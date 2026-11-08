@@ -48,7 +48,7 @@ datatype HeldAction = release | reject
 
 datatype PostingAction = skip | close | save
 
-function readingWhy(refused: bool, affirmAfterRefusal: bool, counter: bool, conditional: bool, hedged: bool, affirmed: bool, sharedNo: bool): ReadingWhy
+function readingWhy(refused: bool, affirmAfterRefusal: bool, counter: bool, conditional: bool, hedged: bool, affirmed: bool, sharedVeto: bool): ReadingWhy
 {
   if refused then
     if affirmAfterRefusal then
@@ -66,7 +66,7 @@ function readingWhy(refused: bool, affirmAfterRefusal: bool, counter: bool, cond
           ReadingWhy.hedged
         else
           if affirmed then
-            if sharedNo then
+            if sharedVeto then
               ReadingWhy.mixed
             else
               ReadingWhy.affirm
@@ -74,14 +74,14 @@ function readingWhy(refused: bool, affirmAfterRefusal: bool, counter: bool, cond
             ReadingWhy.no_signal
 }
 
-lemma readingWhy_ensures(refused: bool, affirmAfterRefusal: bool, counter: bool, conditional: bool, hedged: bool, affirmed: bool, sharedNo: bool)
-  ensures (readingWhy(refused, affirmAfterRefusal, counter, conditional, hedged, affirmed, sharedNo).affirm? ==> (((((affirmed && !(refused)) && !(counter)) && !(conditional)) && !(hedged)) && !(sharedNo)))
-  ensures (refused ==> !(affirmAfterRefusal) ==> readingWhy(refused, affirmAfterRefusal, counter, conditional, hedged, affirmed, sharedNo).refusal?)
-  ensures (refused ==> (readingWhy(refused, affirmAfterRefusal, counter, conditional, hedged, affirmed, sharedNo).refusal? || readingWhy(refused, affirmAfterRefusal, counter, conditional, hedged, affirmed, sharedNo).mixed?))
+lemma readingWhy_ensures(refused: bool, affirmAfterRefusal: bool, counter: bool, conditional: bool, hedged: bool, affirmed: bool, sharedVeto: bool)
+  ensures (readingWhy(refused, affirmAfterRefusal, counter, conditional, hedged, affirmed, sharedVeto).affirm? ==> (((((affirmed && !(refused)) && !(counter)) && !(conditional)) && !(hedged)) && !(sharedVeto)))
+  ensures (refused ==> !(affirmAfterRefusal) ==> readingWhy(refused, affirmAfterRefusal, counter, conditional, hedged, affirmed, sharedVeto).refusal?)
+  ensures (refused ==> (readingWhy(refused, affirmAfterRefusal, counter, conditional, hedged, affirmed, sharedVeto).refusal? || readingWhy(refused, affirmAfterRefusal, counter, conditional, hedged, affirmed, sharedVeto).mixed?))
 {
 }
 
-function readingOf(why: ReadingWhy): Reading
+function readingOf(why: ReadingWhy, affirmed: bool): Reading
 {
   if why.affirm? then
     Reading.yes
@@ -89,16 +89,16 @@ function readingOf(why: ReadingWhy): Reading
     if why.refusal? then
       Reading.no
     else
-      if why.counter? then
+      if (why.counter? && affirmed) then
         Reading.counter
       else
         Reading.unclear
 }
 
-lemma readingOf_ensures(why: ReadingWhy)
-  ensures (readingOf(why).yes? <==> why.affirm?)
-  ensures (readingOf(why).no? <==> why.refusal?)
-  ensures (readingOf(why).counter? <==> why.counter?)
+lemma readingOf_ensures(why: ReadingWhy, affirmed: bool)
+  ensures (readingOf(why, affirmed).yes? <==> why.affirm?)
+  ensures (readingOf(why, affirmed).no? <==> why.refusal?)
+  ensures (readingOf(why, affirmed).counter? <==> (why.counter? && affirmed))
 {
 }
 
@@ -202,26 +202,29 @@ lemma afterBareAck_ensures(a: ProbeAnswer, outboundBefore: int, ackOnly: bool)
 
 function statusAfter(prev: PStatus, e: ProbeEvent, recordedYes: bool): PStatus
 {
-  if ((!prev.probing?) && (!prev.queued?)) then
-    prev
+  if (prev.available? && e.said_no?) then
+    PStatus.unavailable
   else
-    if e.said_yes? then
-      PStatus.available
+    if ((!prev.probing?) && (!prev.queued?)) then
+      prev
     else
-      if e.said_no? then
-        PStatus.unavailable
+      if e.said_yes? then
+        PStatus.available
       else
-        if recordedYes then
-          PStatus.available
-        else
+        if e.said_no? then
           PStatus.unavailable
+        else
+          if recordedYes then
+            PStatus.available
+          else
+            PStatus.unavailable
 }
 
 lemma statusAfter_ensures(prev: PStatus, e: ProbeEvent, recordedYes: bool)
-  ensures (statusAfter(prev, e, recordedYes).available? ==> ((prev.available? || e.said_yes?) || recordedYes))
+  ensures (statusAfter(prev, e, recordedYes).available? ==> (((prev.available? && (!e.said_no?)) || e.said_yes?) || recordedYes))
   ensures ((e.silence? || e.send_refused?) ==> !(recordedYes) ==> prev.probing? ==> statusAfter(prev, e, recordedYes).unavailable?)
-  ensures (e.said_no? ==> prev.probing? ==> statusAfter(prev, e, recordedYes).unavailable?)
-  ensures ((!prev.probing?) ==> (!prev.queued?) ==> (statusAfter(prev, e, recordedYes) == prev))
+  ensures (e.said_no? ==> ((prev.probing? || prev.queued?) || prev.available?) ==> statusAfter(prev, e, recordedYes).unavailable?)
+  ensures ((!prev.probing?) ==> (!prev.queued?) ==> !((prev.available? && e.said_no?)) ==> (statusAfter(prev, e, recordedYes) == prev))
 {
 }
 
@@ -258,14 +261,13 @@ lemma afterSla_ensures(stage: Stage, now: int, deadline: int)
 {
 }
 
-function reviewLate(rejecting: bool, now: int, deadline: int): bool
+function reviewLate(now: int, deadline: int): bool
 {
-  (!(rejecting) && (now >= deadline))
+  (now >= deadline)
 }
 
-lemma reviewLate_ensures(rejecting: bool, now: int, deadline: int)
-  ensures (!(reviewLate(rejecting, now, deadline)) ==> !(rejecting) ==> (now < deadline))
-  ensures (rejecting ==> !(reviewLate(rejecting, now, deadline)))
+lemma reviewLate_ensures(now: int, deadline: int)
+  ensures (reviewLate(now, deadline) <==> (now >= deadline))
 {
 }
 
@@ -312,11 +314,12 @@ lemma mayProbe_ensures(isFirst: bool, firstIn: bool, st: PStatus)
 
 function quorumMet(going: int, quorum: int, pairActivity: bool): bool
 {
-  ((going >= quorum) || ((going >= 2) && pairActivity))
+  ((going >= quorum) || ((going >= 3) && pairActivity))
 }
 
 lemma quorumMet_ensures(going: int, quorum: int, pairActivity: bool)
-  ensures (quorumMet(going, quorum, pairActivity) ==> ((going >= quorum) || ((going >= 2) && pairActivity)))
+  ensures (quorumMet(going, quorum, pairActivity) ==> ((going >= quorum) || ((going >= 3) && pairActivity)))
+  ensures ((going < quorum) ==> (going < 3) ==> !(quorumMet(going, quorum, pairActivity)))
 {
 }
 
@@ -759,27 +762,31 @@ lemma keepsHeldText_ensures(status: HeldStatus)
 {
 }
 
-function postingAction(hasId: bool, close: bool, hasPrev: bool, hasTitle: bool, hasPay: bool): PostingAction
+function postingAction(hasId: bool, close: bool, hasPrev: bool, prevActive: bool, hasTitle: bool, hasPay: bool): PostingAction
 {
   if !(hasId) then
     PostingAction.skip
   else
-    if close then
-      if hasPrev then
-        PostingAction.close
-      else
-        PostingAction.skip
+    if (hasPrev && !(prevActive)) then
+      PostingAction.skip
     else
-      if (hasTitle && hasPay) then
-        PostingAction.save
+      if close then
+        if hasPrev then
+          PostingAction.close
+        else
+          PostingAction.skip
       else
-        PostingAction.skip
+        if (hasTitle && hasPay) then
+          PostingAction.save
+        else
+          PostingAction.skip
 }
 
-lemma postingAction_ensures(hasId: bool, close: bool, hasPrev: bool, hasTitle: bool, hasPay: bool)
-  ensures (postingAction(hasId, close, hasPrev, hasTitle, hasPay).save? ==> (((hasId && !(close)) && hasTitle) && hasPay))
-  ensures (postingAction(hasId, close, hasPrev, hasTitle, hasPay).close? ==> ((hasId && close) && hasPrev))
-  ensures (close ==> (!postingAction(hasId, close, hasPrev, hasTitle, hasPay).save?))
+lemma postingAction_ensures(hasId: bool, close: bool, hasPrev: bool, prevActive: bool, hasTitle: bool, hasPay: bool)
+  ensures (postingAction(hasId, close, hasPrev, prevActive, hasTitle, hasPay).save? ==> (((hasId && !(close)) && hasTitle) && hasPay))
+  ensures (postingAction(hasId, close, hasPrev, prevActive, hasTitle, hasPay).close? ==> ((hasId && close) && hasPrev))
+  ensures ((!postingAction(hasId, close, hasPrev, prevActive, hasTitle, hasPay).skip?) ==> hasPrev ==> prevActive)
+  ensures (close ==> (!postingAction(hasId, close, hasPrev, prevActive, hasTitle, hasPay).save?))
 {
 }
 

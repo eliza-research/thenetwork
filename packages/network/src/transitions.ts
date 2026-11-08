@@ -20,29 +20,36 @@ export type ProbeRoute = "no" | "unclear" | "mixed" | "picked" | "open" | "none_
 export interface TimePicks { hasOptions: boolean; picked: boolean; firmPick: boolean; neither: boolean; anyOf: boolean; openLeft: boolean }
 export type LlmConsent = "yes" | "no" | "other";
 
-/** The last step of consentOf: the signals of a reply, refusals first, into why it reads as it does. */
-export function readingWhy(refused: boolean, affirmAfterRefusal: boolean, counter: boolean, conditional: boolean, hedged: boolean, affirmed: boolean, sharedNo: boolean): ReadingWhy {
+/**
+ * The last step of consentOf: the signals of a reply, refusals first, into why it reads as it does.
+ * `sharedVeto`: the shared reader (core parseReply) reads a refusal, or is unsure for a reason other
+ * than no known word or the time (SD-035).
+ */
+export function readingWhy(refused: boolean, affirmAfterRefusal: boolean, counter: boolean, conditional: boolean, hedged: boolean, affirmed: boolean, sharedVeto: boolean): ReadingWhy {
   //@ verify
-  //@ ensures \result === "affirm" ==> affirmed && !refused && !counter && !conditional && !hedged && !sharedNo
+  //@ ensures \result === "affirm" ==> affirmed && !refused && !counter && !conditional && !hedged && !sharedVeto
   //@ ensures refused && !affirmAfterRefusal ==> \result === "refusal"
   //@ ensures refused ==> \result === "refusal" || \result === "mixed"
   if (refused) return affirmAfterRefusal ? "mixed" : "refusal";
   if (counter) return "counter";
   if (conditional) return "conditional";
   if (hedged) return "hedged";
-  if (affirmed) return sharedNo ? "mixed" : "affirm";
+  if (affirmed) return sharedVeto ? "mixed" : "affirm";
   return "no_signal";
 }
 
-/** The answer a reading gives. Only "affirm" is a yes. */
-export function readingOf(why: ReadingWhy): Reading {
+/**
+ * The answer a reading gives. Only "affirm" is a yes. A counter-offer is a counter (a yes to another
+ * time) only with a yes word; a bare counter ("how about next week instead?") is unclear (SD-041).
+ */
+export function readingOf(why: ReadingWhy, affirmed: boolean): Reading {
   //@ verify
   //@ ensures \result === "yes" <==> why === "affirm"
   //@ ensures \result === "no" <==> why === "refusal"
-  //@ ensures \result === "counter" <==> why === "counter"
+  //@ ensures \result === "counter" <==> why === "counter" && affirmed
   if (why === "affirm") return "yes";
   if (why === "refusal") return "no";
-  return why === "counter" ? "counter" : "unclear";
+  return why === "counter" && affirmed ? "counter" : "unclear";
 }
 
 /** True for the routes that are a yes to the probe. */
@@ -103,14 +110,16 @@ export type ProbeEvent = "said_yes" | "said_no" | "primed" | "silence" | "send_r
 /**
  * The one step that can make a probed member available. `recordedYes` is what the Network stored
  * earlier (they asked for this, or said yes). Silence or a refused send keeps a yes that was recorded
- * and never makes one: both-yes needs a yes from each member.
+ * and never makes one: both-yes needs a yes from each member. A no also takes back a yes that is not
+ * booked yet ("available"): consent holds until the reveal.
  */
 export function statusAfter(prev: PStatus, e: ProbeEvent, recordedYes: boolean): PStatus {
   //@ verify
-  //@ ensures \result === "available" ==> prev === "available" || e === "said_yes" || recordedYes
+  //@ ensures \result === "available" ==> (prev === "available" && e !== "said_no") || e === "said_yes" || recordedYes
   //@ ensures (e === "silence" || e === "send_refused") && !recordedYes && prev === "probing" ==> \result === "unavailable"
-  //@ ensures e === "said_no" && prev === "probing" ==> \result === "unavailable"
-  //@ ensures prev !== "probing" && prev !== "queued" ==> \result === prev
+  //@ ensures e === "said_no" && (prev === "probing" || prev === "queued" || prev === "available") ==> \result === "unavailable"
+  //@ ensures prev !== "probing" && prev !== "queued" && !(prev === "available" && e === "said_no") ==> \result === prev
+  if (prev === "available" && e === "said_no") return "unavailable";
   if (prev !== "probing" && prev !== "queued") return prev;
   if (e === "said_yes") return "available";
   if (e === "said_no") return "unavailable";
@@ -138,12 +147,11 @@ export function afterSla(stage: Stage, now: number, deadline: number): Stage {
   return stage;
 }
 
-/** Only a reject may be decided past the deadline: approve, edit and reroll would start or extend the item. */
-export function reviewLate(rejecting: boolean, now: number, deadline: number): boolean {
+/** No review decision is applied at or past the deadline (SD-009): the next tick expires the item unsent. */
+export function reviewLate(now: number, deadline: number): boolean {
   //@ verify
-  //@ ensures !\result && !rejecting ==> now < deadline
-  //@ ensures rejecting ==> !\result
-  return !rejecting && now >= deadline;
+  //@ ensures \result <==> now >= deadline
+  return now >= deadline;
 }
 
 export function allAvailable(statuses: PStatus[]): boolean {
@@ -170,11 +178,16 @@ export function mayProbe(isFirst: boolean, firstIn: boolean, st: PStatus): boole
   return isFirst || firstIn;
 }
 
-/** A plan books at its quorum; a two-person activity needs only the pair. */
+/**
+ * A plan books at its quorum. When the activity allows a pair, a smaller group of 3 or more is booked
+ * like the original; a group plan is never booked as a pair below its quorum (SD-008: the engine
+ * fallback gives the pair a fresh partner plan with one-to-one consent).
+ */
 export function quorumMet(going: number, quorum: number, pairActivity: boolean): boolean {
   //@ verify
-  //@ ensures \result ==> going >= quorum || (going >= 2 && pairActivity)
-  return going >= quorum || (going >= 2 && pairActivity);
+  //@ ensures \result ==> going >= quorum || (going >= 3 && pairActivity)
+  //@ ensures going < quorum && going < 3 ==> !\result
+  return going >= quorum || (going >= 3 && pairActivity);
 }
 
 /** What a person may be put into. Each fact false or true as named: a reader of Maps fills them in. */
@@ -524,13 +537,18 @@ export function keepsHeldText(status: HeldStatus): boolean {
 // ------------------------------------------------------------------ job posts
 export type PostingAction = "skip" | "close" | "save";
 
-/** What a confirmed draft does. A close never saves, and a save always has a title and a pay range. */
-export function postingAction(hasId: boolean, close: boolean, hasPrev: boolean, hasTitle: boolean, hasPay: boolean): PostingAction {
+/**
+ * What a confirmed draft does. A close never saves, and a save always has a title and a pay range.
+ * A closed (or filled) post is final: no draft reopens, updates or closes it again.
+ */
+export function postingAction(hasId: boolean, close: boolean, hasPrev: boolean, prevActive: boolean, hasTitle: boolean, hasPay: boolean): PostingAction {
   //@ verify
   //@ ensures \result === "save" ==> hasId && !close && hasTitle && hasPay
   //@ ensures \result === "close" ==> hasId && close && hasPrev
+  //@ ensures \result !== "skip" && hasPrev ==> prevActive
   //@ ensures close ==> \result !== "save"
   if (!hasId) return "skip";
+  if (hasPrev && !prevActive) return "skip";
   if (close) return hasPrev ? "close" : "skip";
   return hasTitle && hasPay ? "save" : "skip";
 }

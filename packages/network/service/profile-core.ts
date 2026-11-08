@@ -126,10 +126,13 @@ function sameOwner(b: BatchFacts, o: BatchOwner): boolean {
   return b.personId === o.personId && b.app === o.app && b.chatId === o.chatId;
 }
 
-/** A known source and kind, a valid id and text, and a time that is not after now. */
+/**
+ * A known source and kind, a valid id and text, and a Gmail time that is not after now. A Calendar event
+ * start can be in the future: the store accepts it (SD-240).
+ */
 export function suggestionOk(s: SuggestionFacts, now: number): boolean {
   //@ verify
-  return s.idOk && s.valueOk && s.observedSafe && s.observedAt <= now
+  return s.idOk && s.valueOk && s.observedSafe && (s.source === "google_calendar" || s.observedAt <= now)
     && (s.source === "gmail" || s.source === "google_calendar")
     && (s.kind === "interest" || s.kind === "goal" || s.kind === "availability_pattern");
 }
@@ -156,7 +159,7 @@ export function currentBatch(b: BatchFacts, o: BatchOwner, now: number): boolean
   //@ ensures \result ==> b.status === "pending" && sameOwner(b, o)
   //@ ensures \result ==> b.numbersSafe && now < b.expiresAt && b.revision > 0 && b.idOk
   //@ ensures \result ==> 0 < b.suggestions.length && b.suggestions.length <= MAX_SUGGESTIONS && b.distinctIds === b.suggestions.length
-  //@ ensures \result ==> forall(i: nat, i < b.suggestions.length ==> b.suggestions[i].idOk && b.suggestions[i].valueOk && b.suggestions[i].observedSafe && b.suggestions[i].observedAt <= now)
+  //@ ensures \result ==> forall(i: nat, i < b.suggestions.length ==> b.suggestions[i].idOk && b.suggestions[i].valueOk && b.suggestions[i].observedSafe && (b.suggestions[i].source === "google_calendar" || b.suggestions[i].observedAt <= now))
   //@ ensures \result ==> forall(i: nat, i < b.suggestions.length ==> (b.suggestions[i].source === "gmail" || b.suggestions[i].source === "google_calendar") && (b.suggestions[i].kind === "interest" || b.suggestions[i].kind === "goal" || b.suggestions[i].kind === "availability_pattern"))
   //@ ensures b.status === "pending" && sameOwner(b, o) && b.numbersSafe && now < b.expiresAt && b.idOk && b.revision > 0 && 0 < b.suggestions.length && b.suggestions.length <= MAX_SUGGESTIONS && b.distinctIds === b.suggestions.length && forall(i: nat, i < b.suggestions.length ==> suggestionOk(b.suggestions[i], now)) ==> \result
   return b.status === "pending" && sameOwner(b, o)

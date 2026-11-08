@@ -301,13 +301,14 @@ class ObsStore {
   /** Every request names the app (the server checks the role for it). */
   private withApp(path: string) { return /[?&]app=/.test(path) ? path : `${path}${path.includes("?") ? "&" : "?"}app=${encodeURIComponent(this.app)}`; }
   private async api(path: string, init: RequestInit = {}): Promise<Response> {
-    const headers = new Headers(init.headers);
-    if (this.token) headers.set("authorization", `Bearer ${this.token}`);
+    const headers = new Headers(init.headers), sent = this.token;
+    if (sent) headers.set("authorization", `Bearer ${sent}`);
     // The mode this page shows: the server refuses a change meant for the other mode (409 mode_changed).
     headers.set("x-observatory-mode", this.mode);
     const r = await fetch(this.withApp(path), { ...init, headers });
     if (r.status === 401) {
-      if (!this.authNeeded) { this.authEpoch++; this.authNeeded = true; this.notify(); }
+      // A late 401 for a token that was replaced says nothing about the token in use.
+      if (!this.authNeeded && sent === this.token) { this.authEpoch++; this.authNeeded = true; this.notify(); }
       throw new AuthError("token required");
     }
     return r;
@@ -371,6 +372,7 @@ class ObsStore {
       if (this.filtersMode !== this.mode) { this.filtersMode = this.mode; this.ui = { ...this.ui, filters: loadFilters(this.mode) }; }
       this.applyFull(state);
       this.sync = step(this.sync, { kind: "land", gen, app, version: state.version });
+      // A state at version V already holds delta V (SD-505): deltaMove makes a held delta V "meta" only.
       const later = this.buffered;
       this.buffered = [];
       for (const d of later) this.applyDelta(d);
@@ -513,7 +515,8 @@ class ObsStore {
   held(queue: HeldQueue) { return this.fetch<{ ok: boolean; items?: HeldText[]; code?: string; error?: string }>(`/api/held?queue=${queue}`); }
   async heldPhoto(id:string,reason:string):Promise<{blob?:Blob;error?:string}>{
     try{
-      const r=await this.api(`/api/held/${encodeURIComponent(id)}/photo`,{headers:{"x-network-reason":reason}});
+      // A header value is a byte string: the reason goes percent-encoded (UTF-8), and the server decodes it.
+      const r=await this.api(`/api/held/${encodeURIComponent(id)}/photo`,{headers:{"x-network-reason":encodeURIComponent(reason)}});
       if(!r.ok)return {error:"The selected photo could not load. Try again or reject it."};
       const blob=await r.blob();
       return ["image/jpeg","image/png","image/webp"].includes(blob.type)&&blob.size>0?{blob}:{error:"The selected photo could not be verified. You can still reject it."};
@@ -586,6 +589,11 @@ class ObsStore {
     return [...new Set(this.me?.grants?.filter(x => x.app === "*" || x.app === this.app).map(x => x.role) ?? this.me?.roles ?? [])];
   }
   isAdmin() { return this.can(); }
+  /** The caller holds one of these roles, or admin, on every app ("*"): the service's cross-app safety rule. */
+  canEverywhere(...roles: StaffRole[]): boolean {
+    const g = this.me?.grants ?? this.me?.roles.map(role => ({ role, app: "*" })) ?? [];
+    return g.some(x => x.app === "*" && (x.role === "admin" || roles.includes(x.role)));
+  }
   /** Game controls (play, step, propose, take over, god): the simulation lab is for reviewers and safety staff. */
   canSim() { return this.can("reviewer", "safety", "engineer"); }
   realOnly() { return !!(this.me?.realOnly || this.env?.realOnly); }
@@ -602,12 +610,17 @@ class ObsStore {
     this.notify();
   }
   revealFor(memberId: string): RevealGrant | undefined { return this.reveals.find(g => g.memberId === memberId && g.until > Date.now()); }
-  /** End a reveal before its time (audited). */
+  /** End a reveal before its time (audited). The grant leaves the screen only when the server has none (200 or 404). */
   async unreveal(memberId: string): Promise<void> {
-    let status = 0;
-    try { status = (await this.api(`/api/reveal?memberId=${encodeURIComponent(memberId)}`, { method: "DELETE" })).status; } catch { /* the 401 prompt shows */ }
+    let r: Response | undefined;
+    try { r = await this.api(`/api/reveal?memberId=${encodeURIComponent(memberId)}`, { method: "DELETE" }); }
+    catch (e) { if (!(e instanceof AuthError)) this.toast((e as Error).message, "bad"); }
     this.revealGen++;
-    if (unrevealStep({ server: true, badge: true }, status).badge) return; // the server may still serve it: the badge stays
+    if (unrevealStep({ server: true, badge: true }, r?.status ?? 0).badge) {
+      // The server may still serve it: the badge stays, and the error shows (SD-247).
+      if (r) this.toast(((await r.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${r.status}`, "bad");
+      return;
+    }
     this.reveals = this.reveals.filter(g => g.memberId !== memberId);
     this.notify();
   }

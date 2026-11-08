@@ -32,7 +32,7 @@ function MathMax(a: int, b: int): int { if a >= b then a else b }
 
 datatype ConsentState = opted_in | opted_out
 
-datatype MessageKind = reply | compliance | proactive | transactional
+datatype MessageKind = reply | compliance | proactive | transactional | safety
 
 datatype ReplyKind = reply | compliance
 
@@ -50,7 +50,7 @@ datatype StartOutcome = opted_in | refused_banned | stale
 
 datatype JoinStep = refuse_banned | invite_only | ask | decline_under_age | need_name | need_home | join
 
-datatype JoinFacts = JoinFacts(banned: bool, held: bool, inviteOnly: bool, invited: bool, hasAge: bool, stated: int, hasFloor: bool, floor: int, minJoinAge: int, maxAge: int, hasName: bool, invalidHome: bool)
+datatype JoinFacts = JoinFacts(banned: bool, held: bool, inviteOnly: bool, invited: bool, hasAge: bool, stated: int, hasFloor: bool, floor: int, floorUnderJoin: bool, minJoinAge: int, maxAge: int, hasName: bool, invalidHome: bool)
 
 datatype TurnTag = open | ignored | handled
 
@@ -210,21 +210,26 @@ lemma startOutcome_ensures(banned: bool, optedInAfterWrite: bool)
 {
 }
 
-function outboundKind(reply: bool, causal: bool, replyingToMember: bool, proactive: bool): MessageKind
+function outboundKind(reply: bool, causal: bool, replyingToMember: bool, safety: bool, proactive: bool): MessageKind
 {
   if (reply && (causal || replyingToMember)) then
     MessageKind.reply
   else
-    if proactive then
-      MessageKind.proactive
+    if safety then
+      MessageKind.safety
     else
-      MessageKind.transactional
+      if proactive then
+        MessageKind.proactive
+      else
+        MessageKind.transactional
 }
 
-lemma outboundKind_ensures(reply: bool, causal: bool, replyingToMember: bool, proactive: bool)
-  ensures (proactive ==> !(reply) ==> outboundKind(reply, causal, replyingToMember, proactive).proactive?)
-  ensures (outboundKind(reply, causal, replyingToMember, proactive).reply? ==> (reply && (causal || replyingToMember)))
-  ensures (!outboundKind(reply, causal, replyingToMember, proactive).compliance?)
+lemma outboundKind_ensures(reply: bool, causal: bool, replyingToMember: bool, safety: bool, proactive: bool)
+  ensures (proactive ==> !(reply) ==> !(safety) ==> outboundKind(reply, causal, replyingToMember, safety, proactive).proactive?)
+  ensures (outboundKind(reply, causal, replyingToMember, safety, proactive).reply? ==> (reply && (causal || replyingToMember)))
+  ensures (outboundKind(reply, causal, replyingToMember, safety, proactive).safety? ==> safety)
+  ensures (safety ==> !((reply && (causal || replyingToMember))) ==> outboundKind(reply, causal, replyingToMember, safety, proactive).safety?)
+  ensures (!outboundKind(reply, causal, replyingToMember, safety, proactive).compliance?)
 {
 }
 
@@ -290,10 +295,13 @@ function joinStep(f: JoinFacts): JoinStep
       JoinStep.invite_only
     else
       if !(f.hasAge) then
-        if f.invalidHome then
-          JoinStep.need_home
+        if f.floorUnderJoin then
+          JoinStep.decline_under_age
         else
-          JoinStep.ask
+          if f.invalidHome then
+            JoinStep.need_home
+          else
+            JoinStep.ask
       else
         var age := effectiveAge(f);
         if (((f.stated > f.maxAge) || (age > f.maxAge)) || (age < f.minJoinAge)) then
@@ -314,6 +322,8 @@ lemma joinStep_ensures(f: JoinFacts)
   ensures (joinStep(f).join? ==> (((f.stated >= 13) && (f.stated <= f.maxAge)) && (f.hasFloor ==> (f.floor >= 13))))
   ensures (joinStep(f).join? ==> f.inviteOnly ==> f.invited)
   ensures ((f.banned || f.held) ==> joinStep(f).refuse_banned?)
+  ensures (!(f.banned) ==> !(f.held) ==> !((f.inviteOnly && !(f.invited))) ==> !(f.hasAge) ==> f.floorUnderJoin ==> joinStep(f).decline_under_age?)
+  ensures (joinStep(f).ask? ==> !(f.floorUnderJoin))
 {
 }
 
@@ -398,14 +408,13 @@ lemma storedTurnAdmitted_ensures(onboarding: bool, kind: ReplyKind, replies: int
 {
 }
 
-function accountFreeReply(eligible: bool, kind: ReplyKind, onboardingPrompt: bool, noMember: bool, knownApp: bool): bool
+function accountFreeReply(eligible: bool): bool
 {
-  (!(eligible) && (kind.compliance? || (((onboardingPrompt && kind.reply?) && noMember) && knownApp)))
+  !(eligible)
 }
 
-lemma accountFreeReply_ensures(eligible: bool, kind: ReplyKind, onboardingPrompt: bool, noMember: bool, knownApp: bool)
-  ensures (accountFreeReply(eligible, kind, onboardingPrompt, noMember, knownApp) ==> !(eligible))
-  ensures (accountFreeReply(eligible, kind, onboardingPrompt, noMember, knownApp) ==> (!kind.compliance?) ==> ((onboardingPrompt && noMember) && knownApp))
+lemma accountFreeReply_ensures(eligible: bool)
+  ensures (accountFreeReply(eligible) <==> !(eligible))
 {
 }
 
@@ -468,18 +477,24 @@ lemma receiptStatus_ensures(o: ReceiptOutcome)
 {
 }
 
-function turnHeldBack(compliance: bool, processing: bool, pending: bool, recentUnresolved: bool): bool
+function turnHeldBack(compliance: bool, processing: bool, processingCompliance: bool, pending: bool, recentUnresolved: bool): bool
+  requires (processingCompliance ==> processing)
 {
-  (processing || (!(compliance) && (pending || recentUnresolved)))
+  if compliance then
+    processingCompliance
+  else
+    ((processing || pending) || recentUnresolved)
 }
 
-lemma turnHeldBack_ensures(compliance: bool, processing: bool, pending: bool, recentUnresolved: bool)
-  ensures (compliance ==> (turnHeldBack(compliance, processing, pending, recentUnresolved) <==> processing))
-  ensures (!(processing) ==> !(pending) ==> !(recentUnresolved) ==> !(turnHeldBack(compliance, processing, pending, recentUnresolved)))
+lemma turnHeldBack_ensures(compliance: bool, processing: bool, processingCompliance: bool, pending: bool, recentUnresolved: bool)
+  requires (processingCompliance ==> processing)
+  ensures (compliance ==> (turnHeldBack(compliance, processing, processingCompliance, pending, recentUnresolved) <==> processingCompliance))
+  ensures (!(compliance) ==> processing ==> turnHeldBack(compliance, processing, processingCompliance, pending, recentUnresolved))
+  ensures (!(processing) ==> !(pending) ==> !(recentUnresolved) ==> !(turnHeldBack(compliance, processing, processingCompliance, pending, recentUnresolved)))
 {
 }
 
-function priorAnswer(found: bool, sameHash: bool, done: bool, hasResponse: bool, processing: bool): PriorAnswer
+function priorAnswer(found: bool, sameHash: bool, done: bool, hasResponse: bool, processing: bool, compliance: bool, reclaimable: bool): PriorAnswer
 {
   if !(found) then
     PriorAnswer.busy
@@ -490,16 +505,18 @@ function priorAnswer(found: bool, sameHash: bool, done: bool, hasResponse: bool,
       if (done && hasResponse) then
         PriorAnswer.replay
       else
-        if processing then
+        if (processing || (compliance && reclaimable)) then
           PriorAnswer.busy
         else
           PriorAnswer.unresolved
 }
 
-lemma priorAnswer_ensures(found: bool, sameHash: bool, done: bool, hasResponse: bool, processing: bool)
-  ensures (priorAnswer(found, sameHash, done, hasResponse, processing).replay? ==> (((found && sameHash) && done) && hasResponse))
-  ensures (found ==> !(sameHash) ==> priorAnswer(found, sameHash, done, hasResponse, processing).conflict?)
-  ensures (!(found) ==> priorAnswer(found, sameHash, done, hasResponse, processing).busy?)
+lemma priorAnswer_ensures(found: bool, sameHash: bool, done: bool, hasResponse: bool, processing: bool, compliance: bool, reclaimable: bool)
+  ensures (priorAnswer(found, sameHash, done, hasResponse, processing, compliance, reclaimable).replay? ==> (((found && sameHash) && done) && hasResponse))
+  ensures (found ==> !(sameHash) ==> priorAnswer(found, sameHash, done, hasResponse, processing, compliance, reclaimable).conflict?)
+  ensures (!(found) ==> priorAnswer(found, sameHash, done, hasResponse, processing, compliance, reclaimable).busy?)
+  ensures (found ==> sameHash ==> !((done && hasResponse)) ==> compliance ==> reclaimable ==> priorAnswer(found, sameHash, done, hasResponse, processing, compliance, reclaimable).busy?)
+  ensures (priorAnswer(found, sameHash, done, hasResponse, processing, compliance, reclaimable).unresolved? ==> (!(processing) && !((compliance && reclaimable))))
 {
 }
 

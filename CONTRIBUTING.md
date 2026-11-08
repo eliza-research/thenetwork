@@ -143,6 +143,7 @@ The validation layer is the simulations plus the integration and e2e tests ([doc
 | `bun run security` | The security suite alone (the file list is in AGENTS.md). | Dev Postgres |
 | `bun run test:e2e` | `tests/e2e`: the platform and notify through the running service. | Dev Postgres |
 | `bun run plugins/build.ts --check` | The plugin snapshots match `sites/skills`. | |
+| `bun run quint:check` | The Quint state-machine models in `quint/`: typecheck, run tests, safety simulation and reachability witnesses ([quint/README.md](quint/README.md)). `--verify` adds bounded model checking. | Java 17+ for `--verify` only |
 | `bun run sites:build` | The production build of the four sites. | |
 
 CI (`.github/workflows/ci.yml`) runs all of these with no secrets. CI never calls an LLM. So your PR must also show a real-LLM run (section 7.2).

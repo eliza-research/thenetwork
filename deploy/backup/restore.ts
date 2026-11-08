@@ -6,7 +6,8 @@
 //   bun run deploy/backup/restore.ts --r2 latest --db restore_drill_20261008     # the newest complete backup under BACKUP_PREFIX
 // The target server is RESTORE_DATABASE_URL (a login that may create databases; any database on that
 // server, usually the maintenance one). Exit 0: every table has the row count of the manifest.
-// Keep the scratch database only as long as the drill or the comparison needs it, then drop it.
+// Keep the scratch database only as long as the drill or the comparison needs it, then drop it. A restore
+// that fails before the comparison drops the database it made.
 //
 // Safety (docs/deploy.md 8.2): a restore never changes a role or a privilege of the source server.
 //  - The drill (default) restores with --no-owner --no-privileges: no ALTER OWNER, GRANT or REVOKE at all.
@@ -41,32 +42,44 @@ export async function restore(o: { serverUrl: string; db: string; dir: string; k
   const manifest = JSON.parse(await Bun.file(join(o.dir, "manifest.json")).text()) as Manifest;
   if (manifest.version !== 1) throw new Error(`unknown manifest version ${manifest.version}`);
   const target = pgEnv(withDatabase(o.serverUrl, o.db));
-  // A backup without a recorded source (older than the field) counts as taken on this server (refusal.ts).
-  const refusal = restoreRefusal({
-    safeName: true, liveName: false, ownName: o.db === manifest.database,
-    sourceKnown: !!manifest.source, sameServer: !!manifest.source && sameServer(manifest.source, { host: target.PGHOST!, port: target.PGPORT! }),
-    roles: !!o.roles, encrypted: !!manifest.encryption, dumpPresent: !manifest.encryption || existsSync(join(o.dir, manifest.files.dump)),
-  });
-  if (refusal === RESTORE_OWN_DATABASE) throw new Error(`refusing to restore into the backup's own database "${o.db}" on its own server`);
-  if (refusal === RESTORE_ROLES_ON_SOURCE) throw new Error("refusing --roles: roles.sql changes roles for the whole server, and this is the source server (or the backup does not name its source)");
-  if (refusal === RESTORE_ENCRYPTED) throw new Error("the backup is encrypted: download it with restore.ts --r2 (BACKUP_ENCRYPTION_KEY), which decrypts it");
   const admin = new SQL({ url: o.serverUrl, max: 1 });
   try {
+    // One server can have two host names (the private name and a TCP proxy): its system identifier is the same through both (SD-165).
+    const [{ id }] = await admin`select system_identifier::text as id from pg_control_system()` as { id: string }[];
+    // A backup without a recorded source (older than the field) counts as taken on this server (refusal.ts).
+    const refusal = restoreRefusal({
+      safeName: true, liveName: false, ownName: o.db === manifest.database,
+      sourceKnown: !!manifest.source,
+      sameServer: !!manifest.source && (sameServer(manifest.source, { host: target.PGHOST!, port: target.PGPORT! }) || manifest.source.systemId === id),
+      roles: !!o.roles, encrypted: !!manifest.encryption, dumpPresent: !manifest.encryption || existsSync(join(o.dir, manifest.files.dump)),
+    });
+    if (refusal === RESTORE_OWN_DATABASE) throw new Error(`refusing to restore into the backup's own database "${o.db}" on its own server`);
+    if (refusal === RESTORE_ROLES_ON_SOURCE) throw new Error("refusing --roles: roles.sql changes roles for the whole server, and this is the source server (or the backup does not name its source)");
+    if (refusal === RESTORE_ENCRYPTED) throw new Error("the backup is encrypted: download it with restore.ts --r2 (BACKUP_ENCRYPTION_KEY), which decrypts it");
     const [exists] = await admin`select 1 as x from pg_database where datname = ${o.db}`;
     if (exists) throw new Error(`database ${o.db} already exists: a restore only creates a new one`);
     await admin.unsafe(`create database "${o.db}"`);
   } finally { await admin.close(); }
   const url = withDatabase(o.serverUrl, o.db);
   const env = pgEnv(url);
-  // Roles (without passwords) only on another server, and only when asked: errors for roles that already exist are expected and ignored.
-  if (o.roles && manifest.files.roles && existsSync(join(o.dir, manifest.files.roles))) {
-    await run([pgBin("psql"), "--no-password", "--quiet", "-v", "ON_ERROR_STOP=0", "-f", join(o.dir, manifest.files.roles)], { env: { ...env, PGOPTIONS: "-c client_min_messages=error" } }).catch(e => o.log?.("roles: some statements failed", { error: redactUrls((e as Error).message) }));
-  }
-  const privileges = o.keepPrivileges ? [] : ["--no-owner", "--no-privileges"];
-  await run([pgBin("pg_restore"), "--no-password", "--exit-on-error", ...privileges, `--dbname=${env.PGDATABASE}`, join(o.dir, manifest.files.dump)], { env });
-  const sql = new SQL({ url, max: 1 });
   let got: Record<string, number>;
-  try { got = await rowCounts(sql); } finally { await sql.close(); }
+  try {
+    // Roles (without passwords) only on another server, and only when asked: errors for roles that already exist are expected and ignored.
+    if (o.roles && manifest.files.roles && existsSync(join(o.dir, manifest.files.roles))) {
+      await run([pgBin("psql"), "--no-password", "--quiet", "-v", "ON_ERROR_STOP=0", "-f", join(o.dir, manifest.files.roles)], { env: { ...env, PGOPTIONS: "-c client_min_messages=error" } }).catch(e => o.log?.("roles: some statements failed", { error: redactUrls((e as Error).message) }));
+    }
+    const privileges = o.keepPrivileges ? [] : ["--no-owner", "--no-privileges"];
+    await run([pgBin("pg_restore"), "--no-password", "--exit-on-error", ...privileges, `--dbname=${env.PGDATABASE}`, join(o.dir, manifest.files.dump)], { env });
+    const sql = new SQL({ url, max: 1 });
+    try { got = await rowCounts(sql); } finally { await sql.close(); }
+  } catch (e) {
+    // A failed restore drops the scratch database it made: it can hold part of the member data.
+    const drop = new SQL({ url: o.serverUrl, max: 1 });
+    try { await drop.unsafe(`drop database if exists "${o.db}" with (force)`); }
+    catch (d) { o.log?.(`the scratch database ${o.db} was not dropped: drop it by hand`, { error: redactUrls((d as Error).message) }); }
+    finally { await drop.close(); }
+    throw e;
+  }
   return { db: o.db, url, manifest, mismatches: compareCounts(manifest.rowCounts, got), ms: Math.round(performance.now() - t0) };
 }
 

@@ -31,20 +31,26 @@ export function loginVerdict(readOnly: boolean, rlsRole: boolean, inAppRole: boo
   return "ok";
 }
 
-export type DeployVerdict = "ok" | "no_env" | "unknown_env" | "needs_access" | "dev_remote";
+export type DeployVerdict = "ok" | "no_env" | "unknown_env" | "needs_access" | "needs_audit" | "dev_remote";
 
-/** The console's start guard (docs/deploy.md 2.6). `env` is PLATFORM_ENV, "" when unset. */
-export function deployVerdict(realOnly: boolean, access: boolean, env: string, remote: boolean): DeployVerdict {
+/**
+ * The console's start guard (docs/deploy.md 2.6). `env` is PLATFORM_ENV, "" when unset. `remote` is true when
+ * a database or the Network service is not on this machine. `auditPg` is true when the audit log is in Postgres
+ * (a deployed console loses a file audit log on a redeploy).
+ */
+export function deployVerdict(realOnly: boolean, access: boolean, env: string, remote: boolean, auditPg: boolean): DeployVerdict {
   //@ verify
   //@ ensures \result === "ok" && (realOnly || remote) ==> env === "dev" || env === "staging" || env === "production"
   //@ ensures \result === "ok" && (realOnly || remote) && env !== "dev" ==> access
+  //@ ensures \result === "ok" && (realOnly || remote) && env !== "dev" ==> auditPg
   //@ ensures \result === "ok" && remote ==> access
   //@ ensures !realOnly && !remote ==> \result === "ok"
   if (!realOnly && !remote) return "ok";
   if (env === "") return "no_env";
   if (env !== "dev" && env !== "staging" && env !== "production") return "unknown_env";
+  if (env !== "dev" && !access) return "needs_access";
+  if (env !== "dev" && !auditPg) return "needs_audit";
   if (access) return "ok";
-  if (env !== "dev") return "needs_access";
   if (remote) return "dev_remote";
   return "ok";
 }

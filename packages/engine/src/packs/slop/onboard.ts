@@ -107,7 +107,7 @@ export const SLOP_ONBOARD_QUESTIONS: Record<string, { field: OnboardField; text:
   slop_gender: { field: "gender", text: "And how do you describe yourself: a woman, a man, nonbinary, or something else?" },
   slop_age_range: { field: "ageRange", text: SLOP_ASK_QUESTIONS.slop_age_range! },
   slop_distance: { field: "distance", text: SLOP_ASK_QUESTIONS.slop_distance! },
-  slop_location: { field: "location", text: "What's your zip code or neighborhood? It's only used to work out rough distances." },
+  slop_location: { field: "location", text: SLOP_ASK_QUESTIONS.slop_location! },
   slop_zip: { field: "location", text: SLOP_ASK_QUESTIONS.slop_zip! },
   slop_basics: { field: "dealbreakers", text: SLOP_ASK_QUESTIONS.slop_basics! },
   slop_goal: { field: "goal", text: "And what are you looking for right now: something casual, something long-term, or not sure yet?" },

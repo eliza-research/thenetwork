@@ -4,7 +4,7 @@ import { SQL } from "bun";
 import type { AppId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
 import { hitPasses } from "./decisions.ts";
-import type { Ban, HitResult, HitRule, Membership, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneChange, PhoneHold, PhoneIdentity, PhoneMethod, PhoneMove, PhoneMoveResult, Session, ShareGrant } from "./store.ts";
+import type { Ban, Hit, HitResult, HitRule, Membership, MembershipState, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneChange, PhoneHold, PhoneIdentity, PhoneMethod, PhoneMove, PhoneMoveResult, Session, ShareGrant } from "./store.ts";
 
 type Row = Record<string, any>;
 const ms = (v: unknown): number | null => (v === null || v === undefined ? null : new Date(v as string | Date).getTime());
@@ -19,7 +19,7 @@ const membership = (r: Row): Membership => ({
 });
 const consent = (r: Row): ConsentEvent => ({
   e164: r.e164, app: r.app_id ?? null, line: r.line ?? null, state: r.state, source: r.source, wording: r.wording ?? null,
-  wordingVersion: r.wording_version ?? null, ref: r.ref ?? null, at: ms(r.at)!,
+  wordingVersion: r.wording_version ?? null, ref: r.ref ?? null, namedApp: r.named_app ?? null, at: ms(r.at)!,
 });
 const pendingRow = (r: Row): PendingText => ({ phoneHash: r.phone_hash, kind: r.kind, app: r.app_id, name: r.name ?? null, age: r.age ?? null, ...(r.home_city ? { homeCity: r.home_city } : {}), at: ms(r.at)! });
 const challenge = (r: Row): OtpChallenge => ({
@@ -50,9 +50,6 @@ export class PgPeopleStore implements PeopleStore {
     const [r] = await this.sql`select * from platform.phone_identities where e164 = ${e164}`;
     return r ? phone(r) : undefined;
   }
-  async detachPhoneHash(personId: string) {
-    await this.sql`update platform.people set phone_hash = null where id = ${personId}::uuid`;
-  }
   async findPhoneByHash(phoneHash: string) {
     const [r] = await this.sql`select ph.* from platform.people p join platform.phone_identities ph on ph.person_id = p.id
       where p.phone_hash = ${phoneHash} and p.deleted_at is null order by ph.verified_at desc limit 1`;
@@ -76,7 +73,9 @@ export class PgPeopleStore implements PeopleStore {
     await this.sql`update platform.phone_identities set last_seen_at = ${ts(at)} where e164 = ${e164}`;
   }
   async setPhoneHold(e164: string, hold: PhoneHold | null, at: number) {
-    await this.sql`update platform.phone_identities set hold = ${hold}, hold_at = ${hold ? ts(at) : null} where e164 = ${e164}`;
+    // Lifting a hold also marks the number seen, in the same statement: a text read in between never finds it unheld and stale.
+    if (hold === null) await this.sql`update platform.phone_identities set hold = null, hold_at = null, last_seen_at = ${ts(at)} where e164 = ${e164}`;
+    else await this.sql`update platform.phone_identities set hold = ${hold}, hold_at = ${ts(at)} where e164 = ${e164}`;
   }
   async heldPhones() {
     return (await this.sql`select * from platform.phone_identities where hold is not null order by hold_at`).map(phone);
@@ -129,11 +128,31 @@ export class PgPeopleStore implements PeopleStore {
         first_name = excluded.first_name, profile = excluded.profile, joined_at = excluded.joined_at, left_at = excluded.left_at`;
   }
 
-  async addConsent(e: ConsentEvent) {
-    const r = await this.sql`insert into platform.consent_events (e164, app_id, line, state, source, wording, wording_version, ref, at)
-      values (${e.e164}, ${e.app}, ${e.line ?? null}, ${e.state}, ${e.source}, ${e.wording ?? null}, ${e.wordingVersion ?? null}, ${e.ref ?? null}, ${ts(e.at)})
-      on conflict (e164, ref) where ref is not null do nothing returning id`;
+  async updateMembership(personId: string, app: AppId, from: MembershipState[], patch: { state?: MembershipState; profile?: Record<string, unknown> }) {
+    const r = await this.sql`update platform.memberships set state = coalesce(${patch.state ?? null}, state), profile = profile || ${patch.profile ?? {}}::jsonb
+      where person_id = ${personId} and app_id = ${app} and state = any(${this.sql.array(from, "TEXT")}) returning 1`;
     return r.length > 0;
+  }
+
+  async addConsent(e: ConsentEvent, personId?: string) {
+    const insert = (db: SQL) => db`insert into platform.consent_events (e164, app_id, line, state, source, wording, wording_version, ref, named_app, at)
+      values (${e.e164}, ${e.app}, ${e.line ?? null}, ${e.state}, ${e.source}, ${e.wording ?? null}, ${e.wordingVersion ?? null}, ${e.ref ?? null}, ${e.namedApp ?? null}, ${ts(e.at)})
+      on conflict (e164, ref) where ref is not null do nothing returning id`;
+    if (!personId) return (await insert(this.sql)).length > 0;
+    return this.sql.begin(async tx => {
+      // A number change of this number that runs now finishes first (movePhone locks the phone row). One that
+      // starts later waits for this lock, then copies this event to the new number.
+      const [ph] = await tx`select person_id from platform.phone_identities where e164 = ${e.e164} for share`;
+      const r = await insert(tx);
+      // The number moved before this write: the event follows the person to the number they have now.
+      if (ph?.person_id !== personId) {
+        await tx`insert into platform.consent_events (e164, app_id, line, state, source, wording, wording_version, ref, named_app, at)
+          select ph.e164, ${e.app}, ${e.line ?? null}, ${e.state}, ${e.source}, ${e.wording ?? null}, ${e.wordingVersion ?? null}, ${e.ref ?? null}, ${e.namedApp ?? null}, ${ts(e.at)}
+          from platform.phone_identities ph where ph.person_id = ${personId}::uuid and ph.e164 <> ${e.e164}
+          on conflict (e164, ref) where ref is not null do nothing`;
+      }
+      return r.length > 0;
+    });
   }
   async lastConsent(e164: string, app: AppId): Promise<ConsentLast> {
     const rows = await this.sql`
@@ -168,8 +187,18 @@ export class PgPeopleStore implements PeopleStore {
   }
 
   async ban(b: Ban) {
-    await this.sql`insert into platform.bans (id, scope, person_id, phone_hash, reason, report_id, banned_by, at)
-      values (${b.id}, ${b.scope}, ${b.personId}, ${b.phoneHash}, ${b.reason}, ${b.reportId}, ${b.bannedBy}, ${ts(b.at)}) on conflict (id) do nothing`;
+    await this.sql.begin(async tx => {
+      // A number change of this person that runs now finishes first (movePhone locks the person row); one that
+      // starts later waits, then finds this ban and does not move.
+      const [p] = b.personId ? await tx`select phone_hash from platform.people where id = ${b.personId}::uuid for share` : [];
+      await tx`insert into platform.bans (id, scope, person_id, phone_hash, reason, report_id, banned_by, at)
+        values (${b.id}, ${b.scope}, ${b.personId}, ${b.phoneHash}, ${b.reason}, ${b.reportId}, ${b.bannedBy}, ${ts(b.at)}) on conflict (id) do nothing`;
+      // The person's number changed after the caller read it: the ban covers the number they have now too.
+      if (b.phoneHash !== null && p?.phone_hash && p.phone_hash !== b.phoneHash) {
+        await tx`insert into platform.bans (id, scope, person_id, phone_hash, reason, report_id, banned_by, at)
+          values (${`${b.id}:moved`}, ${b.scope}, ${b.personId}, ${p.phone_hash}, ${b.reason}, ${b.reportId}, ${b.bannedBy}, ${ts(b.at)}) on conflict (id) do nothing`;
+      }
+    });
   }
   async isBanned(phoneHash: string, personId?: string | null) {
     const [r] = await this.sql`select 1 from platform.bans where phone_hash = ${phoneHash} or (scope = 'person' and ${personId ?? null}::uuid is not null and person_id = ${personId ?? null}::uuid) limit 1`;
@@ -223,23 +252,44 @@ export class PgPeopleStore implements PeopleStore {
   async revokeSession(tokenHash: string, at: number) {
     await this.sql`update platform.sessions set revoked_at = least(coalesce(revoked_at, ${ts(at)}), ${ts(at)}) where token_hash = ${tokenHash}`;
   }
-  async attachPerson(e164: string, personId: string) {
-    await this.sql`update platform.sessions set person_id = ${personId} where e164 = ${e164} and person_id is null`;
+  async bindSessions(e164: string, personId: string, keep: string | null, at: number) {
+    await this.sql`update platform.sessions set person_id = case when token_hash = ${keep} then ${personId}::uuid else person_id end,
+      revoked_at = case when token_hash = ${keep} then revoked_at else least(coalesce(revoked_at, ${ts(at)}), ${ts(at)}) end
+      where e164 = ${e164} and person_id is null`;
+  }
+
+  async forgetPersonlessSessions(e164: string) {
+    await this.sql`delete from platform.sessions where e164 = ${e164} and person_id is null`;
   }
 
   async hit(bucket: string, windowMs: number, at: number, rule: HitRule = {}): Promise<HitResult> {
-    const start = new Date(at - (at % windowMs));
+    return (await this.hitAll([{ bucket, windowMs, rule }], at))[0]!;
+  }
+  async hitAll(hits: Hit[], at: number): Promise<HitResult[]> {
     return this.sql.begin(async tx => {
       // One writer per bucket at a time: parallel requests see each other's hits (one SMS for 20 parallel starts).
-      await tx`select pg_advisory_xact_lock(hashtext(${`rate:${bucket}`}))`;
-      const [prev] = await tx`select max(last_at) as last_at, coalesce(sum(count) filter (where window_start = ${start}), 0)::int as n from platform.rate_limits where bucket = ${bucket}`;
-      const prevAt = ms(prev?.last_at), n = (prev?.n as number) ?? 0;
-      if (!hitPasses(n, prevAt, at, rule.limit, rule.minGapMs)) return { count: n + 1, prevAt, ok: false };
-      const [r] = await tx`insert into platform.rate_limits (bucket, window_start, count, last_at) values (${bucket}, ${start}, 1, ${ts(at)})
-        on conflict (bucket, window_start) do update set count = platform.rate_limits.count + 1, last_at = excluded.last_at returning count`;
-      // Old windows are not needed after the next one starts.
-      await tx`delete from platform.rate_limits where bucket = ${bucket} and window_start < ${new Date(start.getTime() - windowMs)}`;
-      return { count: r!.count as number, prevAt, ok: true };
+      // The locks are taken in name order, so two requests on the same buckets never wait for each other in a cycle.
+      for (const bucket of [...new Set(hits.map(h => h.bucket))].sort()) await tx`select pg_advisory_xact_lock(hashtext(${`rate:${bucket}`}))`;
+      const results: HitResult[] = [];
+      for (const { bucket, windowMs, rule = {} } of hits) {
+        const start = new Date(at - (at % windowMs));
+        const [prev] = await tx`select max(last_at) as last_at, coalesce(sum(count) filter (where window_start = ${start}), 0)::int as n from platform.rate_limits where bucket = ${bucket}`;
+        const prevAt = ms(prev?.last_at), n = (prev?.n as number) ?? 0;
+        const ok = hitPasses(n, prevAt, at, rule.limit, rule.minGapMs);
+        results.push({ count: n + 1, prevAt, ok });
+        if (!ok) return results;
+      }
+      for (const [i, { bucket, windowMs, rule = {} }] of hits.entries()) {
+        const start = new Date(at - (at % windowMs));
+        // A minimum gap outlives the retention purge: the row stays until the gap ends.
+        const keepUntil = rule.minGapMs !== undefined ? ts(at + rule.minGapMs) : null;
+        const [r] = await tx`insert into platform.rate_limits (bucket, window_start, count, last_at, keep_until) values (${bucket}, ${start}, 1, ${ts(at)}, ${keepUntil})
+          on conflict (bucket, window_start) do update set count = platform.rate_limits.count + 1, last_at = excluded.last_at, keep_until = excluded.keep_until returning count`;
+        results[i]!.count = r!.count as number;
+        // Old windows are not needed after the next one starts.
+        await tx`delete from platform.rate_limits where bucket = ${bucket} and window_start < ${new Date(start.getTime() - windowMs)}`;
+      }
+      return results;
     });
   }
 
@@ -284,7 +334,7 @@ export class PgPeopleStore implements PeopleStore {
       let n = 0;
       n += (await tx`delete from platform.otp_challenges where expires_at < ${b} returning 1`).length;
       n += (await tx`delete from platform.sessions where expires_at < ${b} or revoked_at < ${b} returning 1`).length;
-      n += (await tx`delete from platform.rate_limits where last_at < ${b} returning 1`).length;
+      n += (await tx`delete from platform.rate_limits where last_at < ${b} and (keep_until is null or keep_until < ${b}) returning 1`).length;
       n += (await tx`delete from platform.pending_texts where at < ${b} returning 1`).length;
       n += (await tx`delete from platform.phone_changes where confirmed_at is null and requested_at < ${b} returning 1`).length;
       return n;
@@ -302,16 +352,31 @@ export class PgPeopleStore implements PeopleStore {
     });
   }
 
-  async deleteAll(personId: string | null, e164: string, phoneHash: string, at: number) {
+  async deleteAll(personId: string | null, e164: string, phoneHash: string, at: number, newOwner = false) {
     await this.sql.begin(async tx => {
       if (personId) await tx`select id from platform.people where id = ${personId} for update`;
-      await tx`insert into platform.suppression (phone_hash, reason, at) values (${phoneHash}, 'deleted', ${ts(at)}) on conflict do nothing`;
-      await tx`update platform.inbound set status = 'unresolved', response = null, replies = '[]'::jsonb, action_receipts = '{}'::jsonb,
-        receipt = null, receipt_hash = null, sender = null, event = null, sender_hash = null, member_id = null, app_id = null
-        where request_hash is not null and sender_hash = ${phoneHash}`;
-      await tx`delete from platform.sessions where e164 = ${e164} or (${personId}::uuid is not null and person_id = ${personId}::uuid)`;
-      await tx`delete from platform.otp_challenges where e164 = ${e164}`;
-      await tx`delete from platform.consent_events where e164 = ${e164}`;
+      // The person's number now (read under the person lock): a number change that committed after the
+      // caller read `e164` moved the person, and that number goes too.
+      const [now] = personId && !newOwner ? await tx`select ph.e164, p.phone_hash from platform.phone_identities ph join platform.people p on p.id = ph.person_id
+        where ph.person_id = ${personId}::uuid and ph.e164 <> ${e164} and p.phone_hash is not null` : [];
+      const numbers = [{ e164, phoneHash }, ...(now ? [{ e164: now.e164 as string, phoneHash: now.phone_hash as string }] : [])];
+      // A new owner: consent events after the old owner's last message are the new holder's (a STOP works before
+      // and during the hold). They stay; only the old owner's events go.
+      const [seen] = newOwner ? await tx`select last_seen_at from platform.phone_identities where e164 = ${e164}` : [];
+      const keepAfter = (seen?.last_seen_at as Date | null | undefined) ?? null;
+      for (const n of numbers) {
+        if (!newOwner) await tx`insert into platform.suppression (phone_hash, reason, at) values (${n.phoneHash}, 'deleted', ${ts(at)}) on conflict do nothing`;
+        await tx`update platform.inbound set status = 'unresolved', response = null, replies = '[]'::jsonb, action_receipts = '{}'::jsonb,
+          receipt = null, receipt_hash = null, sender = null, event = null, sender_hash = null, member_id = null, app_id = null
+          where request_hash is not null and sender_hash = ${n.phoneHash}`;
+        await tx`delete from platform.sessions where e164 = ${n.e164} or (${personId}::uuid is not null and person_id = ${personId}::uuid)`;
+        await tx`delete from platform.otp_challenges where e164 = ${n.e164}`;
+        await tx`delete from platform.consent_events where e164 = ${n.e164} and (${keepAfter}::timestamptz is null or at <= ${keepAfter})`;
+        // The line's conversation counters hold the number in plain form (the retention purge keeps a row with
+        // an unanswered text). A new owner's counters are theirs: their own text reset them.
+        if (!newOwner) await tx`delete from platform.line_conversations where address = ${n.e164}`;
+        await tx`delete from platform.pending_texts where phone_hash = ${n.phoneHash}`;
+      }
       if (personId) {
         await tx`delete from platform.memberships where person_id = ${personId}`;
         await tx`delete from platform.share_grants where person_id = ${personId}`;
@@ -321,8 +386,14 @@ export class PgPeopleStore implements PeopleStore {
         await tx`select notify.forget_data(${personId}, null)`;
       }
       await tx`delete from platform.phone_identities where e164 = ${e164}`;
-      await tx`delete from platform.pending_texts where phone_hash = ${phoneHash}`;
       if (personId) await tx`delete from platform.phone_changes where person_id = ${personId}::uuid`;
+      if (newOwner) {
+        // The number starts clean for its new holder, in the same transaction: no suppression and no age
+        // floor (the old owner's), and the tombstone (it keeps its blocks) is never revived for them.
+        if (personId) await tx`update platform.people set phone_hash = null where id = ${personId}::uuid`;
+        await tx`delete from platform.suppression where phone_hash = ${phoneHash}`;
+        await tx`delete from platform.age_floor where phone_hash = ${phoneHash}`;
+      }
     });
   }
 
@@ -341,8 +412,13 @@ export class PgPeopleStore implements PeopleStore {
   }
   async movePhone(m: PhoneMove): Promise<PhoneMoveResult> {
     return this.sql.begin(async tx => {
+      // The person row first (the order deleteAll takes): a ban of this person that runs now finishes first.
+      await tx`select id from platform.people where id = ${m.personId}::uuid for update`;
       const [old] = await tx`select * from platform.phone_identities where e164 = ${m.oldE164} and person_id = ${m.personId}::uuid for update`;
       if (!old) return "no_phone";
+      // A ban that committed after the caller's check: a banned person or number never moves.
+      const [banned] = await tx`select 1 from platform.bans where phone_hash = ${m.oldHash} or (scope = 'person' and person_id = ${m.personId}::uuid) limit 1`;
+      if (banned) return "banned";
       // The new number is checked again inside the transaction (a join or another change may have taken it).
       const [taken] = await tx`select 1 from platform.phone_identities where e164 = ${m.newE164}`;
       if (taken) return "number_in_use";
@@ -354,6 +430,8 @@ export class PgPeopleStore implements PeopleStore {
         on conflict (e164, ref) where ref is not null do nothing`;
       await tx`delete from platform.consent_events where e164 = ${m.oldE164}`;
       await tx`update platform.people set phone_hash = ${m.newHash} where id = ${m.personId}::uuid`;
+      // A delete of everything by an earlier owner of the new number no longer suppresses it (the person proved it now).
+      await tx`delete from platform.suppression where phone_hash = ${m.newHash}`;
       const [floor] = await tx`delete from platform.age_floor where phone_hash = ${m.oldHash} returning lowest_age, at`;
       if (floor) {
         await tx`insert into platform.age_floor (phone_hash, lowest_age, at) values (${m.newHash}, ${floor.lowest_age}, ${floor.at})
@@ -366,12 +444,20 @@ export class PgPeopleStore implements PeopleStore {
       await tx`update platform.outbound set status = 'suppressed_ineligible', note = 'number changed', to_address = null, ended_at = ${ts(m.at)}, updated_at = ${ts(m.at)},
           lease_owner = null, lease_until = null
         where to_address = ${m.oldE164} and status = any(${OUTBOUND_WAITING}::text[])`;
-      await tx`insert into platform.eliza_notices (phone_hash, sent_at) select ${m.newHash}, sent_at from platform.eliza_notices where phone_hash = ${m.oldHash} on conflict do nothing`;
-      await tx`delete from platform.eliza_notices where phone_hash = ${m.oldHash}`;
+      await tx`insert into platform.eliza_notices (phone_hash, sent_at, turn_id) select ${m.newNoticeHash}, sent_at, turn_id from platform.eliza_notices where phone_hash = ${m.oldNoticeHash} on conflict do nothing`;
+      await tx`delete from platform.eliza_notices where phone_hash = ${m.oldNoticeHash}`;
       // The person's linked agents (MCP OAuth grants) hold the keyed hash: they move with the number (PRD 11.5, F25).
       const [oauth] = await tx`select case when to_regclass('oauth.grants') is null then false
         else has_schema_privilege('oauth', 'USAGE') and has_table_privilege(to_regclass('oauth.grants'), 'UPDATE') end as ok`;
-      if (oauth?.ok) await tx`update oauth.grants set phone_key = ${m.newHash} where phone_key = ${m.oldHash}`;
+      if (oauth?.ok) {
+        // A Cloud grant's authority, its number too, never changes (oauth.keep_cloud_grant_authority): it ends
+        // with the old number, and the person links the agent again. Any other grant moves.
+        const cloud = tx`(id like 'grant_cloud_%' or cloud_authority is not null)`;
+        await tx`update oauth.grants set revoked_at = ${ts(m.at)} where phone_key = ${m.oldHash} and revoked_at is null and ${cloud}`;
+        await tx`update oauth.grants set phone_key = ${m.newHash} where phone_key = ${m.oldHash} and not ${cloud}`;
+        // A grant's signup draft is claimed by the same key as the grant (packages/mcp/db/oauth.sql).
+        await tx`update oauth.signup_drafts set phone_key = ${m.newHash} where phone_key = ${m.oldHash}`;
+      }
       const changed = await tx`update platform.phone_changes set confirmed_at = ${ts(m.at)}, new_e164 = null, old_hash = ${m.oldHash}, new_hash = ${m.newHash}
         where id = ${m.changeId}::uuid and person_id = ${m.personId}::uuid and confirmed_at is null returning id`;
       if (!changed.length) throw new Error("no waiting number change for this person");

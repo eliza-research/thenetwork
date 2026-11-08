@@ -322,6 +322,8 @@ const OPT_OUT_EN: RegExp[] = [
   new RegExp(`\\bi (?:don't|do not|dont) want (?:these|your|any|any more|anymore|more|the) ${MSGS}\\b`),
   /\bleave me alone\b/,
   /\bwrong number\b/,
+  // A whole message that is only STOP said again or said harder: "STOP STOP", "stop it", "Stop. Now.", "I said stop".
+  /^(?:i (?:said|told you to|asked you to) )?stop(?: (?:stop|it|now|already|this|everything))*$/,
   // "remove me", "take me off", "take me off the list" on their own.
   /^(?:please |pls )?(?:remove|take) me(?: off| out)?(?: (?:the|your|this) list)?(?: please| pls)?$/,
 ];

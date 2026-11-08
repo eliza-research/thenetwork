@@ -25,7 +25,8 @@ function make(store: PeopleStore) {
   const api: PublicApi = createPublicApi({
     store, env: { PLATFORM_ENV: "dev" }, now: () => clock.t, minStartMs: 0, minVerifyMs: 0, log: () => {}, ipOf: req => req.headers.get("x-real-ip") ?? "198.51.100.200",
     otp: { name: "fake", send: async e164 => { sends++; const code = String(100000 + ((sends * 7919) % 900000)); codes.set(e164, code); return { code }; } },
-    onJoin: async ({ app, age, membership }) => { await Bun.sleep(5); joined.push({ app: app.id, age, member: membership.memberId }); },
+    // Like the service's hook: a repeated join of a member that exists makes no second member.
+    onJoin: async ({ app, age, membership }) => { await Bun.sleep(5); if (!joined.some(j => j.member === membership.memberId)) joined.push({ app: app.id, age, member: membership.memberId }); },
   });
   const call = async (app: AppId, method: string, path: string, body?: unknown, headers: Record<string, string> = {}) => {
     const res = (await api.fetch(new Request(`http://${HOST[app]}${path}`, {

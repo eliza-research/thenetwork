@@ -142,3 +142,7 @@
 {"text":"Your order #1034567890 is confirmed.","want":"clean","note":"defect 13: ten digits that are not a NANP number stay an order number"}
 {"text":"Booking ref 2100550102 at the front desk.","want":"clean","note":"defect 13: exchange 055 is not a NANP number"}
 {"text":"Tracking 940011189922385536","want":"clean","note":"defect 13: a long tracking number stays clean"}
+{"text":"my id 2125550102","want":"contact","note":"SD-120 a joined phone number after a reference keyword"}
+{"text":"ref 2125550102, text me","want":"contact","note":"SD-120 a joined phone number after a reference keyword"}
+{"text":"acct 12125550102","want":"contact","note":"SD-120 a joined phone number with a country code after a reference keyword"}
+{"text":"Your order #1234567890 is confirmed.","want":"clean","note":"SD-120 benign: a 10-digit order number that is not a phone shape"}

@@ -13,7 +13,7 @@ export const RESTORE_ENCRYPTED = 4;
  * What restore.ts knows before it creates the database. Each fact is computed by the caller and
  * trusted here: `safeName` (safeDbName), `liveName` (LIVE_NAMES), `ownName` (the backup's own
  * database name), `sourceKnown` (the manifest names its source), `sameServer` (lib.ts sameServer on
- * host and port), `roles` (--roles), `encrypted` (manifest.encryption), `dumpPresent` (the plain dump file is there).
+ * host and port, or the same cluster system identifier), `roles` (--roles), `encrypted` (manifest.encryption), `dumpPresent` (the plain dump file is there).
  */
 export interface RestoreFacts {
   safeName: boolean; liveName: boolean; ownName: boolean; sourceKnown: boolean; sameServer: boolean;

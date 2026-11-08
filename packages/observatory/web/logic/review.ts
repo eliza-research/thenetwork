@@ -207,17 +207,22 @@ function backendDismiss(s: ReportStatus): boolean {
   return s === "open";
 }
 
-/** The actions the page offers on a report. minorKind: a "minor" report; its clear action stays until the report is final. */
-export function reportOffer(status: ReportStatus, canBan: boolean, safety: boolean, minorKind: boolean, canAct: boolean): Offer {
+/**
+ * The actions the page offers on a report. minorKind: a "minor" report; its clear action stays until the report is final.
+ * everywhere: the staff member has safety (or admin) on every app. The service bans only then (service.ts ban:
+ * needs_safety_everywhere, SD-468), so the ban needs it too.
+ */
+export function reportOffer(status: ReportStatus, canBan: boolean, safety: boolean, everywhere: boolean, minorKind: boolean, canAct: boolean): Offer {
   //@ verify
-  //@ ensures canBan && safety ==> \result.ban === backendBan(status) && \result.hold === backendHold(status) && \result.dismiss === backendDismiss(status)
+  //@ ensures canBan && safety ==> \result.ban === (everywhere && backendBan(status)) && \result.hold === backendHold(status) && \result.dismiss === backendDismiss(status)
   //@ ensures !(canBan && safety) ==> !\result.ban && !\result.hold && !\result.dismiss
+  //@ ensures \result.ban ==> everywhere
   //@ ensures \result.clear <==> (minorKind && canAct && safety && backendBan(status))
   const live = status === "open" || status === "held";
   const clear = minorKind && canAct && safety && live;
   if (!canBan || !safety || !live) return { hold: false, ban: false, dismiss: false, clear };
   const open = status === "open";
-  return { hold: open, ban: true, dismiss: open, clear };
+  return { hold: open, ban: everywhere, dismiss: open, clear };
 }
 
 export interface Pending { active: boolean; target: boolean }

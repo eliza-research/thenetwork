@@ -7,6 +7,7 @@ export type MessageKind =
   | "reply"          // the answer to the member's own message; quiet-hours exempt
   | "compliance"     // STOP/START/HELP confirmations and declines; exempt from the opt-out and quiet hours
   | "proactive"      // Network-initiated; quiet hours, consent, the person cap and the line caps apply
+  | "safety"         // a safety notice (a hold); consent and the leak guard apply; quiet hours, the streak and the line caps do not
   | "transactional"; // everything else the Network starts (reminders, scheduling); quiet hours apply
 
 /** Everything except a direct reply and a compliance text is agent-initiated (any new kind is too). */
@@ -65,20 +66,23 @@ export function preCapGate(f: GateFacts): Gate {
   //@ ensures \result.tag !== "send" && \result.tag !== "refused_person_cap" && \result.tag !== "parked_leak_review"
   const agent = isAgentInitiated(f.kind);
   const compliance = f.kind === "compliance";
+  // A safety notice (a hold) goes at once: it skips quiet hours, the unanswered streak and the line caps.
+  const timed = agent && f.kind !== "safety";
   if (f.tooOld || f.stale) return { tag: "expired" };
   if (!f.live) return { tag: "refused_not_approved" };
   if (!compliance && f.optedOut) return { tag: "refused_opted_out" };
   if (!compliance && !f.recipientOk) return { tag: "suppressed_ineligible" };
   if (f.kind === "reply" && !f.hasRecentInbound) return { tag: "suppressed_no_inbound" };
-  if (agent && !f.zoneValid) return { tag: "parked_invalid_timezone" };
-  if (agent && f.quiet) return { tag: "deferred_quiet" };
-  const overStreak = !compliance && f.hasConv && f.unanswered >= f.maxUnanswered;
+  if (timed && !f.zoneValid) return { tag: "parked_invalid_timezone" };
+  if (timed && f.quiet) return { tag: "deferred_quiet" };
+  const overStreak = !compliance && f.kind !== "safety" && f.hasConv && f.unanswered >= f.maxUnanswered;
   if (overStreak && !(agent && !f.reengagementUsed && f.quietForEnough)) return { tag: "held_awaiting_reply" };
   const isNew = !f.hasConv;
-  if (f.safety === "review" || (f.safety === "reply_only" && (agent || isNew)) || (f.safety === "pause_new" && isNew)) return { tag: "line_safety" };
+  // Blooio's safety state of the line holds new and agent texts; compliance texts (STOP, HELP) still go.
+  if (!compliance && (f.safety === "review" || (f.safety === "reply_only" && (agent || isNew)) || (f.safety === "pause_new" && isNew))) return { tag: "line_safety" };
   if (!compliance && f.recipientCount >= f.perRecipient) return { tag: "retry_recipient_cap" };
-  if (!compliance && agent && f.lineCount >= f.perLine) return { tag: "retry_line_cap" };
-  if (!compliance && agent && isNew && f.newChats >= f.newChatsCap) return { tag: "retry_new_chat_cap" };
+  if (!compliance && timed && f.lineCount >= f.perLine) return { tag: "retry_line_cap" };
+  if (!compliance && timed && isNew && f.newChats >= f.newChatsCap) return { tag: "retry_new_chat_cap" };
   return { tag: "pass", reengagement: overStreak };
 }
 
@@ -102,15 +106,16 @@ export function finalGate(f: GateFacts, capTaken: boolean, leakClean: boolean, l
   //@ ensures \result.tag === "send" ==> leakClean || leakReleased
   //@ ensures \result.tag === "send" && f.kind !== "compliance" ==> !f.optedOut && f.recipientOk
   //@ ensures \result.tag === "send" && f.kind === "reply" ==> f.hasRecentInbound
-  //@ ensures \result.tag === "send" && isAgentInitiated(f.kind) ==> !f.quiet && f.zoneValid
+  //@ ensures \result.tag === "send" && isAgentInitiated(f.kind) && f.kind !== "safety" ==> !f.quiet && f.zoneValid
   //@ ensures \result.tag === "send" && f.kind === "proactive" ==> capTaken && takesSlot(f)
   //@ ensures \result.tag === "send" && f.kind !== "compliance" ==> f.recipientCount < f.perRecipient
-  //@ ensures \result.tag === "send" && isAgentInitiated(f.kind) ==> f.lineCount < f.perLine
-  //@ ensures \result.tag === "send" && f.kind !== "compliance" && f.hasConv && f.unanswered >= f.maxUnanswered ==> isAgentInitiated(f.kind) && !f.reengagementUsed && f.quietForEnough && \result.reengagement
-  //@ ensures \result.tag === "send" ==> f.safety !== "review"
-  //@ ensures \result.tag === "send" && f.safety === "reply_only" ==> !isAgentInitiated(f.kind) && f.hasConv
-  //@ ensures \result.tag === "send" && f.safety === "pause_new" ==> f.hasConv
-  //@ ensures \result.tag === "send" && !f.hasConv && isAgentInitiated(f.kind) ==> f.newChats < f.newChatsCap
+  //@ ensures \result.tag === "send" && isAgentInitiated(f.kind) && f.kind !== "safety" ==> f.lineCount < f.perLine
+  //@ ensures \result.tag === "send" && f.kind !== "compliance" && f.kind !== "safety" && f.hasConv && f.unanswered >= f.maxUnanswered ==> isAgentInitiated(f.kind) && !f.reengagementUsed && f.quietForEnough && \result.reengagement
+  //@ ensures \result.tag === "send" && f.kind !== "compliance" ==> f.safety !== "review"
+  //@ ensures \result.tag === "send" && f.kind !== "compliance" && f.safety === "reply_only" ==> !isAgentInitiated(f.kind) && f.hasConv
+  //@ ensures \result.tag === "send" && f.kind !== "compliance" && f.safety === "pause_new" ==> f.hasConv
+  //@ ensures \result.tag === "send" && !f.hasConv && isAgentInitiated(f.kind) && f.kind !== "safety" ==> f.newChats < f.newChatsCap
+  //@ ensures \result.tag === "send" && f.kind === "safety" ==> !f.optedOut && f.recipientOk && f.recipientCount < f.perRecipient && f.safety !== "review" && (f.hasConv || (f.safety !== "reply_only" && f.safety !== "pause_new"))
   const pre = preCapGate(f);
   if (pre.tag !== "pass") return pre;
   if (f.kind === "proactive" && !capTaken) return { tag: "refused_person_cap" };

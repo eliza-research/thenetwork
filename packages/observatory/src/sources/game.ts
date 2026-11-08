@@ -250,6 +250,8 @@ export class GameSource implements DataSource {
     this.timers = [];
     this.store.clock.playing = false;
     await this.takeover?.releaseAll();
+    // A running step ends here, before a reset builds the next world: its records go to this world only.
+    await this.advancing;
   }
 
   private onRecord(r: RunRecord) {
@@ -627,8 +629,12 @@ export class GameSource implements DataSource {
       switch (cmd.type) {
         case "play": if (this.over()) return { ok: false, error: "game over: reset to play again" }; c.playing = true; break;
         case "pause": c.playing = false; break;
-        case "speed": c.speed = Math.max(MINUTE, Math.min(7 * DAY, cmd.speed)); break;
+        case "speed":
+          if (!Number.isFinite(cmd.speed)) return { ok: false, error: "speed must be a number (ms of sim time per second)" };
+          c.speed = Math.max(MINUTE, Math.min(7 * DAY, cmd.speed)); break;
         case "step": {
+          // With no number the target is NaN, and the scheduler would run the whole world.
+          if (!Number.isFinite(cmd.ms)) return { ok: false, error: "ms must be a number" };
           if (this.advancing) return { ok: false, error: this.takeover.waiting ? "waiting for your reply" : "the world is busy" };
           if (this.over()) return { ok: false, error: "game over: reset to play again" };
           c.playing = false;

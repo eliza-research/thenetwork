@@ -346,7 +346,7 @@ Checked on 2026-10-08 on a migrated scratch database: `--once --dry-run` printed
 
 - The default adapter is dry-run: each message is stored in `network.messages` with status `dry_run`. Nothing leaves the machine.
 - `NETWORK_CHANNEL=blooio` uses the Blooio adapter: the prototype's `OutboundQueue` with `blooioRecipientPolicy` and `forbiddenProvider` ([network.md](network.md) 6.5).
-- The Blooio adapter reads the flags on every delivery. It refuses every send (`refused_not_approved`, no provider call) unless `BLOOIO_ALLOW_SEND=1` and `NTWRK_LIVE_APPROVED=1` are both set, and, for an app other than ntwrk, its own `<APP>_LIVE_APPROVED=1` (`SLOP_LIVE_APPROVED`, `PEON_LIVE_APPROVED`, `BUDDIES_LIVE_APPROVED`). One flag alone, or any value but `1`, refuses.
+- The Blooio adapter reads the flags on every delivery. It refuses every send (`refused_not_approved`, no provider call) unless `BLOOIO_ALLOW_SEND=1` and `NTWRK_LIVE_APPROVED=1` are both set, and, for an app other than ntwrk, its own `<APP>_LIVE_APPROVED=1` (`SLOP_LIVE_APPROVED`, `PEON_LIVE_APPROVED`, `FRIENDS_LIVE_APPROVED`). One flag alone, or any value but `1`, refuses.
 - A person cap holds across apps: at most 3 proactive messages a day for one person. A send over it gets `refused_person_cap`.
 - At start the service prints the send mode: `dry-run`, `blooio (refusing: ...)` or `blooio LIVE`.
 

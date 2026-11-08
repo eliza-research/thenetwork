@@ -2,7 +2,7 @@
 
 datatype LoginVerdict = ok | not_read_only | not_app_role | too_strong
 
-datatype DeployVerdict = ok | no_env | unknown_env | needs_access | dev_remote
+datatype DeployVerdict = ok | no_env | unknown_env | needs_access | needs_audit | dev_remote
 
 function consoleMinor(hasAge: bool, ageIsMinor: bool, netKnown: bool, netMinor: bool): bool
 {
@@ -38,7 +38,7 @@ lemma loginVerdict_ensures(readOnly: bool, rlsRole: bool, inAppRole: bool, local
 {
 }
 
-function deployVerdict(realOnly: bool, access: bool, env: string, remote: bool): DeployVerdict
+function deployVerdict(realOnly: bool, access: bool, env: string, remote: bool, auditPg: bool): DeployVerdict
 {
   if (!(realOnly) && !(remote)) then
     DeployVerdict.ok
@@ -49,22 +49,26 @@ function deployVerdict(realOnly: bool, access: bool, env: string, remote: bool):
       if (((env != "dev") && (env != "staging")) && (env != "production")) then
         DeployVerdict.unknown_env
       else
-        if access then
-          DeployVerdict.ok
+        if ((env != "dev") && !(access)) then
+          DeployVerdict.needs_access
         else
-          if (env != "dev") then
-            DeployVerdict.needs_access
+          if ((env != "dev") && !(auditPg)) then
+            DeployVerdict.needs_audit
           else
-            if remote then
-              DeployVerdict.dev_remote
-            else
+            if access then
               DeployVerdict.ok
+            else
+              if remote then
+                DeployVerdict.dev_remote
+              else
+                DeployVerdict.ok
 }
 
-lemma deployVerdict_ensures(realOnly: bool, access: bool, env: string, remote: bool)
-  ensures (deployVerdict(realOnly, access, env, remote).ok? ==> (realOnly || remote) ==> (((env == "dev") || (env == "staging")) || (env == "production")))
-  ensures (deployVerdict(realOnly, access, env, remote).ok? ==> (realOnly || remote) ==> (env != "dev") ==> access)
-  ensures (deployVerdict(realOnly, access, env, remote).ok? ==> remote ==> access)
-  ensures (!(realOnly) ==> !(remote) ==> deployVerdict(realOnly, access, env, remote).ok?)
+lemma deployVerdict_ensures(realOnly: bool, access: bool, env: string, remote: bool, auditPg: bool)
+  ensures (deployVerdict(realOnly, access, env, remote, auditPg).ok? ==> (realOnly || remote) ==> (((env == "dev") || (env == "staging")) || (env == "production")))
+  ensures (deployVerdict(realOnly, access, env, remote, auditPg).ok? ==> (realOnly || remote) ==> (env != "dev") ==> access)
+  ensures (deployVerdict(realOnly, access, env, remote, auditPg).ok? ==> (realOnly || remote) ==> (env != "dev") ==> auditPg)
+  ensures (deployVerdict(realOnly, access, env, remote, auditPg).ok? ==> remote ==> access)
+  ensures (!(realOnly) ==> !(remote) ==> deployVerdict(realOnly, access, env, remote, auditPg).ok?)
 {
 }

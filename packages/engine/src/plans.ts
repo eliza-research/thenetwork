@@ -146,9 +146,10 @@ export function activityFit(w: World, id: MemberId, pcfg: PlansConfig = DEFAULT_
  * holds, category opt-out, only-when-asked and the reliability hold-out all exclude.
  */
 export function planMemberReason(w: World, id: MemberId, role: Role = "guest"): string | null {
-  const r = memberReason(w, id, { category: plansOf(w).lane, role, format: "small_group", timeSensitive: true });
-  return r === "interruption_budget" || (r === "contribution_budget" && role !== "host") ? null : r;
+  return memberReason(w, id, { category: plansOf(w).lane, role, format: "small_group", timeSensitive: true }, role === "host" ? HOST_FORGIVEN : GUEST_FORGIVEN);
 }
+const HOST_FORGIVEN: ReadonlySet<string> = new Set(["interruption_budget"]);
+const GUEST_FORGIVEN: ReadonlySet<string> = new Set(["interruption_budget", "contribution_budget"]);
 
 // ------------------------------------------------------------------------------------------------
 // Plan scoring (4.5 steps 4-6)

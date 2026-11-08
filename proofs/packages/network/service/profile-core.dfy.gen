@@ -86,7 +86,7 @@ function sameOwner(b: BatchFacts, o: BatchOwner): bool
 
 function suggestionOk(s: SuggestionFacts, now: int): bool
 {
-  (((((s.idOk && s.valueOk) && s.observedSafe) && (s.observedAt <= now)) && ((s.source == "gmail") || (s.source == "google_calendar"))) && (((s.kind == "interest") || (s.kind == "goal")) || (s.kind == "availability_pattern")))
+  (((((s.idOk && s.valueOk) && s.observedSafe) && ((s.source == "google_calendar") || (s.observedAt <= now))) && ((s.source == "gmail") || (s.source == "google_calendar"))) && (((s.kind == "interest") || (s.kind == "goal")) || (s.kind == "availability_pattern")))
 }
 
 const MAX_SUGGESTIONS: int := 10
@@ -114,7 +114,7 @@ method currentBatch(b: BatchFacts, o: BatchOwner, now: int) returns (res: bool)
   ensures (res ==> ((b.status == "pending") && sameOwner(b, o)))
   ensures (res ==> (((b.numbersSafe && (now < b.expiresAt)) && (b.revision > 0)) && b.idOk))
   ensures (res ==> (((0 < |b.suggestions|) && (|b.suggestions| <= MAX_SUGGESTIONS)) && (b.distinctIds == |b.suggestions|)))
-  ensures (res ==> forall i: nat :: ((i < |b.suggestions|) ==> (((b.suggestions[i].idOk && b.suggestions[i].valueOk) && b.suggestions[i].observedSafe) && (b.suggestions[i].observedAt <= now))))
+  ensures (res ==> forall i: nat :: ((i < |b.suggestions|) ==> (((b.suggestions[i].idOk && b.suggestions[i].valueOk) && b.suggestions[i].observedSafe) && ((b.suggestions[i].source == "google_calendar") || (b.suggestions[i].observedAt <= now)))))
   ensures (res ==> forall i: nat :: ((i < |b.suggestions|) ==> (((b.suggestions[i].source == "gmail") || (b.suggestions[i].source == "google_calendar")) && (((b.suggestions[i].kind == "interest") || (b.suggestions[i].kind == "goal")) || (b.suggestions[i].kind == "availability_pattern")))))
   ensures ((b.status == "pending") ==> sameOwner(b, o) ==> b.numbersSafe ==> (now < b.expiresAt) ==> b.idOk ==> (b.revision > 0) ==> (0 < |b.suggestions|) ==> (|b.suggestions| <= MAX_SUGGESTIONS) ==> (b.distinctIds == |b.suggestions|) ==> (forall i: nat :: ((i < |b.suggestions|) ==> suggestionOk(b.suggestions[i], now))) ==> res)
 {

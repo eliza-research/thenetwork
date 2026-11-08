@@ -1,4 +1,4 @@
-import type { ProfileSuggestions, SuggestionOwner, SuggestionReviewBatch, SuggestionDecision } from "./profile-suggestions.ts";
+import type { ProfileSuggestions, SuggestionOwner, SuggestionReviewBatch, SuggestionDecision, SuggestionReviewClaim } from "./profile-suggestions.ts";
 
 export type { SuggestionReviewBatch } from "./profile-suggestions.ts";
 import { currentBatch as currentBatchCore, MAX_SUGGESTION_TEXT } from "./profile-core.ts";
@@ -16,6 +16,7 @@ function currentBatch(batch: SuggestionReviewBatch, owner: SuggestionOwner, now:
     suggestions: batch.suggestions.map(s => ({
       idOk: SAFE_ID.test(s.id),
       valueOk: s.value.trim().length > 0 && s.value.length <= MAX_SUGGESTION_TEXT && !/[\r\n\u0000-\u001f\u007f]/.test(s.value),
+      // A Calendar event start can be in the future (the store accepts it); a Gmail time cannot (profile-core.ts).
       observedSafe: Number.isSafeInteger(s.observedAt), observedAt: s.observedAt, source: s.source, kind: s.kind,
     })),
   }, { personId: owner.personId, app: owner.app, chatId: owner.chatId }, now);
@@ -55,10 +56,11 @@ export function parseSuggestionReview(text: string, batch: SuggestionReviewBatch
 }
 
 /** Only this store-backed entry verifies the full user/org binding and applies decisions. */
-export async function reviewSuggestionMessage(store: Pick<ProfileSuggestions, "getPendingBatch" | "decide">, owner: SuggestionOwner, batchId: string, text: string, now: number) {
+export async function reviewSuggestionMessage(store: Pick<ProfileSuggestions, "getPendingBatch" | "decide">, owner: SuggestionOwner, batchId: string, text: string, now: number,
+  claim?: SuggestionReviewClaim) {
   const batch = await store.getPendingBatch(owner, batchId, now);
   if (!batch) return null;
   const input = parseSuggestionReview(text, batch, owner, now);
   if (!input) return null;
-  return store.decide(owner, input, now);
+  return claim ? store.decide(owner, input, now, claim) : store.decide(owner, input, now);
 }

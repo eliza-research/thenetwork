@@ -82,7 +82,8 @@ export class Trust {
 
   add(id: MemberId, now: number, kind: TrustEvent["kind"], points: number, by?: MemberId) {
     const r = this.get(id);
-    r.lastDecay ??= now;
+    // Clean time starts again at each event that adds points: a watch from 3 lasts 14 clean days (SD-141).
+    if (points > 0 || r.lastDecay === undefined) r.lastDecay = now;
     r.score += points;
     const e: TrustEvent = { at: now, kind, points, by };
     r.events.push(e);

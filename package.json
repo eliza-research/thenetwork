@@ -22,11 +22,13 @@
     "sites:dev": "bun run scripts/sites-dev.ts",
     "platform:dev": "bun run scripts/platform-dev.ts",
     "start:backend": "bun run deploy/backend/server.ts",
-    "sites:build": "bun run sites/sites.ts"
+    "sites:build": "bun run sites/sites.ts",
+    "quint:check": "bun run scripts/quint-check.ts"
   },
   "devDependencies": {
     "@cloudflare/containers": "0.3.7",
     "@cloudflare/workers-types": "4.20260429.1",
+    "@informalsystems/quint": "0.33.1",
     "@types/bun": "1.4.2",
     "ajv": "8.20.0",
     "lemmascript": "0.6.6",

@@ -69,12 +69,15 @@ export function selectProposals(w: World, scored: Scored[], rng: Rng, debt: Reco
   // Dry run without exploration sizes the slice; the real run reserves exploration capacity
   // before the greedy pass so exploration picks are not starved of member budget.
   const dry = selectOnce(w, scored, rng, debt, 0, opts);
-  const slots = Math.floor((w.cfg.exploration.rate * dry.selected.length) / (1 - w.cfg.exploration.rate));
-  const res = selectOnce(w, scored, rng, debt, slots, opts);
-  const maxE = Math.floor(w.cfg.exploration.maxShare * res.selected.length);
-  let e = 0;
-  res.selected = res.selected.filter(s => !s.exploration || ++e <= maxE);
-  res.selected.forEach((s, i) => { s.rank = i; });
+  let slots = Math.floor((w.cfg.exploration.rate * dry.selected.length) / (1 - w.cfg.exploration.rate));
+  let res = selectOnce(w, scored, rng, debt, slots, opts);
+  // Too many exploration picks for maxShare: select again with fewer slots. Dropping the extra picks
+  // afterwards would keep the budgets, pairs and city capacity they took from the greedy pass (SD-422).
+  const explored = () => res.selected.filter(s => s.exploration).length;
+  while (explored() > Math.floor(w.cfg.exploration.maxShare * res.selected.length)) {
+    slots = Math.min(slots - 1, Math.floor(w.cfg.exploration.maxShare * res.selected.length));
+    res = selectOnce(w, scored, rng, debt, slots, opts);
+  }
   return res;
 }
 

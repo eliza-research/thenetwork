@@ -214,3 +214,6 @@
 {"text":"perfect, but someone else","label":"unsure"}
 {"text":"great but somebody else please","label":"unsure"}
 {"text":"sure, a different person would be better","label":"unsure"}
+{"text":"are you sure?","label":"unsure"}
+{"text":"sure?","label":"unsure"}
+{"text":"sounds good?","label":"unsure"}

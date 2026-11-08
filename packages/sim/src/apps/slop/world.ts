@@ -196,14 +196,15 @@ function resolveWeek(rc: RunCtx, week: number, out: MatcherOutput, askedNow: Set
     if (!a || !b || a.id === b.id) return;
     f.filterViolation = !oracle.statedMutual(a, b, week);
     if (!canBeMatched(a.stated.claimedAge) || !canBeMatched(b.stated.claimedAge)) { f.declaredMinor = true; return; }
-    if (state.paused.has(a.id) || state.paused.has(b.id)) return;
+    // Holds are checked at send time, as in production: a hold placed by an earlier flow of this round counts.
+    const heldNow = (x: MemberId) => state.safetyHolds.some(h => h.memberId === x && (h.to === undefined || h.to > state.now));
+    if (state.paused.has(a.id) || state.paused.has(b.id) || heldNow(a.id) || heldNow(b.id)) return;
     const interaction: InteractionRecord = { id: key, kind: "intro", category: "romance", participants: [a.id, b.id], at: state.now, outcome: "pending" };
     const done = (outcome: InteractionRecord["outcome"], extra: Partial<InteractionRecord> = {}) => state.interactions.push({ ...interaction, outcome, ...extra });
     // Photo in the probe: the engine's rule (adults both sides, consent, an opaque id), as on the live path.
     const probePhoto = (id: MemberId) => {
       const other = id === a.id ? b : a, me = id === a.id ? a : b;
-      const held = state.safetyHolds.some(h => h.memberId === other.id && (h.to === undefined || h.to > state.now));
-      const ok = probePhotoRefs({ age: other.stated.claimedAge, photoConsent: simPhotoConsent(other, photos?.consent), photoIds: simPhotoIds(other), held }, { age: me.stated.claimedAge }).length > 0;
+      const ok = probePhotoRefs({ age: other.stated.claimedAge, photoConsent: simPhotoConsent(other, photos?.consent), photoIds: simPhotoIds(other), held: heldNow(other.id) }, { age: me.stated.claimedAge }).length > 0;
       if (ok) rc.photoCount.withPhoto++; else rc.photoCount.withoutPhoto++;
       return ok;
     };
@@ -238,7 +239,6 @@ function resolveWeek(rc: RunCtx, week: number, out: MatcherOutput, askedNow: Set
     if (relay?.engine) {
       // Critical path item 7: the pair exchange items through the engine's relay policy.
       const blocked = (x: MemberId, y: MemberId) => state.edges.some(e => e.type === "blocked" && ((e.from === x && e.to === y) || (e.from === y && e.to === x)));
-      const heldNow = (x: MemberId) => state.safetyHolds.some(h => h.memberId === x && (h.to === undefined || h.to > state.now));
       const ex = relayExchange({ seed: world.seed, key, now: state.now, a, b, activity: pr.activity, harms: revealHarms, blocked, held: heldNow, photoConsent: photos?.consent ?? 1, ...(relay.roles ? { shares: relay.roles } : {}) }, rc.relay.engine!);
       for (const id of new Set([...ex.flagged, ...ex.ageSignal])) {
         rc.relay.holds++;

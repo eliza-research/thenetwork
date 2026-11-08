@@ -7,7 +7,7 @@
 // canBeMatched), so the age rules stay in one place.
 
 export type ConsentState = "opted_in" | "opted_out";
-export type MessageKind = "reply" | "compliance" | "proactive" | "transactional";
+export type MessageKind = "reply" | "compliance" | "proactive" | "transactional" | "safety";
 export type ReplyKind = "reply" | "compliance";
 export type Refusal = "allowed" | "banned" | "suppressed" | "opted_out";
 
@@ -106,12 +106,15 @@ export function startOutcome(banned: boolean, optedInAfterWrite: boolean): Start
 }
 
 /** The queue takes a person-cap slot by kind only, so a proactive send that is not a reply must carry the kind "proactive". */
-export function outboundKind(reply: boolean, causal: boolean, replyingToMember: boolean, proactive: boolean): MessageKind {
+export function outboundKind(reply: boolean, causal: boolean, replyingToMember: boolean, safety: boolean, proactive: boolean): MessageKind {
   //@ verify
-  //@ ensures proactive && !reply ==> \result === "proactive"
+  //@ ensures proactive && !reply && !safety ==> \result === "proactive"
   //@ ensures \result === "reply" ==> reply && (causal || replyingToMember)
+  //@ ensures \result === "safety" ==> safety
+  //@ ensures safety && !(reply && (causal || replyingToMember)) ==> \result === "safety"
   //@ ensures \result !== "compliance"
-  return reply && (causal || replyingToMember) ? "reply" : proactive ? "proactive" : "transactional";
+  // A safety notice (the hold notice, SD-475) goes at once, also to a held member.
+  return reply && (causal || replyingToMember) ? "reply" : safety ? "safety" : proactive ? "proactive" : "transactional";
 }
 
 // ------------------------------------------------------------------ ages
@@ -158,6 +161,8 @@ export interface JoinFacts {
   /** A usable lowest age for the person or the phone (core validAge). */
   hasFloor: boolean;
   floor: number;
+  /** The phone's or person's age floor is under 13 (core canJoin of the floor is false). */
+  floorUnderJoin: boolean;
   minJoinAge: number;
   maxAge: number;
   hasName: boolean;
@@ -181,9 +186,12 @@ export function joinStep(f: JoinFacts): JoinStep {
   //@ ensures \result === "join" ==> f.stated >= 13 && f.stated <= f.maxAge && (f.hasFloor ==> f.floor >= 13)
   //@ ensures \result === "join" && f.inviteOnly ==> f.invited
   //@ ensures f.banned || f.held ==> \result === "refuse_banned"
+  //@ ensures !f.banned && !f.held && !(f.inviteOnly && !f.invited) && !f.hasAge && f.floorUnderJoin ==> \result === "decline_under_age"
+  //@ ensures \result === "ask" ==> !f.floorUnderJoin
   if (f.banned || f.held) return "refuse_banned";
   if (f.inviteOnly && !f.invited) return "invite_only";
-  if (!f.hasAge) return f.invalidHome ? "need_home" : "ask";
+  // A phone whose age floor is under 13 (a decline on the web or by text) is declined again with no age stated (SD-315).
+  if (!f.hasAge) return f.floorUnderJoin ? "decline_under_age" : f.invalidHome ? "need_home" : "ask";
   const age = effectiveAge(f);
   if (f.stated > f.maxAge || age > f.maxAge || age < f.minJoinAge) return "decline_under_age";
   if (f.invalidHome) return "need_home";
@@ -292,12 +300,14 @@ export interface ReceiptFacts {
   outcome: ReceiptOutcome;
 }
 
-/** A persisted policy reply or the canonical join prompt may be accepted with no history; a member reply may not. */
-export function accountFreeReply(eligible: boolean, kind: ReplyKind, onboardingPrompt: boolean, noMember: boolean, knownApp: boolean): boolean {
+/**
+ * A turn the service gave no Cloud account (accountEligible false) may be accepted with no history: Cloud has
+ * no history to record for it (SD-131). A reply in an account-eligible turn still needs its history.
+ */
+export function accountFreeReply(eligible: boolean): boolean {
   //@ verify
-  //@ ensures \result ==> !eligible
-  //@ ensures \result && kind !== "compliance" ==> onboardingPrompt && noMember && knownApp
-  return !eligible && (kind === "compliance" || (onboardingPrompt && kind === "reply" && noMember && knownApp));
+  //@ ensures \result <==> !eligible
+  return !eligible;
 }
 
 /**
@@ -332,26 +342,37 @@ export function receiptStatus(o: ReceiptOutcome): DeliveryStatus {
 
 // ------------------------------------------------------------------ the inbox
 
-/** A new signed turn waits for a running turn. Compliance text waits for nothing else, whatever is pending or unresolved. */
-export function turnHeldBack(compliance: boolean, processing: boolean, pending: boolean, recentUnresolved: boolean): boolean {
+/**
+ * A new signed turn waits for a running turn. A compliance turn has its own claim slot: it waits only for a
+ * running compliance turn of the sender, whatever ordinary turn runs or is pending or unresolved.
+ */
+export function turnHeldBack(compliance: boolean, processing: boolean, processingCompliance: boolean, pending: boolean, recentUnresolved: boolean): boolean {
   //@ verify
-  //@ ensures compliance ==> (\result <==> processing)
+  //@ requires processingCompliance ==> processing
+  //@ ensures compliance ==> (\result <==> processingCompliance)
+  //@ ensures !compliance && processing ==> \result
   //@ ensures !processing && !pending && !recentUnresolved ==> !\result
-  return processing || (!compliance && (pending || recentUnresolved));
+  return compliance ? processingCompliance : processing || pending || recentUnresolved;
 }
 
 export type PriorAnswer = "busy" | "conflict" | "replay" | "unresolved";
 
-/** The answer to a turn id that was not claimed. A row with another hash never replays. */
-export function priorAnswer(found: boolean, sameHash: boolean, done: boolean, hasResponse: boolean, processing: boolean): PriorAnswer {
+/**
+ * The answer to a turn id that was not claimed. A row with another hash never replays. A compliance turn that
+ * never answered (reclaimable: unresolved, never handled, no answer stored) is never final: a later retry claims it again.
+ */
+export function priorAnswer(found: boolean, sameHash: boolean, done: boolean, hasResponse: boolean, processing: boolean, compliance: boolean, reclaimable: boolean): PriorAnswer {
   //@ verify
   //@ ensures \result === "replay" ==> found && sameHash && done && hasResponse
   //@ ensures found && !sameHash ==> \result === "conflict"
   //@ ensures !found ==> \result === "busy"
+  //@ ensures found && sameHash && !(done && hasResponse) && compliance && reclaimable ==> \result === "busy"
+  //@ ensures \result === "unresolved" ==> !processing && !(compliance && reclaimable)
   if (!found) return "busy";
   if (!sameHash) return "conflict";
   if (done && hasResponse) return "replay";
-  return processing ? "busy" : "unresolved";
+  if (processing || (compliance && reclaimable)) return "busy";
+  return "unresolved";
 }
 
 /** The next waiting row: the first compliance row, else the oldest. */

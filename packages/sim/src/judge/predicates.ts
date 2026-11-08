@@ -16,8 +16,8 @@ export function underBudget(ts: number[], now: number, span: number, n: number):
 }
 
 /**
- * What a Network age log (age_resolved, age_confirmed) says about a member the judge flagged as a minor
- * (from age_unknown, minor_signal or minor_reported). `saysMinor` / `saysAdult`: the log's `minor` field
+ * What a Network age log (age_resolved) says about a member the judge holds as a minor because of an
+ * age_unknown log (a minor_signal or minor_reported flag is never cleared: the lowest age wins). `saysMinor` / `saysAdult`: the log's `minor` field
  * is true / false; `hasAge` and `age`: a stated age in the log.
  */
 export interface AgeLog { saysMinor: boolean; saysAdult: boolean; hasAge: boolean; age: number; }

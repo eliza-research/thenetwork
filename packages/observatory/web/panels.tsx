@@ -48,7 +48,10 @@ function useLive<T>(load: () => Promise<Fetched<T>>, key: string, deps: unknown[
     last.current = Date.now();
     load().then(x => { const l = readLand(gate.current, ticket); gate.current = l.gate; if (l.show) setD(x); });
   };
-  useEffect(() => { gate.current = readCancel(gate.current); run(); return () => { gate.current = readCancel(gate.current); clearTimeout(timer.current); }; }, deps);
+  // A credential change (another staff member, a 401): the view shaped for the old credential leaves the screen and is read again.
+  const epoch = useRef(store.authEpoch);
+  useEffect(() => { if (epoch.current !== store.authEpoch) { epoch.current = store.authEpoch; setD(undefined); } }, [store.authEpoch]);
+  useEffect(() => { gate.current = readCancel(gate.current); run(); return () => { gate.current = readCancel(gate.current); clearTimeout(timer.current); }; }, [...deps, store.authEpoch]);
   useEffect(() => {
     if (prevKey.current === key) return;
     prevKey.current = key;

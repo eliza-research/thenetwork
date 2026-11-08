@@ -96,7 +96,7 @@ export async function opsBlock(b: Block): Promise<void> {
       }),
     };
     const m = await collectNetwork(probe, T0);
-    expect(m.lastTickAgoMs).toBe(20_000);
+    expect(m.lastTickAgoMs).toBe(30_000);
     expect(m.sends24h).toEqual({ attempted: 105, failed: 6, refused: 8, dryRun: 50, smsFallback: 5 });
     expect([m.reviewExpired24h, m.safety24h.bans, m.safety24h.holds, m.safety24h.reports, m.safety24h.urgentReports]).toEqual([2, 1, 0, 2, 1]);
     const broken = await collectNetwork({ ...probe, health: async () => { throw new Error("connection refused"); } }, T0);
@@ -268,7 +268,7 @@ export async function opsBlock(b: Block): Promise<void> {
     expect([ok.status, (await ok.json()).ok]).toEqual([200, true]);
     expect(() => loadConfig({ ...base, OPS_METRICS_TOKEN: "short" })).toThrow();
     const thrown = (f: () => unknown) => { try { f(); return ""; } catch (e) { return (e as Error).message; } };
-    expect(thrown(() => loadConfig({ PLATFORM_ENV: "staging", DATABASE_URL: "postgres://x@db/x", MIGRATION_DATABASE_URL: "postgres://o@db/x", PLATFORM_HASH_KEY: "h".repeat(40), LEAK_LABEL_KEY: "l".repeat(40), PLATFORM_PROXY_SECRET: "s".repeat(40),
+    expect(thrown(() => loadConfig({ PLATFORM_ENV: "staging", DATABASE_URL: "postgres://x@db/x", MIGRATION_DATABASE_URL: "postgres://o@db/x", PLATFORM_HASH_KEY: "h".repeat(40), PLATFORM_SESSION_SECRET: "e".repeat(40), LEAK_LABEL_KEY: "l".repeat(40), PLATFORM_PROXY_SECRET: "s".repeat(40),
       TURNSTILE_SECRET_KEY: "f", OTP_PROVIDER: "twilio", TWILIO_ACCOUNT_SID: "AC", TWILIO_AUTH_TOKEN: "t", TWILIO_VERIFY_SERVICE_SID: "VA", ALERT_WEBHOOK_URL: "http://hooks.example.test/x" }))).toMatch(/must be https/);
     // A tick that never finishes: healthy until TICK_LATE_MS (15 min by default), then 503 for the uptime monitor.
     void on.startTicks();

@@ -222,7 +222,7 @@ function backendDismiss(s: ReportStatus): bool
   s.open?
 }
 
-function reportOffer(status: ReportStatus, canBan: bool, safety: bool, minorKind: bool, canAct: bool): Offer
+function reportOffer(status: ReportStatus, canBan: bool, safety: bool, everywhere: bool, minorKind: bool, canAct: bool): Offer
 {
   var live := (status.open? || status.held?);
   var clear := (((minorKind && canAct) && safety) && live);
@@ -230,13 +230,14 @@ function reportOffer(status: ReportStatus, canBan: bool, safety: bool, minorKind
     Offer(false, false, false, clear)
   else
     var open := status.open?;
-    Offer(open, true, open, clear)
+    Offer(open, everywhere, open, clear)
 }
 
-lemma reportOffer_ensures(status: ReportStatus, canBan: bool, safety: bool, minorKind: bool, canAct: bool)
-  ensures (canBan ==> safety ==> (((reportOffer(status, canBan, safety, minorKind, canAct).ban == backendBan(status)) && (reportOffer(status, canBan, safety, minorKind, canAct).hold == backendHold(status))) && (reportOffer(status, canBan, safety, minorKind, canAct).dismiss == backendDismiss(status))))
-  ensures (!((canBan && safety)) ==> ((!(reportOffer(status, canBan, safety, minorKind, canAct).ban) && !(reportOffer(status, canBan, safety, minorKind, canAct).hold)) && !(reportOffer(status, canBan, safety, minorKind, canAct).dismiss)))
-  ensures (reportOffer(status, canBan, safety, minorKind, canAct).clear <==> (((minorKind && canAct) && safety) && backendBan(status)))
+lemma reportOffer_ensures(status: ReportStatus, canBan: bool, safety: bool, everywhere: bool, minorKind: bool, canAct: bool)
+  ensures (canBan ==> safety ==> (((reportOffer(status, canBan, safety, everywhere, minorKind, canAct).ban == (everywhere && backendBan(status))) && (reportOffer(status, canBan, safety, everywhere, minorKind, canAct).hold == backendHold(status))) && (reportOffer(status, canBan, safety, everywhere, minorKind, canAct).dismiss == backendDismiss(status))))
+  ensures (!((canBan && safety)) ==> ((!(reportOffer(status, canBan, safety, everywhere, minorKind, canAct).ban) && !(reportOffer(status, canBan, safety, everywhere, minorKind, canAct).hold)) && !(reportOffer(status, canBan, safety, everywhere, minorKind, canAct).dismiss)))
+  ensures (reportOffer(status, canBan, safety, everywhere, minorKind, canAct).ban ==> everywhere)
+  ensures (reportOffer(status, canBan, safety, everywhere, minorKind, canAct).clear <==> (((minorKind && canAct) && safety) && backendBan(status)))
 {
 }
 

@@ -12,6 +12,10 @@ import type { LabArm, LabArmResult, LabRequest, LabRun } from "./types.ts";
 export const LAB_ARMS: readonly LabArm[] = ["push_baseline", "push_v2", "consent"];
 /** maxQueued: seeds that may wait at once (a full queue answers 429; audit observatory-14). */
 export const LAB_LIMITS = { maxSeeds: 5, maxDays: 60, concurrency: 2, maxQueued: 20 } as const;
+/** start() refuses a run: the queue has no room for its seeds. */
+export class LabQueueFull extends Error {
+  constructor() { super(`the lab queue is full (${LAB_LIMITS.maxQueued} seeds)`); }
+}
 
 /**
  * The child's environment: what Bun needs to run, nothing else. API keys, database URLs and tokens
@@ -129,7 +133,7 @@ export class Lab {
   /** Queue a run: one child per seed. */
   async start(req: LabRequest, requestedBy: string): Promise<LabRun> {
     await this.loaded;
-    if (this.queue.length + req.seeds.length > LAB_LIMITS.maxQueued) throw new Error(`the lab queue is full (${LAB_LIMITS.maxQueued} seeds)`);
+    if (this.queue.length + req.seeds.length > LAB_LIMITS.maxQueued) throw new LabQueueFull();
     const now = Date.now();
     const id = `lab-${new Date(now).toISOString().replace(/[-:]/g, "").replace(/\..*/, "")}-${++this.seq}`;
     const run: LabRun = {
@@ -157,9 +161,10 @@ export class Lab {
   }
 
   private async exec(run: LabRun, seed: number) {
-    if (run.status === "queued") { run.status = "running"; run.startedAt = Date.now(); await this.save(run); }
     const r = run.request;
     try {
+      // Inside the try: a failed save fails this seed, and the run still ends (it does not stay running).
+      if (run.status === "queued") { run.status = "running"; run.startedAt = Date.now(); await this.save(run); }
       const child = Bun.spawn([process.execPath, "run", this.script, ...labArgs(r, seed)], {
         cwd: REPO, stdout: "pipe", stderr: "pipe", env: labEnv(),
       });
@@ -179,7 +184,11 @@ export class Lab {
       run.finishedAt = Date.now();
       run.results.sort((a, b) => a.arm.localeCompare(b.arm) || a.seed - b.seed);
     }
-    await this.save(run);
+    // A failed last save fails the run in memory; the file keeps an earlier status, and load() marks it failed.
+    await this.save(run).catch(e => {
+      run.error = [run.error, String((e as Error).message ?? e)].filter(Boolean).join("; ");
+      if (run.progress.done === run.progress.total) run.status = "failed";
+    });
   }
 
   private saving = new Map<string, Promise<void>>();

@@ -14,7 +14,7 @@ import { devShortcutsAllowed, type Env } from "./env.ts";
 import { otpConfigProblems } from "./otp-config.ts";
 import { OTP_REFUSED_GLOBAL, otpCodeShape, otpExpiry, otpMayAttempt, otpRetryAfterMs } from "./otp-core.ts";
 import { keyedHash, maskPhone, safeEqual } from "./phone.ts";
-import type { HitRule, PeopleStore } from "./store.ts";
+import type { PeopleStore } from "./store.ts";
 
 export interface OtpProvider {
   readonly name: string;
@@ -170,21 +170,21 @@ export class OtpService {
   async start(app: AppInfo, e164: string, ip: string, send = true): Promise<OtpStart> {
     const at = this.now(), L = this.limits;
     const phoneKey = keyedHash(this.opts.hashKey, e164);
-    // The limits in order (otp-core.ts OTP_REFUSED_*). The first one that refuses stops the start.
-    const limits: [string, number, HitRule][] = [
+    // All limits as one request, in the order of otp-core.ts OTP_REFUSED_*: a refusal by any of them
+    // counts in none (the header rule). The first one that refuses names the retry-after.
+    const results = await this.store.hitAll([
       // The client IP (the socket address, or the IP a trusted site router signed: proxy.ts).
-      [`otp:ip:${keyedHash(this.opts.hashKey, ipBucket(ip))}`, HOUR, { limit: L.perIpPerHour }],
+      { bucket: `otp:ip:${keyedHash(this.opts.hashKey, ipBucket(ip))}`, windowMs: HOUR, rule: { limit: L.perIpPerHour } },
       // The number alone, not the app: one number gets 3 codes an hour and 6 a day whatever site asks.
-      [`otp:phone:${phoneKey}`, HOUR, { limit: L.perPhonePerHour, minGapMs: L.minGapMs }],
-      [`otp:phone_day:${phoneKey}`, DAY, { limit: L.perPhonePerDay }],
-      ["otp:global", HOUR, { limit: L.globalPerHour }],
-    ];
-    for (let refused = 0; refused < limits.length; refused++) {
-      const [bucket, windowMs, rule] = limits[refused]!;
-      const hit = await this.store.hit(bucket, windowMs, at, rule);
-      if (hit.ok) continue;
+      { bucket: `otp:phone:${phoneKey}`, windowMs: HOUR, rule: { limit: L.perPhonePerHour, minGapMs: L.minGapMs } },
+      { bucket: `otp:phone_day:${phoneKey}`, windowMs: DAY, rule: { limit: L.perPhonePerDay } },
+      { bucket: "otp:global", windowMs: HOUR, rule: { limit: L.globalPerHour } },
+    ], at);
+    const refused = results.findIndex(r => !r.ok);
+    if (refused !== -1) {
       if (refused === OTP_REFUSED_GLOBAL) this.opts.log?.(`[otp] ALERT: the global budget of ${L.globalPerHour} codes an hour is used up; sends are refused until the hour ends`);
-      return { ok: false, error: "rate_limited", retryAfterMs: otpRetryAfterMs(refused, at, hit.prevAt !== null, hit.prevAt ?? 0, { hourMs: HOUR, dayMs: DAY, minGapMs: L.minGapMs }) };
+      const prevAt = results[refused]!.prevAt;
+      return { ok: false, error: "rate_limited", retryAfterMs: otpRetryAfterMs(refused, at, prevAt !== null, prevAt ?? 0, { hourMs: HOUR, dayMs: DAY, minGapMs: L.minGapMs }) };
     }
     if (!send) return { ok: true };
     try {

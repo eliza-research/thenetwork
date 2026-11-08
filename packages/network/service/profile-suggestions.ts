@@ -5,7 +5,8 @@ import { parseProfileReviewWithdrawalProof, type ProfileReviewWithdrawalRequest,
   type ProfileReviewWithdrawalProof } from "../../core/src/svc/profile-review-withdrawal.ts";
 import { parseProfileReviewDisconnectProof, parseProfileReviewDisconnectRequest,
   type ProfileReviewDisconnectRequest, type ProfileReviewDisconnectProof } from "../../core/src/svc/profile-review-disconnect.ts";
-import { fold, isSensitiveTerm, RealClock, type AppId } from "@thenetwork/core";
+import { fold, isSensitiveTerm, type AppId } from "@thenetwork/core";
+import { resolveConsent } from "../../platform/src/consent.ts";
 import { cleanupAction, reviewPath } from "./decisions.ts";
 
 /** These values come from authenticated server context, never an assistant's arguments. */
@@ -37,6 +38,9 @@ export interface SuggestionProposal {
 }
 /** Internal server context, never inferred from a suggestion or a model-selected owner. */
 export interface SuggestionCollectionClaim { batchId: string; turnId: string; requestSha256: string; commandSha256?: string }
+/** The signed review turn and request of a decide or delete; its result is stored on that turn for an exact retry. */
+export interface SuggestionReviewClaim { turnId: string; requestSha256: string }
+type StoredReview = { kind: "saved"; accepted: string[]; rejected: string[] } | { kind: "preview"; revision: number } | { kind: "deleted" };
 /** Collection scope is authority only when it exactly matches the original explicit member turn. */
 export function collectionProposalMatchesStoredCommand(input: SuggestionProposal, text: string, batchId: string, arrivedAt: number, now: number): boolean {
   const command = parseNetworkCollectionCommand(text), deadline = networkCollectionDeadline(arrivedAt, now);
@@ -63,9 +67,6 @@ function completedCleanupCounts(value: unknown): { pending: number; retainedAcce
   return { pending: v.pending as number, retainedAccepted: v.retainedAccepted as number, linkedFacts: v.linkedFacts as number };
 }
 
-/** The time of a store with no authority fence: network code reads time only from a Clock. */
-const wallClock = new RealClock();
-
 /** Private review storage; only accepted values enter the existing canonical facet table. */
 export class ProfileSuggestions {
   constructor(private readonly sql: SQL, private readonly authorize: SuggestionAuthorization,
@@ -83,6 +84,15 @@ export class ProfileSuggestions {
     await tx`select set_config('app.app_id', ${owner.app}, true)`;
     // Use the same person-first order as canonical leave/delete operations.
     await tx`select id from platform.people where id=${owner.personId} for update`;
+    const member = await this.member(tx, owner);
+    if (member && this.authorizeOwner && !await this.authorizeOwner(owner, tx)) return undefined;
+    this.checkAuthority();
+    return member;
+  }
+
+  /** The member row and its eligibility. A ban, a phone hold, a suppression or a STOP event commits without
+   * the person or member lock, so a caller reads this again after each Cloud call and before it writes. */
+  private async member(tx: SQL, owner: SuggestionOwner) {
     const rows = await tx`select n.id,(n.account_status='active' and not n.opted_out and n.age>=18 and p.lowest_age>=18
       and m.state in ('active','onboarding') and m.review is null
       and not exists(select 1 from platform.bans b where b.person_id=p.id or b.phone_hash=p.phone_hash)
@@ -92,8 +102,18 @@ export class ProfileSuggestions {
       join platform.memberships m on m.person_id=p.id and m.app_id=n.app_id
       where n.app_id=${owner.app} and p.id=${owner.personId} and p.deleted_at is null
         and m.state<>'removed' for update of n, m`;
-    if (rows[0] && this.authorizeOwner && !await this.authorizeOwner(owner, tx)) return undefined;
-    this.checkAuthority();
+    // STOP is canonical in the consent ledger even when the member projection is late.
+    if (rows[0]?.eligible) {
+      const events = await tx`select ph.e164,c.app_id,c.state,c.at from platform.phone_identities ph
+        join lateral (select distinct on (app_id) app_id,state,at from platform.consent_events
+          where e164=ph.e164 and (app_id=${owner.app} or app_id is null) order by app_id,at desc,id desc) c on true
+        where ph.person_id=${owner.personId}`;
+      const last = (e164: string, app: AppId | null) => {
+        const e = events.find((r: any) => r.e164 === e164 && r.app_id === app);
+        return e ? { e164, app, source: "canonical-ledger", state: e.state, at: new Date(e.at).getTime() } : undefined;
+      };
+      if (events.some((r: any) => resolveConsent({ app: last(r.e164, owner.app), global: last(r.e164, null) }) === "opted_out")) rows[0].eligible = false;
+    }
     return rows[0] as { id: string; eligible: boolean } | undefined;
   }
 
@@ -104,6 +124,37 @@ export class ProfileSuggestions {
       and person_id=${owner.personId} and member_id=${member.id} and user_id=${owner.userId}
       and organization_id=${owner.organizationId} and chat_id=${owner.chatId} for update`;
     return rows[0] ? { ...rows[0], eligible: member.eligible } : undefined;
+  }
+
+  /** The review turn row, locked; its action receipts hold the result of an applied decide or delete. */
+  private async reviewTurn(tx: SQL, owner: SuggestionOwner, memberId: string, claim: SuggestionReviewClaim) {
+    const [turn] = await tx`select i.action_receipts from platform.inbound i join platform.people p on p.phone_hash=i.sender_hash and p.id=${owner.personId}
+      where i.id=${claim.turnId} and i.status='done' and i.response->>'app'=${owner.app} and i.response->>'memberId'=${memberId} for update of i`;
+    return turn as { action_receipts: Record<string, any> | null } | undefined;
+  }
+
+  private async storeReview(tx: SQL, claim: SuggestionReviewClaim, key: string, response: StoredReview) {
+    await tx`update platform.inbound set action_receipts=jsonb_set(coalesce(action_receipts,'{}'::jsonb),array[${key}],
+      ${{ state: "completed", requestHash: claim.requestSha256, response }}::jsonb) where id=${claim.turnId}`;
+  }
+
+  /** An exact retry of an applied decide or delete gets its stored result. undefined: not applied yet; null: denied. */
+  async priorReview(owner: SuggestionOwner, action: "decide" | "delete", batchId: string, claim: SuggestionReviewClaim, now: number):
+    Promise<SuggestionDecisionResult | { kind: "deleted" } | null | undefined> {
+    return this.sql.begin(async tx => {
+      const member = await this.owned(tx, owner);
+      if (!member) return null;
+      const turn = await this.reviewTurn(tx, owner, member.id, claim);
+      const prior = turn?.action_receipts?.[`profile-${action}:${batchId}`];
+      if (!prior) return undefined;
+      if (prior.state !== "completed" || prior.requestHash !== claim.requestSha256) return null;
+      const r = prior.response as StoredReview;
+      if (r.kind !== "preview") return r;
+      const b = await this.batch(tx, owner, batchId);
+      const preview = b && b.revision === r.revision ? await this.view(tx, b, this.fence?.now() ?? now) : null;
+      this.checkAuthority(preview ? b : undefined);
+      return preview ? { kind: "preview", batch: preview } : null;
+    });
   }
 
   private async view(tx: SQL, b: any, now: number): Promise<SuggestionReviewBatch | null> {
@@ -152,9 +203,13 @@ export class ProfileSuggestions {
           || (claim.commandSha256 !== undefined && hash(collectionTurn.body) !== claim.commandSha256)
           || !collectionProposalMatchesStoredCommand(input, collectionTurn.body, id, new Date(collectionTurn.arrived_at).getTime(), this.fence?.now() ?? now)) return null;
       }
-      for (const s of input.suggestions) if (!await this.authorize(owner, { connectionId: s.connectionId, source: s.source,
+      // One source check per (source, connection): the batch shares the earliest source proof, so one
+      // Cloud call per row would let a full batch run past that proof.
+      const scopes = new Map(input.suggestions.map(s => [`${s.source}\u0000${s.connectionId}`, s]));
+      for (const s of scopes.values()) if (!await this.authorize(owner, { connectionId: s.connectionId, source: s.source,
         windowStart: input.windowStart, windowEnd: input.windowEnd, timezone: input.timezone,
         allowedKinds: input.allowedKinds, retainOnDisconnect: input.retainOnDisconnect }, tx)) return null;
+      if (!(await this.member(tx, owner))?.eligible) return null;
       this.checkAuthority({ expires_at: new Date(input.expiresAt) });
       const receiptKey = claim ? `profile-collect:${id}` : undefined;
       const inputSha256 = hash(JSON.stringify(input));
@@ -205,10 +260,16 @@ export class ProfileSuggestions {
     });
   }
 
-  async decide(owner: SuggestionOwner, input: { batchId: string; revision: number; decisions: SuggestionDecision[] }, now: number): Promise<SuggestionDecisionResult> {
+  async decide(owner: SuggestionOwner, input: { batchId: string; revision: number; decisions: SuggestionDecision[] }, now: number,
+    claim?: SuggestionReviewClaim): Promise<SuggestionDecisionResult> {
     if (!Number.isFinite(now)) return { kind: "denied" };
     return this.sql.begin(async tx => {
       const b = await this.batch(tx, owner, input.batchId);
+      const key = `profile-decide:${input.batchId}`;
+      if (claim) {
+        const turn = b && await this.reviewTurn(tx, owner, b.member_id, claim);
+        if (!turn || turn.action_receipts?.[key] || Object.keys(turn.action_receipts ?? {}).length >= 16) return { kind: "denied" };
+      }
       if (b && new Date(b.expires_at).getTime() <= (this.fence?.now() ?? now)) {
         await tx`update platform.profile_suggestions set status='expired',value=null,tags='{}' where batch_id=${b.id} and status='proposed'`;
         return { kind: "denied" };
@@ -225,6 +286,7 @@ export class ProfileSuggestions {
             windowStart: new Date(b.window_start).getTime(), windowEnd: new Date(b.window_end).getTime(), timezone: b.timezone,
             allowedKinds: b.allowed_kinds, retainOnDisconnect: b.retain_on_disconnect }, tx)))) return { kind: "denied" };
       }
+      if (input.decisions.some(d => d.action === "accept") && !(await this.member(tx, owner))?.eligible) return { kind: "denied" };
       this.checkAuthority(b);
       // An edit or scope change is always a new preview, never an implicit acceptance.
       const anyEdit = input.decisions.some(d => d.editedValue !== undefined), anyScope = input.decisions.some(d => d.scope !== undefined && d.scope !== rows.find((r: any) => r.id === d.suggestionId).privacy_scope);
@@ -233,6 +295,7 @@ export class ProfileSuggestions {
           set value=coalesce(${d.editedValue?.trim() ?? null},value),privacy_scope=coalesce(${d.scope ?? null},privacy_scope),
             tags=case when ${d.editedValue !== undefined} then '{}'::text[] else tags end where id=${d.suggestionId}`;
         const [updated] = await tx`update platform.profile_suggestion_batches set revision=revision+1 where id=${b.id} returning *`;
+        if (claim) await this.storeReview(tx, claim, key, { kind: "preview", revision: updated.revision });
         const preview = await this.view(tx, updated, this.fence?.now() ?? now);
         this.checkAuthority(b);
         return { kind: "preview", batch: preview! };
@@ -253,17 +316,24 @@ export class ProfileSuggestions {
         }
       }
       await tx`update platform.profile_suggestion_batches set revision=revision+1 where id=${b.id}`;
+      if (claim) await this.storeReview(tx, claim, key, { kind: "saved", accepted, rejected });
       this.checkAuthority(b);
       return { kind: "saved", accepted, rejected };
     });
   }
 
-  async deleteBatch(owner: SuggestionOwner, id: string): Promise<boolean> {
+  async deleteBatch(owner: SuggestionOwner, id: string, claim?: SuggestionReviewClaim): Promise<boolean> {
     return this.sql.begin(async tx => {
       const b = await this.batch(tx, owner, id);
       if (!b) return false;
+      const key = `profile-delete:${id}`;
+      if (claim) {
+        const turn = await this.reviewTurn(tx, owner, b.member_id, claim);
+        if (!turn || turn.action_receipts?.[key] || Object.keys(turn.action_receipts ?? {}).length >= 16) return false;
+      }
       this.checkAuthority();
       await tx`delete from platform.profile_suggestion_batches where id=${b.id}`;
+      if (claim) await this.storeReview(tx, claim, key, { kind: "deleted" });
       this.checkAuthority();
       return true;
     });
@@ -292,13 +362,11 @@ export class ProfileSuggestions {
   async applyRevokedConnection(owner: SuggestionOwner, request: ProfileReviewDisconnectRequest,
     proof: ProfileReviewDisconnectProof, fence: () => boolean): Promise<{ pending: number; retainedAccepted: number; linkedFacts: number } | null> {
     const denied = new Error("Revoked connection authority changed");
-    const valid = () => {
-      const now = this.fence?.now() ?? wallClock.now();
-      return !!this.authorizeOwner && fence() && !!parseProfileReviewDisconnectRequest(request)
-        && !!parseProfileReviewDisconnectProof(proof, request, proof.requestSha256, now)
+    // Network code reads time only from the Clock: without the store's clock fence, cleanup is denied.
+    const valid = () => !!this.fence && !!this.authorizeOwner && fence() && !!parseProfileReviewDisconnectRequest(request)
+        && !!parseProfileReviewDisconnectProof(proof, request, proof.requestSha256, this.fence.now())
         && owner.personId === proof.personId && owner.app === proof.app && owner.userId === proof.userId
         && owner.organizationId === proof.organizationId && owner.chatId === proof.chatId;
-    };
     if (!valid()) return null;
     try {
       return await this.sql.begin(async tx => {
@@ -369,8 +437,8 @@ export class ProfileSuggestions {
   async applyOwnerWithdrawal(owner: SuggestionOwner, request: ProfileReviewWithdrawalRequest,
     proof: ProfileReviewWithdrawalProof, fence: () => boolean): Promise<{ pending: number; retainedAccepted: number; linkedFacts: number } | null> {
     const denied = new Error("Owner withdrawal authority changed");
-    const valid = () => !!this.authorizeOwner && fence()
-      && !!parseProfileReviewWithdrawalProof(proof, request, proof.requestSha256, this.fence?.now() ?? wallClock.now())
+    const valid = () => !!this.fence && !!this.authorizeOwner && fence()
+      && !!parseProfileReviewWithdrawalProof(proof, request, proof.requestSha256, this.fence.now())
       && owner.personId === proof.personId && owner.app === proof.app && owner.userId === proof.userId
       && owner.organizationId === proof.organizationId && owner.chatId === proof.chatId;
     if (!valid()) return null;

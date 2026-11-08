@@ -58,7 +58,7 @@ function App() {
         <div className="stage">
           <GraphStage />
           <Legend />
-          {s.game?.prompts.length && s.canSim() ? <Prompts /> : null}
+          {s.game?.prompts.length && s.canSim() ? <Prompts key={s.game.prompts[0]!.id} /> : null}
           {s.ui.picks.length > 0 && s.env?.capabilities.canIntervene && s.canSim() && <ProposeTray />}
           {s.loading && !s.authNeeded && <div className="loading">Loading…</div>}
         </div>
@@ -173,15 +173,20 @@ function Search() {
   const hits = conv ? [] : searchHits(s.ui.query);
   const done = () => { store.setUI({ query: "" }); closeConv(); (document.getElementById("obs-search") as HTMLInputElement | null)?.blur(); };
   const pickHit = (h: Hit) => { h.go(); done(); };
+  // Each search is an audited read: one at a time, and an answer for a query that is gone is dropped.
+  const inFlight = useRef<string | null>(null);
   const runConv = async () => {
-    if (!canConv) return;
+    // SD-471: the query in flight is not sent again; an answer for a query that is gone does not land (readCancel).
+    if (!canConv || inFlight.current === q) return;
+    inFlight.current = q;
     reads.current = readStart(reads.current);
     const ticket = reads.current.last;
     setConv({ q });
     const r = await store.search(q);
+    if (inFlight.current === q) inFlight.current = null;
     const land = readLand(reads.current, ticket);
     reads.current = land.gate;
-    if (land.show) setConv({ q, hits: r.data, error: r.data ? undefined : r.error });
+    if (land.show && store.ui.query.trim() === q) setConv({ q, hits: r.data, error: r.data ? undefined : r.error });
   };
   const openHit = (h: SearchHit) => {
     if (h.opportunityId && store.opps.has(h.opportunityId)) store.focus({ kind: "opportunity", id: h.opportunityId });
@@ -410,8 +415,10 @@ function ProposeTray() {
   const [category, setCategory] = useState<Category>("social");
   const [objective, setObjective] = useState("");
   const [why, setWhy] = useState("");
-  const [peek, setPeek] = useState<Peek | null>(null);
+  // The oracle answer belongs to the picks it was asked for: it is not shown beside other picks.
+  const [asked, setPeek] = useState<(Peek & { picks: string }) | null>(null);
   const picks = s.ui.picks;
+  const peek = asked?.picks === picks.join(",") ? asked : null;
   const busy = s.busy();
   const group = picks.length > 2;
   const g = s.game;
@@ -442,7 +449,7 @@ function ProposeTray() {
           <input className="input grow" placeholder={group ? "Plan" : "Intro for"} value={objective} onChange={e => setObjective(e.target.value)} />
           <input className="input grow" placeholder="Why (shown to them)" value={why} onChange={e => setWhy(e.target.value)} />
           <button className="btn primary" disabled={!ready} title={minor ? "Members under 18 are never introduced" : undefined} onClick={submit}>Propose {group ? "group" : "intro"} · {g?.sparksLeft ?? 0} sparks</button>
-          <button className="btn" onClick={async () => { const r = await store.control({ type: "peek", participants: picks }); if (r.ok) setPeek(r.data as Peek); }} title="Ask the oracle (−25 points)">Peek −25</button>
+          <button className="btn" onClick={async () => { const r = await store.control({ type: "peek", participants: picks }); if (r.ok) setPeek({ ...r.data as Peek, picks: picks.join(",") }); }} title="Ask the oracle (−25 points)">Peek −25</button>
           <button className="btn ghost" onClick={() => { store.setUI({ picks: [] }); setPeek(null); }}>Clear</button>
         </div>
       )}

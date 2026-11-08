@@ -129,7 +129,9 @@ export type ToolOutcome =
   | { kind: "ok"; data: Record<string, unknown> | Record<string, unknown>[] | { apps: unknown[] } }
   | { kind: "error"; message: string }
   /** The grant no longer matches the person who owns the phone: answer 401 like an invalid token. */
-  | { kind: "invalid_grant" };
+  | { kind: "invalid_grant" }
+  /** The grant used up its profiles for the day: answer 429. */
+  | { kind: "rate_limited" };
 
 const NOT_AVAILABLE = "That app is not available here.";
 
@@ -240,6 +242,8 @@ export interface CallContext {
   now?: number;
   /** Which assistant the OAuth client is (by its redirect hosts): chatgpt, claude, grok, or web. */
   assistant?: AssistantKind;
+  /** Count one profile or draft that reaches the app against the grant's daily quota. True: the quota is used up. */
+  profileQuota?: () => Promise<boolean>;
 }
 
 export { grantStillTheirs };
@@ -279,6 +283,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
         if (!grantStillTheirs(g.personId, person)) return { kind: "invalid_grant" };
         const status = person === null ? "not_joined" : await c.hooks.status(person, g.app);
         if (status !== "not_joined" && status !== "invited") return { kind: "error", message: "Use your existing profile; this form is for joining." };
+        if (await c.profileQuota?.()) return { kind: "rate_limited" };
         const at = requestedAt + Math.ceil(performance.now() - started);
         const saved = await store.putSignupDraft({ grantId: g.id, app: g.app, phoneKey: g.phoneKey, fields: chk.draft!, expiresAt: Math.min(requestedAt + 10 * 60_000, g.expiresAt), consumedAt: null }, at);
         return saved ? { kind: "ok", data: { prepared: true, app: g.app, url: `${c.apps[g.app].links.join}?via=agent`, next_step: "Open Join to review or edit your name and home city. Your age and text consent are still yours to enter." } }
@@ -304,6 +309,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       const status: PublicStatus = now === null ? "not_joined" : await c.hooks.status(now, g.app);
       // Only a joined, live member: the profile never creates a member and never reaches a stopped or held one.
       if (now === null || (status !== "active" && status !== "onboarding")) return { kind: "ok", data: { app: a.id, submitted: false, status, next_step: NEXT[status](a) } };
+      if (await c.profileQuota?.()) return { kind: "rate_limited" };
       const r = await c.hooks.submitProfile(now, g.app, g.phoneKey, chk.about!);
       if (r !== "accepted") return { kind: "ok", data: { app: a.id, submitted: false, status: "not_joined", next_step: NEXT.not_joined(a) } };
       return { kind: "ok", data: { app: a.id, submitted: true, next_step: `${a.name} has it. It may text the person a short question or two.` } };

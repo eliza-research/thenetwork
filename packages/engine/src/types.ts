@@ -26,6 +26,11 @@ export interface InteractionRecord {
   acceptedBy?: MemberId[];
   /** Invitees who were asked but never answered before the invite expired. */
   noResponse?: MemberId[];
+  /**
+   * The record is one member's own answer to the check-in after the meeting: its outcome
+   * ("completed" or "no_show") is about this member only. Without it, the outcome is about every participant.
+   */
+  by?: MemberId;
 }
 export type { OpenOpportunity } from "@thenetwork/core";
 /** A question the agent asked a member instead of proposing (engine output "ask"; v1.2). */

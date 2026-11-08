@@ -35,7 +35,7 @@ const NEVER_USED = /^(race|ethnicity|skin|nationality|immigration|hiv|sti|health
 export interface History {
   /** Probes this member answered yes / no / never answered (interaction records). */
   yes: number; no: number; silent: number;
-  /** Booked first dates that happened, no-shows (either side), back-outs at the reveal by this member. */
+  /** Booked first dates that happened, no-shows (this member's own, or either side when the record does not say), back-outs at the reveal by this member. */
   dates: number; noShows: number; backouts: number;
   /** Feedback this member gave: mean of positive=1 / neutral=0.5 / negative=0, and count. */
   givenMean: number; given: number;
@@ -239,16 +239,18 @@ function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<Membe
     if (r.outcome === "declined") for (const id of r.declinedBy ?? []) h(C(id)).no++;
     if (r.outcome === "cancelled") for (const id of r.declinedBy ?? []) h(C(id)).backouts++;
     for (const id of r.noResponse ?? []) h(C(id)).silent++;
-    if (r.outcome === "completed") for (const id of r.participants) {
+    // A check-in answer (r.by) is about the member who gave it: one date, or one no-show, for that member only.
+    const who = r.by !== undefined ? [r.by] : r.participants;
+    if (r.outcome === "completed") for (const id of who) {
       const x = h(C(id)); x.dates++;
       const s = slotOf(r.at);
       if (s !== undefined) x.attendedSlots.push(s);
     }
-    if (r.outcome === "no_show") for (const id of r.participants) h(C(id)).noShows++;
+    if (r.outcome === "no_show") for (const id of who) h(C(id)).noShows++;
   }
   const negFrom = new Map<MemberId, Set<MemberId>>();
   const lastDate = new Map<MemberId, { at: number; liked?: boolean }>();
-  for (const r of input.interactions ?? []) if (r.outcome === "completed" && r.at <= now) for (const id of r.participants) {
+  for (const r of input.interactions ?? []) if (r.outcome === "completed" && r.at <= now) for (const id of r.by !== undefined ? [r.by] : r.participants) {
     const k = C(id), cur = lastDate.get(k);
     if (!cur || r.at > cur.at) lastDate.set(k, { at: r.at });
   }

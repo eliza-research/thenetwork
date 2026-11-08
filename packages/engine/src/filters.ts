@@ -47,8 +47,11 @@ export function involvesMinor(w: World, c: Pick<Candidate, "participants" | "alt
   return involvedMembers(c).some(id => isMinor(w, id));
 }
 
-/** Member-level hard constraints for taking part in a candidate with a given role. */
-export function memberReason(w: World, id: MemberId, c: MemberCheck): FilterReason | null {
+/**
+ * Member-level hard constraints for taking part in a candidate with a given role. A pack rule whose
+ * reason is in `forgive` is skipped, and the later rules still run (plans.ts: the budgets).
+ */
+export function memberReason(w: World, id: MemberId, c: MemberCheck, forgive?: ReadonlySet<string>): FilterReason | null {
   const cfg = w.cfg;
   const mi = w.get(id);
   if (!mi) return "unknown_member";
@@ -59,7 +62,7 @@ export function memberReason(w: World, id: MemberId, c: MemberCheck): FilterReas
   // Pack rules in order (networkPack: packs/network/rules.ts, the pre-refactor order).
   for (const r of w.pack.eligibility.memberRules) {
     const reason = r.check(w, id, mi, c);
-    if (reason) return reason;
+    if (reason && !forgive?.has(reason)) return reason;
   }
   return null;
 }

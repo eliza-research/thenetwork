@@ -428,7 +428,9 @@ export async function relayItemAsync(item: RelayItem, ctx: RelayContext, o: { ho
     ...(out?.block ?? []).map(f => `${src}_severe:${flagCode(f)}`),
   ])];
   if (!extra.length) return first;
-  return finish(item, ctx, withHookReasons(first.reasons, extra, BLOCK_FAMILIES).sort(), { contactValue: null, photos: [], text, ageSignal: first.record.ageSignal || extra.includes("clef:minor_signal") });
+  // A classifier that reads the text as a minor's sets the age signal as the rules' self-disclosure does (never a minor's words for staff).
+  const ageSignal = first.record.ageSignal || extra.some(r => r.endsWith(":minor_signal"));
+  return finish(item, ctx, withHookReasons(first.reasons, extra, BLOCK_FAMILIES).sort(), { contactValue: null, photos: [], text, ageSignal });
 }
 
 // --------------------------------------------------------------------------- member requests

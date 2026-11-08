@@ -12,12 +12,12 @@ import { SLOTS, slopProfiles, type SlopProfile, type Slot } from "./profile.ts";
 import { dateActivity } from "./score.ts";
 import { distanceBand, type DistanceBand } from "./zips.ts";
 
-/** Public venue types per activity. There is no private or home option (safety basics). */
-export const PUBLIC_VENUE: Record<string, { venue: string; minutes: number }> = {
+/** Public venue types per activity. There is no private or home option (safety basics). `daytime`: only day slots. */
+export const PUBLIC_VENUE: Record<string, { venue: string; minutes: number; daytime?: true }> = {
   coffee: { venue: "a cafe", minutes: 60 }, drinks: { venue: "a bar", minutes: 75 }, walk: { venue: "a park", minutes: 60 },
   museum: { venue: "a museum", minutes: 90 }, dinner: { venue: "a restaurant", minutes: 90 }, live_music: { venue: "a music venue", minutes: 120 },
   comedy: { venue: "a comedy club", minutes: 90 }, climbing: { venue: "a climbing gym", minutes: 90 }, cooking_class: { venue: "a cooking class", minutes: 120 },
-  hike: { venue: "a popular trailhead (daytime)", minutes: 120 },
+  hike: { venue: "a popular trailhead (daytime)", minutes: 120, daytime: true },
 };
 
 export interface DatePlan {
@@ -41,6 +41,7 @@ export function planFirstDate(first: SlopProfile, partner: SlopProfile, markets:
   const activity = dateActivity(first, partner);
   const v = PUBLIC_VENUE[activity] ?? PUBLIC_VENUE.coffee!;
   const ranked = SLOTS.map((_, s) => ({ s, p: freeScore(first, s) * freeScore(partner, s) }))
+    .filter(x => !v.daytime || SLOTS[x.s]!.endsWith("_day"))
     .sort((x, y) => (y.p - x.p) || (x.s - y.s));
   const options = ranked.slice(0, 3).map(x => x.s);
   return {
