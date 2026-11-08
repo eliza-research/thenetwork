@@ -2375,6 +2375,9 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** Swap an unavailable participant for an alternate (never the requester), or close quietly. */
   private replaceOrClose(o: Opp, out: MemberId) {
     if (o.stage !== "probing") return;
+    // The member is out of this item: a probe slot that points at it answers nothing any more.
+    const gone = this.members.get(out);
+    if (gone?.awaiting?.oppId === o.id) gone.awaiting = undefined;
     if (o.requester === out) return this.close(o, "requester unavailable");
     // A seat item without its hiring manager is over (an alternate candidate never stands in for them).
     if (o.seat?.manager === out) return this.close(o, "manager unavailable");
