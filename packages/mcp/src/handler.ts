@@ -165,16 +165,25 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   const ttl = { ...TTL, ...o.ttl };
   const lim = { ...LIMITS, ...o.limits };
   const log = o.log ?? (s => console.log(s));
+  const assistantFor = async (clientId: string) => { const client = await store.getClient(clientId); return client ? assistantOf(client) : "web"; };
   /** Tell the inbox an assistant was connected or disconnected for the grant's person (never blocks OAuth). */
   async function linked(grant: Grant | undefined, active: boolean) {
     if (!grant?.personId || !o.platform.assistantLinked) return;
-    const client = await store.getClient(grant.clientId);
-    await o.platform.assistantLinked(grant.personId, client ? assistantOf(client) : "web", active).catch(e => log(`[mcp] assistant ${active ? "link" : "unlink"} not recorded: ${(e as Error).message}`));
+    await o.platform.assistantLinked(grant.personId, await assistantFor(grant.clientId), active).catch(e => log(`[mcp] assistant ${active ? "link" : "unlink"} not recorded: ${(e as Error).message}`));
   }
-  /** Every revocation goes through here, so the inbox always hears about it. */
+  /**
+   * Every revocation goes through here, so the inbox always hears about it. The signal is per person and
+   * assistant, a grant is per app: it goes inactive only when no other live grant of that assistant is left.
+   */
   async function revokeGrant(id: string, at: number) {
     const ok = await store.revokeGrant(id, at);
-    if (ok) await linked(await store.getGrant(id), false);
+    const g = ok ? await store.getGrant(id) : undefined;
+    if (!g?.personId || !o.platform.assistantLinked) return ok;
+    const kind = await assistantFor(g.clientId);
+    for (const app of Object.keys(apps) as McpAppId[])
+      for (const other of await store.grantsFor(g.phoneKey, app, at))
+        if (other.personId === g.personId && (await assistantFor(other.clientId)) === kind) return ok;
+    await linked(g, false);
     return ok;
   }
   const hostMap = o.hostMap ?? defaultHostMap(apps);

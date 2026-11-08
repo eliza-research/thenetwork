@@ -8,6 +8,7 @@ import { sha256hex } from "../../packages/mcp/src/util.ts";
 import { Browser, connectMcp, newPhone, pgAvailable, startStack, webJoin, type Stack } from "./harness.ts";
 
 const T = 180_000;
+const CLAUDE = "https://claude.ai/api/mcp/auth_callback";
 if (!pgAvailable && process.env.REQUIRE_PG === "1") throw new Error("tests/e2e needs Postgres (REQUIRE_PG=1)");
 
 let st: Stack;
@@ -51,5 +52,30 @@ describe.skipIf(!pgAvailable)("OAuth consent, refresh and assistant signals", ()
     });
     expect((await refresh!).status).toBe(400);
     expect(await auditKinds(grantId)).not.toContain("refresh_replay");
+  }, T);
+
+  const personOf = async (e164: string) =>
+    ((await sql`select person_id from platform.phone_identities where e164 = ${e164}`)[0] as { person_id: string }).person_id;
+  const claudeActive = async (personId: string) =>
+    ((await sql`select active from notify.surface_signals where person_id = ${personId} and surface = 'claude'`)[0] as { active: boolean } | undefined)?.active;
+
+  // SD-186: the assistant signal is per person and surface, but a grant is per app. Before the fix the
+  // revocation of one Claude grant set the signal to inactive while another Claude grant was still live.
+  test("revoking one of two live Claude grants keeps the Claude signal active", async () => {
+    const phone = newPhone(), b = new Browser();
+    expect((await webJoin(st, "slop", phone, { age: 30, browser: b })).res.status).toBe(200);
+    const onSlop = await connectMcp(st, "slop", phone, { browser: b, redirect: CLAUDE });
+    const onPeon = await connectMcp(st, "peon", phone, { browser: b, redirect: CLAUDE });
+    expect(onSlop.token?.refresh_token, onSlop.html.slice(0, 300)).toBeString();
+    expect(onPeon.token?.refresh_token, onPeon.html.slice(0, 300)).toBeString();
+    const personId = await personOf(phone);
+    expect(await claudeActive(personId)).toBe(true);
+
+    const revoke = (app: "slop" | "peon", c: typeof onSlop) =>
+      st.site(app, "/oauth/revoke", { form: { client_id: c.client.client_id, token: c.token!.refresh_token, token_type_hint: "refresh_token" } });
+    expect((await revoke("slop", onSlop)).status).toBe(200);
+    expect(await claudeActive(personId), "the peon grant is still live").toBe(true);
+    expect((await revoke("peon", onPeon)).status).toBe(200);
+    expect(await claudeActive(personId)).toBe(false);
   }, T);
 });
