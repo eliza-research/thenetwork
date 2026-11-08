@@ -175,3 +175,14 @@ test("SD-065: a minor's ordinary long text reaches the agent as a single-player 
   expect(r.context.singlePlayer).toBe(true);
   expect(r.context.activeItems === null || r.context.activeItems.length === 0).toBe(true);
 }, 60_000);
+
+test("SD-066: a member the Network holds as a minor from a school sign is single-player in the open context", async () => {
+  const phone = "+12125550310";
+  const memberId = await join(phone, "friends.help", "friends", "Sam, 25");
+  for (const text of ["I enjoy hiking and cooking", "Saturday afternoons work for me", "Small groups are good"]) await say(phone, text, "friends");
+  await say(phone, "i have homework tonight", "friends");
+  const r = await say(phone, "hey", "friends");
+  expect(r.outcome).toBe("open");
+  expect(r.memberId).toBe(memberId);
+  expect(r.context.singlePlayer).toBe(true);
+}, 60_000);

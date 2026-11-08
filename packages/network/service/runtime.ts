@@ -745,9 +745,11 @@ export class NetworkRuntime {
         && safe(f.value)).map(f => f.value);
       // The deployed plugin contract rejects larger context. Withhold it whole; never truncate a fact.
       if (facets.length > 50 || facets.some(f => f.length > 300)) return null;
+      // The Network may hold a minor whose person-level age is adult (a school sign, a member report): single-player too.
+      const minor = (await this.loadState())?.members.find(m => m.id === memberId)?.minor === true;
       return {
         firstName, city: member.homeCity, state, stateFrom: participation.active?participation.window!.from:null, stateUntil: participation.active?participation.window!.until:null, facets,
-        activeItems: null, singlePlayer: !presentInNyc(snapshot, member.id, snapshot.now, snapshot.now + 6 * DAY) || !canBeMatched(await accounts.lowestAge(e164, binding.person)),
+        activeItems: null, singlePlayer: !presentInNyc(snapshot, member.id, snapshot.now, snapshot.now + 6 * DAY) || minor || !canBeMatched(await accounts.lowestAge(e164, binding.person)),
       };
     });
   }
