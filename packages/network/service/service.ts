@@ -639,6 +639,10 @@ export class NetworkService implements RuntimeHost {
    */
   async updatesFor(personId: string, app: AppId, surface: Surface, token?: string): Promise<Array<{ summary: string; at: string; kind: string }>> {
     if (!this.notify) return [];
+    // Every inbox item is about other people (a probe, an intro, a reminder): a minor reads none of
+    // them, also items from before they stated their age (founder decision 1).
+    const lowest = (await this.people.getPerson(personId))?.lowestAge;
+    if (lowest != null && isMinor(lowest)) return [];
     const items: InboxItem[] = await this.notify.readUpdates(personId, surface, this.clock.now(), token, { app });
     return items.map(i => ({ summary: i.summary, at: new Date(i.createdAt).toISOString(), kind: i.eventType }));
   }

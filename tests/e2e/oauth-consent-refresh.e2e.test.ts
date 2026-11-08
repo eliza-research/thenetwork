@@ -4,8 +4,10 @@
 //   bun test tests/e2e/oauth-consent-refresh.e2e.test.ts
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { SQL } from "bun";
+import type { Outbound } from "../../packages/network/service/channel.ts";
+import type { NetworkRuntime } from "../../packages/network/service/runtime.ts";
 import { sha256hex } from "../../packages/mcp/src/util.ts";
-import { Browser, connectMcp, newPhone, pgAvailable, startStack, webJoin, type Stack } from "./harness.ts";
+import { Browser, connectMcp, newPhone, pgAvailable, rpc, startStack, toolData, webJoin, type Stack } from "./harness.ts";
 
 const T = 180_000;
 const CLAUDE = "https://claude.ai/api/mcp/auth_callback";
@@ -77,5 +79,24 @@ describe.skipIf(!pgAvailable)("OAuth consent, refresh and assistant signals", ()
     expect(await claudeActive(personId), "the peon grant is still live").toBe(true);
     expect((await revoke("peon", onPeon)).status).toBe(200);
     expect(await claudeActive(personId)).toBe(false);
+  }, T);
+
+  // SD-214: a member who states an age under 18 is never connected to anyone (founder decision 1). Before
+  // the fix an inbox item from their adult time, which names another person and a venue, stayed readable:
+  // get_updates returned it after the member said they are 16.
+  test("a member who becomes a minor does not read an earlier item that names an adult", async () => {
+    const phone = newPhone(), b = new Browser();
+    expect((await webJoin(st, "peon", phone, { age: 30, browser: b })).res.status).toBe(200);
+    const m = (await sql`select m.id, m.person_id from network.members m join platform.phone_identities ph on ph.person_id = m.person_id where m.app_id = 'peon' and ph.e164 = ${phone}`)[0] as { id: string; person_id: string };
+    const rt = [...st.svc.runtimes.values()].find(r => r.app.id === "peon") as NetworkRuntime;
+    const sent: Outbound = { id: `e2e-reminder-${m.id}`, memberId: m.id as any, body: "Reminder: coffee with Sam at Blue Bottle on Bedford, 10am tomorrow.", kind: "proactive", type: "reminder", oppId: "opp_e2e_minor", proactive: true, system: false, ts: st.clock.now() };
+    await st.svc.delivered(rt, [sent]);
+    const c = await connectMcp(st, "peon", phone, { browser: b });
+    expect(c.token?.access_token, c.html.slice(0, 300)).toBeString();
+
+    await st.text(phone, "I am 16 years old");
+    expect(((await sql`select lowest_age from platform.people where id = ${m.person_id}::uuid`)[0] as { lowest_age: number }).lowest_age).toBe(16);
+    const r = toolData(await rpc(st, "peon", "/mcp", "tools/call", { name: "get_updates", arguments: {} }, c.token!.access_token));
+    expect(r.updates).toEqual([]);
   }, T);
 });
