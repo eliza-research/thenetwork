@@ -103,7 +103,9 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
     const started = outbound(R).filter(m => !inboundAt.has(`${m.msg.memberId}|${m.msg.ts}`) && !m.msg.meta?.safety);
     expect(started.length).toBeGreaterThan(200);
     expect(started.filter(m => !allowedAt(m.msg.ts, quiet.get(m.msg.memberId)!)).map(m => `${m.msg.meta?.type} ${m.msg.memberId} ${new Date(m.msg.ts).toISOString()}`)).toEqual([]);
-    const invites = outbound(R).filter(m => m.msg.meta?.proactive && m.msg.status === "delivered");
+    // Initial invites only: the outreach controller marks other unsolicited sends proactive too (meta.unsolicited),
+    // and an info or cancellation note keeps its logistics timing (after quiet hours, not the send slot).
+    const invites = outbound(R).filter(m => m.msg.meta?.proactive && !m.msg.meta?.unsolicited && m.msg.status === "delivered");
     expect(invites.length).toBeGreaterThan(50);
     const hour = (t: number) => Number(new Intl.DateTimeFormat("en-US", { timeZone: NY, hourCycle: "h23", hour: "2-digit" }).format(t));
     expect(invites.filter(m => hour(m.msg.ts) < 9)).toEqual([]);
