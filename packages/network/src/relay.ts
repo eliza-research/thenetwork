@@ -345,7 +345,8 @@ export class RelayDesk {
   /** An item this desk already decided (replay of the same signed request). */
   private prior(itemId: string): Omit<RelayOutcome, "replayed"> | undefined {
     const r = this.s.log.find(x => x.itemId === itemId);
-    if (r) return { itemId, decision: r.decision === "pass" ? "sent" : r.decision === "hold" ? "held" : "refused", delivered: r.decision === "pass", reason: r.decision === "pass" ? "Sent." : r.decision === "hold" ? "I'm holding that one for a quick check before I pass it on." : "I can't pass that on." };
+    // A hold that is only the rate limit is answered, not kept: the member (or staff, for a selected photo with its fixed id) can try again.
+    if (r && !(r.decision === "hold" && r.reasons.every(x => x.split(":")[0] === "rate"))) return { itemId, decision: r.decision === "pass" ? "sent" : r.decision === "hold" ? "held" : "refused", delivered: r.decision === "pass", reason: r.decision === "pass" ? "Sent." : r.decision === "hold" ? "I'm holding that one for a quick check before I pass it on." : "I can't pass that on." };
     if (this.s.swaps.some(x => x.itemId === itemId)) return { itemId, decision: "held", reason: NOTICE.swapWait };
     return undefined;
   }
