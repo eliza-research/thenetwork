@@ -378,4 +378,27 @@ describe.skipIf(!pgAvailable)("turn and consent", () => {
     expect(after.reason).not.toBe("joined");
     expect(await service.accounts.optedIn("slop", phone)).toBe(false);
   }, 60_000);
+  test("SD-493: a signed STOP cancels the sender's older legacy-webhook rows that still wait", async () => {
+    const from = "+12125550493";
+    // During a cutover a legacy-webhook join answer failed once and waits for the next tick.
+    let down = 1;
+    const handled: string[] = [];
+    const box = new Inbox({sql, clock, log: () => {}, senderKey: x => `key:${x}`,
+      handle: async ev => { if (down > 0) { down--; throw new Error("synthetic database outage"); } handled.push(ev.text); return "handled"; }});
+    const ev = {kind: "message", channel: "sim", messageId: "sd493-join", from, to: "+12125550100", chatId: from, isGroup: false,
+      text: "Sam, 29", mediaUrls: [], transport: "imessage", receivedAt: clock.now()} as const;
+    expect(await box.receive(ev as never)).toBe("retry_later");
+    clock.advance(MINUTE);
+    // Then the person's STOP arrives as a signed turn and is handled.
+    const stop = turn("sd493-stop", from, "STOP");
+    const r = await box.signed(stop, "sd493-hash", async () => ({outcome: "handled", replies: [], replyIds: [], delivery: "collected", replyKind: "compliance",
+      accountEligible: false, app: null, memberId: null, reason: "stopped"}) as never);
+    expect(r.status).toBe(200);
+    // The next tick must not act on the join answer the person wrote before STOP.
+    clock.advance(MINUTE);
+    await box.drain();
+    expect(handled).toEqual([]);
+    const [row] = await sql`select status, outcome from platform.inbound where id = 'msg:sim:sd493-join'`;
+    expect([row.status, row.outcome]).toEqual(["done", "cancelled_by_stop"]);
+  }, 60_000);
 });

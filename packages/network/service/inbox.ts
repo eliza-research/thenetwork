@@ -97,13 +97,13 @@ export class Inbox {
       where ${admitUntil === undefined || now < admitUntil} and not exists(select 1 from platform.inbound where sender_hash=${senderHash} and ((status='processing' and (not ${keyword} or compliance))
         or (not ${keyword} and (status='pending' or (status='unresolved' and arrived_at>${new Date(now - UNRESOLVED_BLOCK_MS)})))))
       on conflict do nothing returning id`;
-      if (inserted.length || !keyword) return inserted;
+      if (inserted.length || !keyword) return this.stopCancels(tx, input, inserted);
       // A compliance turn that never answered (its worker died, or staff resolved it) runs again on the retry of
       // the same request: the consent ledger and the member's unit are idempotent per message.
-      return tx`update platform.inbound set status='processing',arrived_at=${new Date(now)},sender_hash=${senderHash},compliance=true
+      return this.stopCancels(tx, input, await tx`update platform.inbound set status='processing',arrived_at=${new Date(now)},sender_hash=${senderHash},compliance=true
         where id=${id} and request_hash=${requestHash} and status='unresolved' and handled_at is null and response is null
         and ${admitUntil === undefined || now < admitUntil} and not exists(select 1 from platform.inbound where sender_hash=${senderHash} and status='processing' and compliance)
-        returning id`;
+        returning id`);
     });
     if (!wrote.length) {
       const [prior] = await this.o.sql`select request_hash,status,response from platform.inbound where id=${id}`;
@@ -137,6 +137,23 @@ export class Inbox {
     } finally {
       clearInterval(renew);
     }
+  }
+
+  /**
+   * A claimed signed STOP or STOP ALL cancels the sender's ordinary legacy-webhook rows received before it, in the
+   * claim transaction (under the sender lock), as a legacy STOP does: a waiting row is never acted on after the STOP.
+   */
+  private async stopCancels<T extends unknown[]>(tx: SQL, input: TurnRequest, claimed: T): Promise<T> {
+    if (!claimed.length || !isStopText(input.text)) return claimed;
+    const sender = normalizeAddress(input.from);
+    const waiting = await tx`select id, event from platform.inbound where sender = ${sender} and status = 'pending' and received_at <= ${new Date(input.receivedAt)}`;
+    const ids = (waiting as any[]).filter(w => !isComplianceText(((typeof w.event === "string" ? JSON.parse(w.event) : w.event) as {ev?: InboundMessage})?.ev?.text)).map(w => w.id as string);
+    if (ids.length) {
+      await tx`update platform.inbound set status = 'done', outcome = 'cancelled_by_stop', handled_at = ${new Date(this.o.clock.now())},
+        handled_order = nextval('platform.inbound_handled_seq'), event = null, sender = null where id = any(${tx.array(ids, "TEXT")})`;
+      this.o.log(`[inbound] ${ids.length} earlier message(s) cancelled by a signed STOP`);
+    }
+    return claimed;
   }
 
   private async undo(turn: InboundTurn) {
