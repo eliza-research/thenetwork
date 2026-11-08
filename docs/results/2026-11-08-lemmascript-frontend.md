@@ -66,17 +66,76 @@ The skeptic agents for views, sites and server-ui did not run. The main session 
 
    The store implementer ran the new store and map tests against main's `store.ts` and `map.ts`: 20 of 22 cases failed, and the 2 that passed pin behavior that was kept on purpose.
 
-## 4. Not done, and limits
+## 4. Skeptic passes, Quint models and model-found defects
+
+**Skeptic passes on views, sites and server-ui** (one agent per slice, after the usage limit reset):
+- 83 mutants in all; 81 were caught. The 2 that were not:
+  - one showed a weak `yesCounts` contract, now an exact count;
+  - one was an equivalent mutant.
+- Weak contracts were made stronger: `formOrigin`, `formTargets`, `hasFlag`, `samePair`, three `flowNext` clauses and five phone clauses.
+- `undoKeepsFlags` returned true and no code called it. It was removed, and its property is now an `ensures` on `undoIndex`.
+- The Metrics tiles computed their own percentages, and one showed 133%. They now use the core `rate`.
+- `esc` gives the same bytes as the old regex escaper on 200,000 random strings.
+- Code-page Cancel: `handler.ts` (a backend file, changed by 2 lines only) now passes `redirectHost` to both `codePage` calls. An integration case through the real OAuth handler checks the CSP. It fails with main's `handler.ts`.
+
+**Quint models** in `quint/frontend/` (see [quint/README.md](../../quint/README.md)): `join_flow`, `review_desk`, `observatory_sync`, `console_views`.
+- Each step function of the core is a `pure def` with the same name, and each invariant has the name of the LemmaScript contract it matches.
+- Each model has `witness_*` invariants that are reachable, and at least 2 mutants that `quint run` catches.
+
+**Defects found by the models.** These were not in the research reports. Each is fixed in the shell, and the decision is in the core where it is a decision.
+- JF-1: a late `/api/me` answer could sign the Join flow in as the number on screen while the cookie session was another account.
+- JF-3: a second submit during the `account_changed` reroute joined the cookie account with the fields of the account on screen.
+- Reveal badge: a failed or stale `GET /api/reveal`, or a lost POST answer, removed the badge while the server still held the PII grant.
+- Review desk: after the queue unmounted and mounted again, a late answer moved focus, so the next `a` approved an item the reviewer did not choose.
+
+Each fix has an integration case that fails before the fix. The Quint models were updated to the fixed shell, and the violated invariants hold on 20000 samples with two seeds. The old traces stay reachable in scratch mutants.
+
+**Check with a new seed** (seed 101, 5000 samples, run by the main session):
+- `join_flow`: `safety`, `signInMatchesSession` and `joinAppliesToShownAccountWithMarker` hold.
+- `observatory_sync`: `good` and `badgeFollowsGrant` hold.
+- `console_views`: `photoNeverMinor`, `shownRise` and `canPropose_noMinor` hold.
+- `review_desk`: `safety` and `decisionOnlyToReviewerChoice` hold.
+- The expected violations stay violated: `joinAppliesToShownAccount` and `serverApproveBeforeDeadline`. `quint test` passes for each model that has replayed traces (5 and 7 traces).
+
+**Expected violations (server work, backend session):**
+- JF-2: `GET /api/me` gives `signupView` only on ntwrk and friends (`api.ts:513`, from #89). So on slop.date and peon.biz, `/api/join` joins the current cookie account. The shell now sends the marker whenever the server gives one.
+- `reviewBlock` has no deadline check.
+- A review decision does not name the version the reviewer saw.
+
+## 5. Full suites
+
+The suites ran one after the other, with `nice -n 10`, on a shared machine (load average about 17):
+
+| Command | Result |
+|---|---|
+| `bun run typecheck` | exit 0 |
+| `bun run test:e2e` | 42 pass, 1 skip (Playwright), 0 fail |
+| `bun run test:integration` | 766 pass, 8 skip, 22 fail (these also fail on main, see below) |
+| `bun run sim` | 327/327 blocking gates pass |
+
+All 22 failures are in Observatory real-mode and network Postgres files, which this branch does not change (`git diff main -- packages/observatory/src packages/observatory/db packages/network` is empty). The errors came from the shared dev database, for example `relation "network.network_state_console_cross_app" does not exist`, while other sessions used it. The `relation ... does not exist` lines are noise: `apps.test.ts` renames that view on purpose. The real error is `Could not read the network schema: Failed to read data`, from the Postgres driver. Postgres had 19 of 100 connections in use, so the cause is not too many connections.
+
+When each file ran alone on this branch, `shared-agent.integration` (14 pass) and `gateway-fixtures.integration` (7 pass) passed. Six Observatory real-mode files failed:
+- `real-console`: 6
+- `real-fixes`: 5
+- `real`: 4
+- `real-service`: 3
+- `apps`: 2
+- `server`, `consent` and `staff`: 1 each
+
+On a clean `main` worktree with the same database, `real-console` failed with the same 6 tests and the same error. `real-service` and `apps` failed with the same 5 tests. So these failures exist on main in this environment, and they are not from this branch. They are not diagnosed further here.
+
+`bun run sim` (one full run, at the end): exit 0, 327 of 327 blocking gates pass, 14 tracked gates off target, 364.6 s. The run made no model calls (the sim clears the provider keys).
+
+## 6. Not done, and limits
 
 - `tests/e2e/auth-feedback.e2e.test.ts` skipped, because Playwright is not installed on this machine (`PLAYWRIGHT_MODULE` is not set). The callback path of `mountAuth` is covered by `api-security.test.ts`.
-- The full `bun run sim`, `bun run test:integration` and `bun run test:e2e` were not run.
-- No Quint models are written. The modeling requirement in AGENTS.md has the status "not yet met".
-- The views, sites and server-ui slices had one mutant per core from the main session. They did not get the full adversarial pass that store and staff got.
+- The modeling rule in AGENTS.md is still "not yet met" for the whole app. Only the frontend flows above have Quint models and LemmaScript cores. The backend modules are planned by the state-machine session.
+- Quint checks are random simulation with fixed seeds (no Apalache). A pass is a bounded search, not a proof.
 - Bugs left, with reasons, from the implementer reports:
-  - OAuth Cancel on the code page is still broken. It needs a change in `handler.ts` (backend session).
   - Backend: `reviewBlock` accepts an approve after the deadline; the OTP ban bypass is at `api.ts:471`.
   - These need copy changes, which CONTRIBUTING.md does not accept here: 0% against a dash on the Metrics tiles, the countdown tooltip, and the `/join` links in the terms.
   - Out of the slice file lists: B14 (graph view watch flag), and B5, B6, B8, B12, B16 in the views report.
 - `number` is an ideal integer in the proofs. NaN, Infinity and fractions are guarded in the shell, not proved.
-- Async order is not modelled. The wiring tests above cover the shell's calls into the cores.
+- In LemmaScript, async order is not modelled. The Quint models cover late, repeated, failed and lost answers within their bounds, and the wiring tests cover the shell's calls into the cores.
 - `lemmascript.json` is the same as on the backend branch. The shared setup (the devDependency, `bun run formal`, the CI Dafny step) is on `claude/lemmascript-backend`.

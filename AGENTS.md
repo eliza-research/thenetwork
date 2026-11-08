@@ -84,7 +84,7 @@ All code in the app must be modeled at two levels:
 
 A change to code must add or update both levels in the same PR. Use the same invariant name at both levels. When code cannot be expressed in LemmaScript (the DOM, React components, `await`, SQL, regex tables, crypto), move its decisions into an import-free core that LemmaScript can prove, and keep the rest as a thin shell that calls the core and does not recompute the decision. Say in the PR what stays outside the model and which test covers it.
 
-**Status: not yet met.** Most existing code has no model. The repository has no Quint models yet. This rule does not mean that a flow is verified: [docs/formal-verification.md](docs/formal-verification.md) lists what is proved and what is not. Do not write "verified" about a flow unless every seam of the flow calls the proved function.
+**Status: not yet met.** Most existing code has no model. The first models cover the frontend: four Quint flows in `quint/frontend/` and eight LemmaScript cores in `LemmaScript-files.txt`. [quint/README.md](quint/README.md) lists the models, how to run them and the invariants that still fail because of server gaps. This rule does not mean that a flow is verified. Do not write "verified" about a flow unless every seam of the flow calls the proved function.
 
 ## Code invariants
 
