@@ -131,11 +131,25 @@ export class PgPeopleStore implements PeopleStore {
     return r.length > 0;
   }
 
-  async addConsent(e: ConsentEvent) {
-    const r = await this.sql`insert into platform.consent_events (e164, app_id, line, state, source, wording, wording_version, ref, at)
+  async addConsent(e: ConsentEvent, personId?: string) {
+    const insert = (db: SQL) => db`insert into platform.consent_events (e164, app_id, line, state, source, wording, wording_version, ref, at)
       values (${e.e164}, ${e.app}, ${e.line ?? null}, ${e.state}, ${e.source}, ${e.wording ?? null}, ${e.wordingVersion ?? null}, ${e.ref ?? null}, ${ts(e.at)})
       on conflict (e164, ref) where ref is not null do nothing returning id`;
-    return r.length > 0;
+    if (!personId) return (await insert(this.sql)).length > 0;
+    return this.sql.begin(async tx => {
+      // A number change of this number that runs now finishes first (movePhone locks the phone row). One that
+      // starts later waits for this lock, then copies this event to the new number.
+      const [ph] = await tx`select person_id from platform.phone_identities where e164 = ${e.e164} for share`;
+      const r = await insert(tx);
+      // The number moved before this write: the event follows the person to the number they have now.
+      if (ph?.person_id !== personId) {
+        await tx`insert into platform.consent_events (e164, app_id, line, state, source, wording, wording_version, ref, at)
+          select ph.e164, ${e.app}, ${e.line ?? null}, ${e.state}, ${e.source}, ${e.wording ?? null}, ${e.wordingVersion ?? null}, ${e.ref ?? null}, ${ts(e.at)}
+          from platform.phone_identities ph where ph.person_id = ${personId}::uuid and ph.e164 <> ${e.e164}
+          on conflict (e164, ref) where ref is not null do nothing`;
+      }
+      return r.length > 0;
+    });
   }
   async lastConsent(e164: string, app: AppId): Promise<ConsentLast> {
     const rows = await this.sql`

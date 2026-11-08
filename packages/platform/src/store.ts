@@ -104,8 +104,13 @@ export interface PeopleStore {
    */
   updateMembership(personId: string, app: AppId, from: MembershipState[], patch: { state?: MembershipState; profile?: Record<string, unknown> }): Promise<boolean>;
 
-  /** Append an event. False when an event with the same (e164, ref) is already there (a retried message). */
-  addConsent(e: ConsentEvent): Promise<boolean>;
+  /**
+   * Append an event. False when an event with the same (e164, ref) is already there (a retried message).
+   * `personId`: the person the number belonged to when the message came in. When that person's number
+   * changed before this write (movePhone copied the ledger without this event), the event is also written
+   * on the person's current number.
+   */
+  addConsent(e: ConsentEvent, personId?: string): Promise<boolean>;
   /** The last event for (e164, app) and the last for (e164, every app). */
   lastConsent(e164: string, app: AppId): Promise<ConsentLast>;
   /** The events for this app only (export). */
@@ -268,9 +273,12 @@ export class MemoryPeopleStore implements PeopleStore {
     this.members.set(`${m.app}:${m.personId}`, { ...m, profile: { ...m.profile } });
   }
 
-  async addConsent(e: ConsentEvent) {
+  async addConsent(e: ConsentEvent, personId?: string) {
     if (e.ref && this.consent.some(x => x.e164 === e.e164 && x.ref === e.ref)) return false;
     this.consent.push({ ...e });
+    if (personId && this.phones.get(e.e164)?.personId !== personId) {
+      for (const ph of this.phones.values()) if (ph.personId === personId) this.consent.push({ ...e, e164: ph.e164 });
+    }
     return true;
   }
   async lastConsent(e164: string, app: AppId) { return lastEvents(this.consent, e164, app); }

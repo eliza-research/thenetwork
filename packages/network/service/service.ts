@@ -1321,7 +1321,9 @@ export class NetworkService implements RuntimeHost {
     await rt.identities();
     const memberId = rt.memberOf(from);
     const { event, reply } = keywordEvent(kw, e164 ?? from, app, this.consentAt(ev), { line, scope, ref });
-    if (e164 && event) await this.accounts.recordConsent(event);
+    // The person is read before the write: a number change that commits between them does not lose the STOP.
+    const person = e164 ? await this.accounts.personFor(e164) : undefined;
+    if (e164 && event) await this.accounts.recordConsent(event, person?.id);
     const turn = this.inboundTurn();
     if (turn && event) turn.consent = {state: "opted_out", scope: scope === "global" ? "all" : "app", app: scope === "global" ? null : app.id, at: event.at};
     // The STOP is recorded: its confirmation goes out even if a later step of this turn fails (Inbox.rescueCompliance).
@@ -1330,7 +1332,6 @@ export class NetworkService implements RuntimeHost {
     if (memberId && ev) await this.memberMessage(rt, memberId, ev, ref, kw, reply);
     else if (memberId) await rt.unitOfWork(async n => { await n.onInbound({ id: ref, memberId, body: "STOP", ts: t, channel: "imessage", keyword: "STOP" }); rt.unit.optOut.set(memberId, true); });
     else if (reply) await this.direct(rt, from, reply, `sys:${ref}`, "compliance");
-    const person = e164 ? await this.accounts.personFor(e164) : undefined;
     if (person) await this.stopped(app, person.id, scope, memberId ? { rt, memberId } : undefined);
     else if (scope === "global") {
       // A member from before the platform (no person): every app where this address is a member.

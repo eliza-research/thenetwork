@@ -92,6 +92,25 @@ function stopBefore<T extends object>(o: T, name: string) {
   return () => fired;
 }
 
+/** The slop site's API for one browser (its own session cookie). */
+function site(s: NetworkService) {
+  let cookie = "";
+  return async (path: string, body: unknown) => {
+    const res = await s.publicFetch(new Request(`http://127.0.0.1:8790${path}`, { method: "POST", headers: { host: "localhost:5102", "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body) }));
+    const c = res.headers.get("set-cookie"); if (c) cookie = c.split(";")[0]!;
+    return { status: res.status, body: await res.json().catch(() => null) as any };
+  };
+}
+/** A member of slop on `from` logs in on the site and asks to move to `to` (step 1: the code goes to `to`). Returns the browser. */
+async function startMove(s: NetworkService, clock: SimClock, from: string, to: string) {
+  const api = site(s);
+  clock.advance(31_000);
+  expect((await api("/api/auth/otp/start", { phone: from })).status).toBe(200);
+  expect((await api("/api/auth/otp/verify", { phone: from, code: "123456" })).status).toBe(200);
+  expect((await api("/api/me/phone/start", { phone: to })).body).toEqual({ ok: true });
+  return api;
+}
+
 describe.skipIf(!pgAvailable)("identity sagas: stop half way, retry, races (Postgres)", () => {
   beforeAll(async () => {
     await devPgUp();
@@ -266,5 +285,31 @@ describe.skipIf(!pgAvailable)("identity sagas: stop half way, retry, races (Post
     expect(await s.memberApps(a)).toEqual([]);
     expect(await text(s, clock, a, "hey, is this the pizza place?")).toBe("join_asked");
     expect((await sql`select count(*)::int as n from network.messages where app_id = 'slop' and member_id = ${e} and direction = 'inbound' and body like '%pizza%'`)[0].n).toBe(0);
+  }, T);
+
+  test("SD-055: a STOP that comes in before a number change and is written after it stops the person on the new number", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const s = service(clock), other = service(clock);
+    const [a, b] = [newPhone(), newPhone()];
+    expect(await text(s, clock, a, "slop")).toBe("join_asked");
+    expect(await text(s, clock, a, "Fay, 34")).toBe("joined");
+    const api = await startMove(other, clock, a, b);
+
+    // The STOP from the old number is in flight: the number change (another replica) commits before its consent write.
+    const accounts = s.accounts as unknown as Record<string, (...x: unknown[]) => Promise<unknown>>;
+    const record = accounts.recordConsent!.bind(s.accounts);
+    let moved: unknown;
+    accounts.recordConsent = async (...x: unknown[]) => {
+      moved ??= (await api("/api/me/phone/confirm", { code: "123456" })).body;
+      return record(...x);
+    };
+    expect(await text(s, clock, a, "STOP")).toBe("handled");
+    expect(moved).toMatchObject({ ok: true });
+
+    // The STOP follows the person: the new number reads opted out, and the person's member is paused.
+    expect(await s.accounts.optedIn("slop", b)).toBe(false);
+    expect((await s.people.lastConsent(b, "slop")).global?.state).toBe("opted_out");
+    expect((await sql`select m.opted_out from network.members m join platform.phone_identities ph on ph.person_id = m.person_id where m.app_id = 'slop' and ph.e164 = ${b}`).map((r: any) => r.opted_out)).toEqual([true]);
   }, T);
 });
