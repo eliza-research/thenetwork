@@ -11,10 +11,11 @@ const opp = (w: Mini, id: string) => [...(w.net as any).opps.values()].find((o: 
 
 describe("dropMember on a booked group meeting", () => {
   test("STOP after a cancel does not drop the member again", async () => {
-    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cleo Park")]);
-    await w.onboard("a", "b", "c");
-    const id = w.propose(["a", "b", "c"]);
-    await w.answerProbes(["a", "b", "c"]);
+    // Four members: after c calls off, three are still going and the meeting stays on (SD-078 calls off a group of two).
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cleo Park"), climber("d", "Dev Rao")]);
+    await w.onboard("a", "b", "c", "d");
+    const id = w.propose(["a", "b", "c", "d"]);
+    await w.answerProbes(["a", "b", "c", "d"]);
     expect(opp(w, id).stage).toBe("scheduled");
     await w.run(2 * HOUR);
     await w.say("c", "I need to cancel, sorry");
@@ -26,6 +27,6 @@ describe("dropMember on a booked group meeting", () => {
     await w.net.onInbound({ id: "stop-c", memberId: "c", body: "STOP", keyword: "STOP", ts: w.clock.now(), channel: "sms" } as never);
     await w.run(HOUR);
     expect(w.log("booked_cancelled").filter(l => l.detail.memberId === "c").length).toBe(1);
-    expect([...w.to("a", from), ...w.to("b", from)].filter(s => s.meta.type === "cancellation")).toEqual([]);
+    expect([...w.to("a", from), ...w.to("b", from), ...w.to("d", from)].filter(s => s.meta.type === "cancellation")).toEqual([]);
   });
 });
