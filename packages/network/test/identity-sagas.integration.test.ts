@@ -382,4 +382,19 @@ describe.skipIf(!pgAvailable)("identity sagas: stop half way, retry, races (Post
     await s.purge();
     expect((await sql`select count(*)::int as n from platform.line_conversations where address = ${ivy}`)[0].n).toBe(0);
   }, T);
+
+  test("SD-098: a number silent for over a year gets no proactive text before its holder writes", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const s = service(clock);
+    const { phone } = await heldNumber(s, clock);
+    const m = (await memberOf("slop", phone))!.id as Outbound["memberId"];
+    // The number may have a new holder now. Nothing came in from it, so it is not on hold yet.
+    expect(await s.accounts.held(phone)).toBe(false);
+
+    // The send-time check (direct delivery and the persisted queue's optedOut check) refuses a proactive text.
+    const rt = s.runtimeFor("slop")!;
+    const send = (id: string, kind: Outbound["kind"]): Outbound => ({ id, memberId: m, to: phone, body: "x", kind, proactive: kind === "proactive", system: false, ts: clock.now() });
+    expect([...(await s.consentRefused(rt, [send("proactive_1", "proactive"), send("stop_ok", "compliance")]))]).toEqual(["proactive_1"]);
+  }, T);
 });

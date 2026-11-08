@@ -50,7 +50,7 @@ import { canJoin } from "../../core/src/policy.ts";
 import { CostLedger, costRatesFromEnv, PgCostSink } from "./cost.ts";
 import { BlooioAdapter, type ChannelAdapter, type DirectKind, type Outbound } from "./channel.ts";
 import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, type AppId, type AppInfo } from "../../platform/src/apps.ts";
-import { Accounts, homeCityOf, type AccountHooks, type HomeInput, type JoinHookContext, type MemberHookContext } from "../../platform/src/accounts.ts";
+import { Accounts, homeCityOf, RECYCLED_AFTER_MS, type AccountHooks, type HomeInput, type JoinHookContext, type MemberHookContext } from "../../platform/src/accounts.ts";
 import { joinAgeCheck } from "../../platform/src/age.ts";
 import { detectKeyword as platformKeyword, keywordEvent, leaveTarget, resolveConsent, stopScope, type StopScope } from "../../platform/src/consent.ts";
 import { devShortcutsAllowed, isProduction, platformEnv, type Env } from "../../platform/src/env.ts";
@@ -691,7 +691,8 @@ export class NetworkService implements RuntimeHost {
    * Sends to a number whose last consent event for this app (or for every app) is an opt-out
    * (platform.consent_events, PLATFORM_STOP_SCOPE). Compliance texts (the STOP confirmation, a decline)
    * still go. A number with no event at all (a member from before the platform) is not refused here:
-   * the member's own opted_out flag covers it.
+   * the member's own opted_out flag covers it. Sends to a number on hold or silent for 12 months, a
+   * banned number and a suppressed number are refused too.
    */
   async consentRefused(rt: NetworkRuntime, batch: Outbound[]): Promise<Set<string>> {
     const out = new Set<string>();
@@ -702,10 +703,18 @@ export class NetworkService implements RuntimeHost {
       if (e164) byPhone.set(e164, [...(byPhone.get(e164) ?? []), b]);
     }
     for (const [e164, sends] of byPhone) {
+      const phone = await this.people.findPhone(e164);
+      // A number on hold, or silent for 12 months (it may have a new owner: its next message puts it on hold,
+      // Accounts.seen), gets nothing but compliance texts until staff decide.
+      if (phone && (phone.hold !== null || (phone.lastSeenAt !== null && this.clock.now() - phone.lastSeenAt > RECYCLED_AFTER_MS))) {
+        for (const b of sends) out.add(b.id);
+        this.log(`[hold] ${sends.length} send(s) to a held or stale number refused (${rt.id})`);
+        continue;
+      }
       // A number that deleted everything stays suppressed until the person opts in again (platform-15).
       const suppressed = await this.people.isSuppressed(this.phoneKey(e164));
       // A banned number or person gets nothing but compliance texts, on every app (PRD 40.5).
-      const banned = !suppressed && (await this.people.isBanned(this.phoneKey(e164), (await this.people.findPhone(e164))?.personId ?? null));
+      const banned = !suppressed && (await this.people.isBanned(this.phoneKey(e164), phone?.personId ?? null));
       if (banned) { for (const b of sends) out.add(b.id); this.log(`[ban] ${sends.length} send(s) to a banned number refused (${rt.id})`); continue; }
       if (!suppressed && resolveConsent(await this.people.lastConsent(e164, rt.app.id)) !== "opted_out") continue;
       for (const b of sends) out.add(b.id);
