@@ -92,6 +92,15 @@ describe("block and report targets in a group plan", () => {
       ["block out 2 hours", "other", undefined],
       ["block this thing now", "other", undefined],
       ["report back tomorrow", "other", undefined],
+      ["block my date", "block", "my date"],
+      ["I want to block my match", "block", "my match"],
+      ["report my date", "report", "my date"],
+      ["report my match", "report", "my match"],
+      ["block my calendar", "other", undefined],
+      ["block J.R. Smith", "block", "J.R. Smith"],
+      ["can you block Ben please", "block", "Ben"],
+      ["can you block Ben please?", "block", "Ben"],
+      ["block St. Clair, he was rude", "block", "St. Clair"],
     ];
     for (const [text, expectedKind, expectedTarget] of cases) {
       const c = classify(text);

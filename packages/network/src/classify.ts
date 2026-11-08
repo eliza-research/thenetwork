@@ -67,8 +67,8 @@ const RX = {
   invite: /\b[Mm]y (?:friend|buddy|pal|coworker|roommate|cousin) ([A-Z][a-z]+)\b/,
   inviteIntent: /\b(invite|bring|add|sign \w+ up|sign up|refer|include|loop in)\b|\bwould (love|like|enjoy|be into) (this|it|that|joining)\b|\b(wants?|wanted) (to join|in)\b|\bhas been (wanting|looking)\b|\bshould (join|be here|get an invite)\b|\blooking for something like this\b/i,
   cancel: /\b(can'?t make it|have to bail|can'?t come|need to cancel|something came up)\b/i,
-  block: /^\s*(?:(?:please\s+)?(?:can|could)\s+you\s+(?:please\s+)?|(?:please\s+)?i(?:'d|d|\s+would)?\s*(?:like|want|need)\s+to\s+|please\s+)?block\s+(?!(?:back|on|out|off|of|time|my|it|in|for|a|(?:the|this|that)(?!\s+(?:guy|girl|person|dude|man|woman)\b))\b)(.+)$/i,
-  report: /^\s*(?:(?:please\s+)?(?:can|could)\s+you\s+(?:please\s+)?|(?:please\s+)?i(?:'d|d|\s+would)?\s*(?:like|want|need)\s+to\s+|please\s+)?report\s+(?!(?:back|on|to|when|it|in|for|my|a|(?:the|this|that)(?!\s+(?:guy|girl|person|dude|man|woman)\b))\b)(.+)$/i,
+  block: /^\s*(?:(?:please\s+)?(?:can|could)\s+you\s+(?:please\s+)?|(?:please\s+)?i(?:'d|d|\s+would)?\s*(?:like|want|need)\s+to\s+|please\s+)?block\s+(?!(?:back|on|out|off|of|time|my(?!\s+(?:date|match)\b)|it|in|for|a|(?:the|this|that)(?!\s+(?:guy|girl|person|dude|man|woman)\b))\b)(.+)$/i,
+  report: /^\s*(?:(?:please\s+)?(?:can|could)\s+you\s+(?:please\s+)?|(?:please\s+)?i(?:'d|d|\s+would)?\s*(?:like|want|need)\s+to\s+|please\s+)?report\s+(?!(?:back|on|to|when|it|in|for|my(?!\s+(?:date|match)\b)|a|(?:the|this|that)(?!\s+(?:guy|girl|person|dude|man|woman)\b))\b)(.+)$/i,
   plans: /\b(anything fun|what'?s (on|happening|good)|something to do|plans? (this|for the) (weekend|week|tonight)|fun (going on|this weekend)|any (events|plans))\b/i,
   peopleAsk: /\b(anyone (around|who|want|up for)|looking for (a |an |someone|people|other|more)|hoping to|find (me )?(a|an|someone|people)|want to meet|wanna meet|know anyone|still hoping|would love to (meet|find)|i'?d (love|like) to (meet|find)|searching for|in search of)\b/i,
   feedback: /\b(it was (great|nice|fine|fun|good|ok|okay)|we (really )?clicked|(not|wasn'?t) great|didn'?t (really )?click|never showed|would (definitely )?(do it|meet|hang out) again|not much in common)\b/i,
@@ -132,9 +132,17 @@ export function classify(body: string): Classified {
   const other = otherAgeStated(t);
   if (other !== undefined) out.otherAge = other;
 
+  const cleanTarget = (raw: string) => {
+    let s = raw.trim();
+    s = s.replace(/\s+(?:please|pls)\b[.!?,;:]*$/i, "");
+    s = s.replace(/[,;:]\s*.*$/, "");
+    s = s.replace(/[.!?,;:]+$/, "");
+    return s.trim();
+  };
+
   const blk = RX.block.exec(t), rep = RX.report.exec(t);
-  if (blk) return { ...out, kind: "block", target: blk[1]!.replace(/[,;:.!?].*$/, "").trim() };
-  if (rep) return { ...out, kind: "report", target: rep[1]!.replace(/[,;:.!?].*$/, "").trim() };
+  if (blk) return { ...out, kind: "block", target: cleanTarget(blk[1]!) };
+  if (rep) return { ...out, kind: "report", target: cleanTarget(rep[1]!) };
   if (RX.cancel.test(t)) return { ...out, kind: "cancel" };
   const inv = RX.invite.exec(t);
   if (inv && RX.inviteIntent.test(t)) return { ...out, kind: "invite_friend", friendName: inv[1] };
