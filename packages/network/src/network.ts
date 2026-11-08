@@ -454,6 +454,8 @@ const EMPLOYER_TEXT = /\b(works? (at|for)|employer|employed|company|job|occupati
 /** How long a want a member told us about stays fresh (the engine's intent horizon). */
 const LEARNED_DESIRE_DAYS = 60;
 const OPEN_STAGES = new Set(["review", "probing", "scheduled"]);
+/** A plan member who has left the plan (a no, silence, opt-out, watch): a plan probe is no longer about them. */
+const PLAN_OUT = new Set<PStatus>(["no", "unavailable", "dropped"]);
 const EMPTY_SET: ReadonlySet<string> = new Set();
 const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 /** A tie-break in [0, 1) from the seed and two ids (FNV-1a): stable per run, not id order. */
@@ -2324,6 +2326,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (yes) {
       if (!retry) this.counters.probeYes++;
       o.status.set(m.id, "available"); o.primed.add(m.id);
+      const declinedBefore = o.declinedTimes;
       if (offered.length) {
         o.picks = { ...o.picks, [m.id]: picked.map(x => x.start) };
         o.declinedTimes = [...(o.declinedTimes ?? []), ...offered.filter(x => !picked.includes(x)).map(x => x.start)];
@@ -2336,7 +2339,15 @@ export class ConsentNetwork implements NetworkUnderTest {
       // the plan would be set at a time this member never said works, and is often called off.
       // The retry never repeats a time anyone turned down. When the others named times and every one
       // of them is gone, there is nothing to offer and no time to book: the opportunity closes.
-      if (offered.length && !picked.length && this.commonTimeGone(o, m.id, this.now())) { this.ack(m, "No problem."); return this.closeNoCommonTime(o, m.id); }
+      if (offered.length && !picked.length && this.commonTimeGone(o, m.id, this.now())) {
+        this.ack(m, "No problem.");
+        if (o.participants.length <= 2) return this.closeNoCommonTime(o, m.id);
+        // A group goes on without this member, as after a no (docs/network.md 4.1). The times only
+        // they turned down are not held against the others.
+        if (declinedBefore) o.declinedTimes = declinedBefore; else delete o.declinedTimes;
+        o.status.set(m.id, "unavailable"); this.replaceOrClose(o, m.id);
+        return this.advanceProbes(o);
+      }
       const fresh = offered.length && !picked.length && !retry ? this.timeOptionsFor(o, m.id, this.now()) : [];
       if (fresh.length) {
         o.timeRetry = [...(o.timeRetry ?? []), m.id];
@@ -2365,6 +2376,9 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** The answer to a plan probe. "Can't make that time" is a no, and a time this member is not free (availability evidence). */
   private onPlanProbeAnswer(m: MemberState, o: Opp, yes: boolean, body: string) {
     if (!o.planRun || o.planRun.answers[m.id] !== "pending") return;
+    // The probe expires at the probe deadline (plans.ts): an answer after it, before the tick ran the deadline, comes too late.
+    this.planDeadline(o, this.now());
+    if (o.stage === "closed") { if (yes) this.noteFor(m.id, copy.planNotTogether); return; }
     m.answered++;
     this.ctx.log("probe_answer", { oppId: o.id, memberId: m.id, yes, plan: true });
     if (yes) this.counters.probeYes++; else { this.counters.probeNo++; this.emit({ type: "declined", member: m.id, planId: o.id }, `${o.id}:${m.id}`); }
@@ -2453,6 +2467,15 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     const t = this.meetingTime(o, now);
     if (!t) return this.closeNoCommonTime(o, o.participants[0]!);
+    // A yes to a plan waiting for quorum does not make a member busy, so the plan can be booked while
+    // this item waits: a member booked elsewhere within 4 hours of the time is left out, as bookPlan does.
+    const clash = o.participants.find(id => this.bookedNear(id, t.at, o.id));
+    if (clash) {
+      this.refuse(clash, "reveal", "booked_elsewhere");
+      o.status.set(clash, "unavailable");
+      this.replaceOrClose(o, clash);
+      return this.maybeReveal(o);
+    }
     const areas = o.participants.map(p => this.member(p).area);
     // The app's pack may pick the place (slop: a public place near the midpoint of the two homes). Never a home.
     const packVenue = o.fixedVenue ? undefined : this.opts.hooks?.venue?.({ ...this.hookOpp(o), meetingAt: t.at }, this.inputOnce());
@@ -2526,7 +2549,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /**
    * A participant drops out of a booked meeting. `ack` = they told us (reply to them). The others
-   * hear it is off (pairs) or still on (groups of 3 or more), never why.
+   * hear it is still on (3 or more left) or off (fewer), never why.
    */
   private handleDrop(m: MemberState, o: Opp, ack = true) {
     // Counted as a reveal decision only for a member the booked plan reached who had not confirmed it.
@@ -2540,7 +2563,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (ack) this.send(m, "No worries, thanks for the heads up.", { type: "info" }, "reply");
     if (m.awaiting?.oppId === o.id) m.awaiting = undefined;
     const still = o.participants.filter(p => o.status.get(p) === "yes");
-    const keep = o.participants.length > 2 && still.length >= 2;
+    // A group stays on with 3 or more. Two who are left said yes to a group, not to a meeting of two.
+    const keep = still.length >= 3;
     // Only members who were told about the plan hear that it changed.
     for (const id of still) if (o.bookedTold?.includes(id)) this.send(this.member(id), copy.dropNotice(m.first, keep), { type: "cancellation", proposalId: o.id }, "cancellation",
       { hook: { t: "drop_notice", oppId: o.id, meetingAt: o.meetingAt } });
@@ -3032,7 +3056,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const res = this.send(m, text, {
       type: "plan_probe", proactive: true, planInvite: allowance, ...(allowance ? { lane: "plan" } : {}),
       plan: { planId: o.id, activity: a.id, window: { ...o.plan.window }, size: o.plan.invited.length, ...(o.plan.place.area ? { area: o.plan.place.area } : {}) },
-    }, "probe", { about: o.plan.invited, hook: { t: "plan_probe", oppId: o.id, id }, noDefer: true, planInvite: allowance });
+    }, "probe", { about: o.participants.filter(x => !PLAN_OUT.has(o.status.get(x)!)), hook: { t: "plan_probe", oppId: o.id, id }, noDefer: true, planInvite: allowance });
     if (res === "sent") { m.planDay = day; if (allowance) this.plansCounters.planInvitesAllowance++; else this.plansCounters.planInvitesIntroCap++; }
   }
 
@@ -3044,6 +3068,13 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.ctx.log("send_deferred", { memberId: id, kind: "plan_probe", oppId: o.id, reason, until: m ? Math.max(now, this.openAt(m, "slot", now)) : now });
   }
 
+  /** At the probe deadline without quorum: the fallback runs. */
+  private planDeadline(o: Opp, now: number) {
+    if (o.stage !== "probing" || o.planRun?.stage !== "probing") return;
+    const r = plans.checkPlanDeadline(o.planRun, now);
+    if (r.action.kind === "fallback") { o.planRun = r.run; this.planFallback(o); }
+  }
+
   /** A plan probe answer (or silence, or a seat that is no longer possible): the quorum run decides what happens next. */
   private planAnswer(o: Opp, id: MemberId, yes: boolean, silent = false) {
     if (!o.planRun) return;
@@ -3052,6 +3083,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (run === o.planRun) return;
     o.planRun = run;
     if (yes) { this.plansCounters.planYes++; o.status.set(id, "available"); } else { if (!silent) this.plansCounters.planNo++; o.status.set(id, silent ? "unavailable" : "no"); }
+    // A yes after the late-join cutoff was told "I'll tell you once enough people are in": it is out, and hears so in the next message.
+    if (run.answers[id] === "late") { o.status.set(id, "unavailable"); this.noteFor(id, copy.planNotTogether); return; }
     this.planAct(o, action);
   }
 
@@ -3062,6 +3095,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       case "probe_partner": case "backfill": {
         const id = action.member;
         if (!o.participants.includes(id)) o.participants.push(id);
+        // Plan.invited is the primary group plus alternates once backfilled: the probe copy is built for invitees only.
+        if (!o.plan!.invited.includes(id)) { o.plan = { ...o.plan!, invited: [...o.plan!.invited, id] }; o.planRun = { ...o.planRun!, plan: o.plan }; }
         o.alternates = o.alternates.filter(x => x !== id);
         o.status.set(id, "probing");
         o.turnAt = { ...o.turnAt, [id]: this.now() };
@@ -3081,10 +3116,13 @@ export class ConsentNetwork implements NetworkUnderTest {
   private bookPlan(o: Opp, going: MemberId[], fromFallback = false): void {
     const plan = o.plan!;
     const a = plans.activityById.get(plan.activityId)!;
+    // Yes-sayers left out here were told "I'll tell you once enough people are in": they hear that it did not come together (never why).
+    const left: MemberId[] = [];
     let keep = going.filter(id => {
       if (!this.bookedNear(id, plan.window.start, o.id)) return true;
       o.status.set(id, "unavailable"); this.plansCounters.planConflictsDropped++;
       this.ctx.log("plan_conflict", { oppId: o.id, memberId: id });
+      left.push(id);
       return false;
     });
     // In the order they said yes: a member blocked by someone already in drops out, never both of
@@ -3093,16 +3131,20 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const id of keep) {
       const chk = this.checkRecipient(id, "reveal", { about: [...seated, id], reply: false });
       const why = !chk.ok ? chk.reason : attention.canSendLogistics({ outboundSinceInbound: this.member(id).outbound ?? 0 }) ? undefined : "conversation_streak";
-      if (why) { this.refuse(id, "reveal", why); o.status.set(id, "unavailable"); continue; }
+      if (why) { this.refuse(id, "reveal", why); o.status.set(id, "unavailable"); left.push(id); continue; }
       seated.push(id);
     }
     keep = seated;
-    const enough = keep.length >= plan.quorum || (keep.length >= 2 && a.groupSize[0] <= 2);
+    // Never a minor or a member on watch: any later message about this plan to them is a contact.
+    const tell = (ids: MemberId[]) => { for (const id of ids) if (!this.member(id).minor && this.trust.ok(id)) this.noteFor(id, copy.planNotTogether); };
+    // A smaller group of 3 or more is booked like the original; a group plan is never booked as a pair.
+    const enough = keep.length >= plan.quorum || (keep.length >= 3 && a.groupSize[0] <= 2);
     if (!enough) {
       o.planRun = { ...o.planRun!, stage: "closed" };
-      if (fromFallback || keep.length < 2) { for (const id of keep) this.noteFor(id, copy.planNotTogether); return this.close(o, "plan did not come together"); }
+      if (fromFallback || keep.length < 2) { for (const id of keep) this.noteFor(id, copy.planNotTogether); tell(left); return this.close(o, "plan did not come together"); }
       return this.planFallback(o);
     }
+    tell(left);
     const now = this.now();
     o.meetingAt = plan.window.start; o.venue = plan.place.name; o.venueArea = plan.place.area ?? "";
     const gv = VENUES.find(v => v.id === plan.venueId);
@@ -3142,7 +3184,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /**
    * No quorum by the deadline (plans ask 7): a smaller plan of the yes-sayers when the activity
-   * allows it; else a public event for each yes-sayer; else next week (the demand is carried to the
+   * allows it (two of them get a fresh activity-partner plan, never a direct booking); else a public event for each yes-sayer; else next week (the demand is carried to the
    * next planner runs). Yes-sayers hear "that plan didn't come together" in their next message, and
    * never who declined.
    */
@@ -3155,8 +3197,16 @@ export class ConsentNetwork implements NetworkUnderTest {
     const { fallback, carry } = plans.planFallback(run, now, w.events, this.pcfg);
     this.planCarry.push(...carry);
     this.ctx.log("plan_fallback", { oppId: o.id, kind: fallback.kind, members: fallback.kind === "none" ? 0 : fallback.members.length });
-    if (fallback.kind === "smaller") return this.bookPlan(o, fallback.members, true);
+    if (fallback.kind === "smaller" && !fallback.partnerPlan) return this.bookPlan(o, fallback.members, true);
     this.close(o, "plan did not come together");
+    // Two yes-sayers said yes to a group, not to a one-to-one meeting: the pair is never booked
+    // directly. The engine's fresh activity-partner plan asks each of them again, after review. The group
+    // plan is over for them either way, and the partner plan can be rejected in review: they hear so.
+    if (fallback.kind === "smaller") {
+      for (const id of fallback.members) this.noteFor(id, copy.planNotTogether);
+      this.submitPlan(fallback.partnerPlan!, now);
+      return;
+    }
     if (fallback.kind === "solo_event") {
       const ev = w.events.find(e => e.id === fallback.eventId);
       for (const id of fallback.members) {
@@ -3261,18 +3311,21 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const offer of this.crewOffers) if (!offer.resolved && now - offer.at > 3 * DAY) this.resolveCrew(offer);
     for (const crew of this.crews) {
       if (crew.handedOff) continue;
-      if ([...this.opps.values()].some(o => o.plan?.crewId === crew.id && OPEN_STAGES.has(o.stage))) continue;
+      const sessions = [...this.opps.values()].filter(o => o.plan?.crewId === crew.id);
+      if (sessions.some(o => OPEN_STAGES.has(o.stage))) continue;
+      // Only sessions that took place count: one rejected or expired in review, or called off, never met.
+      if (sessions.filter(o => o.stage === "done").length >= this.pcfg.crews.handOffAfterSessions) { crew.handedOff = true; this.ctx.log("crew_handoff", { crewId: crew.id }); continue; }
       const v = PLAN_VENUES.find(x => x.id === crew.venueId);
       const place = v ? { name: v.name, area: v.area } : { name: "the usual spot" };
       const members = crew.members.filter(id => { const m = this.members.get(id); return !!m && this.planSeatOk(m); });
       if (members.length < this.pcfg.crews.minMembers) continue;
       const next = plans.crewSessionPlan({ ...crew, members, hostRotation: crew.hostRotation.filter(h => members.includes(h)).length ? crew.hostRotation.filter(h => members.includes(h)) : members }, now, place, this.pcfg);
-      if (!next || crew.sessions.some(id => this.opps.get(id)?.plan?.window.start === next.window.start)) continue;
+      // crew.sessions holds plan ids, and a session's plan id is fixed by the crew and its start: one session per slot.
+      if (!next || crew.sessions.includes(next.id)) continue;
       const plan = this.withReach(next, now);
       crew.sessions.push(plan.id);
       this.plansCounters.crewSessions++;
       this.ctx.log("crew_session", { crewId: crew.id, session: crew.sessions.length, invited: plan.invited.length });
-      if (crew.sessions.length >= this.pcfg.crews.handOffAfterSessions) { crew.handedOff = true; this.ctx.log("crew_handoff", { crewId: crew.id }); }
       this.submitPlan(plan, now);
     }
   }
@@ -3402,10 +3455,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         if (m?.awaiting?.oppId === o.id) m.awaiting = undefined;
         this.planAnswer(o, p, false, true);
       }
-      if (o.stage === "probing" && o.planRun.stage === "probing") {
-        const r = plans.checkPlanDeadline(o.planRun, now);
-        if (r.action.kind === "fallback") { o.planRun = r.run; this.planFallback(o); }
-      }
+      this.planDeadline(o, now);
       this.planLane(o, now);
     }
     if (o.stage === "probing" && !o.plan) {
