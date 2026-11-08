@@ -278,6 +278,12 @@ export class Inbox {
         if (isStopText(ev.text)) n += await this.cancelBefore(sender, r.received_at, parsed.filter(w => w.id !== r.id && !isComplianceText(w.ev?.text)).map(w => w.id as string));
       } catch (e) {
         const attempts = (r.attempts as number) + 1;
+        // A STOP is never dropped: it stays pending and is tried again on each tick until it is recorded.
+        if (attempts >= MAX_ATTEMPTS && isStopText(ev.text)) {
+          await this.o.sql`update platform.inbound set attempts = ${attempts} where id = ${r.id}`;
+          this.o.log(`[alert] inbound STOP ${r.id} failed ${attempts} times, handled again on the next tick: ${(e as Error).message}`);
+          return n;
+        }
         if (attempts >= MAX_ATTEMPTS) {
           await this.o.sql`update platform.inbound set status = 'failed', attempts = ${attempts}, outcome = 'failed', handled_at = ${new Date(this.o.clock.now())},
             handled_order = nextval('platform.inbound_handled_seq'), event = null, sender = null where id = ${r.id}`;

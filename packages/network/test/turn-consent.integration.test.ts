@@ -13,6 +13,7 @@ import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {SIGNALS_PATH, TURN_PATH, type TurnRequest} from "../../core/src/svc/contract.ts";
 import {DryRunAdapter} from "../service/channel.ts";
 import {NetworkService} from "../service/service.ts";
+import {Inbox} from "../service/inbox.ts";
 
 const user = process.env.USER ?? "postgres";
 const db = `network_turn_consent_${randomUUID().replaceAll("-", "")}`;
@@ -164,6 +165,21 @@ describe.skipIf(!pgAvailable)("turn and consent", () => {
     expect(await service.accounts.optedIn("ntwrk", phone)).toBe(true);
     const person = (await service.accounts.personFor(phone))!;
     expect((await service.people.getMembership(person.id, "ntwrk"))?.state).toBe("active");
+  }, 60_000);
+  test("SD-129: a legacy-webhook STOP is not dropped when the database fails for more than 5 ticks", async () => {
+    const from = "+12125550129";
+    // The handler fails while the database is down (6 ticks), then works again.
+    let down = 6;
+    const handled: string[] = [];
+    const box = new Inbox({sql, clock, log: () => {}, senderKey: x => `key:${x}`,
+      handle: async ev => { if (down > 0) { down--; throw new Error("synthetic database outage"); } handled.push(ev.text); return "handled"; }});
+    const ev = {kind: "message", channel: "sim", messageId: "sd129-stop", from, to: "+12125550100", chatId: from, isGroup: false,
+      text: "STOP", mediaUrls: [], transport: "imessage", receivedAt: clock.now()} as const;
+    expect(await box.receive(ev as never)).toBe("retry_later");
+    for (let tick = 0; tick < 6; tick++) { clock.advance(MINUTE); await box.drain(); }
+    expect(handled).toEqual(["STOP"]);
+    const [row] = await sql`select status from platform.inbound where id = 'msg:sim:sd129-stop'`;
+    expect(row.status).toBe("done");
   }, 60_000);
   test("SD-073: a banned member's text is not stored, handled or answered", async () => {
     const phone = "+12125550073";
