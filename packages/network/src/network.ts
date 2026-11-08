@@ -1433,8 +1433,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.trust.block(m.id, now, { target: target.id, met });
     // Before any report is filed: an urgent report by someone who met them holds the subject (fileReport ->
     // dropMember), which would close a shared booked date as "participant dropped" with no word to them.
+    // Only an item both of them are still in: a member who said no to a plan (or dropped out) stays in
+    // `participants`, and their block keeps the pair apart without calling the plan off for the others (F23).
+    const out = (o: Opp, id: MemberId) => { const s = o.status.get(id); return s === "no" || s === "unavailable" || s === "dropped"; };
     for (const o of [...this.opps.values()]) {
-      if (!OPEN_STAGES.has(o.stage) || !o.participants.includes(m.id) || !o.participants.includes(target.id)) continue;
+      if (!OPEN_STAGES.has(o.stage) || !o.participants.includes(m.id) || !o.participants.includes(target.id) || out(o, m.id) || out(o, target.id)) continue;
       if (o.stage === "scheduled") {
         // The other member hears it is off, never why or who (network-consent-18).
         for (const id of o.participants) if (id !== m.id && o.status.get(id) === "yes" && o.bookedTold?.includes(id)) {
