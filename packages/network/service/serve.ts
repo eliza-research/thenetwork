@@ -87,6 +87,11 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
       cookieName: id => (dev ? `sid_${id}` : "__Host-sid"), secureCookie: !dev,
       // submit_profile: the person's own profile, from their own agent, to their own member (decision 10).
       submitProfile: (personId, app, e164, text) => (isAppId(app) ? svc.submitProfile(personId, app, e164, text) : Promise.resolve("not_member" as const)),
+      // A staff or trust hold lives in the Network's state, not in platform.memberships.
+      memberHeld: async (app, memberId) => {
+        const rt = await svc.runtimeOfMember(app, memberId);
+        return rt ? rt.readState(n => n.trust.level(memberId) === "hold") : false;
+      },
       // get_updates and the inbox's surface signals (packages/notify; entry-flows doc 5).
       ...(svc.notify ? {
         updates: (personId, app, assistant, token) => (isAppId(app) ? svc.updatesFor(personId, app, assistant, token) : Promise.resolve([])),

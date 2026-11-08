@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { SQL } from "bun";
 import { pkceS256, sha256hex } from "../../packages/mcp/src/util.ts";
-import { Browser, connectMcp, newPhone, pgAvailable, REDIRECT, rpc, startStack, VERIFIER, webJoin, type Stack } from "./harness.ts";
+import { Browser, connectMcp, newPhone, pgAvailable, REDIRECT, rpc, startStack, toolData, VERIFIER, webJoin, type Stack } from "./harness.ts";
 
 const T = 180_000;
 if (!pgAvailable && process.env.REQUIRE_PG === "1") throw new Error("tests/e2e needs Postgres (REQUIRE_PG=1)");
@@ -80,5 +80,24 @@ describe.skipIf(!pgAvailable)("OAuth tool calls and sign-in requests", () => {
     expect((await sql`select id from oauth.grants where client_id = ${client.client_id} and revoked_at is null`).length).toBe(1);
     expect(d.headers.get("location") ?? "").not.toContain("access_denied");
     expect((await sql`select 1 from oauth.audit where client_id = ${client.client_id} and kind = 'consent_denied'`).length).toBe(0);
+  }, T);
+
+  // SD-428: a staff hold stops everything with the member (docs/admin-console.md 3.7.1), and submit_profile
+  // "never reaches a stopped or held one" (packages/mcp/src/tools.ts). Before the fix the hold changed only
+  // the Network's trust state, so check_status still said "active" and submit_profile was accepted.
+  test("a member on a staff hold reads on_hold and cannot submit a profile", async () => {
+    const phone = newPhone(), b = new Browser();
+    expect((await webJoin(st, "peon", phone, { age: 30, browser: b })).res.status).toBe(200);
+    const c = await connectMcp(st, "peon", phone, { browser: b });
+    expect(c.token?.access_token, c.html.slice(0, 300)).toBeString();
+    const memberId = ((await sql`select m.id from network.members m join platform.phone_identities ph on ph.person_id = m.person_id where m.app_id = 'peon' and ph.e164 = ${phone}`)[0] as { id: string }).id;
+    const call = (name: string, args: Record<string, unknown> = {}) => rpc(st, "peon", "/mcp", "tools/call", { name, arguments: args }, c.token!.access_token).then(toolData);
+    expect((await call("check_status")).status).toBe("active");
+
+    expect(await (await st.staff("/apps/peon/safety/hold", { memberId, note: "report review" })).json()).toEqual({ ok: true });
+    expect((await call("check_status")).status).toBe("on_hold");
+    const sent = await call("submit_profile", { about: "I like long walks, chess in the park and Sunday coffee with friends." });
+    expect(sent.submitted).toBe(false);
+    expect(sent.status).toBe("on_hold");
   }, T);
 });

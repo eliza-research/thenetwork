@@ -112,6 +112,8 @@ export interface PlatformParts {
   updates?: PlatformHooks["updates"];
   /** Surface signals for the inbox (NetworkService.assistantLinked). */
   assistantLinked?: PlatformHooks["assistantLinked"];
+  /** True when the app's Network holds this member (a staff or trust hold until a review). The membership row does not show it. */
+  memberHeld?: (app: AppInfo["id"], memberId: string) => Promise<boolean>;
 }
 
 function cookieValue(header: string | null, name: string): string | undefined {
@@ -201,7 +203,9 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       const app = p.app(id);
       if (!app) return "not_joined";
       const m = await p.store.getMembership(personId, app.id);
-      return publicStatus(m?.state, m?.review);
+      const status = publicStatus(m?.state, m?.review);
+      // A held member is not signed up as usual: the agent reads on_hold, and submit_profile never reaches them.
+      return m && (status === "active" || status === "onboarding") && (await p.memberHeld?.(app.id, m.memberId)) ? "on_hold" : status;
     },
     session: p.sessions && (async (id, req) => {
       const app = p.app(id);
