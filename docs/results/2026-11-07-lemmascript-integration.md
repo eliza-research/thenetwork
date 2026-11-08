@@ -121,7 +121,7 @@ Hand-written from docs/research/lemmascript/wave3-*.md. Wave 3 took the items th
 - platform, deploy, messaging: the JPEG and PNG walks are proved to end and stay in bounds (segments.ts; 41,204 differential cases, 0 differences); the backup restore refusal is proved (refusal.ts); `dedupeKeysFor` and `isE164` are removed.
 
 Validation on the final tree, 2026-11-08, macOS, Bun 1.3.14, Dafny 4.11.0 release (Z3 4.12.1), lsc 0.6.6, no model calls:
-`bun run typecheck` 0 errors; `bun run sim` PASS 371/371 blocking gates; `bun run test:e2e` 42 pass; `bun run test:integration` 729 pass, 8 skip, 21 fail, all in the 7 observatory real-mode files that fail the same way on the base.
+`bun run typecheck` 0 errors; `bun run sim` PASS 371/371 blocking gates; `bun run test:e2e` 42 pass; `bun run test:integration` 729 pass, 8 skip, 21 fail under the local Bun 1.3.14. All 21 are in 7 observatory real-mode files, and the base fails them the same way. The cause is a SQL driver error in Bun 1.3.14 ("bind message has 3 result formats but query has 1 columns"). Under Bun 1.4.2, the version that CI and the README name, the full suite gives 750 pass, 8 skip, 0 fail.
 
 ### Founder decisions from wave 3
 
