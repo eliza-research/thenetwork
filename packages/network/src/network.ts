@@ -4252,11 +4252,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       });
       this.guardCache = { snap, key, guard };
     }
-    const leaks = this.guardCache.guard.check(text, { exceptOwner: recipient });
-    // A relayed text: what the sender wrote about themselves may go to the person they wrote to.
-    if (alsoOwner === undefined || !leaks.length) return leaks;
-    const theirs = new Set(this.guardCache.guard.check(text, { exceptOwner: alsoOwner }));
-    return leaks.filter(l => theirs.has(l));
+    const exceptOwners = alsoOwner === undefined ? (recipient ? [recipient] : []) : [recipient, alsoOwner];
+    return this.guardCache.guard.check(text, { exceptOwners });
   }
 
   /**

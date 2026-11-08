@@ -146,7 +146,7 @@ export async function evalsBlock(b: Block): Promise<void> {
   });
 
   // ---- leak guard ------------------------------------------------------------------------------------
-  type G = { text: string; want: "contact" | "leak" | "clean"; note: string; facts?: string[]; forbidden?: string[]; privateVocab?: string[]; canaries?: string[]; allow?: string[]; publicPhrases?: string[]; contacts?: boolean };
+  type G = { text: string; want: "contact" | "leak" | "clean"; note: string; facts?: (string | { text: string; owner?: string })[]; forbidden?: (string | { text: string; owner?: string })[]; privateVocab?: string[]; canaries?: string[]; allow?: string[]; publicPhrases?: string[]; contacts?: boolean; exceptOwner?: string; exceptOwners?: string[] };
   const guard = await jsonl<G>("guard/leaks.jsonl");
   const guardMiss = guard.filter(({ text, want, note: _n, ...opts }) => {
     const r = findLeaks(text, opts);
