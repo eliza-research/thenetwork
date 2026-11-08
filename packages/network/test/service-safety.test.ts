@@ -174,14 +174,15 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const before = directs.length;
     expect(await text(s, clock, ben, "peon")).toBe("held");
     expect(directs.length).toBe(before);
-    await web.login("peon", ben);
-    expect((await web.join("peon", 32, "Ben")).body).toMatchObject({ ok: false, error: "review" });
+    // On the web the banned number gets no code and no session (founder decision 3), so it cannot join either.
+    web.forget("peon");
+    clock.advance(31_000);
+    const sent = otp.sent;
+    expect((await web.json("peon", "POST", "/api/auth/otp/start", { phone: ben })).status).toBe(200);
+    expect(otp.sent).toBe(sent);
+    expect((await web.json("peon", "POST", "/api/auth/otp/verify", { phone: ben, code: otp.codes.get(ben) ?? "000000" })).status).toBe(400);
+    expect((await web.join("peon", 32, "Ben")).body).toMatchObject({ ok: false });
     expect(await memberOf("peon", ben)).toBeUndefined();
-    // Delete everything does not lift a ban: the same number still cannot join.
-    clock.advance(MINUTE);
-    expect((await web.json("peon", "POST", "/api/me/delete", { scope: "all" })).status).toBe(200);
-    await web.login("peon", ben);
-    expect((await web.join("peon", 32, "Ben")).body).toMatchObject({ ok: false, error: "review" });
     expect((await sql`select count(*)::int as n from platform.bans`)[0].n).toBe(1);
 
     // Audit: requested before result, for the hold and the ban.

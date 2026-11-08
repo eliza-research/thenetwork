@@ -7,6 +7,7 @@
 import { classifyYesNo } from "@thenetwork/core";
 import type { Gender } from "./profile.ts";
 import { SLOP_ASK_QUESTIONS } from "./copy.ts";
+import { confirmedAfter, firstQuestion } from "../decisions.ts";
 import {
   extractSlopProfile, finalize, HARD_FIELDS, hasField, MAX_ASKS_PER_QUESTION, type Dealbreaker, type DateActivity, type ExtractOptions, type OnboardField, type SlopOnboarding,
 } from "./extract.ts";
@@ -89,10 +90,11 @@ export function readBack(p: SlopOnboarding): string | undefined {
 export function applyCorrection(p: SlopOnboarding, text: string, o: ExtractOptions = {}): SlopOnboarding {
   const next = extractSlopProfile([{ text, asked: o.asked }], p, o);
   const changed = JSON.stringify(view(next)) !== JSON.stringify(view(p));
-  if (changed) return finalize({ ...next, confirmed: false });
-  const yes = classifyYesNo(text) === "yes" || /^\s*(?:right|correct|exactly|that'?s (?:it|right)|you got it|perfect|yup|yep|ya|ye|100|👍)\b/i.test(text);
-  return finalize({ ...next, confirmed: yes && !p.minor && !p.declined });
+  const yes = classifyYesNo(text) === "yes" || BARE_YES.test(text);
+  return finalize({ ...next, confirmed: confirmedAfter(changed, yes, next.minor, next.declined) });
 }
+/** Words that confirm a read-back only as the whole message. "right now i'm not sure" is not a yes. */
+const BARE_YES = /^\s*(?:right|correct|exactly|that'?s (?:it|right)|you got it|perfect|yup|yep|ya|ye|100|👍)(?:[\s.!,]|👍)*(?:thanks|thank you|thx|ty)?[\s.!]*$/i;
 const view = (p: SlopOnboarding) => ({ g: p.gender?.value, s: p.seeks?.value, a: p.ageRange?.value, d: p.distance?.value, l: p.location?.value, goal: p.goal?.value, db: p.dealbreakers.map(d => d.value).sort(), i: p.interests.map(x => x.value).sort(), ac: p.activities.map(x => x.value).sort(), f: p.free.map(x => x.value).sort(), age: p.age?.value, v: Object.fromEntries(Object.entries(p.values).map(([k, x]) => [k, x?.value])) });
 
 // ------------------------------------------------------------------------------------------ next question
@@ -120,9 +122,6 @@ export const SLOP_ONBOARD_QUESTIONS: Record<string, { field: OnboardField; text:
  * Undefined when there is nothing left to ask, or for a minor or a declined person (no dating questions).
  */
 export function nextQuestion(p: SlopOnboarding): { reason: string; field: OnboardField; text: string } | undefined {
-  if (p.declined || p.minor) return undefined;
-  const can = (r: string) => (p.askCounts[r] ?? 0) < MAX_ASKS_PER_QUESTION;
-  const q = (r: string) => ({ reason: r, ...SLOP_ONBOARD_QUESTIONS[r]! });
   const order: [boolean, string][] = [
     [!hasField(p, "age"), "slop_age"],
     [!hasField(p, "gender") && !hasField(p, "seeks"), "slop_orientation"],
@@ -138,8 +137,10 @@ export function nextQuestion(p: SlopOnboarding): { reason: string; field: Onboar
     [!hasField(p, "activities"), "slop_activities"],
     [!hasField(p, "free"), "slop_free"],
   ];
-  for (const [need, r] of order) if (need && can(r)) return q(r);
-  return undefined;
+  const i = firstQuestion(p.declined || p.minor, order.map(([need]) => need), order.map(([, r]) => p.askCounts[r] ?? 0), MAX_ASKS_PER_QUESTION);
+  if (i < 0) return undefined;
+  const r = order[i]![1];
+  return { reason: r, ...SLOP_ONBOARD_QUESTIONS[r]! };
 }
 
 /** Record that a question was sent (the re-ask cap). */

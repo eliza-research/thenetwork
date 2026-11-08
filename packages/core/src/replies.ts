@@ -7,6 +7,8 @@
 //  - negation-aware: "absolutely not", "not sure", "i'm not in", "don't think so", "ok no",
 //    "yeah no" are not yes;
 //  - hedges are "unsure" ("maybe", "probably", "idk", "who is it?"), so the caller asks again;
+//  - a question and reported speech are not answers: "are you sure?", "yes?", "she said yes" are
+//    "unsure", but "why not?" and "yes, where?" stay a yes;
 //  - "yes but not Thursday" is a yes with a time constraint; "sure, but only with a woman" is a
 //    conditional yes, which is "unsure" (leaning yes): the member must confirm the condition;
 //  - a later sentence that contradicts the first ("Sounds fun. I can't though.") is "unsure",
@@ -15,12 +17,16 @@
 //  - emoji (👍 ✅ 👎 🤔) count only when the text has no words that decide;
 //  - basic Spanish (sí, claro, dale, no gracias, no puedo, tal vez, pero no el jueves).
 // Anything it cannot read confidently is "unsure". Consent code must treat only "yes" as yes.
+// The decision from the signals is proved in reply-decision.ts; the regex tables here are checked only
+// by the evals/replies.jsonl rows.
 //
 // parseOptOut reads "please stop texting me", "unsubscribe", "para", "no más mensajes" etc.
 // Exact carrier keywords are "exact"; free-text opt-outs are "likely" (the caller honors them
 // and sends one confirmation, per the TCPA "reasonable means" rule).
 
-export type ReplyAnswer = "yes" | "no" | "unsure";
+import { decideReply, decideWithoutWords, isDecisive, type ReplyAnswer, type ReplySignal, type ReplySignalKind, type ReplyVerdict } from "./reply-decision.ts";
+
+export type { ReplyAnswer };
 
 export interface ReplyConstraint {
   /** "time": a day/time restriction ("not thursday", "after 7"). "condition": anything else ("only with women"). */
@@ -65,14 +71,13 @@ function normalize(s: string): string {
 // Each entry is matched on the normalized text, in this order; a match masks its span so a later
 // pattern does not match inside it ("no problem" is not a "no"; "absolutely not" is not a yes).
 
-type Kind = "yes" | "no" | "unsure" | "timeNeg" | "counter" | "cond" | "reversal" | "neutral";
-interface Rule { kind: Kind; re: RegExp; strong?: boolean }
+interface Rule { kind: ReplySignalKind; re: RegExp; strong?: boolean }
 
 const DAY = "(?:mon(?:day)?s?|tue(?:s|sday)?s?|wed(?:nesday)?s?|thu(?:r|rs|rsday)?s?|fri(?:day)?s?|sat(?:urday)?s?|sun(?:day)?s?|weekends?|weekdays?|mornings?|afternoons?|evenings?|nights?|tonight|today|tomorrow|tmrw|tmr|this week|next week|this weekend|lunes|martes|miercoles|jueves|viernes|sabados?|domingos?|fin de semana|fines de semana|manana|hoy|esta noche|esta semana|la semana que viene|la proxima semana)";
 const CLOCK = "(?:\\d{1,2}(?::\\d{2})?\\s?(?:am|pm|a\\.m\\.|p\\.m\\.)|noon|midnight|\\d{1,2}(?::\\d{2})?)";
 const TIME_WORD = new RegExp(`\\b(?:${DAY})\\b|\\b(?:after|before|by|until|till|from|despues de las|antes de las)\\s+${CLOCK}|\\b\\d{1,2}(?::\\d{2})?\\s?(?:am|pm)\\b|\\b(?:noon|midnight)\\b`);
 
-const r = (kind: Kind, src: string, strong = false): Rule => ({ kind, re: new RegExp(src, "g"), strong });
+const r = (kind: ReplySignalKind, src: string, strong = false): Rule => ({ kind, re: new RegExp(src, "g"), strong });
 
 const RULES: Rule[] = [
   // Positive idioms that contain a negation word.
@@ -91,14 +96,18 @@ const RULES: Rule[] = [
   r("no", "\\b(?:absolutely|definitely|certainly|totally|hell|heck|of course|obviously|surely|honestly|really|seriously) (?:not|no)\\b", true),
   r("no", "\\b(?:claro|por supuesto|obvio|desde luego) que no\\b", true),
   r("no", "\\b(?:no thanks?|no thank you|no ty|no gracias|no way|hard pass|i'll pass|i will pass|i'd pass|ill pass|gonna pass|going to pass|pass on (?:this|that|it)|i pass|count me out|i'm out|not interested|no interest|not for me|not my thing|not my scene|not really|rather not|i'd rather not|prefer not|i don't think so|don't think so|i don't want|don't want to|do not want|not feeling it|not up for|not in the mood|no can do|i can't|can't|cannot|can not|won't|will not|i guess not|doesn't work|does not work|not work(?:ing)? for me|bail|i'm not (?:in|down|interested|up for it|available|free|going|coming)|i'm busy|too busy|i'm swamped|booked up|not available|not free|unavailable|unable|i decline|decline|leave me alone|stop texting|unsubscribe|probably not|prob not|likely not|i doubt it|doubt it|para nada|de ninguna manera|ni loco|ni loca|ni hablar|mejor no|no puedo|no me interesa|no quiero|no voy|no creo|imposible|paso)\\b", true),
+  // Reported speech: someone else's answer is not the member's ("she said yes"; "i said yes" stays a yes).
+  r("unsure", "(?<!\\b(?:i|we) )\\b(?:said|says|told|saying)(?: (?:me|us|them|him|her))?[ :,\"']+(?:yes|yeah|yep|yup|ok|okay|sure)\\b"),
   // Hedges.
-  r("unsure", "\\b(?:not (?:sure|certain|100%|positive|definitely|decided)|unsure|uncertain|maybe|mayb|perhaps|possibly|might|probably|prob|potentially|idk|i don't know|don't know|dunno|let me (?:check|see|think|get back)|lemme (?:check|see|think)|i'll (?:think|check|see|let you know|get back)|think about it|get back to you|depends|it depends|we'll see|tbd|kinda|kind of|sort of|hmm+|hm+|who is it|who's (?:coming|going|it)|who else|tal vez|talvez|quizas|quiza|a lo mejor|no se|puede ser|depende|lo pienso|dejame (?:ver|pensar)|ya veremos|no estoy segur[oa])\\b"),
+  r("unsure", "\\b(?:are you sure|r u sure|you sure|u sure|what do you mean|i have a question|not (?:sure|certain|100%|positive|definitely|decided)|unsure|uncertain|maybe|mayb|perhaps|possibly|might|probably|prob|potentially|idk|i don't know|don't know|dunno|let me (?:check|see|think|get back)|lemme (?:check|see|think)|i'll (?:think|check|see|let you know|get back)|think about it|get back to you|depends|it depends|we'll see|tbd|kinda|kind of|sort of|hmm+|hm+|who is (?:it|this)|who's (?:coming|going|it)|who else|tal vez|talvez|quizas|quiza|a lo mejor|no se|puede ser|depende|lo pienso|dejame (?:ver|pensar)|ya veremos|no estoy segur[oa])\\b"),
   // Counter-offers.
-  r("counter", "\\b(?:different (?:day|time|date|week)|another (?:day|time|date|week)|some ?other (?:day|time)|other day|next week instead|instead|reschedule|rain ?check|raincheck|later in the week|otro dia|otra fecha|otra hora|mas adelante|la proxima)\\b"),
+  r("counter", "\\b(?:different (?:day|time|date|week)|another (?:day|time|date|week)|some ?other (?:day|time)|other day|next week instead|instead|reschedule|rain ?check|raincheck|later in the week|otro dia|otra fecha|otra hora|mas adelante|la proxima|some(?:one|body) else|some(?:one|body) different|(?:a )?different (?:person|match|one)|otra persona|alguien mas)\\b"),
   // Conditions.
   r("cond", "\\b(?:only if|if|as long as|provided|assuming|unless|only with|only on|only after|only before|only|solo si|solo con|siempre que|siempre y cuando|con tal (?:de )?que)\\b"),
   // Yes.
-  r("yes", "\\b(?:yes please|yes|yess+|yesh|yeah|yea|yah|ya|ye|yep|yup|yas+|aye|sure|sure thing|surely|ok+|okay|okie|okey|k+|alright|all right|i'm in|i am in|im in|count me in|sign me up|i'm down|im down|absolutely|definitely|def|deff|for sure|fs|of course|ofc|totally|100%|love to|i'd love|i would love|would love|love that|i'd like that|i would like that|sounds (?:good|great|fun|lovely|perfect|amazing|awesome|nice|like a plan|like fun)|that works|works for me|say less|let's do it|lets do it|let's go|lfg|happy to|glad to|can do|i can|i will|i'll be there|looking forward|go for it|go ahead|please do|do it|agreed|i guess|guess so|i think so|think so|intro me|in!|si claro|claro|dale|vale|orale|por supuesto|de acuerdo|me apunto|cuenta conmigo|me encantaria|con gusto)\\b"),
+  r("yes", "\\b(?:yes please|yes|yess+|yesh|yeah|yea|yah|ya|ye|yep|yup|yas+|aye|sure|sure thing|surely|ok+|okay|okie|okey|k+|alright|all right|i'm in|i am in|im in|count me in|sign me up|i'm down|im down|absolutely|definitely|def|deff|for sure|fs|of course|ofc|totally|100%|love to|i'd love|i would love|would love|love that|i'd like that|i would like that|sounds (?:good|great|fun|lovely|perfect|amazing|awesome|nice|like a plan|like fun)|that works|works for me|say less|let's do it|lets do it|let's go|lfg|happy to|glad to|can do|i'll be there|looking forward|go for it|go ahead|please do|do it|agreed|i guess|guess so|i think so|think so|intro me|in!|si claro|claro|dale|vale|orale|por supuesto|de acuerdo|me apunto|cuenta conmigo|me encantaria|con gusto)\\b"),
+  // "i can" and "i will" answer only on their own or before a verb of showing up ("i will report you" is no answer).
+  r("yes", "\\b(?:i can|i will)(?= *(?:$|[.,!;]|(?:do|make|come|be|go|join|too|definitely|totally)\\b))"),
   // Weak yes words count only at the start of a sentence or comma part, after at most two filler
   // words ("Great!", "oh perfect", "but friday works"), not inside a statement ("it was nice",
   // "honestly this is great timing").
@@ -120,8 +129,13 @@ const HEDGE_WHEN_NEGATED = /^(?:sure|certain|definitely|100%|positive|absolutely
 /** Benign "if" clauses that do not condition the yes ("if that works for them"). */
 const BENIGN_COND = /^(?:if (?:(?:that|it|this) works|so|possible|needed|you (?:want|like|need|can|think)|they (?:want|like|can)|(?:that's|it's|thats|its) (?:ok|okay|fine|cool|alright)|you'd like|you would like|everyone)|si (?:quieres|puedes|te parece))/;
 const CONTRAST = /\b(?:but|though|tho|although|however|except|pero|aunque|excepto)\b/;
+/** A sentence that ends as a question. */
+const ENDS_ASKING = /\?[^a-z0-9]*$/;
+/** "Why not?" is an idiom for yes, and "yes, where?" asks a detail after the yes. */
+const QUESTION_KEEPS_YES = /\b(?:why (?:the hell )?not|por que no)\b/;
+const DETAIL_QUESTION = /\b(?:what|when|where|which|how|who)\b/;
 
-interface Signal { kind: Kind; at: number; end: number; strong: boolean; sentence: number; text: string; bare?: boolean; condTime?: boolean }
+interface Signal extends ReplySignal { end: number; strong: boolean; text: string }
 
 function mask(s: string, from: number, to: number) { return s.slice(0, from) + " ".repeat(to - from) + s.slice(to); }
 
@@ -151,7 +165,7 @@ function extract(t: string): Signal[] {
     }
     for (const f of found) {
       work = mask(work, f.at, f.end);
-      out.push({ kind: rule.kind, at: f.at, end: f.end, strong: !!rule.strong, sentence: sentenceOf(f.at), text: f.text });
+      out.push({ kind: rule.kind, at: f.at, end: f.end, strong: !!rule.strong, sentence: sentenceOf(f.at), text: f.text, bare: false, condTime: false, contrast: false, asked: false });
     }
   }
   out.sort((a, b) => a.at - b.at);
@@ -181,6 +195,12 @@ function extract(t: string): Signal[] {
     const sentence = t.slice(starts[s.sentence]!, sentEnd).replace(/[^a-z' ]/g, " ").trim();
     s.bare = /^(?:(?:and|but|ok|okay|yeah|yes|sure|um+|uh+|hmm+|so|then|sorry|thanks|thank you|lol|haha)\s+)*(?:no|nope|nah|naw|no thanks|no thank you|no gracias)(?:\s+(?:thanks|thank you|sorry|lol|haha|gracias|man|dude))*$/.test(sentence);
   }
+  // A yes word in a sentence that asks a question is not an answer ("are you sure?", "yes?", "is that ok?").
+  for (const s of out) {
+    if (s.kind !== "yes") continue;
+    const sentence = t.slice(starts[s.sentence]!, starts[s.sentence + 1] ?? t.length);
+    s.asked = ENDS_ASKING.test(sentence) && !QUESTION_KEEPS_YES.test(sentence) && !DETAIL_QUESTION.test(t.slice(s.end, starts[s.sentence + 1] ?? t.length));
+  }
   return out;
 }
 
@@ -188,9 +208,6 @@ function extract(t: string): Signal[] {
 export function parseReply(text: string): ParsedReply {
   const raw = text ?? "";
   const t = normalize(raw).trim();
-  const constraints: ReplyConstraint[] = [];
-  const done = (answer: ReplyAnswer, reason: string, o: { counter?: boolean; leaning?: "yes" | "no" } = {}): ParsedReply =>
-    ({ answer, constraints, counter: !!o.counter, ...(o.leaning ? { leaning: o.leaning } : {}), reason });
 
   let sig = extract(t);
   // A reversal keeps only what follows it ("yes. actually no" → "no").
@@ -198,59 +215,20 @@ export function parseReply(text: string): ParsedReply {
   if (lastRev >= 0 && sig.slice(lastRev + 1).some(s => s.kind === "yes" || s.kind === "no" || s.kind === "unsure")) sig = sig.slice(lastRev + 1);
   sig = sig.filter(s => s.kind !== "reversal" && s.kind !== "neutral");
 
-  const decisive = sig.filter(s => s.kind === "yes" || s.kind === "no" || s.kind === "unsure" || s.kind === "timeNeg");
-  const counter = sig.some(s => s.kind === "counter");
-  const timeNegs = sig.filter(s => s.kind === "timeNeg");
-  const conds = sig.filter(s => s.kind === "cond");
+  const first = sig.find(s => isDecisive(s.kind));
+  // Emoji decide only when no word does, in a short reply (not an emoji at the end of a question).
+  if (!first) return reply(decideWithoutWords(sig.some(s => s.kind === "counter"), sig.some(s => s.kind === "cond"), (t.match(/[a-z]+/g) ?? []).length > 3, /\?/.test(t), NO_EMOJI.test(raw), UNSURE_EMOJI.test(raw), YES_EMOJI.test(raw)), sig);
+  for (const s of sig) s.contrast = s.at > first.at && CONTRAST.test(t.slice(first.end, s.at));
+  return reply(decideReply(sig), sig);
+}
 
-  if (!decisive.length) {
-    if (counter) return done("unsure", "counter", { counter: true });
-    if (conds.length) return done("unsure", "condition_only");
-    // Emoji decide only when no word does, in a short reply (not an emoji at the end of a question).
-    if ((t.match(/[a-z]+/g) ?? []).length > 3 || /\?/.test(t)) return done("unsure", /\?/.test(t) ? "question" : "no_signal");
-    if (NO_EMOJI.test(raw)) return done("no", "emoji_no");
-    if (UNSURE_EMOJI.test(raw)) return done("unsure", "emoji_unsure");
-    if (YES_EMOJI.test(raw)) return done("yes", "emoji_yes");
-    return done("unsure", /\?/.test(t) ? "question" : "no_signal");
-  }
-
-  const first = decisive[0]!;
-  const after = (s: Signal) => s.at > first.at;
-
-  if (first.kind === "no") {
-    for (const s of timeNegs) constraints.push({ kind: "time", text: s.text });
-    // "No. ... actually yes" is handled by the reversal rule; anything else after a refusal stays a refusal.
-    return done("no", "refusal", { counter });
-  }
-  if (first.kind === "timeNeg") {
-    for (const s of timeNegs) constraints.push({ kind: "time", text: s.text });
-    // "Not Thursday, but Friday works" offers another time; "Not this week, thanks" is a no.
-    const laterYes = sig.some(s => after(s) && s.kind === "yes");
-    if (laterYes) return done("unsure", "time_refused_other_offered", { counter: true, leaning: "yes" });
-    return done("no", "time_refusal", { counter });
-  }
-  if (first.kind === "unsure") {
-    const leanYes = sig.some(s => s.kind === "yes"), leanNo = sig.some(s => s.kind === "no");
-    if (counter) return done("unsure", "hedge_counter", { counter: true });
-    return done("unsure", "hedge", leanYes && !leanNo ? { leaning: "yes" } : leanNo && !leanYes ? { leaning: "no" } : {});
-  }
-
-  // first.kind === "yes"
-  const laterNo = sig.filter(s => after(s) && s.kind === "no");
-  if (laterNo.length) {
-    const sameSentence = laterNo.find(s => s.sentence === first.sentence && !CONTRAST.test(t.slice(first.end, s.at)));
-    // "ok no", "yeah no", "sure... no": the last word is the answer.
-    if (sameSentence && sig.filter(s => s.sentence === first.sentence && (s.kind === "yes" || s.kind === "no")).at(-1)!.kind === "no") return done("no", "yes_then_no");
-    const last = laterNo.at(-1)!;
-    if (last.bare && last.sentence !== first.sentence && !sig.some(s => s.kind === "yes" && s.at > last.at)) return done("no", "yes_then_bare_no");
-    if (laterNo.some(s => s.strong)) return done("unsure", "yes_no_conflict");
-  }
-  for (const s of timeNegs) constraints.push({ kind: "time", text: s.text });
-  for (const c of conds) constraints.push({ kind: c.condTime ? "time" : "condition", text: c.text });
-  if (sig.some(s => after(s) && s.kind === "unsure")) return done("unsure", "yes_then_hedge", { leaning: "yes", counter });
-  if (counter) return done("unsure", "yes_other_time", { counter: true, leaning: "yes" });
-  if (conds.some(c => !c.condTime)) return done("unsure", "conditional_yes", { leaning: "yes" });
-  return done("yes", constraints.length ? "yes_with_time_constraint" : "yes");
+/** The verdict as a ParsedReply, with the time refusals and conditions it reports, in text order. */
+function reply(v: ReplyVerdict, sig: Signal[]): ParsedReply {
+  const constraints: ReplyConstraint[] = [];
+  if (v.constraints !== "empty") for (const s of sig) if (s.kind === "timeNeg") constraints.push({ kind: "time", text: s.text });
+  if (v.constraints === "all") for (const c of sig) if (c.kind === "cond") constraints.push({ kind: c.condTime ? "time" : "condition", text: c.text });
+  const reason = v.reason === "yes" && constraints.length ? "yes_with_time_constraint" : v.reason;
+  return { answer: v.answer, constraints, counter: v.counter, ...(v.leaning === "neither" ? {} : { leaning: v.leaning }), reason };
 }
 
 /** "yes" | "no" | "unsure" for a free-text answer to a yes/no question (see `parseReply`). */

@@ -194,16 +194,3 @@ function parseLegacyV2(b: Obj, nowMs: number): ChannelEvent {
   }
   return { kind: "ignored", type, reason: "unhandled legacy event" };
 }
-
-/**
- * Keys to dedupe a delivery on. The envelope id catches provider retries/replays; the message id also catches the
- * same inbound arriving through two subscriptions (e.g. an org-wide and a key-scoped webhook both pointing at us)
- * or through a legacy v2 body without an envelope id. An event is a duplicate if ANY key was seen.
- */
-export function dedupeKeysFor(ev: ChannelEvent): string[] {
-  const keys: string[] = [];
-  if (ev.eventId) keys.push(`evt:${ev.eventId}`);
-  if (ev.kind === "message") keys.push(`msg:${ev.channel}:${ev.messageId}`);
-  if (ev.kind === "status") keys.push(`st:${ev.channel}:${ev.providerMessageId}:${ev.status}`);
-  return keys;
-}

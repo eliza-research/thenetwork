@@ -5,7 +5,8 @@
 import { appsOn, type McpApp, type McpAppId, type Surface } from "./apps.ts";
 import type { AssistantKind, PlatformHooks, PublicStatus } from "./hooks.ts";
 import type { Grant, Scope, OAuthStore, SignupDraftFields } from "./store.ts";
-import { outputLeaks } from "./leaks.ts";
+import { grantStillTheirs } from "./decisions.ts";
+import { gateUpdates } from "./update-gate.ts";
 
 export const TOOL_NAMES = ["app_info", "start_signup", "check_status", "submit_profile", "get_updates", "prepare_signup"] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -241,14 +242,7 @@ export interface CallContext {
   assistant?: AssistantKind;
 }
 
-/**
- * Whether a grant still belongs to the number's person. A different person now means a new owner
- * after staff review. A grant made while the number had no person never follows a person created
- * later (who may be someone else): it is dead, and the person connects again (audit: null-person grant).
- */
-export function grantStillTheirs(atConsent: string | null, now: string | null): boolean {
-  return atConsent === null ? now === null : now === atConsent;
-}
+export { grantStillTheirs };
 
 export async function callTool(name: ToolName, args: unknown, c: CallContext): Promise<ToolOutcome> {
   const enumIds = appsOn(c.apps, c.surface).map(a => a.id);
@@ -323,7 +317,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       if (!c.hooks.updates) return { kind: "error", message: "Updates are not available here yet." };
       // Someone else's reference, an unknown one or an expired one reads as "nothing new", like an empty inbox.
       // The output leak gate: a summary with a phone, email, internal id or timestamp is withheld (leaks.ts).
-      const updates = now === null ? [] : (await c.hooks.updates(now, g.app, c.assistant ?? "web", chk.token)).filter(u => outputLeaks(u.summary).length === 0);
+      const updates = now === null ? [] : gateUpdates(await c.hooks.updates(now, g.app, c.assistant ?? "web", chk.token));
       return { kind: "ok", data: { app: a.id, updates, next_step: updates.length ? "Tell the person briefly. They answer by replying to the text." : `Nothing new from ${a.name}.` } };
     }
   }

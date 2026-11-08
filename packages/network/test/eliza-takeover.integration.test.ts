@@ -219,6 +219,35 @@ test("START is refused for a banned number and for a number on the recycled-numb
   expect(await service.accounts.optedIn("friends", recycled)).toBe(false);
 }, 60_000);
 
+test("leave <app> from a number on the recycled-number hold is honored and confirmed (journeys B9)", async () => {
+  const phone = "+12125550216";
+  await joinFriends(phone, "Dee", 35);
+  await service.people.setPhoneHold(phone, "recycled_number", clock.now());
+  // An opt-out is never held back: the hold stops new activity, not the way out.
+  const leave = await say(phone, `leave ${APPS.friends.domain}`);
+  expect(leave.reason).toBe("left");
+  expect(leave.consent).toMatchObject({state: "opted_out", scope: "app", app: "friends"});
+  // The app's fixed opt-out confirmation: nothing is deleted behind a hold (staff decide the account).
+  expect(leave.replies).toEqual([APPS.friends.brand.stopApp]);
+  expect(await service.accounts.optedIn("friends", phone)).toBe(false);
+  // Anything else from the held number is still not handled.
+  expect((await say(phone, "hi", {app: "friends"})).reason).toBe("held");
+}, 60_000);
+
+test("an under-13 age stated at a join closes the person's other memberships at once (journeys B6)", async () => {
+  const phone = "+12125550217";
+  const memberId = await joinFriends(phone, "Fay", 16);
+  const friends = service.runtimeFor("friends")!;
+  expect((await friends.readState(n => n.recipientPolicy(memberId, "info", {proactive: true}))).ok).toBe(true);
+  expect((await say(phone, APPS.slop.domain, {app: "slop"})).reason).toBe("join_asked");
+  expect((await say(phone, "Fay, 12", {app: "slop"})).reason).toBe("under_age");
+  // Under 13 cannot use any app: before the person writes to friends again, nothing but a safety notice reaches them there.
+  await friends.identities();
+  for (const kind of ["info", "reply", "checkin"] as const)
+    expect((await friends.readState(n => n.recipientPolicy(memberId, kind, {proactive: kind !== "reply"}))).ok).toBe(false);
+  expect((await friends.readState(n => n.recipientPolicy(memberId, "safety"))).ok).toBe(true);
+}, 60_000);
+
 test("a minor joins but is single-player only and never in an introduction", async () => {
   const phone = "+12125550207";
   const memberId = await joinFriends(phone, "Kai", 15);

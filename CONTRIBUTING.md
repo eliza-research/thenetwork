@@ -133,7 +133,8 @@ The validation layer is the simulations plus the integration and e2e tests ([doc
 
 | Command | What it does | Needs |
 |---|---|---|
-| `bun run sim` | Every simulation block on pinned seeds: the `evals/` corpora, onboarding, the Network, slop, relay, peon, friends, Clef, safety, ops, pipeline and audit. Exits 1 when a blocking gate fails. Offline. No LLM. | Dev Postgres for the safety, ops, pipeline and audit blocks (they skip without it) |
+| `bun run sim` | Every simulation block on pinned seeds: the LemmaScript proofs (`formal`), the `evals/` corpora, onboarding, the Network, slop, relay, peon, friends, Clef, safety, ops, pipeline and audit. Exits 1 when a blocking gate fails. Offline. No LLM. | Dev Postgres for the safety, ops, pipeline and audit blocks (they skip without it) |
+| `bun run formal` | The LemmaScript proofs ([docs/formal-verification.md](docs/formal-verification.md)). | Dafny 4.11.0 (the block skips without it) |
 | `bun run sim --only <block>` | One block. You can repeat `--only`. Use it while you work. | |
 | `bun run sim --quick` | Fewer seeds and shorter runs. Quality gates become tracked. | |
 | `bun run sim --with-capital` | Adds the slow network-capital block. | |

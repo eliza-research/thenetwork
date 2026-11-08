@@ -5,6 +5,7 @@ import type { City } from "../../core/src/types.ts";
 import type { AppId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
 import { lastEvents } from "./consent.ts";
+import { challengeClaimable, hitPasses } from "./decisions.ts";
 
 export type PhoneMethod = "otp_sms" | "otp_whatsapp" | "inbound_message" | "staff";
 export type MembershipState = "invited" | "onboarding" | "active" | "paused" | "restricted" | "removed";
@@ -288,7 +289,7 @@ export class MemoryPeopleStore implements PeopleStore {
   }
   async claimAttempt(id: string, max: number, at: number) {
     const c = this.challenges.get(id);
-    if (!c || c.consumedAt !== null || c.expiresAt <= at || c.attempts >= max) return false;
+    if (!c || !challengeClaimable(c.consumedAt, c.expiresAt, c.attempts, max, at)) return false;
     c.attempts++;
     return true;
   }
@@ -309,9 +310,7 @@ export class MemoryPeopleStore implements PeopleStore {
     const cur = this.limits.get(bucket);
     const prevAt = cur?.lastAt ?? null;
     const count = cur && cur.windowStart === windowStart ? cur.count : 0;
-    if ((rule.limit !== undefined && count >= rule.limit) || (rule.minGapMs !== undefined && prevAt !== null && at - prevAt < rule.minGapMs)) {
-      return { count: count + 1, prevAt, ok: false };
-    }
+    if (!hitPasses(count, prevAt, at, rule.limit, rule.minGapMs)) return { count: count + 1, prevAt, ok: false };
     this.limits.set(bucket, { windowStart, count: count + 1, lastAt: at });
     return { count: count + 1, prevAt, ok: true };
   }

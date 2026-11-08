@@ -6,7 +6,7 @@
 import { simulate, v14Rate, isBad, DAY, T0, type SimOptions, type SimResult, type PType } from "./world.ts";
 import { balanceOf } from "../src/levers.ts";
 import type { CapitalConfigInput } from "../src/config.ts";
-import { effortTier } from "../src/levers.ts";
+import { effortTier, ledgerProblems } from "../src/levers.ts";
 
 const args = process.argv.slice(2);
 const flag = (k: string, d: number) => { const i = args.indexOf(`--${k}`); return i >= 0 ? Number(args[i + 1]) : d; };
@@ -33,6 +33,8 @@ export interface Metrics {
   /** NC honest members lost to review (clawbacks and fraud penalties), total per seed (capital-12). */
   honestNcLost: number;
   tiers: number[];
+  /** What ledgerProblems found over every member of this seed. */
+  ledgerProblems: string[];
 }
 
 export function measure(r: SimResult): Metrics {
@@ -115,6 +117,7 @@ export function measure(r: SimResult): Metrics {
     honestFlaggedShare: r.honestFlagged.size / Math.max(1, honest.length), friendsFlaggedShare: r.friendsFlagged.size / Math.max(1, r.friends.length),
     honestNcLost: -honest.reduce((s, p) => s + L.internalEntries(p.id).filter(e => e.provenance.eventType === "fraud_confirmed").reduce((a, e) => a + e.amount, 0), 0),
     falseConfirmed: r.falseConfirmed.length, flagsRaised: r.flagsRaised, tiers,
+    ledgerProblems: r.personas.flatMap(p => ledgerProblems(L.internalEntries(p.id))),
   };
 }
 

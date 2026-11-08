@@ -112,6 +112,16 @@ export async function clefBlock(b: Block): Promise<void> {
     expect(parseLabel({ flag: "x/1.jpg", reason: "may be under 18" })).toEqual({ flag: "x/1.jpg", reason: "may be under 18" });
   });
 
+  await b.run("clef gate: a photo with no gate.one_adult answer is never rated (fail closed); the same photo with the answer is", async () => {
+    const photo = [{ id: "p", bytes: photoBytes("p") }];
+    const full = synthAnswers(s.rows.get(s.train[0]!)!);
+    full["gate.one_adult"] = { noul: 0.95 };
+    const { "gate.one_adult": _gate, ...noGate } = full;
+    const rate = (answers: typeof full) => new WorkersAIClefRater({ token: "fake", accountId: "fake", fetch: async () => ({ ok: true, status: 200, json: async () => ({ success: true, result: { answers } }) }) }).rate({ age: 30, ageVerified: true }, photo);
+    expect(await rate(full)).not.toBeNull();
+    expect(await rate(noGate)).toBeNull();
+  });
+
   await b.run("clef features: consent manifest, adults only, flags and cache decide what is sent; dry run reads nothing", async () => {
     const ids = s.train.slice(0, 8);
     const man = (id: string, m: Partial<ManifestRow>): [string, ManifestRow] => [id, { photo: id, subject: id.split("/")[0]!, age: 30, ageVerified: true, consent: `release-${id}`, ...m }];

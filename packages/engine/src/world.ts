@@ -3,16 +3,18 @@
 // one id space and compared in another).
 import type { Category, City, Edge, EdgeType, Facet, FacetKind, Intent, Member, MemberId, Presence, Proposal } from "@thenetwork/core";
 import { canBeMatched, DAY } from "@thenetwork/core";
-import type { EngineConfig } from "./config.ts";
+import { assertNoConfigErrors, engineConfigErrors, type EngineConfig } from "./config.ts";
 import { centroid, cosine, tokenize, type EmbedFn } from "./embed.ts";
 import { sha256, stableStringify } from "./hash.ts";
 import type { AppPack } from "./pack.ts";
+import { keyableId, pairKey } from "./pairKey.ts";
+import { acceptanceEstimate } from "./scoreCore.ts";
 import { networkPack } from "./packs/network/index.ts";
 import type { EngineInput, FeedbackRecord, InteractionRecord, NetworkEvent, ReliabilityEvidence, Role } from "./types.ts";
 
 import type { Interval } from "./interval.ts";
 export type { Interval };
-export const pairKey = (a: MemberId, b: MemberId) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+export { pairKey };
 
 const BLOCKING_EDGES: ReadonlySet<EdgeType> = new Set<EdgeType>(["blocked", "avoid"]);
 const CAP_KINDS: ReadonlySet<FacetKind> = new Set<FacetKind>(["skill", "offer", "resource"]);
@@ -98,6 +100,12 @@ export class World {
       const dup = input.members.find(m => (seen.has(m.id) ? true : (seen.add(m.id), false)));
       throw new Error(`duplicate member id in engine input: ${dup?.id}`);
     }
+    // pairKey is injective only on ids without its separator (pairKey.ts): "a" + "b|c" and "a|b" + "c"
+    // would share one key, so a block or a used pair of one would apply to the other. Refuse such ids.
+    const unkeyable = input.members.find(m => !keyableId(m.id));
+    if (unkeyable) throw new Error(`member id holds the pair-key separator "|": ${unkeyable.id}`);
+    // A config that breaks a proved core's precondition is refused (config.ts), also when not resolved.
+    assertNoConfigErrors(engineConfigErrors(cfg));
     // Minors are identified before anything else so no derived structure can route through them.
     for (const m of input.members) if (!canBeMatched(m.age)) this.minors.add(m.id);
 
@@ -148,6 +156,7 @@ export class World {
     // --- interactions ----------------------------------------------------------------------
     this.interactions = (input.interactions ?? []).map(r => ({
       ...r, participants: r.participants.map(C), declinedBy: r.declinedBy?.map(C), contributors: r.contributors?.map(C),
+      acceptedBy: r.acceptedBy?.map(C), noResponse: r.noResponse?.map(C),
     }));
     for (const r of this.interactions) {
       for (let i = 0; i < r.participants.length; i++) for (let j = i + 1; j < r.participants.length; j++) {
@@ -203,9 +212,10 @@ export class World {
     for (const it of input.intents) {
       const id = C(it.memberId);
       const relabel = pack.ontology.relabelIntent?.(it, cfg);
-      if (relabel) { if (!growthAsHobby.has(id)) growthAsHobby.set(id, []); if (!growthAsHobby.get(id)!.includes(relabel)) growthAsHobby.get(id)!.push(relabel); }
       const live = it.status === "active" && it.createdAt + it.horizonDays * DAY > now;
       if (!live) continue;
+      // Only a live intent opts the member in: a closed or expired one says nothing about today.
+      if (relabel) { if (!growthAsHobby.has(id)) growthAsHobby.set(id, []); if (!growthAsHobby.get(id)!.includes(relabel)) growthAsHobby.get(id)!.push(relabel); }
       const intent: Intent = { ...it, memberId: id, ...(relabel ? { category: relabel } : {}) };
       if (!intentsBy.has(id)) intentsBy.set(id, []);
       intentsBy.get(id)!.push(intent);
@@ -402,7 +412,7 @@ export function responseHistory(interactions: InteractionRecord[], now: number):
  */
 export function acceptanceOf(cfg: EngineConfig, hist: { yes: number; n: number } | undefined): number {
   const A = cfg.acceptance;
-  return ((hist?.yes ?? 0) + A.prior * A.strength) / ((hist?.n ?? 0) + A.strength);
+  return acceptanceEstimate(hist?.yes ?? 0, hist?.n ?? 0, A.prior, A.strength);
 }
 
 export function intentText(i: Intent): string {

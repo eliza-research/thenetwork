@@ -21,6 +21,7 @@
 //    outcome ratios by group for admin (docs/results/2026-10-08-slop-pack.md, iterations 3-4).
 import type { Facet, MemberId } from "@thenetwork/core";
 import { canBeMatched } from "@thenetwork/core";
+import { photosRatable } from "../decisions.ts";
 
 /** Categorical body type (a matching attribute, never shown). "unclear" ratings carry no body type. */
 export const BODY_TYPES = ["slim", "athletic", "average", "curvy", "plus_size"] as const;
@@ -41,7 +42,7 @@ export interface PhotoRef { id: string; url?: string; bytes?: Uint8Array }
 /** Who the photos belong to: the rater checks this before processing anything. */
 export interface RatingSubject { age: number; /** false = age not verified yet (selfie / ID check pending). */ ageVerified?: boolean }
 /** Adults only: verified 18+ (canBeMatched), never 13-17, never an unknown or unverified age. */
-export const canRatePhotos = (s: RatingSubject | undefined): boolean => !!s && canBeMatched(s.age) && s.ageVerified !== false;
+export const canRatePhotos = (s: RatingSubject | undefined): boolean => !!s && photosRatable(canBeMatched(s.age), s.ageVerified);
 
 export interface AppearanceRater {
   id: string;
@@ -175,7 +176,7 @@ export const APPEARANCE_LEAK_PATTERNS: readonly RegExp[] = [
   /\bout of your league\b/i, /\bin your league\b/i,
   /\b(appearance|beauty|looks|face|body|photo|selfie|picture)\s*(rating|score|rank|ranking|bucket|tier|percentile|band)s?\b/i,
   /\b(rating|score|rank|ranking|bucket|tier|percentile)\s+(of|for)\s+(your|their|his|her)\s+(looks|face|body|photos?|appearance)\b/i,
-  /\bappearance\b/i, /\bbody[- ]?type\b/i, /\b(slim|athletic|curvy|plus[- ]size[d]?|heavyset|overweight|skinny|petite|chubby)\b/i,
+  /\bappearance\b/i, /\bbody[- ]?type\b/i, /\b(slim|athletic|curvy|plus[-_ ]size[d]?|heavyset|overweight|skinny|petite|chubby)\b/i,
   /\bappearance:/i, /\bclef\b/i, /\bphoto rating\b/i, /\btop\s+\d+\s*%/i, /\b\d+(st|nd|rd|th)\s+percentile\b/i,
 ];
 /** The first appearance-disclosing pattern in `text` (or an exact stored score tag), else null. */

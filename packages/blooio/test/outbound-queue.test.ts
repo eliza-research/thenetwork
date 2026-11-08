@@ -125,6 +125,57 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
     expect(calls.length).toBe(2);
   });
 
+  test("one row whose stored photos do not parse is parked and the drain goes on; a receipt and staff can still move such a row", async () => {
+    const { calls, provider } = recorder();
+    const alerts: string[] = [];
+    const q = queue(a, provider, { onAlert: (id, why) => alerts.push(`${id}:${why}`) });
+    await q.enqueue(a, [
+      { id: "bad-photo-1", to: "+12125558001", kind: "transactional", text: "Your plan update.", timeZone: NY },
+      { id: "bad-photo-2", to: "+12125558002", kind: "transactional", text: "Your other plan update.", timeZone: NY },
+    ]);
+    await a`update platform.outbound set approved_photos = '[{"x":1}]'::jsonb where id = 'bad-photo-1'`;
+    await q.drain();
+    expect(await q.statusOf("bad-photo-1")).toBe("parked_error");
+    expect(alerts).toContain("bad-photo-1:dispatch_error");
+    expect(await q.statusOf("bad-photo-2")).toBe("sent");
+    expect(calls.map(c => c.idempotencyKey)).toEqual(["tn:bad-photo-2"]);
+    // A row that already went out still takes its receipt.
+    await a`update platform.outbound set approved_photos = '[{"x":1}]'::jsonb where id = 'bad-photo-2'`;
+    const { providerMessageId } = (await a`select provider_message_id as "providerMessageId" from platform.outbound where id = 'bad-photo-2'`)[0];
+    expect(await q.applyStatus({ kind: "status", channel: "blooio", providerMessageId, status: "delivered", at: clock.now() })).toMatchObject({ status: "delivered" });
+    // Staff can end a parked row, and a stranded row with bad photos ends after its TTL without stopping the drain.
+    await a`update platform.outbound set status = 'parked_leak_review' where id = 'bad-photo-1'`;
+    expect(await q.decideLeak("bad-photo-1", "drop", "safety@example.org")).toMatchObject({ status: "dropped_leak_review" });
+  });
+
+  test("a stale hook that throws fails closed: the row does not go, and a stopped row never takes a person-cap slot", async () => {
+    const { calls, provider } = recorder();
+    let taken = 0;
+    const q = queue(a, provider, { checks: checks({ stale: () => { throw new Error("stage lookup failed"); }, capTake: async () => { taken++; return true; } }) });
+    await q.enqueue(a, [{ id: "stale-throw", to: "+12125558003", kind: "proactive", text: "Someone would like to meet you.", timeZone: NY }]);
+    await q.drain();
+    expect(await q.statusOf("stale-throw")).toBe("expired");
+    expect(calls.length).toBe(0);
+    expect(taken).toBe(0);
+  });
+
+  test("a row whose acceptance stayed unknown keeps its person-cap slot; a row that did not go out gives it back", async () => {
+    const { provider } = recorder();
+    const released: string[] = [];
+    const q = queue(a, provider, { checks: checks({ capRelease: async row => { released.push(row.id); } }) });
+    await q.enqueue(a, [
+      { id: "cap-unknown", to: "+12125558004", kind: "proactive", text: "A proposal for you.", timeZone: NY },
+      { id: "cap-refused", to: "+12125558005", kind: "proactive", text: "Another proposal for you.", timeZone: NY },
+    ]);
+    await a`update platform.outbound set person_cap = true where id in ('cap-unknown', 'cap-refused')`;
+    await a`update platform.outbound set status = 'unknown_acceptance', in_doubt = true, created_at = ${new Date(clock.now() - 7 * 60 * 60_000)} where id = 'cap-unknown'`;
+    await a`update platform.outbound set created_at = ${new Date(clock.now() - 2 * 24 * 60 * 60_000)} where id = 'cap-refused'`;
+    await q.drain();
+    expect(await q.statusOf("cap-unknown")).toBe("failed_unknown");
+    expect(await q.statusOf("cap-refused")).toBe("expired");
+    expect(released).toEqual(["cap-refused"]);
+  });
+
   test("the leak guard reads the recent thread to the same address", async () => {
     const { calls, provider } = recorder();
     const leaks = { forbidden: ["secret orchid garden party"] };

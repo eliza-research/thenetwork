@@ -21,9 +21,10 @@ import { randomUUID } from "node:crypto";
 import type { City } from "../../core/src/types.ts";
 import { DAY } from "../../core/src/clock.ts";
 import { validAge } from "../../core/src/policy.ts";
-import { canJoinApp, joinAgeCheck, lowestAge } from "./age.ts";
+import { canJoinApp, lowestAge } from "./age.ts";
 import type { AppId, AppInfo } from "./apps.ts";
 import { type ConsentEvent, resolveConsent, type StopScope, stopScope } from "./consent.ts";
+import { joinPlan } from "./decisions.ts";
 import { keyedHash } from "./phone.ts";
 import type { Membership, PeopleStore, Person, PhoneIdentity, PhoneMethod } from "./store.ts";
 
@@ -343,32 +344,27 @@ export class Accounts {
   }
 
   async join(app: AppInfo, who: Who, input: JoinInput): Promise<{ ok: true; membership: Membership } | { ok: false; error: JoinError }> {
-    if (!consentMatches(app, input.consent)) return { ok: false, error: "consent_wording" };
     // One join per phone at a time: parallel requests see the first one's person and membership.
     return this.store.withLock(`join:${who.e164}`, () => this.joinLocked(app, who, input));
   }
 
   private async joinLocked(app: AppInfo, who: Who, input: JoinInput): Promise<{ ok: true; membership: Membership } | { ok: false; error: JoinError }> {
     const at = this.now();
-    if ((await this.seen(who.e164)) === "held") return { ok: false, error: "review" };
+    const held = (await this.seen(who.e164)) === "held";
     let person = await this.personFor(who.e164);
-    if (await this.banned(who.e164, person)) return { ok: false, error: "review" };
     const existing = person && (await this.store.getMembership(person.id, app.id));
-    if (existing && existing.state !== "removed" && existing.state !== "invited") {
-      // A repeated join is still an age statement. Keep the membership and consent unchanged,
-      // but propagate a lower age before returning the existing membership.
-      await this.recordAge(who.e164, person, input.age);
-      if (!joinAgeCheck(input.age, await this.lowestAge(who.e164, person), app).ok) return { ok: false, error: "under_age" };
-      return { ok: true, membership: existing };
-    }
-    if (app.joinMode === "invite" && existing?.state !== "invited") return { ok: false, error: "invite_only" };
-    const age = joinAgeCheck(input.age, await this.lowestAge(who.e164, person), app);
-    if (!age.ok) {
-      // Nothing is stored for this app: only the age, on the phone's age floor (and the person, if any).
-      await this.recordAge(who.e164, person, input.age);
-      return { ok: false, error: "under_age" };
-    }
-    if (!person) person = await this.createPerson(who.e164, "otp_sms", age.effective ?? input.age);
+    const plan = joinPlan({
+      wordingOk: consentMatches(app, input.consent), held, banned: await this.banned(who.e164, person),
+      member: !!existing && existing.state !== "removed" && existing.state !== "invited",
+      inviteOnly: app.joinMode === "invite", invited: existing?.state === "invited",
+      stated: validAge(input.age) ? input.age : null, lowest: (await this.lowestAge(who.e164, person)) ?? null, minJoinAge: app.minJoinAge,
+    });
+    // Every exit keeps the age it was told. A real join records it below, once the person exists.
+    if (plan.recordAge && plan.step !== "join") await this.recordAge(who.e164, person, input.age);
+    if (plan.step === "existing") return { ok: true, membership: existing! };
+    if (plan.step !== "join") return { ok: false, error: plan.step };
+    const effective = plan.effective!;
+    if (!person) person = await this.createPerson(who.e164, "otp_sms", effective);
     await this.recordAge(who.e164, person, input.age);
     // A new opt-in by the person: a delete of everything no longer suppresses the number.
     await this.store.unsuppress(this.phoneHash(who.e164));
@@ -385,7 +381,7 @@ export class Accounts {
     await this.store.attachPerson(who.e164, person.id);
     try {
       // The network member gets the person's lowest age, not the one typed now (a minor anywhere is a minor here).
-      await this.hooks.onJoin?.({ app, person, membership, e164: who.e164, age: age.effective ?? input.age, input });
+      await this.hooks.onJoin?.({ app, person, membership, e164: who.e164, age: effective, input });
     } catch (e) {
       await this.store.forgetMembership(person.id, app.id, at);
       await this.store.addConsent({ e164: who.e164, app: app.id, state: "opted_out", source: "join_failed", at });
@@ -417,9 +413,8 @@ export class Accounts {
     return resolveConsent(await this.store.lastConsent(e164, app)) === "opted_in";
   }
 
-  /** Leave one app: the forget path. The phone and other memberships stay. */
-  async leave(app: AppInfo, who: Who): Promise<void> {
-    const at = this.now();
+  /** Leave one app: the forget path. The phone and other memberships stay. `at` is when the person asked (a turn's receivedAt). */
+  async leave(app: AppInfo, who: Who, at = this.now()): Promise<void> {
     const person = await this.personFor(who.e164);
     const m = person && (await this.store.getMembership(person.id, app.id));
     await this.store.addConsent({ e164: who.e164, app: app.id, state: "opted_out", source: "leave", at });

@@ -62,8 +62,7 @@ export function retrieveForIntent(ctx: RetrievalCtx, intent: Intent, pool: Membe
   const cfg = w.cfg.retrieval;
   const toks = new Set(tokenize(intentText(intent)));
   const hop = twoHop(w, intent.memberId);
-  // Structured "need" channel (complementarity.ts): members whose skills / offers / pool meet the
-  // intent are kept even below minSim, and structured satisfaction joins the ordering.
+  // Structured satisfaction (complementarity.ts) joins the ordering; it does not keep a member below minSim.
   const cc = w.cfg.complementarity;
   const structured = cc.weight > 0;
   const scored: Retrieved[] = [];
@@ -75,14 +74,14 @@ export function retrieveForIntent(ctx: RetrievalCtx, intent: Intent, pool: Membe
     if (tagHit) channels.add("tag");
     if (hop.has(id) && sim >= cfg.warmMinSim) channels.add("graph");
     const need = structured ? intentSatisfaction(w, intent, id) : 0;
-    if (sim < minSim && !channels.has("graph") && !channels.has("need")) continue;
+    if (sim < minSim && !channels.has("graph")) continue;
     scored.push({ id, sim, facet, channels, floor: false, rank: sim + cc.weight * need });
   }
   const byRank = (a: Retrieved, b: Retrieved) => ((b.rank ?? b.sim) - (a.rank ?? a.sim)) || (a.id < b.id ? -1 : 1);
   scored.sort(byRank);
   const out = new Map<MemberId, Retrieved>();
   scored.slice(0, cfg.topK).forEach(r => { if (r.sim >= minSim) r.channels.add("semantic"); out.set(r.id, r); });
-  for (const r of scored) if (r.channels.has("tag") || r.channels.has("graph") || r.channels.has("need")) if (!out.has(r.id)) out.set(r.id, r);
+  for (const r of scored) if (r.channels.has("tag") || r.channels.has("graph")) if (!out.has(r.id)) out.set(r.id, r);
   // Exposure floor.
   let floor = 0;
   for (const r of scored) {

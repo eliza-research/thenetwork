@@ -65,6 +65,7 @@ CONTRIBUTING.md is the full text. In one line each:
 - Evidence or nothing: numbers before and after, same command and seeds, and a run with real LLM calls (CONTRIBUTING.md section 7.2). Mocked LLM output is not proof.
 - Test the changed flow in several agent clients and report client, version, provider and model for each (CONTRIBUTING.md section 8). Install other clients and drive them with computer use when they have no command line.
 - Simplify first: extend or merge what exists; remove dead code.
+- Keep the proofs passing. LemmaScript proves the safety decisions: a change to a proved function updates its spec and proof, and new decision logic goes in a proved core that production calls ([docs/formal-verification.md](docs/formal-verification.md)).
 - Validate with `bun run sim`, `bun run test:integration` and `bun run test:e2e`. A bug fix adds a sim gate, a scenario, a corpus row or an integration or e2e case that fails before the fix. No unit tests and no smoke tests ([docs/tests-policy.md](docs/tests-policy.md)).
 - Defend the design: give two other implementations.
 - Model the code: Quint at the high level, LemmaScript at the low level (see below).
@@ -110,7 +111,7 @@ Do not break these. `bun run sim` checks them in every simulated run.
 
 ```bash
 bun install
-bun run sim                  # the validation layer: evals, onboard, network, slop, relay, peon, friends, clef, safety, ops, pipeline, audit (pinned seeds; exits 1 on a blocking gate)
+bun run sim                  # the validation layer: formal, evals, onboard, network, slop, relay, peon, friends, clef, safety, ops, pipeline, audit (pinned seeds; exits 1 on a blocking gate)
 bun run sim --only network   # one block (the names above, or capital); repeatable
 bun run sim --quick          # fewer seeds, shorter runs; quality gates become tracked
 bun run sim --with-capital   # adds the network-capital block (32 paired seeds; nightly)
@@ -118,6 +119,7 @@ bun run typecheck
 bun run plugins/build.ts --check
 bun run test:integration     # integration suite incl. the security files (real Postgres on :54339 via dev-pg; docs/tests-policy.md)
 bun run test:e2e             # e2e: the full service and platform through HTTP (tests/e2e; needs Postgres)
+bun run formal               # the LemmaScript proofs and their structure gates (needs Dafny; docs/formal-verification.md)
 bun run security             # the security subset of the integration suite (11 files; list below)
 bun run clef <fit|calibrate|features|audit|synth>   # P2 Clef weight fitting (docs/results/2026-10-09-clef-fitting.md); only `features --live` calls Workers AI
 bun run relay-eval [rules|fit] [--live]   # the relay classifier report; only --live calls Workers AI

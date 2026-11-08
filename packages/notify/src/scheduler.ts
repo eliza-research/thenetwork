@@ -14,6 +14,7 @@
 
 import { createHash, randomInt } from "node:crypto";
 import { isQuietAt } from "../../blooio/src/quiet-hours.ts";
+import { capFilter, countsTowardCap } from "./decide.ts";
 import { composeText } from "./compose.ts";
 import type { NotifyStore } from "./store.ts";
 import { resolveDelivery, type Delivery, type SurfacePrefs } from "./surface.ts";
@@ -133,13 +134,10 @@ export class Notifier {
       if (this.cfg.isQuiet(now, r.timeZone)) { holds.push({ personId, reason: "quiet_hours" }); continue; }
 
       const recent = await this.store.capSendsSince(personId, now - WEEK_MS + 1);
-      if (recent.length >= this.cfg.weeklyCap && items.some(i => i.urgency !== "requested")) {
-        const requested = items.filter(i => i.urgency === "requested");
-        if (requested.length === 0) {
-          holds.push({ personId, reason: "weekly_cap", until: Math.min(...recent) + WEEK_MS });
-          continue;
-        }
-        items = requested;
+      items = capFilter(items, recent.length, this.cfg.weeklyCap);
+      if (items.length === 0) {
+        holds.push({ personId, reason: "weekly_cap", until: Math.min(...recent) + WEEK_MS });
+        continue;
       }
       sends.push(await this.build(r, items, now));
     }
@@ -168,7 +166,7 @@ export class Notifier {
       delivery,
       token,
       text: composeText(items, delivery, token, this.cfg.pageBase),
-      countsTowardCap: items.some(i => i.urgency !== "requested"),
+      countsTowardCap: countsTowardCap(items),
     };
   }
 
@@ -180,7 +178,10 @@ export class Notifier {
     for (const p of sends) {
       const fresh = (await this.store.getItems(p.itemIds)).filter(i => i.seenAt === undefined && i.notifiedAt === undefined);
       if (fresh.length === 0) { cancelled.push(p.deliveryId); continue; }
-      const final = fresh.length === p.itemIds.length ? p : await this.build((await this.directory.get(p.personId))!, fresh, now);
+      // Only part of the plan is still fresh: build it again, unless the person was erased since plan().
+      const r = fresh.length === p.itemIds.length ? undefined : await this.directory.get(p.personId);
+      if (fresh.length !== p.itemIds.length && !r) { cancelled.push(p.deliveryId); continue; }
+      const final = r ? await this.build(r, fresh, now) : p;
       const target: Surface = final.delivery.mode === "deeplink" ? final.delivery.assistant : final.channel;
       // Record first: a crash after this and before enqueue loses one text, never sends two.
       const recorded = await this.store.recordDelivery({

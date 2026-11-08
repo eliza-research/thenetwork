@@ -15,5 +15,6 @@ export async function capitalBlock(b: Block, o: { quick: boolean }): Promise<voi
   const f = (x: number) => x.toFixed(3);
   b.gate(`fairness: NC levers lower the bottom/top V14 ratio by <= 0.02 (CI lower bound, ${seeds} paired seeds)`, lg.primaryFairness.pass, `change ${f(lg.primaryFairness.diff)}, lower ${f(lg.primaryFairness.lower)}`, !o.quick);
   b.gate("gaming: each strategy's mean net gain <= 25% of a regular's NC", lg.gaming.pass, Object.entries(lg.gaming.gainShare).map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(", "));
+  b.gate("ledger: every clawback names one entry of the same member, cancels it exactly, and no entry is reversed twice", on.every(m => m.ledgerProblems.length === 0), on.flatMap(m => m.ledgerProblems).slice(0, 3).join("; ") || `${seeds} seeds`);
   b.track("health target: bottom/top V14 ratio >= 0.80", lg.healthTarget.met, f(lg.healthTarget.ratio));
 }

@@ -163,8 +163,11 @@ export class OtpService {
   }
   private now() { return (this.opts.now ?? Date.now)(); }
 
-  /** Rate-limit, then send. A provider error is logged and not shown (the response stays the same). */
-  async start(app: AppInfo, e164: string, ip: string): Promise<OtpStart> {
+  /**
+   * Rate-limit, then send. A provider error is logged and not shown (the response stays the same).
+   * `send` false (a banned number): the limits count and the answer is the same, and no code goes out.
+   */
+  async start(app: AppInfo, e164: string, ip: string, send = true): Promise<OtpStart> {
     const at = this.now(), L = this.limits;
     const phoneKey = keyedHash(this.opts.hashKey, e164);
     // The limits in order (otp-core.ts OTP_REFUSED_*). The first one that refuses stops the start.
@@ -183,6 +186,7 @@ export class OtpService {
       if (refused === OTP_REFUSED_GLOBAL) this.opts.log?.(`[otp] ALERT: the global budget of ${L.globalPerHour} codes an hour is used up; sends are refused until the hour ends`);
       return { ok: false, error: "rate_limited", retryAfterMs: otpRetryAfterMs(refused, at, hit.prevAt !== null, hit.prevAt ?? 0, { hourMs: HOUR, dayMs: DAY, minGapMs: L.minGapMs }) };
     }
+    if (!send) return { ok: true };
     try {
       const { code, ref, chatId } = await this.provider.send(e164, app);
       await this.store.putChallenge({

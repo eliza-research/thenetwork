@@ -5,7 +5,7 @@
 //
 // WHAT THIS MODELS
 //   deploy/backup/restore.ts restore() on this branch: the checks before it creates a database and
-//   before it runs roles.sql. Each function of deploy/backup/restore-core.ts (LemmaScript, proved) is a
+//   before it runs roles.sql. Each function of deploy/backup/refusal.ts (LemmaScript, proved) is a
 //   pure def here with the same name and the same decision: targetNameRefused, manifestVersionKnown,
 //   onSourceServer, placementRefusal, runsRoles, privilegeFlags. The action `restoreAttempt` calls them
 //   in the order of restore.ts and does not decide again. The `exists` check (a SQL read of pg_database)
@@ -40,7 +40,7 @@ module backup_restore {
   pure val SAFE_NAMES = Set("railway", "network", "postgres", "appdb", "drill_a", "drill_b")
   pure val LIVE = Set("railway", "network", "postgres", "template0", "template1")
 
-  // ---------------------------------------------------------------- the core (restore-core.ts)
+  // ---------------------------------------------------------------- the core (refusal.ts)
   type RestorePlacement = {
     db: str, sourceDatabase: str, sourceRecorded: bool, sameServer: bool,
     roles: bool, encrypted: bool, dumpPresent: bool,
@@ -133,7 +133,7 @@ module backup_restore {
   // ---------------------------------------------------------------- invariants
   // docs/deploy.md 8.2 "any database that exists" (restore.ts exists check): a restore only creates a new database.
   val createsOnlyNew = created.forall(c => not(c.existed))
-  // restore.ts header "the live names" (restore-core.ts targetNameRefused): no live name is ever created.
+  // restore.ts header "the live names" (refusal.ts targetRefused): no live name is ever created.
   val neverLiveName = created.forall(c => not(LIVE.contains(c.name)))
   // restore.ts header "only a safe name" (lib.ts safeDbName via targetNameRefused).
   val onlySafeNames = created.forall(c => SAFE_NAMES.contains(c.name))

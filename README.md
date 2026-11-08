@@ -60,6 +60,7 @@ cp .env.example .env                                  # never commit .env
 bun install --frozen-lockfile
 bun run packages/observatory/db/dev-pg.ts up          # dev Postgres on localhost:54339
 bun run sim                                           # every simulation, offline, no LLM; exits 1 on a blocking gate
+bun run formal                                        # LemmaScript proofs of the safety decisions (needs Dafny; docs/formal-verification.md)
 bun run typecheck
 bun run test:integration                              # real Postgres and HTTP; includes the security suite
 bun run test:e2e                                      # tests/e2e
