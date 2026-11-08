@@ -28,7 +28,9 @@
 //    with retries on API errors (withRetry; each try is a cost row). The score goes to `onRating` (the
 //    service stores it with the engine's appearanceFacet, agent_private) and is never returned by any
 //    route or shown in the console. No rater: ratings are off and everything else works.
-//  - Delete: the member deletes one photo (the rating is dropped, then made again from what is left);
+//  - Delete: the row is hidden first, then the rating is dropped, then the bytes and the row go (an upload
+//    writes its row hidden before the bytes, and shows it after); the sweep ends a hidden row a crash left.
+//    The member deletes one photo (the rating is dropped, then made again from what is left);
 //    leaving the app or deleting everything deletes them all; a person whose lowest age drops under 18
 //    loses them all (deleteFor), and their rating with them; a failed staff age check deletes them on that app.
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
@@ -91,6 +93,8 @@ export const PHOTO_MAX_BYTES = 8 * 1024 * 1024;
 export const PHOTO_MAX_PER_PERSON = 6;
 /** A staff link to one photo works this long. */
 export const PHOTO_VIEW_TTL_MS = 5 * 60_000;
+/** A hidden photo row older than this is from an upload or a delete that did not finish (a crash): the sweep ends it. */
+export const PHOTO_PENDING_MS = 60 * 60_000;
 /** The photo consent a site shows next to the upload button (draft copy: needs the founder's approval and the CONTRIBUTING 3.5 videos). */
 export const PHOTO_CONSENT = {
   version: "2026-10-08",
@@ -366,51 +370,77 @@ export function photoStorageFromEnv(env: Record<string, string | undefined> = pr
 }
 
 // ------------------------------------------------------------------------------------ rows
+/**
+ * A row with deleted_at set is not a photo: no read sees it. It marks bytes that are being written (a new
+ * upload) or removed (a delete), and the sweep ends it when its step did not finish (a crash).
+ */
 export interface PhotoStore {
+  /** Insert the row hidden (deleted_at = createdAt), before the bytes are written. */
+  put(r: PhotoRow): Promise<void>;
   /**
-   * Add the row under the person's row lock, after `check` and the count limit in the same transaction:
-   * two parallel uploads cannot both pass the limit, and a change to the person (an age under 18, a
-   * leave, a failed age check) commits either before the check or before deleteFor lists the rows.
+   * Show a hidden row under the person's row lock, after `check` and the count limit in the same
+   * transaction: two parallel uploads cannot both pass the limit, and a change to the person (an age
+   * under 18, a leave, a failed age check) commits either before the check or before deleteFor hides the
+   * rows. "not_found": the sweep ended the row first.
    */
-  add(r: PhotoRow, max: number, check: (tx?: SQL) => Promise<PhotoRefusal | undefined>): Promise<PhotoRefusal | undefined>;
+  show(r: PhotoRow, max: number, check: (tx?: SQL) => Promise<PhotoRefusal | undefined>): Promise<PhotoRefusal | undefined>;
   get(id: string): Promise<PhotoRow | undefined>;
   list(personId: string, app?: AppId): Promise<PhotoRow[]>;
-  /** The rows deleteFor removes, read under the person's row lock (an upload that holds it lands first). */
-  listLocked(personId: string, app?: AppId): Promise<PhotoRow[]>;
+  /** Hide one photo of the person on this app; undefined when there is none. */
+  hide(id: string, personId: string, app: AppId, at: number): Promise<PhotoRow | undefined>;
+  /** Hide every photo of the person (on one app, or every app) under the person's row lock (an upload that holds it lands first). */
+  hideAll(personId: string, app: AppId | undefined, at: number): Promise<PhotoRow[]>;
+  /** Rows hidden before `before`: their step did not finish. */
+  hidden(before: number): Promise<PhotoRow[]>;
   delete(id: string): Promise<void>;
 }
-/** Memory rows (the simulation's safety block): one process; no await comes between the count and the insert. */
+/** Memory rows (the simulation's safety block): one process; no await comes between the count and the change. */
 export class MemoryPhotoStore implements PhotoStore {
-  readonly rows = new Map<string, PhotoRow>();
-  async add(r: PhotoRow, max: number, check: () => Promise<PhotoRefusal | undefined>) {
+  readonly rows = new Map<string, PhotoRow & { deletedAt: number | null }>();
+  private live(personId: string, app?: AppId) { return [...this.rows.values()].filter(r => r.deletedAt === null && r.personId === personId && (!app || r.app === app)); }
+  private static out({ deletedAt: _, ...r }: PhotoRow & { deletedAt: number | null }): PhotoRow { return r; }
+  async put(r: PhotoRow) { this.rows.set(r.id, { ...r, deletedAt: r.createdAt }); }
+  async show(r: PhotoRow, max: number, check: () => Promise<PhotoRefusal | undefined>) {
     const no = await check();
     if (no) return no;
-    if ([...this.rows.values()].filter(x => x.personId === r.personId).length >= max) return "too_many" as const;
-    this.rows.set(r.id, { ...r });
+    const row = this.rows.get(r.id);
+    if (!row || row.deletedAt === null) return "not_found" as const;
+    if (this.live(r.personId).length >= max) return "too_many" as const;
+    row.deletedAt = null;
     return undefined;
   }
-  async get(id: string) { const r = this.rows.get(id); return r && { ...r }; }
-  async list(personId: string, app?: AppId) { return [...this.rows.values()].filter(r => r.personId === personId && (!app || r.app === app)).sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1)).map(r => ({ ...r })); }
-  listLocked(personId: string, app?: AppId) { return this.list(personId, app); }
+  async get(id: string) { const r = this.rows.get(id); return r && r.deletedAt === null ? MemoryPhotoStore.out(r) : undefined; }
+  async list(personId: string, app?: AppId) { return this.live(personId, app).sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1)).map(MemoryPhotoStore.out); }
+  async hide(id: string, personId: string, app: AppId, at: number) {
+    const r = this.rows.get(id);
+    if (!r || r.deletedAt !== null || r.personId !== personId || r.app !== app) return undefined;
+    r.deletedAt = at;
+    return MemoryPhotoStore.out(r);
+  }
+  async hideAll(personId: string, app: AppId | undefined, at: number) { const rows = this.live(personId, app); for (const r of rows) r.deletedAt = at; return rows.map(MemoryPhotoStore.out); }
+  async hidden(before: number) { return [...this.rows.values()].filter(r => r.deletedAt !== null && r.deletedAt < before).map(MemoryPhotoStore.out); }
   async delete(id: string) { this.rows.delete(id); }
 }
 const photoRow = (r: Record<string, any>): PhotoRow => ({
   id: r.id, personId: r.person_id, app: r.app_id, storageKey: r.storage_key, contentType: r.content_type, bytes: r.bytes, sha256: r.sha256,
   consentVersion: r.consent_version, createdAt: new Date(r.created_at).getTime(),
 });
-/** platform.photos (migration 0011). A deleted photo's row is removed (the bytes first). */
+/** platform.photos (migration 0011). A deleted photo's row is hidden first, then removed after its bytes. */
 export class PgPhotoStore implements PhotoStore {
   constructor(private readonly sql: SQL) {}
-  async add(r: PhotoRow, max: number, check: (tx?: SQL) => Promise<PhotoRefusal | undefined>) {
+  async put(r: PhotoRow) {
+    await this.sql`insert into platform.photos (id, person_id, app_id, storage_key, content_type, bytes, sha256, consent_version, created_at, deleted_at)
+      values (${r.id}, ${r.personId}, ${r.app}, ${r.storageKey}, ${r.contentType}, ${r.bytes}, ${r.sha256}, ${r.consentVersion}, ${new Date(r.createdAt)}, ${new Date(r.createdAt)})`;
+  }
+  async show(r: PhotoRow, max: number, check: (tx?: SQL) => Promise<PhotoRefusal | undefined>) {
     return this.sql.begin(async tx => {
       await tx`select id from platform.people where id = ${r.personId}::uuid for update`;
       const no = await check(tx);
       if (no) return no;
       const [c] = await tx`select count(*)::int as n from platform.photos where person_id = ${r.personId}::uuid and deleted_at is null`;
       if (c.n >= max) return "too_many" as const;
-      await tx`insert into platform.photos (id, person_id, app_id, storage_key, content_type, bytes, sha256, consent_version, created_at)
-        values (${r.id}, ${r.personId}, ${r.app}, ${r.storageKey}, ${r.contentType}, ${r.bytes}, ${r.sha256}, ${r.consentVersion}, ${new Date(r.createdAt)})`;
-      return undefined;
+      const shown = await tx`update platform.photos set deleted_at = null where id = ${r.id} and deleted_at is not null returning id`;
+      return shown.length ? undefined : "not_found" as const;
     });
   }
   async get(id: string) { const [r] = await this.sql`select * from platform.photos where id = ${id} and deleted_at is null`; return r ? photoRow(r) : undefined; }
@@ -420,11 +450,21 @@ export class PgPhotoStore implements PhotoStore {
       : await this.sql`select * from platform.photos where person_id = ${personId}::uuid and deleted_at is null order by created_at, id`;
     return (rows as Record<string, any>[]).map(photoRow);
   }
-  async listLocked(personId: string, app?: AppId) {
+  async hide(id: string, personId: string, app: AppId, at: number) {
+    const [r] = await this.sql`update platform.photos set deleted_at = ${new Date(at)} where id = ${id} and person_id = ${personId}::uuid and app_id = ${app} and deleted_at is null returning *`;
+    return r ? photoRow(r) : undefined;
+  }
+  async hideAll(personId: string, app: AppId | undefined, at: number) {
     return this.sql.begin(async tx => {
       await tx`select id from platform.people where id = ${personId}::uuid for update`;
-      return new PgPhotoStore(tx).list(personId, app);
+      const rows = app
+        ? await tx`update platform.photos set deleted_at = ${new Date(at)} where person_id = ${personId}::uuid and app_id = ${app} and deleted_at is null returning *`
+        : await tx`update platform.photos set deleted_at = ${new Date(at)} where person_id = ${personId}::uuid and deleted_at is null returning *`;
+      return (rows as Record<string, any>[]).map(photoRow).sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1));
     });
+  }
+  async hidden(before: number) {
+    return ((await this.sql`select * from platform.photos where deleted_at < ${new Date(before)} order by deleted_at, id`) as Record<string, any>[]).map(photoRow);
   }
   async delete(id: string) { await this.sql`delete from platform.photos where id = ${id}`; }
 }
@@ -497,11 +537,13 @@ export class PhotoService {
     try { bytes = stripMetadata(input, type); } catch { return { ok: false, reason: "bad_image" }; }
     const id = newPhotoId();
     const key = randomBytes(24).toString("hex");
+    const row: PhotoRow = { id, personId, app, storageKey: key, contentType: type, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), consentVersion, createdAt: this.now() };
+    // The hidden row comes before the bytes, so the sweep finds the bytes of an upload that never ended.
+    await this.o.meta.put(row);
     await this.o.storage.put(key, bytes, type);
     // Checked again with the row: the person can stop being an adult member while the bytes are written.
-    const no = await this.o.meta.add({ id, personId, app, storageKey: key, contentType: type, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), consentVersion, createdAt: this.now() },
-      PHOTO_MAX_PER_PERSON, tx => this.mayTake(personId, app, tx));
-    if (no) { await this.o.storage.delete(key); return { ok: false, reason: no }; }
+    const no = await this.o.meta.show(row, PHOTO_MAX_PER_PERSON, tx => this.mayTake(personId, app, tx));
+    if (no) { await this.o.storage.delete(key); await this.o.meta.delete(id); return { ok: false, reason: no }; }
     await this.rate(personId, app).catch(e => this.o.log?.(`[photos] rating failed: ${(e as Error).message}`));
     return { ok: true, value: { id } };
   }
@@ -581,20 +623,36 @@ export class PhotoService {
 
   /** The member deletes one of their photos: the rating goes with it and is made again from what is left. */
   async remove(personId: string, app: AppId, id: string): Promise<boolean> {
-    const r = await this.o.meta.get(id);
-    if (!r || r.personId !== personId || r.app !== app) return false;
-    await this.o.storage?.delete(r.storageKey);
-    await this.o.meta.delete(id);
-    await this.o.onRemoved?.(personId, r.app, id);
+    const r = await this.o.meta.hide(id, personId, app, this.now());
+    if (!r) return false;
+    await this.end(r);
     await this.rate(personId, app).catch(e => this.o.log?.(`[photos] rating failed: ${(e as Error).message}`));
     return true;
   }
 
-  /** Every photo of a person (on one app, or every app): leave, delete everything, a minor age, a ban. Bytes first, then rows. */
+  /** Every photo of a person (on one app, or every app): leave, delete everything, a minor age, a failed age check. */
   async deleteFor(personId: string, app?: AppId): Promise<number> {
-    const rows = await this.o.meta.listLocked(personId, app);
-    for (const r of rows) { await this.o.storage?.delete(r.storageKey); await this.o.meta.delete(r.id); await this.o.onRemoved?.(personId, r.app, r.id); }
+    const rows = await this.o.meta.hideAll(personId, app, this.now());
+    for (const r of rows) await this.end(r);
     if (rows.length) this.o.log?.(`[photos] deleted ${rows.length} photo(s)${app ? ` on ${app}` : ""}`);
+    return rows.length;
+  }
+
+  /** The rest of a delete, after the row is hidden: the rating first, then the bytes, then the row. */
+  private async end(r: PhotoRow) {
+    await this.o.onRemoved?.(r.personId, r.app, r.id);
+    await this.o.storage?.delete(r.storageKey);
+    await this.o.meta.delete(r.id);
+  }
+
+  /**
+   * The rows a crash left hidden for PHOTO_PENDING_MS (an upload that never showed its row, a delete
+   * that never removed it): the rating is dropped, then the bytes and the row are removed. Returns the count.
+   */
+  async sweep(): Promise<number> {
+    const rows = await this.o.meta.hidden(this.now() - PHOTO_PENDING_MS);
+    for (const r of rows) await this.end(r);
+    if (rows.length) this.o.log?.(`[photos] swept ${rows.length} unfinished photo row(s)`);
     return rows.length;
   }
 

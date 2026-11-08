@@ -190,6 +190,37 @@ describe.skipIf(!pgAvailable)("photo-object and clef-rating through the service 
     expect(t.files()).toHaveLength(PHOTO_MAX_PER_PERSON);
   }, T);
 
+  test("SD-176: a crash after the bytes are written leaves nothing after the sweep", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const t = service(clock);
+    const a = await adult(t, clock);
+    t.storage.afterPut = crash;
+    await expect(t.s.photos.upload(a.person_id, "slop", jpeg(), PHOTO_CONSENT.version)).rejects.toThrow("crash");
+    t.storage.afterPut = undefined;
+    expect(await t.s.photos.list(a.person_id, "slop")).toEqual([]);
+    clock.advance(DAY);
+    await t.s.purge();
+    expect(t.files()).toEqual([]);
+    expect(await rows(a.person_id)).toBe(0);
+  }, T);
 
+  test("SD-176: a crash while a photo is deleted leaves no rating from it, and the sweep ends the delete", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const t = service(clock, { photoRater: rater });
+    const a = await adult(t, clock);
+    const p = await a.web.upload();
+    expect(await ratings(a.id)).toBe(1);
+    t.storage.afterDelete = crash;
+    await expect(t.s.photos.remove(a.person_id, "slop", p.id!)).rejects.toThrow("crash");
+    t.storage.afterDelete = undefined;
+    expect(await ratings(a.id)).toBe(0);
+    expect(await t.s.photos.list(a.person_id, "slop")).toEqual([]);
+    clock.advance(DAY);
+    await t.s.purge();
+    expect(await rows(a.person_id)).toBe(0);
+    expect(t.files()).toEqual([]);
+  }, T);
 
 });

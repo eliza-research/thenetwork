@@ -564,7 +564,7 @@ export class NetworkService implements RuntimeHost {
     if (n) this.log(`[inbound] ${n} waiting inbound message(s) handled`);
   }
 
-  /** Retention (audit platform-18): expired OTP challenges and sessions, old rate windows and stale text flows. */
+  /** Retention (audit platform-18): expired OTP challenges and sessions, old rate windows, stale text flows and unfinished photo rows. */
   async purge() {
     for (const app of new Set([...this.runtimes.values()].map(rt => rt.app.id))) {
       await this.profileSuggestions.expirePending(app, this.clock.now()).catch(e => this.log(`[purge] profile suggestions failed: ${(e as Error).message}`));
@@ -573,6 +573,8 @@ export class NetworkService implements RuntimeHost {
     // The inbox keeps handled ids a week (dedupe); the line keeps no counters for an address that is nobody's phone.
     await this.inbox.purge(this.clock.now() - 7 * DAY).catch(e => this.log(`[purge] inbox failed: ${(e as Error).message}`));
     await this.lineAdapter()?.purge?.().catch(e => { this.log(`[purge] line counters failed: ${(e as Error).message}`); return 0; });
+    // Photo rows a crash left hidden (an upload or a delete that did not finish): bytes, rating and row go.
+    await this.photos.sweep().catch(e => this.log(`[purge] photos failed: ${(e as Error).message}`));
     if (n) this.log(`[purge] removed ${n} expired platform row(s)`);
     return n;
   }
