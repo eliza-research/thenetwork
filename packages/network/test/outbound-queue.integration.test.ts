@@ -27,9 +27,9 @@ const cloudMode={deliver:"accept" as "accept"|"unknown",receipt:"unknown" as "ac
 /** Every id Cloud took on the deliver path (one entry per call). */
 const dispatched:string[]=[];
 
-const replica=async(instance:string)=>{
+const replica=async(instance:string,networks=["friends:nyc"])=>{
   const s=new NetworkService({url,clock,instance,photoStorage:null,tokens:"safety:saf-tok",env:{PLATFORM_ENV:"dev",CLEF_RATINGS:"off",SERVICE_TURN_SECRET:secret},
-    networks:[{id:"friends:nyc",matchingEnabled:false}],network:{seed:1},log:()=>{},
+    networks:networks.map(id=>({id,matchingEnabled:false})),network:{seed:1},log:()=>{},
     adapter:(_net,rt)=>new CloudChannelAdapter({clock,app:rt.app.id,city:rt.city,from:LINE,origin:cloud.url.origin,secret,env:ENV})});
   await s.start();services.push(s);
   return s;
@@ -279,4 +279,21 @@ test("SD-131: Cloud's accepted receipt with no history is recorded for a reply t
   expect(receipt.status).toBe(200);
   const [row]=await sql`select receipt->>'outcome' as outcome from platform.inbound where id='msg:blooio:sd131-back'`;
   expect(row.outcome).toBe("accepted");
+},60_000);
+
+test("SD-132: a second network of the same app on the same line never drains the first network's rows",async()=>{
+  toNewYork(12,0);
+  await primary();
+  const s=await replica("replica-cities",["friends:nyc","friends:sf"]);
+  const nyc=s.runtimes.get("friends:nyc")!,sf=s.runtimes.get("friends:sf")!;
+  const phone="+12125550191",memberId=await join(s,phone,"Hal");
+  await nyc.unitOfWork(()=>undefined);await sf.unitOfWork(()=>undefined);
+  await nyc.adapter.engaged!(phone);
+  await queueOf(nyc).enqueue(sql,[{id:"sd132-reminder",memberId,to:phone,kind:"transactional",text:"Your plan reminder is ready.",city:"nyc"}]);
+  // The sf network drains first: the nyc member is not its member, and its checks must not decide the row.
+  await sf.deliver();
+  expect(await statusOf("sd132-reminder")).toBe("pending");
+  await nyc.deliver();
+  expect(dispatched).toContain("sd132-reminder");
+  expect(await statusOf("sd132-reminder")).toBe("accepted");
 },60_000);

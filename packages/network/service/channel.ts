@@ -207,7 +207,7 @@ export class BlooioAdapter implements ChannelAdapter {
       capRelease: row => rt.capRelease(row.id),
     };
     this.q = new OutboundQueue({
-      sql: rt.db, clock: this.o.clock, provider: this.o.provider, line: this.o.from!, app: this.app, checks, instance: rt.instance,
+      sql: rt.db, clock: this.o.clock, provider: this.o.provider, line: this.o.from!, app: this.app, network: rt.id, checks, instance: rt.instance,
       perLinePerDay: num("BLOOIO_LINE_DAILY_CAP"), newChatsPerLinePerDay: num("BLOOIO_LINE_NEW_CHATS_PER_DAY"), ...this.o.limits, leakAllow: OWN_DOMAINS,
       onAlert: (id, why) => this.log(`[blooio] alert ${why} on ${id} (${this.app})`),
     });

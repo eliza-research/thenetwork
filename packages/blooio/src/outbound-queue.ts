@@ -148,6 +148,12 @@ export interface QueueOptions {
   line: string;
   /** The app whose rows this queue enqueues and drains. */
   app: string;
+  /**
+   * The network ('<app>:<city>') whose rows this queue enqueues and drains: every network of an app has a
+   * queue with the same app and line, and each decides only its own rows with its own checks. Without it the
+   * queue drains every row of its app (one network).
+   */
+  network?: string;
   checks: AppChecks;
   /** The worker's name on its leases. */
   instance?: string;
@@ -242,7 +248,7 @@ export class OutboundQueue {
       // the leak guard already failed is parked for staff at once: no send-time gate may end it before they see it.
       const status = agent && !zone ? "parked_invalid_timezone" : i.leakReasons?.length ? "parked_leak_review" : "pending";
       const row = {
-        id: i.id, app_id: this.app, member_id: i.memberId ?? null, line: this.line, to_address: to, kind: i.kind, body: i.text,
+        id: i.id, app_id: this.app, network_id: this.o.network ?? null, member_id: i.memberId ?? null, line: this.line, to_address: to, kind: i.kind, body: i.text,
         media_urls: tx.array(media, "TEXT"), fingerprint: fp, opportunity_id: i.oppId ?? null, time_zone: zone ?? "UTC", status,
         next_attempt_at: now, created_at: now, updated_at: now, ended_at: status === "pending" ? null : now,
         note: status === "parked_leak_review" ? `leak: ${i.leakReasons!.join(",")}` : null,
@@ -293,7 +299,7 @@ export class OutboundQueue {
     return this.withLine(async () => {
       const changes: StatusChange[] = [...receipts, ...await this.expireHeld()];
       const rows = await this.sql`select * from platform.outbound where app_id = ${this.app} and line = ${this.line}
-        and status = any(${`{${DUE.join(",")}}`}::text[]) and next_attempt_at <= ${new Date(this.now)} order by next_attempt_at, created_at, id`;
+        and (${this.o.network ?? null}::text is null or network_id = ${this.o.network ?? null}) and status = any(${`{${DUE.join(",")}}`}::text[]) and next_attempt_at <= ${new Date(this.now)} order by next_attempt_at, created_at, id`;
       for (const r of rows as any[]) {
         const row = this.rowOf(r);
         let c: StatusChange | undefined;
@@ -713,7 +719,7 @@ export class OutboundQueue {
     for (const i of items) {
       const to = normalizeAddress(i.to);
       await tx`insert into platform.outbound ${tx({
-        id: i.id, app_id: this.app, member_id: i.memberId, line: this.line, to_address: to, kind: i.kind, body: i.text, media_urls: tx.array([], "TEXT"),
+        id: i.id, app_id: this.app, network_id: this.o.network ?? null, member_id: i.memberId, line: this.line, to_address: to, kind: i.kind, body: i.text, media_urls: tx.array([], "TEXT"),
         fingerprint: fingerprint(to, i.text, [], i.kind), opportunity_id: null, time_zone: "UTC", status: "collected", next_attempt_at: now, created_at: now, updated_at: now, ended_at: null,
       })} on conflict (id) do nothing`;
     }
