@@ -261,7 +261,6 @@ export class Accounts {
       const moved = await this.store.movePhone({ personId: person.id, changeId: change.id, oldE164: who.e164, newE164, oldHash: this.phoneHash(who.e164), newHash: this.phoneHash(newE164),
         oldNoticeHash: this.noticeHash(who.e164), newNoticeHash: this.noticeHash(newE164), at: this.now() });
       if (moved !== "ok") return { ok: false, error: moved === "number_in_use" ? "number_in_use" : "review" };
-      await this.store.unsuppress(this.phoneHash(newE164));
       return { ok: true };
     });
     if (!r.ok) return r;

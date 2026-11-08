@@ -401,6 +401,8 @@ export class PgPeopleStore implements PeopleStore {
         on conflict (e164, ref) where ref is not null do nothing`;
       await tx`delete from platform.consent_events where e164 = ${m.oldE164}`;
       await tx`update platform.people set phone_hash = ${m.newHash} where id = ${m.personId}::uuid`;
+      // A delete of everything by an earlier owner of the new number no longer suppresses it (the person proved it now).
+      await tx`delete from platform.suppression where phone_hash = ${m.newHash}`;
       const [floor] = await tx`delete from platform.age_floor where phone_hash = ${m.oldHash} returning lowest_age, at`;
       if (floor) {
         await tx`insert into platform.age_floor (phone_hash, lowest_age, at) values (${m.newHash}, ${floor.lowest_age}, ${floor.at})

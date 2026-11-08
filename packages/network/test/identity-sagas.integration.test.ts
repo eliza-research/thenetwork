@@ -627,4 +627,22 @@ describe.skipIf(!pgAvailable)("identity sagas: stop half way, retry, races (Post
     expect((await sql`select count(*)::int as n from platform.photos where id = 'photo_sam'`)[0].n).toBe(1);
   }, T);
 
+  test("Q-identity_sagas-1: a number change that stops after the move does not leave the new number suppressed", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const s = service(clock);
+    const [a, b] = [newPhone(), newPhone()];
+    expect(await text(s, clock, a, "slop")).toBe("join_asked");
+    expect(await text(s, clock, a, "Xan, 37")).toBe("joined");
+    // An earlier owner of b deleted everything: b is suppressed.
+    await sql`insert into platform.suppression (phone_hash, reason, at) values (${s.accounts.phoneHash(b)}, 'deleted', ${new Date(clock.now())})`;
+
+    const api = await startMove(s, clock, a, b);
+    const fired = stopAfter(s.people, "movePhone");
+    expect((await api("/api/me/phone/confirm", { code: "123456" })).status).toBeGreaterThanOrEqual(500);
+    expect(fired()).toBe(true);
+    // The person now lives on b, and b is not suppressed: their texts are not refused.
+    expect((await memberOf("slop", b))).toBeDefined();
+    expect(await s.people.isSuppressed(s.accounts.phoneHash(b))).toBe(false);
+  }, T);
 });

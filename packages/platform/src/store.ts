@@ -393,6 +393,7 @@ export class MemoryPeopleStore implements PeopleStore {
     this.phones.set(m.newE164, { e164: m.newE164, personId: m.personId, verifiedAt: m.at, method: "otp_sms", lastSeenAt: m.at, hold: null });
     for (const e of this.consent) if (e.e164 === m.oldE164) e.e164 = m.newE164;
     this.personHash.set(m.personId, m.newHash);
+    this.suppression.delete(m.newHash);
     const floor = this.ageFloors.get(m.oldHash);
     if (floor) { this.ageFloors.delete(m.oldHash); await this.noteAgeFloor(m.newHash, floor.age, floor.at); }
     for (const [k, s] of this.sessions) if (s.e164 === m.oldE164) this.sessions.delete(k);
