@@ -98,8 +98,8 @@ test("SD-011: a minor age stated in chat stays recorded when the step after the 
   expect(await matchingAge("slop", slop)).toBe(15);
 }, 60_000);
 
-const webJoin = (app: "friends" | "slop", phone: string, age: number) =>
-  service.accounts.join(APPS[app], {e164: phone, personId: null}, {firstName: "Rae", age, consent: {sms: true, wording: APPS[app].consent.text}});
+const webJoin = (app: "friends" | "slop", phone: string, age: number, firstName = "Rae") =>
+  service.accounts.join(APPS[app], {e164: phone, personId: null}, {firstName, age, consent: {sms: true, wording: APPS[app].consent.text}});
 const liveMemberships = async (phone: string) => {
   const person = await service.accounts.personFor(phone);
   return person ? (await service.people.memberships(person.id)).filter(m => m.state !== "removed").map(m => m.app) : [];
@@ -132,4 +132,25 @@ test("SD-014: an under-13 text join on a new app removes the person's other memb
   expect(await liveMemberships(phone)).toEqual([]);
   expect(await service.accounts.optedIn("friends", phone)).toBe(false);
   expect(await networkMember("friends", friends)).not.toBe("active");
+}, 60_000);
+
+test("SD-015: a web join whose welcome fails leaves no network member and keeps the suppression", async () => {
+  const phone = "+12125550307";
+  expect((await webJoin("friends", phone, 25)).ok).toBe(true);
+  await service.accounts.deleteAll({e164: phone, personId: null});
+  expect(await service.people.isSuppressed(service.accounts.phoneHash(phone))).toBe(true);
+  // The member row commits (createMember); the welcome unit then fails in the database.
+  await sql.unsafe(`create function network.fail_welcome() returns trigger language plpgsql as $$
+    begin if exists (select 1 from network.members where id = new.member_id and name = 'Failwelcome') then raise exception 'synthetic welcome failure'; end if; return new; end $$`);
+  await sql.unsafe(`create trigger fail_welcome before insert on network.messages for each row execute function network.fail_welcome()`);
+  try {
+    await expect(webJoin("slop", phone, 25, "Failwelcome")).rejects.toThrow();
+  } finally {
+    await sql.unsafe(`drop trigger fail_welcome on network.messages; drop function network.fail_welcome()`);
+  }
+  const live = await sql`select id from network.members where app_id = 'slop' and name = 'Failwelcome' and account_status = 'active'`;
+  expect(live.length).toBe(0);
+  expect(await liveMemberships(phone)).toEqual([]);
+  // No opt-in stands, so the deleted number stays suppressed.
+  expect(await service.people.isSuppressed(service.accounts.phoneHash(phone))).toBe(true);
 }, 60_000);

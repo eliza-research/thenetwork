@@ -372,6 +372,7 @@ export class Accounts {
     if (!person) person = await this.createPerson(who.e164, "otp_sms", age.effective ?? input.age);
     await this.recordAge(who.e164, person, input.age);
     // A new opt-in by the person: a delete of everything no longer suppresses the number.
+    const suppressed = await this.store.isSuppressed(this.phoneHash(who.e164));
     await this.store.unsuppress(this.phoneHash(who.e164));
     const membership: Membership = {
       // An invited membership keeps its member id (the invite may already name it).
@@ -388,8 +389,15 @@ export class Accounts {
       // The network member gets the person's lowest age, not the one typed now (a minor anywhere is a minor here).
       await this.hooks.onJoin?.({ app, person, membership, e164: who.e164, age: age.effective ?? input.age, input });
     } catch (e) {
-      await this.store.forgetMembership(person.id, app.id, at);
-      await this.store.addConsent({ e164: who.e164, app: app.id, state: "opted_out", source: "join_failed", at });
+      // The hook can fail after the network member committed (the welcome): it goes through the forget path
+      // too. No opt-in stands, so a number that deleted everything is suppressed again (banned numbers never get here).
+      try {
+        await this.hooks.onForget?.({ app, personId: person.id, memberId: membership.memberId, e164: who.e164 });
+      } finally {
+        await this.store.forgetMembership(person.id, app.id, at);
+        await this.store.addConsent({ e164: who.e164, app: app.id, state: "opted_out", source: "join_failed", at });
+        if (suppressed) await this.store.suppress(this.phoneHash(who.e164), "deleted", at);
+      }
       throw e;
     }
     return { ok: true, membership };
