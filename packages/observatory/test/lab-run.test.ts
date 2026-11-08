@@ -5,7 +5,8 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Lab } from "../src/lab.ts";
+import { Lab, LAB_LIMITS } from "../src/lab.ts";
+import { createServer } from "../src/server.ts";
 
 let dir: string;
 beforeAll(async () => { dir = await mkdtemp(join(tmpdir(), "obs-lab-run-")); });
@@ -44,3 +45,34 @@ test("a run whose save fails ends as failed, not running", async () => {
     lab.dispose();
   }
 }, 60_000);
+
+// SD-503 (observatory D25): two lab requests could both pass the server's queue check while their audit
+// rows were written. The second lab.start then threw "the lab queue is full": the client got a 500, and
+// the audit log kept only an ok:true row for a run that never started.
+test("lab requests that race for the last queue places get 200 or 429, and the audit says which", async () => {
+  const token = "admin-lab-race".padEnd(32, "-0123456789abcdef");
+  const script = join(dir, "slow-arm.ts");
+  await writeFile(script, "await Bun.sleep(20000); console.log(JSON.stringify({ results: [] }));");
+  const obs = await createServer({
+    port: 0, development: false, tokens: `admin:${token}`, audit: { dir: join(dir, "audit-race") },
+    lab: { dir: join(dir, "lab-race"), script, concurrency: 1 }, game: { seed: 1, pushMs: 3_600_000, tickMs: 3_600_000 },
+  });
+  try {
+    // One seed runs; the queue has 1 place left.
+    for (let i = 0; i < 4; i++) await obs.lab.start({ arms: ["consent"], seeds: [1, 2, 3, 4, 5], days: 1, app: "ntwrk" }, "tester");
+    expect(obs.lab.queued).toBe(LAB_LIMITS.maxQueued - 1);
+    const post = () => fetch(`${obs.url}/api/lab/run`, {
+      method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ arms: ["consent"], seeds: [1], days: 1 }),
+    });
+    const res = await Promise.all([post(), post(), post(), post()]);
+    const codes = res.map(r => r.status).sort();
+    expect(codes).toEqual([200, 429, 429, 429]);
+    expect(obs.lab.queued).toBe(LAB_LIMITS.maxQueued);
+    // Each refused request has an audit row that says it failed.
+    const rows = (await obs.audit.list({ limit: 100 })).filter(e => e.action === "lab_run");
+    expect(rows.filter(e => e.ok === false).length).toBe(3);
+  } finally {
+    await obs.stop();
+  }
+}, 120_000);

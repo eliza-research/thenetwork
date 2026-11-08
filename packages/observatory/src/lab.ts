@@ -12,6 +12,10 @@ import type { LabArm, LabArmResult, LabRequest, LabRun } from "./types.ts";
 export const LAB_ARMS: readonly LabArm[] = ["push_baseline", "push_v2", "consent"];
 /** maxQueued: seeds that may wait at once (a full queue answers 429; audit observatory-14). */
 export const LAB_LIMITS = { maxSeeds: 5, maxDays: 60, concurrency: 2, maxQueued: 20 } as const;
+/** start() refuses a run: the queue has no room for its seeds. */
+export class LabQueueFull extends Error {
+  constructor() { super(`the lab queue is full (${LAB_LIMITS.maxQueued} seeds)`); }
+}
 
 /**
  * The child's environment: what Bun needs to run, nothing else. API keys, database URLs and tokens
@@ -129,7 +133,7 @@ export class Lab {
   /** Queue a run: one child per seed. */
   async start(req: LabRequest, requestedBy: string): Promise<LabRun> {
     await this.loaded;
-    if (this.queue.length + req.seeds.length > LAB_LIMITS.maxQueued) throw new Error(`the lab queue is full (${LAB_LIMITS.maxQueued} seeds)`);
+    if (this.queue.length + req.seeds.length > LAB_LIMITS.maxQueued) throw new LabQueueFull();
     const now = Date.now();
     const id = `lab-${new Date(now).toISOString().replace(/[-:]/g, "").replace(/\..*/, "")}-${++this.seq}`;
     const run: LabRun = {
