@@ -46,6 +46,7 @@ import {
 // deployed image (real mode only) does not contain.
 import type { GameOptions } from "./sources/game.ts";
 import { HIDDEN_MESSAGE, RealSource, type RealOptions } from "./sources/real.ts";
+import { serviceFromEnv } from "./sources/service.ts";
 import type { DataSource } from "./sources/source.ts";
 import type { AppHealth, AuditEntry, ControlCommand, EnvInfo, Mode, ObsDelta, ObsMember, RevealGrant, SafetyAction, StaffRole, StaffUser } from "./types.ts";
 
@@ -158,26 +159,26 @@ const remoteDb = (url: string) => { try { return !LOCAL_DB_HOSTS.has(new URL(url
 
 /**
  * The console's start guard (docs/deploy.md 2.6), fail closed. The console holds real data when it is
- * real-only (OBSERVATORY_REAL_ONLY=1) or when any database it may read is not on this machine (a game
- * server can switch to real mode). Then:
+ * real-only (OBSERVATORY_REAL_ONLY=1) or when any database it may read, or the Network service it acts
+ * through, is not on this machine (a game server can switch to real mode). Then:
  *  - PLATFORM_ENV must be set (dev, staging or production);
  *  - staging and production need Cloudflare Access (no tokens);
  *  - staging and production need the Postgres audit log (a redeploy loses the file);
- *  - PLATFORM_ENV=dev may use tokens only with local databases; a remote one needs Cloudflare Access too.
+ *  - PLATFORM_ENV=dev may use tokens only with local databases and a local service; a remote one needs Cloudflare Access too.
  * Returns why the server must not start, or undefined.
  */
-export function deployGuard(o: { realOnly: boolean; trustCfAccess: boolean; platformEnv?: string; databaseUrls: (string | undefined)[]; audit: AuditSink["kind"] }): string | undefined {
-  const remote = o.databaseUrls.some(u => !!u && remoteDb(u));
+export function deployGuard(o: { realOnly: boolean; trustCfAccess: boolean; platformEnv?: string; databaseUrls: (string | undefined)[]; serviceUrl?: string; audit: AuditSink["kind"] }): string | undefined {
+  const remote = o.databaseUrls.some(u => !!u && remoteDb(u)) || (!!o.serviceUrl && remoteDb(o.serviceUrl));
   if (!o.realOnly && !remote) return undefined;
   const env = o.platformEnv?.trim();
-  const why = o.realOnly ? "OBSERVATORY_REAL_ONLY=1" : "a database that is not on this machine";
+  const why = o.realOnly ? "OBSERVATORY_REAL_ONLY=1" : "a database or Network service that is not on this machine";
   const access = "needs Cloudflare Access: OBSERVATORY_TRUST_CF_ACCESS=1 with OBSERVATORY_CF_ACCESS_TEAM and OBSERVATORY_CF_ACCESS_AUD";
   if (!env) return `real data (${why}) needs PLATFORM_ENV (dev, staging or production)`;
   if (env !== "dev" && env !== "staging" && env !== "production") return `unknown PLATFORM_ENV "${env}" (dev, staging or production)`;
   if (env !== "dev" && !o.trustCfAccess) return `a deployed console (${why}, PLATFORM_ENV ${env}) ${access}`;
   if (env !== "dev" && o.audit !== "postgres") return `a deployed console (${why}, PLATFORM_ENV ${env}) needs OBSERVATORY_AUDIT_DATABASE_URL (a redeploy loses the file audit log)`;
   if (o.trustCfAccess) return undefined;
-  if (remote) return `PLATFORM_ENV=dev with a database that is not on this machine ${access} (tokens are for local databases only)`;
+  if (remote) return `PLATFORM_ENV=dev with a database or Network service that is not on this machine ${access} (tokens are for local databases only)`;
   return undefined;
 }
 
@@ -279,6 +280,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
     databaseUrls: [opts.real?.url ?? process.env.NETWORK_DATABASE_URL ?? process.env.DATABASE_URL,
       ...APP_IDS.map(a => opts.real?.appUrls?.[a] ?? process.env[appUrlEnv(a)]), process.env.OBSERVATORY_PLATFORM_DATABASE_URL,
       typeof opts.peopleUrl === "string" ? opts.peopleUrl : undefined, typeof opts.staffRolesUrl === "string" ? opts.staffRolesUrl : undefined],
+    serviceUrl: (opts.real?.service === false ? undefined : opts.real?.service ?? serviceFromEnv())?.url,
   });
   if (refusal) throw new Error(`refusing to start: ${refusal}`);
   if (trustCfAccess && (tokens.size || opts.token || process.env.OBSERVATORY_TOKEN)) console.warn("Observatory: single sign-on is on, so OBSERVATORY_TOKENS and OBSERVATORY_TOKEN are refused (each person signs in as themselves)");
