@@ -548,9 +548,12 @@ class ObsStore {
     this.notify();
   }
   revealFor(memberId: string): RevealGrant | undefined { return this.reveals.find(g => g.memberId === memberId && g.until > Date.now()); }
-  /** End a reveal before its time (audited). */
+  /** End a reveal before its time (audited). The grant leaves the screen only when the server has none (200 or 404). */
   async unreveal(memberId: string): Promise<void> {
-    try { await this.api(`/api/reveal?memberId=${encodeURIComponent(memberId)}`, { method: "DELETE" }); } catch { /* the 401 prompt shows */ }
+    let r: Response;
+    try { r = await this.api(`/api/reveal?memberId=${encodeURIComponent(memberId)}`, { method: "DELETE" }); }
+    catch (e) { if (!(e instanceof AuthError)) this.toast((e as Error).message, "bad"); return; }
+    if (!r.ok && r.status !== 404) { this.toast(((await r.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${r.status}`, "bad"); return; }
     this.reveals = this.reveals.filter(g => g.memberId !== memberId);
     this.notify();
   }
