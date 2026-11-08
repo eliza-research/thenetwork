@@ -24,7 +24,7 @@
 import type { Category, MemberId, ParticipationState } from "@thenetwork/core";
 import { canBeMatched, DAY, fromLocal, HOUR, inQuietHours, localParts, MINUTE } from "@thenetwork/core";
 import { capBlocks, capValue, itemHardGate } from "./attentionCore.ts";
-import { DEFAULT_ATTENTION, type AttentionConfig } from "./config.ts";
+import { assertNoConfigErrors, attentionConfigErrors, DEFAULT_ATTENTION, type AttentionConfig } from "./config.ts";
 import { tokenize } from "./embed.ts";
 import { privateVocabulary } from "./explain.ts";
 import { checkMemberFacing } from "./judgeCommon.ts";
@@ -37,6 +37,7 @@ import { CONTRIBUTOR_ROLES } from "./types.ts";
 export type EligibilityCheck = (memberId: MemberId, others: MemberId[], lane?: Category) => string | null;
 import type { AppPack } from "./pack.ts";
 import { groupQuorum } from "./planCore.ts";
+import { interpolate } from "./scoreCore.ts";
 import { DEFAULT_ENJOY_BY_CATEGORY, DEFAULT_ENJOY_KNOTS } from "./packs/network/calibrator.ts";
 import { GENERIC_ACTIVITY as NETWORK_GENERIC_ACTIVITY } from "./packs/network/copy.ts";
 import { networkPack } from "./packs/network/index.ts";
@@ -113,6 +114,8 @@ export function capFor(m: MemberAttention, cfg: AttentionConfig = DEFAULT_ATTENT
   // 1 per 30 days, engine-attention-plans-5).
   // An explicit request can lower the cap, or restore it, but never exceed the state cap (D11).
   const over = m.prefs.capOverride;
+  // capValue's proof needs limit >= 0 and periodDays > 0; a config handed in unresolved is checked here.
+  assertNoConfigErrors(attentionConfigErrors(cfg));
   return capValue({ state: m.state, minor: isMinor(m.age), onlyWhenAsked: !!m.onlyWhenAsked || m.prefs.mode === "only_when_asked", capOverride: over === undefined ? undefined : Math.floor(over) }, cfg.caps, cfg.minors.cap);
 }
 
@@ -175,15 +178,8 @@ export { DEFAULT_ENJOY_BY_CATEGORY, DEFAULT_ENJOY_KNOTS } from "./packs/network/
 export function knotCalibrator(knots: [number, number][] = DEFAULT_ENJOY_KNOTS, byCategory: Partial<Record<Category, [number, number][]>> = DEFAULT_ENJOY_BY_CATEGORY): Calibrator {
   return (score, category) => interpolate(byCategory[category] ?? knots, score);
 }
-export function interpolate(knots: [number, number][], x: number): number {
-  if (!knots.length) return x;
-  if (x <= knots[0]![0]) return knots[0]![1];
-  for (let i = 1; i < knots.length; i++) {
-    const [x1, y1] = knots[i]!, [x0, y0] = knots[i - 1]!;
-    if (x <= x1) return x1 === x0 ? y1 : y0 + ((y1 - y0) * (x - x0)) / (x1 - x0);
-  }
-  return knots[knots.length - 1]![1];
-}
+// The calibrator itself is proved in scoreCore.ts (a probability in, a probability out).
+export { interpolate };
 
 /** w_kind; profiling questions and re-confirmations are worth their expected value of information, capped. */
 export function kindWeight(item: Pick<AttentionItem, "kind" | "evi">, cfg: AttentionConfig = DEFAULT_ATTENTION): number {

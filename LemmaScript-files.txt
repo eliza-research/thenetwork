@@ -32,3 +32,5 @@ packages/engine/src/attentionCore.ts
 packages/engine/src/intervalCore.ts
 packages/engine/src/pairKey.ts
 packages/engine/src/scoreCore.ts
+packages/platform/src/segments.ts
+deploy/backup/refusal.ts

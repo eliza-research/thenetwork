@@ -24,14 +24,16 @@ export interface ProfileReviewOwnerProof extends ProfileReviewOwnerRequest {
   expiresAt: number;
 }
 const requestKeys = ["version", "channel", "messageId", "app", "memberId", "batchId", "action", "commandSha256", "networkAuthority", "requestNonce"] as const;
+/** Type first: String(["slop"]) is "slop", so a text-form test accepts arrays. */
+const oneOf = (v: unknown, list: readonly string[]): v is string => typeof v === "string" && list.includes(v);
 const uuid = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
 const digest = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{64}$/.test(v);
 function requestFields(v: Record<string, unknown>): boolean {
-  return v.version === 1 && ["blooio", "twilio"].includes(String(v.channel))
+  return v.version === 1 && oneOf(v.channel, ["blooio", "twilio"])
     && typeof v.messageId === "string" && /^[A-Za-z0-9_:.\-]{1,200}$/.test(v.messageId)
-    && ["ntwrk", "slop", "friends", "peon"].includes(String(v.app))
+    && oneOf(v.app, ["ntwrk", "slop", "friends", "peon"])
     && typeof v.memberId === "string" && /^[A-Za-z0-9_:\-]{1,128}$/.test(v.memberId)
-    && uuid(v.batchId) && ["preview", "decide", "delete", "collect"].includes(String(v.action))
+    && uuid(v.batchId) && oneOf(v.action, ["preview", "decide", "delete", "collect"])
     && digest(v.commandSha256) && !!parseNetworkRouteAuthorityV1(v.networkAuthority) && uuid(v.requestNonce);
 }
 export function parseProfileReviewOwnerRequest(value: unknown): ProfileReviewOwnerRequest | undefined {

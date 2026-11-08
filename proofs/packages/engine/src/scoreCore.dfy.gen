@@ -69,3 +69,73 @@ function netValueOf(pos: real, neg: real, norm: real, confidence: real): real
 {
   (((pos - neg) / norm) * confidence)
 }
+
+function realZero(): real
+{
+  (0.5 - 0.5)
+}
+
+lemma realZero_ensures()
+  ensures (realZero() == (0 as real))
+{
+}
+
+method harmonic(xs: seq<real>) returns (res: real)
+  ensures (res >= (0 as real))
+  ensures ((|xs| > 0) ==> (forall i: nat :: ((i < |xs|) ==> (xs[i] > (0 as real)))) ==> (res > (0 as real)))
+  ensures ((exists i: nat :: ((i < |xs|) && (xs[i] <= (0 as real)))) ==> (res == (0 as real)))
+{
+  if (|xs| == 0) {
+    var i_t0 := realZero();
+    return i_t0;
+  }
+  var i_t1 := realZero();
+  var inv := i_t1;
+  var i := 0;
+  while (i < |xs|)
+    invariant (i <= |xs|)
+    invariant forall j: nat :: ((j < i) ==> (xs[j] > (0 as real)))
+    invariant ((i > 0) ==> (inv > (0 as real)))
+    invariant ((i == 0) ==> (inv == (0 as real)))
+    decreases (|xs| - i)
+  {
+    var x := xs[i];
+    if (x <= (0 as real)) {
+      var i_t2 := realZero();
+      return i_t2;
+    }
+    inv := (inv + ((1 as real) / x));
+    i := (i + 1);
+  }
+  return ((|xs| as real) / inv);
+}
+
+method interpolate(knots: seq<seq<real>>, x: real) returns (res: real)
+  requires forall i: nat :: ((i < |knots|) ==> (|knots[i]| == 2))
+  ensures ((|knots| > 0) ==> (forall i: nat :: ((i < |knots|) ==> (((0 as real) <= knots[i][1]) && (knots[i][1] <= (1 as real))))) ==> (((0 as real) <= res) && (res <= (1 as real))))
+{
+  if (|knots| == 0) {
+    return x;
+  }
+  if (x <= knots[0][0]) {
+    return knots[0][1];
+  }
+  var i := 1;
+  while (i < |knots|)
+    invariant (1 <= i)
+    invariant (i <= |knots|)
+    invariant (x > knots[(i - 1)][0])
+  {
+    var i_destr0 := knots[i];
+    var x1 := i_destr0[0];
+    var y1 := i_destr0[1];
+    var i_destr1 := knots[(i - 1)];
+    var x0 := i_destr1[0];
+    var y0 := i_destr1[1];
+    if (x <= (x1 as real)) {
+      return (if (x1 == x0) then y1 else ((y0 as real) + ((((y1 - y0) as real) * (x - (x0 as real))) / ((x1 - x0) as real))));
+    }
+    i := (i + 1);
+  }
+  return knots[(|knots| - 1)][1];
+}

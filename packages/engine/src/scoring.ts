@@ -6,7 +6,7 @@ import type { Facet, MemberId, ScoreComponents } from "@thenetwork/core";
 import { DAY, HOUR } from "@thenetwork/core";
 import type { Candidate, JudgeVerdict } from "./types.ts";
 import { complementarity } from "./complementarity.ts";
-import { netValueOf } from "./scoreCore.ts";
+import { harmonic, netValueOf } from "./scoreCore.ts";
 import { pairKey, provenanceWeight, type World } from "./world.ts";
 
 export interface Scored {
@@ -20,12 +20,8 @@ export interface Scored {
 
 const clamp = (x: number, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, Number.isFinite(x) ? x : lo));
 
-/** Harmonic mean: punishes lopsided matches (reciprocal recommendation, RECON). */
-export function harmonic(xs: number[]): number {
-  if (!xs.length) return 0;
-  if (xs.some(x => x <= 0)) return 0;
-  return xs.length / xs.reduce((s, x) => s + 1 / x, 0);
-}
+/** Harmonic mean (proved in scoreCore.ts). */
+export { harmonic };
 
 /**
  * Mutual benefit: pairs use the harmonic mean of each side's benefit; groups use

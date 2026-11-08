@@ -9,6 +9,38 @@ predicate JSStringLt(s: string, t: string)
   else JSStringLt(s[1..], t[1..])
 }
 
+function StringIndexOf(s: string, sub: string): int
+  ensures StringIndexOf(s, sub) == -1
+       || (0 <= StringIndexOf(s, sub) <= |s| - |sub| && s[StringIndexOf(s, sub)..StringIndexOf(s, sub) + |sub|] == sub)
+{
+  StringIndexOfFrom(s, sub, 0)
+}
+
+function StringIndexOfFrom(s: string, sub: string, from: int): int
+  ensures StringIndexOfFrom(s, sub, from) == -1
+       || (0 <= StringIndexOfFrom(s, sub, from) <= |s| - |sub|
+           && s[StringIndexOfFrom(s, sub, from)..StringIndexOfFrom(s, sub, from) + |sub|] == sub
+           && StringIndexOfFrom(s, sub, from) >= from)
+{
+  StringIndexOfFromN(s, sub, if from < 0 then 0 else from)
+}
+
+function StringIndexOfFromN(s: string, sub: string, from: nat): int
+  decreases |s| - from
+  ensures StringIndexOfFromN(s, sub, from) == -1
+       || (from <= StringIndexOfFromN(s, sub, from) <= |s| - |sub|
+           && s[StringIndexOfFromN(s, sub, from)..StringIndexOfFromN(s, sub, from) + |sub|] == sub)
+{
+  if from + |sub| > |s| then -1
+  else if s[from..from + |sub|] == sub then from as int
+  else StringIndexOfFromN(s, sub, from + 1)
+}
+
+function keyableId(id: string): bool
+{
+  !((StringIndexOf(id, "|") >= 0))
+}
+
 function pairKey(a: string, b: string): string
 {
   if JSStringLt(a, b) then
@@ -19,8 +51,61 @@ function pairKey(a: string, b: string): string
 
 lemma pairKey_ensures(a: string, b: string)
   ensures (pairKey(a, b) == pairKey(b, a))
+  ensures forall c, d :: (keyableId(a) ==> keyableId(b) ==> (pairKey(a, b) == pairKey(c, d)) ==> (((a == c) && (b == d)) || ((a == d) && (b == c))))
 {
   Tri(a, b); Asym(a, b);
+  forall c, d | keyableId(a) && keyableId(b) && pairKey(a, b) == pairKey(c, d)
+    ensures (a == c && b == d) || (a == d && b == c)
+  {
+    NoSep(a); NoSep(b);
+    var lo := if JSStringLt(a, b) then a else b;
+    var hi := if JSStringLt(a, b) then b else a;
+    var lo2 := if JSStringLt(c, d) then c else d;
+    var hi2 := if JSStringLt(c, d) then d else c;
+    assert pairKey(a, b) == lo + "|" + hi;
+    assert pairKey(c, d) == lo2 + "|" + hi2;
+    Split(lo, hi, lo2, hi2);
+  }
+}
+
+// A string without '|' at any index: what keyableId says, unfolded.
+predicate SepFree(s: string) { forall i :: 0 <= i < |s| ==> s[i] != '|' }
+
+lemma NoSepFrom(s: string, from: nat)
+  requires StringIndexOfFromN(s, "|", from) == -1
+  ensures forall i :: from <= i < |s| ==> s[i] != '|'
+  decreases |s| - from
+{
+  if from + 1 <= |s| {
+    assert s[from..from + 1] == [s[from]];
+    NoSepFrom(s, from + 1);
+  }
+}
+
+lemma NoSep(s: string)
+  requires keyableId(s)
+  ensures SepFree(s)
+{
+  NoSepFrom(s, 0);
+}
+
+// The first separator of x + "|" + y sits right after x, so the split is unique when x and y have none.
+lemma Split(x: string, y: string, u: string, v: string)
+  requires SepFree(x) && SepFree(y)
+  requires x + "|" + y == u + "|" + v
+  ensures u == x && v == y
+{
+  var s := x + "|" + y;
+  if |u| < |x| {
+    assert s[|u|] == '|';
+    assert s[|u|] == x[|u|];
+  } else if |u| > |x| {
+    assert s[|u|] == '|';
+    assert s[|u|] == y[|u| - |x| - 1];
+  } else {
+    assert u == s[..|u|] == x;
+    assert v == s[|u| + 1..] == y;
+  }
 }
 
 lemma Tri(s: string, t: string)

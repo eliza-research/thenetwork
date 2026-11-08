@@ -24,7 +24,7 @@
 // hashes. Run logs get no new fields for networkPack. Rule and generator order is the contract.
 import type { AppId, Category, City, Facet, Intent, MemberId, OpportunityKind } from "@thenetwork/core";
 import type { ActivityType } from "./packs/network/activities.ts";
-import type { AttentionConfig, EngineConfig, PlansConfig } from "./config.ts";
+import { attentionConfigErrors, engineConfigErrors, plansConfigErrors, type AttentionConfig, type EngineConfig, type PlansConfig } from "./config.ts";
 import type { GenCtx } from "./genkit.ts";
 import type { Candidate, CadencePrefs, Format, Role } from "./types.ts";
 import type { Interval, MemberIndex, RomanceProfile, World } from "./world.ts";
@@ -37,8 +37,6 @@ export interface AssignContext {
   rng: Rng;
   /** Exposure debt carried between runs (input.exposureDebt, canonical ids). */
   debt: Readonly<Record<MemberId, number>>;
-  /** Members held back this run (asked a question first). */
-  exclude?: ReadonlySet<MemberId>;
   /** Proactive messages already planned this run outside selection (asks), per member. */
   extraProactive?: ReadonlyMap<MemberId, number>;
 }
@@ -220,8 +218,7 @@ export interface SelectionPolicy {
    * Optional global assignment that replaces the core greedy selection (slopPack: stable matching per
    * tick, or a pack greedy with inbound caps). It receives the scored configurations after every
    * hard filter and must only choose among `eligible` ones; the core guard still runs on its output
-   * (selectionGuard.ts: minors in any role, repeated pairs, members in an open opportunity or held
-   * for an ask), but the pack owns its budgets and city caps. Absent for networkPack, so the core
+   * (selectionGuard.ts: minors in any role, repeated pairs, members in an open opportunity), but the pack owns its budgets and city caps. Absent for networkPack, so the core
    * greedy (and its bytes) are unchanged.
    */
   assign?(w: World, scored: readonly Scored[], ctx: AssignContext): SelectionResult;
@@ -339,7 +336,8 @@ export function judgePackOf(w: World): JudgePack {
 
 /**
  * Validates a pack against the core contract. Throws on: a match age under 18, a matchable account
- * tier, a lane that is not adults-only, duplicate generator / rule / lane ids.
+ * tier, a lane that is not adults-only, duplicate generator / rule / lane ids, and default configs
+ * that break a precondition of a proved core (config.ts engineConfigErrors and the others).
  */
 export function validatePack(p: AppPack): AppPack {
   const errs: string[] = [];
@@ -355,6 +353,8 @@ export function validatePack(p: AppPack): AppPack {
   dup(p.eligibility.pairRules.map(r => r.id), "pair rule");
   dup([...p.eligibility.candidatePreRules, ...p.eligibility.candidatePostRules].map(r => r.id), "candidate rule");
   dup(p.ontology.lanes.map(l => l.id), "lane");
+  errs.push(...engineConfigErrors(p.defaults.engine), ...attentionConfigErrors(p.defaults.attention), ...attentionConfigErrors(p.attention.config));
+  if (p.defaults.plans) errs.push(...plansConfigErrors(p.defaults.plans));
   if (errs.length) throw new Error(`invalid pack ${p.id}: ${errs.join("; ")}`);
   return p;
 }

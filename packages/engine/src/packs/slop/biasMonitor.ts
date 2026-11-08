@@ -7,7 +7,7 @@
 // groupings such as the rating quintile (to check that low-rated members are not starved of dates).
 // Iteration 3 showed a biased rater moves match QUALITY (second dates) before it moves volume
 // (dates), so the second-date ratio is the one to watch. Nothing here is member-facing.
-import { isAlert, quintileOf } from "../decisions.ts";
+import { isAlert, quintileOf, ratioOf } from "../decisions.ts";
 
 export interface MemberOutcome {
   group: string;
@@ -40,7 +40,7 @@ export function biasMonitor(rows: Iterable<MemberOutcome>, o: { minN?: number; t
   const groups: Record<string, GroupOutcome> = {};
   for (const k of [...acc.keys()].sort()) {
     const g = acc.get(k)!, rate = per(g as typeof tot);
-    groups[k] = { n: g.n, memberMonths: g.mm, rate, ratio: Object.fromEntries(OUTCOME_METRICS.map(m => [m, overall[m] ? rate[m] / overall[m] : 1])) as Record<OutcomeMetric, number> };
+    groups[k] = { n: g.n, memberMonths: g.mm, rate, ratio: Object.fromEntries(OUTCOME_METRICS.map(m => [m, ratioOf(rate[m], overall[m])])) as Record<OutcomeMetric, number> };
   }
   const min = {} as BiasReport["min"];
   const alerts: BiasReport["alerts"] = [];

@@ -325,7 +325,7 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
       const { w, scored, ctx, result } = seen!;
       // The edge set stableRound saw: eligible two-person candidates, both members usable, at or
       // above minValue. The first pair for a key wins, as it does when the pack builds its edges.
-      const usable = (id: MemberId) => !ctx.exclude?.has(id) && !w.get(id)!.inOpenOpportunity;
+      const usable = (id: MemberId) => !w.get(id)!.inOpenOpportunity;
       const edges = new Map<string, { a: MemberId; b: MemberId; ownA: number; ownB: number }>();
       for (const x of scored) {
         if (!x.eligible || x.c.participants.length !== 2 || x.c.exploration) continue;

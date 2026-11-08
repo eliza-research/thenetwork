@@ -132,6 +132,10 @@ describe("a number swap", () => {
     const from = w.mark();
     expect(await w.net.relayRequest({ itemId: "c2", from: "b", kind: "contact_share" }, { contactOf })).toMatchObject({ decision: "sent" });
     expect(numbers(w, from).map(s => s.to).sort()).toEqual(["a", "b"]);
+    // The numbers went out once; the stored state (network_state) keeps neither (network-src bug 8).
+    const state = JSON.stringify(w.net.exportState());
+    expect(state).not.toContain(contactOf("a"));
+    expect(state).not.toContain(contactOf("b"));
   });
 
   test("never goes one way: a member past the streak limit stops both shares", async () => {
@@ -151,6 +155,46 @@ describe("a number swap", () => {
     expect(await w.net.relayRequest({ itemId: "c2", from: "b", kind: "contact_share" }, { contactOf })).toMatchObject({ decision: "refused" });
     expect(numbers(w, from)).toEqual([]);
     expect((w.net as any).deferred.filter((d: any) => d.kind === "relay")).toEqual([]);
+  });
+});
+
+describe("the engine's send-time re-check (decision 11)", () => {
+  test("a lane opt-in withdrawn after the proposal stops the invite and the introduction", async () => {
+    const w = new Mini(pair());
+    await w.onboard("a", "b");
+    const id = w.propose(["a", "b"]);
+    const first = await firstProbed(w, ["a", "b"]);
+    const other = first === "a" ? "b" : "a";
+    // As an engine proposal: the engine checked both lane opt-ins when it proposed it (a player's
+    // proposal, a member's request and a plan never had that check, so their lane is not re-checked).
+    opp(w, id).origin = "engine";
+    // The other member leaves the hobby lane on the record before their invite or the introduction.
+    const prefs = w.members.find(x => x.id === other)!.prefs!;
+    (prefs as { categoriesOptIn: string[] }).categoriesOptIn = prefs.categoriesOptIn.filter(c => c !== "hobby");
+    await w.say(first, "yes");
+    if (w.probed(other)) await w.say(other, "yes");
+    await w.run(3 * DAY);
+    expect(w.meetings).toEqual([]);
+    expect(w.to(first).some(s => s.body.includes(other === "a" ? "Ana" : "Ben"))).toBe(false);
+    expect(w.logs.some(l => l.kind === "send_refused" && l.detail.reason === "category_opt_out")).toBe(true);
+    expect(opp(w, id).status.get(other)).not.toBe("yes");
+  });
+});
+
+describe("an age the LLM reads", () => {
+  // network-src bug 7: the reader's age only ever lowers what is known; it never makes an unknown age adult.
+  const reader = (selfAge: number) => async () => ({ wants: [], notWanted: [], interests: [], skills: [], selfAge });
+  test("an adult age read by the LLM does not clear an unknown age", async () => {
+    const w = new Mini([{ ...climber("a", "Ana Diaz"), age: undefined }], { understand: reader(34) });
+    await w.say("a", "hi! just moved to the neighborhood");
+    expect(mem(w, "a").minor).toBe(true);
+    expect(mem(w, "a").statedAge).toBeUndefined();
+  });
+  test("a minor age read by the LLM still lowers it", async () => {
+    const w = new Mini([{ ...climber("a", "Ana Diaz"), age: undefined }], { understand: reader(15) });
+    await w.say("a", "hi! just moved to the neighborhood");
+    expect(mem(w, "a").minor).toBe(true);
+    expect(mem(w, "a").statedAge).toBe(15);
   });
 });
 

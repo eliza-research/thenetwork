@@ -28,7 +28,7 @@ datatype ApprovalFacts = ApprovalFacts(declined: bool, known: bool, optedOut: bo
 
 datatype AgeFacts = AgeFacts(attestedKnown: bool, attestedAdult: bool, statedKnown: bool, statedAdult: bool)
 
-datatype RecipientFacts = RecipientFacts(declined: bool, known: bool, optedOut: bool, account: bool, held: bool, trustOk: bool, minor: bool, onlyWhenAsked: bool)
+datatype RecipientFacts = RecipientFacts(declined: bool, known: bool, optedOut: bool, cannotJoin: bool, account: bool, held: bool, trustOk: bool, minor: bool, onlyWhenAsked: bool)
 
 datatype OtherFacts = OtherFacts(blocked: bool, known: bool, minor: bool, account: bool, declined: bool, trustOk: bool)
 
@@ -379,6 +379,21 @@ lemma mustDecline_ensures(attestedAdult: bool, attestedUnder: bool, explicitUnde
 {
 }
 
+function llmAgeCounts(rulesKnown: bool, rulesAge: int, llmAge: int, llmMinor: bool): bool
+{
+  if rulesKnown then
+    (llmAge < rulesAge)
+  else
+    llmMinor
+}
+
+lemma llmAgeCounts_ensures(rulesKnown: bool, rulesAge: int, llmAge: int, llmMinor: bool)
+  ensures (llmAgeCounts(rulesKnown, rulesAge, llmAge, llmMinor) ==> !(rulesKnown) ==> llmMinor)
+  ensures (llmAgeCounts(rulesKnown, rulesAge, llmAge, llmMinor) ==> rulesKnown ==> (llmAge < rulesAge))
+  ensures (!(llmMinor) ==> !(rulesKnown) ==> !(llmAgeCounts(rulesKnown, rulesAge, llmAge, llmMinor)))
+{
+}
+
 function minorClears(wasMinor: bool, attestedKnown: bool, knownAdult: bool, signal: bool, conflict: bool, reported: bool): bool
 {
   (((((wasMinor && !(attestedKnown)) && knownAdult) && !(signal)) && !(conflict)) && !(reported))
@@ -440,6 +455,28 @@ function otherVerdict(x: OtherFacts): string
 
 lemma otherVerdict_ensures(x: OtherFacts)
   ensures ((otherVerdict(x) == "ok") ==> (((((!(x.blocked) && x.known) && !(x.minor)) && !(x.account)) && !(x.declined)) && x.trustOk))
+{
+}
+
+function sendTimeVerdict(gate: string, invite: bool, engineReason: string): string
+{
+  if (gate != "ok") then
+    gate
+  else
+    if (invite && (engineReason != "")) then
+      if (engineReason == "ok") then
+        "engine_refused"
+      else
+        engineReason
+    else
+      "ok"
+}
+
+lemma sendTimeVerdict_ensures(gate: string, invite: bool, engineReason: string)
+  ensures ((gate != "ok") ==> (sendTimeVerdict(gate, invite, engineReason) == gate))
+  ensures ((sendTimeVerdict(gate, invite, engineReason) == "ok") ==> (gate == "ok"))
+  ensures ((sendTimeVerdict(gate, invite, engineReason) == "ok") ==> invite ==> (engineReason == ""))
+  ensures ((gate == "ok") ==> (!(invite) || (engineReason == "")) ==> (sendTimeVerdict(gate, invite, engineReason) == "ok"))
 {
 }
 
@@ -764,6 +801,7 @@ const REPORT_POINTS: int := 3
 
 method recipientVerdict(r: RecipientFacts, s: SendClass, about: seq<OtherFacts>) returns (res: string)
   ensures ((res == "ok") ==> ((!(r.declined) && r.known) && !(r.optedOut)))
+  ensures ((res == "ok") ==> !(s.safety) ==> !(r.cannotJoin))
   ensures ((res == "ok") ==> !(s.reply) ==> !(s.safety) ==> (!(r.account) && !(r.held)))
   ensures ((res == "ok") ==> s.proactive ==> !(s.reengage) ==> !(r.onlyWhenAsked))
   ensures ((res == "ok") ==> s.askKind ==> !(s.reply) ==> !(s.reengage) ==> !(r.onlyWhenAsked))
@@ -778,6 +816,9 @@ method recipientVerdict(r: RecipientFacts, s: SendClass, about: seq<OtherFacts>)
   }
   if r.optedOut {
     return "opted_out";
+  }
+  if (r.cannotJoin && !(s.safety)) {
+    return "cannot_join";
   }
   if ((r.account && !(s.reply)) && !(s.safety)) {
     return "account_";

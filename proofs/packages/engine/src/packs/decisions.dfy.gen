@@ -306,6 +306,31 @@ lemma isAlert_ensures(n: int, ratio: real, minN: int, threshold: real)
 {
 }
 
+function realOne(): real
+{
+  (0.5 + 0.5)
+}
+
+lemma realOne_ensures()
+  ensures (realOne() == (1 as real))
+{
+}
+
+function ratioOf(rate: real, overall: real): real
+{
+  if ((overall != (0 as real)) && (overall == overall)) then
+    (rate / overall)
+  else
+    realOne()
+}
+
+lemma ratioOf_ensures(rate: real, overall: real)
+  ensures ((overall == (0 as real)) ==> (ratioOf(rate, overall) == (1 as real)))
+  ensures ((overall > (0 as real)) ==> (rate >= (0 as real)) ==> (ratioOf(rate, overall) >= (0 as real)))
+  ensures ((overall > (0 as real)) ==> ((ratioOf(rate, overall) * overall) == rate))
+{
+}
+
 function quintileOf(i: int, n: int): int
   requires (0 <= i)
   requires (i < n)
@@ -318,6 +343,31 @@ lemma quintileOf_ensures(i: int, n: int)
   requires (i < n)
   ensures (1 <= quintileOf(i, n))
   ensures (quintileOf(i, n) <= 5)
+{
+}
+
+function distanceBandIndex(miles: real): int
+{
+  if (miles < (2 as real)) then
+    0
+  else
+    if (miles < (5 as real)) then
+      1
+    else
+      if (miles < (10 as real)) then
+        2
+      else
+        if (miles < (25 as real)) then
+          3
+        else
+          4
+}
+
+lemma distanceBandIndex_ensures(miles: real)
+  ensures (0 <= distanceBandIndex(miles))
+  ensures (distanceBandIndex(miles) <= 4)
+  ensures ((distanceBandIndex(miles) == 0) ==> (miles < (2 as real)))
+  ensures forall m: real :: ((m >= miles) ==> (distanceBandIndex(m) >= distanceBandIndex(miles)))
 {
 }
 

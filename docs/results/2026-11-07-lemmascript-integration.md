@@ -111,3 +111,19 @@ Local platform (`bun run platform:dev`, sends dry-run, a fresh dev database), sl
 | Claude Code CLI 2.1.246 | not run | | The CLI login has expired (`OAuth session expired`). It needs the owner to sign in. |
 
 STOP and "leave <app>" are text commands and are not part of an agent client flow. The integration tests and the sims cover them.
+
+## Wave 3
+
+Hand-written from docs/research/lemmascript/wave3-*.md. Wave 3 took the items that wave 2 skipped and that fit LemmaScript.
+
+- engine: production now refuses a config that breaks a proved precondition (config.ts). World build refuses an id with `|`, and `pairKey` injectivity is proved. The dead "need" channel and `exclude` plumbing are removed (sim parity identical). `harmonic`, `interpolate`, `ratioOf` and the distance band are proved through a proved `realZero()` / `realOne()` (lsc emits a bare 0 in a real branch as an int). `probePhotoRefs` in place stays blocked by lsc (regex constants, cross-file `{:axiom}`).
+- network: the svc profile parsers refuse non-strings; a held number's "leave <app>" is honored; a record age under 13 stops every send except safety notices; an LLM age never raises an age; a relayed number is cut from `lastSent`; the engine's `eligibilityFor` runs at send time for engine-proposed items (decision 11), and its composition with the recipient gate is proved (`sendTimeVerdict`).
+- platform, deploy, messaging: the JPEG and PNG walks are proved to end and stay in bounds (segments.ts; 41,204 differential cases, 0 differences); the backup restore refusal is proved (refusal.ts); `dedupeKeysFor` and `isE164` are removed.
+
+Validation on the final tree, 2026-11-08, macOS, Bun 1.3.14, Dafny 4.11.0 release (Z3 4.12.1), lsc 0.6.6, no model calls:
+`bun run typecheck` 0 errors; `bun run sim` PASS 371/371 blocking gates; `bun run test:e2e` 42 pass; `bun run test:integration` 729 pass, 8 skip, 21 fail, all in the 7 observatory real-mode files that fail the same way on the base.
+
+### Founder decisions from wave 3
+
+- Should a leave from a held number also delete that app's data? The sender may be the number's new owner.
+- An attested adult who states an age under 13 at a join is recorded with that raw age, and the next message deletes the membership; network-service-1 says hold for staff, never delete.

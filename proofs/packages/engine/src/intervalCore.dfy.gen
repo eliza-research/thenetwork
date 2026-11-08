@@ -46,6 +46,7 @@ method mergeSorted(ivs: seq<Span>) returns (res: seq<Span>)
   requires forall i: nat, j: nat :: ((i < j) ==> (j < |ivs|) ==> (ivs[i].s <= ivs[j].s))
   ensures forall i: nat :: ((i < |res|) ==> (res[i].s <= res[i].e))
   ensures forall i: nat, j: nat :: ((i < j) ==> (j < |res|) ==> (res[i].e < res[j].s))
+  ensures ((forall i: nat :: ((i < |ivs|) ==> (ivs[i].s < ivs[i].e))) ==> forall i: nat :: ((i < |res|) ==> (res[i].s < res[i].e)))
 {
   var out: seq<Span> := [];
   var k := 0;
@@ -54,6 +55,7 @@ method mergeSorted(ivs: seq<Span>) returns (res: seq<Span>)
     invariant forall i: nat :: ((i < |out|) ==> (out[i].s <= out[i].e))
     invariant forall i: nat, j: nat :: ((i < j) ==> (j < |out|) ==> (out[i].e < out[j].s))
     invariant forall i: nat :: ((i < |out|) ==> forall j: nat :: ((k <= j) ==> (j < |ivs|) ==> (out[i].s <= ivs[j].s)))
+    invariant ((forall i: nat :: ((i < |ivs|) ==> (ivs[i].s < ivs[i].e))) ==> forall i: nat :: ((i < |out|) ==> (out[i].s < out[i].e)))
     decreases (|ivs| - k)
   {
     var iv := ivs[k];

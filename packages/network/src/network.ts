@@ -31,12 +31,13 @@ import {
   type Category, type Facet, type Intent, type LeakOptions, type LLM, type MemberId, type ParticipationState, type Proposal, type ScoreComponents, type WorldSnapshot,
 } from "@thenetwork/core";
 import {
-  attention, buildWorld, CONTRIBUTOR_ROLES, DEFAULT_ATTENTION, localEmbed, plans, resolveConfig, resolvePlans, runEngine,
-  type AskRecord, type EngineAsk, type EngineConfigInput, type EngineInput, type EngineProposal, type FeedbackRecord, type InteractionRecord, type MatchingRunLog,
+  attention, buildWorld, CONTRIBUTOR_ROLES, DEFAULT_ATTENTION, localEmbed, networkPack, plans, resolveConfig, resolvePlans, runEngine, World,
+  type AskRecord, type EngineAsk, type EngineConfig, type EngineConfigInput, type EngineInput, type EngineProposal, type FeedbackRecord, type InteractionRecord, type MatchingRunLog,
   type AppPack, type PlansConfig, type PlansConfigInput, type World as EngineWorld,
 } from "@thenetwork/engine";
 import { HELP_TEXT, STOP_CONFIRMATION, type InboundMessage, type NetworkContext, type NetworkUnderTest, type SimMeta } from "@thenetwork/core";
 import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
+import { eligibilityFor } from "@thenetwork/engine/src/filters.ts";
 import { ageAnswer, availabilityTags, checkinTags, classify, extractProfile, feedbackOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, type Classified, type TimeOption } from "./classify.ts";
 import { mergeConsent, type Understand, type Understood } from "./extract.ts";
 import { brandOf, copy, copyFor, type Copy, whenPhrase } from "./copy.ts";
@@ -55,7 +56,7 @@ import type { NetworkStore } from "./store.ts";
 import { Trust, type TrustLevel, type TrustState } from "./trust.ts";
 import {
   abusePoints, afterAnswers, afterBareAck, afterReview, afterSla, approvalVerdict, llmReading, mayProbe, mayPush, minorClears, minorRises, mustDecline,
-  quorumMet, recipientVerdict, relayDispatchVerdict, relayStatusOf, reviewLate, seatOk, signalClearVerdict, staffHoldPoints, statusAfter, unsolVerdict, windowCount, withSend,
+  llmAgeCounts, quorumMet, recipientVerdict, sendTimeVerdict, relayDispatchVerdict, relayStatusOf, reviewLate, seatOk, signalClearVerdict, staffHoldPoints, statusAfter, unsolVerdict, windowCount, withSend,
   type AgeFacts, type OtherFacts, type RelayPartyFacts, type SeatFacts,
 } from "./transitions.ts";
 import type { AppHooks, AppTag, HookOpp } from "./apphooks.ts";
@@ -658,7 +659,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     const out: Classified = { ...c, tags: [...c.tags] };
     const notWanted = new Set([...(c.notWanted ?? []), ...u.notWanted]);
     if (notWanted.size) out.notWanted = [...notWanted];
-    if (u.selfAge !== undefined && (out.statedAge === undefined || u.selfAge < out.statedAge)) { out.statedAge = u.selfAge; if (isMinor(u.selfAge)) out.minorSignal = true; }
+    // Only ever younger (network-src bug 7): with no age from the rules, only a minor's age counts.
+    if (u.selfAge !== undefined && llmAgeCounts(out.statedAge !== undefined, out.statedAge ?? 0, u.selfAge, isMinor(u.selfAge))) { out.statedAge = u.selfAge; if (isMinor(u.selfAge)) out.minorSignal = true; }
     for (const t of [...u.interests, ...u.skills]) if (!out.tags.includes(t)) out.tags.push(t);
     if (out.desireId && notWanted.has(out.desireId)) { delete out.desireId; if (out.kind === "people_request") out.kind = "other"; }
     const want = u.wants.find(w => !notWanted.has(w));
@@ -2438,7 +2440,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     // Send-time re-check before anyone learns who (P1-5): everyone must still be reachable about the
     // others, and have room on the Blooio streak for one more message.
     for (const id of o.participants) {
-      const chk = this.checkRecipient(id, "reveal", { about: o.participants, proactive: !this.opts.probes && !o.primed.has(id), reply: false });
+      const chk = this.checkRecipient(id, "reveal", { about: o.participants, proactive: !this.opts.probes && !o.primed.has(id), reply: false, lane: this.sendLane(o) });
       const why = !chk.ok ? chk.reason : attention.canSendLogistics({ outboundSinceInbound: this.member(id).outbound ?? 0 }) ? undefined : "conversation_streak";
       if (why) {
         this.refuse(id, "reveal", why);
@@ -3085,7 +3087,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     // them (attention-MISSED-2), so one block cannot collapse the quorum.
     const seated: MemberId[] = [];
     for (const id of keep) {
-      const chk = this.checkRecipient(id, "reveal", { about: [...seated, id], reply: false });
+      const chk = this.checkRecipient(id, "reveal", { about: [...seated, id], reply: false, lane: this.sendLane(o) });
       const why = !chk.ok ? chk.reason : attention.canSendLogistics({ outboundSinceInbound: this.member(id).outbound ?? 0 }) ? undefined : "conversation_streak";
       if (why) { this.refuse(id, "reveal", why); o.status.set(id, "unavailable"); continue; }
       seated.push(id);
@@ -3128,7 +3130,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** A late yes after booking (until 6 hours before): the member joins and gets the booked plan; the sim's meeting is updated in place. */
   private planJoin(o: Opp, id: MemberId) {
     const plan = o.plan!;
-    if (this.bookedNear(id, plan.window.start, o.id) || !this.checkRecipient(id, "reveal", { about: o.participants.filter(p => o.status.get(p) === "yes"), reply: false }).ok) { o.status.set(id, "unavailable"); return; }
+    if (this.bookedNear(id, plan.window.start, o.id) || !this.checkRecipient(id, "reveal", { about: o.participants.filter(p => o.status.get(p) === "yes"), reply: false, lane: this.sendLane(o) }).ok) { o.status.set(id, "unavailable"); return; }
     o.status.set(id, "yes"); this.plansCounters.planLateJoins++;
     this.ctx.recordMeeting({ proposalId: o.id, participants: [id], at: plan.window.start, city: "nyc", kind: "plan" });
     this.planReveal(o, id);
@@ -3746,12 +3748,12 @@ export class ConsentNetwork implements NetworkUnderTest {
         intents.push({ id: `${m.id}:li:${d}`, memberId: m.id, objective: def.text, category: def.category, details: `format: ${def.format}; tags: ${[...def.needsInterests, ...def.needsSkills, def.pool ?? ""].filter(Boolean).join(",")}`, horizonDays: LEARNED_DESIRE_DAYS, status: "active", createdAt: statedAt });
       }
     }
-    const holds = [...this.members.values()].filter(m => !this.trust.ok(m.id) || m.minor || m.minorSignal || this.reportHeld(m.id)).map(m => ({ memberId: m.id, from: now - HOUR }));
+    const holds = this.engineHolds(this.members.values(), now);
     const reliability = Object.fromEntries([...this.members.values()].filter(m => m.noShows > 0).map(m => [m.id, { noShows: m.noShows, completedSinceLastNoShow: m.completedSinceNoShow }]));
     const recent = [...this.opps.values()].filter(o => now - o.createdAt < 30 * DAY).map(o => this.toProposal(o));
     const engineInput: EngineInput = {
       // A member with no valid age on the record who told us they are an adult (6.3) goes in with that age.
-      now, members: snap.members.filter(m => nyc.has(m.id)).map(x => { const m = this.members.get(x.id); return !validAge(x.age) && m && !m.minor && validAge(m.statedAge) ? { ...x, age: m.statedAge } : x; }),
+      now, members: snap.members.filter(m => nyc.has(m.id)).map(x => this.engineMember(x)),
       facets, intents, presence: snap.presence.filter(p => nyc.has(p.memberId)),
       edges: [
         ...snap.edges.filter(e => nyc.has(e.from) && nyc.has(e.to)),
@@ -3908,7 +3910,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     // new the member said, the conversation has moved on and the old ack is dropped.
     if (m.pendingAck && (reply || now - m.pendingAck.at > OUTREACH.ackFoldMs)) m.pendingAck = undefined;
     const fns = this.hookFns(m, o.hook);
-    const chk = this.checkRecipient(m.id, kind, { about: o.about, proactive, reply });
+    const chk = this.checkRecipient(m.id, kind, { about: o.about, proactive, reply, lane: this.sendLane(meta.proposalId ? this.opps.get(meta.proposalId) : undefined) });
     if (!chk.ok) return this.refuse(m.id, kind, chk.reason, fns);
     // Plan invites under the plan allowance were checked against their own ledger (planProbe); never the intro cap.
     if (proactive && !o.planInvite && this.overBudget(m)) return this.refuse(m.id, kind, "budget", fns);
@@ -3924,6 +3926,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (!(interrupt ? attention.canInterrupt(c) : attention.canSendLogistics(c))) return this.refuse(m.id, kind, "conversation_streak", fns);
       if (!this.timingOk(m, timing, now)) {
         if (o.noDefer) return "deferred";
+        // A relayed number is never kept in the stored state (relay.ts: a swap keeps no number), so a
+        // share that would wait is refused; the number swap asks relayWouldSend first, so it never waits.
+        if (o.relayContact) return this.refuse(m.id, kind, "contact_not_deferred", fns);
         this.deferred.push({ memberId: m.id, body, meta, kind, o, timing });
         this.counters.deferred++;
         this.ctx.log("send_deferred", { memberId: m.id, kind, until: this.openAt(m, timing, now), ...(meta.proposalId ? { oppId: meta.proposalId } : {}) });
@@ -3966,7 +3971,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     // Never the same text to one member twice within 10 minutes (the judge's duplicate_send rule).
     // Only plain texts are skipped; a send that changes state (onSent) is never silently dropped.
-    if (!fns.onSent && m.lastSent?.body === text && now - m.lastSent.at < DUPLICATE_WINDOW
+    if (!fns.onSent && m.lastSent?.body === sentForm(text, o.relayContact) && now - m.lastSent.at < DUPLICATE_WINDOW
       && (!Array.isArray(meta.approvedPhotos) || !meta.approvedPhotos.length || m.lastSent.photoItemId === (meta.approvedPhotos[0] as {itemId:string}).itemId)) {
       this.ctx.log("send_skipped", { memberId: m.id, kind, reason: "duplicate" });
       return "refused";
@@ -3987,7 +3992,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.ctx.send(m.id, text, { meta, idempotencyKey: o.key ?? `${m.id}:${++this.seq}`, reply });
     m.pendingAck = undefined;
     if (note || (m.note && now - m.note.at >= 7 * DAY)) m.note = undefined;
-    m.lastSent = { body: text, at: now, ...(Array.isArray(meta.approvedPhotos) && meta.approvedPhotos.length ? {photoItemId:(meta.approvedPhotos[0] as {itemId:string}).itemId} : {}) };
+    m.lastSent = { body: sentForm(text, o.relayContact), at: now, ...(Array.isArray(meta.approvedPhotos) && meta.approvedPhotos.length ? {photoItemId:(meta.approvedPhotos[0] as {itemId:string}).itemId} : {}) };
     fns.onSent?.();
     return "sent";
   }
@@ -4252,17 +4257,62 @@ export class ConsentNetwork implements NetworkUnderTest {
     return this.checkRecipient(memberId, kind, { ...o, reply: kind === "reply" });
   }
 
-  private checkRecipient(id: MemberId, kind: SendKind, o: { about?: MemberId[]; proactive?: boolean; reply: boolean }): RecipientCheck {
+  private checkRecipient(id: MemberId, kind: SendKind, o: { about?: MemberId[]; proactive?: boolean; reply: boolean; lane?: Category }): RecipientCheck {
     const declined = this.declinedIds.has(id);
     const m = declined ? undefined : this.members.get(id);
     if (m) this.syncRecord(m);
     const aboutOthers = ABOUT_OTHERS.has(kind);
     const about = aboutOthers && m ? (o.about ?? []).filter(x => x !== id).map(x => this.otherFacts(id, x)) : [];
     const v = recipientVerdict(
-      { declined, known: !!m, optedOut: !!m?.optedOut, account: !!m?.account, held: this.trust.level(id) === "hold", trustOk: this.trust.ok(id), minor: !!m?.minor, onlyWhenAsked: !!m?.onlyWhenAsked },
+      { declined, known: !!m, optedOut: !!m?.optedOut, cannotJoin: !!m && validAge(m.age) && !canJoin(m.age!), account: !!m?.account, held: this.trust.level(id) === "hold", trustOk: this.trust.ok(id), minor: !!m?.minor, onlyWhenAsked: !!m?.onlyWhenAsked },
       { reply: o.reply, safety: kind === "safety", proactive: !!o.proactive, askKind: ASK_KINDS.has(kind), reengage: kind === "reengage", aboutOthers },
       about);
-    return v === "ok" ? { ok: true } : { ok: false, reason: v === "account_" ? `account_${m!.account}` : v };
+    // An invite or an introduction: the engine's send-time re-check too, with the lane (sendTimeVerdict).
+    const invite = kind === "probe" || kind === "reveal";
+    const engine = v === "ok" && invite ? this.engineSendReason(id, o.about ?? [], o.lane) : "";
+    const w = sendTimeVerdict(v, invite, engine);
+    return w === "ok" ? { ok: true } : { ok: false, reason: w === "account_" ? `account_${m!.account}` : w };
+  }
+
+  /**
+   * The engine's send-time re-check (filters.ts eligibilityFor: decision 11) on a World of just the
+   * recipient and the others: their records as the engine run reads them (engineMember), the blocks
+   * and avoids between them, and the engine run's safety holds (engineHolds). "" when it passes.
+   */
+  private engineSendReason(id: MemberId, about: readonly MemberId[], lane?: Category): string {
+    const ids = new Set([id, ...about]);
+    const snap = this.snapshotCached(), now = this.now();
+    const input: EngineInput = {
+      now, members: snap.members.filter(x => ids.has(x.id)).map(x => this.engineMember(x)), facets: [], intents: [], presence: [],
+      edges: [
+        ...snap.edges.filter(e => ids.has(e.from) && ids.has(e.to)),
+        ...[...this.avoid].map(k => k.split("|") as [string, string]).filter(([a, b]) => ids.has(a) && ids.has(b)).map(([a, b]) => ({ from: a, to: b, type: "avoid" as const, strength: 1, explicit: false, createdAt: now })),
+      ],
+      recentProposals: [], safetyHolds: this.engineHolds([...ids].flatMap(x => this.members.get(x) ?? []), now),
+    };
+    this.sendCfg ??= resolveConfig(this.effectiveEngineConfig());
+    const w = new World(input, this.sendCfg, localEmbed, this.opts.pack ?? networkPack);
+    return eligibilityFor(w)(id, [...about], lane) ?? "";
+  }
+  private sendCfg?: EngineConfig;
+
+  /**
+   * The lane the engine re-checks at send time: only for an engine proposal, whose lane opt-ins the
+   * engine checked when it proposed it, so a refusal here is an opt-in withdrawn since (decision 11,
+   * engine-pipeline-10). A member's own request and the planner's plans never had that check; their
+   * lane rules stay the Network's (the engine's other send-time rules still run for them).
+   */
+  private sendLane(o: Opp | undefined): Category | undefined { return o?.origin === "engine" ? o.category : undefined; }
+
+  /** A member record as the engine run reads it: a missing record age with a stated adult age (6.3) goes in with that age. */
+  private engineMember(x: WorldSnapshot["members"][number]): WorldSnapshot["members"][number] {
+    const m = this.members.get(x.id);
+    return !validAge(x.age) && m && !m.minor && validAge(m.statedAge) ? { ...x, age: m.statedAge! } : x;
+  }
+
+  /** The engine run's safety holds: not trust-ok, a minor or a minor signal, or a held report. */
+  private engineHolds(members: Iterable<MemberState>, now: number): { memberId: MemberId; from: number }[] {
+    return [...members].filter(m => !this.trust.ok(m.id) || m.minor || m.minorSignal || this.reportHeld(m.id)).map(m => ({ memberId: m.id, from: now - HOUR }));
   }
 
   /** One other person a message is about, for the recipient gate. */
@@ -4832,7 +4882,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const meta: SimMeta = { type: "relay", proposalId: o.matchId };
     if (this.unsolicited(m, meta, now) && this.unsolicitedRefusal(m, meta, "relay", now)) return false;
     if (this.guardCheck(o.contact ? body.split(o.contact).join(" ") : body, m.id, o.from).length) return false;
-    return !(m.lastSent?.body === body && now - m.lastSent.at < DUPLICATE_WINDOW);
+    return !(m.lastSent?.body === sentForm(body, o.contact) && now - m.lastSent.at < DUPLICATE_WINDOW);
   }
   /** A member's relay request (POST /internal/relay): decided by the engine, delivered as its rendered text only. */
   relayRequest(ask: RelayAsk, o: RelayCallOptions = {}): Promise<RelayOutcome> { this.relayDesk.prune(this.now()); return this.relayDesk.request(ask, o); }
@@ -4888,6 +4938,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     return true;
   }
 }
+
+/** The text kept in `lastSent` for the duplicate check: a relayed number is cut out (network_state never holds it). */
+function sentForm(text: string, contact?: string): string { return contact ? text.split(contact).join(" ") : text; }
 
 /**
  * Adapter for the Blooio outbound queue's `recipientPolicy` hook (packages/blooio

@@ -1074,9 +1074,21 @@ export class NetworkService implements RuntimeHost {
 
     // A number not seen for 12 months may have a new owner: on hold for staff review. Nothing is
     // answered or stored until staff decide (STOP above always works; HELP still answers).
+    const leavingId = leaveTarget(ev.text, this.apps);
+    const leaving = leavingId ? this.apps[leavingId] : undefined;
     if (e164 && (await this.accounts.seen(e164)) === "held") {
       this.log(`[inbound] a number on hold for review (${rt.id}): not handled`);
       if (kw === "help") await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`, "compliance");
+      // "leave <app>" is an opt-out, and consent is never held back (inbox.ts; journeys B9): the app's opt-out goes
+      // in the ledger and the app's STOP confirmation goes out. The held number is nobody's address, so nothing
+      // is deleted here: the account behind the hold is the staff decision (Accounts.clearHold).
+      if (leaving) {
+        const at = this.consentAt(ev), body = leaving.brand.stopApp;
+        await this.accounts.recordConsent({ e164, app: leaving.id, line, state: "opted_out", source: "leave", ref: rowId, at });
+        if (turn) { turn.app = leaving.id; turn.consent = {state: "opted_out", scope: "app", app: leaving.id, at}; turn.confirmation = {id: `sys:${rowId}`, body}; }
+        await this.direct(this.runtimeFor(leaving.id) ?? rt, ev.from, body, `sys:${rowId}`, "compliance");
+        return "left";
+      }
       return "held";
     }
 
@@ -1092,8 +1104,6 @@ export class NetworkService implements RuntimeHost {
     }
 
     // "leave <app>": that app only, on any line.
-    const leavingId = leaveTarget(ev.text, this.apps);
-    const leaving = leavingId ? this.apps[leavingId] : undefined;
     if (leaving && e164) {
       const leaveMember = (await this.memberApps(ev.from)).find(m => m.app === leaving.id);
       const lrt = (leaveMember && await this.runtimeOfMember(leaving.id, leaveMember.memberId)) || this.runtimeFor(leaving.id);

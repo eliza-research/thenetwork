@@ -218,6 +218,19 @@ export function mustDecline(attestedAdult: boolean, attestedUnder: boolean, expl
   return attestedUnder || explicitUnder;
 }
 
+/**
+ * An age the LLM reader found (extract.ts) only ever makes the member younger: with no age from the
+ * rules it counts only when it is a minor's age (`llmMinor`, core isMinor); with one, only when it is
+ * lower. The lowest age wins, and an LLM guess never turns an unknown age into an adult.
+ */
+export function llmAgeCounts(rulesKnown: boolean, rulesAge: number, llmAge: number, llmMinor: boolean): boolean {
+  //@ verify
+  //@ ensures \result && !rulesKnown ==> llmMinor
+  //@ ensures \result && rulesKnown ==> llmAge < rulesAge
+  //@ ensures !llmMinor && !rulesKnown ==> !\result
+  return rulesKnown ? llmAge < rulesAge : llmMinor;
+}
+
 /** A stated adult age resolves a missing record age, unless something else reads like a minor. */
 export function minorClears(wasMinor: boolean, attestedKnown: boolean, knownAdult: boolean, signal: boolean, conflict: boolean, reported: boolean): boolean {
   //@ verify
@@ -251,7 +264,8 @@ export function signalClearVerdict(recordKnown: boolean, recordAdult: boolean, s
 }
 
 // ------------------------------------------------------------------ the recipient gate
-export interface RecipientFacts { declined: boolean; known: boolean; optedOut: boolean; account: boolean; held: boolean; trustOk: boolean; minor: boolean; onlyWhenAsked: boolean }
+/** `cannotJoin`: core canJoin is false for the record age (under 13; an age lowered on another app, journeys B6). */
+export interface RecipientFacts { declined: boolean; known: boolean; optedOut: boolean; cannotJoin: boolean; account: boolean; held: boolean; trustOk: boolean; minor: boolean; onlyWhenAsked: boolean }
 /** One other person a message is about. */
 export interface OtherFacts { blocked: boolean; known: boolean; minor: boolean; account: boolean; declined: boolean; trustOk: boolean }
 /** What the send is: `aboutOthers` is ABOUT_OTHERS, `askKind` is ASK_KINDS. */
@@ -267,7 +281,8 @@ export function otherVerdict(x: OtherFacts): string {
 }
 
 /**
- * The send-time recipient policy. Never to a declined, unknown or opted-out member. A held or paused
+ * The send-time recipient policy. Never to a declined, unknown or opted-out member. A member who
+ * cannot join (under 13) gets safety notices only (the decline itself): under 13 cannot use any app. A held or paused
  * account gets replies and safety notices only. Anything about another member never reaches a minor
  * or a member on watch, and every other person is a known adult, not blocked, not on watch.
  * `account_` is the prefix of the reason: the caller adds the account status.
@@ -275,6 +290,7 @@ export function otherVerdict(x: OtherFacts): string {
 export function recipientVerdict(r: RecipientFacts, s: SendClass, about: OtherFacts[]): string {
   //@ verify
   //@ ensures \result === "ok" ==> !r.declined && r.known && !r.optedOut
+  //@ ensures \result === "ok" && !s.safety ==> !r.cannotJoin
   //@ ensures \result === "ok" && !s.reply && !s.safety ==> !r.account && !r.held
   //@ ensures \result === "ok" && s.proactive && !s.reengage ==> !r.onlyWhenAsked
   //@ ensures \result === "ok" && s.askKind && !s.reply && !s.reengage ==> !r.onlyWhenAsked
@@ -283,6 +299,7 @@ export function recipientVerdict(r: RecipientFacts, s: SendClass, about: OtherFa
   if (r.declined) return "declined";
   if (!r.known) return "unknown_member";
   if (r.optedOut) return "opted_out";
+  if (r.cannotJoin && !s.safety) return "cannot_join";
   if (r.account && !s.reply && !s.safety) return "account_";
   if (!s.reply && !s.safety && r.held) return "held";
   if (r.onlyWhenAsked && !s.reengage && (s.proactive || (s.askKind && !s.reply))) return "only_when_asked";
@@ -299,6 +316,25 @@ export function recipientVerdict(r: RecipientFacts, s: SendClass, about: OtherFa
     if (v !== "ok") return v;
     i = i + 1;
   }
+  return "ok";
+}
+
+/**
+ * The whole send-time check: the recipient gate first, then, for an invite or an introduction
+ * (`invite`: a probe or a reveal), the engine's send-time re-check (filters.ts eligibilityFor with the
+ * opportunity's lane, CLAUDE.md decision 11). `engineReason` is its reason, "" for none. The engine
+ * adds what the gate does not hold: the lane opt-in, a paused participation state, a held report or
+ * a minor signal (the engine's safety holds), and the effective match age of the config and the pack.
+ */
+export function sendTimeVerdict(gate: string, invite: boolean, engineReason: string): string {
+  //@ verify
+  //@ ensures gate !== "ok" ==> \result === gate
+  //@ ensures \result === "ok" ==> gate === "ok"
+  //@ ensures \result === "ok" && invite ==> engineReason === ""
+  //@ ensures gate === "ok" && (!invite || engineReason === "") ==> \result === "ok"
+  if (gate !== "ok") return gate;
+  // An engine reason that reads "ok" is still a refusal (fail closed).
+  if (invite && engineReason !== "") return engineReason === "ok" ? "engine_refused" : engineReason;
   return "ok";
 }
 

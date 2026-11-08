@@ -130,3 +130,15 @@ test("V2 withdrawal service route is unavailable by default and does not alias O
   try{expect((await service.fetch(new Request("http://fixture.invalid"+PROFILE_REVIEW_WITHDRAWAL_PATH,{method:"POST",body:"{}"}))).status).toBe(503);}
   finally{await service.close();}
 });
+
+test("V2 withdrawal refuses arrays where strings are expected, in the request and in the Cloud proof",async()=>{
+  await seed(false,true);const f=await fixture();try {
+    // String(["friends"]) is "friends": the parsers must test the type, not the text form.
+    for(const patch of [{app:[owner.app]},{operation:["readback"]}]) {
+      expect((await f.post({...f.request(),...patch} as unknown as ProfileReviewWithdrawalRequest)).status).toBe(400);
+    }
+    expect(f.calls).toBe(0);
+    f.setAlter(proof=>{proof.channel=[proof.channel];});expect((await f.post()).status).toBe(403);
+    expect(await sql`select id from network.facets`).toHaveLength(1);
+  }finally{await f.close();}
+});

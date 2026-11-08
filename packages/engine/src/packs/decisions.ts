@@ -250,12 +250,55 @@ export function isAlert(n: number, ratio: number, minN: number, threshold: numbe
   return n >= minN && ratio < threshold;
 }
 
+/**
+ * 1 as a real. LemmaScript types a bare `1` as an integer, and a real-typed branch cannot return one;
+ * 0.5 + 0.5 is exactly 1, so the caller returns the same number as before.
+ */
+export function realOne(): number {
+  //@ verify
+  //@ type \result real
+  //@ ensures \result === 1.0
+  return 0.5 + 0.5;
+}
+
+/**
+ * A group's outcome rate over the overall rate; 1 when the overall rate is 0 or not a number (the
+ * truthiness test it replaces: NaN is the one value not equal to itself). With an overall rate above 0,
+ * ratio x overall = rate, so a ratio under a threshold is a rate under threshold x overall (four-fifths rule).
+ */
+export function ratioOf(rate: number, overall: number): number {
+  //@ verify
+  //@ type rate real
+  //@ type overall real
+  //@ type \result real
+  //@ ensures overall === 0.0 ==> \result === 1.0
+  //@ ensures overall > 0.0 && rate >= 0.0 ==> \result >= 0.0
+  //@ ensures overall > 0.0 ==> \result * overall === rate
+  return overall !== 0 && overall === overall ? rate / overall : realOne();
+}
+
 /** Quintile (1 to 5) of position `i` among `n` sorted ratings. */
 export function quintileOf(i: number, n: number): number {
   //@ verify
   //@ requires 0 <= i && i < n
   //@ ensures 1 <= \result && \result <= 5
   return 1 + Math.floor((5 * i) / n);
+}
+
+// ------------------------------------------------------------------------------------- slop distance
+
+/**
+ * The band of a distance (slop zips.ts distanceBand), 0 = "under 2 mi" to 4 = "25+ mi". More miles never
+ * give a nearer band. The labels stay in zips.ts: LemmaScript cannot emit a union of strings that start
+ * with a digit, so the proof works on the index.
+ */
+export function distanceBandIndex(miles: number): number {
+  //@ verify
+  //@ type miles real
+  //@ ensures 0 <= \result && \result <= 4
+  //@ ensures \result === 0 ==> miles < 2.0
+  //@ ensures forall(m: real, m >= miles ==> distanceBandIndex(m) >= \result)
+  return miles < 2 ? 0 : miles < 5 ? 1 : miles < 10 ? 2 : miles < 25 ? 3 : 4;
 }
 
 // ------------------------------------------------------------------------------------- peon

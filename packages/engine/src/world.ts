@@ -3,11 +3,11 @@
 // one id space and compared in another).
 import type { Category, City, Edge, EdgeType, Facet, FacetKind, Intent, Member, MemberId, Presence, Proposal } from "@thenetwork/core";
 import { canBeMatched, DAY } from "@thenetwork/core";
-import type { EngineConfig } from "./config.ts";
+import { assertNoConfigErrors, engineConfigErrors, type EngineConfig } from "./config.ts";
 import { centroid, cosine, tokenize, type EmbedFn } from "./embed.ts";
 import { sha256, stableStringify } from "./hash.ts";
 import type { AppPack } from "./pack.ts";
-import { pairKey } from "./pairKey.ts";
+import { keyableId, pairKey } from "./pairKey.ts";
 import { acceptanceEstimate } from "./scoreCore.ts";
 import { networkPack } from "./packs/network/index.ts";
 import type { EngineInput, FeedbackRecord, InteractionRecord, NetworkEvent, ReliabilityEvidence, Role } from "./types.ts";
@@ -100,6 +100,12 @@ export class World {
       const dup = input.members.find(m => (seen.has(m.id) ? true : (seen.add(m.id), false)));
       throw new Error(`duplicate member id in engine input: ${dup?.id}`);
     }
+    // pairKey is injective only on ids without its separator (pairKey.ts): "a" + "b|c" and "a|b" + "c"
+    // would share one key, so a block or a used pair of one would apply to the other. Refuse such ids.
+    const unkeyable = input.members.find(m => !keyableId(m.id));
+    if (unkeyable) throw new Error(`member id holds the pair-key separator "|": ${unkeyable.id}`);
+    // A config that breaks a proved core's precondition is refused (config.ts), also when not resolved.
+    assertNoConfigErrors(engineConfigErrors(cfg));
     // Minors are identified before anything else so no derived structure can route through them.
     for (const m of input.members) if (!canBeMatched(m.age)) this.minors.add(m.id);
 

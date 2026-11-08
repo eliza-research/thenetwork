@@ -21,8 +21,6 @@ export interface Selected { s: Scored; exploration: boolean; rank: number; proba
 export interface SelectionResult { selected: Selected[]; budgetSkips: number }
 
 export interface SelectOptions {
-  /** Members that must not be proposed this run (v1.2: members the engine asks a question first). */
-  exclude?: ReadonlySet<MemberId>;
   /** Proactive messages already planned this run outside selection (v1.2: asks), per member. */
   extraProactive?: ReadonlyMap<MemberId, number>;
 }
@@ -30,7 +28,7 @@ export interface SelectOptions {
 /** The Network's ask texts (moved verbatim to packs/network/copy.ts; the engine reads the pack's selection.askQuestions). */
 export const ASK_QUESTIONS: Record<AskReason, string> = NETWORK_ASK_QUESTIONS;
 
-export interface AskPlan { asks: EngineAsk[]; exclude: Set<MemberId>; extraProactive: Map<MemberId, number> }
+export interface AskPlan { asks: EngineAsk[]; extraProactive: Map<MemberId, number> }
 
 /**
  * Pack asks (selection.extraAsks): networkPack asks members with a live romance intent but no
@@ -40,7 +38,7 @@ export interface AskPlan { asks: EngineAsk[]; exclude: Set<MemberId>; extraProac
  */
 export function planAsks(w: World, input: EngineInput): AskPlan {
   const cfg = w.cfg;
-  const plan: AskPlan = { asks: [], exclude: new Set(), extraProactive: new Map() };
+  const plan: AskPlan = { asks: [], extraProactive: new Map() };
   const S = w.pack.selection;
   const extra = S.extraAsksEnabled?.(cfg) ?? false;
   if (!extra) return plan;
@@ -67,7 +65,7 @@ export function planAsks(w: World, input: EngineInput): AskPlan {
 export function selectProposals(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId, number>, opts: SelectOptions = {}): SelectionResult {
   // A pack's own global assignment (slopPack: stable matching). Absent for networkPack.
   const assign = w.pack.selection.assign;
-  if (assign) return assign(w, scored, { rng, debt, exclude: opts.exclude, extraProactive: opts.extraProactive });
+  if (assign) return assign(w, scored, { rng, debt, extraProactive: opts.extraProactive });
   // Dry run without exploration sizes the slice; the real run reserves exploration capacity
   // before the greedy pass so exploration picks are not starved of member budget.
   const dry = selectOnce(w, scored, rng, debt, 0, opts);
@@ -83,7 +81,7 @@ export function selectProposals(w: World, scored: Scored[], rng: Rng, debt: Reco
 /**
  * The proved last guard over a selection, from `selectOnce` or a pack's `assign` hook. A member's
  * allowance is the budget left after recent and planned proactive messages; a member in an open
- * opportunity or held back for an ask has none. A pack with its own assignment (slopPack) keeps its
+ * opportunity has none. A pack with its own assignment (slopPack) keeps its
  * own congestion caps, so cfg.budgets and the city cap do not bind it here; every other rule does.
  * `rejected` is undefined when nothing was dropped.
  */
@@ -93,7 +91,7 @@ export function guardSelection(w: World, selection: SelectionResult, plan: AskPl
   const ownCaps = !!w.pack.selection.assign;
   const allow = (id: MemberId) => {
     const mi = w.get(id);
-    if (!mi || mi.inOpenOpportunity || plan.exclude.has(id)) return 0;
+    if (!mi || mi.inOpenOpportunity) return 0;
     return ownCaps ? picks.length : cfg.budgets[mi.m.state].limit - mi.recentProactive - (plan.extraProactive.get(id) ?? 0);
   };
   const res = enforceSelection(picks, allow, ownCaps ? picks.length : cfg.selection.maxProposalsPerCity, id => isMinor(w, id));
@@ -122,9 +120,8 @@ function selectOnce(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId,
     for (const id of c.participants) {
       const mi = w.get(id)!;
       if (mi.recentProactive + (opts.extraProactive?.get(id) ?? 0) + (proactive.get(id) ?? 0) + 1 > cfg.budgets[mi.m.state].limit) return false;
-      // v1.2: never propose someone already in a sent, still-open opportunity (the Network would
-      // skip it) or someone the engine is asking a question first.
-      if (mi.inOpenOpportunity || opts.exclude?.has(id)) return false;
+      // v1.2: never propose someone already in a sent, still-open opportunity (the Network would skip it).
+      if (mi.inOpenOpportunity) return false;
       const role = c.roles[id];
       if (role && w.pack.ontology.contributorRoles.has(role) && mi.recentContribution + (contribution.get(id) ?? 0) + 1 > cfg.contribution.limit) return false;
       if (c.fixedWindow && c.window) {

@@ -74,7 +74,7 @@ export function slopAssign(o: SlopPackOptions, w: World, scored: readonly Scored
   for (const [, l] of ranked) for (const e of l.sort((p, q) => (q.v - p.v) || (p.other < q.other ? -1 : 1)).slice(0, 5)) demand.set(e.other, (demand.get(e.other) ?? 0) + 1);
   runStats.set(w, { degree, demand, maxDemand: Math.max(0, ...demand.values()), floorLift: ratingFloorLift(o, w, degree.keys()) });
 
-  const usable = (id: MemberId) => !ctx.exclude?.has(id) && !w.get(id)!.inOpenOpportunity;
+  const usable = (id: MemberId) => !w.get(id)!.inOpenOpportunity;
   const edges: Edge[] = [];
   for (const x of pairs) {
     const [a, b] = x.c.participants as [MemberId, MemberId];

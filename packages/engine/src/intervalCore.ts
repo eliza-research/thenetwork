@@ -35,13 +35,17 @@ export function subtractSpan(a: Span[], s: number, e: number): Span[] {
   return out;
 }
 
-/** Merge intervals sorted by start. The result is sorted, and two intervals never touch or overlap. */
+/**
+ * Merge intervals sorted by start. The result is sorted, and two intervals never touch or overlap.
+ * Non-empty inputs give non-empty parts, so a union can feed subtractSpan (geo.ts location).
+ */
 export function mergeSorted(ivs: Span[]): Span[] {
   //@ verify
   //@ requires forall(i: nat, i < ivs.length ==> ivs[i].s <= ivs[i].e)
   //@ requires forall(i: nat, forall(j: nat, i < j && j < ivs.length ==> ivs[i].s <= ivs[j].s))
   //@ ensures forall(i: nat, i < \result.length ==> \result[i].s <= \result[i].e)
   //@ ensures forall(i: nat, forall(j: nat, i < j && j < \result.length ==> \result[i].e < \result[j].s))
+  //@ ensures forall(i: nat, i < ivs.length ==> ivs[i].s < ivs[i].e) ==> forall(i: nat, i < \result.length ==> \result[i].s < \result[i].e)
   let out: Span[] = [];
   let k = 0;
   while (k < ivs.length) {
@@ -50,6 +54,7 @@ export function mergeSorted(ivs: Span[]): Span[] {
     //@ invariant forall(i: nat, i < out.length ==> out[i].s <= out[i].e)
     //@ invariant forall(i: nat, forall(j: nat, i < j && j < out.length ==> out[i].e < out[j].s))
     //@ invariant forall(i: nat, i < out.length ==> forall(j: nat, k <= j && j < ivs.length ==> out[i].s <= ivs[j].s))
+    //@ invariant forall(i: nat, i < ivs.length ==> ivs[i].s < ivs[i].e) ==> forall(i: nat, i < out.length ==> out[i].s < out[i].e)
     //@ decreases ivs.length - k
     const iv = ivs[k]!;
     k = k + 1;

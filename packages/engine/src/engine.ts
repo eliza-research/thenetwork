@@ -234,8 +234,7 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   for (const [k, v] of Object.entries(input.exposureDebt ?? {})) priorDebt[w.canonical(k)] = (priorDebt[w.canonical(k)] ?? 0) + v;
   const askPlan = planAsks(w, input);
   f.asks = askPlan.asks.length;
-  f.askFirst = askPlan.exclude.size;
-  const selection = selectProposals(w, scored, rng.fork("select"), priorDebt, { exclude: askPlan.exclude, extraProactive: askPlan.extraProactive });
+  const selection = selectProposals(w, scored, rng.fork("select"), priorDebt, { extraProactive: askPlan.extraProactive });
   // Last line of defence on any selector's output (selectionGuard.ts): minors in any role, member
   // budgets, city caps, repeated pairs. The core greedy pass checks these first, so this never fires
   // for it. If it does fire, the configuration is withheld (fail closed), not sent.
