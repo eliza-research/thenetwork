@@ -493,7 +493,11 @@ export function newcomerWelcome(ctx: GenCtx): Candidate[] {
     if (memberReason(w, n, { category: "social", role: "newcomer", format: "small_group", timeSensitive: false })) continue;
     const city = mn.m.homeCity;
     const pool = eligibleMembers(ctx, "social", "guest", "small_group", false, new Set([n]))
-      .filter(id => { const mi = w.get(id)!; return !mi.newcomer && (mi.m.homeCity === city) && (mi.m.state === "open" || mi.m.state === "normal"); })
+      .filter(id => {
+        const mi = w.get(id)!;
+        return !mi.newcomer && (mi.m.homeCity === city) && (mi.m.state === "open" || mi.m.state === "normal")
+          && !pairReason(w, n, id, "social") && Boolean(w.overlap([n, id], w.now, w.now + w.cfg.windowDays * DAY, city));
+      })
       .map(id => {
         const mi = w.get(id)!;
         const friendly = Math.min(1, mi.degree / 6);
