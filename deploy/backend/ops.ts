@@ -205,7 +205,8 @@ export async function collectNetwork(p: NetworkProbe, now: number): Promise<Netw
   };
   try {
     const [h, s] = await Promise.all([p.health(), p.since(now - DAY, utcDayStart(now))]);
-    const last = Math.max(h.lastTick.stored ?? -Infinity, h.lastTick.savedAt ?? -Infinity);
+    // Only the stored tick: every unit of work refreshes savedAt, so it hides a stalled tick (SD-368).
+    const last = h.lastTick.stored ?? -Infinity;
     const ev = (type: string, action?: string) => s.events.filter(e => e.type === type && (action === undefined || e.action === action)).reduce((x, e) => x + e.n, 0);
     return {
       ...empty,

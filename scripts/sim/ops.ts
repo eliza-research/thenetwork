@@ -96,7 +96,7 @@ export async function opsBlock(b: Block): Promise<void> {
       }),
     };
     const m = await collectNetwork(probe, T0);
-    expect(m.lastTickAgoMs).toBe(20_000);
+    expect(m.lastTickAgoMs).toBe(30_000);
     expect(m.sends24h).toEqual({ attempted: 105, failed: 6, refused: 8, dryRun: 50, smsFallback: 5 });
     expect([m.reviewExpired24h, m.safety24h.bans, m.safety24h.holds, m.safety24h.reports, m.safety24h.urgentReports]).toEqual([2, 1, 0, 2, 1]);
     const broken = await collectNetwork({ ...probe, health: async () => { throw new Error("connection refused"); } }, T0);
