@@ -7,18 +7,24 @@ import type { AuditEntry, BiasReportView, HeldQueue, HeldText, ConfigInfo, DiffN
 import { store, useStore } from "./store.ts";
 import { Badge, Countdown, dur, humanize, Kpi, MemberLink, num, OppLink, pct, Section, stamp } from "./ui.tsx";
 
-/** Load from an endpoint on mount, when `key` changes, and every `everyMs` (0: never). */
+/**
+ * Load from an endpoint on mount, when `key` changes, and every `everyMs` (0: never). A read for the same
+ * key that fails with a network error or a 5xx keeps the last good data, so the rows (and the notes and
+ * reasons typed in them) stay mounted. A 401, a 403 or another refusal replaces the data.
+ */
 function useFetch<T>(load: () => Promise<{ data?: T; status: number; error?: string }>, key: unknown, everyMs = 0) {
-  const [d, setD] = useState<{ data?: T; status: number; error?: string }>();
+  const [d, setD] = useState<{ key: unknown; r: { data?: T; status: number; error?: string } }>();
   const [n, setN] = useState(0);
   useEffect(() => {
     let live = true;
-    const run = () => load().then(x => { if (live) setD(x); });
+    const run = () => load().then(x => {
+      if (live) setD(p => p && p.key === key && p.r.data !== undefined && x.data === undefined && (x.status === 0 || x.status >= 500) ? p : { key, r: x });
+    });
     run();
     const h = everyMs ? setInterval(run, everyMs) : undefined;
     return () => { live = false; if (h) clearInterval(h); };
   }, [key, n, everyMs]);
-  return { ...d, reload: () => setN(x => x + 1) };
+  return { ...d?.r, reload: () => setN(x => x + 1) };
 }
 const Err = ({ status, error }: { status?: number; error?: string }) =>
   status === undefined ? <div className="muted small">Loading…</div> : <div className="muted small">{status === 403 ? "Your role cannot see this." : error}</div>;
@@ -30,6 +36,10 @@ const BIAS_METRICS = [["proposals", "Proposals"], ["dates", "Dates"], ["secondDa
  * each photo-rating quintile (q1 lowest) and "unrated" against everyone. Under 0.8x is an alert. Aggregates only.
  */
 export function BiasMonitor() {
+  const s = useStore();
+  return <AppBiasMonitor key={s.app} />;
+}
+function AppBiasMonitor() {
   const s = useStore();
   const r = useFetch<{ ok: boolean; reports?: BiasReportView[]; error?: string }>(() => store.bias(), `${s.mode}`, 60_000);
   if (!r.data?.reports) return <Err status={r.status} error={r.status === 404 ? "The bias monitor runs on real data only (bun run sim measures it in simulation)." : r.error ?? r.data?.error} />;
@@ -54,8 +64,16 @@ export function BiasMonitor() {
 }
 
 // ---------------------------------------------------------------- safety console (gap 7)
-/** Cases (urgent first), evidence events and lift/close actions; the minor-safety view. Safety and admin only. */
+/**
+ * Cases (urgent first), evidence events and lift/close actions; the minor-safety view. Safety and admin only.
+ * One mount per app: case ids have no app prefix, so a row of the earlier app must not stay on screen and
+ * send its action to the new app.
+ */
 export function SafetyCases() {
+  const s = useStore();
+  return <AppSafetyCases key={s.app} />;
+}
+function AppSafetyCases() {
   const s = useStore();
   const r = useFetch<SafetyInfo>(() => store.safety(), `${s.mode}|${s.network?.trust.hold}|${s.network?.trust.watch}|${s.stats?.blocks}`, 10_000);
   const [show, setShow] = useState<"open" | "all">("open");
@@ -241,6 +259,8 @@ function ReportRow({ r, canBan, canAct, onDone }: { r: SafetyReport; canBan: boo
     if (res.data?.ok) { store.toast(done, "good"); setNote(""); onDone(); } else store.toast(res.data?.error ?? res.error ?? "refused", "bad");
   };
   const n = note.trim(), ok = n.length >= 5 && !busy;
+  // The service holds and clears on every app of the person only for safety@* or admin@* (service.ts hold, clearMinor).
+  const scope = store.canEverywhere("safety") ? "every app" : "this app";
   return (
     <div className={`case ${open ? "open" : ""}`}>
       <button type="button" className="case-head" onClick={() => setOpen(!open)}>
@@ -257,17 +277,20 @@ function ReportRow({ r, canBan, canAct, onDone }: { r: SafetyReport; canBan: boo
           {canBan && store.can("safety") && r.status === "open" && (
             <div className="review-actions">
               <input className="input grow" placeholder="Decision note (logged, at least 5 characters)" value={note} onChange={e => setNote(e.target.value)} />
-              <button className="btn" disabled={!ok} title="Hold the person on every app until a review" onClick={() => act({ action: "hold", memberId: r.subjectId, note: n, reportId: r.id }, "Person held on every app")}>Hold</button>
-              <button className="btn" disabled={!ok} title="This phone number can never join again" onClick={() => act({ action: "ban", memberId: r.subjectId, by: "phone", note: n, reportId: r.id }, "Banned by phone")}>Ban phone</button>
-              <button className="btn" disabled={!ok} title="Every phone of this person, on every app" onClick={() => act({ action: "ban", memberId: r.subjectId, by: "person", note: n, reportId: r.id }, "Banned by person")}>Ban person</button>
+              <button className="btn" disabled={!ok} title={`Hold the person on ${scope} until a review`} onClick={() => act({ action: "hold", memberId: r.subjectId, note: n, reportId: r.id }, `Person held on ${scope}`)}>Hold</button>
+              {/* The service bans only for safety@* or admin@* (service.ts ban: needs_safety_everywhere). */}
+              {store.canEverywhere("safety") && <>
+                <button className="btn" disabled={!ok} title="This phone number can never join again" onClick={() => act({ action: "ban", memberId: r.subjectId, by: "phone", note: n, reportId: r.id }, "Banned by phone")}>Ban phone</button>
+                <button className="btn" disabled={!ok} title="Every phone of this person, on every app" onClick={() => act({ action: "ban", memberId: r.subjectId, by: "person", note: n, reportId: r.id }, "Banned by person")}>Ban person</button>
+              </>}
               <button className="btn ghost" disabled={!ok} onClick={() => act({ action: "dismiss", reportId: r.id, note: n }, "Report dismissed")}>Dismiss</button>
             </div>
           )}
           {r.kind === "minor" && canAct && store.can("safety") && r.status === "open" && (
             <div className="review-actions">
               {!canBan && <input className="input grow" placeholder="Why the record says adult (logged, at least 5 characters)" value={note} onChange={e => setNote(e.target.value)} />}
-              <button className="btn" disabled={!ok} title="Only after the person's record says 18 or over. Clears the minor signal on every app you may act on and dismisses this person's minor reports. Refused while any age says under 18."
-                onClick={() => act({ action: "clear_minor", memberId: r.subjectId, note: n }, "Minor signal cleared on every app")}>Clear minor signal (every app)</button>
+              <button className="btn" disabled={!ok} title={`Only after the person's record says 18 or over. Clears the minor signal on ${scope} and dismisses this person's minor reports. Refused while any age says under 18.`}
+                onClick={() => act({ action: "clear_minor", memberId: r.subjectId, note: n }, `Minor signal cleared on ${scope}`)}>Clear minor signal ({scope})</button>
             </div>
           )}
         </div>
@@ -375,7 +398,15 @@ export function Growth() {
 }
 
 // ---------------------------------------------------------------- configuration and audit (gaps 10, 17, 5)
+/**
+ * One mount per app: the data, the audit table and an armed matching switch of one app must not stay on
+ * screen, or be confirmed, after a switch to another app.
+ */
 export function Config() {
+  const s = useStore();
+  return <AppConfig key={s.app} />;
+}
+function AppConfig() {
   const s = useStore();
   const r = useFetch<ConfigInfo>(() => store.config(), `${s.mode}|${s.network?.matchingEnabled}|${s.network?.review.mode}`);
   const [confirm, setConfirm] = useState(false);

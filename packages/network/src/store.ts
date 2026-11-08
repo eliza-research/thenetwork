@@ -6,7 +6,7 @@
 //    lock and loads the newest state first, so two processes never overwrite each other's saves.
 // The SQL is in packages/network/db/network-state.sql.
 import { SQL } from "bun";
-import type { ConsentNetwork, NetworkState } from "./network.ts";
+import { attendanceOf, type ConsentNetwork, type NetworkState } from "./network.ts";
 import type { RelayRecord } from "../../engine/src/relay.ts";
 import { emptyRelayState, RELAY_LOG_MAX, type RelayState } from "./relay.ts";
 
@@ -95,12 +95,21 @@ function oppState(o: NetworkState["opps"][number]): string {
 const SOURCE: Record<string, string> = { engine: "engine", request: "member", plans: "member", second_encounter: "network", newcomer_welcome: "network", player: "player" };
 
 /** A participant's status in the console's words (observatory ParticipantStatus). */
-function partStatus(o: NetworkState["opps"][number], s: string | undefined, id: string): string {
+type Opp = NetworkState["opps"][number];
+function partStatus(o: Opp, status: ReadonlyMap<string, Opp["status"][number][1]>, id: string): string {
+  const s = status.get(id);
   switch (s) {
     case "probing": return "checking";
     case "available": case "unavailable": case "dropped": return s;
     // A booked plan is confirmed for a member once it reached them (silence = in); before that they are not told yet.
-    case "yes": return o.stage === "done" ? "attended" : o.stage === "scheduled" ? (o.bookedTold?.includes(id) ? "confirmed" : "pending") : "accepted";
+    // After the meeting: the attendance the Network resolved from the post-meeting answers; still "confirmed" until then.
+    case "yes": {
+      if (o.stage === "done") {
+        const out = o.finalized ? attendanceOf(o, p => status.get(p)).outcome.get(id) : undefined;
+        return out === "attended" ? "attended" : out ? "no_show" : "confirmed";
+      }
+      return o.stage === "scheduled" ? (o.bookedTold?.includes(id) ? "confirmed" : "pending") : "accepted";
+    }
     case "no": return "declined";
     default: return "pending"; // queued, or not contacted yet
   }
@@ -111,7 +120,7 @@ export function consoleRows(state: NetworkState, savedAt = state.savedAt, city =
   const opportunities: Row[] = [], participations: Row[] = [], review_items: Row[] = [];
   for (const o of state.opps) {
     const status = new Map(o.status);
-    for (const id of o.participants) participations.push({ opportunity_id: o.id, member_id: id, role: "participant", status: partStatus(o, status.get(id), id), enjoyment: null, invited_at: null, responded_at: null });
+    for (const id of o.participants) participations.push({ opportunity_id: o.id, member_id: id, role: "participant", status: partStatus(o, status, id), enjoyment: null, invited_at: null, responded_at: null });
     for (const id of o.alternates) if (!o.participants.includes(id)) participations.push({ opportunity_id: o.id, member_id: id, role: "alternate", status: "alternate", enjoyment: null, invited_at: null, responded_at: null });
     opportunities.push({
       id: o.id, kind: o.kind, state: oppState(o), source: SOURCE[o.origin] ?? "network", generator: o.generator, category: o.category, city,
@@ -295,7 +304,10 @@ export class PgStore implements NetworkStore {
       this.seen = saved.v;
       for (let i = 0; i < rows.opportunities.length; i += 500) await tx`insert into network.opportunities ${tx(rows.opportunities.slice(i, i + 500))}
         on conflict (id) do update set state = excluded.state, objective = excluded.objective, explanations = excluded.explanations, meeting_at = excluded.meeting_at,
-          reason = excluded.reason, updated_at = excluded.updated_at`;
+          reason = excluded.reason,
+          -- The time the row last changed, not the time of the last save (every save writes every row).
+          updated_at = case when (network.opportunities.state, network.opportunities.objective, network.opportunities.explanations, network.opportunities.meeting_at, network.opportunities.reason)
+            is distinct from (excluded.state, excluded.objective, excluded.explanations, excluded.meeting_at, excluded.reason) then excluded.updated_at else network.opportunities.updated_at end`;
       for (let i = 0; i < parts.length; i += 500) await tx`insert into network.participations ${tx(parts.slice(i, i + 500))}`;
       for (let i = 0; i < rows.review_items.length; i += 500) await tx`insert into network.review_items ${tx(rows.review_items.slice(i, i + 500))}
         on conflict (opportunity_id) do update set deadline = excluded.deadline, decision = excluded.decision, reason = excluded.reason, note = excluded.note,

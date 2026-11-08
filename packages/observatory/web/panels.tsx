@@ -46,7 +46,10 @@ function useLive<T>(load: () => Promise<Fetched<T>>, key: string, deps: unknown[
   const last = useRef(0), prevKey = useRef(key), gen = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const run = () => { const g = gen.current; last.current = Date.now(); load().then(x => { if (g === gen.current) setD(x); }); };
-  useEffect(() => { gen.current++; run(); return () => { gen.current++; clearTimeout(timer.current); }; }, deps);
+  // A credential change (another staff member, a 401): the view shaped for the old credential leaves the screen and is read again.
+  const epoch = useRef(store.authEpoch);
+  useEffect(() => { if (epoch.current !== store.authEpoch) { epoch.current = store.authEpoch; setD(undefined); } }, [store.authEpoch]);
+  useEffect(() => { gen.current++; run(); return () => { gen.current++; clearTimeout(timer.current); }; }, [...deps, store.authEpoch]);
   useEffect(() => {
     if (prevKey.current === key) return;
     prevKey.current = key;
@@ -578,6 +581,10 @@ function SlopPanel({ id, p }: { id: string; p: SlopProfile360 }) {
   const [reason, setReason] = useState("");
   const [photos, setPhotos] = useState<MemberPhoto[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Photos are for verified adults only, to admin or safety. When the gate closes (an under-18 signal, a lost
+  // role), the loaded photos leave the screen and a later view needs a new logged read.
+  const allowed = p.photos === "reason_required" && s.can("safety");
+  useEffect(() => { if (!allowed) setPhotos(null); }, [allowed]);
   const show = async () => {
     const r = await store.photos(id, reason.trim());
     if (r.data?.photos) { setPhotos(r.data.photos); setError(null); } else setError(r.error ?? r.data?.error ?? "refused");
@@ -589,14 +596,14 @@ function SlopPanel({ id, p }: { id: string; p: SlopProfile360 }) {
         ? <div className="muted small">Dating preferences hidden ({p.prefs.count} facts). {s.env?.capabilities.hiddenTruth ? "Simulated world: the truth lens shows hidden facts." : s.can("safety") ? "Reveal this member (logged) to see them." : "Safety or admin only."}</div>
         : <SlopPrefsView prefs={p.prefs.prefs} />}
       <div className="muted small">{PHOTO_TEXT[p.photos]} Scores and ratings are never shown.</div>
-      {p.photos === "reason_required" && s.can("safety") && !photos && (
+      {allowed && !photos && (
         <form className="person-reason" onSubmit={e => { e.preventDefault(); if (reason.trim().length >= 5) show(); }}>
           <input className="input grow" placeholder="Reason (logged)" value={reason} onChange={e => setReason(e.target.value)} aria-label="Reason to see photos" />
           <button className="btn" type="submit" disabled={reason.trim().length < 5}>Show photos</button>
           {error && <span className="bad small" role="alert">{error}</span>}
         </form>
       )}
-      {photos && (photos.length
+      {allowed && photos && (photos.length
         ? <div className="photos">{photos.map(ph => <img key={ph.id} src={ph.url} alt="Member photo" referrerPolicy="no-referrer" loading="lazy" />)}</div>
         : <div className="muted small">No photos.</div>)}
     </>

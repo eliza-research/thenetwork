@@ -2873,35 +2873,21 @@ export class ConsentNetwork implements NetworkUnderTest {
   private finalize(o: Opp) {
     if (o.finalized || o.meetingAt === undefined) return;
     o.finalized = true;
-    const going = o.participants.filter(p => o.status.get(p) === "yes" && o.bookedAt?.[p] !== undefined);
+    const { going, present, checkIn, vouchers, host, outcome } = attendanceOf(o, p => o.status.get(p));
     if (!going.length) return;
-    const post = o.post ?? {};
-    const said = (p: MemberId) => post[p];
-    const host = o.plan?.hostId && going.includes(o.plan.hostId) && said(o.plan.hostId)?.came ? o.plan.hostId : undefined;
-    const hp = host ? said(host)! : undefined;
-    // The host's check-in: the people they named as there; when they reported someone missing, the
-    // named ones are the missing and only those who said they came count; otherwise everyone who did not say they missed it.
-    const checkIn = !hp ? [] : hp.otherNoShow ? going.filter(p => p !== host && said(p)?.came && !hp.named.includes(p))
-      : hp.named.length ? hp.named : going.filter(p => p !== host && said(p)?.came !== false);
-    // A counterpart who came and reported nobody missing confirms everyone booked (the mutual check-in).
-    const vouchers = (p: MemberId) => going.filter(x => x !== p && said(x)?.came && !said(x)!.otherNoShow);
-    const present = going.filter(p => said(p)?.came === true || (said(p)?.came !== false && (vouchers(p).length > 0 || checkIn.includes(p))));
+    const said = (p: MemberId) => o.post?.[p];
     o.attended = present;
     const origin = this.originOf(o);
     for (const p of going) {
       const key = `${o.id}:${p}`;
-      if (present.includes(p)) {
+      const out = outcome.get(p);
+      if (out === "attended") {
         const v = vouchers(p);
         const verifiedBy: ("counterpart" | "organizer")[] = [...(v.length ? ["counterpart" as const] : []), ...(checkIn.includes(p) ? ["organizer" as const] : [])];
         this.emit({ type: "plan_attended", member: p, planId: o.id, counterparts: present.filter(x => x !== p), verifiedBy, origin, publicVenue: true, confirmers: [...v, ...(checkIn.includes(p) && host ? [host] : [])] }, key);
         if (said(p)) this.emit({ type: "feedback_given", member: p, planId: o.id }, key);
-        continue;
-      }
-      if (said(p)?.came === false) { this.emit({ type: "plan_no_show", member: p, planId: o.id }, key); continue; }
-      const reported = going.length === 2 && going.some(x => x !== p && said(x)?.came && said(x)!.otherNoShow);
-      if (!reported) continue;
-      if (!(o.explicit ?? []).includes(p)) this.emit({ type: "plan_ghosted", member: p, planId: o.id }, key);
-      else this.emit({ type: "plan_no_show", member: p, planId: o.id }, key);
+      } else if (out === "no_show") this.emit({ type: "plan_no_show", member: p, planId: o.id }, key);
+      else if (out === "ghosted") this.emit({ type: "plan_ghosted", member: p, planId: o.id }, key);
     }
     if (host && o.plan) {
       const a = plans.activityById.get(o.plan.activityId);
@@ -5092,6 +5078,38 @@ interface KnownProfile { interests: Set<string>; skills: Set<string>; strongSkil
 
 // ------------------------------------------------------------------ relay views (relay.ts)
 /** A member as the relay sees them: the lowest known age (undefined when unsure: fails closed), opt-out and holds. */
+/**
+ * The attendance of a done meeting, from the post-meeting answers (finalize, and the console rows).
+ * Only members who said yes and got the booked plan count ("going").
+ *  - attended: the member said they came, a counterpart who came confirms them (named them, or
+ *    reported nobody missing: the mutual check-in), or the host checked them in.
+ *  - no_show: the member said they could not make it, or the other person of a pair reported them
+ *    missing and they confirmed the booked plan in words.
+ *  - ghosted: reported missing by the other person of a pair, with no word from them since the booked plan reached them.
+ * A member with nothing known has no outcome.
+ */
+export function attendanceOf(o: Pick<Opp, "participants" | "bookedAt" | "post" | "plan" | "explicit">, statusOf: (p: MemberId) => PStatus | undefined) {
+  const going = o.participants.filter(p => statusOf(p) === "yes" && o.bookedAt?.[p] !== undefined);
+  const post = o.post ?? {};
+  const said = (p: MemberId) => post[p];
+  const host = o.plan?.hostId && going.includes(o.plan.hostId) && said(o.plan.hostId)?.came ? o.plan.hostId : undefined;
+  const hp = host ? said(host)! : undefined;
+  // The host's check-in: the people they named as there; when they reported someone missing, the
+  // named ones are the missing and only those who said they came count; otherwise everyone who did not say they missed it.
+  const checkIn = !hp ? [] : hp.otherNoShow ? going.filter(p => p !== host && said(p)?.came && !hp.named.includes(p))
+    : hp.named.length ? hp.named : going.filter(p => p !== host && said(p)?.came !== false);
+  // A counterpart who came and reported nobody missing confirms everyone booked (the mutual check-in).
+  const vouchers = (p: MemberId) => going.filter(x => x !== p && said(x)?.came && !said(x)!.otherNoShow);
+  const present = going.filter(p => said(p)?.came === true || (said(p)?.came !== false && (vouchers(p).length > 0 || checkIn.includes(p))));
+  const outcome = new Map<MemberId, "attended" | "no_show" | "ghosted">();
+  for (const p of going) {
+    if (present.includes(p)) outcome.set(p, "attended");
+    else if (said(p)?.came === false) outcome.set(p, "no_show");
+    else if (going.length === 2 && going.some(x => x !== p && said(x)?.came && said(x)!.otherNoShow)) outcome.set(p, (o.explicit ?? []).includes(p) ? "no_show" : "ghosted");
+  }
+  return { going, present, checkIn, vouchers, host, outcome };
+}
+
 function relayMemberOf(m: Pick<MemberState, "id" | "first" | "age" | "statedAge" | "minor" | "minorSignal" | "minorReported" | "ageUnknown" | "ageConflict" | "optedOut" | "account">, trustHold: boolean): RelayMember {
   const ages = [m.age, m.statedAge].filter((a): a is number => validAge(a));
   const unsure = m.minor || m.minorSignal || m.minorReported || m.ageUnknown || m.ageConflict || !ages.length;

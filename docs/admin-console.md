@@ -344,7 +344,7 @@ Status: built in the Observatory, 2026-10-08. The service takes the reviewer of 
 | Auth | Bind to 127.0.0.1; optional token | SSO and roles | SSO, second factor, roles, IP allow-list or an access proxy |
 | Banner | "SIMULATION" or "LOCAL DATABASE" | "STAGING" | "PRODUCTION · read-only · PII scrubbed" |
 
-The start guard (`deployGuard` in `src/server.ts`) fails closed. A console with real data (`OBSERVATORY_REAL_ONLY=1`, or any database URL whose host is not this machine) refuses to start without `PLATFORM_ENV`. Under `staging` and `production` it needs Cloudflare Access. Staff tokens work only with `PLATFORM_ENV=dev` and local databases. A console WebSocket opened with an Access JWT closes with code 4401 when the JWT expires (`packages/observatory/test/staff.test.ts`, OBS-05).
+The start guard (`deployGuard` in `src/server.ts`) fails closed. A console with real data (`OBSERVATORY_REAL_ONLY=1`, or any database URL or Network service URL whose host is not this machine) refuses to start without `PLATFORM_ENV`. Under `staging` and `production` it needs Cloudflare Access and the Postgres audit log (`OBSERVATORY_AUDIT_DATABASE_URL`). Staff tokens work only with `PLATFORM_ENV=dev`, local databases and a local Network service. A console WebSocket opened with an Access JWT closes with code 4401 when the JWT expires (`packages/observatory/test/staff.test.ts`, OBS-05).
 
 How it reads data:
 
