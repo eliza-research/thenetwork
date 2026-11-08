@@ -1,5 +1,5 @@
 // -*- mode: Bluespec; -*-
-// quint-check: max-steps=20 max-samples=2000
+// quint-check: max-steps=20 max-samples=20000
 //
 // observatory_sync: the Observatory console state sync, on the browser side.
 //
@@ -24,8 +24,8 @@
 //   reveal, in app "A". Six filter rows. Generations are not bounded, but a run has 20 steps.
 //
 // RUN (from the worktree root; quint 0.33.1; there is no Apalache in this setup)
-//   quint typecheck quint/frontend/observatory_sync.qnt
-//   quint run quint/frontend/observatory_sync.qnt --step=tick --invariant=<name> \
+//   quint typecheck quint/observatory_sync.qnt
+//   quint run quint/observatory_sync.qnt --step=tick --invariant=<name> \
 //     --max-samples=2000 --max-steps=20 --seed=11
 //   For the sync invariants, run also with --step=syncTick (only the sync events and the server,
 //   so the random runs go deeper): --max-samples=10000 --max-steps=20 --seed=11.
@@ -94,7 +94,8 @@ module observatory_sync {
     else if (version > s.version + 1) "reload"
     else "data"
 
-  pure def step(s: SyncState, e: SyncEvent): SyncState = match e {
+  // syncStep is sync.ts `step` (renamed here: `action step` is the default step for quint:check).
+  pure def syncStep(s: SyncState, e: SyncEvent): SyncState = match e {
     | Switch(a) =>
         if (a == s.app) s
         else { app: a, gen: s.gen + 1, buffering: false, dataApp: "", version: 0, synced: false }
@@ -232,7 +233,7 @@ module observatory_sync {
 
   /** store.ts beginLoad and the request that load() sends. */
   pure def beginLoad(u: Ui): Ui = {
-    val s = step(u.sync, Begin)
+    val s = syncStep(u.sync, Begin)
     { ...u, sync: s, buffer: List(),
       loads: u.loads.union(Set({ gen: s.gen, app: s.app, read: false, version: 0, seq: 0 })) }
   }
@@ -247,7 +248,7 @@ module observatory_sync {
       else if (mv == "drop") { ...u, lastEvent: "deltaDrop" }
       else {
         // "meta" or "data": the shell calls step with the delta in both cases.
-        val s2 = step(u.sync, Delta({ version: m.version, reset: false }))
+        val s2 = syncStep(u.sync, Delta({ version: m.version, reset: false }))
         val fed = if (mv == "data") appendNew(u.feed, itemsOf(m.app, m.lo, m.hi)) else u.feed
         val ap = if (mv == "data") u.applied.append(m.version) else u.applied
         { ...u, sync: s2, feed: fed, applied: ap, rewound: u.rewound or s2.version < u.sync.version,
@@ -261,7 +262,7 @@ module observatory_sync {
     if (admits(u0.sync, r.gen, r.app)) {
       val later = u0.buffer
       val full = { ...u0, screenApp: r.app, feed: itemsOf(r.app, 1, r.seq),
-                   sync: step(u0.sync, Land({ gen: r.gen, app: r.app, version: r.version })),
+                   sync: syncStep(u0.sync, Land({ gen: r.gen, app: r.app, version: r.version })),
                    landGen: r.gen, landApp: r.app, landVersion: r.version, applied: List(), buffer: List() }
       val after = later.foldl(full, (acc, m) => applyMsg(acc, m))
       { ...after, lastEvent: "land" }
@@ -273,14 +274,14 @@ module observatory_sync {
   /** store.ts load(), the catch path. */
   pure def failAnswer(u: Ui, r: Req): Ui = {
     val u0 = { ...u, loads: u.loads.exclude(Set(r)) }
-    if (owns(u0.sync, r.gen)) { ...u0, sync: step(u0.sync, Fail(r.gen)), lastEvent: "fail" }
+    if (owns(u0.sync, r.gen)) { ...u0, sync: syncStep(u0.sync, Fail(r.gen)), lastEvent: "fail" }
     else { ...u0, lastEvent: "failStale" }
   }
 
   /** store.ts setApp(app) for a changed app: the setter (step switch, clearData), then load(). */
   pure def switchApp(u: Ui, a: str): Ui = {
     val had = u.sync.dataApp != ""
-    val s1 = step(u.sync, Switch(a))
+    val s1 = syncStep(u.sync, Switch(a))
     val cleared = if (had and s1.dataApp == "") { ...u, sync: s1, screenApp: "", feed: List() } else { ...u, sync: s1 }
     { ...beginLoad(cleared), lastEvent: "switch" }
   }
@@ -544,6 +545,14 @@ module observatory_sync {
     grant, unreveal, otherAnswer, expire, revealRead, revealAnswer,
     setTab, setFilter,
   }
+
+  /**
+   * The default step for `bun run quint:check`. It allows the same events as `tick`, but it picks the
+   * sync-only and reveal-only steps more often, so random runs reach the longer delta and reveal orders.
+   * revealTick is listed three times on purpose: the simulator picks each listed action with the same
+   * chance, and witness_oldReread needs a long reveal order.
+   */
+  action step = any { tick, syncTick, revealTick, revealTick, revealTick }
 
   // ================================================================ invariants
   // Each comment names the rule and the LemmaScript function and contract that proves it in code.

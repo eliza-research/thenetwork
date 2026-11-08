@@ -78,7 +78,7 @@ The skeptic agents for views, sites and server-ui did not run. The main session 
 - `esc` gives the same bytes as the old regex escaper on 200,000 random strings.
 - Code-page Cancel: `handler.ts` (a backend file, changed by 2 lines only) now passes `redirectHost` to both `codePage` calls. An integration case through the real OAuth handler checks the CSP. It fails with main's `handler.ts`.
 
-**Quint models** in `quint/frontend/` (see [quint/README.md](../../quint/README.md)): `join_flow`, `review_desk`, `observatory_sync`, `console_views`.
+**Quint models** in `quint/` (`join_flow`, `review_desk`, `observatory_sync`, `console_views`) (see [quint/FRONTEND.md](../../quint/FRONTEND.md)): `join_flow`, `review_desk`, `observatory_sync`, `console_views`.
 - Each step function of the core is a `pure def` with the same name, and each invariant has the name of the LemmaScript contract it matches.
 - Each model has `witness_*` invariants that are reachable, and at least 2 mutants that `quint run` catches.
 
@@ -105,6 +105,13 @@ Each fix has an integration case that fails before the fix. The Quint models wer
 **Browser check of the code-page Cancel** (Claude desktop app built-in browser, Chromium; the real MCP handler and `pages.ts` on loopback with memory stores and a dev OTP, so nothing was sent; the client callback was `http://127.0.0.1:5299/callback`):
 - Before (main's `handler.ts`): after Cancel on the code page, the page stayed on the code step. The console showed `Sending form data to 'http://127.0.0.1:5298/oauth/authorize/cancel' violates the following Content Security Policy directive: "form-action 'self'"`. The server still logged `POST /oauth/authorize/cancel -> 303` and `consent_denied`, so the denial was stored but the client never heard of it.
 - After (this branch): Cancel reached `http://127.0.0.1:5299/callback?error=access_denied&error_description=Connection+cancelled&state=s1`, with no console errors.
+
+**Check with the state-machine branch's checker.** `scripts/quint-check.ts` from `claude/quint-state-machines` checks each model: typecheck, `run` tests, `safety`, and every `witness_*` must be reachable (Rust backend, seed `0x5eed`). Run with only its two paths changed to this worktree, on the four models (moved from `quint/frontend/` to `quint/`, because that checker reads only the top level of `quint/`): 4 models, 50 checks, 0 failures. Changes made to pass it:
+- `observatory_sync` gained `action step`. Its pure `step` is now `syncStep`; it is still sync.ts `step`.
+- `join_flow.witness_noStaleAnswer` was unreachable after the JF-1 fix. It is now the invariant `noStaleAnswerSeen`, part of `safety`.
+- Bounds were raised for the long paths: `review_desk` 30 steps and 20000 samples; `observatory_sync` 20000 samples, with its reveal step weighted.
+
+Correction: an earlier hand check of witness reachability in this session used `grep -i violat`, which also matches "No violation found". Its "reached" results were not valid. The checker run above replaces them.
 
 ## 5. Full suites
 

@@ -1,5 +1,5 @@
 // -*- mode: Bluespec; -*-
-// quint-check: max-steps=20 max-samples=2000
+// quint-check: max-steps=30 max-samples=20000
 //
 // review_desk: the staff review desk and the matching switch of the Observatory, on the browser side.
 //
@@ -25,14 +25,14 @@
 //   (one remount). The page clock can lag the real clock.
 //
 // RUN (from the repository root; quint 0.33.1; there is no Apalache in this setup)
-//   quint typecheck quint/frontend/review_desk.qnt
-//   quint test quint/frontend/review_desk.qnt                 # 7 replayed traces (run ...Test)
-//   quint run quint/frontend/review_desk.qnt --invariant=safety --max-samples=2000 --max-steps=20 --seed=11
-//   quint run quint/frontend/review_desk.qnt --invariant=<name> --max-samples=2000 --max-steps=20 --seed=11
+//   quint typecheck quint/review_desk.qnt
+//   quint test quint/review_desk.qnt                 # 7 replayed traces (run ...Test)
+//   quint run quint/review_desk.qnt --invariant=safety --max-samples=2000 --max-steps=20 --seed=11
+//   quint run quint/review_desk.qnt --invariant=<name> --max-samples=2000 --max-steps=20 --seed=11
 //   Each witness_<name> must be VIOLATED (the state is reachable). witness_lateAnswerElsewhere is a
 //   long path: use --max-samples=20000 --max-steps=30 (lateAnswerStaysTest also reaches it).
 //   decisionOnlyToReviewerChoice (the remount variant of bug 3) is fixed and is now part of safety:
-//   quint run quint/frontend/review_desk.qnt --invariant=decisionOnlyToReviewerChoice --max-samples=20000 --max-steps=20 --seed=11
+//   quint run quint/review_desk.qnt --invariant=decisionOnlyToReviewerChoice --max-samples=20000 --max-steps=20 --seed=11
 //   (and --seed=29). remountMovesChoiceTest replays the old trace and shows that it now holds.
 //   KNOWN DEFECTS (expected to be violated today, see the comments at each one):
 //   serverApproveBeforeDeadline (bug 4 of the slice report, server side; random run finds it),

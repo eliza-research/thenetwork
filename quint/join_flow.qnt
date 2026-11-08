@@ -27,11 +27,11 @@
 //   tick variable.
 //
 // RUN (from the repository root; quint 0.33.1; there is no Apalache in this setup)
-//   quint typecheck quint/frontend/join_flow.qnt
-//   quint run quint/frontend/join_flow.qnt --invariant=<name> --max-samples=2000 --max-steps=20 --seed=11
-//   Each witness_<name> must be VIOLATED (the state is reachable), except witness_noStaleAnswer (below).
+//   quint typecheck quint/join_flow.qnt
+//   quint run quint/join_flow.qnt --invariant=<name> --max-samples=2000 --max-steps=20 --seed=11
+//   Each witness_<name> must be VIOLATED (the state is reachable). noStaleAnswerSeen holds (part of safety).
 //   Defects JF-1 and JF-3 are fixed in the shell and the core. These hold (seeds 11 and 29):
-//   quint run quint/frontend/join_flow.qnt --invariant=<name> --max-samples=20000 --max-steps=20 --seed=29
+//   quint run quint/join_flow.qnt --invariant=<name> --max-samples=20000 --max-steps=20 --seed=29
 //   for signInMatchesSession, staleAnswerNeverMovesStep, joinAppliesToShownAccountWithMarker, safety.
 //   joinAppliesToShownAccount is still VIOLATED when markerApp is false: slop.date and peon.biz get no
 //   signupView from /api/me (api.ts), so the page has no marker to send (JF-2 needs a server change).
@@ -509,6 +509,7 @@ module join_flow {
   val joinAppliesToShownAccountWithMarker = not(st.sh.markerApp) or st.hist.joinedAs == st.hist.joinedFor
 
   val safety = and {
+    noStaleAnswerSeen,
     inv_flowOk, fieldsNeverShownToOtherAccount, shownFieldsAreFlowFields, doneIsFinal,
     doneOnlyFromTickedProfile, foreignNumberNeverStarts, joinSentOnlyWhenFormPasses,
   }
@@ -520,10 +521,11 @@ module join_flow {
   val witness_neverMember = st.flow.step != Member
   // A sign-in as another account cleared fields (fieldsFor and formResets act).
   val witness_noCrossClear = st.hist.crossClears == 0
-  // A stale answer arrives. After the JF-1 fix each form stays busy until its last answer, so in these
-  // bounds no answer is stale: this witness now HOLDS. With the code form released after otp/verify
-  // (the old busy), it is VIOLATED and staleAnswerNeverMovesStep still holds by the core guard.
-  val witness_noStaleAnswer = not(st.hist.staleSeen)
+  // Rule: each form stays busy until its last answer (JF-1 fix in sites/shared/auth.ts and join.ts), so
+  // no answer is stale when it lands. This is an invariant now, part of safety. With the code form
+  // released after otp/verify (the old busy) it is violated, and staleAnswerNeverMovesStep still holds
+  // by the core guard (flowNext ignores a verified event for another number).
+  val noStaleAnswerSeen = not(st.hist.staleSeen)
   // Link prefill fields survive into profile (bug B2 fix: the first session keeps them).
   val witness_noPrefillInProfile = not(st.flow.step == Profile and st.flow.fields.firstName == "Ann" and st.hist.author == "")
 }

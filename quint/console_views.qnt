@@ -23,10 +23,10 @@
 //   participants each.
 //
 // RUN (from the repository root; quint 0.33.1; there is no Apalache in this setup)
-//   quint typecheck quint/frontend/console_views.qnt
-//   quint test quint/frontend/console_views.qnt
-//   quint run quint/frontend/console_views.qnt --invariant=safety --max-samples=2000 --max-steps=20 --seed=7
-//   quint run quint/frontend/console_views.qnt --invariant=<name> --max-samples=2000 --max-steps=20 --seed=7
+//   quint typecheck quint/console_views.qnt
+//   quint test quint/console_views.qnt
+//   quint run quint/console_views.qnt --invariant=safety --max-samples=2000 --max-steps=20 --seed=7
+//   quint run quint/console_views.qnt --invariant=<name> --max-samples=2000 --max-steps=20 --seed=7
 //   Each witness_<name> must be VIOLATED (the state is reachable).
 //
 // OUTSIDE THE MODEL
