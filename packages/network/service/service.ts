@@ -653,8 +653,9 @@ export class NetworkService implements RuntimeHost {
       if (!personId) continue;
       // The subject is the text itself: the inbox dedupes on it, so a second text about one opportunity
       // is its own item, and only a repeat of the same text (the projection after a crash) is one item.
+      // A text about an opportunity starts with its id ("<oppId>#<text id>"): updatesFor drops it when that opportunity closed.
       await this.notify.recordSent(
-        { personId, app: rt.app.id, eventType: b.type!, subjectId: b.id, urgency: b.proactive ? "normal" : "requested", summary: b.body.trim().slice(0, NOTIFY_SUMMARY_MAX) || "An update from the Network." },
+        { personId, app: rt.app.id, eventType: b.type!, subjectId: b.oppId ? `${b.oppId}#${b.id}` : b.id, urgency: b.proactive ? "normal" : "requested", summary: b.body.trim().slice(0, NOTIFY_SUMMARY_MAX) || "An update from the Network." },
         { deliveryId: `net:${b.id}`, channel: "imessage", countsTowardCap: b.proactive || b.kind === "proactive", sentAt: b.acceptedAt ?? b.ts },
       );
     }
@@ -674,10 +675,13 @@ export class NetworkService implements RuntimeHost {
     let items: InboxItem[] = await this.notify.readUpdates(personId, surface, this.clock.now(), token, { app });
     // An item about an opportunity that closed (completed, cancelled or skipped) is not new: a reply to
     // it answers nothing. Reading still marks it seen. The states are the console's (network store oppState).
+    // The subject of a text about an opportunity is "<oppId>#<text id>" (delivered).
     const rt = this.runtimeFor(app), subjects = [...new Set(items.map(i => i.subjectId))];
     if (rt && subjects.length) {
-      const rows = await rt.scoped(tx => tx`select id from network.opportunities where app_id = ${app} and id in ${tx(subjects)} and state in ('COMPLETED', 'CANCELLED', 'SKIPPED')`);
-      const closed = new Set((rows as any[]).map(r => r.id as string));
+      const rows = await rt.scoped(tx => tx`select s.subject from unnest(${tx.array(subjects, "TEXT")}::text[]) as s(subject)
+        join network.opportunities o on o.app_id = ${app} and left(s.subject, length(o.id) + 1) = o.id || '#'
+        where o.state in ('COMPLETED', 'CANCELLED', 'SKIPPED')`);
+      const closed = new Set((rows as any[]).map(r => r.subject as string));
       items = items.filter(i => !closed.has(i.subjectId));
     }
     return items.map(i => ({ summary: i.summary, at: new Date(i.createdAt).toISOString(), kind: i.eventType }));
