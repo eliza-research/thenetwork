@@ -42,6 +42,8 @@ export const RELAY_SWAP_TTL_MS = RELAY_LIMITS.consentTtlMs;
 /** Log rows kept in the state (the rate limits look back one day; staff and ban notices further). */
 export const RELAY_LOG_MAX = 5000;
 const THREAD_MAX = 50;
+/** The reason on a passed number share that its sender took back before it went out. */
+export const SWAP_WITHDRAWN = "consent:withdrawn";
 
 /** What the desk needs to know about a member (the Network's view; never hidden persona truth). */
 export interface RelayMember {
@@ -304,11 +306,22 @@ export class RelayDesk {
     return { itemId: ask.itemId, decision: "refused", reason: "I can't swap numbers right now." };
   }
 
-  /** The member takes back their pending number swap ("don't send my number"). Returns how many requests were removed. */
+  /**
+   * The member takes back their number ("don't send my number"): their pending swap request goes, and a
+   * share of theirs that passed but may still wait (quiet hours, the outbound queue) gets the reason
+   * `consent:withdrawn`, which final dispatch refuses (runtime.ts relayAdmission). Returns how many
+   * requests and shares it changed.
+   */
   cancelSwaps(from: MemberId): number {
     const before = this.s.swaps.length;
     this.s.swaps = this.s.swaps.filter(x => x.from !== from);
-    return before - this.s.swaps.length;
+    let n = before - this.s.swaps.length;
+    this.s.log = this.s.log.map(r => {
+      if (r.from !== from || r.kind !== "contact_share" || r.decision !== "pass" || r.reasons.includes(SWAP_WITHDRAWN)) return r;
+      n++;
+      return { ...r, reasons: [...r.reasons, SWAP_WITHDRAWN].sort() };
+    });
+    return n;
   }
 
   private share(id: string, from: MemberId, to: MemberId, at: number, value: string, consentAt = at): RelayItem {

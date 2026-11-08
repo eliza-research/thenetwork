@@ -24,7 +24,7 @@ import type { City, Clock, MemberId, WorldSnapshot } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import type { NetworkContext, SimMessage } from "@thenetwork/core";
 import { ConsentNetwork, presentInNyc, relayDispatchCheck, type NetworkOptions, type NetworkState } from "../src/network.ts";
-import type { RelayCanonical } from "../src/relay.ts";
+import { SWAP_WITHDRAWN, type RelayCanonical } from "../src/relay.ts";
 import { loadRelayRows, PgStore, runStored, runTick, type NetworkStore } from "../src/store.ts";
 import { capitalWiring, type CapitalEvent } from "../src/capital.ts";
 import type { AppInfo } from "../../platform/src/apps.ts";
@@ -249,8 +249,9 @@ export class NetworkRuntime {
       matchId = row.oppId;
       from = state.opps.find(o => o.id === matchId)?.participants.find(p => p !== to);
     } else {
-      const [rec] = await tx`select opportunity_id,from_member,to_member,decision,review from network.relay_records where app_id=${app} and item_id=${id[1]!}`;
+      const [rec] = await tx`select opportunity_id,from_member,to_member,decision,review,reasons from network.relay_records where app_id=${app} and item_id=${id[1]!}`;
       if (!rec || rec.to_member !== to || rec.decision !== "pass" || rec.review === "rejected") return no("relay:not_passed");
+      if ((rec.reasons as string[] | null)?.includes(SWAP_WITHDRAWN)) return no(SWAP_WITHDRAWN);
       from = rec.from_member as MemberId; matchId = rec.opportunity_id as string;
       if (row.oppId && row.oppId !== matchId) return no("relay:pair");
     }
