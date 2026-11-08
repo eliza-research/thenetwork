@@ -2327,6 +2327,9 @@ export class NetworkService implements RuntimeHost {
         const note = typeof b.reason === "string" ? b.reason : typeof b.note === "string" ? b.note : undefined;
         if (!id || id.length > 300 || (b.decision !== "release" && b.decision !== "drop") || (note !== undefined && note.length > 2000)) return json({ ok: false, error: "invalid_leak_decision" }, 400);
         if (note === undefined || note.trim().length < 5) return json({ ok: false, reason: "reason_required" }, 409);
+        // The audit row first (no row, no action), then the decision, then a result row.
+        const leakAudit = { actor: user.id, roles: user.roles, action: b.decision === "release" ? "leak_release" : "leak_drop", targetId: id, mode: "real" as const, app: rt.app.id, reason: note };
+        await this.audit.write({ ...leakAudit, at: this.clock.now(), ok: true, detail: { phase: "requested" } });
         const parked = (await queue.parkedLeaks(1000)).find(r => r.id === id);
         let r: ActionResult;
         if (!parked) r = { ok: false, reason: "not_parked" };
@@ -2338,8 +2341,8 @@ export class NetworkService implements RuntimeHost {
           if (change?.memberId) await rt.storeStatuses([{ id: change.id, status: change.status }]);
           if (change && b.decision === "release") await rt.deliver();
         }
-        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: b.decision === "release" ? "leak_release" : "leak_drop", targetId: id,
-          mode: "real", ok: r.ok, app: rt.app.id, reason: note, ...(r.ok ? {} : { detail: { refused: (r as { reason?: string }).reason } }) });
+        await this.audit.write({ ...leakAudit, at: this.clock.now(), ok: r.ok, detail: { phase: "result", ...(r.ok ? {} : { refused: (r as { reason?: string }).reason }) } })
+          .catch(e => this.log(`[audit] result row failed: ${(e as Error).message}`));
         return result(r);
       }
       if (path === "/inbound/resolve") {
@@ -2430,7 +2433,8 @@ export class NetworkService implements RuntimeHost {
         const selected = itemId.startsWith("pri_") ? await this.photoRelay.item(itemId) : undefined;
         if (selected && selected.app !== rt.app.id) return json({ok:false,reason:"not_held"},404);
         let r: {ok:true;delivered?:boolean}|{ok:false;reason:string};
-        if(selected)await this.audit.write({at:this.clock.now(),actor:user.id,roles:user.roles,action:release?"relay_release":"relay_reject",targetId:itemId,mode:"real",ok:true,app:rt.app.id,reason:note,detail:{phase:"requested"}});
+        // The audit row first (no row, no action), for a text and for a photo.
+        await this.audit.write({at:this.clock.now(),actor:user.id,roles:user.roles,action:release?"relay_release":"relay_reject",targetId:itemId,mode:"real",ok:true,app:rt.app.id,reason:note,detail:{phase:"requested"}});
         try {
         if (selected) {
           if (!release) r = await this.photoRelay.review(itemId,user.id,"unsafe") ? {ok:true} : {ok:false,reason:"not_held"};
@@ -2464,7 +2468,8 @@ export class NetworkService implements RuntimeHost {
           throw error;
         }
         await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: release ? "relay_release" : "relay_reject", targetId: itemId,
-          mode: "real", ok: r.ok, app: rt.app.id, reason: note, ...(selected?{detail:{phase:"result",delivered:false}}:"delivered" in r ? { detail: { delivered: r.delivered } } : {}) });
+          mode: "real", ok: r.ok, app: rt.app.id, reason: note, detail: { phase: "result", ...(selected ? { delivered: false } : "delivered" in r ? { delivered: r.delivered } : {}) } })
+          .catch(e => this.log(`[audit] result row failed: ${(e as Error).message}`));
         return result(r);
       }
       const verifyPath = path.match(/^\/members\/([^/]+)\/verify$/);
