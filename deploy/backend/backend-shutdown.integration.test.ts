@@ -19,7 +19,7 @@ test("a hung HTTP request does not hold shutdown past the grace period (SD-158)"
   const lines: string[] = [];
   const config = { ...loadConfig({ PLATFORM_ENV: "dev", DATABASE_URL: "postgres://unused@localhost:1/unused" }), tickMs: 3_600_000, shutdownGraceMs: 200 };
   const b = createBackend({ svc, config, log: jsonLogger(s => lines.push(s)), ping: async () => true });
-  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: req => b.publicFetch(req, server) });
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: req => b.publicFetch(req) });
   const pending = fetch(`http://127.0.0.1:${server.port}/internal/turn`, { method: "POST", body: "{}" }).catch(() => undefined);
   await inside;
 
