@@ -133,7 +133,7 @@ function readLand(g: ReadGate, ticket: int): ReadLand
   requires readOk(g)
 {
   if canLand(g, ticket) then
-    ReadLand(ReadGate(g.last, g.closed), true)
+    ReadLand(ReadGate(g.last, ticket), true)
   else
     ReadLand(g, false)
 }
@@ -250,6 +250,8 @@ lemma effectiveTab_ensures(want: ViewTab, c: TabCaps)
   ensures (effectiveTab(want, c).lab? ==> !(c.realOnly))
   ensures (effectiveTab(want, c).review? ==> c.showReview)
   ensures (effectiveTab(want, c).game? ==> c.game)
+  ensures (effectiveTab(want, c).requests? ==> c.hasRequests)
+  ensures (((((want.feed? || want.pipeline?) || want.engine?) || want.safety?) || want.metrics?) ==> (effectiveTab(want, c) == want))
 {
 }
 
@@ -347,6 +349,8 @@ method allOf(xs: seq<string>, yes: bool) returns (res: bool)
 }
 
 method yesCounts(opps: seq<seq<string>>) returns (res: YesCount)
+  ensures ((res.yes > 0) ==> exists i: nat :: ((i < |opps|) && forall j: nat :: ((j < |opps[i]|) ==> saidYes(opps[i][j]))))
+  ensures ((forall i: nat :: ((i < |opps|) ==> forall j: nat :: ((j < |opps[i]|) ==> saidYes(opps[i][j])))) ==> ((res.yes == |opps|) && (res.revealed == |opps|)))
   ensures (0 <= res.yes)
   ensures (res.yes <= res.revealed)
   ensures (res.revealed <= |opps|)
@@ -357,6 +361,8 @@ method yesCounts(opps: seq<seq<string>>) returns (res: YesCount)
   while (i < |opps|)
     invariant (0 <= i)
     invariant (i <= |opps|)
+    invariant ((yes > 0) ==> exists k: nat :: ((k < i) && forall j: nat :: ((j < |opps[k]|) ==> saidYes(opps[k][j]))))
+    invariant ((forall k: nat :: ((k < i) ==> forall j: nat :: ((j < |opps[k]|) ==> saidYes(opps[k][j])))) ==> ((yes == i) && (revealed == i)))
     invariant (0 <= yes)
     invariant (yes <= revealed)
     invariant (revealed <= i)
@@ -401,6 +407,7 @@ method rate(a: int, b: int) returns (res: Option<int>)
 method canPropose(picks: seq<string>, minor: map<string, bool>, hasGame: bool, sparks: int, over: bool) returns (res: bool)
   ensures (res ==> ((hasGame && (sparks > 0)) && !(over)))
   ensures (res ==> forall i: nat :: ((i < |picks|) ==> ((picks[i] in minor) && !(minor[picks[i]]))))
+  ensures (hasGame ==> (sparks > 0) ==> !(over) ==> (forall i: nat :: ((i < |picks|) ==> ((picks[i] in minor) && !(minor[picks[i]])))) ==> res)
 {
   if ((!(hasGame) || (sparks <= 0)) || over) {
     return false;

@@ -100,7 +100,7 @@ export function readLand(g: ReadGate, ticket: number): ReadLand {
   //@ ensures \result.gate.last === g.last && \result.gate.closed >= g.closed
   //@ ensures \result.show ==> forall(t: int, t <= ticket ==> !canLand(\result.gate, t))
   if (canLand(g, ticket)) return { gate: { last: g.last, closed: ticket }, show: true };
-  return { gate: g, show: true };
+  return { gate: g, show: false };
 }
 
 /** After a read lands, an older read does not. */
@@ -199,10 +199,14 @@ export interface YesCount { revealed: number; yes: number }
  */
 export function yesCounts(opps: string[][]): YesCount {
   //@ verify
+  //@ ensures \result.yes > 0 ==> exists(i: nat, i < opps.length && forall(j: nat, j < opps[i].length ==> saidYes(opps[i][j])))
+  //@ ensures forall(i: nat, i < opps.length ==> forall(j: nat, j < opps[i].length ==> saidYes(opps[i][j]))) ==> \result.yes === opps.length && \result.revealed === opps.length
   //@ ensures 0 <= \result.yes && \result.yes <= \result.revealed && \result.revealed <= opps.length
   let revealed = 0, yes = 0;
   for (let i = 0; i < opps.length; i++) {
     //@ invariant 0 <= i && i <= opps.length
+    //@ invariant yes > 0 ==> exists(k: nat, k < i && forall(j: nat, j < opps[k].length ==> saidYes(opps[k][j])))
+    //@ invariant forall(k: nat, k < i ==> forall(j: nat, j < opps[k].length ==> saidYes(opps[k][j]))) ==> yes === i && revealed === i
     //@ invariant 0 <= yes && yes <= revealed && revealed <= i
     //@ decreases opps.length - i
     const r = allOf(opps[i], false);
@@ -255,6 +259,8 @@ export function effectiveTab(want: ViewTab, c: TabCaps): ViewTab {
   //@ ensures \result === "lab" ==> !c.realOnly
   //@ ensures \result === "review" ==> c.showReview
   //@ ensures \result === "game" ==> c.game
+  //@ ensures \result === "requests" ==> c.hasRequests
+  //@ ensures want === "feed" || want === "pipeline" || want === "engine" || want === "safety" || want === "metrics" ==> \result === want
   return tabVisible(want, c) ? want : "feed";
 }
 
@@ -279,6 +285,7 @@ export function canPropose(picks: string[], minor: Map<string, boolean>, hasGame
   //@ verify
   //@ ensures \result ==> hasGame && sparks > 0 && !over
   //@ ensures \result ==> forall(i: nat, i < picks.length ==> minor.has(picks[i]) && !minor.get(picks[i]))
+  //@ ensures hasGame && sparks > 0 && !over && forall(i: nat, i < picks.length ==> minor.has(picks[i]) && !minor.get(picks[i])) ==> \result
   if (!hasGame || sparks <= 0 || over) return false;
   for (let i = 0; i < picks.length; i++) {
     //@ invariant 0 <= i && i <= picks.length
