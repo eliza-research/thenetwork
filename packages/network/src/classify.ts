@@ -596,9 +596,15 @@ export function consentOf(body: string): Consent {
   if (counter) return { answer: "counter", why: "counter" };
   if (cond) return { answer: "unclear", why: "conditional" };
   if (hedge || question) return { answer: "unclear", why: "hedged" };
-  // A yes needs the shared reader (core parseReply, AGENTS decision 11) not to read a refusal: when the
-  // two disagree the member is asked again, never booked.
-  if (affirmAt < Infinity) return parseReply(body).answer === "no" ? { answer: "unclear", why: "mixed" } : { answer: "yes", why: "affirm" };
+  // A yes needs the shared reader (core parseReply, AGENTS decision 11) not to read a refusal or a hedge:
+  // when the two disagree the member is asked again, never booked. A reading that is unsure only because
+  // it found no word it knows ("aight", "I'm game") or only about the time (this reader reads the time
+  // options itself) is no veto.
+  if (affirmAt < Infinity) {
+    const p = parseReply(body);
+    const veto = p.answer === "no" || (p.answer === "unsure" && !p.counter && p.reason !== "no_signal");
+    return veto ? { answer: "unclear", why: "mixed" } : { answer: "yes", why: "affirm" };
+  }
   return { answer: "unclear", why: "none" };
 }
 
