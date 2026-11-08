@@ -575,6 +575,7 @@ export class NetworkService implements RuntimeHost {
     await this.lineAdapter()?.purge?.().catch(e => { this.log(`[purge] line counters failed: ${(e as Error).message}`); return 0; });
     // Photo rows a crash left hidden (an upload or a delete that did not finish): bytes, rating and row go.
     await this.photos.sweep().catch(e => this.log(`[purge] photos failed: ${(e as Error).message}`));
+    await this.reconcileAges().catch(e => this.log(`[purge] age reconcile failed: ${(e as Error).message}`));
     if (n) this.log(`[purge] removed ${n} expired platform row(s)`);
     return n;
   }
@@ -785,6 +786,23 @@ export class NetworkService implements RuntimeHost {
       if (!rt || m.state === "removed") continue;
       await rt.scoped(tx => tx`update network.members set age = least(coalesce(age, ${age}), ${age}) where app_id = ${m.app} and id = ${m.memberId}`);
     }
+  }
+
+  /**
+   * A person whose lowest age is under 18 but who still has a photo, or a member age above it on an app:
+   * the age hook did not finish (a crash after noteAge commits; recordAge runs it again only on a new
+   * stated age). Run it again: photos, ratings and member ages on every app.
+   */
+  private async reconcileAges() {
+    const due = new Map<string, number>();
+    for (const r of await this.sql`select distinct p.id, p.lowest_age from platform.photos ph join platform.people p on p.id = ph.person_id
+      where ph.deleted_at is null and p.lowest_age < 18` as any[]) due.set(r.id, r.lowest_age);
+    for (const app of new Set([...this.runtimes.values()].map(rt => rt.app.id))) {
+      const rows = await this.runtimeFor(app)!.scoped(tx => tx`select distinct p.id, p.lowest_age from network.members m join platform.people p on p.id = m.person_id
+        where m.app_id = ${app} and m.account_status <> 'removed' and p.lowest_age < 18 and (m.age is null or m.age > p.lowest_age)`) as any[];
+      for (const r of rows) due.set(r.id, r.lowest_age);
+    }
+    for (const [personId, age] of due) await this.ageLowered(personId, age);
   }
 
   /** A web join (POST /api/join): the member row, then the welcome through the normal send path. */

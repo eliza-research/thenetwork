@@ -223,4 +223,19 @@ describe.skipIf(!pgAvailable)("photo-object and clef-rating through the service 
     expect(t.files()).toEqual([]);
   }, T);
 
+  test("Q-photos_rating-1: a crash after the age commit (before the hook) does not keep the photos or the rating of a minor", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const t = service(clock, { photoRater: rater });
+    const a = await adult(t, clock);
+    expect((await a.web.upload()).ok).toBe(true);
+    expect(await ratings(a.id)).toBe(1);
+    // noteAge committed the age 15; the process stopped before onAgeLowered ran.
+    expect(await t.s.people.noteAge(a.person_id, 15)).toBe(15);
+    await t.s.purge();
+    expect(await rows(a.person_id)).toBe(0);
+    expect(t.files()).toEqual([]);
+    expect(await ratings(a.id)).toBe(0);
+    expect((await sql`select age from network.members where app_id = 'slop' and id = ${a.id}`)[0].age).toBe(15);
+  }, T);
 });
