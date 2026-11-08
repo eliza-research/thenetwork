@@ -2299,6 +2299,17 @@ export class NetworkService implements RuntimeHost {
         await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_agent_signals", mode: "real", ok: true, app: rt.app.id });
         return json({ ok: true, network: rt.id, signals: await this.reviewSignals(rt.app.id) });
       }
+      if (req.method === "POST" && path === "/signals") {
+        // The staff decision on one such signal: confirmed (acted on) or rejected. It leaves GET /signals; it changes no consent.
+        const no = need(["reviewer", "safety"]); if (no) return no;
+        const b = await body(req) as Record<string, unknown> | undefined;
+        const id = b?.id, decision = b?.decision;
+        if (typeof id !== "string" || !id.startsWith("service-signal:") || (decision !== "confirmed" && decision !== "rejected")) return json({ ok: false, error: "id_and_decision_required" }, 400);
+        const rows = await rt.scoped(tx => tx`update network.facets set status=${decision} where app_id=${rt.app.id} and id=${id} and status='proposed'
+          and tags && ${tx.array(["signal:opt_out","signal:safety_concern"],"TEXT")} returning member_id`);
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "decide_agent_signal", targetType: "member", targetId: rows[0]?.member_id, mode: "real", ok: rows.length > 0, app: rt.app.id, detail: { signal: id, decision } });
+        return result(rows.length ? { ok: true } : { ok: false, reason: "not_pending" });
+      }
       if (req.method === "GET" && (path === "/staff/relay/held" || path === "/relay/held")) {
         // Relayed items held for a person (relay.ts): ids, reasons and times; an adult's held text; never a minor's words, never a score.
         const no = need(["reviewer", "safety"]); if (no) return no;

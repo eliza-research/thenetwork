@@ -163,6 +163,7 @@ Send `Authorization: Bearer <token>`. Tokens are per app: `reviewer@slop:<t>` is
 | `POST /safety/lift` | safety | `{ memberId, note? }` |
 | `POST /safety/close` | safety | `{ caseId, note? }` |
 | `GET /signals` | reviewer, safety | Agent `opt_out` and `safety_concern` signals waiting for a person: `{ id, memberId, kind, evidence, at }`, newest first |
+| `POST /signals` | reviewer, safety | The decision on one waiting signal: `{ id, decision: "confirmed" \| "rejected" }`. The signal leaves `GET /signals`; no consent changes. 409 `not_pending` when it is not waiting |
 | `GET /staff/relay/held` | reviewer, safety | Relayed items held for a person, oldest first: `{ id, itemId, app, kind, memberId, from, reasons, createdAt, text? or minor: true }` (the console's HeldText shape; `memberId` is the sender). `text` only while the sender is an adult with no age doubt now (re-checked on every read); never a minor's words, never a score |
 | `POST /staff/relay/:itemId/release` | safety | `{ note }` (or `reason`), 5+ characters, else 409 `reason_required`; it goes in the audit row. The engine checks the item again; anything that would now block stays undelivered (`delivered: false`) |
 | `POST /staff/relay/:itemId/reject` | safety | `{ note }` (or `reason`), 5+ characters. Never delivered; the held text is dropped |

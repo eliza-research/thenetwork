@@ -10,7 +10,7 @@ import {APPS} from "../../platform/src/apps.ts";
 import {applySchema, devPgUp, DEV_PG_PORT} from "../../observatory/db/dev-pg.ts";
 import {pgAvailable} from "../../observatory/test/pg.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
-import {TURN_PATH, type TurnRequest} from "../../core/src/svc/contract.ts";
+import {SIGNALS_PATH, TURN_PATH, type TurnRequest} from "../../core/src/svc/contract.ts";
 import {DryRunAdapter} from "../service/channel.ts";
 import {NetworkService} from "../service/service.ts";
 
@@ -22,7 +22,7 @@ const clock = new SimClock(Date.UTC(2026, 10, 8, 16));
 let admin: SQL, sql: SQL, service: NetworkService, server: ReturnType<typeof Bun.serve>;
 
 const start = async () => {
-  service = new NetworkService({url, clock, photoStorage: null, instance: "turn-consent-integration",
+  service = new NetworkService({url, clock, photoStorage: null, instance: "turn-consent-integration", tokens: "safety:saf-tok",
     env: {PLATFORM_ENV: "dev", PLATFORM_HASH_KEY: "synthetic-turn-consent-hash-key", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret},
     networks: [{id: "ntwrk:nyc", matchingEnabled: false}, {id: "slop:nyc", matchingEnabled: false}, {id: "friends:nyc", matchingEnabled: false}],
     network: {seed: 1}, publicApi: {minStartMs: 0, minVerifyMs: 0, otp: {name: "fixture", send: async () => ({code: "314159"})}},
@@ -175,5 +175,29 @@ describe.skipIf(!pgAvailable)("turn and consent", () => {
     // The sender's keyed hash is not kept past the retention window; a replay of the turn is still refused.
     expect([row.status, row.sender_hash]).toEqual(["unresolved", null]);
     expect(await (await post(input)).json()).toEqual({error: "turn_unresolved", retryable: false});
+  }, 60_000);
+  test("SD-036: staff can decide an agent signal, and a decided signal leaves GET /signals", async () => {
+    const phone = "+12125550036";
+    for (const [i, text] of ["friends.help", "Ari, 29", "I enjoy hiking and cooking", "Saturday afternoons work for me", "Small groups are good"].entries()) {
+      clock.advance(MINUTE);
+      expect((await post(turn(`sd036-setup-${i}`, phone, text, "friends"))).status).toBe(200);
+    }
+    clock.advance(MINUTE);
+    const opened = await (await post(turn("sd036-open", phone, "Tell me something about the weather", "friends"))).json() as any;
+    expect(opened.outcome).toBe("open");
+    const raw = JSON.stringify({channel: "blooio", messageId: "sd036-open", app: "friends", memberId: opened.memberId, signals: [{kind: "safety_concern", evidence: "they mentioned feeling unsafe"}]});
+    const recorded = await fetch(new URL(SIGNALS_PATH, server.url), {method: "POST", body: raw, headers: {"content-type": "application/json",
+      ...await svcSign(secret, {method: "POST", path: SIGNALS_PATH, id: "sd036-open:signals", body: raw, nowS: Math.floor(clock.now() / 1000)})}});
+    expect(await recorded.json()).toEqual({recorded: 1});
+    const staff = (method: string, b?: object) => service.fetch(new Request("http://127.0.0.1/apps/friends/signals", {method,
+      headers: {authorization: "Bearer saf-tok", ...(b ? {"content-type": "application/json"} : {})}, ...(b ? {body: JSON.stringify(b)} : {})}));
+    const listed = (await (await staff("GET")).json() as any).signals as {id: string; kind: string}[];
+    expect(listed.map(x => x.kind)).toEqual(["safety_concern"]);
+    // Staff act on it and record the decision: it is no longer new.
+    const decided = await staff("POST", {id: listed[0]!.id, decision: "confirmed"});
+    expect([decided.status, await decided.json()]).toEqual([200, {ok: true}]);
+    expect((await (await staff("GET")).json() as any).signals).toEqual([]);
+    // A second decision on the same signal is refused.
+    expect((await staff("POST", {id: listed[0]!.id, decision: "rejected"})).status).toBe(409);
   }, 60_000);
 });
