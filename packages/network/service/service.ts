@@ -798,9 +798,11 @@ export class NetworkService implements RuntimeHost {
    * "paused" (GET /api/me shows it; START on the app's line makes it active again), and the Network
    * drops the member from open opportunities.
    */
-  private async stopped(app: AppInfo, personId: string, scope: StopScope, skip?: { rt: NetworkRuntime; memberId: MemberId }) {
+  private async stopped(app: AppInfo, personId: string, scope: StopScope, skip?: { rt: NetworkRuntime; memberId: MemberId }, e164?: string) {
     const ms = (await this.people.memberships(personId)).filter(m => m.state !== "removed" && m.state !== "invited" && (scope === "global" || m.app === app.id));
     for (const m of ms) {
+      // A STOP by text: an app with a newer opt-in in the ledger (an older STOP that arrived late) stays as it is.
+      if (e164 && (await this.accounts.optedIn(m.app, e164))) continue;
       if (m.state === "active") await this.people.putMembership({ ...m, state: "paused" });
       const rt = await this.runtimeOfMember(m.app, m.memberId);
       if (!rt || (skip && skip.rt === rt && skip.memberId === m.memberId)) continue;
@@ -879,6 +881,21 @@ export class NetworkService implements RuntimeHost {
     });
   }
 
+  /**
+   * START by text ("start", "resume", "unstop"): the member asks for messages again, so a pause the agent
+   * set ends (a paused state, or a paused window). A busy or traveling window stays. The request is an event.
+   */
+  private async endPause(rt: NetworkRuntime, memberId: MemberId): Promise<void> {
+    await rt.scoped(async tx => {
+      const ended = await tx`update network.members set participation_window = case when participation_window->>'state' = 'paused' then null else participation_window end,
+        participation_state = case when participation_state = 'paused' then 'normal' else participation_state end
+        where app_id = ${rt.app.id} and id = ${memberId} and (participation_state = 'paused' or participation_window->>'state' = 'paused') returning id`;
+      if (!ended.length) return;
+      await tx`insert into network.events(app_id, at, actor_type, actor_id, type, object_type, object_id, payload)
+        values (${rt.app.id}, ${new Date(this.clock.now())}, 'member', ${memberId}, 'member_state_requested', 'member', ${memberId}, ${{ state: "open", from: null, until: null, source: "text" }}::jsonb)`;
+    });
+  }
+
   private async memberHome(ctx: MemberHookContext): Promise<HomeInput | null> {
     const [row] = await this.runtimeFor(ctx.app.id)?.scoped(tx => tx`select home_city, home_area from network.members where app_id=${ctx.app.id} and id=${ctx.memberId} and person_id=${ctx.personId}::uuid`) ?? [];
     const homeCity = homeCityOf(row?.home_city);
@@ -947,9 +964,10 @@ export class NetworkService implements RuntimeHost {
    * The app of an inbound message on the shared line (platform plan 4.4, founder decision 2):
    *  1. a per-app webhook path or a line in platform.app_lines names the app;
    *  2. the whole message is an app's word ("slop", "slop.date", "join friends.help"): that app;
+   *  2b. START after a global STOP: the app that the STOP confirmation named;
    *  3. a join the person started (they sent the app's word) takes the answer that follows, if the
    *     answer reads as a join answer or the person is not a member anywhere;
-   *  4. a member: the app with the newest open item (a probe, a plan they have not answered), else the
+   *  4. a member: SHARE goes to the app that asked for it (the link notice); else the app with the newest open item (a probe, a plan they have not answered), else the
    *     app that wrote to them last;
    *  5. otherwise The Network (a stranger joins it).
    * An app's name inside a sentence ("my ex is on slop.date") never routes a member's message.
@@ -965,12 +983,20 @@ export class NetworkService implements RuntimeHost {
     if (read?.kind === "read" && read.app) return { app: read.app, shared: true };
     const named = this.namedApp(ev.text);
     if (named) return { app: named, shared: true };
-    const mine = (await this.memberApps(ev.from)).filter(x => this.runtimeFor(x.app));
     const e164 = normalizePhone(ev.from);
+    // START after a global STOP: the app that the STOP confirmation named ("Reply START to resume <app>").
+    if (e164 && platformKeyword(ev.text) === "start") {
+      const stop = (await this.people.lastConsent(e164, "ntwrk")).global; // the global row (not the ntwrk row)
+      if (stop?.state === "opted_out" && stop.namedApp && this.runtimeFor(stop.namedApp)) return { app: stop.namedApp, shared: true };
+    }
+    const mine = (await this.memberApps(ev.from)).filter(x => this.runtimeFor(x.app));
     const pending = e164 ? await this.pendingOf(e164, "join") : undefined;
     if (pending && !mine.some(x => x.app === pending.app)
       && (!mine.length || parseJoinText(ev.text, this.appWords(), true).age !== undefined)) return { app: pending.app, shared: true };
     if (mine.length) {
+      // SHARE answers the link notice: the app that asked for it (the newest pending ask of an app they are a member of).
+      const share = e164 && /^\s*share\W*$/i.test(ev.text) ? await this.pendingOf(e164, "share") : undefined;
+      if (share && mine.some(x => x.app === share.app)) return { app: share.app, shared: true };
       const open = mine.filter(x => x.lastItem !== null).sort((a, b) => b.lastItem! - a.lastItem!)[0];
       if (open) return { app: open.app, shared: true };
       // Several apps: the reply goes to the app that wrote to this person last.
@@ -1083,11 +1109,15 @@ export class NetworkService implements RuntimeHost {
       const lrt = (leaveMember && await this.runtimeOfMember(leaving.id, leaveMember.memberId)) || this.runtimeFor(leaving.id);
       if (lrt && lrt !== rt) await lrt.identities();
       const lid = lrt?.memberOf(ev.from);
-      if (lrt && lid) {
+      // A person who is not a member of that app leaves it too (an opt-out for that app): never a join.
+      if (lrt) {
         const person = await this.accounts.personFor(e164);
-        if (person) await this.accounts.leave(leaving, { e164, personId: person.id });
-        else { await this.accounts.recordConsent({ e164, app: leaving.id, line, state: "opted_out", source: "leave", ref: rowId, at: this.consentAt(ev) }); await this.forget(leaving, lid); }
-        if (turn) { turn.app = leaving.id; turn.memberId = lid; turn.consent = {state: "opted_out", scope: "app", app: leaving.id, at: t}; turn.confirmation = {id: `sys:${rowId}`, body: this.copyOf(leaving).leftApp}; }
+        const at = this.consentAt(ev);
+        if (person) await this.accounts.leave(leaving, { e164, personId: person.id }, { at, ref: rowId });
+        else { await this.accounts.recordConsent({ e164, app: leaving.id, line, state: "opted_out", source: "leave", ref: rowId, at }); if (lid && !(await this.accounts.optedIn(leaving.id, e164))) await this.forget(leaving, lid); }
+        // A join of that app that waits for a name or age ends too: a later answer does not join the app they left.
+        await this.people.deletePending(this.phoneKey(e164), "join", leaving.id);
+        if (turn) { turn.app = leaving.id; turn.memberId = lid; turn.consent = {state: "opted_out", scope: "app", app: leaving.id, at}; turn.confirmation = {id: `sys:${rowId}`, body: this.copyOf(leaving).leftApp}; }
         await this.direct(lrt, ev.from, this.copyOf(leaving).leftApp, `sys:${rowId}`, "compliance");
         return "left";
       }
@@ -1096,11 +1126,18 @@ export class NetworkService implements RuntimeHost {
     // A read request is never an instruction to join, opt in or create a person.
     if (!memberId && profileRead) return "handled";
 
+    // A banned number or person gets nothing but compliance texts (founder 2026-10-09 item 3, PRD 40.5): a member's
+    // text is not stored, handled or answered. STOP and leave above always work; HELP still answers.
+    if (memberId && e164 && (await this.accounts.banned(e164))) {
+      this.log(`[inbound] a banned number wrote to ${rt.id}: not stored, not answered`);
+      if (kw === "help") await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`, "compliance");
+      return "held";
+    }
+
     if (memberId) {
       if (kw === "start" && e164) {
-        // The recycled-number hold is checked above (seen). A banned number or person is never opted back in.
+        // The recycled-number hold and a ban are checked above: a banned number or person is never opted back in.
         const person = await this.accounts.personFor(e164);
-        if (await this.accounts.banned(e164, person)) { this.log(`[inbound] START from a banned number (${rt.id}): not opted in`); return "held"; }
         const at = this.consentAt(ev);
         await this.accounts.recordConsent({ e164, app: app.id, line, state: "opted_in", source: "keyword:start", wording: "START keyword", ref: rowId, at });
         // The ledger orders events by their time: an older START (a late gateway retry) never undoes a newer STOP.
@@ -1108,6 +1145,8 @@ export class NetworkService implements RuntimeHost {
         if (turn) turn.consent = {state: "opted_in", scope: "app", app: app.id, at};
         const m = person && (await this.people.getMembership(person.id, app.id));
         if (m?.state === "paused") await this.people.putMembership({ ...m, state: "active" });
+        // The member asked for messages again: an availability pause (set by the agent) ends too.
+        await this.endPause(rt, memberId);
       }
       const reply = kw === "help" ? app.brand.help : undefined;
       if (!kw && e164 && /^\s*share\W*$/i.test(ev.text) && (await this.pendingOf(e164, "share", app.id))) return this.share(rt, app, memberId, e164, ev, rowId);
@@ -1132,8 +1171,11 @@ export class NetworkService implements RuntimeHost {
     if (kw === "start") {
       const person = await this.accounts.personFor(e164);
       if (await this.accounts.banned(e164, person)) { this.log(`[inbound] START from a banned number (${rt.id}): not opted in`); return "held"; }
-      await this.accounts.recordConsent({ e164, app: app.id, line, state: "opted_in", source: "keyword:start", wording: "START keyword", ref: rowId, at: this.consentAt(ev) });
-      if (turn) turn.consent = { state: "opted_in", scope: "app", app: app.id, at: this.consentAt(ev) };
+      const at = this.consentAt(ev);
+      await this.accounts.recordConsent({ e164, app: app.id, line, state: "opted_in", source: "keyword:start", wording: "START keyword", ref: rowId, at });
+      // As for a member: an older START (a late gateway retry) never undoes a newer STOP.
+      if (!(await this.accounts.optedIn(app.id, e164))) { this.log(`[inbound] START older than the last STOP (${rt.id}): not opted in`); return "handled"; }
+      if (turn) turn.consent = { state: "opted_in", scope: "app", app: app.id, at };
     }
     // One text join per phone at a time (the same lock as a web join). In a signed turn, a person who is not a
     // member of any app first gets the one-time Eliza notice, then the normal join flow.
@@ -1222,8 +1264,9 @@ export class NetworkService implements RuntimeHost {
   private async memberMessage(rt: NetworkRuntime, memberId: MemberId, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string, kw: ReturnType<typeof platformKeyword>, systemReply?: string, fromThread = true): Promise<InboundOutcome> {
     // Not from the thread: a profile from the member's AI assistant, learned but never an answer (InboundMessage.source).
     const out = await this.memberUnit(rt, memberId, ev, rowId, kw, systemReply, !fromThread);
-    // The member wrote in the thread: pending notify deliveries count as acted on (an assistant's submit_profile does not).
-    if (out === "handled" && fromThread && this.notify && kw !== "stop" && kw !== "stop_all" && !profileReadRequest(ev.text, this.apps)) {
+    // The member wrote in the thread (a handled turn, or free chat with the agent): pending notify deliveries count as
+    // acted on (an assistant's submit_profile does not).
+    if ((out === "handled" || out === "open") && fromThread && this.notify && kw !== "stop" && kw !== "stop_all" && !profileReadRequest(ev.text, this.apps)) {
       const personId = await this.personOfMember(rt, memberId);
       if (personId) await this.notify.threadReply(personId, ev.transport === "sms" ? "sms" : "imessage", this.clock.now()).catch(e => this.log(`[notify] thread reply not recorded: ${(e as Error).message}`));
     }
@@ -1326,11 +1369,15 @@ export class NetworkService implements RuntimeHost {
     // The STOP is recorded: its confirmation goes out even if a later step of this turn fails (Inbox.rescueCompliance).
     if (turn && event && reply && normalizeAddress(from) === normalizeAddress(turn.from)) turn.confirmation = {id: `sys:${ref}`, body: reply};
     if (e164) await this.people.deletePending(this.phoneKey(e164));
-    if (memberId && ev) await this.memberMessage(rt, memberId, ev, ref, kw, reply);
+    // The ledger orders events by their time: an older STOP (a late gateway retry) never undoes a newer START or
+    // join of an app. That app's membership and network member stay as the ledger reads; the STOP is still confirmed.
+    const resumed = !!(e164 && event) && (await this.accounts.optedIn(app.id, e164));
+    if (memberId && resumed) { if (reply) await this.direct(rt, from, reply, `sys:${ref}`, "compliance"); }
+    else if (memberId && ev) await this.memberMessage(rt, memberId, ev, ref, kw, reply);
     else if (memberId) await rt.unitOfWork(async n => { await n.onInbound({ id: ref, memberId, body: "STOP", ts: t, channel: "imessage", keyword: "STOP" }); rt.unit.optOut.set(memberId, true); });
     else if (reply) await this.direct(rt, from, reply, `sys:${ref}`, "compliance");
     const person = e164 ? await this.accounts.personFor(e164) : undefined;
-    if (person) await this.stopped(app, person.id, scope, memberId ? { rt, memberId } : undefined);
+    if (person) await this.stopped(app, person.id, scope, memberId ? { rt, memberId } : undefined, e164);
     else if (scope === "global") {
       // A member from before the platform (no person): every app where this address is a member.
       for (const other of this.runtimes.values()) {
@@ -1444,10 +1491,16 @@ export class NetworkService implements RuntimeHost {
       state: app.joinMode === "waitlist" ? "onboarding" : "active", review: null, firstName: name, profile: homeCity ? { homeCity } : {}, joinedAt: t, leftAt: null,
     };
     await this.people.putMembership(membership);
-    await this.accounts.recordConsent({ e164, app: app.id, line: ev.to ? normalizeAddress(ev.to) : null, state: "opted_in", source: "inbound_message", wording: ask, ref: rowId, at: this.consentAt(ev) });
+    const joinAt = this.consentAt(ev);
+    await this.accounts.recordConsent({ e164, app: app.id, line: ev.to ? normalizeAddress(ev.to) : null, state: "opted_in", source: "inbound_message", wording: ask, ref: rowId, at: joinAt });
+    // The gateway mirrors the opt-in into its send-time fence (only when the ledger now reads opted in: an older join never undoes a newer STOP).
+    const turn = this.inboundTurn(), optedIn = await this.accounts.optedIn(app.id, e164);
+    if (turn && optedIn) turn.consent = { state: "opted_in", scope: "app", app: app.id, at: joinAt };
     if (membership.state !== "active") return "joined";
     rt = this.runtimeForHome(app.id, homeCity ?? rt.city) ?? rt;
     await this.createMember(rt, membership, { age: Math.min(age, check.effective ?? age), firstName: name, homeCity });
+    // An older join answer than the last STOP: the member reads as after that STOP (paused, opted out), and nothing is said.
+    if (!optedIn) { await this.stopped(app, who.id, "app", undefined, e164); return "joined"; }
     // Their answer is their first message: the Network welcomes them as a reply to it.
     await this.memberMessage(rt, membership.memberId, ev, rowId, undefined);
     // A person who uses another app with this number: the link notice (never names the other app).
@@ -2100,7 +2153,9 @@ export class NetworkService implements RuntimeHost {
       const rt = await this.runtimeOfMember(cached.app, cached.memberId);
       const binding = rt && await this.accounts.activeMembership(rt.app, {e164: input.from, personId: null});
       const current = binding?.membership.memberId === cached.memberId ? await rt!.sharedContext(cached.memberId) : null;
-      if (!current || !isDeepStrictEqual(current, cached.context)) return json({error: "turn_context_changed", retryable: false}, 409);
+      if (!current) return json({error: "turn_context_changed", retryable: false}, 409);
+      // The context changed after it was stored (a window edge, a state the agent set): the answer carries the current one.
+      if (!isDeepStrictEqual(current, cached.context)) return json({...cached, context: current});
     }
     if (result.status===200 && result.body && typeof result.body==="object" && "outcome" in result.body && result.body.outcome==="handled") {
       const handled=result.body as Extract<TurnResponse,{outcome:"handled"}>;
@@ -2278,6 +2333,17 @@ export class NetworkService implements RuntimeHost {
         const no = need(["reviewer", "safety"]); if (no) return no;
         await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_agent_signals", mode: "real", ok: true, app: rt.app.id });
         return json({ ok: true, network: rt.id, signals: await this.reviewSignals(rt.app.id) });
+      }
+      if (req.method === "POST" && path === "/signals") {
+        // The staff decision on one such signal: confirmed (acted on) or rejected. It leaves GET /signals; it changes no consent.
+        const no = need(["reviewer", "safety"]); if (no) return no;
+        const b = await body(req) as Record<string, unknown> | undefined;
+        const id = b?.id, decision = b?.decision;
+        if (typeof id !== "string" || !id.startsWith("service-signal:") || (decision !== "confirmed" && decision !== "rejected")) return json({ ok: false, error: "id_and_decision_required" }, 400);
+        const rows = await rt.scoped(tx => tx`update network.facets set status=${decision} where app_id=${rt.app.id} and id=${id} and status='proposed'
+          and tags && ${tx.array(["signal:opt_out","signal:safety_concern"],"TEXT")} returning member_id`);
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "decide_agent_signal", targetType: "member", targetId: rows[0]?.member_id, mode: "real", ok: rows.length > 0, app: rt.app.id, detail: { signal: id, decision } });
+        return result(rows.length ? { ok: true } : { ok: false, reason: "not_pending" });
       }
       if (req.method === "GET" && (path === "/staff/relay/held" || path === "/relay/held")) {
         // Relayed items held for a person (relay.ts): ids, reasons and times; an adult's held text; never a minor's words, never a score.

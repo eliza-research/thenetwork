@@ -189,7 +189,7 @@ export class MemoryPeopleStore implements PeopleStore {
   readonly ageFloors = new Map<string, { age: number; at: number }>();
   readonly challenges = new Map<string, OtpChallenge>();
   readonly sessions = new Map<string, Session>();
-  readonly limits = new Map<string, { windowStart: number; count: number; lastAt: number }>();
+  readonly limits = new Map<string, { windowStart: number; count: number; lastAt: number; keepUntil: number | null }>();
   readonly pending = new Map<string, PendingText>();
   readonly personHash = new Map<string, string>(); // person id -> keyed phone hash
   readonly phoneChanges = new Map<string, PhoneChange>();
@@ -312,7 +312,7 @@ export class MemoryPeopleStore implements PeopleStore {
     if ((rule.limit !== undefined && count >= rule.limit) || (rule.minGapMs !== undefined && prevAt !== null && at - prevAt < rule.minGapMs)) {
       return { count: count + 1, prevAt, ok: false };
     }
-    this.limits.set(bucket, { windowStart, count: count + 1, lastAt: at });
+    this.limits.set(bucket, { windowStart, count: count + 1, lastAt: at, keepUntil: rule.minGapMs !== undefined ? at + rule.minGapMs : null });
     return { count: count + 1, prevAt, ok: true };
   }
 
@@ -338,7 +338,7 @@ export class MemoryPeopleStore implements PeopleStore {
     let n = 0;
     for (const [k, c] of this.challenges) if (c.expiresAt < before) { this.challenges.delete(k); n++; }
     for (const [k, s] of this.sessions) if (s.expiresAt < before || (s.revokedAt !== null && s.revokedAt < before)) { this.sessions.delete(k); n++; }
-    for (const [k, l] of this.limits) if (l.lastAt < before) { this.limits.delete(k); n++; }
+    for (const [k, l] of this.limits) if (l.lastAt < before && (l.keepUntil === null || l.keepUntil < before)) { this.limits.delete(k); n++; }
     for (const [k, p] of this.pending) if (p.at < before) { this.pending.delete(k); n++; }
     for (const [k, c] of this.phoneChanges) if (c.confirmedAt === null && c.requestedAt < before) { this.phoneChanges.delete(k); n++; }
     return n;

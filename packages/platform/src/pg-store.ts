@@ -18,7 +18,7 @@ const membership = (r: Row): Membership => ({
 });
 const consent = (r: Row): ConsentEvent => ({
   e164: r.e164, app: r.app_id ?? null, line: r.line ?? null, state: r.state, source: r.source, wording: r.wording ?? null,
-  wordingVersion: r.wording_version ?? null, ref: r.ref ?? null, at: ms(r.at)!,
+  wordingVersion: r.wording_version ?? null, ref: r.ref ?? null, namedApp: r.named_app ?? null, at: ms(r.at)!,
 });
 const pendingRow = (r: Row): PendingText => ({ phoneHash: r.phone_hash, kind: r.kind, app: r.app_id, name: r.name ?? null, age: r.age ?? null, ...(r.home_city ? { homeCity: r.home_city } : {}), at: ms(r.at)! });
 const challenge = (r: Row): OtpChallenge => ({
@@ -129,8 +129,8 @@ export class PgPeopleStore implements PeopleStore {
   }
 
   async addConsent(e: ConsentEvent) {
-    const r = await this.sql`insert into platform.consent_events (e164, app_id, line, state, source, wording, wording_version, ref, at)
-      values (${e.e164}, ${e.app}, ${e.line ?? null}, ${e.state}, ${e.source}, ${e.wording ?? null}, ${e.wordingVersion ?? null}, ${e.ref ?? null}, ${ts(e.at)})
+    const r = await this.sql`insert into platform.consent_events (e164, app_id, line, state, source, wording, wording_version, ref, named_app, at)
+      values (${e.e164}, ${e.app}, ${e.line ?? null}, ${e.state}, ${e.source}, ${e.wording ?? null}, ${e.wordingVersion ?? null}, ${e.ref ?? null}, ${e.namedApp ?? null}, ${ts(e.at)})
       on conflict (e164, ref) where ref is not null do nothing returning id`;
     return r.length > 0;
   }
@@ -234,8 +234,10 @@ export class PgPeopleStore implements PeopleStore {
       const [prev] = await tx`select max(last_at) as last_at, coalesce(sum(count) filter (where window_start = ${start}), 0)::int as n from platform.rate_limits where bucket = ${bucket}`;
       const prevAt = ms(prev?.last_at), n = (prev?.n as number) ?? 0;
       if ((rule.limit !== undefined && n >= rule.limit) || (rule.minGapMs !== undefined && prevAt !== null && at - prevAt < rule.minGapMs)) return { count: n + 1, prevAt, ok: false };
-      const [r] = await tx`insert into platform.rate_limits (bucket, window_start, count, last_at) values (${bucket}, ${start}, 1, ${ts(at)})
-        on conflict (bucket, window_start) do update set count = platform.rate_limits.count + 1, last_at = excluded.last_at returning count`;
+      // A minimum gap outlives the retention purge: the row stays until the gap ends.
+      const keepUntil = rule.minGapMs !== undefined ? ts(at + rule.minGapMs) : null;
+      const [r] = await tx`insert into platform.rate_limits (bucket, window_start, count, last_at, keep_until) values (${bucket}, ${start}, 1, ${ts(at)}, ${keepUntil})
+        on conflict (bucket, window_start) do update set count = platform.rate_limits.count + 1, last_at = excluded.last_at, keep_until = excluded.keep_until returning count`;
       // Old windows are not needed after the next one starts.
       await tx`delete from platform.rate_limits where bucket = ${bucket} and window_start < ${new Date(start.getTime() - windowMs)}`;
       return { count: r!.count as number, prevAt, ok: true };
@@ -283,7 +285,7 @@ export class PgPeopleStore implements PeopleStore {
       let n = 0;
       n += (await tx`delete from platform.otp_challenges where expires_at < ${b} returning 1`).length;
       n += (await tx`delete from platform.sessions where expires_at < ${b} or revoked_at < ${b} returning 1`).length;
-      n += (await tx`delete from platform.rate_limits where last_at < ${b} returning 1`).length;
+      n += (await tx`delete from platform.rate_limits where last_at < ${b} and (keep_until is null or keep_until < ${b}) returning 1`).length;
       n += (await tx`delete from platform.pending_texts where at < ${b} returning 1`).length;
       n += (await tx`delete from platform.phone_changes where confirmed_at is null and requested_at < ${b} returning 1`).length;
       return n;

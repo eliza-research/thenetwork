@@ -713,15 +713,18 @@ export class NetworkRuntime {
         : participation.state === "quiet" ? "busy" : participation.state === "paused" ? "paused" : null;
       if (!state) return null;
       const firstName = member.name.trim().split(/\s+/)[0] ?? "";
-      const forbidden = [e164, binding.person.id, ...snapshot.facets.map(f => f.id), ...snapshot.members.flatMap(m => {
+      const ids = [e164, binding.person.id, ...snapshot.facets.map(f => f.id), ...snapshot.members.map(m => m.id)];
+      const forbidden = [...ids, ...snapshot.members.flatMap(m => {
         const first = m.name.trim().split(/\s+/)[0] ?? "";
         // A shared first name is also the caller's own public name. Keep other full names private.
         const otherName = m.name.trim().toLowerCase() !== firstName.toLowerCase() ? [m.name] : [];
-        return m.id === memberId ? [m.id] : [m.id, ...otherName, ...(first.toLowerCase() !== firstName.toLowerCase() ? [first] : [])];
+        return m.id === memberId ? [] : [...otherName, ...(first.toLowerCase() !== firstName.toLowerCase() ? [first] : [])];
       })];
       const facts = [...snapshot.facets.filter(f => f.scope === "agent_private").map(f => f.value),...(participation.window?.note?[participation.window.note]:[])];
       const safe = (text: string) => outputLeaks(text, {forbidden, facts, contacts: true}).length === 0;
-      if (!safe(firstName) || !safe(member.homeCity)) return null;
+      // The caller's own first name is public to their agent: another member's name inside it ("Ann" in "Ann-Marie",
+      // a member named "Nyc") is not a leak. The home city is the service's own code (nyc, sf) and needs no check.
+      if (outputLeaks(firstName, {forbidden: ids, facts, contacts: true}).length) return null;
       const facets = snapshot.facets.filter(f => f.memberId === memberId && f.scope === "shareable" && f.confirmedByMember === true
         && !f.sensitive && (f.validFrom === undefined || f.validFrom <= snapshot.now) && (f.validTo === undefined || f.validTo > snapshot.now)
         && safe(f.value)).map(f => f.value);
