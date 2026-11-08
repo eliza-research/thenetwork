@@ -121,6 +121,10 @@ export class PgNotifyStore implements NotifyStore {
   }
 
   private async deliveryIn(tx: SQL, d: DeliveryRecord) {
+    // Lock the items first: an item already in another delivery (an overlapping replica), or gone, refuses the whole delivery.
+    const ids = numIds(d.itemIds);
+    const open = await tx`select id from notify.inbox_items where id = any(${tx.array(ids, "int8")}) and notified_at is null for update`;
+    if (open.length !== ids.length) return false;
     const ins = await tx`
       insert into notify.deliveries (delivery_id, person_id, item_ids, target, counts_toward_cap, sent_at)
       values (${d.deliveryId}, ${d.personId}, ${tx.array(numIds(d.itemIds), "int8")}, ${d.target}, ${d.countsTowardCap}, ${new Date(d.sentAt)})

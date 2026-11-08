@@ -72,4 +72,45 @@ describe.skipIf(!pgAvailable)("notify deliveries on Postgres", () => {
     const rows = await sql`select i.notified_at is not null as notified, i.delivery_id from notify.inbox_items i where i.person_id = ${r.personId}`;
     expect(rows.map((x: any) => [x.notified, x.delivery_id])).toEqual([[true, "net:msg_1"]]);
   });
+
+  test("SD-150 two scheduler replicas that overlap never put one item in two texts", async () => {
+    const r = await person();
+    const shared = new PgNotifyStore(sql);
+    await shared.addItem(item(r.personId, "a"), NOW);
+    // Both replicas re-read their items before either records (a rollout overlap): a barrier holds each recordDelivery until both arrive.
+    let arrived = 0, release!: () => void;
+    const both = new Promise<void>(res => { release = res; });
+    let second: Promise<unknown> | undefined;
+    const texts: string[][] = [];
+    const planned = new Map<string, string[]>();
+    class Replica extends PgNotifyStore {
+      constructor(private readonly onReread?: () => Promise<void>) { super(url); }
+      override async getItems(ids: string[]) {
+        const hook = this.onReread;
+        if (hook) { (this as { onReread?: unknown }).onReread = undefined; await hook(); }
+        return super.getItems(ids);
+      }
+      override async recordDelivery(d: DeliveryRecord) {
+        planned.set(d.deliveryId, d.itemIds);
+        if (++arrived === 2) release();
+        await both;
+        return super.recordDelivery(d);
+      }
+    }
+    const r2 = new Replica();
+    // Replica 1 planned {a}; then item b arrives and replica 2 plans {a, b}.
+    const r1 = new Replica(async () => {
+      await shared.addItem(item(r.personId, "b"), NOW);
+      second = notifier(r2, r).dispatch(NOW, recordingSink(texts, () => planned));
+    });
+    try {
+      await notifier(r1, r).dispatch(NOW, recordingSink(texts, () => planned));
+      await second;
+    } finally { await r1.close(); await r2.close(); }
+    const ids = texts.flat();
+    expect(texts.length).toBeGreaterThan(0);
+    expect(new Set(ids).size).toBe(ids.length);
+    const rows = await sql`select count(*)::int as n from notify.deliveries where person_id = ${r.personId}`;
+    expect(rows[0].n).toBe(texts.length);
+  });
 });

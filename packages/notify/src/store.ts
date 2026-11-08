@@ -39,7 +39,7 @@ export interface NotifyStore {
    * was delivered is never left pending for the scheduler.
    */
   addDelivered(input: InboxItemInput, d: Pick<DeliveryRecord, "deliveryId" | "target" | "countsTowardCap" | "sentAt">): Promise<{ item: InboxItem; created: boolean }>;
-  /** Record a delivery and mark its items notified, atomically. False if the delivery id exists. */
+  /** Record a delivery and mark its items notified, atomically. False if the delivery id exists, or an item is gone or already notified. */
   recordDelivery(d: DeliveryRecord): Promise<boolean>;
   getDelivery(deliveryId: string): Promise<DeliveryRecord | undefined>;
   /** Send times of cap-counting deliveries to a person at or after `since`. */
@@ -125,11 +125,11 @@ export class MemoryNotifyStore implements NotifyStore {
 
   async recordDelivery(d: DeliveryRecord) {
     if (this.deliveries.has(d.deliveryId)) return false;
+    // An item already in another delivery, or gone, refuses the whole delivery.
+    const items = d.itemIds.map(id => this.items.get(id));
+    if (items.some(i => !i || i.notifiedAt !== undefined)) return false;
     this.deliveries.set(d.deliveryId, { ...d, itemIds: [...d.itemIds] });
-    for (const id of d.itemIds) {
-      const i = this.items.get(id);
-      if (i && i.notifiedAt === undefined) { i.notifiedAt = d.sentAt; i.deliveryId = d.deliveryId; }
-    }
+    for (const i of items) { i!.notifiedAt = d.sentAt; i!.deliveryId = d.deliveryId; }
     return true;
   }
 
