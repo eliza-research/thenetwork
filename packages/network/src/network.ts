@@ -3160,8 +3160,13 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (fallback.kind === "smaller" && !fallback.partnerPlan) return this.bookPlan(o, fallback.members, true);
     this.close(o, "plan did not come together");
     // Two yes-sayers said yes to a group, not to a one-to-one meeting: the pair is never booked
-    // directly. The engine's fresh activity-partner plan asks each of them again, after review.
-    if (fallback.kind === "smaller") { this.submitPlan(fallback.partnerPlan!, now); return; }
+    // directly. The engine's fresh activity-partner plan asks each of them again, after review. The group
+    // plan is over for them either way, and the partner plan can be rejected in review: they hear so.
+    if (fallback.kind === "smaller") {
+      for (const id of fallback.members) this.noteFor(id, copy.planNotTogether);
+      this.submitPlan(fallback.partnerPlan!, now);
+      return;
+    }
     if (fallback.kind === "solo_event") {
       const ev = w.events.find(e => e.id === fallback.eventId);
       for (const id of fallback.members) {

@@ -62,6 +62,21 @@ describe("plan run", () => {
     expect(partner[0].review?.decision).toBe("approve");
   });
 
+  // Q-plan_run-2: after the SD-008 fix, the two yes-sayers of a group plan that fell to two were told
+  // "I'll tell you once enough people are in", the plan closed, and they heard nothing about it. The
+  // partner plan for the two can be rejected in review, so it does not tell them.
+  test("the two yes-sayers of a group plan that fell to two hear that it did not come together", async () => {
+    const w = await world(["a", "b", "c"], { review: "human" });
+    const id = submit(w, groupPlan(w, ["a", "b", "c"]));
+    expect(w.net.review(id, "approve")).toBe(true);
+    expect(await answer(w, { a: "yes", b: "yes", c: "no thanks" })).toBe(true);
+    expect(opp(w, id).stage).toBe("closed");
+    const partner = [...(w.net as any).opps.values()].filter((o: any) => o.plan?.partner);
+    expect(partner.map((o: any) => o.stage)).toEqual(["review"]);
+    expect(w.net.review(partner[0].id, "reject")).toBe(true);
+    for (const x of ["a", "b"]) expect((w.net as any).members.get(x).note?.text).toBe("That plan didn't come together this time.");
+  });
+
   // SD-046: the probe's `about` list was the plan's invited list as approved. A member who left the
   // plan (here: on watch) stayed in it, so every later probe was refused with other_on_watch.
   test("a member who left the plan does not stop the probes to the others", async () => {
