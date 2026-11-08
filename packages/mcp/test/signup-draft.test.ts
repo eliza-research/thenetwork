@@ -110,10 +110,13 @@ test("normal account view distinguishes same-last-four phone sessions and never 
   expect((await(await claim(e,cookieA)).json()as any).signupView).toBe(a.signupView);
   expect((await me(`sid_friends=${a.signupView}`)).status).toBe(401);
   // A phone awaiting recycled-number review has no Join view to prefill.
+  // A new person ends the number's person-less sessions (SD-054): the phone signs in again.
   await e.accounts.createPerson(PHONE_A,"otp_sms",29);
+  expect((await me(cookieA)).status).toBe(401);
+  const cookieP=await browser(e,PHONE_A);
   await e.people.setPhoneHold(PHONE_A,"recycled_number");
-  expect(await(await me(cookieA)).json()).toMatchObject({canJoin:false,reason:"review"});
-  expect(await(await me(cookieA)).json()).not.toHaveProperty("signupView");
+  expect(await(await me(cookieP)).json()).toMatchObject({canJoin:false,reason:"review"});
+  expect(await(await me(cookieP)).json()).not.toHaveProperty("signupView");
 });
 
 const join = async(e:ReturnType<typeof setup>,cookie:string,age:number)=>{
