@@ -154,3 +154,13 @@ test("SD-015: a web join whose welcome fails leaves no network member and keeps 
   // No opt-in stands, so the deleted number stays suppressed.
   expect(await service.people.isSuppressed(service.accounts.phoneHash(phone))).toBe(true);
 }, 60_000);
+
+test("SD-038: an age stated in the answer to the looking-for question counts before any app is joined", async () => {
+  const phone = "+12125550308";
+  await say(phone, "hi");
+  expect((await say(phone, "Sam, 25")).reason).toBe("joined");
+  await say(phone, "dating and friends, I'm 15 actually");
+  expect(await service.accounts.lowestAge(phone, await service.accounts.personFor(phone))).toBe(15);
+  // Dating (slop.date) is 18+: a 15-year-old is never enrolled in it from this question.
+  expect(await liveMemberships(phone)).not.toContain("slop");
+}, 60_000);

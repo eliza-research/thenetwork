@@ -1114,7 +1114,14 @@ export class NetworkService implements RuntimeHost {
       // The answer to The Network's "what are you looking for?": enroll in the apps they named.
       if (!kw && !profileRead && e164 && app.id === "ntwrk" && (await this.pendingOf(e164, "looking_for"))) {
         const wants = lookingFor(ev.text).filter(a => a !== "ntwrk" && this.runtimeFor(a));
-        if (wants.length) return this.enroll(rt, memberId, e164, wants, ev, rowId);
+        if (wants.length) {
+          // The answer is read like any other message first (ages, minor signals, reports, blocks):
+          // an age stated in it counts before any app is joined.
+          const out = await this.memberMessage(rt, memberId, ev, rowId, undefined);
+          await this.statedAge(app, rt, memberId, e164);
+          await this.enroll(rt, memberId, e164, wants, ev, rowId);
+          return out;
+        }
       }
       // After STOP the member's texts still reach the Network (a report is never dropped), but its replies are
       // refused: the person gets one hint instead (founder decision 2026-10-11, #22).
@@ -1472,7 +1479,7 @@ export class NetworkService implements RuntimeHost {
    * app's own join age check (13+ everywhere today), its own opt-in and its own member. The Network
    * confirms in one text. Apps the age check refuses are left out without saying why.
    */
-  private async enroll(rt: NetworkRuntime, memberId: MemberId, e164: string, wants: AppId[], ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string): Promise<InboundOutcome> {
+  private async enroll(rt: NetworkRuntime, memberId: MemberId, e164: string, wants: AppId[], ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string): Promise<void> {
     const key = this.phoneKey(e164), t = this.clock.now();
     const person = await this.accounts.personFor(e164);
     const ntwrk = person && (await this.people.getMembership(person.id, "ntwrk"));
@@ -1498,11 +1505,7 @@ export class NetworkService implements RuntimeHost {
       }
     }
     await this.people.deletePending(key, "looking_for");
-    return rt.unitOfWork(async () => {
-      rt.unit.inbound = { id: rowId, member_id: memberId, direction: "inbound", channel: ev.transport === "sms" ? "sms" : "imessage", body: ev.text, status: "received", type: null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
-      if (joined.length) rt.system(memberId, `sys:${rowId}`, enrolledText(joined), "reply", "info");
-      return "handled" as const;
-    });
+    if (joined.length) await rt.unitOfWork(() => { rt.system(memberId, `sys:${rowId}`, enrolledText(joined), "reply", "info"); });
   }
 
   /** SHARE after the link notice: base-profile grants from the person's other apps (a grant copies nothing). */
