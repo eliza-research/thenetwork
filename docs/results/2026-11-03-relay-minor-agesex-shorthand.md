@@ -61,3 +61,44 @@ applies to it (the relay Clef classifier is a separate layer and is unchanged). 
 requires a first-person prefix ("im"/"i'm"/"i am"), matching the numeric branch; a bare
 "17m here" with no prefix is still not read as a minor signal, which keeps "$15m", "raised 15m" and
 "15m away" out. Provider/model/client are recorded in the PR footer.
+
+## Follow-up: the bare "m" shorthand flagged adult ETA/distance texts (2026-11-09)
+
+Review of the shorthand branch (request-changes on PR #352) found that the bare "m" suffix is also
+the ETA/distance unit, so the new branch read benign adult messages as a minor disclosure and
+blocked the relay (and raised a permanent `ageSignal`): "I'm 15m from the bar", "im 15m from the
+cafe", "I'm 15m in an uber", "I'm 15m in traffic", "running late, I'm 15m" and "eta: I'm 15m." all
+matched. The letter "m" means minutes or metres here, not male.
+
+Fix (smallest sound change): split the shorthand branch so "f", "x" and the slashed forms ("17/m")
+stay unconditional, and the bare (unslashed) "m" branch excludes two ETA/distance contexts only —
+a preceding ETA word (`ETA_BEFORE`: `eta|running late|almost there|on my way|omw`) and a following
+`from (the|a|an|our|your|there|here)` or `in (a|an|the|traffic)` (`ETA_AFTER`). A location
+disclosure after the shorthand ("im 16m from brooklyn", "from" + a place, not an article) is NOT an
+ETA context and still blocks.
+
+Before/after (same `evals`-style rows, `MINOR_SIGNAL` only):
+
+```
+                                             before (buggy)   after
+ETA/distance adult rows flagged as minor       8 / 8          0 / 8
+real disclosures still flagged                 6 / 6          6 / 6
+  ("im 17m","i'm 16f...","hey im 15f btw",
+   "im 16/x from brooklyn","im 16m from brooklyn","im 17/m")
+```
+
+Validation, same command before and after:
+
+```
+bun run sim --only relay
+```
+
+- Before the follow-up fix (ETA rows added to the pass list, regex not yet split): the
+  self-disclosure scenario FAILs — e.g. `expected ["I'm 15m from the bar","block"] to equal
+  ["I'm 15m from the bar","pass"]`.
+- After: `relay: 60/60 blocking gates pass, 11 tracked, 0.8s` (the 4-off-target count is unchanged
+  from base; the tracked count rises only because the scenario now carries more rows).
+
+The six reviewer examples plus "I'm 15m from here" and "I'm 15m in the car" were added to the pass
+list in `scripts/sim/relay.ts`, and "im 16m from brooklyn" and "im 17/m" to the blocking list.
+`bun run typecheck` passes.

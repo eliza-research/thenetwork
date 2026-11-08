@@ -82,11 +82,14 @@ export async function relayBlock(b: Block): Promise<void> {
       }
     }
     for (const t of ["lol I'm 16 tho", "im 17 years old", "I'm still in high school", "not 18 yet but soon",
-      "im 17m", "i'm 16f looking to meet", "hey im 15f btw", "im 16/x from brooklyn"]) {
+      "im 17m", "i'm 16f looking to meet", "hey im 15f btw", "im 16/x from brooklyn", "im 16m from brooklyn", "im 17/m"]) {
       const r = relayItem(text(t), baseCtx());
       expect([t, r.decision, r.record.ageSignal]).toEqual([t, "block", true]);
     }
-    for (const t of ["I'm 15 minutes away", "I'm 29", "we met when I was in high school", "I'm 17m away from the bar", "im 170m from home"]) expect([t, relayItem(text(t), baseCtx()).decision]).toEqual([t, "pass"]);
+    // The bare "m" shorthand ("15m") is also minutes/metres: ETA and distance texts from adults must pass.
+    for (const t of ["I'm 15 minutes away", "I'm 29", "we met when I was in high school", "I'm 17m away from the bar", "im 170m from home",
+      "I'm 15m from the bar", "im 15m from the cafe", "I'm 15m in an uber", "I'm 15m in traffic", "running late, I'm 15m", "eta: I'm 15m.",
+      "I'm 15m from here", "I'm 15m in the car"]) expect([t, relayItem(text(t), baseCtx()).decision]).toEqual([t, "pass"]);
   });
 
   await b.run("relay: only inside a mutual match between its two participants; blocks, opt-outs and holds win", () => {
