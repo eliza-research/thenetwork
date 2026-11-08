@@ -49,9 +49,6 @@ export class PgPeopleStore implements PeopleStore {
     const [r] = await this.sql`select * from platform.phone_identities where e164 = ${e164}`;
     return r ? phone(r) : undefined;
   }
-  async detachPhoneHash(personId: string) {
-    await this.sql`update platform.people set phone_hash = null where id = ${personId}::uuid`;
-  }
   async findPhoneByHash(phoneHash: string) {
     const [r] = await this.sql`select ph.* from platform.people p join platform.phone_identities ph on ph.person_id = p.id
       where p.phone_hash = ${phoneHash} and p.deleted_at is null order by ph.verified_at desc limit 1`;
@@ -301,10 +298,10 @@ export class PgPeopleStore implements PeopleStore {
     });
   }
 
-  async deleteAll(personId: string | null, e164: string, phoneHash: string, at: number) {
+  async deleteAll(personId: string | null, e164: string, phoneHash: string, at: number, newOwner = false) {
     await this.sql.begin(async tx => {
       if (personId) await tx`select id from platform.people where id = ${personId} for update`;
-      await tx`insert into platform.suppression (phone_hash, reason, at) values (${phoneHash}, 'deleted', ${ts(at)}) on conflict do nothing`;
+      if (!newOwner) await tx`insert into platform.suppression (phone_hash, reason, at) values (${phoneHash}, 'deleted', ${ts(at)}) on conflict do nothing`;
       await tx`update platform.inbound set status = 'unresolved', response = null, replies = '[]'::jsonb, action_receipts = '{}'::jsonb,
         receipt = null, receipt_hash = null, sender = null, event = null, sender_hash = null, member_id = null, app_id = null
         where request_hash is not null and sender_hash = ${phoneHash}`;
@@ -322,6 +319,13 @@ export class PgPeopleStore implements PeopleStore {
       await tx`delete from platform.phone_identities where e164 = ${e164}`;
       await tx`delete from platform.pending_texts where phone_hash = ${phoneHash}`;
       if (personId) await tx`delete from platform.phone_changes where person_id = ${personId}::uuid`;
+      if (newOwner) {
+        // The number starts clean for its new holder, in the same transaction: no suppression and no age
+        // floor (the old owner's), and the tombstone (it keeps its blocks) is never revived for them.
+        if (personId) await tx`update platform.people set phone_hash = null where id = ${personId}::uuid`;
+        await tx`delete from platform.suppression where phone_hash = ${phoneHash}`;
+        await tx`delete from platform.age_floor where phone_hash = ${phoneHash}`;
+      }
     });
   }
 

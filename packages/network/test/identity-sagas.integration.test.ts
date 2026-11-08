@@ -6,9 +6,10 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { SQL } from "bun";
-import { MINUTE, SimClock } from "@thenetwork/core";
+import { DAY, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
+import { RECYCLED_AFTER_MS } from "../../platform/src/accounts.ts";
 import type { AppId } from "../../platform/src/apps.ts";
 import { DryRunAdapter } from "../service/channel.ts";
 import { NetworkService, WEBHOOK_PATH, type ServiceOptions } from "../service/service.ts";
@@ -114,5 +115,42 @@ describe.skipIf(!pgAvailable)("identity sagas: stop half way, retry, races (Post
     expect((await sql`select count(*)::int as n from platform.suppression where reason = 'banned'`)[0].n).toBe(1);
     // A third request has nothing left to do: refused as already_banned.
     expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: b, by: "person", note: "scam confirmed" })).json()).toEqual({ ok: false, reason: "already_banned" });
+  }, T);
+
+  /** A member of slop whose number then goes silent for over a year and is texted by its next holder: on hold. */
+  async function heldNumber(s: NetworkService, clock: SimClock) {
+    const phone = newPhone();
+    expect(await text(s, clock, phone, "slop")).toBe("join_asked");
+    expect(await text(s, clock, phone, "Ana, 30")).toBe("joined");
+    const old = (await sql`select person_id from platform.phone_identities where e164 = ${phone}`)[0]!.person_id as string;
+    clock.advance(RECYCLED_AFTER_MS + DAY);
+    return { phone, old };
+  }
+
+  test("SD-016: a new_owner decision that stops after the delete still leaves the number clean; the next holder is a new person", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const s = service(clock);
+    const { phone, old } = await heldNumber(s, clock);
+    expect(await text(s, clock, phone, "hi, who is this?")).toBe("held");
+
+    // The process stops right after the delete commits.
+    const fired = stopAfter(s.people, "deleteAll");
+    expect((await staff(s, "adm-tok", "POST", "/apps/slop/holds", { phone, decision: "new_owner" })).status).toBeGreaterThanOrEqual(500);
+    expect(fired()).toBe(true);
+    // The retry (the number is no longer held, so there is nothing to decide).
+    await staff(s, "adm-tok", "POST", "/apps/slop/holds", { phone, decision: "new_owner" });
+
+    // The number starts clean: no suppression, no age floor, and the old tombstone no longer carries its hash.
+    const hash = s.accounts.phoneHash(phone);
+    expect((await sql`select count(*)::int as n from platform.suppression where phone_hash = ${hash}`)[0].n).toBe(0);
+    expect((await sql`select count(*)::int as n from platform.age_floor where phone_hash = ${hash}`)[0].n).toBe(0);
+    expect((await sql`select phone_hash from platform.people where id = ${old}::uuid`)[0].phone_hash).toBeNull();
+    // The next holder joins as a new person: the old owner's tombstone (and its blocks) is never revived.
+    expect(await text(s, clock, phone, "slop")).toBe("join_asked");
+    expect(await text(s, clock, phone, "Bo, 29")).toBe("joined");
+    const now = (await sql`select person_id from platform.phone_identities where e164 = ${phone}`)[0]!.person_id as string;
+    expect(now).not.toBe(old);
+    expect((await sql`select deleted_at is not null as gone from platform.people where id = ${old}::uuid`)[0].gone).toBe(true);
   }, T);
 });

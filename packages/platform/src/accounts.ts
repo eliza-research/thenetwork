@@ -203,12 +203,9 @@ export class Accounts {
     for (const m of await this.store.memberships(ph.personId)) {
       if (m.state !== "removed") await this.hooks.onForget?.({ app: this.opts.apps(m.app), personId: ph.personId, memberId: m.memberId, e164 });
     }
-    const hash = this.phoneHash(e164);
-    await this.store.deleteAll(ph.personId, e164, hash, at);
-    // The old owner's tombstone keeps its blocks, but is never revived for the new owner of the number.
-    await this.store.detachPhoneHash(ph.personId);
-    await this.store.unsuppress(hash);
-    await this.store.clearAgeFloor(hash);
+    // One transaction: the delete, and the clean start (the old owner's tombstone keeps its blocks, but is
+    // never revived for the new owner). A stop before it leaves the hold in place, so staff can decide again.
+    await this.store.deleteAll(ph.personId, e164, this.phoneHash(e164), at, true);
     return true;
   }
 

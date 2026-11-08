@@ -158,10 +158,12 @@ export interface PeopleStore {
 
   /** Leave one app: the membership is set to removed and its name and profile are cleared; grants that involve the app are revoked. */
   forgetMembership(personId: string, app: AppId, at: number): Promise<void>;
-  /** Delete everything for a person and phone; keep a tombstone (people.deleted_at and its phone hash), the blocks and the suppression hash. */
-  deleteAll(personId: string | null, e164: string, phoneHash: string, at: number): Promise<void>;
-  /** Unlink a tombstone from its phone hash, so a new owner of the number is never revived as this person. */
-  detachPhoneHash(personId: string): Promise<void>;
+  /**
+   * Delete everything for a person and phone; keep a tombstone (people.deleted_at and its phone hash), the blocks and the suppression hash.
+   * newOwner (staff decided a held number has a new owner): in the same step, the tombstone loses its phone hash (it is never
+   * revived for the new owner) and the number keeps no suppression and no age floor.
+   */
+  deleteAll(personId: string | null, e164: string, phoneHash: string, at: number, newOwner?: boolean): Promise<void>;
 
   /** Store a number change the person started (a newer one replaces any change still waiting). */
   putPhoneChange(c: PhoneChange): Promise<void>;
@@ -377,9 +379,8 @@ export class MemoryPeopleStore implements PeopleStore {
     for (const g of this.grants.values()) if (g.personId === personId && (g.fromApp === app || g.toApp === app) && g.revokedAt === null) g.revokedAt = at;
   }
 
-  async detachPhoneHash(personId: string) { this.personHash.delete(personId); }
-  async deleteAll(personId: string | null, e164: string, phoneHash: string, at: number) {
-    await this.suppress(phoneHash, "deleted", at);
+  async deleteAll(personId: string | null, e164: string, phoneHash: string, at: number, newOwner = false) {
+    if (!newOwner) await this.suppress(phoneHash, "deleted", at);
     if (personId) {
       for (const [k, m] of this.members) if (m.personId === personId) this.members.delete(k);
       for (const [k, g] of this.grants) if (g.personId === personId) this.grants.delete(k);
@@ -394,5 +395,10 @@ export class MemoryPeopleStore implements PeopleStore {
     for (const [k, s] of this.sessions) if (s.e164 === e164 || (personId && s.personId === personId)) this.sessions.delete(k);
     for (const [k, p] of this.pending) if (p.phoneHash === phoneHash) this.pending.delete(k);
     if (personId) for (const [k, c] of this.phoneChanges) if (c.personId === personId) this.phoneChanges.delete(k);
+    if (newOwner) {
+      if (personId) this.personHash.delete(personId);
+      this.suppression.delete(phoneHash);
+      this.ageFloors.delete(phoneHash);
+    }
   }
 }
