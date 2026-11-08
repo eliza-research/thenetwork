@@ -20,6 +20,8 @@ export interface ConsentEvent {
   wording?: string | null;
   /** The version of the canonical opt-in wording (apps.ts ConsentText), when the event is a web opt-in. */
   wordingVersion?: string | null;
+  /** A global STOP: the app its confirmation named ("Reply START to resume <app>"). START after it resumes that app. */
+  namedApp?: AppId | null;
   /** The inbound message (or request) that caused it: a retry of the same message writes no second event. */
   ref?: string | null;
   at: number;
@@ -94,10 +96,10 @@ export function keywordEvent(kw: Keyword, e164: string, app: AppInfo, at: number
   switch (kw) {
     case "stop":
       return scope === "global"
-        ? { event: { ...base, app: null, state: "opted_out" }, reply: app.brand.stop }
+        ? { event: { ...base, app: null, state: "opted_out", namedApp: app.id }, reply: app.brand.stop }
         : { event: { ...base, app: app.id, state: "opted_out" }, reply: app.brand.stopApp };
     case "stop_all":
-      return { event: { ...base, app: null, state: "opted_out" }, reply: app.brand.stop };
+      return { event: { ...base, app: null, state: "opted_out", namedApp: app.id }, reply: app.brand.stop };
     case "start":
       return { event: { ...base, app: app.id, state: "opted_in", wording: "START keyword" }, reply: app.brand.start };
     case "help":

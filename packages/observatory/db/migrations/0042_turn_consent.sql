@@ -7,3 +7,6 @@ create unique index if not exists inbound_signed_sender_processing on platform.i
 -- SD-004: a hit with a minimum gap (the 30-day STOP hint) keeps its row until the gap ends, so the 2-day
 -- retention purge does not reset the gap.
 alter table platform.rate_limits add column if not exists keep_until timestamptz;
+-- SD-318: a global STOP keeps the app its confirmation named ("Reply START to resume <app>"), so the next START
+-- resumes that app and not the app that routing picks then.
+alter table platform.consent_events add column if not exists named_app text references platform.apps (id);

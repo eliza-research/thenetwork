@@ -18,7 +18,7 @@ const membership = (r: Row): Membership => ({
 });
 const consent = (r: Row): ConsentEvent => ({
   e164: r.e164, app: r.app_id ?? null, line: r.line ?? null, state: r.state, source: r.source, wording: r.wording ?? null,
-  wordingVersion: r.wording_version ?? null, ref: r.ref ?? null, at: ms(r.at)!,
+  wordingVersion: r.wording_version ?? null, ref: r.ref ?? null, namedApp: r.named_app ?? null, at: ms(r.at)!,
 });
 const pendingRow = (r: Row): PendingText => ({ phoneHash: r.phone_hash, kind: r.kind, app: r.app_id, name: r.name ?? null, age: r.age ?? null, ...(r.home_city ? { homeCity: r.home_city } : {}), at: ms(r.at)! });
 const challenge = (r: Row): OtpChallenge => ({
@@ -129,8 +129,8 @@ export class PgPeopleStore implements PeopleStore {
   }
 
   async addConsent(e: ConsentEvent) {
-    const r = await this.sql`insert into platform.consent_events (e164, app_id, line, state, source, wording, wording_version, ref, at)
-      values (${e.e164}, ${e.app}, ${e.line ?? null}, ${e.state}, ${e.source}, ${e.wording ?? null}, ${e.wordingVersion ?? null}, ${e.ref ?? null}, ${ts(e.at)})
+    const r = await this.sql`insert into platform.consent_events (e164, app_id, line, state, source, wording, wording_version, ref, named_app, at)
+      values (${e.e164}, ${e.app}, ${e.line ?? null}, ${e.state}, ${e.source}, ${e.wording ?? null}, ${e.wordingVersion ?? null}, ${e.ref ?? null}, ${e.namedApp ?? null}, ${ts(e.at)})
       on conflict (e164, ref) where ref is not null do nothing returning id`;
     return r.length > 0;
   }

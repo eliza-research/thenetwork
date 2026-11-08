@@ -298,7 +298,7 @@ describe.skipIf(!pgAvailable)("turn and consent", () => {
     // The member joins friends.help with the same number: friends asks to SHARE (the link notice).
     await friendsByText("sd317-friends", phone, "Sam, 29");
     const person = (await service.accounts.personFor(phone))!;
-    expect((await sql`select app_id from platform.pending_texts where phone_hash = ${phoneKey(phone)} and kind = 'share'`).map(r => r.app_id)).toEqual(["friends"]);
+    expect((await sql`select app_id from platform.pending_texts where phone_hash = ${phoneKey(phone)} and kind = 'share'`).map((r: any) => r.app_id)).toEqual(["friends"]);
     // Then The Network writes to the member (a newer outbound on another app).
     clock.advance(MINUTE);
     const ntwrk = (await service.people.getMembership(person.id, "ntwrk"))!;
@@ -307,6 +307,29 @@ describe.skipIf(!pgAvailable)("turn and consent", () => {
     clock.advance(MINUTE);
     const body = await (await post(turn("sd317-share", phone, "SHARE"))).json() as any;
     expect(body.app).toBe("friends");
-    expect((await sql`select from_app, to_app from platform.share_grants where person_id = ${person.id} and revoked_at is null`).map(r => [r.from_app, r.to_app])).toEqual([["ntwrk", "friends"]]);
+    expect((await sql`select from_app, to_app from platform.share_grants where person_id = ${person.id} and revoked_at is null`).map((r: any) => [r.from_app, r.to_app])).toEqual([["ntwrk", "friends"]]);
+  }, 60_000);
+  test("SD-318: START after a global STOP resumes the app that the STOP confirmation named", async () => {
+    const phone = "+12125550318";
+    expect((await (await post(turn("sd318-join", phone, "Sam, 29"))).json() as any).reason).toBe("joined");
+    await friendsByText("sd318-friends", phone, "Sam, 29");
+    const person = (await service.accounts.personFor(phone))!;
+    // An open item on each app: The Network's first, then friends' (newer).
+    for (const app of ["ntwrk", "friends"] as const) {
+      clock.advance(MINUTE);
+      const m = (await service.people.getMembership(person.id, app))!;
+      await sql`insert into network.opportunities (app_id, id, kind, state, city, objective) values (${app}, ${`sd318-${app}`}, 'probe', 'proposed', 'nyc', 'sd318')`;
+      await sql`insert into network.messages (id, app_id, member_id, direction, channel, body, status, opportunity_id, proactive, system, ts)
+        values (${`sd318-out-${app}`}, ${app}, ${m.memberId}, 'outbound', 'imessage', 'An idea for you', 'sent', ${`sd318-${app}`}, true, false, ${new Date(clock.now())})`;
+    }
+    clock.advance(MINUTE);
+    const stop = await (await post(turn("sd318-stop", phone, "STOP"))).json() as any;
+    expect(stop.consent).toMatchObject({state: "opted_out", scope: "all"});
+    expect(stop.replies).toEqual([APPS.friends.brand.stop]);
+    clock.advance(MINUTE);
+    const start = await (await post(turn("sd318-start", phone, "START"))).json() as any;
+    // The STOP said "Reply START to resume Friends": START resumes that app.
+    expect(start.consent).toMatchObject({state: "opted_in", scope: "app", app: "friends"});
+    expect(await service.accounts.optedIn("friends", phone)).toBe(true);
   }, 60_000);
 });

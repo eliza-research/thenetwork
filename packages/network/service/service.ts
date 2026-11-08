@@ -964,6 +964,7 @@ export class NetworkService implements RuntimeHost {
    * The app of an inbound message on the shared line (platform plan 4.4, founder decision 2):
    *  1. a per-app webhook path or a line in platform.app_lines names the app;
    *  2. the whole message is an app's word ("slop", "slop.date", "join friends.help"): that app;
+   *  2b. START after a global STOP: the app that the STOP confirmation named;
    *  3. a join the person started (they sent the app's word) takes the answer that follows, if the
    *     answer reads as a join answer or the person is not a member anywhere;
    *  4. a member: SHARE goes to the app that asked for it (the link notice); else the app with the newest open item (a probe, a plan they have not answered), else the
@@ -982,8 +983,13 @@ export class NetworkService implements RuntimeHost {
     if (read?.kind === "read" && read.app) return { app: read.app, shared: true };
     const named = this.namedApp(ev.text);
     if (named) return { app: named, shared: true };
-    const mine = (await this.memberApps(ev.from)).filter(x => this.runtimeFor(x.app));
     const e164 = normalizePhone(ev.from);
+    // START after a global STOP: the app that the STOP confirmation named ("Reply START to resume <app>").
+    if (e164 && platformKeyword(ev.text) === "start") {
+      const stop = (await this.people.lastConsent(e164, "ntwrk")).global; // the global row (not the ntwrk row)
+      if (stop?.state === "opted_out" && stop.namedApp && this.runtimeFor(stop.namedApp)) return { app: stop.namedApp, shared: true };
+    }
+    const mine = (await this.memberApps(ev.from)).filter(x => this.runtimeFor(x.app));
     const pending = e164 ? await this.pendingOf(e164, "join") : undefined;
     if (pending && !mine.some(x => x.app === pending.app)
       && (!mine.length || parseJoinText(ev.text, this.appWords(), true).age !== undefined)) return { app: pending.app, shared: true };
