@@ -49,10 +49,11 @@ export async function backup(o: { url: string; outDir: string; roles?: boolean; 
       const [{ snap }] = await tx`select pg_export_snapshot() as snap` as { snap: string }[];
       const counts = await rowCounts(tx as unknown as SQL);
       const [{ server_version }] = await tx`show server_version` as { server_version: string }[];
+      const [{ system_id }] = await tx`select system_identifier::text as system_id from pg_control_system()` as { system_id: string }[];
       const version = (await run([pgBin("pg_dump"), "--version"])).trim();
       // The dump reads the exported snapshot while this transaction stays open.
       await run([pgBin("pg_dump"), "--format=custom", "--no-password", `--snapshot=${snap}`, `--file=${dump}`], { env });
-      manifest = { version: 1, createdAt: new Date().toISOString(), database: env.PGDATABASE!, serverVersion: server_version, pgDump: version, rowCounts: counts, files: { dump: "db.dump" }, source: { host: env.PGHOST!, port: env.PGPORT! } };
+      manifest = { version: 1, createdAt: new Date().toISOString(), database: env.PGDATABASE!, serverVersion: server_version, pgDump: version, rowCounts: counts, files: { dump: "db.dump" }, source: { host: env.PGHOST!, port: env.PGPORT!, systemId: system_id } };
     });
   } finally { await sql.close(); }
   if (o.roles !== false) {
@@ -124,6 +125,7 @@ if (import.meta.main) {
     line("error", "backup failed", { error: redactUrls((e as Error).message) });
     process.exitCode = 1;
   } finally {
-    if (!a.out) await rm(dir, { recursive: true, force: true });
+    // --local keeps the dump where the log says; an upload (or a failed one) keeps no local copy, also with --out.
+    if (!a.local) await rm(dir, { recursive: true, force: true });
   }
 }

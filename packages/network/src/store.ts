@@ -265,7 +265,9 @@ export class PgStore implements NetworkStore {
    */
   async save(state: NetworkState, also?: (tx: SQL) => Promise<void>): Promise<void> {
     const rows = consoleRows(state, state.savedAt, this.city);
-    await this.sql.begin(async tx => {
+    // Under the lock, the save runs on the connection that holds it: when that connection is lost,
+    // Postgres frees the lock and this save fails, so it never overwrites what the next holder committed.
+    await (this.lockConn ?? this.sql).begin(async tx => {
       await tx`select set_config('app.app_id', ${this.app}, true)`;
       // What the last save held, so rows the state dropped are deleted (and only rows this store wrote).
       const prev = await tx`select coalesce(jsonb_path_query_array(state, '$.opps[*].id'), '[]'::jsonb) as opps, coalesce(jsonb_path_query_array(state, '$.requests[*].id'), '[]'::jsonb) as reqs
@@ -308,6 +310,8 @@ export class PgStore implements NetworkStore {
   }
 
   private readonly queue = new Queue();
+  /** The reserved connection that holds the advisory lock, while a unit of work holds it. */
+  private lockConn?: Awaited<ReturnType<SQL["reserve"]>>;
 
   withTickLock<T>(fn: () => Promise<T>): Promise<T | undefined> {
     return this.queue.busy ? Promise.resolve(undefined) : this.queue.run(() => this.locked(false, fn));
@@ -319,7 +323,8 @@ export class PgStore implements NetworkStore {
 
   /**
    * A session-level advisory lock on one reserved connection, released in finally. One caller per
-   * process at a time (the queue), so waiters never use up the pool that load() and save() need.
+   * process at a time (the queue), so waiters never use up the pool that load() needs. save() runs on
+   * the lock's connection (the fence: a save after the lock was lost fails).
    */
   private async locked<T>(wait: boolean, fn: () => Promise<T>): Promise<T | undefined> {
     const key = `network-tick-${this.id}`;
@@ -330,7 +335,8 @@ export class PgStore implements NetworkStore {
         const [row] = await conn`select pg_try_advisory_lock(hashtext(${key})) as ok`;
         if (!row?.ok) return undefined;
       }
-      try { return await fn(); } finally { await conn`select pg_advisory_unlock(hashtext(${key}))`; }
+      this.lockConn = conn;
+      try { return await fn(); } finally { this.lockConn = undefined; await conn`select pg_advisory_unlock(hashtext(${key}))`; }
     } finally {
       conn.release();
     }

@@ -22,7 +22,7 @@ import { otpConfigProblems } from "../../packages/platform/src/otp-config.ts";
 // request loses every proxy and forwarding header, so a client can never pick either one.
 import { appForHost, stagingSiteOrigins, DEFAULT_HOST_MAP, isAppId, type AppId } from "../../packages/platform/src/apps.ts";
 import { requirePlatformEnv, type Env, type PlatformEnv } from "../../packages/platform/src/env.ts";
-import { isProxyHeader, PROXY_HEADERS, verifyProxyHeaders } from "../../packages/platform/src/proxy.ts";
+import { isProxyHeader, PROXY_HEADERS, signedPath, signProxyHeaders, verifyProxyHeaders } from "../../packages/platform/src/proxy.ts";
 import { timingSafeEqual } from "node:crypto";
 import { opsConfigFromEnv, type OpsConfig } from "./ops.ts";
 import { networkRoutePolicy } from "../../packages/network/service/route-authority.ts";
@@ -58,6 +58,8 @@ export interface BackendConfig {
   /** The staff API listener; undefined when BACKEND_STAFF=off. */
   staff?: { host: string; port: number };
   proxySecret?: string;
+  /** PLATFORM_PROXY_SECRET_PREVIOUS: during a rotation, the old value that sites not yet deployed still sign with (docs/deploy.md 3.4). */
+  proxySecretPrevious?: string;
   /** Extra site hosts for previews and staging: BACKEND_EXTRA_HOSTS="pr-1-slop.example.workers.dev=slop,...". */
   hostMap: Record<string, AppId>;
   build: string;
@@ -88,8 +90,9 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   const missing: string[] = [];
   if (!databaseUrl) missing.push("DATABASE_URL (or NETWORK_DATABASE_URL)");
   const proxySecret = e.PLATFORM_PROXY_SECRET || undefined;
+  const proxySecretPrevious = (proxySecret && e.PLATFORM_PROXY_SECRET_PREVIOUS) || undefined;
   if (deployed) {
-    for (const k of ["PLATFORM_HASH_KEY", "TURNSTILE_SECRET_KEY"]) if (!e[k]) missing.push(k);
+    for (const k of ["PLATFORM_HASH_KEY", "PLATFORM_SESSION_SECRET", "TURNSTILE_SECRET_KEY"]) if (!e[k]) missing.push(k);
     missing.push(...otpConfigProblems(e));
     if (!proxySecret) missing.push("PLATFORM_PROXY_SECRET");
   }
@@ -100,8 +103,9 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   if (deployed && migrateOnBoot && !migrationUrl) missing.push("MIGRATION_DATABASE_URL (or MIGRATE_ON_BOOT=0)");
   if (deployed && migrationUrl && databaseUrl && migrationUrl === databaseUrl) throw new Error("MIGRATION_DATABASE_URL must be a different login from the service's NETWORK_DATABASE_URL");
   if (missing.length) throw new Error(`PLATFORM_ENV=${env} needs ${missing.join(", ")}`);
-  if (proxySecret && proxySecret.length < SECRET_MIN) throw new Error(`PLATFORM_PROXY_SECRET must be at least ${SECRET_MIN} characters`);
-  if (deployed && e.PLATFORM_HASH_KEY!.length < SECRET_MIN) throw new Error(`PLATFORM_HASH_KEY must be at least ${SECRET_MIN} characters`);
+  for (const [k, v] of [["PLATFORM_PROXY_SECRET", proxySecret], ["PLATFORM_PROXY_SECRET_PREVIOUS", proxySecretPrevious]] as const) if (v && v.length < SECRET_MIN) throw new Error(`${k} must be at least ${SECRET_MIN} characters`);
+  // The session token hashes have a key of their own (packages/platform/src/env.ts bootConfigProblems), never the hash key (SD-164).
+  for (const k of ["PLATFORM_HASH_KEY", "PLATFORM_SESSION_SECRET"]) if (deployed && e[k]!.length < SECRET_MIN) throw new Error(`${k} must be at least ${SECRET_MIN} characters`);
   // The leak guard's log labels are keyed in staging and production (core-6); dev and sims stay unkeyed and reproducible.
   const leakLabelKey = deployed ? e.LEAK_LABEL_KEY : undefined;
   if (deployed && (!leakLabelKey || new TextEncoder().encode(leakLabelKey).length < SECRET_MIN)) throw new Error(`PLATFORM_ENV=${env} needs LEAK_LABEL_KEY of at least ${SECRET_MIN} bytes`);
@@ -151,20 +155,28 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   if (!e.BLOOIO_WEBHOOK_SECRET) warnings.push("BLOOIO_WEBHOOK_SECRET is not set: the shared-line webhook answers 503");
   if (!deployed && !proxySecret) warnings.push("PLATFORM_PROXY_SECRET is not set: /api answers only for a Host the platform knows (local site ports)");
   const build = (e.BUILD_ID || e.RAILWAY_GIT_COMMIT_SHA || "dev").slice(0, 40);
-  const tickMs = Number(e.TICK_MS ?? 60_000);
+  // An empty value takes the default; anything else must be a whole number of milliseconds (as opsConfigFromEnv checks its numbers, SD-370).
+  const ms = (name: string, dflt: number, min: number) => {
+    const v = e[name];
+    if (v === undefined || v.trim() === "") return dflt;
+    const x = Number(v);
+    if (!Number.isInteger(x) || x < min) throw new Error(`${name} must be a whole number of milliseconds of ${min} or more (got ${JSON.stringify(v)})`);
+    return x;
+  };
+  const tickMs = ms("TICK_MS", 60_000, 1);
   const ops = opsConfigFromEnv(e, { env, build, deployed });
   if (deployed && !ops.webhookUrl) warnings.push("ALERT_WEBHOOK_URL is not set: alerts are log lines only (docs/deploy.md 7.2)");
 
   return {
     env, deployed, databaseUrl: databaseUrl!, migrationUrl: migrationUrl ?? databaseUrl!, host, port,
     staff: staffOff ? undefined : { host: staffHost, port: staffPort },
-    proxySecret, hostMap,
+    proxySecret, ...(proxySecretPrevious ? { proxySecretPrevious } : {}), hostMap,
     build,
     migrateOnBoot,
     channel,
-    shutdownGraceMs: Number(e.SHUTDOWN_GRACE_MS ?? 25_000),
+    shutdownGraceMs: ms("SHUTDOWN_GRACE_MS", 25_000, 0),
     tickMs,
-    tickLateMs: Number(e.TICK_LATE_MS ?? Math.max(15 * 60_000, 3 * tickMs)),
+    tickLateMs: ms("TICK_LATE_MS", Math.max(15 * 60_000, 3 * tickMs), 1),
     ops,
     ...(leakLabelKey ? { leakLabelKey } : {}),
     warnings,
@@ -172,15 +184,17 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
 }
 
 /**
- * Why the service login may not run a deployed backend, or undefined. A superuser, a BYPASSRLS role or
+ * Why the service login may not run a deployed backend, or undefined. A login outside network_service has no grants. A superuser, a BYPASSRLS role or
  * the owner of the platform tables skips row-level security, so the per-app scoping (app.app_id), the
  * least-privilege grants and the never-updated consent events would not hold (audit: backend superuser).
  */
 export async function serviceLoginProblem(query: (q: string) => Promise<Record<string, unknown>[]>): Promise<string | undefined> {
   const [r] = await query(`select r.rolsuper, r.rolbypassrls,
-      exists (select 1 from pg_tables t where t.schemaname in ('platform', 'network') and pg_has_role(current_user, t.tableowner, 'USAGE')) as owner
+      exists (select 1 from pg_tables t where t.schemaname in ('platform', 'network') and pg_has_role(current_user, t.tableowner, 'USAGE')) as owner,
+      pg_has_role(current_user, 'network_service', 'MEMBER') as member
     from pg_roles r where r.rolname = current_user`);
   if (!r) return "the service login is not a role";
+  if (!r.member) return "the service login is not a member of network_service";
   if (r.rolsuper) return "the service login is a superuser";
   if (r.rolbypassrls) return "the service login has BYPASSRLS";
   if (r.owner) return "the service login owns (or is a member of the owner of) platform or network tables";
@@ -232,15 +246,24 @@ export function captureConsole(log: Logger) {
  * host is a site the platform knows): Host and the URL become the site's host, and the signed headers
  * stay, so the same check further in still passes. Otherwise every proxy and forwarding header is
  * removed and the app comes from the request's own Host (which, on the deployed origin, names no app).
+ * `previous` (a secret rotation): a request signed with it is signed again with `secret`, so the checks
+ * further in, which know only `secret`, pass too.
  */
-export async function normalizeEdge(req: Request, secret: string | undefined, hostMap: Record<string, AppId>, nowMs: number = Date.now()): Promise<{ req: Request; app?: AppId; edge: boolean }> {
+export async function normalizeEdge(req: Request, secret: string | undefined, hostMap: Record<string, AppId>, nowMs: number = Date.now(), previous?: string): Promise<{ req: Request; app?: AppId; edge: boolean }> {
   const headers = new Headers(req.headers);
   const url = new URL(req.url);
-  const v = await verifyProxyHeaders(req, secret, Math.floor(nowMs / 1000));
+  const nowS = Math.floor(nowMs / 1000);
+  let v = await verifyProxyHeaders(req, secret, nowS);
+  let resign = false;
+  if (!v && secret && previous) { v = await verifyProxyHeaders(req, previous, nowS); resign = !!v; }
   const signedApp = v ? appForHost(v.host, hostMap) : undefined;
   let app = signedApp;
   for (const h of STRIP) headers.delete(h);
   if (v && app) {
+    if (resign) {
+      const signed = await signProxyHeaders(secret!, { method: req.method, path: signedPath(url), host: v.host, ip: v.ip, ts: Number(req.headers.get(PROXY_HEADERS.ts)) });
+      for (const [k, val] of Object.entries(signed)) headers.set(k, val);
+    }
     headers.set("host", v.host);
     url.host = v.host;
     url.protocol = "https:";
@@ -266,6 +289,10 @@ export interface ServiceLike {
   runtimes: Map<string, { id: string; tick(): Promise<boolean> }>;
   /** The single inbox's tick (packages/notify): outcome sweep, then due notifications. Optional. */
   notifyTick?(): Promise<void>;
+  /** Inbound rows a crash or an error left waiting (platform.inbound), handled before the networks tick. Optional. */
+  inboxTick?(): Promise<void>;
+  /** Retention: expired OTP challenges and sessions, old rate windows, old inbound ids. After the networks tick. Optional. */
+  purge?(): Promise<unknown>;
   close(): Promise<void>;
 }
 
@@ -348,7 +375,7 @@ export function createBackend(d: BackendDeps) {
       } else if (draining) {
         res = json(503, { ok: false, error: "shutting_down" });
       } else if (path === "/api" || path.startsWith("/api/")) {
-        const n = await normalizeEdge(req, c.proxySecret, c.hostMap, (d.now ?? Date.now)());
+        const n = await normalizeEdge(req, c.proxySecret, c.hostMap, (d.now ?? Date.now)(), c.proxySecretPrevious);
         app = n.app;
         // Deployed, only a request a site router signed may name a site (audit: a direct request with
         // Host: slop.date was served as slop.date, and every such request shared one socket IP).
@@ -358,7 +385,7 @@ export function createBackend(d: BackendDeps) {
         res = INTERNAL_PATHS.has(path) && Number(req.headers.get("content-length") ?? "0") > internalCap(path) ? json(413, { ok: false, error: "payload_too_large" }) : await track(svc.fetch(req));
       } else if (MCP_PATH.test(path)) {
         // The MCP server sees the same normalized request as the public API: Host is the site's host only via a verified edge.
-        const n = await normalizeEdge(req, c.proxySecret, c.hostMap, (d.now ?? Date.now)());
+        const n = await normalizeEdge(req, c.proxySecret, c.hostMap, (d.now ?? Date.now)(), c.proxySecretPrevious);
         app = n.app;
         res = c.deployed && !n.edge ? json(421, { ok: false, error: "edge_required" }) : (d.mcp && (await track(d.mcp(n.req)))) || json(404, { ok: false, error: "mcp_not_enabled" });
       } else {
@@ -385,7 +412,16 @@ export function createBackend(d: BackendDeps) {
   // Every network ticks on its own; a running tick is tracked so that shutdown waits for it.
   const busy = new Set<string>();
   let timer: ReturnType<typeof setInterval> | undefined;
-  const networksThenNotify = () => Promise.all([...svc.runtimes.values()].map(async rt => {
+  /** One service-wide step of the round, tracked, and never two at once in this process. */
+  const step = async (name: string, fn: (() => Promise<unknown>) | undefined) => {
+    if (draining || !fn || busy.has(name)) return;
+    busy.add(name);
+    try { await track(fn()); }
+    catch (e) { log.error(`${name} tick failed`, { error: (e as Error).message }); }
+    finally { busy.delete(name); }
+  };
+  // The round is the one serve.ts startTicks runs: waiting inbound rows first (in order per sender), then the networks, retention, the inbox.
+  const networksThenNotify = () => step("inbound", svc.inboxTick && (() => svc.inboxTick!())).then(() => Promise.all([...svc.runtimes.values()].map(async rt => {
     if (draining || busy.has(rt.id)) return;
     busy.add(rt.id);
     try {
@@ -394,7 +430,7 @@ export function createBackend(d: BackendDeps) {
     }
     catch (e) { log.error("tick failed", { network: rt.id, error: (e as Error).message }); }
     finally { busy.delete(rt.id); }
-  })).then(() => notifyTick());
+  }))).then(() => step("purge", svc.purge && (() => svc.purge!()))).then(() => notifyTick());
   // The ops round runs beside the networks, so a network tick that hangs does not stop its alert.
   const opsTick = async () => {
     if (draining || !d.ops || busy.has("ops")) return;
@@ -406,13 +442,7 @@ export function createBackend(d: BackendDeps) {
   const tickAll = () => Promise.all([networksThenNotify(), opsTick()]).then(() => undefined);
   // The inbox ticks once per round, after the networks (their sends are recorded by then). Replicas may overlap: a delivery id is recorded once
   // (notify.deliveries primary key), so a second replica cancels instead of sending again.
-  const notifyTick = async () => {
-    if (draining || !svc.notifyTick || busy.has("notify")) return;
-    busy.add("notify");
-    try { await track(svc.notifyTick()); }
-    catch (e) { log.error("notify tick failed", { error: (e as Error).message }); }
-    finally { busy.delete("notify"); }
-  };
+  const notifyTick = () => step("notify", svc.notifyTick && (() => svc.notifyTick!()));
   const startTicks = () => { ticksFrom = now(); const first = tickAll(); timer = setInterval(tickAll, c.tickMs); return first; };
 
   /**
@@ -425,10 +455,13 @@ export function createBackend(d: BackendDeps) {
   const shutdown = (servers: { stop(force?: boolean): unknown }[] = []) => stopping ??= (async () => {
     draining = true;
     if (timer) clearInterval(timer);
-    for (const s of servers) { try { await s.stop(false); } catch { /* already stopped */ } }
-    let clean = true;
-    const wait = Promise.allSettled([...inFlight]);
+    // The grace period starts now: stop(false) waits for open requests, so a hung request must not hold it (SD-158).
     const grace = new Promise<"timeout">(r => { const t = setTimeout(() => r("timeout"), c.shutdownGraceMs); (t as { unref?: () => void }).unref?.(); });
+    let clean = true;
+    const wait = (async () => {
+      for (const s of servers) { try { await s.stop(false); } catch { /* already stopped */ } }
+      await Promise.allSettled([...inFlight]);
+    })();
     if ((await Promise.race([wait.then(() => "done" as const), grace])) === "timeout") { clean = false; log.warn("shutdown: work still running after the grace period", { inFlight: inFlight.size }); }
     for (const s of servers) { try { await s.stop(true); } catch { /* already stopped */ } }
     await svc.close().catch(e => log.error("shutdown: close failed", { error: (e as Error).message }));
@@ -454,8 +487,16 @@ export async function ensureServiceLogin(query: (q: string) => Promise<Record<st
   if (exists) return { role, created: false };
   if (password.length < 24) throw new Error("the service login password must be at least 24 characters");
   const lit = `'${password.replace(/'/g, "''")}'`;
-  await query(`create role ${role} login password ${lit} nosuperuser nobypassrls nocreaterole nocreatedb`);
-  await query(`grant network_service to ${role}`);
-  await query(`do $$ begin execute format('grant connect on database %I to ${role}', current_database()); end $$`);
+  // One transaction: a crash after create role must not leave a login without its grants (SD-163).
+  await query("begin");
+  try {
+    await query(`create role ${role} login password ${lit} nosuperuser nobypassrls nocreaterole nocreatedb`);
+    await query(`grant network_service to ${role}`);
+    await query(`do $$ begin execute format('grant connect on database %I to ${role}', current_database()); end $$`);
+    await query("commit");
+  } catch (e) {
+    await query("rollback").catch(() => {});
+    throw e;
+  }
   return { role, created: true };
 }

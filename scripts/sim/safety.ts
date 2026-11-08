@@ -341,12 +341,12 @@ export async function safetyBlock(b: Block): Promise<void> {
   await b.run("bias monitor: a rating quintile with half the dates raises an alert under 0.8x; an even population raises none", () => {
     const now = T0 + 28 * DAY;
     const members: BiasMember[] = Array.from({ length: 60 }, (_, i) => ({ id: `m${i}`, age: 25 + (i % 10), joinedAt: T0, tags: [`appearance:face=0.00`, `appearance:body=0.00`, `appearance:overall=${(i / 60 - 0.5).toFixed(2)}`, "appearance:conf=0.80"] }));
-    const date = (a: number, b2: number, k: number): BiasOpp => ({ participants: [`m${a}`, `m${b2}`], stage: "done", createdAt: T0 + k * HOUR, meetingAt: T0 + (k + 24) * HOUR });
+    const date = (a: number, b2: number, k: number): BiasOpp => ({ contacted: new Set([`m${a}`, `m${b2}`]), attended: [`m${a}`, `m${b2}`], createdAt: T0 + k * HOUR });
     const even: BiasOpp[] = [];
     for (let i = 0; i < 60; i += 2) even.push(date(i, i + 1, i), date(i, i + 1, i + 100));
     expect(biasReport("slop:nyc", "slop", members, even, now).report.alerts).toEqual([]);
     // The lowest quintile (m0-m11) gets dates only half the time.
-    const skewed = even.filter(o => !(Number(o.participants[0]!.slice(1)) < 12 && Number(o.participants[0]!.slice(1)) % 4 === 0));
+    const skewed = even.filter(o => !(Number(o.attended![0]!.slice(1)) < 12 && Number(o.attended![0]!.slice(1)) % 4 === 0));
     const r = biasReport("slop:nyc", "slop", members, skewed, now);
     expect(r.report.alerts.some(a => a.group === "q1" && a.metric === "dates" && a.ratio < 0.8)).toBe(true);
     expect(r.members).toBe(60);

@@ -10,7 +10,8 @@
 #
 # Read-only, always allowed:
 #   whoami, login, logout, dev and pages dev (local only: never --remote), tail, types, docs, help, version (and --version, -v, --help, -h)
-#   deploy --dry-run, versions upload --dry-run (the last --dry-run / --no-dry-run wins, as in wrangler)
+#   deploy --dry-run, versions upload --dry-run (the last --dry-run / --no-dry-run wins, as in wrangler;
+#   the same for --help / --no-help, and a "true" or "false" word after a switch is its value)
 #   <noun> list|view|get|info|status: versions, deployments, secret, kv, r2, d1, pages, queues,
 #     vectorize, hyperdrive, workflows, containers, pipelines (kv key/namespace, r2 bucket/object,
 #     pages project/deployment take one more noun first)
@@ -56,17 +57,29 @@ is_read_verb() { case "$1" in list|view|get|info|status) return 0 ;; *) return 1
 # switches; mode "value" reads them as taking the next word.
 decide() {
   local mode="$1"; shift
-  local words=() dry_run=0 remote=0 help=0 skip_next=0 a
+  local words=() dry_run=0 remote=0 help=0 skip_next=0 last="" a
   for a in "$@"; do
     if [ "$skip_next" = 1 ]; then skip_next=0; continue; fi
+    # yargs reads a "true" or "false" word after a boolean switch as its value: "--help false" is not help.
+    if [ -n "$last" ] && { [ "$a" = true ] || [ "$a" = false ]; }; then
+      local v=0; [ "$a" = true ] && v=1
+      case "$last" in dry_run) dry_run=$v ;; remote) remote=$v ;; help) help=$v ;; esac
+      last=""; continue
+    fi
+    last=""
     case "$a" in
       # wrangler (yargs) takes the LAST value of a switch: "--dry-run --no-dry-run" is a real deploy.
-      --dry-run|--dry-run=true) dry_run=1 ;;
+      --dry-run) dry_run=1; last=dry_run ;;
+      --dry-run=true) dry_run=1 ;;
       --no-dry-run|--dry-run=*) dry_run=0 ;;
       # "dev --remote" runs on Cloudflare (it uploads to the account): not read-only.
-      --remote|--remote=true|-r) remote=1 ;;
+      --remote|-r) remote=1; last=remote ;;
+      --remote=true) remote=1 ;;
       --no-remote|--remote=*) remote=0 ;;
-      --help|-h) help=1 ;;
+      # The same for help: "deploy --help --no-help" is a real deploy.
+      --help|-h) help=1; last=help ;;
+      --help=true|-h=true) help=1 ;;
+      --no-help|--no-h|--help=*|-h=*) help=0 ;;
       --*=*) ;;
       -*)
         if value_flag "$a"; then skip_next=1

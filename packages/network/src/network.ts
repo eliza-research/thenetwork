@@ -126,6 +126,11 @@ export interface NetworkOptions {
    * declined kindly and nothing is kept). Matching stays 18+ in every app.
    */
   app?: AppId | AppInfo;
+  /**
+   * The city of this network ('<app>:<city>', default "nyc"). Two networks of one app share the
+   * id tables, so the ids of every city but nyc carry the city ("ntwrk.sf.nw-1-1").
+   */
+  city?: string;
   seed?: number;
   /** Consent-first probes (default true). false = reveal straight away (the push baseline). */
   probes?: boolean;
@@ -385,6 +390,8 @@ interface Opp {
   finalized?: boolean;
   /** Members whose no-show `finalize` counted: a late feedback answer does not count it again (SD-328). */
   noShowCounted?: MemberId[];
+  /** The booked members that attendance found present, set when it is resolved (the bias monitor's dates held). */
+  attended?: MemberId[];
   /**
    * peon (#9): the engine proposed a job seat. `id` is the seat (`job:<posting>`), `manager` the hiring
    * manager who owns it and stands in for it here: they get the blind review after the candidate's
@@ -580,7 +587,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!this.app) throw new Error(`unknown app "${opts.app}"`);
     this.copy = this.app.id === "ntwrk" ? copy : copyFor(brandOf(this.app));
     this.opts = {
-      seed: opts.seed ?? 1, probes: opts.probes ?? true, selective: opts.selective ?? true, maxNewPerDay: opts.maxNewPerDay ?? 20,
+      city: opts.city ?? "nyc", seed: opts.seed ?? 1, probes: opts.probes ?? true, selective: opts.selective ?? true, maxNewPerDay: opts.maxNewPerDay ?? 20,
       minScore: opts.minScore ?? 0, minKnowledge: opts.minKnowledge ?? 2, minWantMet: opts.minWantMet ?? 0.8, minResponsiveness: opts.minResponsiveness ?? 0.6, runHour: opts.runHour ?? 9, growth: opts.growth ?? true,
       invitesPerMonth: opts.invitesPerMonth ?? 3, maxGrowthAsksPerDay: opts.maxGrowthAsksPerDay ?? 8, onboardingRequests: opts.onboardingRequests ?? false,
       review: opts.review ?? "human", reviewSlaHours: opts.reviewSlaHours ?? 12, matchingEnabled: opts.matchingEnabled ?? true,
@@ -903,9 +910,13 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /**
    * Ids that leave this Network (opportunities, requests, engine runs) are stored in tables every app
-   * shares, so another app's ids get the app as a prefix ("slop.nw-1-4"). The Network's ids stay as they were.
+   * shares, so another app's ids get the app as a prefix ("slop.nw-1-4"), and a city other than nyc
+   * gets the app and the city ("ntwrk.sf.nw-1-1"). The ids of ntwrk:nyc stay as they were.
    */
-  private sid(id: string) { return this.app.id === "ntwrk" ? id : `${this.app.id}.${id}`; }
+  private sid(id: string) {
+    if (this.opts.city !== "nyc") return `${this.app.id}.${this.opts.city}.${id}`;
+    return this.app.id === "ntwrk" ? id : `${this.app.id}.${id}`;
+  }
 
   /** The app's join age (core canJoin: 13+; an 18+ app also declines 13-17). */
   private canJoinApp(age: number) { return canJoin(age) && age >= this.app.minJoinAge; }
@@ -940,7 +951,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       o.status.delete(id); delete o.explanations[id];
       // Every per-member map and list too (network-consent-16): only declinedIds may keep the id.
       for (const k of ["offered", "picks", "turnAt", "sentAt", "bookedAt", "post"] as const) if (o[k]) delete (o[k] as Record<string, unknown>)[id];
-      for (const k of ["explicit", "confirmed", "bookedTold", "deferLogged", "timeRetry"] as const) if (o[k]) o[k] = o[k]!.filter(x => x !== id);
+      for (const k of ["explicit", "confirmed", "bookedTold", "deferLogged", "timeRetry", "attended"] as const) if (o[k]) o[k] = o[k]!.filter(x => x !== id);
       if (o.post) for (const v of Object.values(o.post)) v.named = v.named.filter(x => x !== id);
       if (o.plan) o.plan = this.scrubPlan(o.plan, id);
       if (o.planRun) { const { [id]: _, ...answers } = o.planRun.answers; o.planRun = { ...o.planRun, plan: this.scrubPlan(o.planRun.plan, id), answers, bench: o.planRun.bench.filter(x => x !== id) }; }
@@ -2875,6 +2886,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     // A counterpart who came and reported nobody missing confirms everyone booked (the mutual check-in).
     const vouchers = (p: MemberId) => going.filter(x => x !== p && said(x)?.came && !said(x)!.otherNoShow);
     const present = going.filter(p => said(p)?.came === true || (said(p)?.came !== false && (vouchers(p).length > 0 || checkIn.includes(p))));
+    o.attended = present;
     const origin = this.originOf(o);
     for (const p of going) {
       const key = `${o.id}:${p}`;
@@ -3974,7 +3986,11 @@ export class ConsentNetwork implements NetworkUnderTest {
       const [a, b] = k.split("|") as [MemberId, MemberId];
       this.again.delete(k);
       if (!this.eligible(a) || !this.eligible(b) || this.pairBarred(a, b, false)) continue;
-      const o = this.newOpp({ origin: "second_encounter", kind: "second_encounter", category: "social", objective: "meet again", detail: "meeting up again", participants: [a, b], alternates: [], primed: [], explanations: { [a]: "you both said you'd meet again", [b]: "you both said you'd meet again" }, score: 0.8, generator: "second_encounter", tags: [] });
+      // The second encounter keeps the category of the meeting the two answered for: on slop (dating only) a
+      // "social" one was closed at once as not allowed, so a second date was never proposed (SD-236).
+      // Feedback writes the interaction with the "again" answer, and forget() removes both.
+      const met = this.interactions.filter(x => x.participants.includes(a) && x.participants.includes(b)).at(-1)!;
+      const o = this.newOpp({ origin: "second_encounter", kind: "second_encounter", category: met.category, objective: "meet again", detail: "meeting up again", participants: [a, b], alternates: [], primed: [], explanations: { [a]: "you both said you'd meet again", [b]: "you both said you'd meet again" }, score: 0.8, generator: "second_encounter", tags: [] });
       this.submit(o);
     }
     // Newcomer welcome: members who joined in the last week and finished onboarding, paired with a

@@ -115,8 +115,10 @@ Set these in **Variables**. Mark each **secret** row as a sealed variable. Never
 | `PORT` | no | `8790` | The public listener. Set it, so that Railway's domain targets this port. |
 | `STAFF_PORT` | no | `4848` | Private only. `BACKEND_STAFF=off` turns the staff listener off. |
 | `PLATFORM_HASH_KEY` | **yes** | 32+ random bytes, for example `openssl rand -base64 48` | Keys the phone and IP hashes. **Never rotate it after launch**: suppression and rate-limit rows are keyed by it. |
+| `PLATFORM_SESSION_SECRET` | **yes** | 32+ random bytes, for example `openssl rand -base64 48` | Keys the stored session token hashes and the Cloud seal. Use a value of its own, not `PLATFORM_HASH_KEY`. `loadConfig` refuses to start staging or production without it. A change ends every open session. |
 | `LEAK_LABEL_KEY` | **yes** | 32+ random bytes, for example `openssl rand -base64 48` | Keys the leak guard's log labels (core-6), so a stored label cannot be matched against guessed values. `loadConfig` refuses to start staging or production without it. Dev and the simulations stay unkeyed. |
 | `PLATFORM_PROXY_SECRET` | **yes** | 32+ random characters | The same value goes into each site Worker (section 3). |
+| `PLATFORM_PROXY_SECRET_PREVIOUS` | no | unset; during a rotation, the old `PLATFORM_PROXY_SECRET` | The backend also accepts a site signature made with this value (section 3.4). Remove it when every site has the new value. |
 | `TURNSTILE_SECRET_KEY` | **yes** | From Cloudflare Turnstile | One widget per site domain, or one widget listing all four |
 | `TURNSTILE_SITE_KEY` | no (public) | The same Turnstile widget | The MCP sign-in page (`/oauth/authorize` on each site) shows the widget. Without it the MCP server stays off (404 `mcp_not_enabled`). The `oauth` schema is a migration (`9001_oauth_schema`, packages/mcp/db/oauth.sql); the service login only reads and writes it. The widget's hostnames: each domain, its `www` name and its `<project>.pages.dev`. |
 | `MCP_CUSTOM_CHATGPT_SLOP` | no | unset or `off` | Default off. `on` requires founder approval for the private real-account pilot at `https://slop.date/mcp`. Keep the public OpenAI plugin exclusion. |
@@ -148,7 +150,7 @@ Set these in **Variables**. Mark each **secret** row as a sealed variable. Never
 | `ALERT_WEBHOOK_URL` | **yes** | A Slack incoming webhook (or any HTTPS endpoint that takes a JSON POST) | Section 7.2. Unset: alerts are log lines only, and the boot log warns. |
 | `ALERT_WEBHOOK_FORMAT` | no | `slack` for a Slack webhook, else leave unset (`json`) | `slack` sends `{ text }` only |
 | `OPS_METRICS_TOKEN` | **yes** | 32+ random characters | `GET /ops/metrics` with `Authorization: Bearer <token>`. Unset: the route answers 404. |
-| `OPS_HEARTBEAT_URL` | **yes** | The heartbeat URL of the uptime service (section 7.1) | A GET after each ops round (every minute) |
+| `OPS_HEARTBEAT_URL` | **yes** | The heartbeat URL of the uptime service (section 7.1) | A GET after each ops round (every minute) whose alert post did not fail |
 | `COST_BUDGET_DAILY_USD`, `COST_BUDGET_DAILY_USD_<APP>` | no | The founder's daily budget, in US dollars | Section 7.3. An alert at 80% and at 100%. |
 | `COST_BLOOIO_LINE_MONTHLY_USD` | no | The line's monthly price from the Blooio contract | Unset: the line is not in the ledger. Other prices have defaults (7.3). |
 
@@ -265,7 +267,7 @@ docker run -d --name backend-smoke -p 127.0.0.1:18791:8790 \
   -e PLATFORM_ENV=staging -e PLATFORM_DB_ENVIRONMENT_INIT=1 \
   -e MIGRATION_DATABASE_URL=postgres://$USER@host.docker.internal:54339/backend_smoke \
   -e NETWORK_DATABASE_URL=postgres://backend_smoke_svc@host.docker.internal:54339/backend_smoke \
-  -e PLATFORM_HASH_KEY=$S -e LEAK_LABEL_KEY=$S -e PLATFORM_PROXY_SECRET=$S \
+  -e PLATFORM_HASH_KEY=$S -e PLATFORM_SESSION_SECRET=$(openssl rand -hex 24) -e LEAK_LABEL_KEY=$S -e PLATFORM_PROXY_SECRET=$S \
   -e TURNSTILE_SECRET_KEY=fake -e OTP_PROVIDER=twilio \
   -e TWILIO_ACCOUNT_SID=ACfake -e TWILIO_AUTH_TOKEN=fake -e TWILIO_VERIFY_SERVICE_SID=VAfake \
   -e BUILD_ID=local-smoke network-backend
@@ -328,6 +330,12 @@ for S in https://ntwrk-party.pages.dev https://slop-date.pages.dev https://peon-
 done
 curl -s https://api.ntwrk.party/api/app                      # 421 edge_required: the origin alone names no site
 ```
+
+### 3.4 Rotating PLATFORM_PROXY_SECRET (founder approval only)
+
+1. On the backend, set `PLATFORM_PROXY_SECRET_PREVIOUS` to the current value and `PLATFORM_PROXY_SECRET` to the new value, then redeploy it. The backend now accepts both signatures, so every site keeps working.
+2. Put the new value into each Pages project and deploy it (3.1). A site that is not yet deployed still signs with the old value and still works.
+3. When all four sites are deployed with the new value, remove `PLATFORM_PROXY_SECRET_PREVIOUS` from the backend and redeploy it.
 
 ### Isolated staging site authorities
 
@@ -417,7 +425,7 @@ The backend cannot report its own death. Use an external uptime service (for exa
    - 503 `"status":"database"`: the database does not answer.
    - 503 `"status":"tick_late"`: a network's tick has not finished in this process for `TICK_LATE_MS` (default 15 minutes, or 3 ticks if the tick is slower). The tick loop is stuck.
    - 503 `"status":"draining"`: a deploy or a restart. One failure is normal; two in a row are not.
-2. **Heartbeat monitor:** make a heartbeat in the same service. Put its URL in `OPS_HEARTBEAT_URL`. The backend calls it after each ops round (every minute). Set the grace period to 5 minutes. A missing heartbeat means the process is down, or its tick loop or its alert dispatcher stopped.
+2. **Heartbeat monitor:** make a heartbeat in the same service. Put its URL in `OPS_HEARTBEAT_URL`. The backend calls it after each ops round (every minute). Set the grace period to 5 minutes. A missing heartbeat means the process is down, or its tick loop or its alert dispatcher stopped, or the alert webhook did not take the last post (the round's alerts did not reach the on-call channel).
 3. Optional: a second HTTP monitor on `GET https://api.ntwrk.party/ops/metrics` with the header `Authorization: Bearer <OPS_METRICS_TOKEN>`. Expect 200.
 4. Send these monitors to the same on-call channel as the alert webhook (7.2).
 
@@ -435,6 +443,8 @@ Every minute, inside the backend's tick, the ops round reads each network and th
 | `safety_signal:<network>` | bad | Agent `safety_concern` signals (`POST /internal/signals`) that wait for a person in `GET /signals`. Posted again when the count goes up. |
 | `precision:<network>` | warn | Shadow precision under 80% over 7 days (person review decisions approved without edits, at least 20 decisions; PRD 32.8). |
 | `bias_report:<network>` | warn | The weekly bias monitor wrote a report with groups under 0.8x in the last 24 h. Counts only; the groups are in the console's bias panel. |
+| `bias_blind:<network>` | warn | The weekly bias monitor wrote a report in the last 24 h that can compare no group: fewer than 2 groups of 8 or more adults (the rater is off, or too few rated adults for the quintiles), or no outcomes yet. It has no alerts, but the 0.8x rule was not checked. |
+| `bias_late:<network>` | warn | A photo-app network (slop) has no bias monitor report newer than 8 days (the monitor runs every 7 days after a tick). The after-tick work failed: look for `[tick] after-tick work failed` in the log. |
 | `safety_action:<network>` | warn | A ban or a hold in 24 h |
 | `line_safety` | bad | Blooio put the shared line under a safety action (`platform.line_safety`: review, reply_only, pause_new): new and agent texts wait; STOP and HELP still go. The text names the action and since when, never the number. |
 | `leak_review:<app>` | warn | Texts parked for leak review wait for a person (`GET /queue/leak-review`, the console's held texts). Posted again when the count goes up. |
@@ -515,7 +525,9 @@ A restore never changes a role or a privilege on the source server:
 
 ```bash
 # RESTORE_DATABASE_URL: an owner login on the target server (any database; usually the maintenance one).
+# BACKUP_PREFIX: the prefix of the backup job (8.1). Without it, "latest" looks under postgres/dev.
 RESTORE_DATABASE_URL=... BACKUP_R2_ACCOUNT_ID=... BACKUP_R2_BUCKET=ntwrk-backups BACKUP_R2_ACCESS_KEY_ID=... BACKUP_R2_SECRET_ACCESS_KEY=... \
+  BACKUP_PREFIX=postgres/production BACKUP_ENCRYPTION_KEY=... \
   bun run deploy/backup/restore.ts --r2 latest --db restore_drill_20261008
 # or a backup on disk: --from <dir with manifest.json>
 ```
