@@ -309,12 +309,17 @@ test("Q-join_age-1: the bare answer \"friends\" to the looking-for question enro
 test("Q-join_age-2: a web join that stops after its membership commits gets its network member on the retry", async () => {
   const phone = "+12125550321";
   // The worker stops after putMembership and the opt-in, before the join hook (the network member) runs.
-  const attach = service.people.attachPerson;
-  service.people.attachPerson = (async () => { service.people.attachPerson = attach; throw new Error("synthetic worker stop"); }) as typeof attach;
+  // bindSessions runs first when the person is made, then after the membership and the opt-in: the second call stops.
+  const bind = service.people.bindSessions;
+  let calls = 0;
+  service.people.bindSessions = (async (...args: Parameters<typeof bind>) => {
+    if (++calls === 2) { service.people.bindSessions = bind; throw new Error("synthetic worker stop"); }
+    return bind.apply(service.people, args);
+  }) as typeof bind;
   try {
     await expect(webJoin("friends", phone, 25, "Sam")).rejects.toThrow("synthetic worker stop");
   } finally {
-    service.people.attachPerson = attach;
+    service.people.bindSessions = bind;
   }
   // The client sends the same join again: the live membership gets its network member.
   const retry = await webJoin("friends", phone, 25, "Sam");

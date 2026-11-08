@@ -368,7 +368,7 @@ export class Accounts {
       if (!again.ok) { await this.declineUnderAge(who.e164, person); return { ok: false, error: "under_age" }; }
       // A first join can stop after its membership committed and before the hook made the network member:
       // the repeat completes it (the hook does nothing for a member that already exists).
-      await this.store.attachPerson(who.e164, person!.id);
+      await this.store.bindSessions(who.e164, person!.id, who.session ?? null, at);
       await this.hooks.onJoin?.({ app, person: person!, membership: existing, e164: who.e164, age: again.effective ?? input.age, input });
       return { ok: true, membership: existing };
     }

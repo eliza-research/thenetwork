@@ -478,11 +478,9 @@ describe.skipIf(!pgAvailable)("identity sagas: stop half way, retry, races (Post
     const clock = new SimClock(START);
     const s = service(clock);
     const { phone, person } = await bannedWithPhoto(s, clock, "Sid, 41");
-    const api = site(s);
-    clock.advance(31_000);
-    expect((await api("/api/auth/otp/start", { phone })).status).toBe(200);
-    expect((await api("/api/auth/otp/verify", { phone, code: "123456" })).status).toBe(200);
-    expect((await api("/api/me/delete", { scope: "all" })).body).toEqual({ ok: true });
+    // A banned number gets no web session (SD-013): the delete request comes by help@ntwrk.party and
+    // runs the same account erasure that /api/me/delete runs.
+    await s.accounts.deleteAll({ e164: phone, personId: person });
     expect(await photoRows(person)).toBe(1);
     // The ban stays.
     expect(await s.accounts.banned(phone)).toBe(true);
