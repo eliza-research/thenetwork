@@ -24,7 +24,7 @@ import type { City, Clock, MemberId, WorldSnapshot } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import type { NetworkContext, SimMessage } from "@thenetwork/core";
 import { ConsentNetwork, presentInNyc, relayDispatchCheck, type NetworkOptions, type NetworkState } from "../src/network.ts";
-import type { RelayCanonical } from "../src/relay.ts";
+import { RELAY_SWAP_TTL_MS, SWAP_WITHDRAWN, type RelayCanonical } from "../src/relay.ts";
 import { loadRelayRows, PgStore, runStored, runTick, type NetworkStore } from "../src/store.ts";
 import { capitalWiring, type CapitalEvent } from "../src/capital.ts";
 import type { AppInfo } from "../../platform/src/apps.ts";
@@ -228,6 +228,14 @@ export class NetworkRuntime {
     return out;
   }
 
+  /** The relay items of this match that the desk passed and whose outbound row ended unsent (NOT_SENT). */
+  async relayUnsent(matchId: string): Promise<Set<string>> {
+    const rows = await this.scoped(tx => tx`select r.item_id from network.relay_records r
+      join platform.outbound o on o.app_id = r.app_id and o.id = 'relay:' || r.item_id
+      where r.app_id = ${this.app.id} and r.opportunity_id = ${matchId} and r.decision = 'pass' and o.status ~ ${NOT_SENT.source}`);
+    return new Set((rows as Row[]).map(r => r.item_id as string));
+  }
+
   /**
    * Final dispatch admission of a relayed row, inside the outbound queue's admission transaction after
    * every asynchronous gate (outbound ids "relay:<item>", and "relay:<item>:ask" for the swap question).
@@ -251,9 +259,13 @@ export class NetworkRuntime {
       // The swap question names no item of its own: the match is the row's, the sender its other member.
       matchId = row.oppId;
       from = state.opps.find(o => o.id === matchId)?.participants.find(p => p !== to);
+      // The question asks for an answer "in the next 15 minutes": it goes only while its swap still waits.
+      const now = this.clock.now();
+      if (!state.relay?.swaps.some(x => x.itemId === id[1] && x.matchId === matchId && x.from === from && x.to === to && x.at <= now && now - x.at <= RELAY_SWAP_TTL_MS)) return no("relay:ask_expired");
     } else {
-      const [rec] = await tx`select opportunity_id,from_member,to_member,decision,review from network.relay_records where app_id=${app} and item_id=${id[1]!}`;
+      const [rec] = await tx`select opportunity_id,from_member,to_member,decision,review,reasons from network.relay_records where app_id=${app} and item_id=${id[1]!}`;
       if (!rec || rec.to_member !== to || rec.decision !== "pass" || rec.review === "rejected") return no("relay:not_passed");
+      if ((rec.reasons as string[] | null)?.includes(SWAP_WITHDRAWN)) return no(SWAP_WITHDRAWN);
       from = rec.from_member as MemberId; matchId = rec.opportunity_id as string;
       if (row.oppId && row.oppId !== matchId) return no("relay:pair");
     }
@@ -573,6 +585,15 @@ export class NetworkRuntime {
       await tx`update platform.outbound set body = null, to_address = null, ended_at = coalesce(ended_at, ${new Date(this.clock.now())}),
         status = case when status = any(${`{${WAITING_STATUSES.join(",")}}`}::text[]) then 'dropped_forgotten' else status end
         where app_id = ${app} and member_id = ${id}`;
+      // What the relay carried from them to their match (their words, their number, the swap question) is theirs too:
+      // the other member's rows keep the id only, and what still waits is never sent.
+      const relayed = (await tx`select item_id from network.relay_records where app_id = ${app} and from_member = ${id}`).flatMap((r: Row) => [`relay:${r.item_id}`, `relay:${r.item_id}:ask`]);
+      if (relayed.length) {
+        await tx`update network.messages set body = '' where app_id = ${app} and direction = 'outbound' and id in ${tx(relayed)}`;
+        await tx`update platform.outbound set body = null, ended_at = coalesce(ended_at, ${new Date(this.clock.now())}),
+          status = case when status = any(${`{${WAITING_STATUSES.join(",")}}`}::text[]) then 'dropped_forgotten' else status end
+          where app_id = ${app} and id in ${tx(relayed)}`;
+      }
     }
     // The persisted queue: the unit's sends in this same transaction (delivered after the commit). The one
     // decline to a member the unit forgets goes as a text to a non-member. Sends it does not queue (the live
@@ -707,10 +728,14 @@ export class NetworkRuntime {
     return ran;
   }
 
-  /** A unit that waits for the lock (an inbound message or a staff action), then delivery. */
+  /**
+   * A unit that waits for the lock (an inbound message or a staff action), then delivery. The unit has
+   * committed before delivery starts: a delivery error is logged and never makes the committed unit look
+   * failed (the persisted queue keeps its rows for the next tick).
+   */
   async unitOfWork<T>(fn: (n: ConsentNetwork) => Promise<T> | T): Promise<T> {
     const out = await runStored(this.net, this.store, fn);
-    await this.deliver();
+    await this.deliver().catch(e => this.host.log(`[deliver] delivery after a committed unit failed (${this.id}): ${(e as Error).message}`));
     return out;
   }
 

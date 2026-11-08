@@ -228,6 +228,8 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
         // The canonical owners' word on both members of the match the desk will pick (fails closed).
         const match = net.relayMatch(memberId as MemberId, itemId ?? undefined);
         const canonical = match ? await rt.relayParties([...match.participants]) : undefined;
+        // What went out is what counts: a passed item whose row ended unsent is no longer shared, nor in the thread.
+        if (match) net.relayUnsent(await rt.relayUnsent(match.id));
         const photo = request.kind === "photo" && match ? await d.photos?.approvedForParty(app, match.id, memberId) : undefined;
         if (request.kind === "photo" && !photo) {
           const r: StoredRelay = {decision:"block",notice:NOTICE.photo};

@@ -3366,7 +3366,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       const valid = this.hookFns(m, d.o.hook).valid;
       if (valid && !valid()) continue;
       if (!this.timingOk(m, d.timing ?? "logistics", now)) { this.deferred.push(d); continue; }
-      this.send(m, d.body, d.meta, d.kind, d.o);
+      // A relayed item that is refused now was never delivered (relay.ts unsent).
+      if (this.send(m, d.body, d.meta, d.kind, d.o) === "refused" && d.o.key?.startsWith("relay:")) this.relayDesk.unsent(new Set([d.o.key.slice(6)]));
     }
     for (const m of this.members.values()) this.refreshUnanswered(m, now);
     for (const o of [...this.opps.values()]) this.advance(o, now);
@@ -4882,7 +4883,7 @@ export class ConsentNetwork implements NetworkUnderTest {
           || o.photoIds.some((id, i) => id !== o.approvedPhotos![i]!.photoId))) return "refused";
         this.dirty = true;
         const r = this.send(m, body, { type: "relay", proposalId: o.matchId,
-          ...(o.approvedPhotos?.length ? { approvedPhotos: o.approvedPhotos } : {}) }, "relay", { about: [o.from], key: o.key, relayFrom: o.from, ...(o.contact ? { relayContact: o.contact } : {}) });
+          ...(o.approvedPhotos?.length ? { approvedPhotos: o.approvedPhotos } : {}) }, "relay", { about: [o.from], key: o.key, relayFrom: o.from, ...(o.contact ? { relayContact: o.contact } : {}), ...(o.noDefer ? { noDefer: true } : {}) });
         return r === "sent" ? "sent" : r === "deferred" ? "deferred" : "refused";
       },
     };
@@ -4891,6 +4892,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   relayRequest(ask: RelayAsk, o: RelayCallOptions = {}): Promise<RelayOutcome> { this.relayDesk.prune(this.now()); return this.relayDesk.request(ask, o); }
   /** The member takes back their pending number swap (POST /internal/relay kind contact_share_cancel, or "don't send my number"). */
   relayCancelSwap(memberId: MemberId): number { const n = this.relayDesk.cancelSwaps(memberId); if (n) this.dirty = true; return n; }
+  /** Relayed items whose outbound row ended unsent (runtime.ts relayUnsent): not delivered, out of the thread. */
+  relayUnsent(itemIds: ReadonlySet<string>): void { if (this.relayDesk.unsent(itemIds)) this.dirty = true; }
   /** The member's open match for the relay, if any (ids only); `matchId` narrows it to that one match. */
   relayMatch(memberId: MemberId, matchId?: string): RelayMatch | undefined { return this.relayDesk.matchFor(memberId, matchId); }
   /** The member is (or may be) a minor, their age is unknown or in conflict, or they were declined or are unknown: staff never see their words. */

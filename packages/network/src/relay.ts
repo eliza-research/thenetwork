@@ -42,6 +42,8 @@ export const RELAY_SWAP_TTL_MS = RELAY_LIMITS.consentTtlMs;
 /** Log rows kept in the state (the rate limits look back one day; staff and ban notices further). */
 export const RELAY_LOG_MAX = 5000;
 const THREAD_MAX = 50;
+/** The reason on a passed number share that its sender took back before it went out. */
+export const SWAP_WITHDRAWN = "consent:withdrawn";
 
 /** What the desk needs to know about a member (the Network's view; never hidden persona truth). */
 export interface RelayMember {
@@ -76,7 +78,7 @@ export interface RelayHost {
   /** The app rates photos (slop): run `appearanceLeak` on relayed text. */
   ratesPhotos: boolean;
   /** Send `body` to `to` through the Network's send path. `key` is the outbound id. "sent", "deferred" or "refused". */
-  send(to: MemberId, body: string, o: { from: MemberId; matchId: string; key: string; contact?: string; photoIds?: string[]; approvedPhotos?: ApprovedRelayPhoto[] }): "sent" | "deferred" | "refused";
+  send(to: MemberId, body: string, o: { from: MemberId; matchId: string; key: string; contact?: string; photoIds?: string[]; approvedPhotos?: ApprovedRelayPhoto[]; noDefer?: boolean }): "sent" | "deferred" | "refused";
 }
 
 /** A held item waiting for staff. `text` only while held (dropped on release or reject). */
@@ -253,6 +255,18 @@ export class RelayDesk {
     this.log({ ...r, decision: "block", contactShared: false, reasons: [...new Set([...r.reasons, "send:refused"])].sort() });
   }
 
+  /**
+   * Passed items whose outbound row ended unsent (the queue refused, parked, dropped or expired it, or the
+   * provider refused it): the log says not delivered (so no number counts as shared and a new swap can
+   * start), and the thread drops their wording (it keeps only what the other member got).
+   */
+  unsent(itemIds: ReadonlySet<string>): number {
+    let n = 0;
+    for (const r of [...this.s.log]) if (itemIds.has(r.itemId) && r.decision === "pass") { this.undelivered(r); n++; }
+    for (const t of this.s.threads) t.messages = t.messages.filter(x => !itemIds.has(x.itemId));
+    return n;
+  }
+
   private deliver(res: RelayResult, match: RelayMatch, item: RelayItem, o: RelayCallOptions, contact?: string): "sent" | "deferred" | "refused" {
     const sent = this.host.send(item.to, res.rendered, { from: item.from, matchId: match.id, key: `relay:${item.id}`, ...(contact ? { contact } : {}), ...(res.photos?.length ? { photoIds: res.photos, approvedPhotos: o.photos?.approved } : {}) });
     if (sent === "refused") return sent;
@@ -276,9 +290,11 @@ export class RelayDesk {
       // Check the request itself first (parties, state, consent, rate) with the engine; only a pass waits.
       const probe = await this.decide(this.share(ask.itemId, ask.from, to, now, mineValue), match, o);
       if (probe.decision !== "pass") return this.apply(probe, match, this.share(ask.itemId, ask.from, to, now, mineValue), o);
-      this.s.swaps.push({ itemId: ask.itemId, matchId: match.id, from: ask.from, to, at: now });
       const name = this.host.member(ask.from)?.firstName ?? "Your match";
-      this.host.send(to, swapAsk(name), { from: ask.from, matchId: match.id, key: `relay:${ask.itemId}:ask` });
+      // The question says "in the next 15 minutes": it goes now or not at all (never after quiet hours), and only an asked swap waits.
+      const asked = this.host.send(to, swapAsk(name), { from: ask.from, matchId: match.id, key: `relay:${ask.itemId}:ask`, noDefer: true });
+      if (asked !== "sent") return { itemId: ask.itemId, decision: "refused", reason: NOTICE.undelivered };
+      this.s.swaps.push({ itemId: ask.itemId, matchId: match.id, from: ask.from, to, at: now });
       return { itemId: ask.itemId, decision: "held", reason: NOTICE.swapWait };
     }
     // Both asked. Each share runs through the engine with its own consent (the other member's was given at
@@ -304,11 +320,22 @@ export class RelayDesk {
     return { itemId: ask.itemId, decision: "refused", reason: "I can't swap numbers right now." };
   }
 
-  /** The member takes back their pending number swap ("don't send my number"). Returns how many requests were removed. */
+  /**
+   * The member takes back their number ("don't send my number"): their pending swap request goes, and a
+   * share of theirs that passed but may still wait (quiet hours, the outbound queue) gets the reason
+   * `consent:withdrawn`, which final dispatch refuses (runtime.ts relayAdmission). Returns how many
+   * requests and shares it changed.
+   */
   cancelSwaps(from: MemberId): number {
     const before = this.s.swaps.length;
     this.s.swaps = this.s.swaps.filter(x => x.from !== from);
-    return before - this.s.swaps.length;
+    let n = before - this.s.swaps.length;
+    this.s.log = this.s.log.map(r => {
+      if (r.from !== from || r.kind !== "contact_share" || r.decision !== "pass" || r.reasons.includes(SWAP_WITHDRAWN)) return r;
+      n++;
+      return { ...r, reasons: [...r.reasons, SWAP_WITHDRAWN].sort() };
+    });
+    return n;
   }
 
   private share(id: string, from: MemberId, to: MemberId, at: number, value: string, consentAt = at): RelayItem {
@@ -318,7 +345,8 @@ export class RelayDesk {
   /** An item this desk already decided (replay of the same signed request). */
   private prior(itemId: string): Omit<RelayOutcome, "replayed"> | undefined {
     const r = this.s.log.find(x => x.itemId === itemId);
-    if (r) return { itemId, decision: r.decision === "pass" ? "sent" : r.decision === "hold" ? "held" : "refused", delivered: r.decision === "pass", reason: r.decision === "pass" ? "Sent." : r.decision === "hold" ? "I'm holding that one for a quick check before I pass it on." : "I can't pass that on." };
+    // A hold that is only the rate limit is answered, not kept: the member (or staff, for a selected photo with its fixed id) can try again.
+    if (r && !(r.decision === "hold" && r.reasons.every(x => x.split(":")[0] === "rate"))) return { itemId, decision: r.decision === "pass" ? "sent" : r.decision === "hold" ? "held" : "refused", delivered: r.decision === "pass", reason: r.decision === "pass" ? "Sent." : r.decision === "hold" ? "I'm holding that one for a quick check before I pass it on." : "I can't pass that on." };
     if (this.s.swaps.some(x => x.itemId === itemId)) return { itemId, decision: "held", reason: NOTICE.swapWait };
     return undefined;
   }
@@ -326,7 +354,11 @@ export class RelayDesk {
   private log(r: RelayRecord) {
     const i = this.s.log.findIndex(x => x.itemId === r.itemId);
     if (i >= 0) this.s.log[i] = r; else this.s.log.push(r);
-    if (this.s.log.length > RELAY_LOG_MAX) this.s.log.splice(0, this.s.log.length - RELAY_LOG_MAX);
+    if (this.s.log.length <= RELAY_LOG_MAX) return;
+    // The oldest rows go first, but never the row of an item that still waits for staff (its decision updates that row).
+    const waiting = new Set(this.s.held.filter(h => h.status === "held").map(h => h.itemId));
+    let drop = this.s.log.length - RELAY_LOG_MAX;
+    this.s.log = this.s.log.filter(x => drop <= 0 || waiting.has(x.itemId) || !drop--);
   }
   private thread(id: string) { return this.s.threads.find(t => t.id === id); }
   private openThread(m: RelayMatch): RelayThreadState {
