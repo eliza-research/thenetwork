@@ -399,3 +399,34 @@ test("SD-300: two delivery receipts for one row that read the same status never 
   await delivered!;await sent!;
   expect(await statusOf("sd300-reminder")).toBe("delivered");
 },60_000);
+
+test("SD-316: a signed turn that ends unresolved keeps no collected reply text",async()=>{
+  toNewYork(12,0);
+  const rt=await primary(),s=services[0]!;
+  const phone="+12125550198",memberId=await join(s,phone,"Ned");
+  await rt.unitOfWork(()=>undefined);
+  const repliesOf=async(id:string)=>(await sql`select status,replies from platform.inbound where id=${id}`)[0] as {status:string;replies:unknown[]};
+  const input=(messageId:string):TurnRequest=>({messageId,channel:"blooio",from:phone,to:null,text:"what did you find?",transport:"imessage",receivedAt:clock.now()});
+  // 1. The turn's unit collects a reply, then a later step of the turn throws.
+  const failed=await s.inbox.signed(input("sd316-fault"),"h-sd316-fault",async turn=>{
+    turn.app="friends";turn.memberId=memberId;
+    await rt.unitOfWork(()=>{rt.system(memberId as never,"sd316-fault-reply","Ana is free on Saturday at 3.","reply");});
+    expect((await repliesOf(turn.id)).replies.length).toBe(1);
+    throw new Error("synthetic fault after the collection");
+  });
+  expect(failed.status).toBe(409);
+  expect(await repliesOf("msg:blooio:sd316-fault")).toEqual({status:"unresolved",replies:[]});
+  // 2. The worker of a turn stops after its collection: the next turn of the sender reads it as unresolved.
+  clock.advance(11*60_000);
+  let release!:()=>void;const gate=new Promise<void>(r=>{release=r;});
+  const stuck=s.inbox.signed(input("sd316-stuck"),"h-sd316-stuck",async turn=>{
+    turn.app="friends";turn.memberId=memberId;
+    await rt.unitOfWork(()=>{rt.system(memberId as never,"sd316-stuck-reply","Bo can meet you on Sunday.","reply");});
+    await gate;throw new Error("the worker stopped");
+  });
+  while (!(await repliesOf("msg:blooio:sd316-stuck"))?.replies?.length) await Bun.sleep(10);
+  clock.advance(3*60_000);
+  expect((await s.inbox.signed(input("sd316-next"),"h-sd316-next",async()=>{throw new Error("not reached");})).status).toBe(409);
+  expect(await repliesOf("msg:blooio:sd316-stuck")).toEqual({status:"unresolved",replies:[]});
+  release();await stuck;
+},60_000);

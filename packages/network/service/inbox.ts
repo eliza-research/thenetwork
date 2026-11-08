@@ -13,7 +13,8 @@
 //    (outcome "cancelled_by_stop"): nothing the person wrote before STOP is acted on after it (a join
 //    answer handled late would opt them back in). Rows received after the STOP are handled as usual.
 //  - Privacy: the row keeps the sender and the event only while it waits. A handled row keeps the id,
-//    the times and the outcome.
+//    the times and the outcome. An unresolved signed turn keeps no collected reply text (no receipt can
+//    reach it: a receipt needs a done turn).
 //  - Signed turns (/internal/turn): one at a time per sender. A running turn renews its lease (arrived_at)
 //    every 30 seconds; a turn still "processing" 2 minutes after its last renewal lost its worker and reads
 //    as unresolved. An unresolved turn holds the sender back for 10 minutes at most; STOP, START and HELP are
@@ -89,7 +90,7 @@ export class Inbox {
       // Admission is checked again after acquiring the sender lock, before any write.
       if (admitUntil !== undefined && this.o.clock.now() >= admitUntil) return [];
       // A turn whose worker stopped (no completion within the lease) is unresolved, not processing forever.
-      await tx`update platform.inbound set status='unresolved',event=null,sender=null
+      await tx`update platform.inbound set status='unresolved',event=null,sender=null,replies='[]'::jsonb
         where sender_hash=${senderHash} and status='processing' and request_hash is not null and arrived_at<${new Date(now - PROCESSING_LEASE_MS)}`;
       return tx`insert into platform.inbound(id,line,sender,received_at,arrived_at,event,status,request_hash,sender_hash,network_authority)
       select ${id},null,null,${new Date(input.receivedAt)},${new Date(now)},null,'processing',${requestHash},${senderHash},${input.networkAuthority ?? null}::jsonb
@@ -123,7 +124,7 @@ export class Inbox {
         const rescued = await this.rescueCompliance(id, turn).catch(() => undefined);
         if (rescued) { this.o.log(`[inbound] compliance turn ${id} failed after its consent change: ${(e as Error).message}`); return rescued; }
       }
-      await this.o.sql`update platform.inbound set status='unresolved',event=null,sender=null where id=${id} and status='processing'`;
+      await this.o.sql`update platform.inbound set status='unresolved',event=null,sender=null,replies='[]'::jsonb where id=${id} and status='processing'`;
       await this.undo(turn);
       return {status:409,body:{error:"turn_unresolved",retryable:false}};
     } finally {
@@ -209,7 +210,7 @@ export class Inbox {
    * longer holds back the sender's later messages. Returns false when the row is not a stuck signed turn.
    */
   async resolve(id: string): Promise<boolean> {
-    const rows = await this.o.sql`update platform.inbound set status='unresolved',sender_hash=null,event=null,sender=null
+    const rows = await this.o.sql`update platform.inbound set status='unresolved',sender_hash=null,event=null,sender=null,replies='[]'::jsonb
       where id=${id} and request_hash is not null and status in ('processing','unresolved') returning id`;
     return rows.length > 0;
   }
