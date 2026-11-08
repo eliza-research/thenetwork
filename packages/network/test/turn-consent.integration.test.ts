@@ -416,4 +416,25 @@ describe.skipIf(!pgAvailable)("turn and consent", () => {
     const [row] = await sql`select arrived_at from platform.inbound where id = 'msg:blooio:sd496-slow'`;
     expect(new Date(row.arrived_at).getTime()).toBe(arrival);
   }, 60_000);
+  test("Q-turn_consent-1: a STOP whose claim staff resolve while it runs still answers its committed consent", async () => {
+    const box = new Inbox({sql, clock, log: () => {}, senderKey: x => `key:${x}`, handle: async () => "handled"});
+    const input = turn("q1-stop", "+12125559001", "STOP");
+    const id = `msg:${input.channel}:${input.messageId}`;
+    const at = clock.now();
+    const r = await box.signed(input, "q1-hash", async t => {
+      // The worker records the STOP in the ledger (as NetworkService.stop does); meanwhile staff resolve the turn.
+      t.consent = {state: "opted_out", scope: "all", app: null, at};
+      t.confirmation = {id: "sys:q1", body: APPS.ntwrk.brand.stop};
+      expect(await box.resolve(id)).toBe(true);
+      return {outcome: "handled", replies: [APPS.ntwrk.brand.stop], replyIds: ["sys:q1"], delivery: "collected", replyKind: "compliance",
+        accountEligible: false, app: null, memberId: null, reason: "stopped", consent: t.consent} as never;
+    });
+    // The gateway mirrors only the answer's consent into its send-time fence: the committed STOP must reach it.
+    const body = r.body as any;
+    expect([r.status, body.error]).toEqual([200, undefined]);
+    expect(body.consent).toMatchObject({state: "opted_out", scope: "all", app: null});
+    expect(body.replies).toEqual([APPS.ntwrk.brand.stop]);
+    // A retry of the same turn gets the same answer.
+    expect(await box.signed(input, "q1-hash", async () => { throw new Error("not run again"); })).toEqual(r);
+  }, 60_000);
 });

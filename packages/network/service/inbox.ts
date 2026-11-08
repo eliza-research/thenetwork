@@ -167,8 +167,11 @@ export class Inbox {
    * same messageId (the consent ledger and the member's unit are idempotent per message).
    */
   private async rescueCompliance(id: string, turn: InboundTurn): Promise<{status: number; body: unknown} | undefined> {
-    const [row] = await this.o.sql`select status,replies from platform.inbound where id=${id}`;
-    if (!row || row.status !== "processing") return undefined;
+    const [row] = await this.o.sql`select status,replies,response from platform.inbound where id=${id}`;
+    // A claim sealed while the worker ran (staff resolve, or a sweep after missed lease renewals) still answers a
+    // consent change that committed: the gateway's send-time fence learns of it only from this answer.
+    const sealed = row?.status === "unresolved" && row.response === null && !!turn.consent;
+    if (!row || (row.status !== "processing" && !sealed)) return undefined;
     const collected = ((typeof row.replies === "string" ? JSON.parse(row.replies) : row.replies) ?? []) as CollectedReply[];
     if (!turn.consent && !collected.length) {
       const released = await this.o.sql`delete from platform.inbound where id=${id} and status='processing' returning id`;
@@ -183,7 +186,7 @@ export class Inbox {
       app: turn.app ?? null, memberId: turn.memberId ?? null, reason: "compliance_partial", ...(turn.consent ? {consent: turn.consent} : {})};
     const rows = await this.o.sql`update platform.inbound set status='done',response=${body}::jsonb,replies=(${{items: replies}}::jsonb->'items'),
       handled_at=${new Date(this.o.clock.now())},handled_order=nextval('platform.inbound_handled_seq'),event=null,sender=null,
-      app_id=${turn.app ?? null},member_id=${turn.memberId ?? null} where id=${id} and status='processing' returning id`;
+      app_id=${turn.app ?? null},member_id=${turn.memberId ?? null} where id=${id} and (status='processing' or (${sealed} and status='unresolved' and response is null)) returning id`;
     return rows.length ? {status: 200, body} : undefined;
   }
 
