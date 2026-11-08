@@ -2534,7 +2534,12 @@ export class ConsentNetwork implements NetworkUnderTest {
     // Only members who were told about the plan hear that it changed.
     for (const id of still) if (o.bookedTold?.includes(id)) this.send(this.member(id), copy.dropNotice(m.first, keep), { type: "cancellation", proposalId: o.id }, "cancellation",
       { hook: { t: "drop_notice", oppId: o.id } });
-    if (!keep) { this.expireReveals(o); o.closedFrom = o.stage; o.closedReason = "participant dropped"; o.stage = "closed"; this.ctx.log("opportunity_closed", { proposalId: o.id, reason: "participant dropped" }); }
+    if (!keep) {
+      this.expireReveals(o); o.closedFrom = o.stage; o.closedReason = "participant dropped"; o.stage = "closed"; this.ctx.log("opportunity_closed", { proposalId: o.id, reason: "participant dropped" });
+      // The requester still wants it (another member called it off): the request waits again, and the standing retry looks again.
+      const r = o.requester && o.status.get(o.requester) === "yes" ? this.requests.find(x => x.oppId === o.id && x.memberId === o.requester && x.outcome === "booked") : undefined;
+      if (r) { r.oppId = undefined; r.outcome = "none"; this.ctx.log("request_result", { requestId: r.id, memberId: r.memberId, outcome: "waiting", reason: "participant dropped" }); }
+    }
   }
 
   /** Members the booked plan reached who neither confirmed nor dropped before it closed: an expired reveal. */
