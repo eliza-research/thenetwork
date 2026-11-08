@@ -40,6 +40,8 @@ export type RunRecord =
   | { t: number; type: "outcome"; meetingId: string; proposalId: string; at: number; attendance: Record<MemberId, { showed: boolean; cancelledWithNotice: boolean; enjoyment: number }> }
   | { t: number; type: "feedback"; memberId: MemberId; proposalId?: string; text: string; enjoyment?: number }
   | { t: number; type: "block"; from: MemberId; to: MemberId }
+  /** The simulator: a persona sent its block of another member, whatever the Network made of it ("block" is the Network's record). */
+  | { t: number; type: "block_intent"; from: MemberId; to: MemberId }
   | { t: number; type: "opt_out"; memberId: MemberId }
   /** START (or another resubscribe) after a STOP. An inbound message with keyword START means the same. */
   | { t: number; type: "opt_in"; memberId: MemberId }

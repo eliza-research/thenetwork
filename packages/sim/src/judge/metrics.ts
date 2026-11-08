@@ -307,7 +307,8 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
   };
 
   for (const r of records) {
-    if (r.type === "block") blocked.add(pairKey(r.from, r.to));
+    // A block counts from the persona's own act (block_intent, simulator), not only from the Network's record.
+    if (r.type === "block" || r.type === "block_intent") blocked.add(pairKey(r.from, r.to));
     if (r.type === "invariant_violation") violate(r.rule, r.detail);
     if (r.type === "join") { const l = line(r.memberId); l.lastIn = r.t; l.outSince = 0; addApp(r.memberId, r.app ?? (appsUsed && !personas.get(r.memberId)?.apps?.length ? "ntwrk" : undefined)); }
     if (r.type === "opt_out") line(r.memberId).optedOut = true;

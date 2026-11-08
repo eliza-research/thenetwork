@@ -25,6 +25,8 @@ export type WorldAction =
   | { do: "go_silent"; persona: MemberId }
   | { do: "force_flake"; persona: MemberId; how: "notice" | "no_show" }
   | { do: "say"; persona: MemberId; text: string }
+  /** The persona blocks another member: "block <name>" to the Network, logged as a block_intent. */
+  | { do: "block"; persona: MemberId; other: MemberId }
   /** source "player": a human playing the Network in the observatory (counted like Network output). */
   | { do: "propose"; proposal: Proposal; source?: "scenario" | "player" }
   | { do: "opt_out"; persona: MemberId };
@@ -257,6 +259,17 @@ export class World {
     return m;
   }
 
+  /**
+   * The persona sends its block of `otherId`. The World logs the block_intent itself, so the judge sees
+   * the block also when the Network does not read it (the Network's own record is "block").
+   */
+  private personaBlock(personaId: MemberId, otherId: MemberId) {
+    const mem = this.memories.get(personaId)!, other = this.personas.get(otherId);
+    if (!other) return;
+    if (!mem.blocked.includes(otherId)) mem.blocked.push(otherId);
+    if (this.personaSend(this.personas.get(personaId)!, `block ${other.name}`)) this.rec({ type: "block_intent", from: personaId, to: otherId });
+  }
+
   // ------------------------------------------------------------------ run
   /** Run the whole world: begin(), advanceTo(end), complete(). */
   async run(): Promise<WorldResult> {
@@ -310,6 +323,7 @@ export class World {
     s.on<{ personaId: MemberId }>("join", ev => this.onJoin(ev.data.personaId));
     s.on<{ msg: SimMessage }>("deliver", ev => this.onDeliver(ev.data.msg));
     s.on<{ personaId: MemberId; text: string; reaction?: Reaction }>("persona_send", ev => { this.personaSend(this.personas.get(ev.data.personaId)!, ev.data.text, ev.data.reaction); });
+    s.on<{ personaId: MemberId; otherId: MemberId }>("persona_block", ev => this.personaBlock(ev.data.personaId, ev.data.otherId));
     s.on<{ msg: SimMessage }>("network_inbound", async ev => {
       const m = ev.data.msg;
       const inbound: InboundMessage = { id: m.id, memberId: m.memberId, body: m.body, ts: m.ts, channel: m.channel, keyword: m.keyword };
@@ -419,10 +433,9 @@ export class World {
       this.scheduler.after(reply.delayMs, "persona_send", { personaId: p.id, text: reply.text, ...(reply.reaction ? { reaction: reply.reaction } : {}) });
       if (reply.block?.length) {
         for (const b of reply.block) {
-          const other = this.personas.get(b);
-          if (other && !mem.blocked.includes(b)) {
+          if (this.personas.has(b) && !mem.blocked.includes(b)) {
             mem.blocked.push(b);
-            this.scheduler.after(reply.delayMs + 2 * MINUTE, "persona_send", { personaId: p.id, text: `block ${other.name}` });
+            this.scheduler.after(reply.delayMs + 2 * MINUTE, "persona_block", { personaId: p.id, otherId: b });
           }
         }
       }
@@ -436,8 +449,10 @@ export class World {
     if (mem.joined && !mem.optedOut) {
       const ini = await this.agent.initiative(this.personaCtx(p, `ini${this.clock.now()}`));
       if (ini) {
-        if (ini.block) for (const b of ini.block) if (!mem.blocked.includes(b)) mem.blocked.push(b);
+        const blocks = (ini.block ?? []).filter(b => !mem.blocked.includes(b));
+        mem.blocked.push(...blocks);
         const m = this.personaSend(p, ini.text);
+        if (m) for (const b of blocks) this.rec({ type: "block_intent", from: id, to: b });
         if (m && ini.adversarial) this.rec({ type: "adversarial_attempt", memberId: id, kind: ini.adversarial, messageId: m.id });
       }
     }
@@ -525,6 +540,7 @@ export class World {
       case "go_silent": if (mem) mem.silentFrom = this.clock.now(); break;
       case "force_flake": if (mem) mem.forceFlake = a.how; break;
       case "say": this.personaSend(this.personas.get(a.persona)!, a.text); break;
+      case "block": this.personaBlock(a.persona, a.other); break;
       case "opt_out": this.personaSend(this.personas.get(a.persona)!, "STOP"); break;
       case "propose": {
         const p = { ...a.proposal, createdAt: this.clock.now() };

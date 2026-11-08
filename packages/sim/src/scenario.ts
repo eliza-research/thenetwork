@@ -30,6 +30,7 @@ export type ScenarioActionSpec =
   | { at: At; do: "go_silent"; persona: string }
   | { at: At; do: "force_flake"; persona: string; how?: "notice" | "no_show" }
   | { at: At; do: "say"; persona: string; text: string }
+  | { at: At; do: "block"; persona: string; other: string }
   | { at: At; do: "opt_out"; persona: string }
   | { at: At; do: "propose"; kind: OpportunityKind; participants: string[]; objective: string; city: City; explanation?: string; alternates?: string[] };
 

@@ -3,6 +3,7 @@
 // thing, and the judge must see it (docs/research/state-machines/sim.md). No world run, no model call.
 import { DAY, type MemberId, type RunRecord } from "../../packages/core/src/index.ts";
 import { computeMetrics } from "../../packages/sim/src/judge/metrics.ts";
+import { runScenario, StubNetwork, type NetworkUnderTest, type Scenario, type ScenarioPersonaSpec } from "../../packages/sim/src/index.ts";
 import { Block, expect } from "./gate.ts";
 
 /** A fixed start time. */
@@ -49,5 +50,31 @@ export async function judgeBlock(b: Block): Promise<void> {
     const recs: RunRecord[] = [...base(), persona("k", "Kai Moreno", 16), { t: T0, type: "join", memberId: "k" },
       out(T0 + DAY, "k", { type: "plan_probe", plan: { planId: "plan-1", activity: "bouldering" } }, "Up for bouldering Thursday evening with 3 others? Reply STOP to pause.")];
     expect(computeMetrics(recs).safety.minorContacts).toBe(1);
+  });
+  // SD-193 (sim S-05): the judge knew a block only from the Network's own record (ctx.recordBlock). A Network
+  // that did not read "block Ben Okafor" left no record, so it could propose the pair again with no violation.
+  await b.run("judge: a Network that ignores a member's block is blamed when it proposes the pair", async () => {
+    const adult = (ref: string, name: string, hour: number): ScenarioPersonaSpec => ({
+      ref, name, age: 31, city: "sf", homeArea: "Noe Valley", interests: ["hiking", "coffee", "board_games"], desires: ["new_friends"],
+      capacity: 0.95, responsiveness: { latencyMedianMin: 10, ignoreProb: 0 }, join: { day: 0, hour },
+    });
+    const s = {
+      name: "ignored-block", description: "Ana blocks Ben before the Network proposes anyone.", seed: 71, days: 6, stub: { introRate: 1 },
+      personas: [adult("ana", "Ana Lindqvist", 9), adult("ben", "Ben Okafor", 10)],
+      actions: [{ at: { day: 0, hour: 12 }, do: "block", persona: "ana", other: "ben" }], expectations: [],
+    } as Scenario;
+    // The push stub with its block parser turned off: it never hears the block.
+    const deaf = (): NetworkUnderTest => {
+      const stub = new StubNetwork({ seed: 71, introRate: 1 });
+      return { name: "stub-ignores-blocks", init: c => stub.init(c), tick: t => stub.tick(t), submitProposal: p => stub.submitProposal(p),
+        onInbound: m => (/^\s*block\b/i.test(m.body) ? undefined : stub.onInbound(m)) };
+    };
+    const ignored = await runScenario(s, { network: deaf });
+    expect(ignored.world.records.some(r => r.type === "proposal" && r.source === "network")).toBe(true);
+    expect(ignored.world.metrics.invariants.byRule.blocked_pair_proposed ?? 0).toBeGreaterThan(0);
+    // Control: the stub that reads the block keeps the pair apart.
+    const kept = await runScenario(s, { network: () => new StubNetwork({ seed: 71, introRate: 1 }) });
+    expect(kept.world.records.some(r => r.type === "block")).toBe(true);
+    expect(kept.world.metrics.invariants.byRule.blocked_pair_proposed ?? 0).toBe(0);
   });
 }
