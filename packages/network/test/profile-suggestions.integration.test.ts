@@ -922,9 +922,21 @@ async function contextFixture() {
   const input: LearningConsentContextRequest = { version: 1, purpose: 'network_profile_learning_v1', selectionSha256: NETWORK_LEARNING_ENTRY_SELECTION_SHA256,
     review: { version: 1, channel: 'blooio', messageId: 'consent-identity', app: 'ntwrk', memberId: 'owned-member', batchId,
       action: 'collect', commandSha256: digest(`collect ${batchId}`), networkAuthority: f.policy.authority, requestNonce: randomUUID() } };
-  const http = await reviewHttp(undefined, undefined, f.policy);
+  const http = await reviewHttp(boundIdentity, undefined, f.policy);
   return { f, http, input, async stop() { await http.stop(); f.stop(); } };
 }
+
+// SD-464: with profile review off (no identity resolver), collect answers 503; the consent context must not sign a proof either.
+test("membership context signs no proof when profile review is off", async () => {
+  const t = await contextFixture();
+  const off = await reviewHttp(undefined, undefined, t.f.policy);
+  try {
+    const r = await off.context(t.input);
+    expect(r.status).toBe(503);
+    expect(r.headers.get("x-ntwrk-svc-id")).toBeNull();
+    expect((await t.http.context(t.input)).status).toBe(200);
+  } finally { await off.stop(); await t.stop(); }
+});
 
 test("membership context derives and signs only the current Network person without consent or Cloud identity inputs", async () => {
   const t = await contextFixture();
