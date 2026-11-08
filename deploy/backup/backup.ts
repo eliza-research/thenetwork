@@ -125,6 +125,7 @@ if (import.meta.main) {
     line("error", "backup failed", { error: redactUrls((e as Error).message) });
     process.exitCode = 1;
   } finally {
-    if (!a.out) await rm(dir, { recursive: true, force: true });
+    // --local keeps the dump where the log says; an upload (or a failed one) keeps no local copy, also with --out.
+    if (!a.local) await rm(dir, { recursive: true, force: true });
   }
 }
