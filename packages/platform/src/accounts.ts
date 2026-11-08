@@ -199,7 +199,6 @@ export class Accounts {
     if (!ph || ph.hold === null) return false;
     if (decision === "same_owner") {
       await this.store.setPhoneHold(e164, null, at);
-      await this.store.touchPhone(e164, at);
       return true;
     }
     for (const m of await this.store.memberships(ph.personId)) {

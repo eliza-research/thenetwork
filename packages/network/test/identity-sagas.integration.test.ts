@@ -570,4 +570,26 @@ describe.skipIf(!pgAvailable)("identity sagas: stop half way, retry, races (Post
     expect(rows).toEqual([noticeKey(b)]);
   }, T);
 
+  test("SD-381: a text that comes in while staff lift a hold (same_owner) does not put the number on hold again", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const s = service(clock);
+    const { phone } = await heldNumber(s, clock);
+    expect(await text(s, clock, phone, "hi, it is me")).toBe("held");
+
+    // The owner texts again right after the hold is lifted, before any later write of the staff decision.
+    const t = s.people as unknown as Record<string, (...x: unknown[]) => Promise<unknown>>;
+    const real = t.setPhoneHold!.bind(s.people);
+    let between: string | undefined;
+    t.setPhoneHold = async (...x: unknown[]) => {
+      const r = await real(...x);
+      if (x[1] === null && between === undefined) between = await text(s, clock, phone, "still me");
+      return r;
+    };
+    expect(await (await staff(s, "adm-tok", "POST", "/apps/slop/holds", { phone, decision: "same_owner" })).json()).toEqual({ ok: true });
+    expect(between).toBeDefined();
+    expect(between).not.toBe("held");
+    expect(await s.accounts.held(phone)).toBe(false);
+  }, T);
+
 });

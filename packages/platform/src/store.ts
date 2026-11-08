@@ -85,7 +85,7 @@ export interface PeopleStore {
    */
   createPerson(p: { id: string; e164: string; method: PhoneMethod; at: number; lowestAge: number | null; phoneHash?: string }): Promise<Person>;
   touchPhone(e164: string, at: number): Promise<void>;
-  /** Put a number on hold for staff review (or clear the hold with null). */
+  /** Put a number on hold for staff review, or clear the hold with null (the number is then also seen at `at`). */
   setPhoneHold(e164: string, hold: PhoneHold | null, at: number): Promise<void>;
   heldPhones(): Promise<PhoneIdentity[]>;
   /** The lowest age ever stated for a keyed phone hash (no app, no person; kept after a delete of everything). */
@@ -235,7 +235,7 @@ export class MemoryPeopleStore implements PeopleStore {
     return person;
   }
   async touchPhone(e164: string, at: number) { const ph = this.phones.get(e164); if (ph) ph.lastSeenAt = at; }
-  async setPhoneHold(e164: string, hold: PhoneHold | null) { const ph = this.phones.get(e164); if (ph) ph.hold = hold; }
+  async setPhoneHold(e164: string, hold: PhoneHold | null, at?: number) { const ph = this.phones.get(e164); if (ph) { ph.hold = hold; if (hold === null && at !== undefined) ph.lastSeenAt = at; } }
   async heldPhones() { return [...this.phones.values()].filter(p => p.hold !== null).map(p => ({ ...p })); }
   async ageFloor(phoneHash: string) { return this.ageFloors.get(phoneHash)?.age; }
   private readonly ageLocks = new Map<string, Promise<unknown>>();

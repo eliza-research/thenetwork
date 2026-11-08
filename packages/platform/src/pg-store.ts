@@ -72,7 +72,9 @@ export class PgPeopleStore implements PeopleStore {
     await this.sql`update platform.phone_identities set last_seen_at = ${ts(at)} where e164 = ${e164}`;
   }
   async setPhoneHold(e164: string, hold: PhoneHold | null, at: number) {
-    await this.sql`update platform.phone_identities set hold = ${hold}, hold_at = ${hold ? ts(at) : null} where e164 = ${e164}`;
+    // Lifting a hold also marks the number seen, in the same statement: a text read in between never finds it unheld and stale.
+    if (hold === null) await this.sql`update platform.phone_identities set hold = null, hold_at = null, last_seen_at = ${ts(at)} where e164 = ${e164}`;
+    else await this.sql`update platform.phone_identities set hold = ${hold}, hold_at = ${ts(at)} where e164 = ${e164}`;
   }
   async heldPhones() {
     return (await this.sql`select * from platform.phone_identities where hold is not null order by hold_at`).map(phone);
