@@ -3752,8 +3752,17 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!this.appPack()) return input;
     const adult = new Set(input.members.filter(x => {
       const m = this.members.get(x.id);
-      return validAge(x.age) && !isMinor(x.age) && x.age >= 18 && (!m || (!m.minor && !m.minorSignal && !m.ageConflict && !m.ageUnknown && !m.minorReported));
+      return !isSeatId(x.id) && validAge(x.age) && !isMinor(x.age) && x.age >= 18 && (!m || (!m.minor && !m.minorSignal && !m.ageConflict && !m.ageUnknown && !m.minorReported));
     }).map(x => x.id));
+    // A job seat has no member state of its own: it goes in only with its manager, and is held with them.
+    const held = new Set((input.safetyHolds ?? []).map(h => h.memberId));
+    const seatHolds: NonNullable<EngineInput["safetyHolds"]> = [];
+    for (const x of input.members) {
+      const owner = seatOwnerOf(x);
+      if (!owner || !adult.has(owner)) continue;
+      adult.add(x.id);
+      if (held.has(owner)) seatHolds.push({ memberId: x.id, from: now - HOUR });
+    }
     const both = (a: MemberId, b: MemberId) => adult.has(a) && adult.has(b);
     const facets = input.facets.filter(f => adult.has(f.memberId));
     for (const m of this.members.values()) {
@@ -3772,7 +3781,7 @@ export class ConsentNetwork implements NetworkUnderTest {
           .map(([k, at]) => { const [a, b] = k.split("|") as [MemberId, MemberId]; return { from: a, to: b, type: "avoid" as const, strength: 1, explicit: false, createdAt: at }; }),
       ],
       recentProposals: (input.recentProposals ?? []).filter(p => p.participants.every(id => adult.has(id))),
-      safetyHolds: (input.safetyHolds ?? []).filter(h => adult.has(h.memberId)),
+      safetyHolds: [...(input.safetyHolds ?? []).filter(h => adult.has(h.memberId)), ...seatHolds],
       feedback: (input.feedback ?? []).filter(f => both(f.from, f.about)),
       interactions: (input.interactions ?? []).filter(x => x.participants.every(id => adult.has(id))),
       reliability: Object.fromEntries(Object.entries(input.reliability ?? {}).filter(([id]) => adult.has(id))),
