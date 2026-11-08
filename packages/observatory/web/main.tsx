@@ -57,7 +57,7 @@ function App() {
         <div className="stage">
           <GraphStage />
           <Legend />
-          {s.game?.prompts.length && s.canSim() ? <Prompts /> : null}
+          {s.game?.prompts.length && s.canSim() ? <Prompts key={s.game.prompts[0]!.id} /> : null}
           {s.ui.picks.length > 0 && s.env?.capabilities.canIntervene && s.canSim() && <ProposeTray />}
           {s.loading && !s.authNeeded && <div className="loading">Loading…</div>}
         </div>
@@ -408,8 +408,10 @@ function ProposeTray() {
   const [category, setCategory] = useState<Category>("social");
   const [objective, setObjective] = useState("");
   const [why, setWhy] = useState("");
-  const [peek, setPeek] = useState<Peek | null>(null);
+  // The oracle answer belongs to the picks it was asked for: it is not shown beside other picks.
+  const [asked, setPeek] = useState<(Peek & { picks: string }) | null>(null);
   const picks = s.ui.picks;
+  const peek = asked?.picks === picks.join(",") ? asked : null;
   const busy = s.busy();
   const group = picks.length > 2;
   const g = s.game;
@@ -438,7 +440,7 @@ function ProposeTray() {
           <input className="input grow" placeholder={group ? "Plan" : "Intro for"} value={objective} onChange={e => setObjective(e.target.value)} />
           <input className="input grow" placeholder="Why (shown to them)" value={why} onChange={e => setWhy(e.target.value)} />
           <button className="btn primary" disabled={!g || g.sparksLeft <= 0 || g.over || minor} title={minor ? "Members under 18 are never introduced" : undefined} onClick={submit}>Propose {group ? "group" : "intro"} · {g?.sparksLeft ?? 0} sparks</button>
-          <button className="btn" onClick={async () => { const r = await store.control({ type: "peek", participants: picks }); if (r.ok) setPeek(r.data as Peek); }} title="Ask the oracle (−25 points)">Peek −25</button>
+          <button className="btn" onClick={async () => { const r = await store.control({ type: "peek", participants: picks }); if (r.ok) setPeek({ ...r.data as Peek, picks: picks.join(",") }); }} title="Ask the oracle (−25 points)">Peek −25</button>
           <button className="btn ghost" onClick={() => { store.setUI({ picks: [] }); setPeek(null); }}>Clear</button>
         </div>
       )}
