@@ -32,13 +32,14 @@ test("Enter during a conversation search sends no second search, and a late answ
   const pop=()=>root.querySelector(".search-pop")?.textContent??"";
   const wait=async(check:()=>boolean)=>{for(let i=0;i<100;i++){if(check())return;await act(async()=>{await Bun.sleep(10);});}throw Error(pop()||"render timed out");};
   const enter=async(shiftKey:boolean)=>{await act(async()=>{root.querySelector("#obs-search")!.dispatchEvent(new window.KeyboardEvent("keydown",{key:"Enter",shiftKey,bubbles:true}) as any);await Bun.sleep(40);});};
-  let s:any;
+  let s:any,saved:any;
   try{
     const {store}=await import("../web/store.ts");
     // The socket and the full reload are not part of this view: only the search box and its requests.
-    s=store;s.connect=()=>{};s.load=async()=>{};
+    s=store;s.connect=()=>{};s.load=async()=>{};saved=Object.fromEntries(["mode","app","me","ui","stage"].map(k=>[k,s[k]]));
     store.mode="real";store.app="slop";store.me={id:"fixture",roles:["safety"],grants:[{role:"safety",app:"slop"}],via:"token"};
-    await act(async()=>{await import("../web/main.tsx");await Bun.sleep(40);});
+    // main.tsx renders into #root when it loads: each test file loads its own copy (the query).
+    await act(async()=>{await import(`../web/main.tsx?${import.meta.file}`);await Bun.sleep(40);});
     await act(async()=>{store.setUI({query:"alice"});await Bun.sleep(40);});
     await enter(true);
     await wait(()=>searched.length===1&&pop().includes("Searching"));
@@ -60,7 +61,14 @@ test("Enter during a conversation search sends no second search, and a late answ
   }finally{
     // Let every answer reach the page while it still has a window.
     await act(async()=>{release();await Bun.sleep(80);});
-    if(s){delete s.connect;delete s.load;}globalThis.fetch=nativeFetch;api.stop(true);await window.happyDOM.close();
+    // main.tsx keeps its React root to itself: unmount it through the root that React stored on #root.
+    const {createRoot}=await import("react-dom/client"),scratch=window.document.createElement("div");
+    const Root=Object.getPrototypeOf(createRoot(scratch as unknown as HTMLElement)).constructor;
+    const key=Object.keys(root).find(k=>k.startsWith("__reactContainer$"));
+    const page=key&&(root as any)[key]?.stateNode;
+    if(page)await act(async()=>{new Root(page).unmount();});
+    // The store is one module instance per test process: give the next file the fields this test set.
+    if(s){Object.assign(s,saved);delete s.connect;delete s.load;}globalThis.fetch=nativeFetch;api.stop(true);await window.happyDOM.close();
     for(const [name,descriptor]of prior){if(descriptor)Object.defineProperty(globalThis,name,descriptor);else delete (globalThis as any)[name];}
   }
 },30_000);

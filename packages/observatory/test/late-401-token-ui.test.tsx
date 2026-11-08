@@ -21,6 +21,8 @@ test("a late 401 for the old token does not open the prompt after a good token s
   for(const [name,value]of Object.entries({window,document:window.document,navigator:window.navigator,location:window.location,history:window.history,localStorage:window.localStorage,sessionStorage:window.sessionStorage,HTMLElement:window.HTMLElement})){
     prior.set(name,Object.getOwnPropertyDescriptor(globalThis,name));Object.defineProperty(globalThis,name,{value,writable:true,configurable:true});
   }
+  // The token the other console test files expect when this file loads the store first.
+  window.sessionStorage.setItem("obs.token","fixture-safety-token");
   const nativeFetch=globalThis.fetch;
   globalThis.fetch=((input:any,init?:RequestInit)=>nativeFetch(typeof input==="string"?new URL(input,api.url):input,init)) as typeof fetch;
   let s:any,before="";
