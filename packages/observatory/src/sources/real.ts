@@ -259,14 +259,17 @@ export class RealSource implements DataSource {
    * This app's Network state, one console row per city merged into one (mergeStateRows): the app's
    * own view (migration 0005), else the shared view with the app's ids ('<app>:<city>'; a legacy id
    * with no ':' is ntwrk). Columns come from a fixed list in this file, never from a caller. A
-   * database without either gives none.
+   * database without either gives none. `strict`: an error of the app's view other than a missing view
+   * (42P01) is thrown, not read as "no state" (the age state fails closed on a read error).
    */
-  private async stateRow(cols: string): Promise<any[]> {
+  private async stateRow(cols: string, strict = false): Promise<any[]> {
     const sql = this.sql;
     if (!sql) return [];
     const view = `network.network_state_console_${this.app}`;
-    const rows = await sql.unsafe(`select ${cols} from ${view} order by saved_at desc`).catch(() =>
-      sql.unsafe(`select ${cols} from network.network_state_console where split_part(id, ':', 1) = $1 or ($1 = 'ntwrk' and position(':' in id) = 0) order by saved_at desc`, [this.app]).catch(() => []));
+    const rows = await sql.unsafe(`select ${cols} from ${view} order by saved_at desc`).catch(e => {
+      if (strict && (e as { errno?: string }).errno !== "42P01") throw e;
+      return sql.unsafe(`select ${cols} from network.network_state_console where split_part(id, ':', 1) = $1 or ($1 = 'ntwrk' and position(':' in id) = 0) order by saved_at desc`, [this.app]).catch(() => []);
+    });
     const one = mergeStateRows(rows as Record<string, unknown>[]);
     return one ? [one] : [];
   }
@@ -415,13 +418,14 @@ export class RealSource implements DataSource {
    * How the Network treats each member's age (network.md 6.3) and their availability opt-ins: the
    * latest from its stored state (network.network_state_console), else from its events, the way the
    * game projector reads them; every change with its time from the events. A member the Network has
-   * not seen yet has no entry: the record age decides.
+   * not seen yet has no entry: the record age decides. A read error fails the load, so the last good
+   * copy stays (a lost stored flag would turn a minor into an adult in the console).
    */
   private async ageInfo(sql: SQL): Promise<AgeInfo> {
     const info: AgeInfo = { latest: new Map(), changes: new Map(), optIns: new Map() };
     const [st, ev] = await Promise.all([
-      this.stateRow("members"),
-      sql`select at, type, payload from network.events where app_id = ${this.app} and type = any(${`{${[...AGE_EVENTS, "calendar_consent", "weekly_checkin_consent"].join(",")}}`}::text[]) order by at, id`.catch(() => []),
+      this.stateRow("members", true),
+      sql`select at, type, payload from network.events where app_id = ${this.app} and type = any(${`{${[...AGE_EVENTS, "calendar_consent", "weekly_checkin_consent"].join(",")}}`}::text[]) order by at, id`,
     ]);
     for (const e of ev as any[]) {
       const id = e.payload?.memberId as string | undefined;
