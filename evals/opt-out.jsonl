@@ -102,3 +102,16 @@
 {"text": "stop slop", "label": "not_stop", "lang": "en"}
 {"text": "quit peon", "label": "not_stop", "lang": "en"}
 {"text": "remove me from the group chat with Ana?", "label": "not_stop", "lang": "en"}
+{"text": "STOP STOP", "label": "stop", "lang": "en"}
+{"text": "stop stop stop", "label": "stop", "lang": "en"}
+{"text": "stop it", "label": "stop", "lang": "en"}
+{"text": "STOP IT", "label": "stop", "lang": "en"}
+{"text": "stop now", "label": "stop", "lang": "en"}
+{"text": "Stop. Now.", "label": "stop", "lang": "en"}
+{"text": "stop already", "label": "stop", "lang": "en"}
+{"text": "stop this", "label": "stop", "lang": "en"}
+{"text": "stop everything", "label": "stop", "lang": "en"}
+{"text": "I said stop", "label": "stop", "lang": "en"}
+{"text": "I told you to stop", "label": "stop", "lang": "en"}
+{"text": "I asked you to stop", "label": "stop", "lang": "en"}
+{"text": "Stop it, I love this", "label": "not_stop", "lang": "en"}
