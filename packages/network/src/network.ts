@@ -2167,11 +2167,15 @@ export class ConsentNetwork implements NetworkUnderTest {
     // (growth, profiling, check-in) is still due, so "Sure, my friend Wren would love this" is never
     // read as a yes to the probe.
     const askOpen = this.askOpen(m, now);
-    if (askOpen || !this.timingOk(m, timing, now)) {
+    // The same for a probe they still owe an answer on (a hiring manager reviews several candidates):
+    // the member has one answer slot, and a second probe would take it from the first.
+    const owedOn = this.owedAnswer(m, o.id);
+    const owed = owedOn?.kind === "probe" ? owedOn : undefined;
+    if (askOpen || owed || !this.timingOk(m, timing, now)) {
       if (!o.deferLogged?.includes(id)) {
         o.deferLogged = [...(o.deferLogged ?? []), id];
         this.counters.deferred++;
-        this.ctx.log("send_deferred", { memberId: id, kind: "probe", oppId: o.id, until: askOpen ? m.openAskAt! + ASK_HOLD_MS : this.openAt(m, timing, now) });
+        this.ctx.log("send_deferred", { memberId: id, kind: "probe", oppId: o.id, until: askOpen ? m.openAskAt! + ASK_HOLD_MS : this.openAt(m, timing, now), ...(owed ? { owedOn: owed.oppId } : {}) });
       }
       return;
     }
@@ -4607,6 +4611,20 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   /**
+   * The yes or no this member still owes, other than on `except`: a probe that went out and was not
+   * answered (first), or a booked plan they were told about and did not confirm.
+   */
+  private owedAnswer(m: MemberState, except?: string): MemberState["awaiting"] {
+    const open = this.openOpps().filter(o => o.id !== except);
+    for (const o of open) {
+      const sent = o.sentAt?.[m.id];
+      if (o.stage === "probing" && sent !== undefined && (o.plan ? o.planRun?.answers[m.id] === "pending" : o.status.get(m.id) === "probing")) return { kind: "probe", oppId: o.id, at: sent };
+    }
+    const o = open.find(o => o.stage === "scheduled" && o.status.get(m.id) === "yes" && o.bookedTold?.includes(m.id) && !(o.confirmed ?? []).includes(m.id));
+    return o ? { kind: "booked", oppId: o.id, at: o.bookedAt?.[m.id] ?? o.createdAt } : undefined;
+  }
+
+  /**
    * A job post by text in a handled turn. A posting command starts a draft (or a close); while a draft
    * waits, a yes saves it, a no drops it, and other details correct it. Every step answers with one
    * message (a question or the read-back). False: the text is not about a posting.
@@ -4614,7 +4632,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   private postingTurn(m: MemberState, body: string): boolean {
     const waiting = m.awaiting?.kind === "posting" && m.posting ? m.posting : undefined;
     const reply = (text: string) => { this.send(m, text, { type: "info" }, "reply"); return true; };
-    const clear = () => { m.posting = undefined; if (m.awaiting?.kind === "posting") m.awaiting = undefined; };
+    // The read-back used the slot: a probe or booked plan that still waits for this member's answer gets it back.
+    const clear = () => { m.posting = undefined; if (m.awaiting?.kind === "posting") m.awaiting = this.owedAnswer(m); };
     if (waiting?.ready) {
       const yn = this.yesNoOf(body);
       if (yn === "yes") {
