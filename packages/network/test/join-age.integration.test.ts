@@ -164,3 +164,14 @@ test("SD-038: an age stated in the answer to the looking-for question counts bef
   // Dating (slop.date) is 18+: a 15-year-old is never enrolled in it from this question.
   expect(await liveMemberships(phone)).not.toContain("slop");
 }, 60_000);
+
+test("SD-065: a minor's ordinary long text reaches the agent as a single-player open turn", async () => {
+  const phone = "+12125550309";
+  const memberId = await join(phone, "friends.help", "friends", "Kai, 15");
+  for (const text of ["I enjoy hiking and cooking", "Saturday afternoons work for me", "Small groups are good"]) await say(phone, text, "friends");
+  const r = await say(phone, "Can you help me plan my science fair project about bridges?", "friends");
+  expect(r.outcome).toBe("open");
+  expect(r.memberId).toBe(memberId);
+  expect(r.context.singlePlayer).toBe(true);
+  expect(r.context.activeItems === null || r.context.activeItems.length === 0).toBe(true);
+}, 60_000);
