@@ -1945,6 +1945,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     const o = this.opps.get(oppId);
     if (!o || o.stage !== "review" || !o.review) return "not_in_review";
     if (opts.reason === "other" && !opts.note?.trim()) return "note_required";
+    // Matching off refuses every approval first, so the reason a reviewer sees does not depend on the item.
+    if ((decision === "approve" || decision === "edit") && !this.opts.matchingEnabled) return "matching_paused";
     // An item past its SLA expires unsent: the tick may not have run yet. A reject stays allowed: it sends nothing.
     if (reviewLate(decision === "reject", this.now(), o.review.deadline)) return "review_expired";
     if (decision === "approve" || decision === "edit") {
@@ -1955,7 +1957,6 @@ export class ConsentNetwork implements NetworkUnderTest {
         const rec = this.snapshotCached().members.find(x => x.id === id)?.age;
         if (!m || m.minor || (validAge(rec) && isMinor(rec))) return "participant_minor";
       }
-      if (!this.opts.matchingEnabled) return "matching_paused";
     }
     return undefined;
   }

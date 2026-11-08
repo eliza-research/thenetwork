@@ -28,7 +28,7 @@ bunx lsc check --backend=dafny packages/core/src/policy.ts      # one file
 bunx lsc regen --backend=dafny packages/core/src/policy.ts      # after a change to the TypeScript
 ```
 
-Install Dafny 4.11.0 (`brew install dafny`, or the release zip). Without Dafny the block records a tracked "skipped" gate. CI sets `REQUIRE_DAFNY=1`, so there it fails.
+Install Dafny 4.11.0 from the release zip (https://github.com/dafny-lang/dafny/releases/tag/v4.11.0). The zip has the Z3 builds that Dafny supports, and CI uses it. Do not use Homebrew's build: it uses Z3 5.x, and some proofs that pass in CI fail with it. Without Dafny the block records a tracked "skipped" gate. CI sets `REQUIRE_DAFNY=1`, so there it fails.
 
 ## Rules
 

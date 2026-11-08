@@ -35,7 +35,8 @@ lemma isBackendPath_ensures(pathname: string)
   ensures (isBackendPath(pathname) ==> ((|pathname| >= |"/"| && pathname[..|"/"|] == "/") && !((|pathname| >= |"//"| && pathname[..|"//"|] == "//"))))
   ensures (isBackendPath(pathname) ==> (((!((|pathname| >= |"/internal/"| && pathname[..|"/internal/"|] == "/internal/")) && !((|pathname| >= |"/review"| && pathname[..|"/review"|] == "/review"))) && !((|pathname| >= |"/webhooks/"| && pathname[..|"/webhooks/"|] == "/webhooks/"))) && !((|pathname| >= |"/ops/"| && pathname[..|"/ops/"|] == "/ops/"))))
 {
-  if pathname == "/api" || pathname == "/mcp" { assert pathname[..|pathname|] == pathname; DiffPrefix(pathname, pathname, "//", 1); assert pathname[..1] == "/"; }
+  if pathname == "/api" { assert pathname[..1] == "/"; assert pathname[..2] == "/a"; }
+  if pathname == "/mcp" { assert pathname[..1] == "/"; assert pathname[..2] == "/m"; }
   if |pathname| >= 5 && pathname[..5] == "/api/" { Excl(pathname, "/api/"); }
   if |pathname| >= 5 && pathname[..5] == "/mcp/" { Excl(pathname, "/mcp/"); }
   if |pathname| >= 7 && pathname[..7] == "/oauth/" { Excl(pathname, "/oauth/"); }

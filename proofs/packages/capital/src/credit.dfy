@@ -49,8 +49,31 @@ lemma creditAmount_ensures(base: real, pairMult: real, catMult: real, periodCap:
   ensures (creditAmount(base, pairMult, catMult, periodCap, inPeriod) <= base)
   ensures (((inPeriod + creditAmount(base, pairMult, catMult, periodCap, inPeriod)) <= periodCap) || (creditAmount(base, pairMult, catMult, periodCap, inPeriod) == (0 as real)))
 {
-  assert base * pairMult <= base * 1.0;
-  assert (base * pairMult) * catMult <= (base * pairMult) * 1.0;
+  // Monotonic multiplication, stated step by step: older Z3 builds do not find it alone.
+  var p := base * pairMult;
+  var want := p * catMult;
+  MulLe(base, 0.0, pairMult); MulLe(base, pairMult, 1.0);
+  assert base * 0.0 == 0.0 && base * 1.0 == base;
+  assert 0.0 <= p <= base;
+  MulLe(p, 0.0, catMult); MulLe(p, catMult, 1.0);
+  assert p * 0.0 == 0.0 && p * 1.0 == p;
+  assert 0.0 <= want <= p;
+  var r := creditAmount(base, pairMult, catMult, periodCap, inPeriod);
+  if periodCap - inPeriod <= 0.0 {
+    assert r == 0.0 * base == 0.0;
+  } else if want < periodCap - inPeriod {
+    assert r == want;
+  } else {
+    assert r == periodCap - inPeriod;
+  }
+}
+
+lemma MulLe(a: real, b: real, c: real)
+  requires a >= 0.0 && b <= c
+  ensures a * b <= a * c
+{
+  assert a * c - a * b == a * (c - b);
+  assert a * (c - b) >= 0.0;
 }
 
 function catMultOf(nCat: int, softN: real): real
