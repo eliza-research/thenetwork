@@ -119,4 +119,17 @@ describe.skipIf(!pgAvailable)("turn and consent", () => {
     // The gateway mirrors only the turn's consent field: without it, its fence keeps the STOP and blocks the welcome.
     expect(body.consent).toMatchObject({state: "opted_in", scope: "app", app: "ntwrk"});
   }, 60_000);
+  test("SD-037: a late START from a non-member, older than a STOP, reports no opt-in", async () => {
+    const phone = "+12125550237";
+    const sentAt = clock.now();
+    clock.advance(MINUTE);
+    // The STOP was sent after the START but reaches the service first.
+    expect((await (await post(turn("sd037-stop", phone, "STOP"))).json() as any).consent).toMatchObject({state: "opted_out", scope: "all"});
+    clock.advance(MINUTE);
+    const body = await (await post({...turn("sd037-start", phone, "START"), receivedAt: sentAt})).json() as any;
+    expect(body.outcome).toBe("handled");
+    expect(await service.accounts.optedIn("ntwrk", phone)).toBe(false);
+    // The gateway copies the consent field into its fence: it must not say opted_in while the ledger says opted_out.
+    expect(body.consent?.state).not.toBe("opted_in");
+  }, 60_000);
 });

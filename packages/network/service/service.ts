@@ -1132,8 +1132,11 @@ export class NetworkService implements RuntimeHost {
     if (kw === "start") {
       const person = await this.accounts.personFor(e164);
       if (await this.accounts.banned(e164, person)) { this.log(`[inbound] START from a banned number (${rt.id}): not opted in`); return "held"; }
-      await this.accounts.recordConsent({ e164, app: app.id, line, state: "opted_in", source: "keyword:start", wording: "START keyword", ref: rowId, at: this.consentAt(ev) });
-      if (turn) turn.consent = { state: "opted_in", scope: "app", app: app.id, at: this.consentAt(ev) };
+      const at = this.consentAt(ev);
+      await this.accounts.recordConsent({ e164, app: app.id, line, state: "opted_in", source: "keyword:start", wording: "START keyword", ref: rowId, at });
+      // As for a member: an older START (a late gateway retry) never undoes a newer STOP.
+      if (!(await this.accounts.optedIn(app.id, e164))) { this.log(`[inbound] START older than the last STOP (${rt.id}): not opted in`); return "handled"; }
+      if (turn) turn.consent = { state: "opted_in", scope: "app", app: app.id, at };
     }
     // One text join per phone at a time (the same lock as a web join). In a signed turn, a person who is not a
     // member of any app first gets the one-time Eliza notice, then the normal join flow.
