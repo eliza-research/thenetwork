@@ -576,7 +576,8 @@ export function createOps(d: OpsDeps) {
         if (r.posted && !r.ok) d.log.error("alert webhook failed", { notices: r.notices.length });
         if (r.held) d.log.warn("alerts held by the rate limit", { held: r.held, maxPerHour: c.maxPostsPerHour });
       }
-      if (c.heartbeatUrl) await ping(c.heartbeatUrl).then(ok => { if (!ok) d.log.warn("heartbeat ping failed"); }, e => d.log.warn("heartbeat ping failed", { error: (e as Error).message }));
+      // A round whose alert post failed is not a good round: the heartbeat goes quiet, so the uptime service alerts (SD-360).
+      if (c.heartbeatUrl && !(r?.posted && !r.ok)) await ping(c.heartbeatUrl).then(ok => { if (!ok) d.log.warn("heartbeat ping failed"); }, e => d.log.warn("heartbeat ping failed", { error: (e as Error).message }));
       return r;
     },
   };

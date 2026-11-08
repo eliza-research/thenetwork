@@ -150,7 +150,7 @@ Set these in **Variables**. Mark each **secret** row as a sealed variable. Never
 | `ALERT_WEBHOOK_URL` | **yes** | A Slack incoming webhook (or any HTTPS endpoint that takes a JSON POST) | Section 7.2. Unset: alerts are log lines only, and the boot log warns. |
 | `ALERT_WEBHOOK_FORMAT` | no | `slack` for a Slack webhook, else leave unset (`json`) | `slack` sends `{ text }` only |
 | `OPS_METRICS_TOKEN` | **yes** | 32+ random characters | `GET /ops/metrics` with `Authorization: Bearer <token>`. Unset: the route answers 404. |
-| `OPS_HEARTBEAT_URL` | **yes** | The heartbeat URL of the uptime service (section 7.1) | A GET after each ops round (every minute) |
+| `OPS_HEARTBEAT_URL` | **yes** | The heartbeat URL of the uptime service (section 7.1) | A GET after each ops round (every minute) whose alert post did not fail |
 | `COST_BUDGET_DAILY_USD`, `COST_BUDGET_DAILY_USD_<APP>` | no | The founder's daily budget, in US dollars | Section 7.3. An alert at 80% and at 100%. |
 | `COST_BLOOIO_LINE_MONTHLY_USD` | no | The line's monthly price from the Blooio contract | Unset: the line is not in the ledger. Other prices have defaults (7.3). |
 
@@ -425,7 +425,7 @@ The backend cannot report its own death. Use an external uptime service (for exa
    - 503 `"status":"database"`: the database does not answer.
    - 503 `"status":"tick_late"`: a network's tick has not finished in this process for `TICK_LATE_MS` (default 15 minutes, or 3 ticks if the tick is slower). The tick loop is stuck.
    - 503 `"status":"draining"`: a deploy or a restart. One failure is normal; two in a row are not.
-2. **Heartbeat monitor:** make a heartbeat in the same service. Put its URL in `OPS_HEARTBEAT_URL`. The backend calls it after each ops round (every minute). Set the grace period to 5 minutes. A missing heartbeat means the process is down, or its tick loop or its alert dispatcher stopped.
+2. **Heartbeat monitor:** make a heartbeat in the same service. Put its URL in `OPS_HEARTBEAT_URL`. The backend calls it after each ops round (every minute). Set the grace period to 5 minutes. A missing heartbeat means the process is down, or its tick loop or its alert dispatcher stopped, or the alert webhook did not take the last post (the round's alerts did not reach the on-call channel).
 3. Optional: a second HTTP monitor on `GET https://api.ntwrk.party/ops/metrics` with the header `Authorization: Bearer <OPS_METRICS_TOKEN>`. Expect 200.
 4. Send these monitors to the same on-call channel as the alert webhook (7.2).
 
