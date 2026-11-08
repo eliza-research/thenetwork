@@ -1382,10 +1382,12 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /**
    * Did these two members actually meet through the Network (a booked plan reached both, or a
-   * meeting was recorded)? Anonymous probes do not count: neither knew who the other was.
+   * meeting was recorded)? Anonymous probes do not count: neither knew who the other was. A plan
+   * keeps a member who said no in `participants`, and `contacted` means only "got a probe", so the
+   * booked plan must have reached both (`bookedTold`).
    */
   private metBefore(a: MemberId, b: MemberId): boolean {
-    for (const o of this.opps.values()) if (o.meetingAt !== undefined && o.participants.includes(a) && o.participants.includes(b) && o.contacted.has(a) && o.contacted.has(b)) return true;
+    for (const o of this.opps.values()) if (o.meetingAt !== undefined && o.bookedTold?.includes(a) && o.bookedTold.includes(b)) return true;
     return this.interactions.some(x => x.participants.includes(a) && x.participants.includes(b) && (x.outcome === "completed" || x.outcome === "no_show"));
   }
 
