@@ -31,8 +31,8 @@ import {
   type Category, type Facet, type Intent, type LeakOptions, type LLM, type MemberId, type ParticipationState, type Proposal, type ScoreComponents, type WorldSnapshot,
 } from "@thenetwork/core";
 import {
-  attention, buildWorld, CONTRIBUTOR_ROLES, DEFAULT_ATTENTION, localEmbed, plans, resolveConfig, resolvePlans, runEngine,
-  type AskRecord, type EngineAsk, type EngineConfigInput, type EngineInput, type EngineProposal, type FeedbackRecord, type InteractionRecord, type MatchingRunLog,
+  attention, buildWorld, CONTRIBUTOR_ROLES, DEFAULT_ATTENTION, JudgeCache, localEmbed, plans, resolveConfig, resolvePlans, runEngine,
+  type AskRecord, type EngineDeps, type EngineAsk, type EngineConfigInput, type EngineInput, type EngineProposal, type FeedbackRecord, type InteractionRecord, type MatchingRunLog,
   type AppPack, type PlansConfig, type PlansConfigInput, type World as EngineWorld,
 } from "@thenetwork/engine";
 import { HELP_TEXT, STOP_CONFIRMATION, type InboundMessage, type NetworkContext, type NetworkUnderTest, type SimMeta } from "@thenetwork/core";
@@ -3446,8 +3446,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     const queued = this.queued; this.queued = [];
     for (const p of queued) this.fromProposal(p, "player", now);
     const input = this.packInput(now);
-    const deps = { ...(this.opts.engineLLM ? { llm: this.opts.engineLLM } : {}), ...(this.opts.pack ? { pack: this.opts.pack } : {}) };
-    const { proposals, asks, runLog } = await runEngine(input, this.effectiveEngineConfig(), deps);
+    const cfg = this.effectiveEngineConfig();
+    const deps = { ...(this.opts.engineLLM ? { llm: this.opts.engineLLM, ...this.judgeCaches(cfg) } : {}), ...(this.opts.pack ? { pack: this.opts.pack } : {}) };
+    const { proposals, asks, runLog } = await runEngine(input, cfg, deps);
     // Exposure debt carries to the next run (matching-e2e-6).
     this.exposureDebt = { ...(runLog.exposureDebt ?? {}) };
     this.counters.engineRuns++; this.counters.engineProposals += proposals.length;
@@ -3482,6 +3483,16 @@ export class ConsentNetwork implements NetworkUnderTest {
   effectiveEngineConfig(): EngineConfigInput {
     const e = this.opts.engine ?? {};
     return { seed: this.opts.seed, ...e, cities: ["nyc"], judge: { ...(e.judge ?? {}), enabled: !!this.opts.engineLLM && (e.judge?.enabled ?? true) } };
+  }
+  /**
+   * The judge verdict caches, kept across daily runs (ME-008): a verdict is reused until judge.ttlMs
+   * passes or a participant's profile revision changes (the cache key holds the revisions).
+   */
+  private judgeCache?: Required<Pick<EngineDeps, "judgeCache" | "screenCache" | "deepCache">>;
+  private judgeCaches(cfg: EngineConfigInput) {
+    const ttl = resolveConfig(cfg).judge.ttlMs;
+    if (this.judgeCache?.judgeCache.ttlMs !== ttl) this.judgeCache = { judgeCache: new JudgeCache(ttl), screenCache: new JudgeCache(ttl), deepCache: new JudgeCache(ttl) };
+    return this.judgeCache;
   }
   /** Exposure debt from the last engine run, passed back on the next one (engineInput). */
   private exposureDebt: Record<MemberId, number> = {};
