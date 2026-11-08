@@ -34,3 +34,9 @@ begin
     end if;
   end loop;
 end $$;
+
+-- A safety notice (the hold notice) has its own outbound kind (SD-475): consent, the leak guard and
+-- the ban still apply; the hold, quiet hours, the unanswered streak and the line caps do not.
+alter table platform.outbound drop constraint if exists outbound_kind_check;
+alter table platform.outbound add constraint outbound_kind_check
+  check (kind in ('reply', 'compliance', 'proactive', 'safety', 'transactional'));

@@ -4933,7 +4933,7 @@ export function blooioRecipientPolicy(net: ConsentNetwork, memberOf: (to: string
     // An agent-started send about an opportunity we no longer know (deleted, or a stale id) is refused:
     // without it, the about-others checks cannot run (network-consent-20).
     if (ctx.briefId && !opp && ctx.agentInitiated) return { ok: false, reason: "unknown_brief" };
-    const kind: SendKind = !ctx.agentInitiated ? "reply" : opp ? "reveal" : "info";
+    const kind: SendKind = !ctx.agentInitiated ? "reply" : ctx.kind === "safety" ? "safety" : opp ? "reveal" : "info";
     return net.recipientPolicy(id, kind, { about: opp?.participants ?? [], proactive: ctx.kind === "proactive" });
   };
 }
