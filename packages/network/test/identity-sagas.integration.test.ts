@@ -96,8 +96,11 @@ function stopBefore<T extends object>(o: T, name: string) {
 /** The slop site's API for one browser (its own session cookie). */
 function site(s: NetworkService) {
   let cookie = "";
-  return async (path: string, body: unknown) => {
-    const res = await s.publicFetch(new Request(`http://127.0.0.1:8790${path}`, { method: "POST", headers: { host: "localhost:5102", "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body) }));
+  return async (path: string, body?: unknown) => {
+    // No body: a GET (the export).
+    const res = await s.publicFetch(new Request(`http://127.0.0.1:8790${path}`, body === undefined
+      ? { method: "GET", headers: { host: "localhost:5102", ...(cookie ? { cookie } : {}) } }
+      : { method: "POST", headers: { host: "localhost:5102", "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body) }));
     const c = res.headers.get("set-cookie"); if (c) cookie = c.split(";")[0]!;
     return { status: res.status, body: await res.json().catch(() => null) as any };
   };
@@ -498,4 +501,31 @@ describe.skipIf(!pgAvailable)("identity sagas: stop half way, retry, races (Post
     expect(await text(s, clock, phone, "leave slop.date")).toBe("left");
     expect(await photoRows(person)).toBe(0);
   }, T);
+
+  /** A slop member logs in on the site and downloads the export of this app. */
+  async function exportOf(s: NetworkService, clock: SimClock, phone: string) {
+    const api = site(s);
+    clock.advance(31_000);
+    expect((await api("/api/auth/otp/start", { phone })).status).toBe(200);
+    expect((await api("/api/auth/otp/verify", { phone, code: "123456" })).status).toBe(200);
+    const r = await api("/api/me/export");
+    expect(r.status).toBe(200);
+    return r.body;
+  }
+
+  test("SD-378: the export lists the member's photos (id, time, type and size; no bytes, no score)", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const s = service(clock);
+    const phone = newPhone();
+    expect(await text(s, clock, phone, "slop")).toBe("join_asked");
+    expect(await text(s, clock, phone, "Uma, 28")).toBe("joined");
+    const person = (await sql`select person_id from platform.phone_identities where e164 = ${phone}`)[0]!.person_id as string;
+    const at = new Date(clock.now());
+    await sql`insert into platform.photos (id, person_id, app_id, storage_key, content_type, bytes, sha256, consent_version, created_at)
+      values ('photo_uma', ${person}, 'slop', 'key_uma', 'image/jpeg', 100, 'sha', 'v1', ${at})`;
+    const out = await exportOf(s, clock, phone);
+    expect(out.network.photos).toEqual([{ id: "photo_uma", createdAt: at.getTime(), bytes: 100, contentType: "image/jpeg" }]);
+  }, T);
+
 });

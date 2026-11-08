@@ -774,7 +774,7 @@ export class NetworkService implements RuntimeHost {
           try { await f(ctx); } catch (e) { this.log(`[forget] listener failed for ${ctx.app.id}: ${(e as Error).message}`); }
         }
       },
-      onExport: (ctx: MemberHookContext) => this.exportMember(ctx.app, ctx.memberId),
+      onExport: (ctx: MemberHookContext) => this.exportMember(ctx.app, ctx.memberId, ctx.personId),
       onAgeLowered: ctx => this.ageLowered(ctx.personId, ctx.age),
     };
   }
@@ -834,8 +834,8 @@ export class NetworkService implements RuntimeHost {
     await rt.unitOfWork(n => { n.forgetMember(memberId); rt.unit.forget.add(memberId); });
   }
 
-  /** This app's own data about the member: what they told it, their own messages, and their opportunities (kind and state only). */
-  private async exportMember(app: AppInfo, memberId: MemberId) {
+  /** This app's own data about the member: what they told it, their own messages, their opportunities (kind and state only) and their photos (no bytes, no score). */
+  private async exportMember(app: AppInfo, memberId: MemberId, personId: string) {
     const a = app.id;
     const rt = this.runtimeFor(a);
     if (!rt) return null;
@@ -848,7 +848,7 @@ export class NetworkService implements RuntimeHost {
       await tx`select o.id, o.kind, o.state, o.created_at, o.meeting_at, p.role from network.participations p join network.opportunities o on o.app_id = p.app_id and o.id = p.opportunity_id
         where p.app_id = ${a} and p.member_id = ${memberId} order by o.created_at, o.id`,
     ]);
-    return { member: member[0] ?? null, facets: [...facets], intents: [...intents], presence: [...presence], messages: [...messages], opportunities: [...opps] };
+    return { member: member[0] ?? null, facets: [...facets], intents: [...intents], presence: [...presence], messages: [...messages], opportunities: [...opps], photos: await this.photos.list(personId, a) };
   }
 
   /**
