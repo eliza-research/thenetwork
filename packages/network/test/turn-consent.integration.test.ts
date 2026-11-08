@@ -456,4 +456,44 @@ describe.skipIf(!pgAvailable)("turn and consent", () => {
     const [row] = await sql`select opted_out from network.members where app_id = 'ntwrk' and id = ${m.memberId}`;
     expect(row.opted_out).toBe(true);
   }, 60_000);
+  test("Q-turn_consent-3: a STOP that lost its worker waits for a running HELP of the sender, then runs again", async () => {
+    const box = new Inbox({sql, clock, log: () => {}, senderKey: x => `key:${x}`, handle: async () => "handled"});
+    const from = "+12125559003";
+    const stop = turn("q3-stop", from, "STOP");
+    // The STOP's claim committed in a process that then died (no worker renews it).
+    await sql`insert into platform.inbound(id,line,sender,received_at,arrived_at,lease_at,event,status,request_hash,sender_hash,compliance)
+      values ('msg:blooio:q3-stop',null,null,${new Date(stop.receivedAt)},${new Date(clock.now())},${new Date(clock.now())},null,'processing','q3-stop-hash',${`key:${from}`},true)`;
+    clock.advance(3 * MINUTE);
+    const handled = {outcome: "handled", replies: [], replyIds: [], delivery: "collected", replyKind: "compliance", accountEligible: false, app: null, memberId: null, reason: "handled"} as never;
+    let retry: {status: number; body: unknown} | undefined;
+    // A HELP of the same sender sweeps the dead STOP claim and runs in the compliance slot. The gateway retries the
+    // STOP meanwhile: it must be told to retry, not refused for good (turn_unresolved is final, the STOP would be lost).
+    const help = await box.signed(turn("q3-help", from, "HELP"), "q3-help-hash", async () => {
+      retry = await box.signed(stop, "q3-stop-hash", async () => { throw new Error("must not run while HELP holds the slot"); });
+      return handled;
+    });
+    expect(help.status).toBe(200);
+    expect(retry).toEqual({status: 409, body: {error: "turn_busy", retryable: true}});
+    // The next retry claims the STOP again and runs it.
+    let ran = false;
+    const again = await box.signed(stop, "q3-stop-hash", async () => { ran = true; return handled; });
+    expect([again.status, ran]).toEqual([200, true]);
+  }, 60_000);
+  test("Q-turn_consent-3: a STOP whose claim staff resolve, and that fails before its consent change, is retried", async () => {
+    const box = new Inbox({sql, clock, log: () => {}, senderKey: x => `key:${x}`, handle: async () => "handled"});
+    const input = turn("q3-sealed", "+12125559004", "STOP");
+    const r = await box.signed(input, "q3-sealed-hash", async () => {
+      // Staff resolve the stuck-looking turn; then the turn fails before the ledger write (no consent, no reply).
+      expect(await box.resolve(`msg:${input.channel}:${input.messageId}`)).toBe(true);
+      throw new Error("database unavailable");
+    });
+    // Nothing committed and nothing answered: the gateway must retry (a final turn_unresolved would lose the STOP).
+    expect(r).toEqual({status: 409, body: {error: "turn_failed", retryable: true}});
+    let ran = false;
+    const again = await box.signed(input, "q3-sealed-hash", async () => {
+      ran = true;
+      return {outcome: "handled", replies: [], replyIds: [], delivery: "collected", replyKind: "compliance", accountEligible: false, app: null, memberId: null, reason: "stopped"} as never;
+    });
+    expect([again.status, ran]).toEqual([200, true]);
+  }, 60_000);
 });

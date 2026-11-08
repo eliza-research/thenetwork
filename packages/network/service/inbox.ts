@@ -20,7 +20,9 @@
 //    never held back (on either path); staff can resolve a stuck turn (POST /inbound/resolve). A retry of
 //    a turn that is still running is told to retry (turn_busy). A compliance turn that fails is never
 //    sealed: when its consent change committed, it answers with the consent and the confirmation; when
-//    nothing committed, the claim is released and the gateway retries the same messageId (turn_failed).
+//    nothing committed, the claim is released and the gateway retries the same messageId (turn_failed). A
+//    compliance turn is never final without an answer: while its claim can be taken again it answers turn_busy
+//    or turn_failed (retryable), and the retry claims it again.
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { NetworkAppId, TurnRequest, TurnResponse } from "../../core/src/svc/contract.ts";
 import type { SQL } from "bun";
@@ -106,12 +108,14 @@ export class Inbox {
         returning id`);
     });
     if (!wrote.length) {
-      const [prior] = await this.o.sql`select request_hash,status,response from platform.inbound where id=${id}`;
+      const [prior] = await this.o.sql`select request_hash,status,response,handled_at from platform.inbound where id=${id}`;
       if (!prior) return {status:409,body:{error:"turn_busy",retryable:true}};
       if (prior.request_hash !== requestHash) return {status:409,body:{error:"turn_conflict",retryable:false}};
       if (prior.status === "done" && prior.response) return {status:200,body:prior.response};
       // The same turn is still running (a gateway timeout and its retry): the caller may try again; the worker's answer is kept for that replay.
       if (prior.status === "processing") return {status:409,body:{error:"turn_busy",retryable:true}};
+      // A compliance turn that never answered waits for another compliance turn of the sender: a later retry claims it again.
+      if (keyword && this.reclaimable(prior)) return {status:409,body:{error:"turn_busy",retryable:true}};
       return {status:409,body:{error:"turn_unresolved",retryable:false}};
     }
     const turn: InboundTurn = {id,from:input.from};
@@ -133,10 +137,23 @@ export class Inbox {
       }
       await this.o.sql`update platform.inbound set status='unresolved',event=null,sender=null where id=${id} and status='processing'`;
       await this.undo(turn);
+      if (keyword) {
+        // A compliance turn is never final without an answer: another run of the same request answered it (replay that
+        // answer), or its claim is unanswered or released by another run, and the gateway's retry claims it again (the
+        // ledger is idempotent per message).
+        const [row] = await this.o.sql`select status,response,handled_at from platform.inbound where id=${id}`;
+        if (row?.status === "done" && row.response) return {status:200,body:row.response};
+        if (!row || this.reclaimable(row)) return {status:409,body:{error:"turn_failed",retryable:true}};
+      }
       return {status:409,body:{error:"turn_unresolved",retryable:false}};
     } finally {
       clearInterval(renew);
     }
+  }
+
+  /** A signed turn's claim that a compliance retry can take again: unresolved, never handled, no answer stored. */
+  private reclaimable(row: {status: string; response: unknown; handled_at: unknown}): boolean {
+    return row.status === "unresolved" && row.response === null && row.handled_at === null;
   }
 
   /**
