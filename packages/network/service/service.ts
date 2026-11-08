@@ -546,7 +546,9 @@ export class NetworkService implements RuntimeHost {
       where m.app_id = ${rt.app.id} and m.home_city = any(${tx.array([...this.conversationCities(rt)], "TEXT")}) and m.account_status in ('active', 'paused', 'restricted')
       group by m.id, m.age, m.joined_at order by m.id`) as any[];
     const members: BiasMember[] = rows.map(r => ({ id: r.id, age: r.age, joinedAt: r.joined_at ? new Date(r.joined_at).getTime() : null, tags: r.tags ?? [] }));
-    const r = biasReport(rt.id, rt.app.id, members, [...rt.net.opps.values()], now);
+    // The opportunities of the newest stored state, under the Network lock: afterTick runs outside the lock,
+    // and a unit that failed to save leaves changes in memory that the database never held (SD-448).
+    const r = await rt.readState(n => biasReport(rt.id, rt.app.id, members, [...n.opps.values()], now));
     // afterTick runs after the tick lock is released, so another replica can be here too: one writer per
     // network at a time, and the week is checked again inside that lock (SD-446).
     const stored = await rt.scoped(async tx => {
