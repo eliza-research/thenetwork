@@ -25,8 +25,8 @@ export function ageRangeOf(p: SlopProfile, o: SlopPackOptions): [number, number]
 }
 
 /** Hard-filter fields that are missing (ask instead of proposing; one message asks them all). */
-export function missingFields(p: SlopProfile, o: SlopPackOptions): ("orientation" | "age_range" | "distance" | "zip")[] {
-  const out: ("orientation" | "age_range" | "distance" | "zip")[] = [];
+export function missingFields(p: SlopProfile, o: SlopPackOptions): ("orientation" | "age_range" | "distance" | "zip" | "location")[] {
+  const out: ("orientation" | "age_range" | "distance" | "zip" | "location")[] = [];
   if (!p.is || !p.seeks.length) out.push("orientation");
   if (!o.asks) return out;
   if (!ageRangeOf(p, o)) out.push("age_range");
@@ -34,6 +34,8 @@ export function missingFields(p: SlopProfile, o: SlopPackOptions): ("orientation
   // A zip we cannot place: ask for a nearby zip or neighborhood rather than fail or guess. After a
   // week without an answer the market's anchor cell stands in (profile.cellIn), never a lockout.
   if (p.zipUnknown && !p.silentAsks.includes("zip")) out.push("zip");
+  // No zip and no neighborhood at all: ask for one, the same way (the anchor cell is not a location).
+  else if (!p.cell && !p.zipUnknown && !p.silentAsks.includes("location")) out.push("location");
   return out;
 }
 
