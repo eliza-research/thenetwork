@@ -84,10 +84,10 @@ describe.skipIf(!pgAvailable)("notify deliveries on Postgres", () => {
     const texts: string[][] = [];
     const planned = new Map<string, string[]>();
     class Replica extends PgNotifyStore {
-      constructor(private readonly onReread?: () => Promise<void>) { super(url); }
+      constructor(private onReread?: () => Promise<void>) { super(url); }
       override async getItems(ids: string[]) {
         const hook = this.onReread;
-        if (hook) { (this as { onReread?: unknown }).onReread = undefined; await hook(); }
+        if (hook) { this.onReread = undefined; await hook(); }
         return super.getItems(ids);
       }
       override async recordDelivery(d: DeliveryRecord) {
