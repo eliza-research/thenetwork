@@ -574,7 +574,7 @@ export class NetworkService implements RuntimeHost {
     if (n) this.log(`[inbound] ${n} waiting inbound message(s) handled`);
   }
 
-  /** Retention (audit platform-18): expired OTP challenges and sessions, old rate windows and stale text flows. */
+  /** Retention (audit platform-18): expired OTP challenges and sessions, old rate windows, stale text flows and unfinished photo rows. */
   async purge() {
     for (const app of new Set([...this.runtimes.values()].map(rt => rt.app.id))) {
       await this.profileSuggestions.expirePending(app, this.clock.now()).catch(e => this.log(`[purge] profile suggestions failed: ${(e as Error).message}`));
@@ -583,6 +583,9 @@ export class NetworkService implements RuntimeHost {
     // The inbox keeps handled ids a week (dedupe); the line keeps no counters for an address that is nobody's phone.
     await this.inbox.purge(this.clock.now() - 7 * DAY).catch(e => this.log(`[purge] inbox failed: ${(e as Error).message}`));
     await this.lineAdapter()?.purge?.().catch(e => { this.log(`[purge] line counters failed: ${(e as Error).message}`); return 0; });
+    // Photo rows a crash left hidden (an upload or a delete that did not finish): bytes, rating and row go.
+    await this.photos.sweep().catch(e => this.log(`[purge] photos failed: ${(e as Error).message}`));
+    await this.reconcileAges().catch(e => this.log(`[purge] age reconcile failed: ${(e as Error).message}`));
     if (n) this.log(`[purge] removed ${n} expired platform row(s)`);
     return n;
   }
@@ -787,10 +790,11 @@ export class NetworkService implements RuntimeHost {
       onJoin: (ctx: JoinHookContext) => this.joined(ctx),
       onStop: ctx => this.stopped(ctx.app, ctx.personId, ctx.scope),
       onForget: async (ctx: MemberHookContext) => {
-        // The app's photos go first (leave, delete everything, a new owner of the number). A banned
-        // person's photos stay for the safety team (see ban): a leave or a delete does not remove them.
-        if (!(await this.personBanned(ctx.personId))) await this.photos.deleteFor(ctx.personId, ctx.app.id);
+        // The Network forgets the member first, so an upload in flight is refused when it adds its row
+        // (no member age); then the app's photos go (leave, delete everything, a new owner of the number).
+        // A banned person's photos stay for the safety team (see ban): a leave or a delete does not remove them.
         await this.forget(ctx.app, ctx.memberId, ctx.personId);
+        if (!(await this.personBanned(ctx.personId))) await this.photos.deleteFor(ctx.personId, ctx.app.id);
         // Other parts of the backend that hold data about the person in this app (the MCP server's OAuth grants).
         // A failure stops the leave or the delete before the membership goes, so the person can try again.
         for (const f of this.forgetListeners) await f(ctx);
@@ -814,6 +818,23 @@ export class NetworkService implements RuntimeHost {
       if (!rt || m.state === "removed") continue;
       await rt.scoped(tx => tx`update network.members set age = least(coalesce(age, ${age}), ${age}) where app_id = ${m.app} and id = ${m.memberId}`);
     }
+  }
+
+  /**
+   * A person whose lowest age is under 18 but who still has a photo, or a member age above it on an app:
+   * the age hook did not finish (a crash after noteAge commits; recordAge runs it again only on a new
+   * stated age). Run it again: photos, ratings and member ages on every app.
+   */
+  private async reconcileAges() {
+    const due = new Map<string, number>();
+    for (const r of await this.sql`select distinct p.id, p.lowest_age from platform.photos ph join platform.people p on p.id = ph.person_id
+      where ph.deleted_at is null and p.lowest_age < 18` as any[]) due.set(r.id, r.lowest_age);
+    for (const app of new Set([...this.runtimes.values()].map(rt => rt.app.id))) {
+      const rows = await this.runtimeFor(app)!.scoped(tx => tx`select distinct p.id, p.lowest_age from network.members m join platform.people p on p.id = m.person_id
+        where m.app_id = ${app} and m.account_status <> 'removed' and p.lowest_age < 18 and (m.age is null or m.age > p.lowest_age)`) as any[];
+      for (const r of rows) due.set(r.id, r.lowest_age);
+    }
+    for (const [personId, age] of due) await this.ageLowered(personId, age);
   }
 
   /** A web join (POST /api/join): the member row, then the welcome through the normal send path. */
@@ -1815,8 +1836,8 @@ export class NetworkService implements RuntimeHost {
       return 1;
     });
     const r: ActionResult = n ? { ok: true } : { ok: false, reason: "unknown_member" };
-    // A failed age check: no rating of looks may stay on this app (adults only, decision 9).
-    if (n && check === "age" && result === "fail") { const pid = await this.personOfMember(rt, memberId); if (pid) await this.dropRatings(pid, rt.app.id); }
+    // A failed age check: no photo and no rating of looks may stay on this app (adults only, decision 9).
+    if (n && check === "age" && result === "fail") { const pid = await this.personOfMember(rt, memberId); if (pid) { await this.photos.deleteFor(pid, rt.app.id); await this.dropRatings(pid, rt.app.id); } }
     await this.audit.write({ ...base, at: this.clock.now(), ok: r.ok, detail: { safety: "verify", check, result, phase: "result", ...(r.ok ? {} : { reason: r.reason }) } }).catch(e => this.log(`[audit] result row failed: ${(e as Error).message}`));
     return r;
   }
