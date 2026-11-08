@@ -179,6 +179,8 @@ Hand-written summary of generated agent reports. Date: 2026-11-08.
 - `packages/engine/src/packs/friends/planner.ts:215-298`: repeat alternates, crew sessions and crew offers have no block check, and a crew session does not read `taken`. Only the friends sim calls the planner, so production sends are not affected.
 - `packages/core/src/chatJson.ts:79`: `attempts: 0` makes `chatJson()` throw `undefined`.
 
+**Checks after the gap closing** (main session, Bun 1.4.2, same commands as section 5): all 19 files in LemmaScript-files.txt give 0 Dafny errors, and no proved file has `assume`, `havoc` or `{:axiom}`. The Quint checker (seed 0x5eed, rust backend) gives 13 models and 0 failures. `bun run typecheck` is clean. `bun run test:integration` gives 788 pass, 8 skip and 0 fail. `bun run test:e2e` gives 42 pass, 1 skip and 0 fail. `bun run sim` (one full run, no model calls) gives 327 of 327 blocking gates and 14 tracked gates off target, in 180.3 s.
+
 ## 7. Not done, and limits
 
 - `tests/e2e/auth-feedback.e2e.test.ts` skipped, because Playwright is not installed on this machine (`PLAYWRIGHT_MODULE` is not set). The callback path of `mountAuth` is covered by `api-security.test.ts`.
