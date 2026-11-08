@@ -829,9 +829,12 @@ export class RealSource implements DataSource {
     return this.afterAction(await this.service.safety(actor, a));
   }
 
-  /** A staff action the service applied, or may have applied (a timeout): read the database again so every viewer sees it. */
+  /**
+   * After a staff action, read the database again so every viewer sees the result. A refusal can also
+   * change the state: an approval that the re-check invalidated closes the item, and a timeout may have acted.
+   */
   private async afterAction(r: ControlResult): Promise<ControlResult> {
-    if (r.ok || r.code === "not_in_review" || r.code === "service_timeout") { await this.loading; await this.reload(); this.push(); }
+    await this.loading; await this.reload(); this.push();
     return r;
   }
 
