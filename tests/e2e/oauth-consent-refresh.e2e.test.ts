@@ -148,4 +148,24 @@ describe.skipIf(!pgAvailable)("OAuth consent, refresh and assistant signals", ()
     expect(new URL(again.headers.get("location")!).searchParams.get("code")).toBeString();
     expect(await grants()).toBe(1);
   }, T);
+
+  // SD-390: the sweep deletes a registered client only when it never got a grant (packages/mcp/README.md
+  // section 3). Before the fix it deleted any day-old client with no grant row left: after a revoked
+  // grant was deleted, the connector's client_id answered "not registered".
+  // This test moves the clock 32 days, so it stays last in the file.
+  test("a client whose grant was revoked and deleted stays registered", async () => {
+    const phone = newPhone(), b = new Browser();
+    expect((await webJoin(st, "friends", phone, { age: 30, browser: b })).res.status).toBe(200);
+    const c = await connectMcp(st, "friends", phone, { browser: b });
+    expect(c.token?.refresh_token, c.html.slice(0, 300)).toBeString();
+    expect((await st.site("friends", "/oauth/revoke", { form: { client_id: c.client.client_id, token: c.token!.refresh_token } })).status).toBe(200);
+
+    st.clock.advance(32 * 86_400_000);
+    // Any OAuth request runs the sweep (at most once in 10 minutes).
+    expect((await st.site("friends", "/.well-known/oauth-authorization-server")).status).toBe(200);
+    expect((await sql`select id from oauth.grants where client_id = ${c.client.client_id}`).length).toBe(0);
+    expect((await sql`select id from oauth.clients where id = ${c.client.client_id}`).length).toBe(1);
+    const q = new URLSearchParams({ response_type: "code", client_id: c.client.client_id, redirect_uri: REDIRECT, code_challenge: pkceS256(VERIFIER), code_challenge_method: "S256", state: "e2e", resource: `${st.sites.friends.origin}/mcp` });
+    expect(await (await st.site("friends", `/oauth/authorize?${q}`, { browser: new Browser() })).text()).not.toContain("not registered");
+  }, T);
 });

@@ -298,7 +298,7 @@ export class MemoryOAuthStore implements OAuthStore {
     for (const [k, t] of this.tokens) if (t.expiresAt <= at) this.tokens.delete(k);
     for (const [k, w] of this.windows) if (w.start + w.windowMs <= at) this.windows.delete(k);
     for (const [k, g] of this.grants) if (Math.min(g.revokedAt ?? Infinity, g.expiresAt) <= at - GRANT_KEEP_MS) this.dropGrant(k);
-    const used = new Set([...this.grants.values()].map(g => g.clientId));
+    const used = new Set([...this.grants.values()].map(g => g.clientId).concat(this.rows.filter(r => r.kind === "consent_granted").map(r => r.clientId!)));
     for (const [k, c] of this.clients) if (!used.has(k) && c.createdAt <= at - CLIENT_UNUSED_MS) this.clients.delete(k);
   }
 
