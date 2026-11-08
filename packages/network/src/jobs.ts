@@ -36,9 +36,9 @@ export interface JobPosting {
   createdAt: number; updatedAt: number;
 }
 
-/** What a manager said so far (plain JSON in MemberState.posting). `close`: the draft closes `id`. */
+/** What a manager said so far (plain JSON in MemberState.posting). `close`: the draft closes `id`; `filled`: because the manager filled it. */
 export interface PostingDraft {
-  id?: string; close?: boolean;
+  id?: string; close?: boolean; filled?: boolean;
   title?: string; family?: string; seniority?: number; openings?: number; payMin?: number; payMax?: number;
   mode?: PeonMode; area?: string; must?: { skill: string; level: number }[]; nice?: string[]; sponsors?: boolean;
   /** Questions asked for this draft (at most 2 before it is dropped). */
@@ -60,6 +60,7 @@ const AREAS = [...BOROUGHS, ...NEIGHBORHOODS.map(n => n.name.toLowerCase())].sor
 /** A text that starts or changes a job post (a posting command). */
 export const POSTING_COMMAND = /^\s*(?:(?:we(?:'| a)?re|i(?:'| a)?m|we are|i am|now)\s+hiring\b|hiring\s*:|post(?:ing)?\s+(?:a\s+)?(?:new\s+)?job\b|new\s+job\s+post|job\s+post(?:ing)?\s*:|update\s+(?:my|our|the)\s+[\w ]{0,40}?(?:job|post|posting|role)\b|(?:close|take\s+down|remove)\s+(?:my|our|the)\s+[\w ]{0,40}?(?:job|post|posting|role)\b|we\s+(?:filled|hired\s+for)\s+(?:the|our|my)\b)/i;
 const CLOSE_COMMAND = /^\s*(?:(?:close|take\s+down|remove)\s+(?:my|our|the)\b|we\s+(?:filled|hired\s+for)\b)/i;
+const FILLED_COMMAND = /^\s*we\s+(?:filled|hired\s+for)\b/i;
 
 /** Read job-post fields from one text (rules only). Fields not in the text stay undefined. */
 export function parsePosting(body: string): PostingDraft {
@@ -82,9 +83,9 @@ export function parsePosting(body: string): PostingDraft {
   const lvl = /\blevel\s*([1-5])\b/i.exec(t); if (lvl) d.seniority = Number(lvl[1]);
   const list = (s: string) => s.split(/,|\band\b|\/|;/i).map(x => x.trim().toLowerCase()).filter(x => x && x.length <= 40 && !/^(?:a|an|the|some)$/.test(x));
   const must = /\bmust(?:[- ]haves?|\s+have|\s+know)?\s*:?\s*([^.;]+?)(?=\.|;|\bnice to have\b|$)/i.exec(t);
-  if (must) d.must = list(must[1]!).map(x => { const m = /^(.*?)\s*(?:\(?(?:level\s*)?([0-5])\)?)$/i.exec(x); return { skill: slug(m?.[1] || x), level: m?.[2] ? Number(m[2]) : 2 }; }).filter(x => x.skill);
+  if (must) d.must = list(must[1]!).map(x => { const m = /^(.*?)\s*(?:\(?(?:level\s*)?([0-5])\)?)$/i.exec(x); return { skill: slug(m?.[1] || x), level: m?.[2] ? Number(m[2]) : 2 }; }).filter((x, i, all) => x.skill && all.findIndex(y => y.skill === x.skill) === i);
   const nice = /\bnice[- ]to[- ]haves?\s*:?\s*([^.;]+)/i.exec(t);
-  if (nice) d.nice = list(nice[1]!).map(slug).filter(Boolean);
+  if (nice) d.nice = [...new Set(list(nice[1]!).map(slug).filter(Boolean))];
   if (/\b(can|will|we)\s+sponsor\b|\bsponsorship (?:available|ok|yes)\b/i.test(t)) d.sponsors = true;
   else if (/\bno (?:visa )?sponsorship\b|\b(?:can(?:'|no)?t|cannot|won'?t|don'?t) sponsor\b/i.test(t)) d.sponsors = false;
   return d;
@@ -154,14 +155,15 @@ export function readPostingText(body: string, ctx: { draft?: PostingDraft; posti
     const lower = body.toLowerCase();
     const named = open.filter(p => lower.includes(p.title.toLowerCase()));
     const pick = named.length === 1 ? named[0] : open.length === 1 ? open[0] : undefined;
-    if (!pick) return { draft: { close: true }, text: POSTING_COPY.whichToClose(open.map(p => p.title)), ready: false };
-    return { draft: { close: true, id: pick.id, title: pick.title }, text: POSTING_COPY.readBackClose(pick.title), ready: true };
+    const filled = FILLED_COMMAND.test(body) ? { filled: true } : {};
+    if (!pick) return { draft: { close: true, ...filled }, text: POSTING_COPY.whichToClose(open.map(p => p.title)), ready: false };
+    return { draft: { close: true, ...filled, id: pick.id, title: pick.title }, text: POSTING_COPY.readBackClose(pick.title), ready: true };
   }
   if (ctx.draft?.close && !command) {
     const lower = body.toLowerCase();
     const pick = ctx.postings.filter(p => p.active && lower.includes(p.title.toLowerCase()));
     if (pick.length !== 1) return undefined;
-    return { draft: { close: true, id: pick[0]!.id, title: pick[0]!.title }, text: POSTING_COPY.readBackClose(pick[0]!.title), ready: true };
+    return { draft: { close: true, ...(ctx.draft.filled ? { filled: true } : {}), id: pick[0]!.id, title: pick[0]!.title }, text: POSTING_COPY.readBackClose(pick[0]!.title), ready: true };
   }
   const read = parsePosting(body);
   const base: PostingDraft = command && !/^\s*update\b/i.test(body) ? { id: ctx.newId } : { ...(ctx.draft ?? {}) };
@@ -182,10 +184,10 @@ export function readPostingText(body: string, ctx: { draft?: PostingDraft; posti
   return { draft: merged, text: POSTING_COPY.readBack(merged), ready: true };
 }
 
-/** The posting a confirmed draft saves (an update keeps what the draft does not change). */
+/** The posting a confirmed draft saves (an update keeps what the draft does not change). A closed post is final: undefined. */
 export function postingFromDraft(d: PostingDraft, managerId: MemberId, now: number, prev?: JobPosting): JobPosting | undefined {
-  if (!d.id) return undefined;
-  if (d.close) return prev ? { ...prev, status: "closed", closedReason: "closed", updatedAt: now } : undefined;
+  if (!d.id || (prev && prev.status !== "active")) return undefined;
+  if (d.close) return prev ? { ...prev, status: "closed", closedReason: d.filled ? "filled" : "closed", updatedAt: now } : undefined;
   const title = d.title ?? prev?.title;
   const payMin = d.payMin ?? prev?.payMin, payMax = d.payMax ?? prev?.payMax;
   if (!title || payMin === undefined || payMax === undefined) return undefined;
@@ -204,7 +206,8 @@ export function postingProblem(p: JobPosting): string | undefined {
   if (!Number.isInteger(p.openings) || p.openings < 1 || p.openings > MAX_OPENINGS) return "invalid_openings";
   if (!Number.isFinite(p.payMin) || !Number.isFinite(p.payMax) || p.payMin < 10 || p.payMax < p.payMin || p.payMax > 999) return "pay_range_required";
   if (!["onsite", "hybrid", "remote"].includes(p.mode)) return "invalid_mode";
-  if (p.must.length > 12 || p.nice.length > 12 || p.must.some(m => !m.skill || !Number.isInteger(m.level) || m.level < 0 || m.level > 5)) return "invalid_skills";
+  if (p.must.length > 12 || p.nice.length > 12 || p.must.some(m => !m.skill || !Number.isInteger(m.level) || m.level < 0 || m.level > 5)
+    || new Set(p.must.map(m => m.skill)).size < p.must.length || new Set(p.nice).size < p.nice.length) return "invalid_skills";
   return undefined;
 }
 

@@ -77,6 +77,7 @@ import { LEARNING_CONSENT_CONTEXT_PATH } from "../../core/src/svc/learning-conse
 import { learningConsentContextEndpoint } from "./learning-consent-context-endpoint.ts";
 import { SUGGESTION_PATH, profileSuggestionEndpoint, type SuggestionIdentityResolver } from "./profile-suggestion-endpoint.ts";
 import { RELAY_PATH, relayClassifierFromEnv, relayEndpoint } from "./relay-endpoint.ts";
+import { jobPostingRoutes } from "./postings.ts";
 import type { RelayClassifierHook } from "../../engine/src/relay.ts";
 import type { ChannelEvent } from "../../blooio/src/types.ts";
 // The Observatory's staff auth (per-app role grants) and audit sink, so the console and the service agree.
@@ -2472,6 +2473,9 @@ export class NetworkService implements RuntimeHost {
       const user = this.reviewerOfRecord(req, auth.user);
       // A role for this app (role@app or role@*); admin for the app passes every check.
       const need = (roles: StaffRole[]) => (allowed(user, roles, rt.app.id, "real") ? undefined : json({ ok: false, code: "forbidden", error: `needs role ${roles.map(r => `${r}@${rt.app.id}`).join(" or ")}` }, 403));
+      // peon job postings and employer verification (service/postings.ts): undefined for any other path.
+      const posting = await jobPostingRoutes({ rt, user, need, audit: e => this.audit.write(e), now: () => this.clock.now() })(req, path);
+      if (posting) return posting;
       if (req.method === "GET" && path === "/health") {
         const no = need(["admin", "reviewer", "safety", "analyst"]); if (no) return no;
         return json(await this.health(rt, user));

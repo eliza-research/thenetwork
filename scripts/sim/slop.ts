@@ -177,6 +177,23 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
   const results = new Map<number, Promise<EngineResult>>();
   const result = (s: number) => { if (!results.has(s)) results.set(s, run(inputs.get(s)!, s)); return results.get(s)!; };
 
+  // SD-207: slopAssign did not read the interruption budget, so a member at the weekly limit was picked
+  // again and took the partner's one slot for the run (the Network gate then dropped the pair).
+  await b.run("conformance slop: selection respects the interruption budget (members at the limit are never picked)", async () => {
+    const limits = resolveConfig(SLOP_ENGINE_CONFIG).budgets;
+    for (const s of SEEDS) {
+      const input = inputs.get(s)!, base = await result(s);
+      const full = new Set(base.proposals.flatMap(p => p.participants));
+      expect(full.size).toBeGreaterThan(0);
+      const state = new Map(input.members.map(m => [m.id, m.state] as const));
+      const recentProposals = [...(input.recentProposals ?? []), ...[...full].flatMap(id => Array.from({ length: limits[state.get(id) ?? "normal"].limit }, (_, k) => ({
+        ...base.proposals[0]!, id: `budget-${id}-${k}`, participants: [id, `budget-other-${id}-${k}`], alternates: [], createdAt: input.now - (k + 1) * DAY,
+      })))];
+      const r = await run({ ...input, recentProposals }, s);
+      for (const p of r.proposals) for (const id of p.participants) expect(full.has(id)).toBe(false);
+    }
+  });
+
   await b.run("conformance slop: stated filters respected both ways (orientation, age ranges, dealbreakers, mutual radius)", async () => {
     for (const s of SEEDS) {
       const input = inputs.get(s)!, P = slopProfiles(input);

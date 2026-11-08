@@ -132,10 +132,11 @@ export function makeSlopPack(over: DeepPartial<SlopPackOptions> = {}): AppPack &
         }
         // Iteration 2: a small pool -> ask once whether they would consider a wider radius.
         if (o.widen.enabled && (runDegree.get(w)?.get(id) ?? Infinity) <= o.widen.maxDegree && (limitMiles(p, o) ?? Infinity) < o.widen.miles && !(p.askCounts.slop_widen ?? 0)) add("slop_widen", intent?.id);
-        // Compatibility questions (one message; never re-asked within 3 weeks): basics, then type.
+        // Compatibility questions (one message; never re-asked within 3 weeks, and at most the per-question
+        // cap: "no dealbreakers" and a type leave no tag, so these can stay unanswered for good): basics, then type.
         if (!o.compatAsks) return;
-        if (needsBasics(p) && w.now - lastAsk(["slop_basics"]) >= 21 * DAY) add("slop_basics", intent?.id);
-        if (o.typeAsk && (!p.wants || !p.self) && w.now - lastAsk(["slop_type"]) >= 21 * DAY) add("slop_type", intent?.id);
+        if (needsBasics(p) && w.now - lastAsk(["slop_basics"]) >= 21 * DAY && !capped("slop_basics")) add("slop_basics", intent?.id);
+        if (o.typeAsk && (!p.wants || !p.self) && w.now - lastAsk(["slop_type"]) >= 21 * DAY && !capped("slop_type")) add("slop_type", intent?.id);
       },
     },
     consent: {

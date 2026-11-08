@@ -816,7 +816,8 @@ export function recordProbeAnswer(f: ProbeFlow, member: MemberId, yes: boolean):
   let stage: ProbeFlow["stage"] = f.stage;
   if (f.parallel) stage = !yes ? "closed" : yesN === Object.keys(answers).length ? "revealed" : f.stage;
   else if (!f.group) {
-    if (member === f.first) stage = yes ? "probing_partners" : "closed";
+    // A one-participant proposal (network_growth) has no partner to probe: its yes completes the flow.
+    if (member === f.first) stage = !yes ? "closed" : f.partners.length ? "probing_partners" : "revealed";
     else stage = yes && answers[f.first] === "yes" ? "revealed" : "closed";
   } else if (yesN >= f.quorum) stage = "revealed";
   else if (yesN + open < f.quorum) stage = "closed";

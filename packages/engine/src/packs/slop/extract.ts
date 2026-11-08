@@ -936,7 +936,8 @@ export function slopOnboardTags(p: SlopOnboarding): { tags: SlopTag[]; replaces:
   if (V.hasKids) { add(`slop:has_kids:${V.hasKids.value}`, "fact", "agent_private", V.hasKids.confidence); replaces.push("slop:has_kids:"); }
   if (V.wantsKids) { add(`slop:wants_kids:${V.wantsKids.value}`, "fact", "agent_private", V.wantsKids.confidence); replaces.push("slop:wants_kids:"); }
   if (V.religionImportance) { add(`slop:religion_importance:${V.religionImportance.value}`, "fact", "agent_private", V.religionImportance.confidence); replaces.push("slop:religion_importance:"); }
-  if (p.dealbreakers.length || p.noDealbreakers) replaces.push("slop:dealbreaker:");
+  // The list is the whole truth: a dealbreaker the member took back ("smoking is fine") drops its tag too.
+  replaces.push("slop:dealbreaker:");
   for (const d of p.dealbreakers) add(`slop:dealbreaker:${d.value}`, "boundary", "agent_private", d.confidence);
   for (const i of p.interests) add(i.value, "interest", "matchable", i.confidence);
   for (const a of p.activities) add(`slop:activity:${a.value}`, "preference", "matchable", a.confidence);
