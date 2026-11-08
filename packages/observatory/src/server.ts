@@ -403,9 +403,10 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
       return json({ error: "audit log unavailable: request refused" }, 503);
     }
   }
+  /** A live reveal of this member, for staff who hold safety (or admin) for the app now: a role taken away ends it (admin-console 4.4). */
   const revealFor = (u: StaffUser, app: AppId, memberId: string): RevealGrant | undefined => {
     const k = revealKey(u, app, memberId), g = reveals.get(k);
-    if (g && g.until <= Date.now()) { reveals.delete(k); return undefined; }
+    if (g && (g.until <= Date.now() || !allowed(u, ["safety"], app, mode))) { reveals.delete(k); return undefined; }
     return g;
   };
   /**
