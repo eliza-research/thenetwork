@@ -83,6 +83,15 @@ export class ProfileSuggestions {
     await tx`select set_config('app.app_id', ${owner.app}, true)`;
     // Use the same person-first order as canonical leave/delete operations.
     await tx`select id from platform.people where id=${owner.personId} for update`;
+    const member = await this.member(tx, owner);
+    if (member && this.authorizeOwner && !await this.authorizeOwner(owner, tx)) return undefined;
+    this.checkAuthority();
+    return member;
+  }
+
+  /** The member row and its eligibility. A ban, a phone hold, a suppression or a STOP event commits without
+   * the person or member lock, so a caller reads this again after each Cloud call and before it writes. */
+  private async member(tx: SQL, owner: SuggestionOwner) {
     const rows = await tx`select n.id,(n.account_status='active' and not n.opted_out and n.age>=18 and p.lowest_age>=18
       and m.state in ('active','onboarding') and m.review is null
       and not exists(select 1 from platform.bans b where b.person_id=p.id or b.phone_hash=p.phone_hash)
@@ -104,8 +113,6 @@ export class ProfileSuggestions {
       };
       if (events.some((r: any) => resolveConsent({ app: last(r.e164, owner.app), global: last(r.e164, null) }) === "opted_out")) rows[0].eligible = false;
     }
-    if (rows[0] && this.authorizeOwner && !await this.authorizeOwner(owner, tx)) return undefined;
-    this.checkAuthority();
     return rows[0] as { id: string; eligible: boolean } | undefined;
   }
 
@@ -201,6 +208,7 @@ export class ProfileSuggestions {
       for (const s of scopes.values()) if (!await this.authorize(owner, { connectionId: s.connectionId, source: s.source,
         windowStart: input.windowStart, windowEnd: input.windowEnd, timezone: input.timezone,
         allowedKinds: input.allowedKinds, retainOnDisconnect: input.retainOnDisconnect }, tx)) return null;
+      if (!(await this.member(tx, owner))?.eligible) return null;
       this.checkAuthority({ expires_at: new Date(input.expiresAt) });
       const receiptKey = claim ? `profile-collect:${id}` : undefined;
       const inputSha256 = hash(JSON.stringify(input));
@@ -277,6 +285,7 @@ export class ProfileSuggestions {
             windowStart: new Date(b.window_start).getTime(), windowEnd: new Date(b.window_end).getTime(), timezone: b.timezone,
             allowedKinds: b.allowed_kinds, retainOnDisconnect: b.retain_on_disconnect }, tx)))) return { kind: "denied" };
       }
+      if (input.decisions.some(d => d.action === "accept") && !(await this.member(tx, owner))?.eligible) return { kind: "denied" };
       this.checkAuthority(b);
       // An edit or scope change is always a new preview, never an implicit acceptance.
       if (input.decisions.some(d => d.editedValue !== undefined || (d.scope !== undefined && d.scope !== rows.find((r: any) => r.id === d.suggestionId).privacy_scope))) {

@@ -118,3 +118,24 @@ test("a leave that stops after the Network forget leaves no suggestion batches",
     expect(await sql`select id from platform.profile_suggestions`).toHaveLength(0);
   } finally { await service.close(); }
 });
+
+// Q-profile_learning-1: a ban or a phone hold commits while the Cloud source checks run. The person and
+// member locks do not stop either write (a phone ban has no person row to wait on), so the eligibility read
+// at the start of the transaction was stale.
+test("a ban or hold during the Cloud source checks blocks collect and accept", async () => {
+  const people = new PgPeopleStore(sql);
+  const pending = (await store.propose(owner, input(), now))!;
+  expect(pending).not.toBeNull();
+  const banDuringCheck = new ProfileSuggestions(sql, async () => {
+    await people.ban({ id: randomUUID(), scope: "phone", personId: null, phoneHash: "fixture-phone-hash", reason: "fixture",
+      reportId: null, bannedBy: "fixture-staff", at: now });
+    return true;
+  });
+  expect(await banDuringCheck.propose(owner, input(), now)).toBeNull();
+  expect(await sql`select id from platform.profile_suggestion_batches`).toHaveLength(1);
+  await sql`delete from platform.bans`;
+  const holdDuringCheck = new ProfileSuggestions(sql, async () => { await people.setPhoneHold(e164, "recycled_number", now); return true; });
+  expect(await holdDuringCheck.decide(owner, { batchId: pending.id, revision: pending.revision,
+    decisions: [{ suggestionId: pending.suggestions[0]!.id, action: "accept" }] }, now)).toEqual({ kind: "denied" });
+  expect(await sql`select id from network.facets`).toHaveLength(0);
+});
