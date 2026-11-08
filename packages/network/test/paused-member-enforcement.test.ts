@@ -93,4 +93,79 @@ describe("paused member enforcement across eligibility, recipient policy, plans,
     expect(relayMemberA).toBeDefined();
     expect(relayMemberA!.held).toBe(false);
   });
+  it("syncMember drops or replaces paused member when record transitions to paused in open opps", async () => {
+    const w = new Mini([
+      person("a", "Ana Diaz", "normal"),
+      person("b", "Ben Ito", "normal"),
+      person("c", "Chloe Chen", "normal"),
+    ], { review: "human" });
+    await w.onboard("a", "b", "c");
+
+    // 1. In review: member b pauses
+    const oppReview = (w.net as any).newOpp({
+      id: "review-opp",
+      origin: "planner",
+      kind: "intro",
+      category: "hobby",
+      objective: "climbing",
+      participants: ["a", "b"],
+      alternates: ["c"],
+      primed: [],
+      explanations: { a: "intro", b: "intro" },
+      score: 0.8,
+    });
+    (w.net as any).submit(oppReview);
+    expect(oppReview.stage).toBe("review");
+
+    // Ben's record is paused in snapshot
+    (w.net as any).record("b").state = "paused";
+    const mb = (w.net as any).members.get("b")!;
+    (w.net as any).syncMember(mb);
+
+    // Review opportunity must close because participant paused
+    expect(oppReview.stage).toBe("closed");
+    expect(oppReview.closedReason).toBe("paused participation");
+
+    // 2. In probing: member b pauses and is replaced by alternate c
+    // Reset Ben to normal first to create a probing opp
+    (w.net as any).record("b").state = "normal";
+    mb.state = "normal";
+    const oppProbing = (w.net as any).newOpp({
+      id: "probing-opp",
+      origin: "planner",
+      kind: "intro",
+      category: "hobby",
+      objective: "climbing",
+      participants: ["a", "b"],
+      alternates: ["c"],
+      primed: [],
+      explanations: { a: "intro", b: "intro" },
+      score: 0.8,
+    });
+    oppProbing.stage = "probing";
+    oppProbing.status.set("a", "probing");
+    oppProbing.status.set("b", "probing");
+
+    // Ben transitions to paused again
+    (w.net as any).record("b").state = "paused";
+    (w.net as any).syncMember(mb);
+
+    // In probing, Ben is replaced by alternate c
+    expect(oppProbing.participants).toEqual(["a", "c"]);
+    expect(oppProbing.status.get("c")).toBe("queued");
+  });
+
+  it("distinctAlternates filters out paused members from alternate candidate slots", async () => {
+    const w = new Mini([
+      person("a", "Ana Diaz", "normal"),
+      person("b", "Ben Ito", "normal"),
+      person("c", "Chloe Chen", "paused"),
+      person("d", "David Miller", "normal"),
+    ]);
+    await w.onboard("a", "b", "c", "d");
+
+    const alts = (w.net as any).distinctAlternates(["a", "b"], ["c", "d"]);
+    // Chloe is paused, so distinctAlternates must omit c and only include d
+    expect(alts).toEqual(["d"]);
+  });
 });

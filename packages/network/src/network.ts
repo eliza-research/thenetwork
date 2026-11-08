@@ -3967,9 +3967,10 @@ export class ConsentNetwork implements NetworkUnderTest {
       // Minors policy: an alternate (a possible backfill) is never a minor or someone of unknown age,
       // whoever proposed it (search, engine, planner, player or scenario).
       const am = this.members.get(a);
-      if (!am || am.minor || am.minorSignal) continue;
+      if (am) this.syncRecord(am);
+      if (!am || am.minor || am.minorSignal || am.state === "paused") continue;
       if (participants.includes(a) || [...participants, ...out].some(p => this.blocked(p, a))) continue;
-      const f = this.members.get(a)?.first.toLowerCase();
+      const f = am.first.toLowerCase();
       if (f && firsts.has(f)) continue;
       if (f) firsts.add(f);
       out.push(a);
@@ -4425,12 +4426,12 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (validAge(r.age) && r.age !== m.age) m.age = r.age;
       if (validAge(r.age) && isMinor(r.age) && !m.minor) { m.minor = true; this.ctx.log("minor_record", { memberId: m.id }); this.minorAfterContact(m.id); }
     }
-    return m.minor || !!m.account;
+    return m.minor || !!m.account || m.state === "paused";
   }
 
   /** At the start of a unit: read the record again, and take a member the record now keeps out of matching out of every open opportunity. */
   private syncMember(m: MemberState) {
-    if (this.syncRecord(m) && this.busy(m.id, undefined, true)) this.dropMember(m.id, m.account ? `account ${m.account}` : "minors policy");
+    if (this.syncRecord(m)) this.dropMember(m.id, m.account ? `account ${m.account}` : m.state === "paused" ? "paused participation" : "minors policy");
   }
 
   member(id: MemberId): MemberState {
