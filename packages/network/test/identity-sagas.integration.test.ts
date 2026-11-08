@@ -397,4 +397,28 @@ describe.skipIf(!pgAvailable)("identity sagas: stop half way, retry, races (Post
     const send = (id: string, kind: Outbound["kind"]): Outbound => ({ id, memberId: m, to: phone, body: "x", kind, proactive: kind === "proactive", system: false, ts: clock.now() });
     expect([...(await s.consentRefused(rt, [send("proactive_1", "proactive"), send("stop_ok", "compliance")]))]).toEqual(["proactive_1"]);
   }, T);
+
+  test("SD-108: a number change completes for a person with a Cloud grant; the Cloud grant ends, a site grant moves", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const s = service(clock);
+    const [a, b] = [newPhone(), newPhone()];
+    expect(await text(s, clock, a, "slop")).toBe("join_asked");
+    expect(await text(s, clock, a, "Jo, 36")).toBe("joined");
+    const person = (await sql`select person_id from platform.phone_identities where e164 = ${a}`)[0]!.person_id as string;
+    // The person linked two agents: one through the site's own OAuth, one while Eliza Cloud auth was on for the app.
+    const at = new Date(clock.now()), until = new Date(clock.now() + 30 * DAY), key = s.accounts.phoneHash(a);
+    await sql`insert into oauth.clients (id, name, redirect_uris, auth_method, app_id, surface, kind, created_at) values ('client_sagas', 'Agent', ${sql.array(["https://agent.example/cb"], "TEXT")}, 'none', 'slop', 'full', 'dcr', ${at})`;
+    await sql`insert into oauth.grants (id, client_id, app_id, phone_key, person_id, scopes, resource, created_at, expires_at, cloud_authority) values
+      ('grant_site', 'client_sagas', 'slop', ${key}, ${person}, ${sql.array(["profile"], "TEXT")}, 'https://slop.date/mcp', ${at}, ${until}, null),
+      ('grant_cloud_1', 'client_sagas', 'slop', ${key}, ${person}, ${sql.array(["profile"], "TEXT")}, 'https://slop.date/mcp', ${at}, ${until}, ${{ version: "1" }}::jsonb)`;
+
+    const api = await startMove(s, clock, a, b);
+    expect((await api("/api/me/phone/confirm", { code: "123456" })).body).toMatchObject({ ok: true });
+    expect((await memberOf("slop", b))).toBeDefined();
+    const grants = await sql`select id, phone_key, revoked_at is not null as revoked from oauth.grants order by id`;
+    expect(grants.map((g: any) => [g.id, g.phone_key === s.accounts.phoneHash(b) ? "new" : g.phone_key === key ? "old" : "?", g.revoked])).toEqual([
+      ["grant_cloud_1", "old", true], ["grant_site", "new", false],
+    ]);
+  }, T);
 });
