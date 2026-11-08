@@ -1600,7 +1600,8 @@ export class ConsentNetwork implements NetworkUnderTest {
         const opp = this.tryRequest(m, prior);
         if (opp) { this.send(m, copy.requestAck, { type: "info" }, "reply"); this.submit(opp); return; }
       }
-      this.tellNoneYet(m, prior);
+      // The member asked again: they get the answer again, never silence (SD-266).
+      this.tellNoneYet(m, prior, true);
       return;
     }
     // Only what this app does (matching-e2e-2): a request outside its categories is not searched.
@@ -1644,10 +1645,13 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!o.quiet) this.send(m, copy.requestWaiting, { type: "info" }, "reply");
   }
 
-  /** A standing request: tell them once, offer a public alternative and an invite, keep looking for a week. */
-  private tellNoneYet(m: MemberState, req: Request) {
+  /**
+   * A standing request: tell them once, offer a public alternative and an invite, keep looking for a
+   * week. `again`: the member asked again, so they are told again.
+   */
+  private tellNoneYet(m: MemberState, req: Request, again = false) {
     req.outcome = "none";
-    if (req.toldNone) return;
+    if (req.toldNone && !again) return;
     req.toldNone = true;
     const def = req.desireId ? desireById.get(req.desireId) : undefined;
     const what = def ? def.text.replace(/^(find|meet|get|be part of|try|start|make|play|join|go on) /, "").replace(/^learn to /, "learning to ") : "that";
