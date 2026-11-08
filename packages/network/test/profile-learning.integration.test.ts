@@ -50,3 +50,16 @@ test("delete everything removes the connection cleanup receipts of the person", 
   await new PgPeopleStore(sql).deleteAll(owner.personId, e164, "fixture-phone-hash", now);
   expect(await sql`select request_nonce from platform.profile_suggestion_connection_receipts`).toHaveLength(0);
 });
+
+// SD-175: STOP is in the consent ledger, but the member projection (opted_out, membership state) is not yet updated.
+test("a STOP in the consent ledger blocks collect and accept before the projection changes", async () => {
+  const pending = (await store.propose(owner, input(), now))!;
+  expect(pending).not.toBeNull();
+  await sql`insert into platform.consent_events(e164,app_id,state,source,at) values(${e164},null,'opted_out','fixture',${new Date(now)})`;
+  expect((await sql`select opted_out from network.members where id='owned-member'`)[0].opted_out).toBe(false);
+  expect(await store.propose(owner, input(), now)).toBeNull();
+  expect(await store.decide(owner, { batchId: pending.id, revision: pending.revision,
+    decisions: [{ suggestionId: pending.suggestions[0]!.id, action: "accept" }] }, now)).toEqual({ kind: "denied" });
+  expect(await sql`select id from network.facets`).toHaveLength(0);
+  expect(await sql`select id from platform.profile_suggestion_batches`).toHaveLength(1);
+});

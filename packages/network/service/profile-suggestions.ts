@@ -6,6 +6,7 @@ import { parseProfileReviewWithdrawalProof, type ProfileReviewWithdrawalRequest,
 import { parseProfileReviewDisconnectProof, parseProfileReviewDisconnectRequest,
   type ProfileReviewDisconnectRequest, type ProfileReviewDisconnectProof } from "../../core/src/svc/profile-review-disconnect.ts";
 import { fold, isSensitiveTerm, type AppId } from "@thenetwork/core";
+import { resolveConsent } from "../../platform/src/consent.ts";
 
 /** These values come from authenticated server context, never an assistant's arguments. */
 export interface SuggestionOwner { userId: string; organizationId: string; personId: string; app: AppId; chatId: string }
@@ -88,6 +89,18 @@ export class ProfileSuggestions {
       join platform.memberships m on m.person_id=p.id and m.app_id=n.app_id
       where n.app_id=${owner.app} and p.id=${owner.personId} and p.deleted_at is null
         and m.state<>'removed' for update of n, m`;
+    // STOP is canonical in the consent ledger even when the member projection is late.
+    if (rows[0]?.eligible) {
+      const events = await tx`select ph.e164,c.app_id,c.state,c.at from platform.phone_identities ph
+        join lateral (select distinct on (app_id) app_id,state,at from platform.consent_events
+          where e164=ph.e164 and (app_id=${owner.app} or app_id is null) order by app_id,at desc,id desc) c on true
+        where ph.person_id=${owner.personId}`;
+      const last = (e164: string, app: AppId | null) => {
+        const e = events.find((r: any) => r.e164 === e164 && r.app_id === app);
+        return e ? { e164, app, source: "canonical-ledger", state: e.state, at: new Date(e.at).getTime() } : undefined;
+      };
+      if (events.some((r: any) => resolveConsent({ app: last(r.e164, owner.app), global: last(r.e164, null) }) === "opted_out")) rows[0].eligible = false;
+    }
     if (rows[0] && this.authorizeOwner && !await this.authorizeOwner(owner, tx)) return undefined;
     this.checkAuthority();
     return rows[0] as { id: string; eligible: boolean } | undefined;
