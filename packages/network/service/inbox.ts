@@ -201,15 +201,19 @@ export class Inbox {
     return n;
   }
 
-  /** Retention: handled rows older than `before` (a provider retries for hours, not weeks). */
+  /** Retention: handled rows, and signed turns that lost their worker, older than `before` (a provider retries for hours, not weeks). */
   async purge(before: number): Promise<number> {
     const sealed = await this.o.sql`update platform.inbound set status='unresolved',response=null,replies='[]'::jsonb,receipt=null,receipt_hash=null,action_receipts='{}'::jsonb,
       sender=null,event=null,sender_hash=null,member_id=null,app_id=null
       where request_hash is not null and status='done' and handled_at<${new Date(before)} returning id`;
+    // A signed turn that lost its worker and whose sender never wrote again (the claim's sweep never ran for it):
+    // an unresolved tombstone, with nothing about the sender kept past the retention window.
+    const orphans = await this.o.sql`update platform.inbound set status='unresolved',sender=null,event=null,sender_hash=null,member_id=null,app_id=null
+      where request_hash is not null and status='processing' and arrived_at<${new Date(before)} returning id`;
     const removed = await this.o.sql`delete from platform.inbound where request_hash is null and status not in ('pending','processing','unresolved') and arrived_at < ${new Date(before)} returning id`;
     // Signed-turn tombstones keep replays refused for a while, then go: platform.inbound does not grow without bound.
     const tombstones = await this.o.sql`delete from platform.inbound where request_hash is not null and status='unresolved' and arrived_at < ${new Date(before - TOMBSTONE_KEEP_MS)} returning id`;
-    return sealed.length + removed.length + tombstones.length;
+    return sealed.length + orphans.length + removed.length + tombstones.length;
   }
 
   /**

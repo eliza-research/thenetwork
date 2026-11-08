@@ -166,4 +166,14 @@ describe.skipIf(!pgAvailable)("turn and consent", () => {
     const help = await (await post(turn("sd073-help", phone, "HELP"))).json() as any;
     expect(help.replies).toEqual([APPS.ntwrk.brand.help]);
   }, 60_000);
+  test("SD-087: a dead turn of a sender who never writes again leaves processing at the retention purge", async () => {
+    const input = turn("sd087-chat", "+12125550087", "what's on tonight");
+    await deadClaim(input);
+    clock.advance(8 * DAY);
+    await service.purge();
+    const [row] = await sql`select status, sender_hash from platform.inbound where id = ${`msg:${input.channel}:${input.messageId}`}`;
+    // The sender's keyed hash is not kept past the retention window; a replay of the turn is still refused.
+    expect([row.status, row.sender_hash]).toEqual(["unresolved", null]);
+    expect(await (await post(input)).json()).toEqual({error: "turn_unresolved", retryable: false});
+  }, 60_000);
 });
