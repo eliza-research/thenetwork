@@ -430,3 +430,22 @@ test("SD-316: a signed turn that ends unresolved keeps no collected reply text",
   expect(await repliesOf("msg:blooio:sd316-stuck")).toEqual({status:"unresolved",replies:[]});
   release();await stuck;
 },60_000);
+
+test("SD-334: two drains that look up one unknown acceptance never store dropped_forgotten for a text that went out",async()=>{
+  toNewYork(12,0);
+  const rt=await primary();
+  const phone="+12125550201",memberId=await join(services[0]!,phone,"Oda");
+  await rt.unitOfWork(()=>undefined);
+  await rt.adapter.engaged!(phone);
+  // The deliver call times out after Cloud may have taken the reminder.
+  cloudMode.deliver="unknown";
+  try {await rt.unitOfWork(()=>{rt.system(memberId as never,"sd334-reminder","Your plan reminder is ready.","transactional");});} finally {cloudMode.deliver="accept";}
+  expect(await both("sd334-reminder")).toEqual({outbound:"unknown_acceptance",ended:false,message:"unknown_acceptance"});
+  // Two drains look the row up (a tick and another replica's tick). The second drain commits Cloud's answer
+  // and stores it while the first one waits for its own answer.
+  cloudMode.receipt="accept";
+  const provider=(queueOf(rt) as unknown as {o:{provider:{receipt:(r:unknown)=>Promise<unknown>}}}).o.provider,receipt=provider.receipt;
+  provider.receipt=async r=>{provider.receipt=receipt;const answer=await receipt(r);await rt.deliver();return answer;};
+  try {clock.advance(60_000);await rt.deliver();} finally {provider.receipt=receipt;cloudMode.receipt="unknown";}
+  expect(await both("sd334-reminder")).toEqual({outbound:"accepted",ended:false,message:"accepted"});
+},60_000);

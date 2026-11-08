@@ -594,7 +594,11 @@ export class OutboundQueue {
       if (status!=="failed") await this.countSend(tx,this.line,row.to,row.kind,row.reengagement,at);
       return true;
     });
-    if (!committed) return {id:row.id,app:row.app,memberId:row.memberId,status:"dropped_forgotten"};
+    if (!committed) {
+      // Another drain recorded this acceptance first (a parallel receipt lookup), or erasure ended the row: report the stored status.
+      const [cur]=await this.sql`select status from platform.outbound where id=${row.id}`;
+      return {id:row.id,app:row.app,memberId:row.memberId,status:String(cur?.status??"dropped_forgotten")};
+    }
     if (status==="failed") return this.end(row,"failed","provider reported failure");
     if (status==="delivered"||status==="read") return this.end(row,status);
     return {id:row.id,app:row.app,memberId:row.memberId,status};
