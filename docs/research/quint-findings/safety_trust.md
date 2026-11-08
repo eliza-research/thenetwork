@@ -2,185 +2,176 @@
 
 Module plan: [docs/research/2026-11-07-state-machines.md](../2026-11-07-state-machines.md) section 6.9 (P0).
 Model: [quint/safety_trust.qnt](../../../quint/safety_trust.qnt). This file is hand-written. The traces are
-from `quint run` (seed `0x5eed`) and from the model's `run` tests.
+from `quint run` (seed `0x5eed` unless stated) and from the model's `run` tests.
 
-## 1. What the model covers
+## 1. Final state
 
-- Machines: person-safety-carryover (M-051), trust-level (M-052), safety-report (M-053), pair-relations (M-054),
-  slop-check-in-report (M-055), slop-review-hold (M-056), safety-case (M-127), pending-safety-who (M-128).
-  journey-help (M-183) has no Network state (`network.ts:677` returns on HELP), so the model leaves it out.
-- Bounds: 2 apps (`slop` with `postDateReports`, `peon` without), 3 adult persons (`ana`, `ben`, `cy`),
-  member generation 0..1 (one rejoin per app and person gives a new member id), 3 opportunity slots, days
-  0..60.
-- One action is one unit of work of one Network. The service loops that run one unit per app (staff hold,
-  `service.ts:1681-1684`) have one action per unit and a `crash` action between units.
-- Oracles: the report-kind reader on the "report X" text, the check-in reader (`checkInReport`; it can
-  misread only a happy answer; a missed real report is corpus work, the SD-031 family), the route of a member's
-  message (`service.ts:957-981`: the app with the newest item, else the last writer), and the relay decision.
-- Not modelled: the 14-day window of `blocksMade` (the model counts every stranger block), the UTC hour in
-  `slotOf` (the model uses days), inviter accountability, the probe stage (items start booked), and
-  person-level ages from `onAgeStated` (only the minor *report* is modelled).
+The model follows the code on branch `wave2/safety_trust` after the fixes `f8d9de8..49602b7` and the
+SD-044 follow-up fix in this commit. `safety` holds the rules of every fixed defect and passes. The rules
+of the skipped defects (SD-027, SD-074, SD-253) and two new findings (NEW-2, NEW-3) stay out of `safety`
+as their own named values. Each has a comment with the id and the reason, and a `run` test replays a trace
+that breaks it.
+
+What changed in the model, by fix:
+
+| Defect | Commit | Model change |
+|---|---|---|
+| SD-044 | f8d9de8 + this commit | `metBefore` reads `told` (bookedTold). The check-in record names the `told` people (see 3.1). |
+| SD-045 | df588c8 | `callOffPair` closes only items that the blocker and the target are both going to. |
+| SD-025 | de48147 | The tick runs `callOffPair` for every person block on every app. `meet` (the tick's advance) cannot finalize an item that two blocked people are going to. |
+| SD-021, SD-022 | 059965d | New state `personHolds` (platform.person_holds). A staff hold writes `(p, "*")` first. A leave of a member who is held, has an urgent report open or was reported as a minor writes `(p, app)`. A covered member is out of matching, and `sync` (syncMember/personHold) holds them at their next unit or tick. A lift turns `"*"` into one row per other app and deletes this app's row. |
+| SD-141 | db176ce | `addPts` restarts the decay clock at each event with points. |
+| SD-072 | ab4ff2a | `reportHeld` skips a report whose reporter is on hold (a blank reporter id counts as "ok"). |
+| SD-067 | 0e0bf2a | The check-in reader (an oracle) reads a happy answer as no report. The corpus gate checks the reader itself. |
+| SD-220 | 33ea2bc | New action `disclose(k, m, kind)`: a later disclosure in the 7-day window files the check-in report. |
+| SD-221 | 9b8ef32 | Both apps have `postDateReports`. |
+| SD-222, SD-442 | 581888d | The check-in record has `by` and the meeting time. `noShows` and `dates` count records by that member. |
+| SD-229 | db4ea4c | `blockAndReport` is the one path for "report X" and the check-in: trust block, call off, trust report, case event, record, minor step. |
+| SD-250 | 4878d3c | `report` routing: a member of several apps whose text names a counterpart goes to the app of the newest meeting with them. |
+| SD-254 | fa81646 | Relay decision `blockSevere` writes a 0-point case event. A block for the form (`block`) opens nothing. |
+| SD-475 | 49602b7 | The hold notice outside the member's own turn is the `safety` kind. |
+
+Rules that were rewritten:
+
+- `autoHoldFollowsPerson`, `minorSignalFollowsPerson` and `urgentMetReportBlocksMatching` are now in two
+  forms. The `InApp` form (same app, any member id: SD-021) is in `safety`. The every-app form is SD-074
+  (skipped) and stays out of `safety`. The ghosts `autoHeldP` and `minorP` now hold `(person, app)`.
+- `urgentMetReportBlocksMatchingInApp` counts only a report by a reporter in good standing (the SD-072
+  rule), and it accepts a staff lift of the rejoined member as the staff decision.
+  `minorSignalFollowsPersonInApp` also accepts that lift (see 3.4).
+- `reporterNotHeld` now says what SD-072 asks: a live member that a report holds has such a report by a
+  reporter who is not on hold and not banned. The earlier form ("every open met urgent report is
+  credible") was about the record, but the fix keeps the record for staff.
+- `blockClosesAllApps` allows a pair's item on another app to stay booked until that app's next tick (ghost
+  `pendingCallOff`, cleared at the tick). The item cannot finalize first. This is the design of the
+  SD-025 fix. The app where the block was made still closes the item at once.
+- `blockOnlyAffectsPair` is the SD-045 rule: a block calls an item off only when the blocker and the target
+  are both going. The stricter earlier form ("nobody else is going") is NEW-3.
+- `relayBlockReachesSafety` is about a severe block (the sender's own words), and it asks for a case
+  (`caseSt != "none"`), so that a later staff close does not break it.
 
 ## 2. Check results
+
+Bounds: 2 apps, 3 adult persons, member generation 0..1, 3 opportunity slots, days 0..60.
 
 | Check | Result |
 |---|---|
 | `quint typecheck` | ok |
-| `quint test` (21 `run` tests) | ok: each defect trace below replays and ends in the stated violation |
-| `safety` simulation (max-steps 14, max-samples 6000) | FAIL (expected: the model shows the defects) |
-| 8 witnesses (date done, check-in report, met message report, staff hold, lift to ok, watch, rejoin, ban) | all reachable |
-| `quint verify --invariant safety` (Apalache, verify-steps 2, 22 s) | FAIL at step 1 (staff hold notice, SD-475; and the hold window, SD-022) |
-| `quint verify --invariant noSingleActorHold --max-steps 2` | ok (no counterexample in 2 steps, 142 s) |
-| `quint verify --invariant holdOnlyLiftedByStaff --max-steps 2` | not finished: Apalache ran out of Java heap (157 s). At 3 and 5 steps both invariants ran out of heap or time. |
+| `quint test` (29 `run` tests) | ok |
+| `safety` simulation (max-steps 14, max-samples 6000, seeds `0x5eed`, `0x1234`, `0xbeef`) | ok: no violation |
+| 11 witnesses (date done, check-in report, met message report, staff hold, lift to ok, watch, rejoin, ban, carried-over hold on a rejoin, call-off on another app, relay case) | all reachable |
+| `quint verify --invariant safety --max-steps 2` (Apalache 0.62.4, verify-steps 2) | ok: no violation (521 s) |
 
-Per-invariant simulation (seed `0x5eed`, same bounds). "run" means the simulator did not find it in 6000
-samples, and the named `run` test replays a concrete trace.
+`bun run quint:check --verify` failed to connect to the shared Apalache server on `localhost:8822` (other
+sessions use it: "Connection dropped"), so the verify step ran by hand with `--server-endpoint
+localhost:18931`. Deeper bounded checks were not run: 2 steps already take 521 s. A witness for the late
+disclosure path (SD-220) was not reachable in 6000 random samples of 14 steps (it needs a booked date, the
+meeting, a first answer and the disclosure on the same member and slot), so the model has no witness for it;
+`sd220DisclosureAfterAnswerTest` replays that path.
 
-| Invariant | Rule | Result | Register |
-|---|---|---|---|
-| `staffHoldFollowsPerson` | PRD 40.3 (prd-snapshot.md:1777), admin-console 3.7.1 | violated | SD-021, SD-022 |
-| `autoHoldFollowsPerson` | admin-console 4.6, trust.ts:6-7 | violated | SD-074, SD-021 |
-| `minorSignalFollowsPerson` | founder decision 1 (AGENTS.md) | violated | SD-074, SD-021 |
-| `urgentMetReportBlocksMatching` | PRD 36.3 / prd-snapshot.md:1446 | violated | SD-022, SD-074, SD-021 |
-| `holdOnlyLiftedByStaff` | trust.ts:6-7 | holds | - |
-| `noSingleActorHold` | trust.ts:8-11, network.ts:1143 | holds | - |
-| `reporterNotHeld` | trust.ts:115-116, network.ts:1326 | violated | SD-072 |
-| `blockClosesAllApps` | PRD 40.3, PRD F23 (prd-snapshot.md:1055) | violated | SD-025 |
-| `blockOnlyAffectsPair` | PRD F23, network.ts:3050-3051 | violated | SD-045 |
-| `metIsReal` | network.ts:1383-1386, trust.ts:9 | violated | SD-044 |
-| `checkInReportIntended` | reports.ts:33-37 | violated (run) | SD-067 |
-| `reportersCounted` | trust.ts:8-10 | violated | SD-229 |
-| `watchLasts14Days` | trust.ts:4-5 | violated | SD-141 |
-| `engineHoldVisible` | trust.ts:6, PRD 1420 safety console | violated | SD-027 |
-| `staffDecisionEndsEngineHold` | trust.ts:7 | violated | SD-027 |
-| `noShowCountsAbsentOnly` | network.ts:2602 (`came: !f.selfNoShow`) | violated (run) | SD-222 |
-| `slotFromMeeting` | profile.ts:51 (`attendedSlots`) | violated (run) | SD-442 |
-| `everyMetReportFiled` | PRD F23, slop and peon check-in copy | violated | SD-250, SD-220 (run), SD-221 (run) |
-| `pastContactsToldOfBan` | PRD 40.5 (prd-snapshot.md:1820) | violated | SD-253 |
-| `relayBlockReachesSafety` | PRD 1420, PRD F23 | violated | SD-254 |
-| `safetyNoticeImmediate` | network.ts:4143 (`safety` is "now"), outbound-queue.ts:46 | violated | SD-475 |
+The values kept out of `safety`, simulated at the same bounds (seed `0x5eed`):
 
-No counterexample was a model error after one correction: `blockClosesAllApps` first read every
-participant of an item, so a plan member who had said no (not going) counted. The rule is about a booked item
-that the two people are going to, so it now reads `going`.
+| Value | Defect | Result |
+|---|---|---|
+| `autoHoldFollowsPerson` | SD-074 (skipped) | violated |
+| `minorSignalFollowsPerson` | SD-074 (skipped) | violated |
+| `urgentMetReportBlocksMatching` | SD-074 (skipped) | violated |
+| `engineHoldVisible` | SD-027 (skipped) | violated |
+| `staffDecisionEndsEngineHold` | SD-027 (skipped) | `sd027TrustReviewTest` and the simulator |
+| `pastContactsToldOfBan` | SD-253 (skipped) | violated (`sd253BanNoticeTest`) |
+| `reporterStandingKept` | NEW-2 | violated (`new2HeldReporterLeavesTest`) |
+| `blockLeavesOthersPlan` | NEW-3 | violated (`new3BlockInPlanTest`) |
 
-## 3. Counterexamples, mapped to the code
+## 3. Register defects of this module
 
-Short form: `action(args)` per step. `S` is slop, `P` is peon.
+### Fixed (16)
 
-1. **SD-021, leave and rejoin clears a hold** (`sd021LeaveRejoinClearsHoldTest`).
-   `staffHold(ben@S)`, `staffHoldApply(ben@P)`, `leave(S, ben)`, `join(S, ben)` -> `ben@S#1` is level ok and
-   matchable. Code: `network.ts:912-943` `forget` deletes the trust record, the cases and the minor flags of
-   the member; `service.ts:1443` gives the rejoin a new member id (`${app.id}_${randomUUID()}`); nothing reads
-   the person's earlier hold. The same trace with an automatic hold or a minor report fails
-   `autoHoldFollowsPerson` and `minorSignalFollowsPerson`.
-2. **SD-022, a hold is not atomic and not inherited** (`sd022HoldNotAtomicTest`, `sd022JoinDuringHoldTest`).
-   (a) `staffHold(ben@S)`, `crash` -> `ben@P` is matchable. Code: `service.ts:1681` holds on this app in one
-   unit, then `service.ts:1684` awaits one unit per other app; a stop between them leaves the other apps open
-   and nothing resumes the loop. The simulator finds the shorter form: the state right after `staffHold` already
-   breaks the rule, because another unit can run in the await. (b) `staffHold(cy@S)`, `join(P, cy)` -> the new
-   peon member is not held. Code: `service.ts:1390` refuses only a banned person; `createMember` makes a fresh
-   member. (c) Simulated: `leave(P, ana)`, `bookPlan(S, ...)`, `report(cy, S, ana, report, minor)`, `join(P, ana)`
-   -> an open urgent met report about `ana@S` does not keep `ana@P` out of matching (`network.ts:1295-1296` reads
-   reports of this member id only).
-3. **SD-074, minor report and automatic hold stay in one app** (`sd074MinorReportOneAppTest`).
-   `bookDate(S, ana, ben)`, `report(ana, S, ben, report, minor)` -> `ben@P` is matchable. Code:
-   `network.ts:1550-1558` `minorReported` sets flags on this Network's member and calls no platform hook (compare
-   `onAgeStated`, `network.ts:700`). Simulated automatic hold: `abuse(ben@S, 3)`, `abuse(ben@S, 6)` -> `ben@S`
-   hold, `ben@P` ok and matchable (`network.ts:1188-1203` `onTrustChange` acts on one Network).
-4. **SD-025, a block on one app leaves the other app's item** (`sd025BlockOneAppTest`).
-   `bookDate(S, ana, ben)`, `bookDate(P, ana, ben)`, `report(ana, S, ben, block)` -> the peon item is still
-   scheduled. Code: `network.ts:1434-1445` loops over `this.opps` of one Network; `runtime.ts:508-512` writes the
-   person block, which the other app reads only for new items (`approvalCheck`, `network.ts:1998-1999`).
-5. **SD-044 and SD-045, a plan decliner** (`sd044sd045DeclinerTest`).
-   `bookPlan(S, ana, ben, cy, declined)`, `report(cy, S, ana, report, harassment)` -> the report has
-   `met = true` (cy only got the anonymous probe), ana is out of matching (urgent met report) and the plan of
-   ana and ben closes. Code: `network.ts:1388` `metBefore` reads `participants` and `contacted` (a decliner is
-   both, `network.ts:3014`); `network.ts:1435` closes any open item that names both, whoever is going.
-6. **SD-072, a banned or held reporter** (`sd072BannedReporterTest`).
-   `bookDate(S, ana, ben)`, `ban(ben)`, `report(ben, S, ana, report, harassment)` -> ana is out of matching.
-   Code: `service.ts:1122` passes a banned member's text to the Network (no ban check for members);
-   `network.ts:740` runs block and report before the hold return at `network.ts:746`; `network.ts:1296`
-   `reportHeld` reads `met` and the kind, not the reporter's standing. The simulator also found it through
-   "Who do you mean?" (`reportAsk`, `ban`, `answerWho`).
-7. **SD-067, a happy check-in answer** (`sd067HappyCheckInTest`).
-   `bookDate(S, ana, ben)`, `meet`, `checkIn(ana@S, fine, reader = minor)` -> a check-in report, a person block
-   and `minorF(ben@S)`. Code: `reports.ts:38-41` `checkInReport` reads the whole answer with the kind regexes;
-   `network.ts:2608-2616` files a report, writes a block and calls `minorReported` for any kind it returns.
-8. **SD-229, check-in reports skip the trust rules** (simulated: `bookDate`, `meet`, `checkIn(report)`).
-   The check-in report is credible and met, but the reporter is not in `reportsFrom` and adds no points.
-   Code: `network.ts:2611` calls `fileReport` only; `network.ts:1447` (`trust.report`) runs only on the
-   "report X" path. The doc comment at `network.ts:1276-1277` says only the message path keeps the trust
-   rules, so the gap is known in the code, but trust.ts:8-10 states the rule for every report.
-9. **SD-141, a short watch** (`sd141ShortWatchTest`; the simulator found a 13-day form).
-   `abuse(ben@S, 1)` on day 0, `tick(13)`, `abuse(ben@S, 2)` -> watch on day 13; `tick(1)` -> ok on day 14.
-   Code: `trust.ts:85` `r.lastDecay ??= now` keeps the grid of the first event; `trust.ts:127-131` takes a whole
-   step on day 14.
-10. **SD-027, `trust_review` with no case and no exit** (`sd027TrustReviewTest`).
-    `report(ana, S, ben, block)`, `report(cy, S, ben, block)` -> `trustReview(ben@S)` with no case. Code:
-    `profile.ts:273` counts `blocked` edges, `rules.ts:57` holds at 2; `network.ts:1429-1431` writes no case
-    event for the target of a block. Simulated "no exit": `report(cy, S, ana, block)`, `report(ben, P, ana,
-    report, no_show)` (a case for ana), `staffHold(ana@S)`, `liftHold(ana@S)` -> ana is still in trust_review.
-    Code: `rules.ts:48-59` reads `review:cleared` only for the safety cue, and no production code writes the
-    `review:*` tags (only `packages/sim` does).
-11. **SD-222, a self-reported no-show** (`sd222SelfNoShowTest`).
-    `bookDate(S, ana, ben)`, `meet(absent = {ben})`, `checkIn(ben@S, selfNoShow)` -> `noShows(ana@S) = 1`.
-    Code: `network.ts:2641` pushes one interaction with every participant and outcome `no_show`;
-    `profile.ts:247` charges every participant.
-12. **SD-442, the slot of the answer** (`sd442SlotTest`).
-    `bookDate`, `meet`, `tick(1)`, `checkIn(fine)` -> the completed interaction has the answer day.
-    Code: `network.ts:2641` stamps `at: this.now()`; `profile.ts:244` `slotOf(r.at)`.
-13. **SD-220, a disclosure after the first answer** (`sd220DisclosureAfterAnswerTest`).
-    `checkIn(ana@S, fine)`, then `disclose(ana@S)` -> no report. Code: `network.ts:748` only logs
-    `abuse_disclosed`; `onFeedback` runs once per member (`network.ts:2587-2591`).
-14. **SD-221, the peon check-in** (`sd221PeonCheckInTest`).
-    `bookDate(P, ana, ben)`, `meet`, `checkIn(ana@P, report, harassment)` -> nothing filed. Code:
-    `network.ts:2608` needs `hooks.postDateReports`; only slop sets it (`packs.ts:275`).
-15. **SD-250, the route of a report** (`sd250MisroutedReportTest`; simulated with `leave` then
-    `reportUnresolved`). `bookDate(S, ana, ben)`, `report(ana, P, ben, report, harassment)` -> filed on peon with
-    `met = false`; ben stays matchable on slop. If ben is not a peon member, the report is unresolved. Code:
-    `service.ts:972-978` routes a plain text to the newest item or the last writer; `service.ts:966`
-    `namedApp` reads only a whole-message app name; `network.ts:1371` `findByName` searches only this Network.
-16. **SD-253, no ban notice** (`sd253BanNoticeTest`). `bookDate(S, ana, ben)`, `ban(ben)` -> ana is never told.
-    Code: `service.ts:1734-1764` `ban` writes no notice and calls no relay-log reader.
-17. **SD-254, relay blocks** (`sd254RelayBlockTest`). `bookDate`, `relaySend(ben@S, block)` -> no case for ben.
-    Code: `relay.ts:234` returns on a block after the log; `RelayHost` (`relay.ts:67-80`) has no trust or case
-    method.
-18. **SD-475, hold notice kind** (`sd475HoldNoticeKindTest`). `staffHold(ben@S)` -> the hold notice is queued
-    as `transactional`. Code: `network.ts:1197` sends kind `safety` (`timingOf` "now", `network.ts:4143`);
-    `runtime.ts:429` makes every send that is not a reply in the member's own turn `transactional`, and the
-    outbound queue applies quiet hours and the caps to it (`packages/blooio/src/outbound-queue.ts:46`, quiet hours at 394, caps at 398-421).
-    A report by another member that puts someone on hold has the same result.
+Each fix has its test in the code (named in the commit). The model's `run` test for each replays the
+earlier counterexample and now ends in a state that keeps the rule:
 
-## 4. Register defects of this module
+| Id | Fix commit | Model run test |
+|---|---|---|
+| SD-021 | 059965d | `sd021LeaveRejoinKeepsHoldTest`, `sd021MinorReportCarriedOverTest` |
+| SD-022 | 059965d | `sd022HoldNotAtomicTest`, `sd022JoinDuringHoldTest`, `sd022JoinDuringHoldTextTest` |
+| SD-025 | de48147 | `sd025BlockAcrossAppsTest`, `sd025NoMeetingBeforeCallOffTest` |
+| SD-044 | f8d9de8, this commit | `sd044sd045DeclinerTest`, `sd044AfterCheckInTest` |
+| SD-045 | df588c8 | `sd044sd045DeclinerTest` |
+| SD-067 | 0e0bf2a | `sd067HappyCheckInTest`, `sd067NoMisreadTest` |
+| SD-072 | ab4ff2a | `sd072BannedReporterTest` |
+| SD-141 | db176ce | `sd141WatchLastsTest` |
+| SD-220 | 33ea2bc | `sd220DisclosureAfterAnswerTest` |
+| SD-221 | 9b8ef32 | `sd221PeonCheckInTest` |
+| SD-222 | 581888d | `sd222SelfNoShowTest` |
+| SD-229 | db4ea4c | `sd229CheckInCountedTest` |
+| SD-250 | 4878d3c | `sd250ReportRoutedToMeetingTest`, `sd250NotRoutedElsewhereTest` |
+| SD-254 | fa81646 | `sd254RelayBlockTest` |
+| SD-442 | 581888d (in part) | `sd442SlotTest`. The model uses days; `slotOf` still reads UTC hours, which the model does not cover. |
+| SD-475 | 49602b7 | `sd475HoldNoticeKindTest` |
 
-Reproduced (19 of 19 in the task list): SD-021, SD-022, SD-025, SD-027, SD-044, SD-045, SD-067, SD-072,
-SD-074, SD-141, SD-220, SD-221, SD-222, SD-229, SD-250, SD-253, SD-254, SD-442, SD-475.
+#### 3.1 SD-044: a second path, fixed in this commit
 
-Notes on the disputed rows:
+After the f8d9de8 fix the model found a second path to the same defect. `onFeedback` wrote the check-in
+record with `participants: [...o.participants]`. A plan keeps a member who said no in `participants`, and
+`metBefore` and `counterparts` read the record. So after the plan met and one member answered the
+check-in, the decliner counted as someone who met them, and the decliner's urgent report held that member.
+Trace: `bookPlan(o1, slop, ana, ben, cy, declined)`, `meet(o1)`, `checkIn(o1, ana@slop, fine)`,
+`report(cy, slop, ana, report, harassment)` -> `met = true`.
 
-- SD-072 (disputed): reproduced through the code path above. The model assumes the gateway passes a banned
-  member's text to `/internal/turn` (the backend has no ban check before `memberMessage`, `service.ts:1122`).
-  If the Eliza gateway drops texts from banned numbers, the banned half does not occur, but the held-reporter
-  half does (a member on hold can still report, `network.ts:740`).
-- SD-074 (disputed): reproduced; the rule used is admin-console 4.6 ("a hold on any app holds the person
-  everywhere") and founder decision 1 (age is a person fact). If the founder decides that an automatic hold
-  is per app, `autoHoldFollowsPerson` goes and `minorSignalFollowsPerson` stays.
-- SD-221, SD-253, SD-254 (disputed): reproduced as "no code path exists". The model cannot say whether the
-  production deployment reaches them (for SD-254, whether `NETWORK_RELAY_ENABLED` is on).
+Fix: the record names the people the booked plan reached (`o.bookedTold ?? o.participants`,
+`packages/network/src/network.ts` onFeedback). Test: `packages/network/test/report-plan-decliner.test.ts`
+"SD-044: after the plan, a check-in answer does not make the decliner someone who met them". It failed
+before the fix (`met` was `true`) and passes after it. The test files of the check-in record
+(`check-in-history`, `check-in-report-trust`, `check-in-late-report`, `peon-check-in-report`) also pass.
 
-Other rows in section 6.9 that are not in the task list:
+### Not reproduced
 
-- SD-251 (refuted, design of "leave"): the model records a wanted report only while the reporter is a member
-  of the app where they met, so it does not report it.
-- SD-476 (refuted): a lift on one app leaves the other apps held; the model shows this as fail-safe (no
-  invariant fails).
-- SD-477 (refuted): no unban path; the model has none either, by design.
+None.
+
+### Skipped (3)
+
+- **SD-027** (founder decision). The slop `trust_review` rule holds a member after 2 blocks or 2 no-shows
+  with no case and no staff exit. A fix adds a new staff action and member copy, or removes an engine
+  safety filter. `engineHoldVisible` and `staffDecisionEndsEngineHold` stay out of `safety`.
+- **SD-074** (founder decision). An automatic hold, a minor report or an urgent report on one app does not
+  hold the person on the other apps. It is not clear which staff decision ends such a hold in the other
+  apps, and one verifier vote says per-app reach is by design. `autoHoldFollowsPerson`,
+  `minorSignalFollowsPerson` and `urgentMetReportBlocksMatching` stay out of `safety`. Their `InApp` forms
+  (SD-021) are in `safety` and pass.
+- **SD-253** (founder decision). No notice of a ban goes to past contacts. It is new member copy.
+  `pastContactsToldOfBan` stays out of `safety`.
+
+### 3.4 Notes on the fixed rows
+
+- SD-021: a minor report carries over as a plain person hold (`held_by = 'safety_carryover'`). A staff lift
+  of the rejoined member ends it, and the minor flag does not come back. The case history is not carried
+  over (the commit names this as the separate evidence or erasure defect), so staff lift without seeing
+  that the hold came from a minor report. The model accepts the lift as the staff decision.
+- SD-022: the other apps' members are held at their next unit or tick, not in the same transaction. The
+  model treats a covered member as out of matching at once, because matching runs in the tick after
+  `personHold`.
+- SD-220: the code takes the member's newest done 1:1 date in the window. The model lets a member disclose
+  only when one such date is in the window. A disclosure about an older date, with a newer date in the
+  window, is not modelled.
+
+## 4. New findings
+
+These findings are reported, not fixed: they are not in the task list, and each needs a decision on the
+wanted behaviour.
+
+- **NEW-2: a held reporter's standing resets.** The SD-072 fix reads the reporter's trust level. Two paths
+  reset it. (a) A reporter on hold leaves the app: `forget` blanks `reporterId`, `trust.level("")` is "ok",
+  and the report holds its subject again (`new2HeldReporterLeavesTest`: `bookDate`, `staffHold(ben)`,
+  `report(ben -> ana)`, `leave(slop, ben)` -> ana is out of matching). (b) Staff lift a banned member's hold
+  (`liftHold` does not check the ban): the banned member's report holds its subject (the simulator found
+  `ban(ana)`, `liftHold(ana@slop)`, `report(ana -> cy)`). The value `reporterStandingKept` keeps this rule.
+  A fix needs the report to keep the reporter's standing when it is filed or at the leave, or `liftHold` to
+  refuse a banned member. Not fixed here: it is a new defect, not in the task list.
+- **NEW-3: a block inside a plan calls it off for everyone.** When two members who are both going to a
+  plan of three block each other, `callOffPair` closes the plan, and the third member loses it
+  (`new3BlockInPlanTest`). PRD F23 says a block "only affects the pair", and `bookPlan` drops one member of
+  a blocked pair so that "one block cannot collapse the quorum". SD-045 covers only a blocker who is not
+  going. The value `blockLeavesOthersPlan` keeps the strict rule. It needs a decision on what a block in a
+  booked plan does (drop one member, or call it off).
 
 The liveness item of the plan ("every hold reaches a staff decision") is not checked: the simulator and
 Apalache check state invariants only.
-
-## 5. New findings
-
-None. Every counterexample maps to a register id above. `holdOnlyLiftedByStaff` and `noSingleActorHold` hold
-in 6000 random traces of 14 steps. Apalache confirms `noSingleActorHold` for 2 steps only; deeper bounded checks of this model run out of heap.
