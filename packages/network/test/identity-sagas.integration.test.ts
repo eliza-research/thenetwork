@@ -35,7 +35,7 @@ let sql: SQL;
 const open: NetworkService[] = [];
 function service(clock: SimClock, more: Partial<ServiceOptions> = {}) {
   const s = new NetworkService({
-    url: URL_, clock, instance: "sagas", log: process.env.SAGA_LOG ? console.log : () => {}, env: { PLATFORM_ENV: "dev" }, networks: NETS,
+    url: URL_, clock, instance: "sagas", log: () => {}, env: { PLATFORM_ENV: "dev" }, networks: NETS,
     tokens: "admin:adm-tok,safety:saf-tok", webhookSecret: SECRET,
     network: { seed: 1 }, publicApi: { otp: { name: "fake", send: async () => ({ code: "123456" }) }, minStartMs: 0, minVerifyMs: 0 }, photoStorage: null,
     adapter: () => new DryRunAdapter(() => {}),
@@ -235,5 +235,36 @@ describe.skipIf(!pgAvailable)("identity sagas: stop half way, retry, races (Post
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  }, T);
+
+  test("SD-026: after a number change, a legacy address row no longer routes the old number to the member", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const s = service(clock);
+    const [a, b] = [newPhone(), newPhone()];
+    expect(await text(s, clock, a, "slop")).toBe("join_asked");
+    expect(await text(s, clock, a, "Eve, 33")).toBe("joined");
+    const e = (await memberOf("slop", a))!.id;
+    // A member from before the platform: migration 0006 gave them a person and kept their channel_identities row.
+    await sql`insert into network.channel_identities (app_id, member_id, channel, address, verified_at, is_primary) values ('slop', ${e}, 'sms', ${a}, ${new Date(clock.now())}, true)`;
+
+    // The member moves to a new number on the site (a fresh login, then a code to the new number).
+    let cookie = "";
+    const api = async (path: string, body: unknown) => {
+      const res = await s.publicFetch(new Request(`http://127.0.0.1:8790${path}`, { method: "POST", headers: { host: "localhost:5102", "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body) }));
+      const c = res.headers.get("set-cookie"); if (c) cookie = c.split(";")[0]!;
+      return { status: res.status, body: await res.json().catch(() => null) as any };
+    };
+    clock.advance(31_000);
+    expect((await api("/api/auth/otp/start", { phone: a })).status).toBe(200);
+    expect((await api("/api/auth/otp/verify", { phone: a, code: "123456" })).status).toBe(200);
+    expect((await api("/api/me/phone/start", { phone: b })).body).toEqual({ ok: true });
+    expect((await api("/api/me/phone/confirm", { code: "123456" })).body).toMatchObject({ ok: true });
+    expect((await memberOf("slop", b))!.id).toBe(e);
+
+    // The old number goes to someone else. Their text is not the member's: it is a stranger's first text.
+    expect(await s.memberApps(a)).toEqual([]);
+    expect(await text(s, clock, a, "hey, is this the pizza place?")).toBe("join_asked");
+    expect((await sql`select count(*)::int as n from network.messages where app_id = 'slop' and member_id = ${e} and direction = 'inbound' and body like '%pizza%'`)[0].n).toBe(0);
   }, T);
 });

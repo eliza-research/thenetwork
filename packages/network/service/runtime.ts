@@ -382,14 +382,15 @@ export class NetworkRuntime {
   /**
    * This app's joined members' addresses. An invited person (the invite gate has not let them in) or a
    * removed one is not a member here. A member the platform knows (members.person_id) gets the person's
-   * verified phone (platform.phone_identities, the one place a phone lives). Members from before the
-   * platform keep their channel_identities rows (one per app and address).
+   * verified phone (platform.phone_identities, the one place a phone lives: a legacy phone row of theirs
+   * is not read). Members from before the platform keep their channel_identities rows (one per app and address).
    */
   async identities() {
     const [legacy, platform] = await this.scoped(async tx => [
       await tx`select ci.member_id, ci.address, m.home_city from network.channel_identities ci
         join network.members m on m.app_id = ci.app_id and m.id = ci.member_id
-        where ci.app_id = ${this.app.id} and ci.channel in ('imessage', 'sms') and m.account_status not in ('invited', 'removed') order by ci.is_primary desc, ci.member_id`,
+        where ci.app_id = ${this.app.id} and ci.channel in ('imessage', 'sms') and m.account_status not in ('invited', 'removed')
+          and (m.person_id is null or left(ci.address, 1) <> '+') order by ci.is_primary desc, ci.member_id`,
       // A number on hold (it may have a new owner) is nobody's address until staff decide.
       await tx`select m.id as member_id, ph.e164 as address, m.home_city from network.members m join platform.phone_identities ph on ph.person_id = m.person_id
         where m.app_id = ${this.app.id} and m.account_status not in ('invited', 'removed') and ph.hold is null order by m.id`,
