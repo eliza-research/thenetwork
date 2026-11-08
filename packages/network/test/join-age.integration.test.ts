@@ -11,6 +11,7 @@ import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {TURN_PATH, type TurnRequest} from "../../core/src/svc/contract.ts";
 import {DryRunAdapter} from "../service/channel.ts";
 import {NetworkService} from "../service/service.ts";
+import {ELIZA_NOTICE} from "../src/copy.ts";
 import {APPS} from "../../platform/src/apps.ts";
 
 const db = `network_join_age_${randomUUID().replaceAll("-", "")}`;
@@ -242,4 +243,26 @@ test("SD-213: a member who becomes a minor during the interview gets no further 
   const replies: string[] = r.replies ?? [];
   expect(replies.some(t => t.includes("When are you usually free"))).toBe(false);
   expect(replies.some(t => t.includes("one-on-one or small groups"))).toBe(false);
+}, 60_000);
+
+test("SD-276: a first contact whose worker stops after the notice row commits still gets the notice on the next text", async () => {
+  const phone = "+12125550316";
+  // The worker stops after the notice row, its collected reply and the join step committed, before the turn is
+  // done (a crash: the in-memory undo never runs, and the turn stays "processing").
+  const withLock = service.people.withLock;
+  let stuck!: () => void;
+  const reached = new Promise<void>(r => { stuck = r; });
+  service.people.withLock = (async (key: string, fn: () => Promise<unknown>) => {
+    if (key !== `join:${phone}`) return withLock.call(service.people, key, fn);
+    service.people.withLock = withLock;
+    await fn(); stuck();
+    return new Promise(() => {});
+  }) as typeof withLock;
+  post(phone, "hi").catch(() => {});
+  await reached;
+  // Past the processing lease and the hold of an unresolved turn: the next text sweeps the stuck turn.
+  clock.advance(11 * MINUTE);
+  const next = await say(phone, "hi");
+  expect(next.outcome).toBe("handled");
+  expect(next.replies[0]).toBe(ELIZA_NOTICE);
 }, 60_000);

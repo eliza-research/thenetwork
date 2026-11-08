@@ -1182,7 +1182,8 @@ export class NetworkService implements RuntimeHost {
    * first contact gets it. It enrolls nobody: joining still needs the age check and the opt-in.
    */
   private async elizaNotice(app: AppInfo, e164: string, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string): Promise<boolean> {
-    if (!this.inboundTurn()) return false;
+    const turn = this.inboundTurn();
+    if (!turn) return false;
     if ((await this.memberApps(e164)).length) return false;
     for (const other of this.runtimes.values()) { await other.identities(); if (other.memberOf(e164)) return false; }
     const person = await this.accounts.personFor(e164);
@@ -1194,14 +1195,14 @@ export class NetworkService implements RuntimeHost {
     if ((age !== undefined && !joinAgeCheck(age, floor, app).ok) || (floor !== undefined && !canJoin(floor))) return false;
     const key = this.noticeKey(e164);
     const wrote = await this.sql.begin(async tx => {
-      const rows = await tx`insert into platform.eliza_notices (phone_hash, sent_at) values (${key}, ${new Date(this.clock.now())}) on conflict (phone_hash) do nothing returning phone_hash`;
+      const rows = await tx`insert into platform.eliza_notices (phone_hash, sent_at, turn_id) values (${key}, ${new Date(this.clock.now())}, ${turn.id}) on conflict (phone_hash) do nothing returning phone_hash`;
       if (rows.length) await this.inbox.collect(tx, [{ id: `notice:${rowId}`, body: ELIZA_NOTICE, kind: "compliance" }]);
       return rows.length > 0;
     });
     // The notice row commits before the join runs: a turn that then fails (its collected notice never
     // reaches Cloud) takes the row back, so the retry or the next first contact still gets the notice.
-    const turn = this.inboundTurn();
-    if (wrote && turn) (turn.onFail ??= []).push(() => this.sql`delete from platform.eliza_notices where phone_hash = ${key}`);
+    // A worker that stops cannot run this: the inbox sweep deletes the row of its turn (turn_id).
+    if (wrote) (turn.onFail ??= []).push(() => this.sql`delete from platform.eliza_notices where phone_hash = ${key}`);
     return wrote;
   }
 
