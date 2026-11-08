@@ -540,9 +540,11 @@ export class NetworkService implements RuntimeHost {
     const now = this.clock.now();
     const [last] = await rt.scoped(tx => tx`select max(at) as at from network.bias_reports where app_id = ${rt.app.id} and network_id = ${rt.id}`);
     if (!force && last?.at && now - new Date(last.at as string).getTime() < BIAS_EVERY_MS) return undefined;
+    // The members of this network only (the homes it owns, as the snapshot reads them): its opps are this network's (SD-447).
     const rows = await rt.scoped(tx => tx`select m.id, m.age, m.joined_at, coalesce(array_agg(t) filter (where t like 'appearance:%'), '{}') as tags
       from network.members m left join network.facets f on f.app_id = m.app_id and f.member_id = m.id and f.status <> 'rejected' and ${automatedFacetPredicate(tx, true)} left join lateral unnest(f.tags) t on true
-      where m.app_id = ${rt.app.id} and m.account_status in ('active', 'paused', 'restricted') group by m.id, m.age, m.joined_at order by m.id`) as any[];
+      where m.app_id = ${rt.app.id} and m.home_city = any(${tx.array([...this.conversationCities(rt)], "TEXT")}) and m.account_status in ('active', 'paused', 'restricted')
+      group by m.id, m.age, m.joined_at order by m.id`) as any[];
     const members: BiasMember[] = rows.map(r => ({ id: r.id, age: r.age, joinedAt: r.joined_at ? new Date(r.joined_at).getTime() : null, tags: r.tags ?? [] }));
     const r = biasReport(rt.id, rt.app.id, members, [...rt.net.opps.values()], now);
     // afterTick runs after the tick lock is released, so another replica can be here too: one writer per
