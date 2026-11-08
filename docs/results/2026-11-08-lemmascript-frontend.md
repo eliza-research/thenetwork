@@ -102,6 +102,10 @@ Each fix has an integration case that fails before the fix. The Quint models wer
 - `reviewBlock` has no deadline check.
 - A review decision does not name the version the reviewer saw.
 
+**Browser check of the code-page Cancel** (Claude desktop app built-in browser, Chromium; the real MCP handler and `pages.ts` on loopback with memory stores and a dev OTP, so nothing was sent; the client callback was `http://127.0.0.1:5299/callback`):
+- Before (main's `handler.ts`): after Cancel on the code page, the page stayed on the code step. The console showed `Sending form data to 'http://127.0.0.1:5298/oauth/authorize/cancel' violates the following Content Security Policy directive: "form-action 'self'"`. The server still logged `POST /oauth/authorize/cancel -> 303` and `consent_denied`, so the denial was stored but the client never heard of it.
+- After (this branch): Cancel reached `http://127.0.0.1:5299/callback?error=access_denied&error_description=Connection+cancelled&state=s1`, with no console errors.
+
 ## 5. Full suites
 
 The suites ran one after the other, with `nice -n 10`, on a shared machine (load average about 17):

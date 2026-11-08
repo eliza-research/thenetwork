@@ -69,7 +69,7 @@ There are no unit or smoke tests ([docs/tests-policy.md](docs/tests-policy.md)).
 
 ## Formal modeling
 
-All code in the app must be modeled at two levels: Quint at the high level (flows, states and invariants) and LemmaScript at the low level (proved contracts on the functions that the shipping code calls). A change to code updates both. This requirement is not yet met: most existing code has no model. The first models cover the frontend: see [quint/README.md](quint/README.md) and `LemmaScript-files.txt`. [CONTRIBUTING.md](CONTRIBUTING.md) section 14 has the rule.
+All code in the app must be modeled at two levels: Quint at the high level (flows, states and invariants) and LemmaScript at the low level (proved contracts on the functions that the shipping code calls). A change to code updates both. The rule applies to every PR from 2026-11-07, for the code that the PR changes. Existing code that no PR touches does not meet it yet. Coverage today is the frontend: see [quint/README.md](quint/README.md) and `LemmaScript-files.txt`. [CONTRIBUTING.md](CONTRIBUTING.md) section 14 has the rule.
 
 ## The Eliza seam
 

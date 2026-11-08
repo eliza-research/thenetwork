@@ -1406,7 +1406,7 @@ All code in the app is modeled at two levels.
 - Code that LemmaScript cannot express (the DOM, React components, `await`, SQL, regex tables, crypto) moves its decisions into an import-free core. The rest stays a thin shell that calls the core and does not recompute the decision.
 - Integration tests, end-to-end tests and `bun run sim` stay the validation layer for what the models do not cover.
 
-Status: not yet met. Most existing code has no model. The first frontend cores and models are in PR #419.
+The rule applies to every pull request from 2026-11-07, for the code that the pull request changes. Existing code that no pull request touches does not meet it yet. Coverage today: the frontend flows in PR #419 (four Quint models, eight LemmaScript cores).
 # 35. Admin console, backend tools, and data analysis
 The team must be able to see everything happening in the Network, from any member's point of view, and understand why the system did what it did. These tools are MVP scope, not polish. They are also how reviewers do their jobs and how the simulator is inspected. The console serves every app (Section 40.3): an app switcher, roles per app and a reason-gated, audited cross-app person view.
 ## 35.1 Principles
