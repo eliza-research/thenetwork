@@ -281,13 +281,14 @@ class ObsStore {
   /** Every request names the app (the server checks the role for it). */
   private withApp(path: string) { return /[?&]app=/.test(path) ? path : `${path}${path.includes("?") ? "&" : "?"}app=${encodeURIComponent(this.app)}`; }
   private async api(path: string, init: RequestInit = {}): Promise<Response> {
-    const headers = new Headers(init.headers);
-    if (this.token) headers.set("authorization", `Bearer ${this.token}`);
+    const headers = new Headers(init.headers), sent = this.token;
+    if (sent) headers.set("authorization", `Bearer ${sent}`);
     // The mode this page shows: the server refuses a change meant for the other mode (409 mode_changed).
     headers.set("x-observatory-mode", this.mode);
     const r = await fetch(this.withApp(path), { ...init, headers });
     if (r.status === 401) {
-      if (!this.authNeeded) { this.authEpoch++; this.authNeeded = true; this.notify(); }
+      // A late 401 for a token that was replaced says nothing about the token in use.
+      if (!this.authNeeded && sent === this.token) { this.authEpoch++; this.authNeeded = true; this.notify(); }
       throw new AuthError("token required");
     }
     return r;
