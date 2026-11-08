@@ -3074,10 +3074,13 @@ export class ConsentNetwork implements NetworkUnderTest {
   private bookPlan(o: Opp, going: MemberId[], fromFallback = false): void {
     const plan = o.plan!;
     const a = plans.activityById.get(plan.activityId)!;
+    // Yes-sayers left out here were told "I'll tell you once enough people are in": they hear that it did not come together (never why).
+    const left: MemberId[] = [];
     let keep = going.filter(id => {
       if (!this.bookedNear(id, plan.window.start, o.id)) return true;
       o.status.set(id, "unavailable"); this.plansCounters.planConflictsDropped++;
       this.ctx.log("plan_conflict", { oppId: o.id, memberId: id });
+      left.push(id);
       return false;
     });
     // In the order they said yes: a member blocked by someone already in drops out, never both of
@@ -3086,17 +3089,20 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const id of keep) {
       const chk = this.checkRecipient(id, "reveal", { about: [...seated, id], reply: false });
       const why = !chk.ok ? chk.reason : attention.canSendLogistics({ outboundSinceInbound: this.member(id).outbound ?? 0 }) ? undefined : "conversation_streak";
-      if (why) { this.refuse(id, "reveal", why); o.status.set(id, "unavailable"); continue; }
+      if (why) { this.refuse(id, "reveal", why); o.status.set(id, "unavailable"); left.push(id); continue; }
       seated.push(id);
     }
     keep = seated;
+    // Never a minor or a member on watch: any later message about this plan to them is a contact.
+    const tell = (ids: MemberId[]) => { for (const id of ids) if (!this.member(id).minor && this.trust.ok(id)) this.noteFor(id, copy.planNotTogether); };
     // A smaller group of 3 or more is booked like the original; a group plan is never booked as a pair.
     const enough = keep.length >= plan.quorum || (keep.length >= 3 && a.groupSize[0] <= 2);
     if (!enough) {
       o.planRun = { ...o.planRun!, stage: "closed" };
-      if (fromFallback || keep.length < 2) { for (const id of keep) this.noteFor(id, copy.planNotTogether); return this.close(o, "plan did not come together"); }
+      if (fromFallback || keep.length < 2) { for (const id of keep) this.noteFor(id, copy.planNotTogether); tell(left); return this.close(o, "plan did not come together"); }
       return this.planFallback(o);
     }
+    tell(left);
     const now = this.now();
     o.meetingAt = plan.window.start; o.venue = plan.place.name; o.venueArea = plan.place.area ?? "";
     const gv = VENUES.find(v => v.id === plan.venueId);

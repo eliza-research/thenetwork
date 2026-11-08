@@ -159,6 +159,29 @@ describe("plan run", () => {
     expect(w.net.crews[0]!.sessions).toHaveLength(4);
   });
 
+  // SD-480: a yes-sayer left out when the plan was booked (booked elsewhere at that time, or refused at
+  // the send-time check) was told "I'll tell you once enough people are in" and then heard nothing.
+  test("a yes-sayer left out at booking hears that the plan did not come together", async () => {
+    const w = await world(["a", "b", "c", "d", "f"]);
+    // Saturday 2026-10-10 10:00 New York: the first time the intro below offers a.
+    const sat = Date.UTC(2026, 9, 10, 14);
+    // Quorum 4: without a, three are left, and bouldering (groupSize from 2) is booked for three.
+    const id = submit(w, { ...groupPlan(w, ["a", "b", "c", "d"], { quorum: 4 }), window: { start: sat, end: sat + 2 * HOUR }, probeDeadline: sat - 30 * HOUR });
+    expect(await answer(w, { a: "yes" })).toBe(true);
+    const intro = w.propose(["a", "f"]);
+    expect(await w.runUntil(() => w.probed("a"), 3 * DAY)).toBe(true);
+    expect(opp(w, intro).offered.a[0].start).toBe(sat);
+    await w.say("a", "yes, Saturday works");
+    expect(await w.runUntil(() => w.probed("f"), 2 * DAY)).toBe(true);
+    await w.say("f", "yes, Saturday works");
+    expect(opp(w, intro).stage).toBe("scheduled");
+    expect(await answer(w, { b: "yes", c: "yes", d: "yes" })).toBe(true);
+    expect(w.log("plan_conflict").map(l => l.detail.memberId)).toEqual(["a"]);
+    expect(w.meetings.filter(m => m.kind === "plan").map(m => [...m.participants].sort())).toEqual([["b", "c", "d"]]);
+    expect(opp(w, id).status.get("a")).toBe("unavailable");
+    expect((w.net as any).members.get("a").note?.text).toBe("That plan didn't come together this time.");
+  });
+
   // SD-204: a backfilled alternate was not in plan.invited, so the engine gave no probe text for them
   // (plan_copy) and the bench drained with no message sent.
   test("a backfilled alternate gets the plan probe", async () => {
