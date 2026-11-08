@@ -21,9 +21,10 @@ let sql:SQL,service:NetworkService,server:ReturnType<typeof Bun.serve>,cloud:Ret
 const sent:Array<{id:string;text:string;kind:string;to:string}>=[];
 /** What the classifier boundary answers next: hold flags (Clef categories). */
 let clefFlags:string[]=[];
+const logs:string[]=[];
 const start=async()=>{
   service=new NetworkService({url,clock,photoStorage:null,env:{PLATFORM_ENV:"dev",CLEF_RATINGS:"off",SERVICE_TURN_SECRET:secret},
-    networks:[{id:"friends:nyc",matchingEnabled:false}],log:()=>{},
+    networks:[{id:"friends:nyc",matchingEnabled:false}],log:line=>{logs.push(line);},
     relayClassifier:async()=>({flags:clefFlags,source:"clef" as const}),
     adapter:(_net,rt)=>new CloudChannelAdapter({app:rt.app.id,clock,city:rt.city,from:"+12125550310",origin:cloud.url.origin,secret,
       env:{PLATFORM_ENV:"dev",BLOOIO_ALLOW_SEND:"1",NTWRK_LIVE_APPROVED:"1",FRIENDS_LIVE_APPROVED:"1"}})});
@@ -91,6 +92,18 @@ test("relay-item: a text that Clef reads as a minor's is not kept for staff (SD-
   expect(item?.text).toBeUndefined();
   const [saved]=await sql`select state from network.network_state where id='friends:nyc'`;
   expect(JSON.stringify(saved.state)).not.toContain("drives me to the park");
+},60_000);
+
+test("relay-item: a held item that staff do not decide raises the review SLA alert (SD-133)",async()=>{
+  await fixturePair("held-sla");toNyHour(12);
+  clefFlags=["scam"];
+  try { expect((await relay("held-sla-text","tell Sam I can send the tickets if they pay me first")).body).toMatchObject({decision:"hold"}); }
+  finally { clefFlags=[]; }
+  const held=(await service.runtimeFor("friends")!.readState(n=>n.relayHeld())).find(h=>h.matchId==="held-sla")!;
+  expect(held.status).toBe("held");
+  // The friends review SLA is 12 hours (observatory apps.ts DEFAULT_SLA_HOURS). Nobody decides the item.
+  for(let i=0;i<13;i++){clock.advance(HOUR);await service.runtimeFor("friends")!.tick();}
+  expect(logs.filter(l=>l.startsWith("[alert] review SLA friends:nyc")&&l.includes(held.itemId))).toHaveLength(1);
 },60_000);
 
 // Keep this case last: Ari deletes everything.

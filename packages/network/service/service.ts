@@ -531,7 +531,9 @@ export class NetworkService implements RuntimeHost {
    * host's log alerts pick up (docs/deploy.md); a failure is logged and never stops the tick.
    */
   async afterTick(rt: NetworkRuntime): Promise<void> {
-    for (const line of slaAlerts(rt.id, rt.net.reviewQueue(), this.clock.now(), DEFAULT_SLA_HOURS[rt.app.id], this.slaAlerted)) this.log(line);
+    // Relayed items held for staff (relay.ts) wait for the same human review: they share the app's SLA (no expiry).
+    const relayHeld = rt.net.relayHeld().map(h => ({ oppId: `relay:${h.itemId}`, queuedAt: h.at }));
+    for (const line of slaAlerts(rt.id, [...rt.net.reviewQueue(), ...relayHeld], this.clock.now(), DEFAULT_SLA_HOURS[rt.app.id], this.slaAlerted)) this.log(line);
     if (PHOTO_APPS.includes(rt.app.id)) await this.weeklyBias(rt);
   }
 
@@ -2546,8 +2548,9 @@ export function reviewerOfRecord(req: Request, user: StaffUser, consoleToken: st
 /**
  * Review items waiting longer than the app's SLA (slop 6 h, peon 24 h, the others 12 h;
  * observatory apps.ts DEFAULT_SLA_HOURS): one "[alert] review SLA" line per item, once (`seen`).
+ * An item with no `deadline` (a held relay item) does not expire.
  */
-export function slaAlerts(network: string, queue: readonly { oppId: string; queuedAt: number; deadline: number }[], now: number, hours: number, seen: Set<string>): string[] {
+export function slaAlerts(network: string, queue: readonly { oppId: string; queuedAt: number; deadline?: number }[], now: number, hours: number, seen: Set<string>): string[] {
   const out: string[] = [];
   const key = (id: string) => `${network}|${id}`;
   // Items that left the queue are forgotten (the set holds only waiting items).
@@ -2555,7 +2558,7 @@ export function slaAlerts(network: string, queue: readonly { oppId: string; queu
   for (const q of queue) {
     if (seen.has(key(q.oppId)) || now - q.queuedAt <= hours * 3_600_000) continue;
     seen.add(key(q.oppId));
-    out.push(`[alert] review SLA ${network}: item ${q.oppId} waited ${Math.round((now - q.queuedAt) / 60_000)} min (SLA ${hours} h, expires unsent in ${Math.max(0, Math.round((q.deadline - now) / 60_000))} min)`);
+    out.push(`[alert] review SLA ${network}: item ${q.oppId} waited ${Math.round((now - q.queuedAt) / 60_000)} min (SLA ${hours} h${q.deadline === undefined ? "" : `, expires unsent in ${Math.max(0, Math.round((q.deadline - now) / 60_000))} min`})`);
   }
   return out;
 }
