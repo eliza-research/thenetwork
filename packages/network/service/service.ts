@@ -954,9 +954,11 @@ export class NetworkService implements RuntimeHost {
    *  2. the whole message is an app's word ("slop", "slop.date", "join friends.help"): that app;
    *  3. a join the person started (they sent the app's word) takes the answer that follows, if the
    *     answer reads as a join answer or the person is not a member anywhere;
-   *  4. a member: the app with the newest open item (a probe, a plan they have not answered), else the
+   *  4. a member's "block X" or "report X" that names someone they met through one of their apps: the
+   *     app of the newest meeting with that person (SD-250);
+   *  5. a member: the app with the newest open item (a probe, a plan they have not answered), else the
    *     app that wrote to them last;
-   *  5. otherwise The Network (a stranger joins it).
+   *  6. otherwise The Network (a stranger joins it).
    * An app's name inside a sentence ("my ex is on slop.date") never routes a member's message.
    */
   private async route(ev: Extract<ChannelEvent, { kind: "message" }>, forced?: AppId): Promise<Route> {
@@ -975,6 +977,15 @@ export class NetworkService implements RuntimeHost {
     const pending = e164 ? await this.pendingOf(e164, "join") : undefined;
     if (pending && !mine.some(x => x.app === pending.app)
       && (!mine.length || parseJoinText(ev.text, this.appWords(), true).age !== undefined)) return { app: pending.app, shared: true };
+    if (mine.length > 1) {
+      let met: { app: AppId; at: number } | undefined;
+      for (const x of mine) {
+        const rt = await this.runtimeOfMember(x.app, x.memberId);
+        const at = rt && await rt.readState(n => n.safetyTargetAt(x.memberId, ev.text));
+        if (at !== undefined && (!met || at > met.at)) met = { app: x.app, at };
+      }
+      if (met) return { app: met.app, shared: true };
+    }
     if (mine.length) {
       const open = mine.filter(x => x.lastItem !== null).sort((a, b) => b.lastItem! - a.lastItem!)[0];
       if (open) return { app: open.app, shared: true };

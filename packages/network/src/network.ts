@@ -1540,6 +1540,22 @@ export class ConsentNetwork implements NetworkUnderTest {
     return { target: this.findByName(text, m.id) };
   }
 
+  /**
+   * A "block X" or "report X" text from this member that names someone they met through this Network
+   * (or "him" with such a counterpart): the time of the newest meeting with them. Undefined for any
+   * other text, or for a name that is no counterpart here. On the shared line the service sends the
+   * text to the app where they met, not to the app that wrote last (SD-250).
+   */
+  safetyTargetAt(memberId: MemberId, text: string): number | undefined {
+    const c = classify(text);
+    const m = this.members.get(memberId);
+    if ((c.kind !== "block" && c.kind !== "report") || !m) return undefined;
+    const r = this.resolveTarget(m, c.target ?? "");
+    const hits = r.target ? [r.target] : r.ask ?? [];
+    const at = this.counterparts(m.id).filter(x => hits.includes(x.m)).map(x => x.at);
+    return at.length ? Math.max(...at) : undefined;
+  }
+
   /** First names for "Who do you mean?", or "First L." when two of them share a first name. */
   private namesFor(list: MemberState[]): string[] {
     const firsts = list.map(x => x.first);
