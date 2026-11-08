@@ -519,8 +519,10 @@ export class OutboundQueue {
             for share of membership,phone`;
           if (!binding) return "dropped_forgotten";
         }
-        if (row.kind!=="compliance" && (member.opted_out || await this.guarded(()=>this.o.checks.optedOut?.(row)??false,true))) return "refused_opted_out";
+        if (row.kind!=="compliance" && member.opted_out) return "refused_opted_out";
       }
+      // The consent ledger again, for every row (a direct text to a non-member too): a STOP that came during the gates wins.
+      if (row.kind!=="compliance" && await this.guarded(()=>this.o.checks.optedOut?.(row)??false,true)) return "refused_opted_out";
       // Recheck eligibility after person/member fences; app state fences were acquired first, as in canonical erasure.
       if (this.o.checks.admit && !(await this.o.checks.admit(row, tx)).ok) return "suppressed_ineligible";
       const claimed = await tx`update platform.outbound set status='sending',attempts=attempts+1,lease_owner=${this.instance},

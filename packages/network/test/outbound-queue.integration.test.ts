@@ -497,3 +497,20 @@ test("SD-337: a send that Blooio answers with status failed gets no sent_at",asy
     expect(row.sent_at).toBeNull();
   } finally {blooio.stop(true);}
 },60_000);
+
+test("Q-outbound_queue-1: a STOP that commits while a direct text to a non-member is in dispatch stops the text",async()=>{
+  toNewYork(12,0);
+  const rt=await primary(),s=services[0]!;
+  const stranger="+12125550204";
+  // The consent read of the dispatch (gate 2) finds no opt-out. The number's STOP commits while the later
+  // gates run (here: during the leak guard's read), before the admission transaction claims the row.
+  const checks=(queueOf(rt) as unknown as {o:{checks:{leaks:(row:{to:string})=>unknown}}}).o.checks,leaks=checks.leaks;
+  checks.leaks=async row=>{
+    if (row.to===stranger) {checks.leaks=leaks;await s.accounts.recordConsent({e164:stranger,app:null,state:"opted_out",source:"keyword",at:clock.now()});}
+    return leaks(row);
+  };
+  let status:string;
+  try {status=await rt.adapter.direct(stranger,"You're invited to friends.help. Reply JOIN to start.","q1-invite","transactional");} finally {checks.leaks=leaks;}
+  expect(dispatched).not.toContain("q1-invite");
+  expect(status).toBe("refused_opted_out");
+},60_000);
