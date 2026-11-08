@@ -461,7 +461,8 @@ class ObsStore {
   held(queue: HeldQueue) { return this.fetch<{ ok: boolean; items?: HeldText[]; code?: string; error?: string }>(`/api/held?queue=${queue}`); }
   async heldPhoto(id:string,reason:string):Promise<{blob?:Blob;error?:string}>{
     try{
-      const r=await this.api(`/api/held/${encodeURIComponent(id)}/photo`,{headers:{"x-network-reason":reason}});
+      // A header value is a byte string: the reason goes percent-encoded (UTF-8), and the server decodes it.
+      const r=await this.api(`/api/held/${encodeURIComponent(id)}/photo`,{headers:{"x-network-reason":encodeURIComponent(reason)}});
       if(!r.ok)return {error:"The selected photo could not load. Try again or reject it."};
       const blob=await r.blob();
       return ["image/jpeg","image/png","image/webp"].includes(blob.type)&&blob.size>0?{blob}:{error:"The selected photo could not be verified. You can still reject it."};

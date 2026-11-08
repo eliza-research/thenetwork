@@ -652,7 +652,9 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
       // Held texts: the leak guard's parked texts and held relay items (real mode, from the Network service).
       // Safety or admin; each read and each decision is audited; a decision needs a reason of 5+ characters.
       "/api/held/:id/photo": {GET:guard(async(req,u,app)=>{
-        const id=decodeURIComponent(req.params.id!),reason=req.headers.get("x-network-reason")?.trim()??"";
+        // The console sends the reason percent-encoded (UTF-8): a header value is a byte string.
+        let reason="";try{reason=decodeURIComponent(req.headers.get("x-network-reason")??"").trim();}catch{return json({error:"A selected item and review reason are required."},400);}
+        const id=decodeURIComponent(req.params.id!);
         if(!/^pri_[a-f0-9]{32}$/.test(id)||reason.length<PERSON_REASON_MIN||reason.length>500)return json({error:"A selected item and review reason are required."},400);
         const src=await source(mode,app);if(!src.heldPhoto)return json({error:"Selected photo review is unavailable."},404);
         const no=await record(u,app,{action:"read_relay_photo",targetType:"case",targetId:id,reason,ok:true});if(no)return no;

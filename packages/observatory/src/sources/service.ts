@@ -194,7 +194,7 @@ export class ServiceClient {
       const path=`/staff/relay/${encodeURIComponent(id)}/photo`;
       const response=await fetch(this.url+path+(this.c.app?`?app=${encodeURIComponent(this.c.app)}`:""),{
         redirect:"error",signal:AbortSignal.timeout(this.c.timeoutMs??15_000),
-        headers:{authorization:`Bearer ${this.c.token}`,[STAFF_HEADER]:staff,...(this.c.app?{[APP_HEADER]:this.c.app}:{}),[REASON_HEADER]:reason.replace(/[\r\n]+/g," ").slice(0,500)}});
+        headers:{authorization:`Bearer ${this.c.token}`,[STAFF_HEADER]:staff,...(this.c.app?{[APP_HEADER]:this.c.app}:{}),[REASON_HEADER]:encodeURIComponent(reason.replace(/[\r\n]+/g," ").slice(0,500))}});
       if(!response.ok){await response.body?.cancel();return Response.json({error:"The selected photo is unavailable. You can still reject it."},{status:response.status===403||response.status===404?response.status:502});}
       const type=response.headers.get("content-type"),token=response.headers.get("x-network-photo-review-token");
       const bytes=await readCapped(response,PHOTO_MAX_BYTES);
