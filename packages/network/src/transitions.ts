@@ -505,13 +505,36 @@ export function relayDispatchVerdict(f: RelayDispatchFacts): string {
   return f.blocked ? "party:blocked" : "ok";
 }
 
-/** How many numbers a swap sends: both or none. Each pass and each preflight must hold before the first send. */
-export function swapPlan(theirPass: boolean, myPass: boolean, canFirst: boolean, canSecond: boolean): number {
+/** What the send path would do with a message now, with no side effects (network.ts relayWouldSend). */
+export type SendVerdict = "sent" | "deferred" | "refused";
+
+/**
+ * How many numbers a swap sends: both or none. Both engine decisions must pass, and the preflight of
+ * both shares must give the same answer that is not a refusal: both go now, or both wait together
+ * (quiet hours) and are checked again as a pair (swapFlush). One share now and one that waits is
+ * none: the waiting one can be refused later, and the first number would have gone one way.
+ */
+export function swapPlan(theirPass: boolean, myPass: boolean, first: SendVerdict, second: SendVerdict): number {
   //@ verify
   //@ ensures \result === 0 || \result === 2
-  //@ ensures \result === 2 <==> theirPass && myPass && canFirst && canSecond
-  if (!theirPass || !myPass || !canFirst || !canSecond) return 0;
+  //@ ensures \result === 2 <==> theirPass && myPass && first !== "refused" && first === second
+  if (!theirPass || !myPass || first === "refused" || second === "refused") return 0;
+  if (first !== second) return 0;
   return 2;
+}
+
+export type SwapFlush = "both" | "wait" | "neither";
+/**
+ * Two number shares of one swap that waited together, when either one's window may have come: both go
+ * only when both would go now; a refusal of either stops both; otherwise both wait again.
+ */
+export function swapFlush(first: SendVerdict, second: SendVerdict): SwapFlush {
+  //@ verify
+  //@ ensures \result === "both" <==> first === "sent" && second === "sent"
+  //@ ensures \result === "neither" <==> first === "refused" || second === "refused"
+  if (first === "refused" || second === "refused") return "neither";
+  if (first === "sent" && second === "sent") return "both";
+  return "wait";
 }
 
 export type HeldStatus = "held" | "released" | "rejected";

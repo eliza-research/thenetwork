@@ -154,7 +154,14 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
     const q = queue(a, provider, { checks: checks({ stale: () => { throw new Error("stage lookup failed"); }, capTake: async () => { taken++; return true; } }) });
     await q.enqueue(a, [{ id: "stale-throw", to: "+12125558003", kind: "proactive", text: "Someone would like to meet you.", timeZone: NY }]);
     await q.drain();
-    expect(await q.statusOf("stale-throw")).toBe("expired");
+    // SD-299: a check that did not answer neither sends nor ends the row; it waits and runs every check again.
+    expect(await q.statusOf("stale-throw")).toBe("retry_scheduled");
+    expect(calls.length).toBe(0);
+    expect(taken).toBe(0);
+    // The hook still throws on the next drain: the row still does not go and still takes no slot.
+    clock.advance(60_000);
+    await q.drain();
+    expect(await q.statusOf("stale-throw")).toBe("retry_scheduled");
     expect(calls.length).toBe(0);
     expect(taken).toBe(0);
   });
@@ -168,7 +175,8 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
       { id: "cap-refused", to: "+12125558005", kind: "proactive", text: "Another proposal for you.", timeZone: NY },
     ]);
     await a`update platform.outbound set person_cap = true where id in ('cap-unknown', 'cap-refused')`;
-    await a`update platform.outbound set status = 'unknown_acceptance', in_doubt = true, created_at = ${new Date(clock.now() - 7 * 60 * 60_000)} where id = 'cap-unknown'`;
+    // SD-090: the unknown-acceptance TTL counts from when acceptance became unknown (next_attempt_at), not from created_at.
+    await a`update platform.outbound set status = 'unknown_acceptance', in_doubt = true, created_at = ${new Date(clock.now() - 7 * 60 * 60_000)}, next_attempt_at = ${new Date(clock.now() - 7 * 60 * 60_000)} where id = 'cap-unknown'`;
     await a`update platform.outbound set created_at = ${new Date(clock.now() - 2 * 24 * 60 * 60_000)} where id = 'cap-refused'`;
     await q.drain();
     expect(await q.statusOf("cap-unknown")).toBe("failed_unknown");

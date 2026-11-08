@@ -92,11 +92,16 @@ test("a banned member gets no collected reply, and nothing is queued for them", 
   const phone = "+12125550304", before = escaped;
   const memberId = await joinFriends(phone, "Bea", 33);
   await ban(phone);
+  const outbound = async () => (await service.main.scoped(tx => tx`select id from network.messages where app_id='friends' and member_id=${memberId} and direction='outbound'`) as any[]).length;
+  const sent = await outbound();
   const r = await say(phone, "block Sam", {app: "friends"});
   expect(r.replies).toEqual([]);
   expect(r.accountEligible).toBe(false);
-  const rows = await service.main.scoped(tx => tx`select status from network.messages where app_id='friends' and member_id=${memberId} and direction='outbound' order by ts desc limit 1`) as any[];
-  expect(rows[0]?.status).toBe("refused_opted_out");
+  // A banned member's text is refused at inbound (founder 2026-10-09 item 3, SD-073): it is not stored or handled,
+  // so the Network writes no reply at all and no new outbound row exists for them.
+  expect(await outbound()).toBe(sent);
+  const stored = await service.main.scoped(tx => tx`select id from network.messages where app_id='friends' and member_id=${memberId} and direction='inbound' and body = 'block Sam'`) as any[];
+  expect(stored.length).toBe(0);
   expect(escaped).toBe(before);
 }, 60_000);
 

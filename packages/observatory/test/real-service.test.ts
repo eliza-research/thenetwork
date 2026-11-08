@@ -21,6 +21,7 @@ describe.skipIf(!pgAvailable)("real mode: staff actions through the Network serv
   let svc: NetworkService;
   let http: ReturnType<typeof Bun.serve>;
   let real: RealSource;
+  let clock: SimClock;
   const seen: { path: string; staff: string | null; body: unknown }[] = [];
   beforeAll(async () => {
     url = await testDb();
@@ -28,12 +29,15 @@ describe.skipIf(!pgAvailable)("real mode: staff actions through the Network serv
     const g = new GameSource({ pushMs: 3_600_000, tickMs: 3_600_000, seed: 1, review: "human", scenario: "spam_wave" });
     await g.init();
     await g.control({ type: "step", ms: 2 * DAY });
+    // The service runs at the game's time, not the wall clock: items wait in review only until their
+    // deadline, and a decision past it is refused (SD-009). A wall-clock service sees them all expired.
+    clock = new SimClock(g.state().clock.now);
     const sql = new SQL(url);
     await writeRows(sql, rowsFromGame(g), { truncate: true });
     await sql.close();
     await g.dispose();
     // The console's own token: only it may name the reviewer of record (X-Network-Staff-Id).
-    svc = new NetworkService({ url, clock: new SimClock(Date.now()), tokens: `admin:${SERVICE_TOKEN}`, consoleToken: SERVICE_TOKEN, log: () => {} });
+    svc = new NetworkService({ url, clock, tokens: `admin:${SERVICE_TOKEN}`, consoleToken: SERVICE_TOKEN, log: () => {} });
     http = Bun.serve({
       port: 0, hostname: "127.0.0.1",
       async fetch(req) {
@@ -98,6 +102,8 @@ describe.skipIf(!pgAvailable)("real mode: staff actions through the Network serv
 
   test("health: the service's state is in the alerts strip; a service that does not answer is a bad alert and actions refuse", async () => {
     const keys = () => (real.state().stats.alerts ?? []).map(a => `${a.level}:${a.key}`);
+    // The console measures the service's last tick against the wall clock: the service moves to it.
+    clock.set(Date.now());
     await svc.tick();
     await real.control({ type: "refresh" });
     expect(keys()).toContain("info:service_ok");

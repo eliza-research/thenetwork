@@ -224,7 +224,11 @@ export class RealSource implements DataSource {
           (select pg_has_role(current_user, oid, 'member') from pg_roles where rolname = ${`network_observatory_${this.app}`}) as in_app_role
         from pg_roles r where r.rolname = current_user` as any[];
       why = loginProblem({ su: !!who?.su, bypass: !!who?.bypass, ro: String(who?.ro), inAppRole: who?.in_app_role ?? null }, { local: isLocal(this.url!), isolation: this.isolation, app: this.app });
-    } catch (e) { this.store.setEnv(this.env(`Could not check the database login: ${(e as Error).message}`)); return; }
+    } catch (e) {
+      // Refused while unchecked (LemmaScript observatory fix): nothing is read, and the next poll checks again (SD-083).
+      this.store.setEnv(this.env(`Refused: could not check the database login: ${(e as Error).message}. Could not check the database login, so the console reads nothing until the next poll checks it again.`));
+      return;
+    }
     this.unchecked = undefined;
     if (why) {
       this.refused = `Refused: ${why}.`;

@@ -241,11 +241,15 @@ test("an under-13 age stated at a join closes the person's other memberships at 
   expect((await friends.readState(n => n.recipientPolicy(memberId, "info", {proactive: true}))).ok).toBe(true);
   expect((await say(phone, APPS.slop.domain, {app: "slop"})).reason).toBe("join_asked");
   expect((await say(phone, "Fay, 12", {app: "slop"})).reason).toBe("under_age");
-  // Under 13 cannot use any app: before the person writes to friends again, nothing but a safety notice reaches them there.
+  // Under 13 cannot use any app (core canJoin; SD-014): the decline removes the friends membership through the
+  // forget path at once, with a join_declined opt-out, so nothing at all reaches them there, not even a safety notice.
+  const person = (await service.accounts.personFor(phone))!;
+  expect((await service.people.getMembership(person.id, "friends"))!.state).toBe("removed");
+  expect(await service.accounts.optedIn("friends", phone)).toBe(false);
   await friends.identities();
   for (const kind of ["info", "reply", "checkin"] as const)
     expect((await friends.readState(n => n.recipientPolicy(memberId, kind, {proactive: kind !== "reply"}))).ok).toBe(false);
-  expect((await friends.readState(n => n.recipientPolicy(memberId, "safety"))).ok).toBe(true);
+  expect((await friends.readState(n => n.recipientPolicy(memberId, "safety"))).ok).toBe(false);
 }, 60_000);
 
 test("a minor joins but is single-player only and never in an introduction", async () => {

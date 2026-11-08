@@ -175,6 +175,8 @@ export class NetworkRuntime {
       onPosting: p => { this.unit.postings.push(p); },
     });
     this.net.init(this.context());
+    // A number swap whose two shares waited keeps no number in the state: the tick reads it here.
+    this.net.contactOf = id => this.addressOf(id);
     this.adapter = typeof o.adapter === "function" ? o.adapter(this.net, this) : o.adapter ?? new DryRunAdapter(host.log);
     this.adapter.attach?.(this);
   }
@@ -269,9 +271,20 @@ export class NetworkRuntime {
       const now = this.clock.now();
       if (!state.relay?.swaps.some(x => x.itemId === id[1] && x.matchId === matchId && x.from === from && x.to === to && x.at <= now && now - x.at <= RELAY_SWAP_TTL_MS)) return no("relay:ask_expired");
     } else {
-      const [rec] = await tx`select opportunity_id,from_member,to_member,decision,review,reasons from network.relay_records where app_id=${app} and item_id=${id[1]!}`;
+      const [rec] = await tx`select opportunity_id,from_member,to_member,kind,at,decision,review,reasons from network.relay_records where app_id=${app} and item_id=${id[1]!}`;
       if (!rec || rec.to_member !== to || rec.decision !== "pass" || rec.review === "rejected") return no("relay:not_passed");
       if ((rec.reasons as string[] | null)?.includes(SWAP_WITHDRAWN)) return no(SWAP_WITHDRAWN);
+      if (rec.kind === "contact_share") {
+        // A number swap goes both ways or not at all (relay.ts swapPlan): the other share of the same swap
+        // (same match and instant, the other direction) must still be passed, not withdrawn, not rejected,
+        // and its row must not have ended unsent.
+        const [other] = await tx`select r.decision,r.review,r.reasons,o.status from network.relay_records r
+          left join platform.outbound o on o.app_id = r.app_id and o.id = 'relay:' || r.item_id
+          where r.app_id=${app} and r.opportunity_id=${rec.opportunity_id} and r.kind='contact_share'
+            and r.from_member=${rec.to_member} and r.to_member=${rec.from_member} and r.at=${rec.at} limit 1`;
+        if (!other || other.decision !== "pass" || other.review === "rejected" || (other.reasons as string[] | null)?.includes(SWAP_WITHDRAWN)
+          || (other.status && isNotSent(other.status as OutboundStatus))) return no("relay:swap_partner");
+      }
       from = rec.from_member as MemberId; matchId = rec.opportunity_id as string;
       if (row.oppId && row.oppId !== matchId) return no("relay:pair");
     }

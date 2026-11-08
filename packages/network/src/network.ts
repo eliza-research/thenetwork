@@ -56,8 +56,8 @@ import type { NetworkStore } from "./store.ts";
 import { Trust, type TrustLevel, type TrustState } from "./trust.ts";
 import {
   abusePoints, afterAnswers, afterBareAck, afterReview, afterSla, approvalVerdict, llmReading, mayProbe, mayPush, minorClears, minorRises, mustDecline,
-  llmAgeCounts, quorumMet, recipientVerdict, sendTimeVerdict, relayDispatchVerdict, relayStatusOf, reviewLate, seatOk, signalClearVerdict, staffHoldPoints, statusAfter, unsolVerdict, windowCount, withSend,
-  type AgeFacts, type OtherFacts, type RelayPartyFacts, type SeatFacts,
+  llmAgeCounts, quorumMet, recipientVerdict, sendTimeVerdict, relayDispatchVerdict, relayStatusOf, reviewLate, seatOk, signalClearVerdict, staffHoldPoints, statusAfter, swapFlush, unsolVerdict, windowCount, withSend,
+  type AgeFacts, type SendVerdict, type OtherFacts, type RelayPartyFacts, type SeatFacts,
 } from "./transitions.ts";
 import type { AppHooks, AppTag, HookOpp } from "./apphooks.ts";
 import { isSeatId, postingFromDraft, postingFromFacts, postingProblem, postingsOf, POSTING_COPY, readPostingText, seatIdOf, seatOwnerOf, SEAT_COPY, type JobPosting, type PostingDraft } from "./jobs.ts";
@@ -447,6 +447,10 @@ interface SendOpts {
   relayFrom?: MemberId;
   /** A number swap both members asked for (relay.ts): the one contact value the leak guard lets through in this text. */
   relayContact?: string;
+  /** The outbound key of the other share of the same number swap: a pair that waits goes or stops together (tick). */
+  swapPartner?: string;
+  /** A waiting swap share keeps no number: the body has CONTACT_MARK, and this member's number goes in when it is sent. */
+  relayContactOf?: MemberId;
 }
 type SendHook =
   | { t: "interview" } | { t: "age" } | { t: "suggested"; venues: string[] } | { t: "retry_found"; oppId: string }
@@ -3523,7 +3527,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const r of this.snapshotCached().members as MemberRecord[]) this.personHold(r);
     // Deferred sends whose window may have come. Each one runs every send-time check again.
     const waiting = this.deferred; this.deferred = [];
+    const flushed = new Set<Deferred>();
     for (const d of waiting) {
+      if (flushed.has(d)) continue;
+      if (d.o.swapPartner) { this.flushSwapShares(d, waiting, flushed); continue; }
       const m = this.members.get(d.memberId);
       if (!m) continue;
       const valid = this.hookFns(m, d.o.hook).valid;
@@ -4177,9 +4184,15 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (!(interrupt ? attention.canInterrupt(c) : attention.canSendLogistics(c))) return this.refuse(m.id, kind, "conversation_streak", fns);
       if (!this.timingOk(m, timing, now)) {
         if (o.noDefer) return "deferred";
-        // A relayed number is never kept in the stored state (relay.ts: a swap keeps no number), so a
-        // share that would wait is refused; the number swap asks relayWouldSend first, so it never waits.
-        if (o.relayContact) return this.refuse(m.id, kind, "contact_not_deferred", fns);
+        // A relayed number is never kept in the stored state (relay.ts: a swap keeps no number). Only the
+        // two shares of one swap that both wait (relay.ts swapPlan) are kept, with the number cut out; the
+        // tick puts it back from the address book and sends or refuses the pair together (swapFlush).
+        if (o.relayContact) {
+          if (!o.swapPartner || !o.relayFrom) return this.refuse(m.id, kind, "contact_not_deferred", fns);
+          const { relayContact, ...rest } = o;
+          body = body.split(relayContact).join(CONTACT_MARK);
+          o = { ...rest, relayContactOf: o.relayFrom };
+        }
         this.deferred.push({ memberId: m.id, body, meta, kind, o, timing });
         this.counters.deferred++;
         this.ctx.log("send_deferred", { memberId: m.id, kind, until: this.openAt(m, timing, now), ...(meta.proposalId ? { oppId: meta.proposalId } : {}) });
@@ -5149,28 +5162,63 @@ export class ConsentNetwork implements NetworkUnderTest {
           || o.photoIds.some((id, i) => id !== o.approvedPhotos![i]!.photoId))) return "refused";
         this.dirty = true;
         const r = this.send(m, body, { type: "relay", proposalId: o.matchId,
-          ...(o.approvedPhotos?.length ? { approvedPhotos: o.approvedPhotos } : {}) }, "relay", { about: [o.from], key: o.key, relayFrom: o.from, ...(o.contact ? { relayContact: o.contact } : {}), ...(o.noDefer ? { noDefer: true } : {}) });
+          ...(o.approvedPhotos?.length ? { approvedPhotos: o.approvedPhotos } : {}) }, "relay", { about: [o.from], key: o.key, relayFrom: o.from, ...(o.contact ? { relayContact: o.contact } : {}), ...(o.swapPartner ? { swapPartner: o.swapPartner } : {}), ...(o.noDefer ? { noDefer: true } : {}) });
         return r === "sent" ? "sent" : r === "deferred" ? "deferred" : "refused";
       },
-      canSend: (to, body, o) => { const m = this.members.get(to); return !!m && this.relayWouldSend(m, body, o); },
+      canSend: (to, body, o) => { const m = this.members.get(to); return m ? this.relayWouldSend(m, body, o) : "refused"; },
     };
   }
 
   /**
-   * Would send() deliver this relayed text now? The same checks in the same order, with no side
-   * effects, for the number swap: both shares are asked about before the first goes. A send that
-   * would be deferred is a no: it is checked again later and can be refused then.
+   * What send() would do with this relayed text now: "sent", "deferred" (it would wait for the
+   * member's window) or "refused". The same checks in the same order, with no side effects, for the
+   * number swap: both shares are asked about before the first goes (relay.ts swapPlan), and a waiting
+   * pair is asked again at the tick (flushSwapShares).
    */
-  private relayWouldSend(m: MemberState, body: string, o: { from: MemberId; matchId: string; contact?: string }): boolean {
+  private relayWouldSend(m: MemberState, body: string, o: { from: MemberId; matchId: string; contact?: string }): SendVerdict {
     const now = this.now();
     const reply = this.replyTo === m.id;
-    if (!this.checkRecipient(m.id, "relay", { about: [o.from], proactive: false, reply }).ok) return false;
+    if (!this.checkRecipient(m.id, "relay", { about: [o.from], proactive: false, reply }).ok) return "refused";
     const timing = this.timingOf("relay", false, reply);
-    if (timing !== "now" && (!attention.canSendLogistics({ outboundSinceInbound: m.outbound ?? 0 }) || !this.timingOk(m, timing, now))) return false;
+    if (timing !== "now" && !attention.canSendLogistics({ outboundSinceInbound: m.outbound ?? 0 })) return "refused";
+    const wait = timing !== "now" && !this.timingOk(m, timing, now);
     const meta: SimMeta = { type: "relay", proposalId: o.matchId };
-    if (this.unsolicited(m, meta, now) && this.unsolicitedRefusal(m, meta, "relay", now)) return false;
-    if (this.guardCheck(o.contact ? body.split(o.contact).join(" ") : body, m.id, o.from).length) return false;
-    return !(m.lastSent?.body === sentForm(body, o.contact) && now - m.lastSent.at < DUPLICATE_WINDOW);
+    if (this.unsolicited(m, meta, now) && this.unsolicitedRefusal(m, meta, "relay", now)) return "refused";
+    if (this.guardCheck(o.contact ? body.split(o.contact).join(" ") : body, m.id, o.from).length) return "refused";
+    if (m.lastSent?.body === sentForm(body, o.contact) && now - m.lastSent.at < DUPLICATE_WINDOW) return "refused";
+    return wait ? "deferred" : "sent";
+  }
+
+  /** The member's number for a swap share that waited (the runtime's address book; NetworkRuntime sets it). */
+  contactOf?: (id: MemberId) => string | undefined;
+
+  /**
+   * The two shares of one number swap that waited together (relay.ts swapPlan): both go only when both
+   * would go now, a refusal of either stops both (neither counts as shared), and otherwise both wait
+   * again (swapFlush). A share whose partner is gone stops too. The number goes back into the text here.
+   */
+  private flushSwapShares(d: Deferred, waiting: Deferred[], flushed: Set<Deferred>) {
+    const p = waiting.find(x => x !== d && !flushed.has(x) && x.o.key === d.o.swapPartner && x.o.swapPartner === d.o.key);
+    const pair = p ? [d, p] : [d];
+    for (const x of pair) flushed.add(x);
+    const ready = pair.map(x => {
+      const m = this.members.get(x.memberId), from = x.o.relayContactOf, contact = from && this.contactOf?.(from);
+      if (!m || !from || !contact || !x.meta.proposalId) return undefined;
+      return { m, x, contact, body: x.body.split(CONTACT_MARK).join(contact) };
+    });
+    const verdict = (i: number): SendVerdict => {
+      const r = ready[i];
+      if (!r) return "refused";
+      return this.relayWouldSend(r.m, r.body, { from: r.x.o.relayContactOf!, matchId: String(r.x.meta.proposalId), contact: r.contact });
+    };
+    const plan = p ? swapFlush(verdict(0), verdict(1)) : "neither";
+    if (plan === "wait") { this.deferred.push(...pair); return; }
+    const keys = (xs: Deferred[]) => new Set(xs.map(x => x.o.key!.slice(6)));
+    if (plan === "neither") { this.relayDesk.unsent(keys(pair)); this.dirty = true; return; }
+    for (const r of ready) {
+      const { relayContactOf: _, ...o } = r!.x.o;
+      if (this.send(r!.m, r!.body, r!.x.meta, r!.x.kind, { ...o, relayContact: r!.contact }) === "refused") { this.relayDesk.unsent(keys([r!.x])); this.dirty = true; }
+    }
   }
   /** A member's relay request (POST /internal/relay): decided by the engine, delivered as its rendered text only. */
   relayRequest(ask: RelayAsk, o: RelayCallOptions = {}): Promise<RelayOutcome> { this.relayDesk.prune(this.now()); return this.relayDesk.request(ask, o); }
@@ -5231,6 +5279,8 @@ export class ConsentNetwork implements NetworkUnderTest {
 
 /** The text kept in `lastSent` for the duplicate check: a relayed number is cut out (network_state never holds it). */
 function sentForm(text: string, contact?: string): string { return contact ? text.split(contact).join(" ") : text; }
+/** Where a waiting swap share's number goes back in (the stored state keeps no number). */
+const CONTACT_MARK = "\u27e8contact\u27e9";
 
 /**
  * Adapter for the Blooio outbound queue's `recipientPolicy` hook (packages/blooio

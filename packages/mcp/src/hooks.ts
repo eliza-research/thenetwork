@@ -52,8 +52,6 @@ export interface PlatformHooks {
   withSignupAgePolicy?<T>(phoneKey: string, app: McpAppId, fn: (allowed: boolean) => Promise<T>): Promise<T>;
   /** Wire the one temporary-draft cleanup consumer to canonical age recording, including null-person phones. */
   setSignupAgeCleanup?(fn: (phoneKey: string, app: McpAppId) => Promise<void>): void;
-  /** True when this keyed number, or this person, is banned. A ban ends every grant of theirs, however old. */
-  banned?(phoneKey: string, personId: string | null): Promise<boolean>;
   /** The person's own state in one app. */
   status(personId: string, app: McpAppId): Promise<PublicStatus>;
   /** Current adult Slop member and phone owner, with no safety hold or ban. Never enrolls anyone. */
@@ -155,7 +153,6 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       return (await p.accounts.personFor(e164))?.id ?? null;
     },
     phoneKey: e164 => p.accounts.phoneHash(e164),
-    banned: (key, personId) => p.store.isBanned(key, personId),
     async personForKey(key) {
       return (await p.accounts.byPhoneHash(key))?.person.id ?? null;
     },

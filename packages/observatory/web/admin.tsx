@@ -417,7 +417,8 @@ function AppConfig() {
   const [pending, setPending] = useState<Pending>({ active: false, target: false });
   useEffect(() => { if (!pending.active) return; const h = setTimeout(() => setPending({ active: false, target: false }), 4000); return () => clearTimeout(h); }, [pending.active]);
   const c = r.data;
-  if (!c) return <Err {...r} />;
+  // The audit table reads the app at mount, beside the config read, not after it: same position in both trees, so it stays mounted.
+  if (!c) return <div className="config"><Err {...r} />{s.isAdmin() && <AuditLog />}</div>;
   const locked = !!s.env?.matchingLocked && !c.matchingEnabled;
   const canSwitch = c.canChange && s.isAdmin() && !locked;
   const press = async () => {

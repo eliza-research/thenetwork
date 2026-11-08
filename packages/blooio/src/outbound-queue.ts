@@ -294,6 +294,13 @@ export class OutboundQueue {
         let c: StatusChange | undefined;
         try {
           row = this.rowOf(r);
+        } catch (e) {
+          // The stored row itself does not parse (approved photos): no retry can fix it, so it is parked for a person at once.
+          changes.push(await this.end(row, "parked_error", (e as Error).message.slice(0, 500)));
+          this.o.onAlert?.(row.id, "dispatch_error");
+          continue;
+        }
+        try {
           c = await this.dispatch(row);
         } catch (e) {
           // One bad row never stops the drain. A database error (a deadlock, a lock timeout, a lost connection) is

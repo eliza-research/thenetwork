@@ -42,6 +42,10 @@ datatype RelayPartyFacts = RelayPartyFacts(known: bool, declined: bool, adultSur
 
 datatype RelayDispatchFacts = RelayDispatchFacts(samePerson: bool, pairOk: bool, status: RelayStatus, bothAccepted: bool, from: RelayPartyFacts, to: RelayPartyFacts, blocked: bool)
 
+datatype SendVerdict = sent | deferred | refused
+
+datatype SwapFlush = both | wait | neither
+
 datatype HeldStatus = held | released | rejected
 
 datatype HeldAction = release | reject
@@ -720,17 +724,37 @@ lemma relayDispatchVerdict_ensures(f: RelayDispatchFacts)
 {
 }
 
-function swapPlan(theirPass: bool, myPass: bool, canFirst: bool, canSecond: bool): int
+function swapPlan(theirPass: bool, myPass: bool, first: SendVerdict, second: SendVerdict): int
 {
-  if (((!(theirPass) || !(myPass)) || !(canFirst)) || !(canSecond)) then
+  if (((!(theirPass) || !(myPass)) || first.refused?) || second.refused?) then
     0
   else
-    2
+    if (first != second) then
+      0
+    else
+      2
 }
 
-lemma swapPlan_ensures(theirPass: bool, myPass: bool, canFirst: bool, canSecond: bool)
-  ensures ((swapPlan(theirPass, myPass, canFirst, canSecond) == 0) || (swapPlan(theirPass, myPass, canFirst, canSecond) == 2))
-  ensures ((swapPlan(theirPass, myPass, canFirst, canSecond) == 2) <==> (((theirPass && myPass) && canFirst) && canSecond))
+lemma swapPlan_ensures(theirPass: bool, myPass: bool, first: SendVerdict, second: SendVerdict)
+  ensures ((swapPlan(theirPass, myPass, first, second) == 0) || (swapPlan(theirPass, myPass, first, second) == 2))
+  ensures ((swapPlan(theirPass, myPass, first, second) == 2) <==> (((theirPass && myPass) && (!first.refused?)) && (first == second)))
+{
+}
+
+function swapFlush(first: SendVerdict, second: SendVerdict): SwapFlush
+{
+  if (first.refused? || second.refused?) then
+    SwapFlush.neither
+  else
+    if (first.sent? && second.sent?) then
+      SwapFlush.both
+    else
+      SwapFlush.wait
+}
+
+lemma swapFlush_ensures(first: SendVerdict, second: SendVerdict)
+  ensures (swapFlush(first, second).both? <==> (first.sent? && second.sent?))
+  ensures (swapFlush(first, second).neither? <==> (first.refused? || second.refused?))
 {
 }
 

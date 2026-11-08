@@ -156,6 +156,38 @@ describe("a number swap", () => {
     expect(numbers(w, from)).toEqual([]);
     expect((w.net as any).deferred.filter((d: any) => d.kind === "relay")).toEqual([]);
   });
+
+  /** Both members inside their quiet hours when the second asks: both shares wait as a pair, with no number kept. */
+  async function waitingPair() {
+    const w = await matched();
+    for (const id of ["a", "b"]) { mem(w, id).quietHours = [0, 23.99]; w.members.find(x => x.id === id)!.prefs!.quietHours = [0, 23.99] as never; }
+    (w.net as any).contactOf = contactOf;
+    const from = w.mark();
+    expect(await w.net.relayRequest({ itemId: "c2", from: "b", kind: "contact_share" }, { contactOf })).toMatchObject({ decision: "sent" });
+    expect(numbers(w, from)).toEqual([]);
+    expect((w.net as any).deferred.filter((d: any) => d.kind === "relay").length).toBe(2);
+    const state = JSON.stringify(w.net.exportState());
+    expect(state).not.toContain(contactOf("a"));
+    expect(state).not.toContain(contactOf("b"));
+    // The quiet hours end.
+    for (const id of ["a", "b"]) { mem(w, id).quietHours = [21, 9]; w.members.find(x => x.id === id)!.prefs!.quietHours = [21, 9] as never; }
+    return { w, from };
+  }
+
+  test("a pair that waited for quiet hours goes both ways when both can go", async () => {
+    const { w, from } = await waitingPair();
+    await w.run(HOUR);
+    expect(numbers(w, from).map(s => s.to).sort()).toEqual(["a", "b"]);
+    expect((w.net as any).deferred.filter((d: any) => d.kind === "relay")).toEqual([]);
+  });
+
+  test("never goes one way: a pair that waited stops both when one share is refused in the morning", async () => {
+    const { w, from } = await waitingPair();
+    mem(w, "a").outbound = 3; // The share to the first member is refused at the morning send (streak limit).
+    await w.run(HOUR);
+    expect(numbers(w, from)).toEqual([]);
+    expect((w.net as any).relayDesk.records().filter((r: any) => r.contactShared)).toEqual([]);
+  });
 });
 
 describe("the engine's send-time re-check (decision 11)", () => {
