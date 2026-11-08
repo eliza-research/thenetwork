@@ -149,4 +149,21 @@ describe.skipIf(!pgAvailable)("turn and consent", () => {
     const [row] = await sql`select opted_out from network.members where app_id = 'ntwrk' and id = ${m.memberId}`;
     expect(row.opted_out).toBe(false);
   }, 60_000);
+  test("SD-073: a banned member's text is not stored, handled or answered", async () => {
+    const phone = "+12125550073";
+    expect((await (await post(turn("sd073-join", phone, "Sam, 29"))).json() as any).reason).toBe("joined");
+    const person = (await service.accounts.personFor(phone))!;
+    const m = (await service.people.getMembership(person.id, "ntwrk"))!;
+    await service.people.ban({id: "ban_sd073", scope: "phone", personId: person.id, phoneHash: phoneKey(phone), reason: "test", reportId: null, bannedBy: "staff", at: clock.now()});
+    clock.advance(MINUTE);
+    const body = await (await post(turn("sd073-chat", phone, "hey, any plans for this weekend?"))).json() as any;
+    expect(body.outcome).toBe("handled");
+    expect(body.replies).toEqual([]);
+    const stored = await sql`select id from network.messages where app_id = 'ntwrk' and member_id = ${m.memberId} and direction = 'inbound' and body like '%weekend%'`;
+    expect(stored.length).toBe(0);
+    // HELP is a compliance text and still answers.
+    clock.advance(MINUTE);
+    const help = await (await post(turn("sd073-help", phone, "HELP"))).json() as any;
+    expect(help.replies).toEqual([APPS.ntwrk.brand.help]);
+  }, 60_000);
 });

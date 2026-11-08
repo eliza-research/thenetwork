@@ -1098,11 +1098,18 @@ export class NetworkService implements RuntimeHost {
     // A read request is never an instruction to join, opt in or create a person.
     if (!memberId && profileRead) return "handled";
 
+    // A banned number or person gets nothing but compliance texts (founder 2026-10-09 item 3, PRD 40.5): a member's
+    // text is not stored, handled or answered. STOP and leave above always work; HELP still answers.
+    if (memberId && e164 && (await this.accounts.banned(e164))) {
+      this.log(`[inbound] a banned number wrote to ${rt.id}: not stored, not answered`);
+      if (kw === "help") await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`, "compliance");
+      return "held";
+    }
+
     if (memberId) {
       if (kw === "start" && e164) {
-        // The recycled-number hold is checked above (seen). A banned number or person is never opted back in.
+        // The recycled-number hold and a ban are checked above: a banned number or person is never opted back in.
         const person = await this.accounts.personFor(e164);
-        if (await this.accounts.banned(e164, person)) { this.log(`[inbound] START from a banned number (${rt.id}): not opted in`); return "held"; }
         const at = this.consentAt(ev);
         await this.accounts.recordConsent({ e164, app: app.id, line, state: "opted_in", source: "keyword:start", wording: "START keyword", ref: rowId, at });
         // The ledger orders events by their time: an older START (a late gateway retry) never undoes a newer STOP.
