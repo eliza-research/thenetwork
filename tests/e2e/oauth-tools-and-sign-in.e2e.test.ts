@@ -100,4 +100,25 @@ describe.skipIf(!pgAvailable)("OAuth tool calls and sign-in requests", () => {
     expect(sent.submitted).toBe(false);
     expect(sent.status).toBe("on_hold");
   }, T);
+
+  // SD-395: "At most 5 accepted profiles per grant a day" (packages/mcp/README.md section 2). Before the fix
+  // the quota counted each well-formed call before the tool ran: five profiles refused because the person
+  // had not joined yet used up the day, and the first profile after the join got 429.
+  test("refused profiles do not use up the daily profile quota", async () => {
+    const phone = newPhone(), b = new Browser();
+    expect((await webJoin(st, "slop", phone, { age: 30, browser: b })).res.status).toBe(200);
+    const c = await connectMcp(st, "peon", phone);
+    expect(c.token?.access_token, c.html.slice(0, 300)).toBeString();
+    const submit = () => rpc(st, "peon", "/mcp", "tools/call", { name: "submit_profile", arguments: { about: "Product designer, I like to mentor and to pair on side projects after work." } }, c.token!.access_token);
+    for (let i = 0; i < 5; i++) {
+      const r = await submit();
+      expect(r.res.status).toBe(200);
+      expect(toolData(r)).toMatchObject({ submitted: false, status: "not_joined" });
+    }
+
+    expect((await webJoin(st, "peon", phone, { age: 30, browser: b })).res.status).toBe(200);
+    const r = await submit();
+    expect(r.res.status).toBe(200);
+    expect(toolData(r).submitted).toBe(true);
+  }, T);
 });

@@ -13,7 +13,7 @@ import { defaultApps, defaultHostMap, type McpApp, type McpAppId, type Surface }
 import type { AssistantKind, PlatformHooks } from "./hooks.ts";
 import { codePage, consentPage, consentsPage, messagePage, phonePage } from "./pages.ts";
 import { MemoryOAuthStore, type AuthCode, type AuthRequest, type ClientAuthMethod, type Grant, type OAuthClient, type OAuthStore, type Scope, SCOPES, type Token } from "./store.ts";
-import { callTool, checkArgs, INSTRUCTIONS, TOOL_NAMES, TOOL_SCOPE, type ToolName, toolDefs } from "./tools.ts";
+import { callTool, INSTRUCTIONS, TOOL_NAMES, TOOL_SCOPE, type ToolName, toolDefs } from "./tools.ts";
 import { cookieValue, isLoopbackHost, json, pkceS256, randomId, randomToken, readForm, readJson, safeEqual, sha256hex, validChallenge, validVerifier } from "./util.ts";
 
 export const LATEST_PROTOCOL = "2026-07-28";
@@ -860,11 +860,12 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
               : out(401, rpcError(id, -31401, "Sign-in required"), { "www-authenticate": scopeChallenge });
           }
           if (await limited(`status:grant:${auth.grant.id}`, lim.statusPerGrantMinute, 60_000)) return out(429, rpcError(id, -31029, "Too many requests"), { "retry-after": "60" });
-          // A profile is a few messages a day at most (each one reaches the member's own app as a text).
-          // Only a well-formed profile counts (a refused one never reaches the app).
-          if ((tool === "submit_profile" || tool === "prepare_signup") && checkArgs(tool, params.arguments, [], host).ok && (await limited(`profile:grant:${auth.grant.id}`, PROFILES_PER_GRANT_DAY, 86_400_000))) return out(429, rpcError(id, -31029, "Too many profiles today"), { "retry-after": "3600" });
         }
-        const r = await callTool(tool, params.arguments, { apps, surface, host, hooks: o.platform, grant: auth?.grant ?? null, store, now: now(), assistant: auth ? assistantOf(auth.client) : undefined });
+        // A profile is a few messages a day at most (each one reaches the member's own app as a text).
+        // The tool counts only a profile or draft that reaches the app (a refused one never does).
+        const profileQuota = auth ? () => limited(`profile:grant:${auth.grant.id}`, PROFILES_PER_GRANT_DAY, 86_400_000) : undefined;
+        const r = await callTool(tool, params.arguments, { apps, surface, host, hooks: o.platform, grant: auth?.grant ?? null, store, now: now(), assistant: auth ? assistantOf(auth.client) : undefined, profileQuota });
+        if (r.kind === "rate_limited") return out(429, rpcError(id, -31029, "Too many profiles today"), { "retry-after": "3600" });
         log(`[mcp] ${host.id} ${surface} ${tool} ${r.kind}${auth ? ` grant=${auth.grant.id}` : ""}`);
         if (r.kind === "invalid_grant") {
           if (auth && (await revokeGrant(auth.grant.id, now())))
