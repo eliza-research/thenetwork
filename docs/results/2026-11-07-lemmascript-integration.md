@@ -95,5 +95,17 @@ Every defect in the first table is fixed. Each fix has a case that fails before 
 - A banned member's text still reaches the Network. Only the replies are refused.
 - slopPack declares a budget that nothing enforces. The selection guard does not apply budgets to a pack with its own `assign`.
 - The svc profile files in packages/core/src/svc now import proof-window.ts. If Eliza keeps a copy of them, that copy needs the file too.
-- No real-LLM run (CONTRIBUTING.md section 7.2) and no agent-client matrix (section 8) yet.
+- No real-LLM run (CONTRIBUTING.md section 7.2): this machine has no SURPLUS_API_KEY or OPENAI_API_KEY, and the owner chose to skip it. The change does not alter a model prompt or an LLM call path.
 - The CI Dafny step has not run on GitHub yet.
+
+## Agent clients (CONTRIBUTING.md section 8)
+
+Local platform (`bun run platform:dev`, sends dry-run, a fresh dev database), slop.date skill at http://127.0.0.1:5102/SKILL.md, fictional number (212) 555-0142. Date 2026-11-08. Hand-written from the run logs.
+
+| Client | Provider and model | Flow | Result |
+|---|---|---|---|
+| OpenAI Codex CLI 0.149.1 | OpenAI, gpt-5.6-sol, reasoning high (the configured gpt-6.1-sol is not available on this account) | Signup: read the skill, `/api/app`, profile in conversation, consent, OTP start, code, verify, `/api/join`, export | Pass. Membership active. The client noted that the export does not show the age; `exportApp` is unchanged from a0ed7bc, so this is older than this work. |
+| OpenAI Codex CLI 0.149.1 | as above | Sign-in after a staff ban by phone | Pass. OTP start answered as for any number, no code was issued (none in the dev log), the old code was refused, no session. |
+| Claude Code 2.1.246 | not run | | The CLI login has expired (`OAuth session expired`). It needs the owner to sign in. |
+
+STOP and "leave <app>" are text commands and are not part of an agent client flow. The integration tests and the sims cover them.
