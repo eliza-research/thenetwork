@@ -335,7 +335,8 @@ class ObsStore {
       this.loadReveals();
       if (this.filtersMode !== this.mode) { this.filtersMode = this.mode; this.ui = { ...this.ui, filters: loadFilters(this.mode) }; }
       this.applyFull(state);
-      const later = this.buffered.filter(d => d.version >= state.version);
+      // A state at version V already holds delta V: apply only the deltas after it.
+      const later = this.buffered.filter(d => d.version > state.version);
       this.loadingState = false;
       for (const d of later) this.applyDelta(d);
     } catch (e) {
