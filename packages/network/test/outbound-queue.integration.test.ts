@@ -374,3 +374,28 @@ test("SD-299: when the stale check of a notification throws, the row is not sent
   expect(dispatched).toContain("ntf_sd299");
   expect(await statusOf("ntf_sd299")).toBe("accepted");
 },60_000);
+
+test("SD-300: two delivery receipts for one row that read the same status never move the status back",async()=>{
+  toNewYork(12,0);
+  const rt=await primary();
+  const phone="+12125550197",memberId=await join(services[0]!,phone,"Max");
+  await rt.unitOfWork(()=>undefined);
+  await rt.adapter.engaged!(phone);
+  await rt.unitOfWork(()=>{rt.system(memberId as never,"sd300-reminder","Your plan reminder is ready.","transactional");});
+  expect(await statusOf("sd300-reminder")).toBe("accepted");
+  const receipt=(status:"sent"|"delivered")=>rt.adapter.status!({kind:"status",channel:"blooio",providerMessageId:"provider:sd300-reminder",status,at:clock.now()});
+  const waiting=async(n:number)=>{for (let i=0;i<200;i++) {
+    const [w]=await admin`select count(*)::int as n from pg_stat_activity where datname=${db} and wait_event_type='Lock'`;if (w.n>=n) return;await Bun.sleep(10);}
+    throw new Error("the receipts did not reach the row lock");};
+  // Two webhooks in parallel: both read "accepted"; "delivered" writes first, then "sent" from its older read.
+  const holder=await sql.reserve();
+  let delivered:Promise<unknown>,sent:Promise<unknown>;
+  try {
+    await holder`begin`;
+    await holder`select id from platform.outbound where id='sd300-reminder' for update`;
+    delivered=receipt("delivered");await waiting(1);
+    sent=receipt("sent");await waiting(2);
+  } finally {await holder`rollback`;holder.release();}
+  await delivered!;await sent!;
+  expect(await statusOf("sd300-reminder")).toBe("delivered");
+},60_000);

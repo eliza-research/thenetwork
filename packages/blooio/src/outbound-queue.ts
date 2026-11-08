@@ -661,25 +661,32 @@ export class OutboundQueue {
 
   /** A delivery receipt (any app on the line). Undefined when the provider id is not ours. Never goes back. */
   async applyStatus(u: StatusUpdate): Promise<StatusChange | undefined> {
-    const [r] = await this.sql`select * from platform.outbound where provider_message_id = ${u.providerMessageId}`;
-    if (!r) return undefined;
-    const row = this.rowOf(r);
-    const at = new Date(this.now);
-    if (u.status === "failed") {
-      if (!IN_FLIGHT.includes(row.status)) return undefined; // a late failure after delivery
-      await this.sql`update platform.outbound set transport = coalesce(${u.transport ?? null}, transport) where id = ${row.id}`;
-      return this.end(row, "failed", "receipt: failed", `${u.errorCode ?? ""} ${u.errorMessage ?? ""}`.trim() || "failed");
+    // Each write is conditional on the status this receipt read. When another receipt wrote first, read again:
+    // the rank check then decides on the current status (two receipts in parallel never move a status back).
+    for (;;) {
+      const [r] = await this.sql`select * from platform.outbound where provider_message_id = ${u.providerMessageId}`;
+      if (!r) return undefined;
+      const row = this.rowOf(r);
+      const at = new Date(this.now);
+      if (u.status === "failed") {
+        if (!IN_FLIGHT.includes(row.status)) return undefined; // a late failure after delivery
+        const won = await this.sql`update platform.outbound set status = 'failed', transport = coalesce(${u.transport ?? null}, transport)
+          where id = ${row.id} and status = ${row.status} returning id`;
+        if (!won.length) continue;
+        return this.end(row, "failed", "receipt: failed", `${u.errorCode ?? ""} ${u.errorMessage ?? ""}`.trim() || "failed");
+      }
+      const cur = PROVIDER_RANK[row.status];
+      if (cur === undefined || (PROVIDER_RANK[u.status] ?? 0) <= cur) return undefined; // a row that did not go out, or a status that would go back
+      const final = u.status === "delivered" || u.status === "read";
+      const won = await this.sql`update platform.outbound set status = ${u.status}, transport = coalesce(${u.transport ?? null}, transport), updated_at = ${at},
+        delivered_at = case when ${final} then coalesce(delivered_at, ${at}) else delivered_at end,
+        read_at = case when ${u.status === "read"} then ${at} else read_at end,
+        ended_at = case when ${final} then coalesce(ended_at, ${at}) else ended_at end,
+        to_address = case when ${final} and member_id is null then null else to_address end, body = case when ${final} and member_id is null then null else body end
+        where id = ${row.id} and status = ${row.status} returning id`;
+      if (!won.length) continue;
+      return { id: row.id, app: row.app, memberId: row.memberId, status: u.status };
     }
-    const cur = PROVIDER_RANK[row.status];
-    if (cur === undefined || (PROVIDER_RANK[u.status] ?? 0) <= cur) return undefined; // a row that did not go out, or a status that would go back
-    const final = u.status === "delivered" || u.status === "read";
-    await this.sql`update platform.outbound set status = ${u.status}, transport = coalesce(${u.transport ?? null}, transport), updated_at = ${at},
-      delivered_at = case when ${final} then coalesce(delivered_at, ${at}) else delivered_at end,
-      read_at = case when ${u.status === "read"} then ${at} else read_at end,
-      ended_at = case when ${final} then coalesce(ended_at, ${at}) else ended_at end,
-      to_address = case when ${final} and member_id is null then null else to_address end, body = case when ${final} and member_id is null then null else body end
-      where id = ${row.id}`;
-    return { id: row.id, app: row.app, memberId: row.memberId, status: u.status };
   }
 
   /**
