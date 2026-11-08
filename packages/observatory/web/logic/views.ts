@@ -191,6 +191,14 @@ function allOf(xs: string[], yes: boolean): boolean {
   return true;
 }
 
+/** Proof only: how many of the first `n` opportunities pass allOf. The exact count that yesCounts gives. */
+function countOf(opps: string[][], n: number, yes: boolean): number {
+  //@ verify
+  //@ requires 0 <= n && n <= opps.length
+  //@ decreases n
+  return n === 0 ? 0 : countOf(opps, n - 1, yes) + ((yes ? opps[n - 1].every((s) => saidYes(s)) : opps[n - 1].every((s) => isRevealed(s))) ? 1 : 0);
+}
+
 export interface YesCount { revealed: number; yes: number }
 
 /**
@@ -202,12 +210,14 @@ export function yesCounts(opps: string[][]): YesCount {
   //@ ensures \result.yes > 0 ==> exists(i: nat, i < opps.length && forall(j: nat, j < opps[i].length ==> saidYes(opps[i][j])))
   //@ ensures forall(i: nat, i < opps.length ==> forall(j: nat, j < opps[i].length ==> saidYes(opps[i][j]))) ==> \result.yes === opps.length && \result.revealed === opps.length
   //@ ensures 0 <= \result.yes && \result.yes <= \result.revealed && \result.revealed <= opps.length
+  //@ ensures \result.revealed === countOf(opps, opps.length, false) && \result.yes === countOf(opps, opps.length, true)
   let revealed = 0, yes = 0;
   for (let i = 0; i < opps.length; i++) {
     //@ invariant 0 <= i && i <= opps.length
     //@ invariant yes > 0 ==> exists(k: nat, k < i && forall(j: nat, j < opps[k].length ==> saidYes(opps[k][j])))
     //@ invariant forall(k: nat, k < i ==> forall(j: nat, j < opps[k].length ==> saidYes(opps[k][j]))) ==> yes === i && revealed === i
     //@ invariant 0 <= yes && yes <= revealed && revealed <= i
+    //@ invariant revealed === countOf(opps, i, false) && yes === countOf(opps, i, true)
     //@ decreases opps.length - i
     const r = allOf(opps[i], false);
     const y = allOf(opps[i], true);

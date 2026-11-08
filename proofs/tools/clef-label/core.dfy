@@ -21,6 +21,7 @@ function repeatPool(history: seq<Pair>, flagged: seq<string>): seq<Pair>
 
 lemma repeatPool_ensures(history: seq<Pair>, flagged: seq<string>)
   ensures forall k: nat :: ((k < |repeatPool(history, flagged)|) ==> (!(hasFlag(repeatPool(history, flagged)[k], flagged)) && (repeatPool(history, flagged)[k] in history)))
+  ensures forall k: nat :: ((k < |repeatPool(history, flagged)|) ==> (!((repeatPool(history, flagged)[k].a in flagged)) && !((repeatPool(history, flagged)[k].b in flagged))))
   ensures forall k: nat :: ((k < |history|) ==> !(hasFlag(history[k], flagged)) ==> (history[k] in repeatPool(history, flagged)))
 {
   repeatPoolMem(history, flagged);
@@ -85,8 +86,20 @@ lemma undoIndex_ensures(lines: seq<Line>)
   ensures (undoIndex(lines) < |lines|)
   ensures ((undoIndex(lines) >= 0) ==> !(lines[undoIndex(lines)].isFlag))
   ensures forall k: nat :: ((k > undoIndex(lines)) ==> (k < |lines|) ==> lines[k].isFlag)
+  ensures ((undoIndex(lines) >= 0) ==> (flagsOf(without(lines, undoIndex(lines))) == flagsOf(lines)))
 {
   lastAnswerFacts(lines, |lines|);
+  if undoIndex(lines) >= 0 {
+    var i := undoIndex(lines);
+    lastAnswerFacts(lines, |lines|);
+    var a, x, b := lines[..i], lines[i], lines[i + 1..];
+    assert lines == a + ([x] + b);
+    assert without(lines, i) == a + b;
+    flagsOfConcat(a, b);
+    flagsOfConcat(a, [x] + b);
+    flagsOfCons([x] + b);
+    assert ([x] + b)[1..] == b;
+  }
 }
 
 function without<T>(xs: seq<T>, i: int): seq<T>
@@ -103,30 +116,6 @@ lemma without_ensures<T>(xs: seq<T>, i: int)
 {
 }
 
-function undoKeepsFlags(lines: seq<Line>): bool
-  requires (undoIndex(lines) >= 0)
-  requires (undoIndex(lines) < |lines|)
-{
-  true
-}
-
-lemma undoKeepsFlags_ensures(lines: seq<Line>)
-  requires (undoIndex(lines) >= 0)
-  requires (undoIndex(lines) < |lines|)
-  ensures (flagsOf(without(lines, undoIndex(lines))) == flagsOf(lines))
-  ensures (undoKeepsFlags(lines) == true)
-{
-  var i := undoIndex(lines);
-  lastAnswerFacts(lines, |lines|);
-  var a, x, b := lines[..i], lines[i], lines[i + 1..];
-  assert lines == a + ([x] + b);
-  assert without(lines, i) == a + b;
-  flagsOfConcat(a, b);
-  flagsOfConcat(a, [x] + b);
-  flagsOfCons([x] + b);
-  assert ([x] + b)[1..] == b;
-}
-
 function dropPair(history: seq<Pair>, p: Pair): seq<Pair>
 {
   Std.Collections.Seq.Filter((h: Pair) => !(samePair(h, p)), history)
@@ -134,6 +123,7 @@ function dropPair(history: seq<Pair>, p: Pair): seq<Pair>
 
 lemma dropPair_ensures(history: seq<Pair>, p: Pair)
   ensures forall k: nat :: ((k < |dropPair(history, p)|) ==> (!(samePair(dropPair(history, p)[k], p)) && (dropPair(history, p)[k] in history)))
+  ensures forall k: nat :: ((k < |dropPair(history, p)|) ==> !(((dropPair(history, p)[k].dim == p.dim) && (((dropPair(history, p)[k].a == p.a) && (dropPair(history, p)[k].b == p.b)) || ((dropPair(history, p)[k].a == p.b) && (dropPair(history, p)[k].b == p.a))))))
   ensures forall k: nat :: ((k < |history|) ==> !(samePair(history[k], p)) ==> (history[k] in dropPair(history, p)))
 {
   dropPairMem(history, p);
@@ -145,6 +135,7 @@ method planNext(plan: seq<Pair>, start: int, flagged: seq<string>) returns (res:
   requires (0 <= start)
   ensures (res >= start)
   ensures ((res >= |plan|) || !(hasFlag(plan[res], flagged)))
+  ensures ((res >= |plan|) || (!((plan[res].a in flagged)) && !((plan[res].b in flagged))))
   ensures forall k: nat :: ((start <= k) ==> (k < res) ==> (k < |plan|) ==> hasFlag(plan[k], flagged))
 {
   var i := start;

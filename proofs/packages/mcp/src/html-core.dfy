@@ -109,7 +109,12 @@ function formOrigin(host: string): string
 lemma formOrigin_ensures(host: string)
   ensures (!(loopbackAuthority(host)) ==> (formOrigin(host) == ("https://" + host)))
   ensures (loopbackAuthority(host) ==> (formOrigin(host) == ("http://" + host)))
+  ensures ((|formOrigin(host)| >= |"http://"| && formOrigin(host)[..|"http://"|] == "http://") ==> ((((((host == "localhost") || (host == "127.0.0.1")) || (host == "[::1]")) || (|host| >= |"localhost:"| && host[..|"localhost:"|] == "localhost:")) || (|host| >= |"127.0.0.1:"| && host[..|"127.0.0.1:"|] == "127.0.0.1:")) || (|host| >= |"[::1]:"| && host[..|"[::1]:"|] == "[::1]:")))
 {
+  if !loopbackAuthority(host) {
+    var r := formOrigin(host);
+    assert r[..7][4] == r[4] == 's';
+  }
 }
 
 function urlStripped(s: string): string
@@ -152,6 +157,7 @@ method esc(s: string) returns (res: string)
 method formTargets(targets: seq<string>) returns (res: seq<string>)
   ensures forall k: nat :: ((k < |res|) ==> (cleanTarget(res[k]) && (res[k] in targets)))
   ensures forall k: nat :: ((k < |targets|) ==> cleanTarget(targets[k]) ==> (targets[k] in res))
+  ensures forall k: nat :: ((k < |res|) ==> forall j: nat :: ((j < |res[k]|) ==> ((((((((res[k][j] as int) != 59) && ((res[k][j] as int) != 44)) && ((res[k][j] as int) != 32)) && ((res[k][j] as int) != 9)) && ((res[k][j] as int) != 10)) && ((res[k][j] as int) != 12)) && ((res[k][j] as int) != 13))))
 {
   var out: seq<string> := [];
   var i := 0;
@@ -168,6 +174,7 @@ method formTargets(targets: seq<string>) returns (res: seq<string>)
     }
     i := (i + 1);
   }
+  forall k: nat | k < |out| { cleanChars(out[k]); }
   return out;
 }
 
@@ -338,6 +345,7 @@ lemma escBars(s: string)
 lemma cleanChars(s: string)
   requires cleanTarget(s)
   ensures forall k: nat :: k < |s| ==> (s[k] as int) != 59 && (s[k] as int) != 44
+  ensures forall k: nat :: k < |s| ==> !cspDelimiter(s[k] as int)
   decreases |s|
 {
   if |s| > 0 {

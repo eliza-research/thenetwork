@@ -264,6 +264,16 @@ test("the consent ladder never shows a rate above 100%, and a pair with no base 
   expect(title("passed gate")).toStartWith("– passed");
 });
 
+test("the Metrics invite yes rate never shows above 100%", async () => {
+  await open(["reviewer"], stateOf([member("m1")], {
+    network: { kind: "consent", counters: { revealYes: 4, reveals: 3 }, gateReasons: {}, requests: { total: 0, fulfilled: 0, plans: 0, waiting: 0, probing: 0 } },
+  }));
+  store.setUI({ drawer: "metrics", drawerOpen: true });
+  await until(() => kpi("invite yes rate"), "the metrics tiles");
+  expect(kpi("invite yes rate").textContent).toContain("100%");
+  expect(kpi("show rate").textContent).toContain("0%");
+});
+
 test("a booked plan reads per member", async () => {
   const booked = { at: T + 72 * H, optOutHours: 48, told: { m1: T - H, m2: T - 49 * H, m3: T - H }, cancelled: { m3: { at: T - H, told: true } } };
   const o = { id: "o1", kind: "intro", state: "SCHEDULED", source: "network", origin: "engine", category: "social", city: "nyc", participants: ["m1", "m2", "m3", "m4"], status: { m1: "accepted", m2: "accepted", m3: "accepted", m4: "accepted" }, createdAt: T - 24 * H, updatedAt: T - H, score: 0, explanations: {}, enjoyment: {}, alternates: [], objective: "", booked };
@@ -275,6 +285,18 @@ test("a booked plan reads per member", async () => {
   expect(open1).toContain("opt-out closes in 1d 23h");
   expect(confirmed).toContain("confirmed");
   expect(off).toContain("called off");
+  expect(notTold).toContain("not told yet");
+});
+
+test("a booked plan with a bad opt-out window still shows who was told", async () => {
+  const booked = { at: T + 72 * H, optOutHours: -1, told: { m1: T - H }, cancelled: {} };
+  const o = { id: "o2", kind: "intro", state: "SCHEDULED", source: "network", origin: "engine", category: "social", city: "nyc", participants: ["m1", "m2"], status: { m1: "accepted", m2: "accepted" }, createdAt: T - 24 * H, updatedAt: T - H, score: 0, explanations: {}, enjoyment: {}, alternates: [], objective: "", booked };
+  await open(["reviewer"], stateOf(["m1", "m2"].map(id => member(id)), { opportunities: [o] }));
+  store.focus({ kind: "opportunity", id: "o2" });
+  const rows = () => all(".participant").map(e => e.textContent as string).filter(x => /opt-out closes|confirmed|called off|not told yet/.test(x));
+  await until(() => rows().length === 2, "the plan rows");
+  const [told, notTold] = rows();
+  expect(told).toContain("confirmed");
   expect(notTold).toContain("not told yet");
 });
 

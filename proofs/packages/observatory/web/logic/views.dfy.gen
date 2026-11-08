@@ -214,6 +214,17 @@ function saidYes(s: string): bool
   (((((s == "accepted") || (s == "confirmed")) || (s == "attended")) || (s == "no_show")) || (s == "cancelled_with_notice"))
 }
 
+function countOf(opps: seq<seq<string>>, n: int, yes: bool): int
+  requires (0 <= n)
+  requires (n <= |opps|)
+  decreases n
+{
+  if (n == 0) then
+    0
+  else
+    (countOf(opps, (n - 1), yes) + (if (if yes then Std.Collections.Seq.All(opps[(n - 1)], (s: string) => saidYes(s)) else Std.Collections.Seq.All(opps[(n - 1)], (s: string) => isRevealed(s))) then 1 else 0))
+}
+
 function tabVisible(t: ViewTab, c: TabCaps): bool
 {
   if t.review? then
@@ -354,6 +365,8 @@ method yesCounts(opps: seq<seq<string>>) returns (res: YesCount)
   ensures (0 <= res.yes)
   ensures (res.yes <= res.revealed)
   ensures (res.revealed <= |opps|)
+  ensures (res.revealed == countOf(opps, |opps|, false))
+  ensures (res.yes == countOf(opps, |opps|, true))
 {
   var revealed := 0;
   var yes := 0;
@@ -366,6 +379,8 @@ method yesCounts(opps: seq<seq<string>>) returns (res: YesCount)
     invariant (0 <= yes)
     invariant (yes <= revealed)
     invariant (revealed <= i)
+    invariant (revealed == countOf(opps, i, false))
+    invariant (yes == countOf(opps, i, true))
     decreases (|opps| - i)
   {
     var i_t4 := allOf(opps[i], false);

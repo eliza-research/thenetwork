@@ -123,9 +123,6 @@ function undoIndex(lines) {
 function without(xs, i) {
   return xs.slice(0, i).concat(xs.slice(i + 1));
 }
-function undoKeepsFlags(lines) {
-  return true;
-}
 function dropPair(history, p) {
   return history.filter((h) => !samePair(h, p));
 }

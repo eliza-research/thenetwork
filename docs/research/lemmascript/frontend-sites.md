@@ -485,3 +485,51 @@ Limits:
 - The `flow` proofs do not check that the handlers match the reducer.
 - `lsc` refused to rerun over a stale `.dfy` after an edit to the `.ts`. It printed a warning and did not verify. I deleted the stale file for `flow-mut` and ran it again. A quiet run is not a pass, so read the last line of output.
 - No real LLM or agent client ran. This pass tested no live site.
+
+## Skeptic pass on the shipped cores (2026-11-08)
+
+Hand-written by an independent skeptic agent after the cores landed (`sites/shared/join-core.ts`, `packages/core/src/phone-core.ts`). No maintainer reviewed it.
+
+Verifier lines after this pass, with the throttled `lsc check --backend=dafny`:
+
+- `packages/core/src/phone-core.ts`: `Dafny program verifier finished with 15 verified, 0 errors`
+- `sites/shared/join-core.ts`: `Dafny program verifier finished with 6 verified, 0 errors`
+
+Both `.dfy` files are the `.dfy.gen` plus added lines only. There is no `assume`, `havoc`, `extern` or `{:axiom}`.
+
+### Weak contracts found and made strong
+
+Each mutant below verified before this pass. Each one now fails.
+
+| Mutant | Before | Contract added |
+|---|---|---|
+| `formPasses` returns `false` | verified | `parseJoinTakes(f) && f.ticked && f.age >= 1 ==> \result` |
+| `afterAuth` returns `"profile"` when `canJoin` is false | verified | a `loaded`, `verified` or `rerouted` event with `!e.canJoin` gives step `profile` only when nothing changed |
+| `refused` keeps step `profile` | verified | `refused` from `profile` gives no `profile` and no `done` |
+| `joined` keeps step `profile` | verified | a ticked `joined` from `profile` gives `done` |
+| `nationalDigits` returns a fixed valid number | verified (one run failed only by a solver limit) | the result is `""`, the digits, or the digits after a leading `1` |
+| `phoneE164` returns `null` | failed only on proof assertions, not on a contract | a plain valid 10-digit input gives `"+1" + input` |
+| `phoneE164` without the character check | failed only on the idempotence lemma | `!allPhoneChars(input) ==> \result === null` |
+
+A new contract also ties the result to the input: the digits of the input are the 10 national digits, or `1` and those digits.
+
+### Force: one mutant for each contract
+
+All of these failed `lsc check`, as wanted. Every saved file was restored and compared with `cmp`.
+
+- join-core: `formPasses` without the ZIP check; `formPasses` with age up to 121; `initialFlow` at step `profile`; `otpStarted` with an empty number; `sessionEnded` after `done`; `joined` without the tick; `changeNumber` that clears the fields; `verified` with another account; `typed` that does not set the owner; `fieldsFor` that drops the link prefill; `loaded` that clears the fields; `fieldsFor` that keeps the fields of another account; `sessionEnded` that changes the owner.
+- phone-core: `digitsOf` that keeps all characters; no area-code check; the wrong N11 check; the wrong plus check; an exchange that can start with `1`; a 13-character result. The `startsWithPlus` mutant was built by hand (the regen merge refused it). It failed with one error and one solver time-out.
+
+### Wiring
+
+- `phoneE164` is the only exported function of `phone-core.ts`. `packages/platform/src/phone.ts` (`normalizePhone`) and `sites/shared/api.ts` (`toE164`) both call it. The helpers are now private.
+- `join.ts` and `auth.ts` get each step from `flowNext`, and each submit from `formProblems` and `formPasses`. `isEmpty` and `flowOk` are now private. `parseJoinTakes` stays exported, because `sites/test/join-flow.test.ts` pins it to the real `parseJoin`.
+- `mountAuth(root, callback)` (the old form) builds a sign-in flow with `initialFlow` and `flowNext`. A DOM run showed: phone, then code, then change number, then a new number, then the code calls `otpVerify` with the new number and calls the callback one time.
+
+### Behaviour changes to know (not fixed, by intent or not reachable)
+
+- The link prefill (name and age) now stays through sign-in. This is the fix for B2.
+- The same account that signs in again keeps its fields and its tick. The old code cleared them on each sign-in. Another account never keeps them.
+- `accountOf` uses `signupView`, or else the masked number. Two accounts with the same last 4 digits have the same masked number. A reroute between two such accounts would keep the fields. Today no path reaches it: a reroute needs `account_changed`, and that needs `signupView`.
+- A first name of more than 50 characters now shows "Enter your first name." The new `maxlength="50"` stops the typing first.
+- `number` in the proofs is an integer. The shell sends `wholeAge` for `NaN` and fractions. String length in Dafny counts characters, and JavaScript counts UTF-16 units.

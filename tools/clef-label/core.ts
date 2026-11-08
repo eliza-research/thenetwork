@@ -24,6 +24,7 @@ export function planNext(plan: Pair[], start: number, flagged: string[]): number
   //@ requires 0 <= start
   //@ ensures \result >= start
   //@ ensures \result >= plan.length || !hasFlag(plan[\result], flagged)
+  //@ ensures \result >= plan.length || (!flagged.includes(plan[\result].a) && !flagged.includes(plan[\result].b))
   //@ ensures forall(k: nat, start <= k && k < \result && k < plan.length ==> hasFlag(plan[k], flagged))
   let i = start;
   while (i < plan.length) {
@@ -40,6 +41,7 @@ export function planNext(plan: Pair[], start: number, flagged: string[]): number
 export function repeatPool(history: Pair[], flagged: string[]): Pair[] {
   //@ verify
   //@ ensures forall(k: nat, k < \result.length ==> !hasFlag(\result[k], flagged) && history.includes(\result[k]))
+  //@ ensures forall(k: nat, k < \result.length ==> !flagged.includes(\result[k].a) && !flagged.includes(\result[k].b))
   //@ ensures forall(k: nat, k < history.length && !hasFlag(history[k], flagged) ==> \result.includes(history[k]))
   return history.filter(h => !hasFlag(h, flagged));
 }
@@ -67,12 +69,13 @@ function lastAnswer(lines: Line[], n: number): number {
   return n === 0 ? -1 : !lines[n - 1].isFlag ? n - 1 : lastAnswer(lines, n - 1);
 }
 
-/** The line that undo removes: the last answer, never a flag. -1 when there is no answer. */
+/** The line that undo removes: the last answer, never a flag. -1 when there is no answer. Undo keeps every flag. */
 export function undoIndex(lines: Line[]): number {
   //@ verify
   //@ ensures \result >= -1 && \result < lines.length
   //@ ensures \result >= 0 ==> !lines[\result].isFlag
   //@ ensures forall(k: nat, k > \result && k < lines.length ==> lines[k].isFlag)
+  //@ ensures \result >= 0 ==> flagsOf(without(lines, \result)) === flagsOf(lines)
   return lastAnswer(lines, lines.length);
 }
 
@@ -84,19 +87,11 @@ export function without<T>(xs: T[], i: number): T[] {
   return xs.slice(0, i).concat(xs.slice(i + 1));
 }
 
-/** Undo keeps every flag, because the line that it removes is never a flag line. */
-export function undoKeepsFlags(lines: Line[]): boolean {
-  //@ verify
-  //@ requires undoIndex(lines) >= 0 && undoIndex(lines) < lines.length
-  //@ ensures flagsOf(without(lines, undoIndex(lines))) === flagsOf(lines)
-  //@ ensures \result === true
-  return true;
-}
-
 /** History after an undo: the pair cannot repeat. Other pairs stay. */
 export function dropPair(history: Pair[], p: Pair): Pair[] {
   //@ verify
   //@ ensures forall(k: nat, k < \result.length ==> !samePair(\result[k], p) && history.includes(\result[k]))
+  //@ ensures forall(k: nat, k < \result.length ==> !(\result[k].dim === p.dim && ((\result[k].a === p.a && \result[k].b === p.b) || (\result[k].a === p.b && \result[k].b === p.a))))
   //@ ensures forall(k: nat, k < history.length && !samePair(history[k], p) ==> \result.includes(history[k]))
   return history.filter(h => !samePair(h, p));
 }

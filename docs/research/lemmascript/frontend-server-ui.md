@@ -710,3 +710,48 @@ Candidates 4, 5 and 9, for the reasons in section 3. `redirectPartsAllowed` from
 - The resend line reference was off by one: `sites/shared/auth.ts:128`, not `:129`.
 - `git grep` did not time out in this pass, so it is the search of record now.
 - The reach of bugs 1, 2 and 5 depends on Cloud flags, which the first pass did not say for bugs 1 and 5.
+
+## 8. Implementation skeptic pass (2026-11-08)
+
+Hand-written by an independent skeptic agent. It checked the implementation of candidates 3, 7, 11 and 12 (`packages/mcp/src/html-core.ts`, `tools/clef-label/core.ts`) and their shells (`pages.ts`, `util.ts`, `tools/clef-label/index.html`, `build.ts`).
+
+### 8.1 Verifier
+
+| Core | Command | Result |
+|---|---|---|
+| `packages/mcp/src/html-core.ts` | `lsc check --backend=dafny` | `Dafny program verifier finished with 31 verified, 0 errors` |
+| `tools/clef-label/core.ts` | `lsc check --backend=dafny` | `Dafny program verifier finished with 31 verified, 0 errors` |
+
+Each `.dfy` is its `.dfy.gen` plus added lines only. No `assume`, `havoc`, `extern` or `{:axiom}`.
+
+### 8.2 Mutants
+
+One mutant per `ensures` group, made in the `.ts`, then `lsc regen` and `lsc check`, then a byte-for-byte restore (checked with `cmp`). 26 mutants. All are caught after the fixes in 8.3.
+
+- `esc`: `>` not escaped (bars), `&` not escaped (round trip), last character dropped (`escAll`). Caught.
+- `formTargets`: guard flipped, first clean target dropped. Caught. `formAction`: prefix changed, `;` not a delimiter, raw targets. Caught.
+- `formOrigin`: scheme flipped. Caught. `hostIs` with a prefix match (`localhost.evil.example` becomes `http`): **survived** before 8.3.
+- `cspDelimiter` without space (a target `https://a https:` adds a second source): **survived** before 8.3.
+- `safeRetryPath`: backslash allowed, tab allowed, start guard dropped. Caught.
+- `planNext`: test flipped, start at 0. `repeatPool`, `flagsOf`, `resumeIds`, `dropPair`: filter changed. `undoIndex`: picks a flag line. `without`: keeps the element, or removes element 0 in place of element i. Caught.
+- `hasFlag` checks only side a, and `samePair` checks only one orientation: **survived** before 8.3.
+
+### 8.3 Fixes
+
+- `formOrigin` now also ensures that an `http://` result comes only from an exact loopback name, with or without a port. The `hostIs` mutant is caught.
+- `formTargets` now ensures that no kept target has `;`, `,`, space, tab, LF, FF or CR. The `cspDelimiter` mutant is caught.
+- `planNext`, `repeatPool` and `dropPair` now state their property with `includes` and field equality too, so the `hasFlag` and `samePair` helpers are pinned. Both mutants are caught.
+- `undoKeepsFlags` was an exported function that returned `true` and that no code called. Its property is now an `ensures` of `undoIndex`, which the page calls. The function is removed and `index.html` is rebuilt.
+- `html-core.ts` exported spec helpers (`escChar`, `escAll`, `unesc`, `cleanTarget`, `formTargets`, `loopbackAuthority`, `urlStripped`) that no shipping code imports. They are no longer exported. The generated Dafny did not change.
+
+### 8.4 Wiring
+
+- `util.ts` re-exports `esc` from the core. No other HTML escape is in `packages/mcp/src`. `esc` gives the same bytes as the old regex version on 200,000 random strings (ASCII, non-ASCII, lone surrogates, emoji) and is faster on a 600,000-character string (4 ms, old 15 ms).
+- `pages.ts` calls `formAction` for every page CSP, `formOrigin` on the phone page, and `safeRetryPath` for the retry link.
+- `index.html` calls `planNext`, `repeatPool`, `flagsOf`, `resumeIds`, `undoIndex`, `without` and `dropPair`. `bun run tools/clef-label/build.ts --check` exits 1 when the inlined block is not the current `core.ts`, and `sites/test/clef-label.test.ts` checks the same.
+- **Open (outside this slice):** `codePage` takes `redirectHost`, but `handler.ts:472` and `:478` do not pass it. So Cancel on the code page is still blocked by `form-action 'self'` in Chrome (bug 1, second half). The fix is one argument in `handler.ts`, which another session owns: `{ redirectHost: new URL(r.redirectUri).host }`.
+
+### 8.5 Tests
+
+- `packages/mcp/test/oauth-pages.integration.test.ts` and `sites/test/clef-label.test.ts`: 32 pass, 0 fail. With `main`'s `pages.ts`, 14 of the 24 page tests fail. With `main`'s `index.html`, all 8 page tests fail.
+- `packages/mcp/test` (9 files, Postgres on :54339): 119 pass, 0 fail.

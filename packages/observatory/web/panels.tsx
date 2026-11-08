@@ -6,7 +6,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { AppProfile360, BookedPlan, HealthAlert, MemberDetail, MemberPhoto, PeonProfile360, SlopProfile360, MemberTimeline, ObsFeedItem, ObsMember, ObsMessage, OpportunityDetail, SystemEvent, TimeChoice } from "../src/types.ts";
 import { STATE_COLOR } from "./graph.ts";
 import { historyBetween, isBusyElsewhere, ReviewActions, reviewLine, VenueLink, wantsOf } from "./review.tsx";
-import { planCloses, planView, photoHeld, photoView, readCancel, readLand, readNew, readStart, yesCounts, type ReadGate } from "./logic/views.ts";
+import { planCloses, planView, photoHeld, photoView, rate, readCancel, readLand, readNew, readStart, yesCounts, type ReadGate } from "./logic/views.ts";
 import { isMemberActive, OPEN, originLabel, originOf, store, useStore, type DrawerTab, type Fetched, type Opp } from "./store.ts";
 import {
   ago, AreaLink, Badge, Components, Countdown, Disclosure, dur, humanize, Kpi, MemberLink, num, OppLink, oppDot, pct, Section, sentence, shortDate,
@@ -140,7 +140,7 @@ function KpiGrid({ area }: { area?: string }) {
   const reviewOff = s.network?.kind === "stub";
   const proposals = opps.filter(o => originOk(o) && s.inRange(o.createdAt)).length;
   const yes = yesCounts(opps.filter(o => originOk(o) && s.inRange(o.updatedAt)).map(o => o.participants.map(id => o.status[id] ?? "")));
-  const yesRate = yes.revealed ? yes.yes / yes.revealed : undefined;
+  const yesRate = rate(yes.yes, yes.revealed);
   const met = opps.filter(o => MET.has(o.state) && originOk(o) && o.meetingAt !== undefined && s.inRange(o.meetingAt)).length;
   const upcoming = opps.filter(o => o.state === "SCHEDULED" && originOk(o)).length;
   const requests = s.network && !area && f.borough === "all"
@@ -158,7 +158,7 @@ function KpiGrid({ area }: { area?: string }) {
       {reviewOff
         ? <Kpi label={`Proposals · ${range}`} value={num(proposals)} title="Opportunities created in the range" onClick={() => store.setUI({ drawer: "pipeline", drawerOpen: true })} />
         : <Kpi label="In review" value={num(inReview.length)} tone={dueSoon ? "warn" : undefined} title="Waiting for a human reviewer before anyone is contacted (PRD 32.8). Amber: one is due in under 1 h." onClick={() => store.setUI(s.showReviewTab() ? { drawer: "review", drawerOpen: true, reviewView: "pending" } : { drawer: "pipeline", drawerOpen: true })} />}
-      <Kpi label="Everyone-yes" value={yesRate === undefined ? "–" : pct(yesRate)} tone={yesRate !== undefined && yesRate >= 0.85 ? "good" : undefined} title={`Of ${yes.revealed} opportunities revealed in the range, the share where every participant said yes. Target 85%.`} onClick={() => store.setUI({ drawer: "pipeline", drawerOpen: true })} />
+      <Kpi label="Everyone-yes" value={yesRate === undefined ? "–" : `${yesRate}%`} tone={yesRate !== undefined && yes.yes * 100 >= 85 * yes.revealed ? "good" : undefined} title={`Of ${yes.revealed} opportunities revealed in the range, the share where every participant said yes. Target 85%.`} onClick={() => store.setUI({ drawer: "pipeline", drawerOpen: true })} />
       <Kpi label={`Meetings · ${range}`} value={num(met)} title={`Meetings held in the range. ${upcoming} scheduled.`} onClick={() => go({ stateGroup: "met" }, "pipeline")} />
       <Kpi label="Open requests" value={num(requests)} tone={requests ? "warn" : undefined} title="People requests still being worked on (probing or waiting)" onClick={() => go({ origin: "request" }, "pipeline")} />
       <Kpi label="Safety holds" value={num(holds)} tone={holds ? "bad" : undefined} title="Members on trust hold (never matched until cleared)" onClick={() => go({ members: "hold" }, "safety")} />
@@ -516,16 +516,16 @@ function BookedPlanView({ o, b }: { o: Opp; b: BookedPlan }) {
     <>
       <div className="small">Booked for {stamp(b.at)}{o.venue ? <> at <VenueLink venue={o.venue} /></> : null}. Each member can say they can't within {b.optOutHours} h; silence is a yes.</div>
       {o.participants.map(x => {
-        // The proof models whole numbers: a value that is not one counts as not told.
-        const sane = Number.isFinite(b.told[x]) && b.optOutHours >= 0;
-        const told = sane ? b.told[x] : undefined, off = b.cancelled[x];
-        const view = planView(!!off, told, sane ? b.optOutHours : 0, b.at, now);
+        // The proof models numbers that are finite: a bad time counts as not told, and a bad window as no window.
+        const told = Number.isFinite(b.told[x]) ? b.told[x] : undefined, off = b.cancelled[x];
+        const hours = Number.isFinite(b.optOutHours) && b.optOutHours >= 0 ? b.optOutHours : 0;
+        const view = planView(!!off, told, hours, b.at, now);
         return (
           <div className="small participant" key={x}>
             <MemberLink id={x} first />
             {view === "called_off" ? <Badge tone="warn" title={off!.told ? "They told us they can't make it" : "They dropped out without replying to us"}>called off {stamp(off!.at)}{off!.told ? "" : " · silently"}</Badge>
               : view === "not_told" ? <span className="muted">not told yet</span>
-              : view === "open" ? <span><span className="muted">told {stamp(told!)} · opt-out closes </span><Countdown deadline={planCloses(told!, b.optOutHours, b.at)} prefix="in " what="Opt-out window closes" /></span>
+              : view === "open" ? <span><span className="muted">told {stamp(told!)} · opt-out closes </span><Countdown deadline={planCloses(told!, hours, b.at)} prefix="in " what="Opt-out window closes" /></span>
               : <Badge tone="good" title="The opt-out window passed: silence counts as confirmed">confirmed</Badge>}
           </div>
         );

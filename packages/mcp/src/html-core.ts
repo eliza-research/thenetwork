@@ -4,20 +4,20 @@
 // slices UTF-16 units: only ASCII characters change, so the two views give the same bytes.
 
 /** One character of text in its HTML form. */
-export function escChar(c: string): string {
+function escChar(c: string): string {
   //@ verify
   return c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : c === "\"" ? "&quot;" : c === "'" ? "&#39;" : c;
 }
 
 /** Spec of esc, one character at a time. */
-export function escAll(s: string): string {
+function escAll(s: string): string {
   //@ verify
   //@ decreases s.length
   return s.length === 0 ? "" : escChar(s.slice(0, 1)) + escAll(s.slice(1));
 }
 
 /** Spec of esc: gives back the text. It is not an HTML parser. */
-export function unesc(s: string): string {
+function unesc(s: string): string {
   //@ verify
   //@ decreases s.length
   return s.length === 0 ? "" :
@@ -54,17 +54,18 @@ function cspDelimiter(c: number): boolean {
 }
 
 /** True when a form target has no CSP delimiter, so it stays one source of one directive. */
-export function cleanTarget(s: string): boolean {
+function cleanTarget(s: string): boolean {
   //@ verify
   //@ decreases s.length
   return s.length === 0 || (!cspDelimiter(s.charCodeAt(0)) && cleanTarget(s.slice(1)));
 }
 
 /** The form targets that can go in a CSP header. A target with a delimiter is left out. */
-export function formTargets(targets: string[]): string[] {
+function formTargets(targets: string[]): string[] {
   //@ verify
   //@ ensures forall(k: nat, k < \result.length ==> cleanTarget(\result[k]) && targets.includes(\result[k]))
   //@ ensures forall(k: nat, k < targets.length && cleanTarget(targets[k]) ==> \result.includes(targets[k]))
+  //@ ensures forall(k: nat, k < \result.length ==> forall(j: nat, j < \result[k].length ==> \result[k].charCodeAt(j) !== 59 && \result[k].charCodeAt(j) !== 44 && \result[k].charCodeAt(j) !== 32 && \result[k].charCodeAt(j) !== 9 && \result[k].charCodeAt(j) !== 10 && \result[k].charCodeAt(j) !== 12 && \result[k].charCodeAt(j) !== 13))
   let out: string[] = [];
   let i = 0;
   while (i < targets.length) {
@@ -103,7 +104,7 @@ function hostIs(host: string, name: string): boolean {
 }
 
 /** True for a loopback host, with or without a port. Same names as isLoopbackHost in util.ts. */
-export function loopbackAuthority(host: string): boolean {
+function loopbackAuthority(host: string): boolean {
   //@ verify
   return hostIs(host, "localhost") || hostIs(host, "127.0.0.1") || hostIs(host, "[::1]");
 }
@@ -116,11 +117,12 @@ export function formOrigin(host: string): string {
   //@ verify
   //@ ensures !loopbackAuthority(host) ==> \result === "https://" + host
   //@ ensures loopbackAuthority(host) ==> \result === "http://" + host
+  //@ ensures \result.startsWith("http://") ==> host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host.startsWith("localhost:") || host.startsWith("127.0.0.1:") || host.startsWith("[::1]:")
   return (loopbackAuthority(host) ? "http://" : "https://") + host;
 }
 
 /** Spec of the URL parser: it removes tab, LF and CR before it reads a URL. */
-export function urlStripped(s: string): string {
+function urlStripped(s: string): string {
   //@ verify
   //@ decreases s.length
   return s.length === 0 ? "" :

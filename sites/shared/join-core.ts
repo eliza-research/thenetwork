@@ -45,13 +45,13 @@ export interface FormProblems { name: boolean; age: boolean; zip: boolean; conse
 /** The longest first name that parseJoin (platform/src/accounts.ts) takes. */
 export const MAX_FIRST_NAME = 50;
 
-export function isEmpty(f: JoinFields): boolean {
+function isEmpty(f: JoinFields): boolean {
   //@ verify
   return f.firstName === "" && f.age === "" && !f.ticked;
 }
 
 /** The safety rules of the flow. Each event keeps them. */
-export function flowOk(s: Flow): boolean {
+function flowOk(s: Flow): boolean {
   //@ verify
   return (s.step !== "code" || (s.phone.length > 0 && s.shown === s.phone))
     // A step that asks for a number or a code holds only with no session.
@@ -96,6 +96,9 @@ export function flowNext(s: Flow, e: FlowEvent): Flow {
   //@ ensures s.step === "loading" && s.owner === "" && e.tag === "loaded" ==> \result.fields === s.fields
   //@ ensures s.step === "code" && s.owner !== "" && s.owner !== s.phone && e.tag === "verified" ==> formResets(s, \result)
   //@ ensures flowOk(s) && s.owner === "" && !isEmpty(s.fields) ==> !formResets(s, \result)
+  //@ ensures (e.tag === "loaded" || e.tag === "verified" || e.tag === "rerouted") && !e.canJoin && \result.step === "profile" ==> \result === s
+  //@ ensures e.tag === "refused" && s.step === "profile" ==> \result.step !== "profile" && \result.step !== "done"
+  //@ ensures e.tag === "joined" && s.step === "profile" && s.fields.ticked ==> \result.step === "done"
   switch (e.tag) {
     case "loaded":
       if (s.step !== "loading") return s;
@@ -166,6 +169,7 @@ export function formProblems(f: JoinForm): FormProblems {
 export function formPasses(f: JoinForm): boolean {
   //@ verify
   //@ ensures \result ==> parseJoinTakes(f) && f.ticked
+  //@ ensures parseJoinTakes(f) && f.ticked && f.age >= 1 ==> \result
   const p = formProblems(f);
   return !p.name && !p.age && !p.zip && !p.consent;
 }

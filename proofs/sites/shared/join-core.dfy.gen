@@ -120,6 +120,9 @@ lemma flowNext_ensures(s: Flow, e: FlowEvent)
   ensures (s.step.loading? ==> (s.owner == "") ==> e.loaded? ==> (flowNext(s, e).fields == s.fields))
   ensures (s.step.code? ==> (s.owner != "") ==> (s.owner != s.phone) ==> e.verified? ==> formResets(s, flowNext(s, e)))
   ensures (flowOk(s) ==> (s.owner == "") ==> !(isEmpty(s.fields)) ==> !(formResets(s, flowNext(s, e))))
+  ensures (((e.loaded? || e.verified?) || e.rerouted?) ==> !(e.canJoin) ==> flowNext(s, e).step.profile? ==> (flowNext(s, e) == s))
+  ensures (e.refused? ==> s.step.profile? ==> ((!flowNext(s, e).step.profile?) && (!flowNext(s, e).step.done?)))
+  ensures (e.joined? ==> s.step.profile? ==> s.fields.ticked ==> flowNext(s, e).step.done?)
 {
 }
 
@@ -160,6 +163,7 @@ function formPasses(f: JoinForm): bool
 
 lemma formPasses_ensures(f: JoinForm)
   ensures (formPasses(f) ==> (parseJoinTakes(f) && f.ticked))
+  ensures (parseJoinTakes(f) ==> f.ticked ==> (f.age >= 1) ==> formPasses(f))
 {
 }
 

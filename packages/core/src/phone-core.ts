@@ -17,37 +17,37 @@ const NOT_US_CA: string[] = [
 /** The longest input that is worth a scan. A valid number with punctuation fits. */
 const MAX_INPUT = 40;
 
-export function isDigit(c: number): boolean {
+function isDigit(c: number): boolean {
   //@ verify
   return c >= 48 && c <= 57;
 }
 
-export function isSpace(c: number): boolean {
+function isSpace(c: number): boolean {
   //@ verify
   return (c >= 9 && c <= 13) || c === 32 || c === 160 || c === 5760 || (c >= 8192 && c <= 8202)
     || c === 8232 || c === 8233 || c === 8239 || c === 8287 || c === 12288 || c === 65279;
 }
 
 /** Digits, spaces and the punctuation of a written number: + ( ) . - */
-export function isPhoneChar(c: number): boolean {
+function isPhoneChar(c: number): boolean {
   //@ verify
   return isDigit(c) || isSpace(c) || c === 43 || c === 40 || c === 41 || c === 46 || c === 45;
 }
 
-export function allDigits(s: string): boolean {
+function allDigits(s: string): boolean {
   //@ verify
   //@ decreases s.length
   return s.length === 0 || (isDigit(s.charCodeAt(0)) && allDigits(s.slice(1)));
 }
 
-export function allPhoneChars(s: string): boolean {
+function allPhoneChars(s: string): boolean {
   //@ verify
   //@ decreases s.length
   return s.length === 0 || (isPhoneChar(s.charCodeAt(0)) && allPhoneChars(s.slice(1)));
 }
 
 /** The digits of s, in order. The same as s.replace(/\D/g, ""). */
-export function digitsOf(s: string): string {
+function digitsOf(s: string): string {
   //@ verify
   //@ decreases s.length
   //@ ensures allDigits(\result)
@@ -57,14 +57,14 @@ export function digitsOf(s: string): string {
 }
 
 /** True when the first character after any leading space is a plus. */
-export function startsWithPlus(s: string): boolean {
+function startsWithPlus(s: string): boolean {
   //@ verify
   //@ decreases s.length
   return s.length > 0 && (s.charCodeAt(0) === 43 || (isSpace(s.charCodeAt(0)) && startsWithPlus(s.slice(1))));
 }
 
 /** A geographic US or Canadian area code. The reserved N11, N9X, 37X and 96X ranges are refused. */
-export function usOrCanadaArea(area: string): boolean {
+function usOrCanadaArea(area: string): boolean {
   //@ verify
   return area.length === 3 && allDigits(area) && area.charCodeAt(0) >= 50 && !NOT_US_CA.includes(area)
     && !(area.charCodeAt(1) === 49 && area.charCodeAt(2) === 49)
@@ -74,12 +74,14 @@ export function usOrCanadaArea(area: string): boolean {
 }
 
 /** The ten national digits, or "" when the digits name no US or Canadian number. */
-export function nationalDigits(plus: boolean, digits: string): string {
+function nationalDigits(plus: boolean, digits: string): string {
   //@ verify
   //@ requires allDigits(digits)
   //@ ensures \result === "" || (\result.length === 10 && allDigits(\result) && usOrCanadaArea(\result.slice(0, 3)))
   //@ ensures \result === "" || (\result.charCodeAt(3) >= 50 && !(\result.charCodeAt(4) === 49 && \result.charCodeAt(5) === 49))
   //@ ensures plus && !digits.startsWith("1") ==> \result === ""
+  //@ ensures \result === "" || \result === digits || (digits.length === 11 && digits.startsWith("1") && \result === digits.slice(1))
+  //@ ensures !plus && digits.length === 10 && usOrCanadaArea(digits.slice(0, 3)) && digits.charCodeAt(3) >= 50 && !(digits.charCodeAt(4) === 49 && digits.charCodeAt(5) === 49) ==> \result === digits
   if (plus && !digits.startsWith("1")) return "";
   const d = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
   if (d.length !== 10) return "";
@@ -100,6 +102,9 @@ export function phoneE164(input: string): string | null {
   //@ ensures \result !== null ==> usOrCanadaArea(\result.slice(2, 5)) && !NOT_US_CA.includes(\result.slice(2, 5))
   //@ ensures \result !== null ==> !(\result.charCodeAt(6) === 49 && \result.charCodeAt(7) === 49)
   //@ ensures \result !== null && startsWithPlus(input) ==> digitsOf(input).startsWith("1")
+  //@ ensures \result !== null ==> digitsOf(input) === \result.slice(2) || digitsOf(input) === \result.slice(1)
+  //@ ensures !allPhoneChars(input) ==> \result === null
+  //@ ensures input.length === 10 && allDigits(input) && usOrCanadaArea(input.slice(0, 3)) && input.charCodeAt(3) >= 50 && !(input.charCodeAt(4) === 49 && input.charCodeAt(5) === 49) ==> \result === "+1" + input
   if (input.length > MAX_INPUT || !allPhoneChars(input)) return null;
   const national = nationalDigits(startsWithPlus(input), digitsOf(input));
   return national === "" ? null : `+1${national}`;

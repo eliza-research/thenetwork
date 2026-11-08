@@ -82,6 +82,8 @@ lemma nationalDigits_ensures(plus: bool, digits: string)
   ensures ((nationalDigits(plus, digits) == "") || (((|nationalDigits(plus, digits)| == 10) && allDigits(nationalDigits(plus, digits))) && usOrCanadaArea(nationalDigits(plus, digits)[0..3])))
   ensures ((nationalDigits(plus, digits) == "") || (((nationalDigits(plus, digits)[3] as int) >= 50) && !((((nationalDigits(plus, digits)[4] as int) == 49) && ((nationalDigits(plus, digits)[5] as int) == 49)))))
   ensures (plus ==> !((|digits| >= |"1"| && digits[..|"1"|] == "1")) ==> (nationalDigits(plus, digits) == ""))
+  ensures (((nationalDigits(plus, digits) == "") || (nationalDigits(plus, digits) == digits)) || (((|digits| == 11) && (|digits| >= |"1"| && digits[..|"1"|] == "1")) && (nationalDigits(plus, digits) == digits[1..])))
+  ensures (!(plus) ==> (|digits| == 10) ==> usOrCanadaArea(digits[0..3]) ==> ((digits[3] as int) >= 50) ==> !((((digits[4] as int) == 49) && ((digits[5] as int) == 49))) ==> (nationalDigits(plus, digits) == digits))
 {
 }
 
@@ -104,14 +106,22 @@ lemma phoneE164_ensures(input: string)
   ensures (match phoneE164(input) { case Some(i_result_val) => (usOrCanadaArea(i_result_val[2..5]) && !((i_result_val[2..5] in NOT_US_CA))) case None => true })
   ensures (match phoneE164(input) { case Some(i_result_val) => !((((i_result_val[6] as int) == 49) && ((i_result_val[7] as int) == 49))) case None => true })
   ensures (match phoneE164(input) { case Some(i_result_val) => (startsWithPlus(input) ==> (|digitsOf(input)| >= |"1"| && digitsOf(input)[..|"1"|] == "1")) case None => true })
+  ensures (match phoneE164(input) { case Some(i_result_val) => ((digitsOf(input) == i_result_val[2..]) || (digitsOf(input) == i_result_val[1..])) case None => true })
+  ensures (!(allPhoneChars(input)) ==> (match phoneE164(input) { case Some(i_) => false case None => true }))
+  ensures ((|input| == 10) ==> allDigits(input) ==> usOrCanadaArea(input[0..3]) ==> ((input[3] as int) >= 50) ==> !((((input[4] as int) == 49) && ((input[5] as int) == 49))) ==> (match phoneE164(input) { case Some(i_value) => (i_value == ("+1" + input)) case None => false }))
 {
   digitsOf_ensures(input);
   var plus := startsWithPlus(input);
   nationalDigits_ensures(plus, digitsOf(input));
   var n := nationalDigits(plus, digitsOf(input));
+  if allDigits(input) {
+    digitsOfDigits(input);
+    allDigitsArePhoneChars(input);
+  }
   if |input| <= MAX_INPUT && allPhoneChars(input) && n != "" {
     var r := "+1" + n;
     assert phoneE164(input) == Option.Some(r);
+    assert r[2..] == n;
     assert r[2..5] == n[0..3];
     assert r[1..] == "1" + n;
     assert ("1" + n)[1..] == n;
