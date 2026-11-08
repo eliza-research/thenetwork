@@ -575,6 +575,7 @@ export class OutboundQueue {
     const acceptedAt=receipt.acceptedAt??this.now;
     if (!Number.isFinite(acceptedAt) || !receipt.providerMessageId) throw new ChannelSendError("Invalid acceptance receipt","unknown");
     const at=new Date(acceptedAt),providerIds=receipt.providerMessageIds??[receipt.providerMessageId];
+    // A send the provider reports failed did not go out: it gets no sent_at (the caps and the thread history read it).
     // A receipt owner (Eliza Cloud) sends no delivery receipts to this queue: acceptance is the last status a
     // row gets, so a row to a non-member ends here and keeps no address and no text (applyStatus does it otherwise).
     const final=status==="delivered"||status==="read"||status==="failed",forget=!!this.o.provider.receipt;
@@ -584,7 +585,7 @@ export class OutboundQueue {
         where member.app_id=${row.app} and member.id=${row.memberId} order by person.id for update of person`;
       const wrote=await tx`update platform.outbound set status=${status},provider_message_id=${receipt.providerMessageId},
         provider_message_ids=${{ids:providerIds}}::jsonb->'ids',history_recorded=${receipt.historyRecorded??null},chat_id=${receipt.chatId??null},
-        transport=${receipt.transport??null},sent_at=coalesce(sent_at,${at}),lease_owner=null,lease_until=null,updated_at=${new Date(this.now)},
+        transport=${receipt.transport??null},sent_at=case when ${status==="failed"} then sent_at else coalesce(sent_at,${at}) end,lease_owner=null,lease_until=null,updated_at=${new Date(this.now)},
         note=${receipt.replayed?"idempotent replay":null},delivered_at=${status==="delivered"||status==="read"?at:null},
         ended_at=case when ${final} or (member_id is null and ${forget}) then ${at}::timestamptz else null end,
         to_address=case when member_id is null and ${forget} then null else to_address end,body=case when member_id is null and ${forget} then null else body end

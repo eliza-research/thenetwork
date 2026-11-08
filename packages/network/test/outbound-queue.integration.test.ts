@@ -11,6 +11,9 @@ import {APPS} from "../../platform/src/apps.ts";
 import {svcSign,svcVerify} from "../../core/src/svc/svc-auth.ts";
 import {DELIVER_PATH,TURN_PATH,TURN_RECEIPT_PATH,type TurnReceiptRequest,type TurnRequest} from "../../core/src/svc/contract.ts";
 import {CloudChannelAdapter} from "../service/cloud-channel.ts";
+import {BlooioAdapter} from "../service/channel.ts";
+import {BlooioAdapter as BlooioProvider} from "../../blooio/src/adapters/blooio-adapter.ts";
+import {BlooioClient} from "../../blooio/src/blooio/client.ts";
 import {NetworkService} from "../service/service.ts";
 import type {NetworkRuntime} from "../service/runtime.ts";
 
@@ -470,4 +473,27 @@ test("SD-336: a status change that a drain did not store (the process stopped af
   clock.advance(60_000);
   await rt.deliver();
   expect(await both("sd336-reminder")).toEqual({outbound:"expired",ended:true,message:"expired"});
+},60_000);
+
+test("SD-337: a send that Blooio answers with status failed gets no sent_at",async()=>{
+  toNewYork(12,0);
+  await primary();
+  // Webhook mode: the real Blooio client against a local Blooio API that answers the send with status "failed".
+  const blooio=Bun.serve({hostname:"127.0.0.1",port:0,fetch:req=>Response.json({message_id:`bm-${req.headers.get("idempotency-key")}`,status:"failed"},{status:201})});
+  try {
+    const line="+12125550170";
+    const s=new NetworkService({url,clock,instance:"replica-blooio",photoStorage:null,tokens:"safety:saf-tok",env:{PLATFORM_ENV:"dev",CLEF_RATINGS:"off",SERVICE_TURN_SECRET:secret},
+      networks:[{id:"friends:nyc",matchingEnabled:false}],network:{seed:1},log:()=>{},
+      adapter:(_net,rt)=>new BlooioAdapter({provider:new BlooioProvider(new BlooioClient({apiKey:"synthetic-blooio-key",baseUrl:blooio.url.origin}),line),
+        clock,app:rt.app.id,city:rt.city,from:line,env:ENV,log:()=>{}})});
+    await s.start();services.push(s);
+    const rt=runtime(s);
+    const phone="+12125550203",memberId=await join(s,phone,"Sol");
+    await rt.unitOfWork(()=>undefined);
+    await rt.adapter.engaged!(phone);
+    await rt.unitOfWork(()=>{rt.system(memberId as never,"sd337-reminder","Your plan reminder is ready.","transactional");});
+    const [row]=await sql`select status,sent_at from platform.outbound where id='sd337-reminder'`;
+    expect(row.status).toBe("failed");
+    expect(row.sent_at).toBeNull();
+  } finally {blooio.stop(true);}
 },60_000);
