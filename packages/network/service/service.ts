@@ -1444,7 +1444,11 @@ export class NetworkService implements RuntimeHost {
       state: app.joinMode === "waitlist" ? "onboarding" : "active", review: null, firstName: name, profile: homeCity ? { homeCity } : {}, joinedAt: t, leftAt: null,
     };
     await this.people.putMembership(membership);
-    await this.accounts.recordConsent({ e164, app: app.id, line: ev.to ? normalizeAddress(ev.to) : null, state: "opted_in", source: "inbound_message", wording: ask, ref: rowId, at: this.consentAt(ev) });
+    const joinAt = this.consentAt(ev);
+    await this.accounts.recordConsent({ e164, app: app.id, line: ev.to ? normalizeAddress(ev.to) : null, state: "opted_in", source: "inbound_message", wording: ask, ref: rowId, at: joinAt });
+    // The gateway mirrors the opt-in into its send-time fence (only when the ledger now reads opted in: an older join never undoes a newer STOP).
+    const turn = this.inboundTurn();
+    if (turn && (await this.accounts.optedIn(app.id, e164))) turn.consent = { state: "opted_in", scope: "app", app: app.id, at: joinAt };
     if (membership.state !== "active") return "joined";
     rt = this.runtimeForHome(app.id, homeCity ?? rt.city) ?? rt;
     await this.createMember(rt, membership, { age: Math.min(age, check.effective ?? age), firstName: name, homeCity });

@@ -108,4 +108,15 @@ describe.skipIf(!pgAvailable)("turn and consent", () => {
     expect(second.outcome).toBe("handled");
     expect(second.replies).not.toContain(hint);
   }, 60_000);
+  test("SD-023: a text join after STOP reports its opt-in to the gateway fence", async () => {
+    const phone = "+12125550223";
+    expect((await (await post(turn("sd023-stop", phone, "STOP"))).json() as any).consent).toMatchObject({state: "opted_out", scope: "all"});
+    clock.advance(MINUTE);
+    const r = await post(turn("sd023-join", phone, "Sam, 29"));
+    const body = await r.json() as any;
+    expect([r.status, body.reason]).toEqual([200, "joined"]);
+    expect(await service.accounts.optedIn("ntwrk", phone)).toBe(true);
+    // The gateway mirrors only the turn's consent field: without it, its fence keeps the STOP and blocks the welcome.
+    expect(body.consent).toMatchObject({state: "opted_in", scope: "app", app: "ntwrk"});
+  }, 60_000);
 });
