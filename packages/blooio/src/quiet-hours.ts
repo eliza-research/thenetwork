@@ -1,13 +1,9 @@
 // Quiet hours in the recipient's local time zone (PRD 32.2, 32.9, 36.1).
 // Default window 21:00-09:00 local: the PRD's "not after 9pm" example, inside Blooio's suggested 8am-8pm-ish
 // sending window for new conversations. Replies to a member's own message and compliance replies are exempt.
+import { isQuietMinute, minutesUntilAllowed, type QuietWindow } from "./quiet-window.ts";
 
-export interface QuietWindow {
-  /** Local hour (0-23) quiet hours start. */
-  startHour: number;
-  /** Local hour (0-23) quiet hours end (exclusive). */
-  endHour: number;
-}
+export type { QuietWindow };
 
 export const DEFAULT_QUIET: QuietWindow = { startHour: 21, endHour: 9 };
 
@@ -21,27 +17,25 @@ function fmt(tz: string): Intl.DateTimeFormat {
   return f;
 }
 
-/** Local minutes since midnight in `tz`. Throws RangeError for an invalid IANA zone. */
+/** Local minutes since midnight in `tz`, 0 to 1439 (the proof of quiet-window.ts needs that range). Throws RangeError for an invalid IANA zone. */
 export function localMinutes(ms: number, tz: string): number {
   const parts = fmt(tz).formatToParts(new Date(ms));
   const h = Number(parts.find((p) => p.type === "hour")?.value);
   const m = Number(parts.find((p) => p.type === "minute")?.value);
-  return h * 60 + m;
+  const mins = h * 60 + m;
+  if (!Number.isInteger(mins) || mins < 0 || mins >= 1440) throw new RangeError(`local time out of range in ${tz}`);
+  return mins;
 }
 
 export function isQuietAt(ms: number, tz: string, w: QuietWindow = DEFAULT_QUIET): boolean {
   if (w.startHour === w.endHour) return false;
-  const mins = localMinutes(ms, tz);
-  const start = w.startHour * 60, end = w.endHour * 60;
-  return start < end ? mins >= start && mins < end : mins >= start || mins < end;
+  return isQuietMinute(localMinutes(ms, tz), w);
 }
 
 /** The first instant at or after `ms` that is outside quiet hours (minute precision, DST-safe by re-checking). */
 export function nextAllowedAt(ms: number, tz: string, w: QuietWindow = DEFAULT_QUIET): number {
   if (!isQuietAt(ms, tz, w)) return ms;
-  const mins = localMinutes(ms, tz);
-  const end = w.endHour * 60;
-  const until = mins < end ? end - mins : 24 * 60 - mins + end;
+  const until = minutesUntilAllowed(localMinutes(ms, tz), w);
   // Align to the start of the minute, jump, then nudge across any DST hour shift.
   let t = ms - (ms % 60_000) + until * 60_000;
   for (let i = 0; i < 8 && isQuietAt(t, tz, w); i++) t += 15 * 60_000;

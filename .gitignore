@@ -10,3 +10,8 @@ runs/
 __pycache__/
 .wrangler/
 .dev.vars
+
+# LemmaScript merge state (the run log ignores itself)
+*.dfy.base
+*.dfy.merged
+.lemmascript/

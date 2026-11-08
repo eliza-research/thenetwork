@@ -3,6 +3,7 @@
 import { SQL } from "bun";
 import type { AppId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
+import { hitPasses } from "./decisions.ts";
 import type { Ban, HitResult, HitRule, Membership, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneChange, PhoneHold, PhoneIdentity, PhoneMethod, PhoneMove, PhoneMoveResult, Session, ShareGrant } from "./store.ts";
 
 type Row = Record<string, any>;
@@ -233,7 +234,7 @@ export class PgPeopleStore implements PeopleStore {
       await tx`select pg_advisory_xact_lock(hashtext(${`rate:${bucket}`}))`;
       const [prev] = await tx`select max(last_at) as last_at, coalesce(sum(count) filter (where window_start = ${start}), 0)::int as n from platform.rate_limits where bucket = ${bucket}`;
       const prevAt = ms(prev?.last_at), n = (prev?.n as number) ?? 0;
-      if ((rule.limit !== undefined && n >= rule.limit) || (rule.minGapMs !== undefined && prevAt !== null && at - prevAt < rule.minGapMs)) return { count: n + 1, prevAt, ok: false };
+      if (!hitPasses(n, prevAt, at, rule.limit, rule.minGapMs)) return { count: n + 1, prevAt, ok: false };
       const [r] = await tx`insert into platform.rate_limits (bucket, window_start, count, last_at) values (${bucket}, ${start}, 1, ${ts(at)})
         on conflict (bucket, window_start) do update set count = platform.rate_limits.count + 1, last_at = excluded.last_at returning count`;
       // Old windows are not needed after the next one starts.

@@ -34,6 +34,7 @@ import { runDiff } from "./runDiff.ts";
 import { SQL } from "bun";
 import { APP_IDS, appUrlEnv, consoleApps, DEFAULT_APP, isAppId, slaHours, toNetworkReason, type AppId } from "./apps.ts";
 import { appProfile, memberFacets, photosAllowed } from "./appProfile.ts";
+import { deployVerdict } from "./console-gate.ts";
 import { countsMember, countsOpp, shapeDelta, shapeState, viewClass, type ViewClass } from "./shape.ts";
 import { appHealth } from "./health.ts";
 import { PeopleView, peopleUrl } from "./people.ts";
@@ -167,16 +168,16 @@ const remoteDb = (url: string) => { try { return !LOCAL_DB_HOSTS.has(new URL(url
  */
 export function deployGuard(o: { realOnly: boolean; trustCfAccess: boolean; platformEnv?: string; databaseUrls: (string | undefined)[] }): string | undefined {
   const remote = o.databaseUrls.some(u => !!u && remoteDb(u));
-  if (!o.realOnly && !remote) return undefined;
-  const env = o.platformEnv?.trim();
+  const env = o.platformEnv?.trim() ?? "";
   const why = o.realOnly ? "OBSERVATORY_REAL_ONLY=1" : "a database that is not on this machine";
   const access = "needs Cloudflare Access: OBSERVATORY_TRUST_CF_ACCESS=1 with OBSERVATORY_CF_ACCESS_TEAM and OBSERVATORY_CF_ACCESS_AUD";
-  if (!env) return `real data (${why}) needs PLATFORM_ENV (dev, staging or production)`;
-  if (env !== "dev" && env !== "staging" && env !== "production") return `unknown PLATFORM_ENV "${env}" (dev, staging or production)`;
-  if (o.trustCfAccess) return undefined;
-  if (env !== "dev") return `a deployed console (${why}, PLATFORM_ENV ${env}) ${access}`;
-  if (remote) return `PLATFORM_ENV=dev with a database that is not on this machine ${access} (tokens are for local databases only)`;
-  return undefined;
+  switch (deployVerdict(o.realOnly, o.trustCfAccess, env, remote)) {
+    case "ok": return undefined;
+    case "no_env": return `real data (${why}) needs PLATFORM_ENV (dev, staging or production)`;
+    case "unknown_env": return `unknown PLATFORM_ENV "${env}" (dev, staging or production)`;
+    case "needs_access": return `a deployed console (${why}, PLATFORM_ENV ${env}) ${access}`;
+    case "dev_remote": return `PLATFORM_ENV=dev with a database that is not on this machine ${access} (tokens are for local databases only)`;
+  }
 }
 
 /** Hostname of a Host header or an origin, lowercased, without the port ("[::1]" keeps its brackets). */
@@ -545,7 +546,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         const d = await (await source(mode, app)).opportunity(id, { truth: truthFor(u, app) });
         if (!d) return json({ error: "not found" }, 404);
         // An analyst sees the opportunity's shape, never the people in it or the texts written to them.
-        if (viewClass(rolesFor(u, app, mode)) === "counts") return json({ ...d, opportunity: countsOpp(d.opportunity), members: d.members.map(countsMember), messages: [] });
+        if (viewClass(rolesFor(u, app, mode)) === "counts") return json({ ...d, opportunity: countsOpp(d.opportunity), members: d.members.map(countsMember), messages: [], events: d.events.map(e => ({ t: e.t, type: e.type, text: e.type })) });
         // What a member wrote only for staff who may open that member (4.1); others get its length.
         const may = new Map<string, boolean>();
         for (const m of d.messages) {

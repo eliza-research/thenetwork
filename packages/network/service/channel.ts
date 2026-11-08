@@ -16,6 +16,7 @@ import { OutboundQueue, WAITING, type AppChecks, type MessageKind } from "../../
 import type { Clock, ChannelAdapter as ProviderAdapter, StatusUpdate } from "../../blooio/src/types.ts";
 import type { NetworkRuntime } from "./runtime.ts";
 import { APPS } from "../../platform/src/apps.ts";
+import { liveAllowed } from "./decisions.ts";
 
 /** The apps' own domains: the Network's fixed copy names them ("you're in friends.help and peon.biz"), so the contact check allows them. */
 const OWN_DOMAINS = Object.values(APPS).flatMap(a => [`https://${a.domain}`, `www.${a.domain}`, a.domain]);
@@ -92,7 +93,7 @@ export const liveFlag = (app: string) => `${app.toUpperCase()}_LIVE_APPROVED`;
  * app other than ntwrk its own <APP>_LIVE_APPROVED=1 too.
  */
 export function liveSendAllowed(env: Record<string, string | undefined> = process.env, app = "ntwrk"): boolean {
-  return env.BLOOIO_ALLOW_SEND === "1" && env.NTWRK_LIVE_APPROVED === "1" && env[liveFlag(app)] === "1";
+  return liveAllowed(env.BLOOIO_ALLOW_SEND === "1", env.NTWRK_LIVE_APPROVED === "1", env[liveFlag(app)] === "1");
 }
 
 /** Nothing leaves the machine. The service stores every send with status "dry_run". */

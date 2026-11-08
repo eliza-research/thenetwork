@@ -22,6 +22,9 @@ describe("age, logins and merged state (units)", () => {
     expect([ageView(null).minor, minorAt(empty, "a", null, 5)]).toEqual([true, true]);
     expect([ageView(30).minor, minorAt(empty, "a", 30, 5)]).toEqual([false, false]);
     expect([ageView(16).minor, minorAt(empty, "a", 16, 5)]).toEqual([true, true]);
+    // An age out of range is unknown to core's policy, so it fails closed in both, whatever the Network's view says.
+    expect([ageView(200).minor, minorAt(empty, "a", 200, 5)]).toEqual([true, true]);
+    expect([ageView(200, { minor: false, unknown: false }).minor, minorAt({ ...empty, latest: new Map([["a", { minor: false, unknown: false }]]) }, "a", 200, 5)]).toEqual([true, true]);
     const stored = { ...empty, latest: new Map([["a", { minor: false, unknown: false }]]) };
     expect([ageView(null, stored.latest.get("a")).minor, minorAt(stored, "a", null, 5)]).toEqual([false, false]);
     const ev = { ...empty, latest: new Map([["a", { minor: false, unknown: false }]]), changes: new Map([["a", [{ at: 10, minor: true, unknown: true }, { at: 20, minor: false, unknown: false }]]]) };
@@ -208,6 +211,15 @@ describe.skipIf(!pgAvailable)("real mode fixes and per-app panels (Postgres)", (
     expect(sent.every(c => /^token:safety#/.test(c.staff ?? ""))).toBe(true);
     const rows = (await (await as(TOK.admin, "/api/audit?limit=200&app=slop")).json() as { entries: AuditEntry[] }).entries.filter(e => e.action === "safety_ban");
     expect(rows.map(e => [(e.detail as any).phase, (e.detail as any).by])).toEqual([["result", "person"], ["requested", "person"], ["result", "phone"], ["requested", "phone"]]);
+  }, T);
+
+  test("a login that cannot be checked is refused and reads nothing", async () => {
+    const gone = new RealSource({ url: "postgres://nobody@127.0.0.1:1/none", pollMs: 3_600_000, pushMs: 3_600_000, service: false });
+    try {
+      await gone.init();
+      expect(gone.state().env.error).toContain("Refused: could not check the database login");
+      expect((gone as unknown as { sql?: unknown }).sql).toBeUndefined();
+    } finally { await gone.dispose(); }
   }, T);
 
   test("an app login outside the app's role is refused; the global reveal needs a dev database; shadow runs are one at a time and read the app's blocks view", async () => {

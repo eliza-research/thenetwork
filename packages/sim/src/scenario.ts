@@ -158,7 +158,8 @@ export function scenarioWorldOptions(s: Scenario, o: ScenarioRunOptions): WorldO
 
 function getPath(obj: unknown, path: string): number {
   const v = path.split(".").reduce<any>((o, k) => (o == null ? undefined : o[k]), obj);
-  return typeof v === "number" ? v : v == null ? 0 : Number(v);
+  // A rule never violated has no byRule entry (0). Any other missing path is a typo: NaN fails every comparison.
+  return typeof v === "number" ? v : v == null ? (path.startsWith("invariants.byRule.") ? 0 : NaN) : Number(v);
 }
 
 /** Grade a finished run against expectations, using only the final run log and metrics. */

@@ -22,6 +22,7 @@
 import { CLEF_FEATURES } from "../clef.ts";
 import { DEFAULT_CLEF_WEIGHTS, validateClefWeights, type ClefHead, type ClefProvenance, type ClefWeights } from "../clefWeights.ts";
 import { hash32 } from "@thenetwork/core";
+import { photoPasses } from "../../decisions.ts";
 
 export type Dim = "face" | "body" | "overall";
 export const DIMS: readonly Dim[] = ["face", "body", "overall"];
@@ -363,7 +364,7 @@ export function fitClefWeights(rows: FeatureRows, labels: readonly (LabelledPair
   let gated = 0;
   for (const [id, x] of rows) {
     if (flagged.has(id)) continue;
-    if ((x["gate.one_adult"] ?? 1) < base.gate.oneAdult) { gated++; continue; }
+    if (!photoPasses(x["gate.one_adult"], base.gate.oneAdult)) { gated++; continue; }
     usable.set(id, x);
   }
   const pairs = labels.filter((l): l is LabelledPair => !("flag" in l));

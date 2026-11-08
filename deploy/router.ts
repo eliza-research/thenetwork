@@ -51,7 +51,13 @@ export function retiredSitePage(req: Request, app: string): Response | null {
   return new Response(req.method === "HEAD" ? null : "Not found", { status: 404, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } });
 }
 
-/** True for a path that belongs to the shared backend. */
+/**
+ * True for a path that belongs to the shared backend. A forwarded path keeps the backend's origin
+ * (never "//host") and is never a backend-only route.
+ */
+//@ verify
+//@ ensures \result ==> pathname.startsWith("/") && !pathname.startsWith("//")
+//@ ensures \result ==> !pathname.startsWith("/internal/") && !pathname.startsWith("/review") && !pathname.startsWith("/webhooks/") && !pathname.startsWith("/ops/")
 export function isBackendPath(pathname: string): boolean {
   return (
     pathname === "/api" || pathname.startsWith("/api/") ||

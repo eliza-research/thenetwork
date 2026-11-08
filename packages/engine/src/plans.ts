@@ -23,6 +23,8 @@ import { tokenize } from "./embed.ts";
 import { privateVocabulary } from "./explain.ts";
 import { isMinor, memberReason } from "./filters.ts";
 import { makeCompat } from "./group.ts";
+import { stricterCap } from "./attentionCore.ts";
+import { pickPlans, planSettles, planStep, smallerKind } from "./planCore.ts";
 import { checkMemberFacing } from "./judgeCommon.ts";
 import { fromLocal, localParts } from "@thenetwork/core";
 import { sha256 } from "./hash.ts";
@@ -110,7 +112,7 @@ export function planAllowanceEligible(ev: PlanEvidence | undefined, checkInOptIn
 export function planAllowanceConfig(att: AttentionConfig = DEFAULT_ATTENTION, pcfg: PlansConfig = DEFAULT_PLANS): AttentionConfig {
   const cap = { limit: pcfg.allowance.limit, periodDays: pcfg.allowance.periodDays };
   // A state whose own cap is stricter than the allowance keeps it (Quiet: 1 per 30 days, engine-attention-plans-9).
-  const stricter = (st: { limit: number; periodDays: number }) => (st.limit / st.periodDays < cap.limit / cap.periodDays ? { ...st } : cap);
+  const stricter = (st: { limit: number; periodDays: number }) => stricterCap(st, cap);
   // One plan per message (the member answers one plan at a time); outside-world items (events,
   // places) may ride along as companions, as in any message.
   return { ...att, maxMemberItems: 1, caps: { open: stricter(att.caps.open), normal: stricter(att.caps.normal), quiet: stricter(att.caps.quiet), receiving: stricter(att.caps.receiving), paused: { limit: 0, periodDays: cap.periodDays } }, breakIns: { open: { ...cap, limit: 0 }, normal: { ...cap, limit: 0 }, quiet: { ...cap, limit: 0 }, receiving: { ...cap, limit: 0 }, paused: { ...cap, limit: 0 } } };
@@ -374,18 +376,8 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
   }
   // Greedy: best plans first, each member in at most one plan per run (participants and alternates).
   cands.sort((x, y) => (y.rank - x.rank) || (x.plan.id < y.plan.id ? -1 : 1));
-  const used = new Set<MemberId>();
-  const out: Plan[] = [];
-  for (const c of cands) {
-    if (out.length >= pcfg.maxPlansPerCityRun) break;
-    if (c.plan.invited.some(id => used.has(id))) continue;
-    c.plan.alternates = c.plan.alternates.filter(id => !used.has(id) && !out.some(p => p.invited.includes(id)));
-    for (const id of c.plan.invited) used.add(id);
-    out.push(c.plan);
-  }
-  // Alternates are never someone already invited elsewhere this run.
-  for (const p of out) p.alternates = p.alternates.filter(id => !used.has(id));
-  return out;
+  const picks = pickPlans(cands.map((c, index) => ({ index, invited: c.plan.invited, alternates: c.plan.alternates })), pcfg.maxPlansPerCityRun);
+  return picks.map(p => ({ ...cands[p.index]!.plan, alternates: p.alternates }));
 }
 
 function beam(pool: MemberId[], minG: number, maxG: number, score: (ids: MemberId[]) => PlanScore | null, passes: (s: PlanScore | null) => s is PlanScore, pcfg: PlansConfig):
@@ -565,28 +557,23 @@ export const pendingOf = (r: PlanRun) => Object.keys(r.answers).filter(x => r.an
  * when nobody is pending and quorum can no longer be reached -> "fallback". Never says who declined.
  */
 export function recordPlanAnswer(run: PlanRun, member: MemberId, yes: boolean, now: number, pcfg: PlansConfig = DEFAULT_PLANS, opts: PlanRunOpts = {}): { run: PlanRun; action: PlanAction } {
-  if (run.stage === "closed" || run.answers[member] !== "pending") return { run, action: { kind: "none" } };
   const r: PlanRun = { ...run, answers: { ...run.answers, [member]: yes ? "yes" : "no" }, bench: [...run.bench] };
   const p = r.plan;
-  if (yes) {
-    if (r.stage === "booked") {
-      if (now <= p.window.start - pcfg.lateJoinHours * HOUR) return { run: r, action: { kind: "join", member } };
-      r.answers[member] = "late";
-      return { run: r, action: { kind: "none" } };
-    }
-    const y = yesOf(r);
-    if (y.length >= p.quorum) { r.stage = "booked"; return { run: r, action: { kind: "book", going: y } }; }
-    if (p.partner && now < p.probeDeadline) { const nx = nextOnBench(r, opts); if (nx) { r.answers[nx] = "pending"; return { run: r, action: { kind: "probe_partner", member: nx } }; } }
-    return { run: r, action: { kind: "none" } };
-  }
-  if (r.stage === "booked") return { run: r, action: { kind: "none" } };
-  // Partner plan: a no from the first ends it (one-to-one rules: no swap without re-review); a no from the partner tries the next.
-  if (p.partner && member === p.invited[0]) { r.stage = "closed"; return { run: r, action: { kind: "fallback" } }; }
-  if (now < p.probeDeadline) {
+  const step = planStep({
+    stage: run.stage, isPending: run.answers[member] === "pending", yes, yesAfter: yesOf(r).length, quorum: p.quorum, partner: p.partner,
+    // Partner plan: a no from the first ends it (one-to-one rules: no swap without re-review); a no from the partner tries the next.
+    isFirst: member === p.invited[0], beforeDeadline: now < p.probeDeadline, lateJoinOpen: now <= p.window.start - pcfg.lateJoinHours * HOUR,
+  });
+  if (step === "ignore") return { run, action: { kind: "none" } };
+  if (step === "join") return { run: r, action: { kind: "join", member } };
+  if (step === "late") { r.answers[member] = "late"; return { run: r, action: { kind: "none" } }; }
+  if (step === "book") { r.stage = "booked"; return { run: r, action: { kind: "book", going: yesOf(r) } }; }
+  if (step === "close") { r.stage = "closed"; return { run: r, action: { kind: "fallback" } }; }
+  if (step === "next_partner" || step === "next_alternate") {
     const nx = nextOnBench(r, opts);
-    if (nx) { r.answers[nx] = "pending"; return { run: r, action: { kind: "backfill", member: nx } }; }
+    if (nx) { r.answers[nx] = "pending"; return { run: r, action: step === "next_partner" ? { kind: "probe_partner", member: nx } : { kind: "backfill", member: nx } }; }
   }
-  if (!pendingOf(r).length && yesOf(r).length < p.quorum) { r.stage = "closed"; return { run: r, action: { kind: "fallback" } }; }
+  if (!yes && r.stage !== "booked" && planSettles(pendingOf(r).length, yesOf(r).length, p.quorum)) { r.stage = "closed"; return { run: r, action: { kind: "fallback" } }; }
   return { run: r, action: { kind: "none" } };
 }
 
@@ -642,10 +629,9 @@ export function planFallback(run: PlanRun, now: number, events: readonly Network
   const a = activityById.get(p.activityId)!;
   const carry = pcfg.fallback.nextWeek ? yes.map(memberId => ({ memberId, activityId: p.activityId, until: now + pcfg.fallback.carryDays * DAY })) : [];
   if (!yes.length) return { fallback: { kind: "none" }, carry };
-  if (pcfg.fallback.smaller && yes.length >= 2 && a.groupSize[0] <= 2 && p.window.start - now > pcfg.lateJoinHours * HOUR) {
-    if (yes.length === 2) return { fallback: { kind: "smaller", members: yes, partnerPlan: partnerPlanFor(p, [yes[0]!, yes[1]!], now, pcfg) }, carry: [] };
-    return { fallback: { kind: "smaller", members: yes }, carry: [] };
-  }
+  const smaller = smallerKind(yes.length, pcfg.fallback.smaller, yes.length >= 2 ? a.groupSize[0] : 3, p.window.start - now > pcfg.lateJoinHours * HOUR);
+  if (smaller === "partner_plan") return { fallback: { kind: "smaller", members: yes, partnerPlan: partnerPlanFor(p, [yes[0]!, yes[1]!], now, pcfg) }, carry: [] };
+  if (smaller === "smaller_group") return { fallback: { kind: "smaller", members: yes }, carry: [] };
   if (pcfg.fallback.soloEvent) {
     const ev = events.find(e => e.city === p.city && !e.riskTags?.length && e.start > now + 24 * HOUR && e.start < now + 7 * DAY && e.tags.some(t => a.tags.includes(t)));
     if (ev) return { fallback: { kind: "solo_event", members: yes, eventId: ev.id }, carry };
