@@ -312,4 +312,46 @@ describe.skipIf(!pgAvailable)("identity sagas: stop half way, retry, races (Post
     expect((await s.people.lastConsent(b, "slop")).global?.state).toBe("opted_out");
     expect((await sql`select m.opted_out from network.members m join platform.phone_identities ph on ph.person_id = m.person_id where m.app_id = 'slop' and ph.e164 = ${b}`).map((r: any) => r.opted_out)).toEqual([true]);
   }, T);
+
+  test("SD-056: a phone ban and a number change that run at the same time leave the person's number banned", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const s = service(clock), other = service(clock);
+    const patch = (o: object, name: string, before: () => Promise<unknown>) => {
+      const t = o as Record<string, (...x: unknown[]) => Promise<unknown>>;
+      const real = t[name]!.bind(o);
+      let ran = false;
+      t[name] = async (...x: unknown[]) => { if (!ran) { ran = true; await before(); } return real(...x); };
+    };
+
+    // 1. The ban read the person's number, then the number change (another replica) committed before the ban rows.
+    const [a, b] = [newPhone(), newPhone()];
+    expect(await text(s, clock, a, "slop")).toBe("join_asked");
+    expect(await text(s, clock, a, "Gus, 41")).toBe("joined");
+    const g = (await memberOf("slop", a))!.id;
+    const api = await startMove(other, clock, a, b);
+    let moved: unknown;
+    patch(s.people, "ban", async () => { moved = (await api("/api/me/phone/confirm", { code: "123456" })).body; });
+    expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: g, by: "phone", note: "scam confirmed" })).json()).toEqual({ ok: true });
+    expect(moved).toMatchObject({ ok: true });
+    // The person is on the new number, and the new number is banned.
+    expect((await memberOf("slop", b))!.id).toBe(g);
+    expect(await s.people.isBanned(s.accounts.phoneHash(b))).toBe(true);
+
+    // 2. The number change checked for a ban, then the ban committed before the move.
+    const [c, d] = [newPhone(), newPhone()];
+    expect(await text(s, clock, c, "slop")).toBe("join_asked");
+    expect(await text(s, clock, c, "Hal, 44")).toBe("joined");
+    const h = (await memberOf("slop", c))!.id;
+    const api2 = await startMove(other, clock, c, d);
+    let banned: unknown;
+    patch(other.people, "movePhone", async () => { banned = await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: h, by: "phone", note: "scam confirmed" })).json(); });
+    const r = await api2("/api/me/phone/confirm", { code: "123456" });
+    expect(banned).toEqual({ ok: true });
+    // The banned person does not move to a number with no ban.
+    expect(r.body).toMatchObject({ ok: false, error: "review" });
+    expect((await memberOf("slop", c))?.id).toBe(h);
+    expect(await s.accounts.banned(d)).toBe(false);
+    expect(await memberOf("slop", d)).toBeUndefined();
+  }, T);
 });

@@ -64,7 +64,7 @@ export interface PhoneChange {
 }
 /** What movePhone moves: the person's phone from one number to another, and everything keyed to the number. */
 export interface PhoneMove { personId: string; changeId: string; oldE164: string; newE164: string; oldHash: string; newHash: string; at: number }
-export type PhoneMoveResult = "ok" | "number_in_use" | "no_phone";
+export type PhoneMoveResult = "ok" | "number_in_use" | "no_phone" | "banned";
 
 /** A rate-limit rule for hit(): a hit over `limit` in the window, or within `minGapMs` of the last counted hit, is refused and not counted. */
 export interface HitRule { limit?: number; minGapMs?: number }
@@ -291,7 +291,12 @@ export class MemoryPeopleStore implements PeopleStore {
   async isBlocked(a: string, b: string) { return this.blocks.has(`${a}:${b}`) || this.blocks.has(`${b}:${a}`); }
 
   readonly bans: Ban[] = [];
-  async ban(b: Ban) { if (!this.bans.some(x => x.id === b.id)) this.bans.push({ ...b }); }
+  async ban(b: Ban) {
+    if (!this.bans.some(x => x.id === b.id)) this.bans.push({ ...b });
+    // The person's number changed after the caller read it: the ban covers the number they have now too.
+    const now = b.personId ? this.personHash.get(b.personId) : undefined;
+    if (b.phoneHash !== null && now && now !== b.phoneHash && !this.bans.some(x => x.id === `${b.id}:moved`)) this.bans.push({ ...b, id: `${b.id}:moved`, phoneHash: now });
+  }
   async isBanned(phoneHash: string, personId?: string | null) {
     return this.bans.some(b => (b.phoneHash !== null && b.phoneHash === phoneHash) || (b.scope === "person" && !!personId && b.personId === personId));
   }
@@ -378,6 +383,7 @@ export class MemoryPeopleStore implements PeopleStore {
   async movePhone(m: PhoneMove): Promise<PhoneMoveResult> {
     const old = this.phones.get(m.oldE164);
     if (!old || old.personId !== m.personId) return "no_phone";
+    if (await this.isBanned(m.oldHash, m.personId)) return "banned";
     if (this.phones.has(m.newE164)) return "number_in_use";
     this.phones.delete(m.oldE164);
     this.phones.set(m.newE164, { e164: m.newE164, personId: m.personId, verifiedAt: m.at, method: "otp_sms", lastSeenAt: m.at, hold: null });
