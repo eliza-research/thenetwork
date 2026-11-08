@@ -19,6 +19,7 @@ import type { GenCtx } from "../../packages/engine/src/genkit.ts";
 import { checkMemberFacing } from "../../packages/engine/src/judgeCommon.ts";
 import { hardGate } from "../../packages/engine/src/judgeDeep.ts";
 import { validatePack, type AppPack } from "../../packages/engine/src/pack.ts";
+import { planMemberReason } from "../../packages/engine/src/plans.ts";
 import { EngineRng as Rng } from "../../packages/core/src/index.ts";
 import { randomWorld } from "../../packages/engine/src/testkit.ts";
 import type { AttentionItem, EngineInput, EngineProposal } from "../../packages/engine/src/types.ts";
@@ -163,6 +164,24 @@ export async function conformance(b: Block, pack: AppPack, o: ConformanceOptions
         expect(["revealed", "closed"]).toContain(f.stage);
       }
     }
+  });
+
+  // SD-206: a plan seat forgives only the budgets. memberReason returned interruption_budget first, so
+  // planMemberReason returned null and a member in the reliability hold-out (or a later rule) got a seat.
+  const plans = pack.plans;
+  if (plans) await b.run(name("plan seats forgive only the budgets (every member at budget keeps the later rules: hold-out, cooldown, quota)"), async () => {
+    const budgets = (limit: number) => ({ budgets: Object.fromEntries((["open", "normal", "quiet", "receiving", "paused"] as const).map(s => [s, { limit, periodDays: 7 }])), contribution: { limit, periodDays: 14 } });
+    let later = 0;
+    for (const { seed, input } of worlds) {
+      const full = new World(input, resolveConfig({ ...cfgIn(seed), ...budgets(0) }), localEmbed, pack);
+      const open = new World(input, resolveConfig({ ...cfgIn(seed), ...budgets(Infinity) }), localEmbed, pack);
+      for (const id of full.ids) {
+        const want = memberReason(open, id, { category: plans.lane, role: "guest", format: "small_group", timeSensitive: true });
+        if (want && memberReason(full, id, { category: plans.lane, role: "guest", format: "small_group", timeSensitive: true }) === "interruption_budget") later++;
+        expect(planMemberReason(full, id)).toBe(want);
+      }
+    }
+    if (pack.eligibility.memberRules.some(r => r.id === "interruption_budget")) expect(later).toBeGreaterThan(0);
   });
 
   await b.run(name("member-facing leak gate (explanations, objectives, probes pass LeakGuard; no canary in any output)"), async () => {
