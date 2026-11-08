@@ -1527,17 +1527,48 @@ export class ConsentNetwork implements NetworkUnderTest {
    */
   private answerWho(m: MemberState, body: string): boolean {
     const p = m.pendingSafety!;
-    m.pendingSafety = undefined;
-    if (this.now() - p.at > DAY) return false;
-    const text = body.trim();
-    let target = this.resolveTarget(m, text).target;
-    if (!target && p.targets?.length === 1 && (this.yesNoOf(text) === "yes" || /^\W*(?:yes|yeah|yep|yup|sure|correct|right|that's (?:him|her|them)|yes please)\b/i.test(text))) {
-      target = this.members.get(p.targets[0]!);
+    if (this.now() - p.at > DAY) {
+      m.pendingSafety = undefined;
+      return false;
     }
-    if (target) { this.applyBlock(m, p.verb, p.kind, target); return true; }
-    // A probe (1:1 or plan), the booked date, a crew or a check-in is also waiting: a short "no", "yes"
-    // or "can't make it" is its answer, not this one (the question is dropped; they can block or report again).
-    if (m.awaiting && ["probe", "booked", "crew", "checkin"].includes(m.awaiting.kind)) return false;
+    const text = body.trim();
+
+    // 1. If an active probe, booking, crew or check-in is waiting, a bare "yes"/"no"/cancel is its answer,
+    // not an answer to a pending safety clarification question.
+    if (m.awaiting && ["probe", "booked", "crew", "checkin"].includes(m.awaiting.kind)) {
+      if (this.yesNoOf(text) !== undefined || /^\W*(?:yes|yeah|yep|yup|sure|correct|right|no|nope|can'?t make it)\b/i.test(text)) {
+        return false;
+      }
+    }
+
+    m.pendingSafety = undefined;
+
+    // 2. Affirmative answer to single candidate confirmation ("Who do you mean: Leo?")
+    if (p.targets?.length === 1 && (this.yesNoOf(text) === "yes" || /^\W*(?:yes|yeah|yep|yup|sure|correct|right|that's (?:him|her|them)|yes please)\b/i.test(text))) {
+      const target = this.members.get(p.targets[0]!);
+      if (target) {
+        this.applyBlock(m, p.verb, p.kind, target);
+        return true;
+      }
+    }
+
+    // 3. Resolve target using confirmPast = (p.verb === "report") to maintain safety on past counterparts
+    const r = this.resolveTarget(m, text, p.verb === "report");
+    if (r.ask) {
+      m.pendingSafety = { verb: p.verb, kind: p.kind, at: this.now(), targets: r.ask.map(x => x.id) };
+      this.ctx.log(`${p.verb}_ambiguous`, { memberId: m.id, options: r.ask.length });
+      this.send(m, copy.whoDoYouMean(this.namesFor(r.ask)), { type: "question", proactive: false }, "reply");
+      return true;
+    }
+
+    // 4. Valid target: for block, any resolved member (even if not yet met); for report, must be a counterpart
+    if (r.target) {
+      if (p.verb === "block" || this.counterparts(m.id).some(x => x.m.id === r.target!.id)) {
+        this.applyBlock(m, p.verb, p.kind, r.target);
+        return true;
+      }
+    }
+
     if (NEVER_MIND.test(text)) { this.ack(m, "Okay."); return true; }
     if (text.split(/\s+/).length > 4) return false;
     this.ctx.log(`${p.verb}_unresolved`, { memberId: m.id });
