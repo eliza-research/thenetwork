@@ -66,7 +66,7 @@ describe.skipIf(!pgAvailable)("real mode fixes and per-app panels (Postgres)", (
     url = await testDb();
     sql = new SQL(url);
     await sql`insert into platform.people (id, lowest_age) values (${P.a}, 29), (${P.c}, 41)`;
-    // slop: s1 a verified adult with dating facts (and a score that must never show), s2 a 16-year-old, s3 an adult not verified, s4 with no name.
+    // slop: s1 a verified adult with dating facts (and a score that must never show), s2 a 16-year-old, s3 an adult whose age check failed, s4 with no name.
     await sql.begin(async tx => {
       await tx`set local app.app_id = 'slop'`;
       await tx`insert into network.members (id, name, home_city, account_status, age, joined_at, person_id) values
@@ -90,6 +90,7 @@ describe.skipIf(!pgAvailable)("real mode fixes and per-app panels (Postgres)", (
       values ('slop', 's1:appearance', 's1', 'fact', 'photo rating (internal)', ${"{appearance:face=0.83,appearance:body=0.77,appearance:overall=0.81,appearance:conf=0.64,appearance:bodyType=athletic}"}::text[],
         'agent_private', 'inferred', 'photo_rater', 0.64, 'confirmed', now())`;
     await facet("f7", "s2", "fact", "age check passed", ["verify:age:pass"]);
+    await facet("f9", "s3", "fact", "age check failed", ["verify:age:fail"]);
     await facet("f8", "s2", "preference", "seeks", ["romance:seeks:man"]);
     // peon: a job seat (with a proxy tag that must never show) and a candidate.
     await sql.begin(async tx => {
@@ -159,7 +160,7 @@ describe.skipIf(!pgAvailable)("real mode fixes and per-app panels (Postgres)", (
     // The photo rating never shows, revealed or not, in the member detail, the app panel or the state.
     const state = await (await as(TOK.safety, "/api/state?app=slop")).text();
     for (const body of [JSON.stringify([d, hidden, shown, revealed]), state]) expect(body).not.toMatch(/appearance|photo rating|athletic/);
-    // Photos: a reason; never under 18; verified adults only; only https links come back.
+    // Photos: a reason; never under 18; never after a failed age check; only https links come back.
     expect((await post(TOK.safety, "/api/member/s1/photos?app=slop", { reason: "no" })).status).toBe(400);
     const minor = await post(TOK.safety, "/api/member/s2/photos?app=slop", { reason: "report r9 check" });
     expect([minor.status, (await minor.json()).code]).toEqual([403, "never_minor"]);
