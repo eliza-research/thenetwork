@@ -289,7 +289,10 @@ export class PgStore implements NetworkStore {
         on conflict (id) do update set version = excluded.version, state = excluded.state, saved_at = excluded.saved_at`;
       for (let i = 0; i < rows.opportunities.length; i += 500) await tx`insert into network.opportunities ${tx(rows.opportunities.slice(i, i + 500))}
         on conflict (id) do update set state = excluded.state, objective = excluded.objective, explanations = excluded.explanations, meeting_at = excluded.meeting_at,
-          reason = excluded.reason, updated_at = excluded.updated_at`;
+          reason = excluded.reason,
+          -- The time the row last changed, not the time of the last save (every save writes every row).
+          updated_at = case when (network.opportunities.state, network.opportunities.objective, network.opportunities.explanations, network.opportunities.meeting_at, network.opportunities.reason)
+            is distinct from (excluded.state, excluded.objective, excluded.explanations, excluded.meeting_at, excluded.reason) then excluded.updated_at else network.opportunities.updated_at end`;
       for (let i = 0; i < parts.length; i += 500) await tx`insert into network.participations ${tx(parts.slice(i, i + 500))}`;
       for (let i = 0; i < rows.review_items.length; i += 500) await tx`insert into network.review_items ${tx(rows.review_items.slice(i, i + 500))}
         on conflict (opportunity_id) do update set deadline = excluded.deadline, decision = excluded.decision, reason = excluded.reason, note = excluded.note,
