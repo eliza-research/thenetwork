@@ -3043,6 +3043,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (run === o.planRun) return;
     o.planRun = run;
     if (yes) { this.plansCounters.planYes++; o.status.set(id, "available"); } else { if (!silent) this.plansCounters.planNo++; o.status.set(id, silent ? "unavailable" : "no"); }
+    // A yes after the late-join cutoff was told "I'll tell you once enough people are in": it is out, and hears so in the next message.
+    if (run.answers[id] === "late") { o.status.set(id, "unavailable"); this.noteFor(id, copy.planNotTogether); return; }
     this.planAct(o, action);
   }
 

@@ -191,4 +191,22 @@ describe("plan run", () => {
     expect(w.log("send_refused").filter(l => l.detail.reason === "plan_copy")).toEqual([]);
     expect(w.meetings.map(m => [...m.participants].sort())).toEqual([["b", "c", "e"]]);
   });
+  // Q-plan_run-1: a plan yes after booking and after the late-join cutoff (6 hours before the start)
+  // was told "I'll tell you once enough people are in", then the engine marked it late and nobody
+  // told the member anything more.
+  test("a yes after the late-join cutoff hears that it did not work out", async () => {
+    const w = await world(["a", "b", "c", "d"]);
+    const p = groupPlan(w, ["a", "b", "c", "d"]);
+    const id = submit(w, p);
+    expect(await answer(w, { a: "yes", b: "yes", c: "yes" })).toBe(true);
+    expect(opp(w, id).stage).toBe("scheduled");
+    expect(w.probed("d")).toBe(true);
+    // Five hours before the start: past the cutoff, the plan is still on.
+    w.clock.set(p.window.start - 5 * HOUR);
+    await w.say("d", "yes");
+    expect(opp(w, id).planRun.answers.d).toBe("late");
+    expect(w.meetings.filter(m => m.participants.includes("d"))).toHaveLength(0);
+    expect(opp(w, id).status.get("d")).toBe("unavailable");
+    expect((w.net as any).members.get("d").note?.text).toBe("That plan didn't come together this time.");
+  });
 });
