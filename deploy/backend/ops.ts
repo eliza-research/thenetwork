@@ -20,7 +20,8 @@ import type { SQL } from "bun";
 import { URGENT_REPORTS } from "../../packages/network/src/reports.ts";
 import { SIM_AUTO_REVIEWER } from "../../packages/network/src/network.ts";
 import { budgetLines, costBudgetsFromEnv, dayOf, type BudgetLine, type CostApp, type CostBudgets, type CostLedger } from "../../packages/network/service/cost.ts";
-import { BIAS_EVERY_MS } from "../../packages/network/service/bias.ts";
+import { BIAS_EVERY_MS, BIAS_MIN_N, biasBlind } from "../../packages/network/service/bias.ts";
+import type { BiasReport } from "../../packages/engine/src/packs/slop/biasMonitor.ts";
 import type { AppId } from "../../packages/platform/src/apps.ts";
 import { PHOTO_APPS } from "../../packages/platform/src/photos.ts";
 
@@ -117,6 +118,8 @@ export interface NetworkMetrics {
   safetySignalsWaiting?: number;
   /** Groups under 0.8x in bias monitor reports written in the last 24 h (service.ts afterTick; weekly). */
   biasAlerts24h?: number;
+  /** The newest bias monitor report of the last 24 h could compare no group (biasBlind): no alert is not a pass. */
+  biasBlind24h?: boolean;
   /** Since the newest bias monitor report (null: none yet). Undefined: the network's app has no bias monitor (not a photo app). */
   biasReportAgoMs?: number | null;
   /**
@@ -169,7 +172,7 @@ export interface NetworkProbe {
    * Rows since a time: outbound statuses, event counts (type and action), report rows from the stored
    * state, and the SMS fallbacks of the UTC day that starts at `dayStart` and of the day before (the cost accruals).
    */
-  since(t: number, dayStart: number): Promise<{ statuses: Record<string, number>; events: { type: string; action: string | null; n: number }[]; reports: { kind: string }[]; sms: { today: number; yesterday: number }; safetySignals?: number; biasAlerts?: number; biasLastAt?: number | null; precision7d?: { decided: number; clean: number } }>;
+  since(t: number, dayStart: number): Promise<{ statuses: Record<string, number>; events: { type: string; action: string | null; n: number }[]; reports: { kind: string }[]; sms: { today: number; yesterday: number }; safetySignals?: number; biasAlerts?: number; biasBlind?: boolean; biasLastAt?: number | null; precision7d?: { decided: number; clean: number } }>;
 }
 
 /** Below this many person decisions in 7 days the precision is not alerted on (too few to read). */
@@ -217,6 +220,7 @@ export async function collectNetwork(p: NetworkProbe, now: number): Promise<Netw
       smsByDay: s.sms,
       safetySignalsWaiting: s.safetySignals ?? 0,
       biasAlerts24h: s.biasAlerts ?? 0,
+      biasBlind24h: s.biasBlind ?? false,
       ...(s.biasLastAt !== undefined ? { biasReportAgoMs: s.biasLastAt === null ? null : Math.max(0, now - s.biasLastAt) } : {}),
       ...(s.precision7d ? { precision7d: s.precision7d } : {}),
     };
@@ -250,6 +254,8 @@ export function runtimeProbe(rt: {
         and tags && ${tx.array(["signal:safety_concern"], "TEXT")}`) as { n: number }[];
       const [bias] = (await tx`select coalesce(sum(alerts) filter (where at > ${at}), 0)::int as n, max(at) as last
         from network.bias_reports where app_id = ${rt.app.id} and network_id = ${rt.id}`) as { n: number; last: Date | null }[];
+      const [newest] = (await tx`select report from network.bias_reports where app_id = ${rt.app.id} and network_id = ${rt.id} and at > ${at}
+        order by at desc limit 1`) as { report: BiasReport }[];
       const biasLastAt = PHOTO_APPS.includes(rt.app.id as AppId) ? (bias?.last ? new Date(bias.last).getTime() : null) : undefined;
       // Shadow precision: person decisions of the last 7 days (an edit before approving is not "without edits").
       const [prec] = (await tx`select count(*)::int as decided,
@@ -257,6 +263,7 @@ export function runtimeProbe(rt: {
         from network.review_items where app_id = ${rt.app.id} and decision in ('approve', 'reject') and decided_at > ${new Date(t - 6 * DAY)}
           and reviewer is not null and reviewer <> ${SIM_AUTO_REVIEWER}`) as { decided: number; clean: number }[];
       return { statuses, events, reports, sms: { today: sms?.today ?? 0, yesterday: sms?.yesterday ?? 0 }, safetySignals: sig?.n ?? 0, biasAlerts: bias?.n ?? 0,
+        biasBlind: newest ? biasBlind(newest.report) : false,
         ...(biasLastAt !== undefined ? { biasLastAt } : {}), precision7d: { decided: prec?.decided ?? 0, clean: prec?.clean ?? 0 } };
     }),
   };
@@ -293,6 +300,7 @@ export function evaluate(m: Pick<OpsMetrics, "networks" | "cost"> & { uptimeMs?:
     if (f.reports > 0) out.push({ key: `safety_report:${id}`, level: f.urgentReports > 0 ? "bad" : "warn", count: f.reports, bump: true, text: `${id}: ${f.reports} report(s) in 24 h (${f.urgentReports} urgent)` });
     if (n.safetySignalsWaiting) out.push({ key: `safety_signal:${id}`, level: "bad", count: n.safetySignalsWaiting, bump: true, text: `${id}: ${n.safetySignalsWaiting} agent safety signal(s) wait for staff review (console: Safety, or GET /signals)` });
     if (n.biasAlerts24h) out.push({ key: `bias_report:${id}`, level: "warn", count: n.biasAlerts24h, bump: true, text: `${id}: the weekly bias monitor found ${n.biasAlerts24h} group outcome(s) under 0.8x (console: Metrics, bias monitor)` });
+    if (n.biasBlind24h) out.push({ key: `bias_blind:${id}`, level: "warn", count: 1, text: `${id}: the weekly bias monitor could not compare groups (fewer than 2 groups of ${BIAS_MIN_N} or more adults, or no outcomes yet), so no alert is not a pass (console: Metrics, bias monitor)` });
     // The monitor runs once a week (BIAS_EVERY_MS) in afterTick, which can fail on every tick while the ticks still run.
     const biasLate = BIAS_EVERY_MS + DAY;
     if (n.biasReportAgoMs !== undefined && (n.biasReportAgoMs === null ? (m.uptimeMs ?? Infinity) > biasLate : n.biasReportAgoMs > biasLate)) {

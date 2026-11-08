@@ -17,6 +17,9 @@ const MIN = 60_000, HOUR = 60 * MIN;
 const T0 = Date.UTC(2026, 9, 20, 15);
 const KEY = "bias_report:slop:nyc";
 
+/** The stored report's fields that the ops round reads: two groups of 8 with outcomes (a report that can compare groups). */
+const REPORT = { overall: { proposals: 1, dates: 1, secondDates: 0 }, groups: { q1: { n: 8 }, q2: { n: 8 } }, alerts: [] };
+
 let sql: SQL;
 
 describe.skipIf(!pgAvailable)("ops alerts: delivery when the webhook fails", () => {
@@ -29,7 +32,7 @@ describe.skipIf(!pgAvailable)("ops alerts: delivery when the webhook fails", () 
     await sql`insert into network.network_state (id, version, state, saved_at) values ('slop:nyc', 1, ${{ reports: [] }}::jsonb, ${new Date(T0 - MIN)})`;
     // A weekly bias report with two groups under 0.8x: bias_report:slop:nyc fires for 24 h.
     await sql`insert into network.bias_reports (app_id, id, network_id, at, members, alerts, report)
-      values ('slop', 'bias_slop:nyc_t0', 'slop:nyc', ${new Date(T0 - MIN)}, 40, 2, ${{ alerts: [] }}::jsonb)`;
+      values ('slop', 'bias_slop:nyc_t0', 'slop:nyc', ${new Date(T0 - MIN)}, 40, 2, ${REPORT}::jsonb)`;
   }, 120_000);
   afterAll(async () => {
     await sql?.close();
@@ -69,7 +72,7 @@ describe.skipIf(!pgAvailable)("ops alerts: delivery when the webhook fails", () 
   test("the heartbeat is not pinged after a round whose alert post failed, and is pinged again once the webhook takes it (SD-360)", async () => {
     const T1 = T0 + 10 * 24 * HOUR;
     await sql`insert into network.bias_reports (app_id, id, network_id, at, members, alerts, report)
-      values ('slop', 'bias_slop:nyc_t1', 'slop:nyc', ${new Date(T1 - MIN)}, 40, 1, ${{ alerts: [] }}::jsonb)`;
+      values ('slop', 'bias_slop:nyc_t1', 'slop:nyc', ${new Date(T1 - MIN)}, 40, 1, ${REPORT}::jsonb)`;
     let now = T1, up = false;
     const heartbeat = { url: "https://heartbeat.test/ping", pings: [] as number[] };
     const { ops, delivered } = opsWith(() => up, () => now, heartbeat);

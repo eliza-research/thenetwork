@@ -7,7 +7,7 @@
 // group whose outcome rate is under 0.8x the overall rate raises an alert (the four-fifths rule). The
 // report holds group counts and ratios only: no member id, no score.
 import { DAY, type MemberId } from "@thenetwork/core";
-import { biasMonitor, ratingQuintiles, type BiasReport, type MemberOutcome } from "../../engine/src/packs/slop/biasMonitor.ts";
+import { biasMonitor, OUTCOME_METRICS, ratingQuintiles, type BiasReport, type MemberOutcome } from "../../engine/src/packs/slop/biasMonitor.ts";
 import { parseAppearance } from "../../engine/src/packs/slop/appearance.ts";
 
 export const BIAS_WINDOW_MS = 28 * DAY;
@@ -49,6 +49,14 @@ export function biasReport(network: string, app: string, members: readonly BiasM
   const rows = biasRows(members, opps, now);
   return { network, app, at: now, members: rows.length, report: biasMonitor(rows, { minN: o.minN ?? BIAS_MIN_N, threshold: o.threshold ?? BIAS_THRESHOLD }) };
 }
+
+/**
+ * A report that can compare no group (SD-237): fewer than two groups of BIAS_MIN_N or more adults (the
+ * rater is off, or the pilot is too small for its quintiles), or no outcome of any kind (every ratio is
+ * then 1). It has no alerts, but it is not a pass: the 0.8x rule could not be checked.
+ */
+export const biasBlind = (r: BiasReport) =>
+  Object.values(r.groups).filter(g => g.n >= BIAS_MIN_N).length < 2 || OUTCOME_METRICS.every(m => !r.overall[m]);
 
 /** The alert lines for a report (empty when every group is at 0.8x or more). */
 export const biasAlerts = (r: StoredBiasReport) =>

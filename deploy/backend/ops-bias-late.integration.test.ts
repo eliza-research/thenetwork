@@ -17,6 +17,9 @@ async function admin(q: string) { const sql = new SQL({ url: ADMIN_URL, max: 1 }
 const MIN = 60_000, HOUR = 60 * MIN, DAY = 24 * HOUR;
 const T0 = Date.UTC(2026, 9, 20, 15);
 
+/** The stored report's fields that the ops round reads: two groups of 8 with outcomes (a report that can compare groups). */
+const REPORT = { overall: { proposals: 1, dates: 1, secondDates: 0 }, groups: { q1: { n: 8 }, q2: { n: 8 } }, alerts: [] };
+
 let sql: SQL;
 
 describe.skipIf(!pgAvailable)("ops alerts: the weekly bias report is late (SD-233)", () => {
@@ -34,7 +37,7 @@ describe.skipIf(!pgAvailable)("ops alerts: the weekly bias report is late (SD-23
 
   test("a photo-app network whose newest bias report is more than 8 days old raises bias_late; a new report ends it", async () => {
     const report = (at: number) => sql`insert into network.bias_reports (app_id, id, network_id, at, members, alerts, report)
-      values ('slop', ${`bias_slop:nyc_${at}`}, 'slop:nyc', ${new Date(at)}, 40, 0, ${{ alerts: [] }}::jsonb)`;
+      values ('slop', ${`bias_slop:nyc_${at}`}, 'slop:nyc', ${new Date(at)}, 40, 0, ${REPORT}::jsonb)`;
     await sql`insert into network.network_state (id, version, state, saved_at) values ('slop:nyc', 1, ${{ reports: [] }}::jsonb, ${new Date(T0 - MIN)})`;
     // The last report that the monitor wrote; every weekly run since then failed.
     await report(T0 - 9 * DAY);
