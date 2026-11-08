@@ -1308,7 +1308,7 @@ export class NetworkService implements RuntimeHost {
    * onAgeStated, runtime.ts). The person keeps the lowest age on every app (Accounts.recordAge ->
    * ageLowered): an explicit age, a minor's age, or the age the Network declined them for. The phone's
    * age floor too, so a member from before the platform (no person) cannot join again older. When the
-   * Network declined them (under 13), every membership goes: under 13 cannot use any app.
+   * Network declined them (under 13), every membership and a pending text join go: under 13 cannot use any app.
    */
   private async statedAge(app: AppInfo, rt: NetworkRuntime, memberId: MemberId, e164: string) {
     const ages = rt.takeAges(memberId).filter(a => a.explicit || a.declined || isMinor(a.age));
@@ -1319,7 +1319,10 @@ export class NetworkService implements RuntimeHost {
     // other app deletes the person's data before staff decide.
     const recorded = ages.map(a => (a.declined ? a.age : Math.max(a.age, app.minJoinAge)));
     await this.accounts.recordAge(e164, person, Math.min(...recorded));
-    if (!person || !ages.some(a => a.declined)) return;
+    if (!ages.some(a => a.declined)) return;
+    // Under 13 stores nothing: a text join the phone started (its pending row) goes too.
+    await this.people.deletePending(this.phoneKey(e164), "join");
+    if (!person) return;
     const at = this.clock.now();
     for (const m of await this.people.memberships(person.id)) {
       if (m.state === "removed") continue;

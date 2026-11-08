@@ -328,3 +328,27 @@ test("Q-join_age-2: a web join that stops after its membership commits gets its 
   const rows = await sql`select id from network.members where app_id = 'friends' and person_id = ${person!.id}`;
   expect(rows.map((r: any) => r.id)).toEqual([memberId]);
 }, 60_000);
+
+test("Q-join_age-3: an under-13 web join removes the text join the phone started", async () => {
+  const phone = "+12125550322";
+  // The phone starts a text join (a pending join row), then states 12 on the web.
+  await say(phone, "slop.date", "slop");
+  expect(await (service as any).pendingOf(phone, "join")).toBeDefined();
+  expect(await webJoin("friends", phone, 12)).toEqual({ok: false, error: "under_age"});
+  // Under 13 stores nothing but the age floor: the pending join goes too.
+  expect(await (service as any).pendingOf(phone, "join")).toBeUndefined();
+  expect(await service.accounts.lowestAge(phone)).toBe(12);
+}, 60_000);
+
+test("Q-join_age-3: an under-13 age stated in chat removes the text join the phone started", async () => {
+  const phone = "+12125550323";
+  expect((await webJoin("friends", phone, 15)).ok).toBe(true);
+  // A member of friends starts a text join of slop.date (a pending join row).
+  await say(phone, "slop.date", "slop");
+  expect(await (service as any).pendingOf(phone, "join")).toBeDefined();
+  // On friends the member states 12: the Network declines them, and nothing stays stored.
+  await say(phone, "I am 12 years old", "friends");
+  expect(await service.accounts.lowestAge(phone, await service.accounts.personFor(phone))).toBe(12);
+  expect(await liveMemberships(phone)).toEqual([]);
+  expect(await (service as any).pendingOf(phone, "join")).toBeUndefined();
+}, 60_000);

@@ -421,12 +421,15 @@ export class Accounts {
   }
 
   /**
-   * Under 13 cannot use any app (core canJoin): when the person's lowest age is under 13, every
-   * membership goes through the forget path, with an opt-out in the ledger (as the Network's decline).
+   * Under 13 cannot use any app (core canJoin): when the phone's lowest age is under 13, a text join the
+   * phone started (its pending row) is deleted, and every membership of the person goes through the
+   * forget path, with an opt-out in the ledger (as the Network's decline).
    */
   async declineUnderAge(e164: string, person: Person | undefined): Promise<void> {
-    const lowest = person && await this.lowestAge(e164, person);
-    if (!person || lowest === undefined || canJoin(lowest)) return;
+    const lowest = await this.lowestAge(e164, person);
+    if (lowest === undefined || canJoin(lowest)) return;
+    await this.store.deletePending(this.phoneHash(e164), "join");
+    if (!person) return;
     const at = this.now();
     for (const m of await this.store.memberships(person.id)) {
       if (m.state === "removed") continue;
