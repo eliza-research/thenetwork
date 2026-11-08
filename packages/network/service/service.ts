@@ -1428,6 +1428,9 @@ export class NetworkService implements RuntimeHost {
       return "join_asked";
     }
     if (!name) {
+      // The age is a statement now: the phone's age floor keeps it, so a later, older age or an expired
+      // pending row never replaces it (the lowest age wins).
+      await this.accounts.recordAge(e164, person, age);
       await this.people.putPending({ phoneHash: key, kind: "join", app: app.id, name: null, age, ...(homeCity ? { homeCity } : {}), at: t });
       await this.direct(rt, ev.from, c.joinNeedName, `sys:${rowId}`, "reply");
       return "join_asked";
