@@ -354,7 +354,11 @@ export class RelayDesk {
   private log(r: RelayRecord) {
     const i = this.s.log.findIndex(x => x.itemId === r.itemId);
     if (i >= 0) this.s.log[i] = r; else this.s.log.push(r);
-    if (this.s.log.length > RELAY_LOG_MAX) this.s.log.splice(0, this.s.log.length - RELAY_LOG_MAX);
+    if (this.s.log.length <= RELAY_LOG_MAX) return;
+    // The oldest rows go first, but never the row of an item that still waits for staff (its decision updates that row).
+    const waiting = new Set(this.s.held.filter(h => h.status === "held").map(h => h.itemId));
+    let drop = this.s.log.length - RELAY_LOG_MAX;
+    this.s.log = this.s.log.filter(x => drop <= 0 || waiting.has(x.itemId) || !drop--);
   }
   private thread(id: string) { return this.s.threads.find(t => t.id === id); }
   private openThread(m: RelayMatch): RelayThreadState {

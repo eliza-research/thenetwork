@@ -221,6 +221,24 @@ test("relay-swap: a deferred number share that the morning send refuses does not
   expect(log.filter(r=>r.opportunityId==="share-deferred"&&r.from===samId&&r.contactShared)).toEqual([]);
 },60_000);
 
+test("relay-item: staff reject a held item after the relay log reached its cap (SD-387)",async()=>{
+  await fixturePair("log-cap");toNyHour(12);
+  clefFlags=["scam"];
+  try { expect((await relay("log-cap-held","tell Sam I can sell the tickets if they pay me first")).body).toMatchObject({decision:"hold"}); }
+  finally { clefFlags=[]; }
+  const rt=service.runtimeFor("friends")!;
+  const held=(await rt.readState(n=>n.relayHeld())).find(h=>h.matchId==="log-cap")!;
+  // 5000 newer log rows of another match (a busy app), then one more relayed text: the log reaches its cap.
+  await rt.unitOfWork(n=>{const state=n.exportState(),relay=state.relay!;
+    for(let i=0;i<5000;i++)relay.log.push({itemId:`log-cap-filler-${i}`,opportunityId:"log-cap-filler",app:"friends",kind:"text",from:samId,to:ariId,at:clock.now(),decision:"pass",reasons:[],photoCount:0,contactShared:false,ageSignal:false,policy:"relay-1.0.0"});
+    n.importState(state);});
+  for(const [phone,id] of [[a,"log-cap-ari-reply"],[b,"log-cap-sam-reply"]] as const){clock.advance(MINUTE);expect((await post(TURN_PATH,turn(phone,id,"Sounds good, thanks"))).status).toBe(200);}
+  expect((await relay("log-cap-next","tell Sam I am at the gate")).body).toMatchObject({decision:"pass"});
+  expect(await rt.unitOfWork(n=>n.rejectRelay(held.itemId,"staff:fixture"))).toMatchObject({ok:true});
+  const [row]=await sql`select review,reasons from network.relay_records where app_id='friends' and item_id=${held.itemId}`;
+  expect(row?.review).toBe("rejected");
+},120_000);
+
 // Keep this case last: Ari deletes everything.
 test("relay-item: erasure removes the member's number and words from the rows of the other member (SD-040)",async()=>{
   await fixturePair("swap-erase");toNyHour(12);
