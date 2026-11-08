@@ -781,7 +781,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       // The booked plan: silence is a yes; "can't" or "no" cancels it (the other member is told, without the reason).
       const o = this.opps.get(aw.oppId!);
       const yn = this.yesNoOf(body);
-      if (o && o.stage === "scheduled" && o.status.get(m.id) === "yes" && (c.kind === "cancel" || yn === "no")) { m.awaiting = undefined; return this.handleDrop(m, o); }
+      if (o && o.stage === "scheduled" && o.status.get(m.id) === "yes" && ((c.kind === "cancel" && this.cancelMatchesOpp(body, o)) || yn === "no")) { m.awaiting = undefined; return this.handleDrop(m, o); }
       if (yn === "yes" || c.kind === "ack") { m.awaiting = undefined; if (o && o.stage === "scheduled") this.confirmPlan(o, m.id, true); this.ack(m, copy.bookedThanks); return; }
     }
     if (aw?.kind === "checkin") {
@@ -798,7 +798,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     if (c.kind === "cancel") {
       const o = [...this.opps.values()].find(o => o.stage === "scheduled" && o.status.get(m.id) === "yes");
-      if (o) return this.handleDrop(m, o);
+      if (o && this.cancelMatchesOpp(body, o)) return this.handleDrop(m, o);
     }
     const isRequest = c.kind === "people_request" || c.kind === "plans_request";
     if ((aw?.kind === "feedback" && !isRequest && c.kind !== "invite_friend") || (c.kind === "feedback_like" && aw?.kind !== "interview")) {
@@ -2499,6 +2499,17 @@ export class ConsentNetwork implements NetworkUnderTest {
    * A participant drops out of a booked meeting. `ack` = they told us (reply to them). The others
    * hear it is off (pairs) or still on (groups of 3 or more), never why.
    */
+  /** When a cancellation explicitly names a weekday (e.g. "can't make Friday"), ensure it matches the booked meeting day. */
+  private cancelMatchesOpp(body: string, o: Opp): boolean {
+    const dayMatch = /\b(?:can'?t|cannot|won'?t|not\s+gonna|not\s+going\s+to|unable\s+to|not\s+able\s+to)\s+(?:be\s+able\s+to\s+)?make\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.exec(body);
+    if (dayMatch && o.meetingAt) {
+      const namedDay = dayMatch[1]!.toLowerCase();
+      const scheduledDay = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"][localParts(o.meetingAt, NY).weekday]!;
+      if (!namedDay.startsWith(scheduledDay)) return false;
+    }
+    return true;
+  }
+
   private handleDrop(m: MemberState, o: Opp, ack = true) {
     // Counted as a reveal decision only for a member the booked plan reached who had not confirmed it.
     if (o.bookedTold?.includes(m.id) && !(o.confirmed ?? []).includes(m.id) && o.status.get(m.id) === "yes") this.counters.revealNo++;
