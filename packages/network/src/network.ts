@@ -328,6 +328,8 @@ const ASK_HOLD_MS = 24 * HOUR;
 /** A member's message that asks for something (their follow-ups are not unsolicited). */
 const MEMBER_ASK = /\?|\b(looking for|i'?d (really )?(like|love)|i want|i need|can you|could you|help me|find me|anything (come|came) up|still hoping)\b/i;
 /** A bare acknowledgement ("thx", "ok") answers logistics, not an earlier unsolicited message. */
+/** A later check-in report is about someone: a pronoun or the date (lateCheckInReport). "My boss was rude" is not. */
+const ABOUT_SOMEONE = /\b(he|she|they|him|her|them|his|hers|their|my date|the date|our date)\b/i;
 const ACK_ONLY = /^(?:ok(?:ay)?|k|kk|thx|thanks?(?: you)?|ty|cool|great|nice|perfect|got it|sounds good|will do|see you( then)?|yep|yup|sure|[\s.!,:;)(-]|\p{Extended_Pictographic})+$/iu;
 
 type PStatus = "queued" | "probing" | "available" | "unavailable" | "yes" | "no" | "dropped";
@@ -811,6 +813,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (o && !ack) { m.awaiting = undefined; return this.onFeedback(m, o, body, f); }
       return;
     }
+    // Not while another question waits for its answer (a probe, a booked plan, a crew): those words are about that.
+    if (!isRequest && c.kind !== "invite_friend" && (!aw || aw.kind === "checkin" || aw.kind === "growth") && this.lateCheckInReport(m, body)) return;
     if (aw?.kind === "interview" && aw.ask) return this.onAskAnswer(m, aw.ask, c, body);
     // A growth ask's answer can be just the friend's name ("My friend Maya!", "Maya").
     // A one-word answer is a name only when it is not an answer word: "Yes!" invites nobody called "Yes".
@@ -2619,15 +2623,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     // The check-in after a date (AppHooks.postDateReports): harassment, lying, a no-show or an unsafe
     // date is a report about the other person, a block between them, and a staff case.
     const reportKind = this.opts.hooks?.postDateReports && !o.plan ? checkInReport(body) ?? (f.otherNoShow ? "no_show" : undefined) : undefined;
-    if (reportKind) {
-      for (const other of others) {
-        this.fileReport(m.id, other, reportKind, { oppId: o.id, source: "check_in", met: true });
-        this.blocks.add(pairKey(m.id, other));
-        this.ctx.recordBlock(m.id, other);
-        if (reportKind === "minor") { const t = this.members.get(other); if (t) this.minorReported(t, m.id); }
-      }
-      this.send(m, copy.reported, { type: "info" }, "reply");
-    } else if (crewId) {
+    if (reportKind) this.checkInReported(m, o, others, reportKind);
+    else if (crewId) {
       const a = plans.activityById.get(o.plan!.activityId)!;
       this.send(m, `${copy.feedbackThanks} ${copy.crewOffer(a.label)}`, { type: "crew_offer", crew: { crewId, activity: a.id } }, "reply", { about: others, hook: { t: "crew_offer", crewId } });
     } else this.ack(m, copy.feedbackThanks);
@@ -2657,6 +2654,37 @@ export class ConsentNetwork implements NetworkUnderTest {
       m.lastGrowthAsk = this.now();
       this.growthAsk(m, this.copy.growthAsk, "after_good_meeting");
     }
+  }
+
+  /** A report in the answer to the check-in after a date: a record for staff, a block between them, the "reported" reply. */
+  private checkInReported(m: MemberState, o: Opp, others: MemberId[], kind: ReportKind) {
+    for (const other of others) {
+      this.fileReport(m.id, other, kind, { oppId: o.id, source: "check_in", met: true });
+      this.blocks.add(pairKey(m.id, other));
+      this.ctx.recordBlock(m.id, other);
+      if (kind === "minor") { const t = this.members.get(other); if (t) this.minorReported(t, m.id); }
+    }
+    this.send(m, copy.reported, { type: "info" }, "reply");
+  }
+
+  /**
+   * The check-in said "tell me and I'll pass it to our safety team": a report that comes after the
+   * first answer, or after the question lapsed, inside the 7 days after the date, is the same report
+   * (SD-220). Only a text that names a report kind and is about someone (the other person's first
+   * name, a pronoun or "the date"); other chat goes on as before.
+   */
+  private lateCheckInReport(m: MemberState, body: string): boolean {
+    if (!this.opts.hooks?.postDateReports) return false;
+    const now = this.now();
+    const o = [...this.opps.values()].reverse().find(o => o.stage === "done" && !o.plan && o.status.get(m.id) === "yes"
+      && o.meetingAt !== undefined && o.meetingAt <= now && now - o.meetingAt < 7 * DAY);
+    if (!o) return false;
+    const others = o.participants.filter(p => p !== m.id && o.status.get(p) === "yes");
+    const kind = checkInReport(body);
+    if (!kind || !(ABOUT_SOMEONE.test(body) || others.some(x => this.namedIn(body, x)))) return false;
+    if (!o.feedbackFrom.has(m.id)) { m.awaiting = undefined; this.onFeedback(m, o, body); return true; }
+    this.checkInReported(m, o, others, kind);
+    return true;
   }
 
   private canInvite(m: MemberState) {
