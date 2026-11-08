@@ -2571,6 +2571,11 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (m.awaiting?.oppId === o.id) m.awaiting = undefined;
       // Tell people who said yes, without saying who declined (F11, F29).
       if (!wasProbing && o.status.get(id) === "yes" && reason !== "blocked") { this.send(m, copy.declinedQuiet, { type: "info", proposalId: o.id }, "cancellation"); told.add(id); }
+      // A yes to a probe that is not booked yet is released too (F29, SD-263). Not the requester (the
+      // request path below tells them), not a plan (planOut leaves a note), and never about a minor.
+      else if (wasProbing && !o.plan && id !== o.requester && o.contacted.has(id) && o.status.get(id) === "available" && reason !== "blocked" && reason !== "minors policy") {
+        this.send(m, copy.declinedQuiet, { type: "info", proposalId: o.id }, "info"); told.add(id);
+      }
     }
     if (o.requester) {
       const r = this.requests.find(x => x.oppId === o.id && x.memberId === o.requester);
