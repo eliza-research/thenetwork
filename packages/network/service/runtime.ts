@@ -323,8 +323,9 @@ export class NetworkRuntime {
   /** The stored state of this network (inside an app-scoped transaction). */
   private async loadState(): Promise<NetworkState | undefined> {
     return this.scoped(async tx => {
-      const [r] = await tx`select state from network.network_state where id = ${this.pg.id}`;
+      const [r] = await tx`select state, xmin::text as v from network.network_state where id = ${this.pg.id}`;
       const s = r?.state;
+      this.pg.seen = r?.v;
       // A state without its relay log gets it back from network.relay_records (store.ts).
       return loadRelayRows(tx, s === undefined ? undefined : ((typeof s === "string" ? JSON.parse(s) : s) as NetworkState), this.app.id, this.pg.id);
     });
@@ -610,11 +611,21 @@ export class NetworkRuntime {
    * out to the host (the inbox). An error leaves the rows in the queue for the next tick.
    */
   private async drainQueue() {
+    // Another replica saved the state since this one loaded it (a hold, a closed match, a new member): every
+    // send-time check here would read old state. The rows wait for a replica whose state is current.
+    if (!(await this.stateCurrent())) { this.host.log(`[deliver] the stored state is newer than this replica's: the queue waits (${this.id})`); return; }
     let ds: Delivery[];
     try { ds = await this.adapter.deliver([]); } catch (e) { this.host.log(`[deliver] the queue waits for the next tick (${this.id}): ${(e as Error).message}`); return; }
     const mine = ds.filter(d => d.memberId && (d.app ?? this.app.id) === this.app.id);
     await this.storeStatuses(mine);
     await this.projectNotifications();
+  }
+
+  /** True when the stored Network state is the one this replica last loaded or saved (or none is stored). `tx`: lock it for share until the caller commits. */
+  async stateCurrent(tx?: SQL): Promise<boolean> {
+    const read = (t: SQL) => tx ? t`select xmin::text as v from network.network_state where id = ${this.pg.id} for share` : t`select xmin::text as v from network.network_state where id = ${this.pg.id}`;
+    const [r] = tx ? await read(tx) : await this.scoped(read);
+    return !r || r.v === this.pg.seen;
   }
 
   /** Repair the existing Notify projection after acceptance, including a crash after its SQL commit. */

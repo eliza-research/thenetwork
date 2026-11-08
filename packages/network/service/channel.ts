@@ -194,10 +194,9 @@ export class BlooioAdapter implements ChannelAdapter {
         return number ? { ...base, allow: [number] } : base;
       },
       // PgStore.save locks the state before erasing members. Dispatch takes the
-      // same order, then the existing admit check revalidates current parties.
-      lockAdmission: async (row, tx) => {
-        if (row.id.startsWith("relay:")) await tx`select id from network.network_state where id=${rt.pg.id} for share`;
-      },
+      // same order, then the existing admit check revalidates current parties. Every check above read this
+      // replica's in-memory state: when another replica saved since, the row waits for a current one.
+      lockAdmission: (_row, tx) => rt.stateCurrent(tx),
       // A relayed item: its match and both members are read again inside the admission transaction (runtime.ts).
       admit: (row, tx) => row.approvedPhotos?.length && this.name !== "eliza_cloud"
         ? Promise.resolve({ ok: false as const, reason: "approved_photos_require_cloud" })

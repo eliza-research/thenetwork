@@ -124,8 +124,11 @@ export interface AppChecks {
   capTake?(row: QueueRow): Promise<boolean>;
   /** Give the slot back (the message did not go out). */
   capRelease?(row: QueueRow): Promise<void>;
-  /** Acquire app-owned row fences before the shared person/member fences, in this transaction. SQL only; no remote I/O. */
-  lockAdmission?(row: QueueRow, tx: SQL): Promise<void>;
+  /**
+   * Acquire app-owned row fences before the shared person/member fences, in this transaction. SQL only; no remote I/O.
+   * False: the app state the hooks above read is older than the stored one; the row is left as it is for a later drain.
+   */
+  lockAdmission?(row: QueueRow, tx: SQL): Promise<boolean>;
   /**
    * The app's last word, inside the admission transaction after every asynchronous gate (app.app_id is
    * set; short row locks only, no remote I/O). Not ok: the row ends suppressed. A throw parks the row.
@@ -361,7 +364,7 @@ export class OutboundQueue {
     return c as { unanswered: number; reengagement_used: boolean; last_outbound_at: unknown; last_inbound_at: unknown } | undefined;
   }
 
-  private async dispatch(row: QueueRow): Promise<StatusChange> {
+  private async dispatch(row: QueueRow): Promise<StatusChange | undefined> {
     const now = this.now;
     const c = this.o.checks;
     const agent = isAgentInitiated(row.kind);
@@ -460,13 +463,13 @@ export class OutboundQueue {
     return (rows as any[]).map(r => String(r.body)).reverse();
   }
 
-  private async send(row: QueueRow, isNew: boolean, reengagement: boolean): Promise<StatusChange> {
+  private async send(row: QueueRow, isNew: boolean, reengagement: boolean): Promise<StatusChange | undefined> {
     const start = this.now;
     // Admit only the current canonical member and immutable payload, after the async gates.
     // Erasure and admission share the person/member row fences. No remote I/O holds these locks.
     const admission = await this.sql.begin(async tx => {
       await tx`select set_config('app.app_id',${this.app},true)`;
-      await this.o.checks.lockAdmission?.(row, tx);
+      if (await this.o.checks.lockAdmission?.(row, tx) === false) return "stale_view";
       if (row.memberId) {
         await tx`select person.id from platform.people person join network.members member on member.person_id=person.id
           where member.app_id=${row.app} and member.id=${row.memberId} order by person.id for update of person`;
@@ -500,6 +503,7 @@ export class OutboundQueue {
       return "dropped_forgotten";
     });
     if (typeof admission==="object") return {id:row.id,app:row.app,memberId:row.memberId,status:admission.busy};
+    if (admission==="stale_view") return undefined;
     if (admission!=="admitted") return this.end(row,admission);
     const attempts = row.attempts + 1;
     try {
