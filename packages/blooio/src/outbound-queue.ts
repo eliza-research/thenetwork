@@ -541,7 +541,10 @@ export class OutboundQueue {
     const attempts = row.attempts + 1;
     try {
       const receipt = await this.o.provider.send(this.request(row));
-      return this.acceptReceipt({...row,newConversation:isNew,reengagement}, receipt);
+      // The provider took the text: when its acceptance cannot be recorded (a database error), it is unknown, never an end.
+      return await this.acceptReceipt({...row,newConversation:isNew,reengagement}, receipt).catch(e => {
+        throw e instanceof ChannelSendError ? e : new ChannelSendError(`acceptance not recorded: ${e instanceof Error ? e.message : String(e)}`, "unknown");
+      });
     } catch (err) {
       const e = err instanceof ChannelSendError ? err : new ChannelSendError(err instanceof Error ? err.message : String(err), "retryable");
       const error = `${e.failure}${e.status ? ` ${e.status}` : ""}${e.code ? ` ${e.code}` : ""}: ${e.message}`.slice(0, 500);

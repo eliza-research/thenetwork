@@ -25,8 +25,10 @@ const clock=new SimClock(Date.UTC(2026,9,9,16)),secret="synthetic-outbound-queue
 const ENV={PLATFORM_ENV:"dev",BLOOIO_ALLOW_SEND:"1",NTWRK_LIVE_APPROVED:"1",FRIENDS_LIVE_APPROVED:"1"};
 let sql:SQL,cloud:ReturnType<typeof Bun.serve>;
 const services:NetworkService[]=[];
-/** What Cloud answers. deliver: "accept" takes the text; "unknown" times out after it may have taken it. */
-const cloudMode={deliver:"accept" as "accept"|"unknown",receipt:"unknown" as "accept"|"unknown"};
+/** What Cloud answers. deliver: "accept" takes the text; "unknown" times out after it may have taken it; "reject" refuses admission (retryable). */
+const cloudMode={deliver:"accept" as "accept"|"unknown"|"reject",receipt:"unknown" as "accept"|"unknown"};
+/** Runs on each deliver call before Cloud answers. */
+let deliverHook:((id:string)=>Promise<void>)|undefined;
 /** Every id Cloud took on the deliver path (one entry per call). */
 const dispatched:string[]=[];
 
@@ -61,6 +63,8 @@ beforeAll(async()=>{
     const accepted=()=>Response.json({ok:true,replayed:false,providerMessageIds:[`provider:${payload.id}`],history:true});
     if (path===DELIVER_PATH) {
       dispatched.push(payload.id);
+      await deliverHook?.(payload.id);
+      if (cloudMode.deliver==="reject") return Response.json({ok:false,error:"rejected",retryable:true},{status:503});
       if (cloudMode.deliver==="unknown") return Response.json({ok:false,error:"unknown",retryable:true},{status:504});
       return accepted();
     }
@@ -513,4 +517,44 @@ test("Q-outbound_queue-1: a STOP that commits while a direct text to a non-membe
   try {status=await rt.adapter.direct(stranger,"You're invited to friends.help. Reply JOIN to start.","q1-invite","transactional");} finally {checks.leaks=leaks;}
   expect(dispatched).not.toContain("q1-invite");
   expect(status).toBe("refused_opted_out");
+},60_000);
+
+test("Q-outbound_queue-2: when the commit of a send Cloud took fails, the row waits for the receipt lookup; it never ends unsent and keeps its person-cap slot",async()=>{
+  toNewYork(12,0);
+  const rt=await primary();
+  const phone="+12125550205",memberId=await join(services[0]!,phone,"Tia");
+  await rt.unitOfWork(()=>undefined);
+  const slots=async(id:string)=>(await sql`select count(*)::int as n from platform.person_sends where msg_id=${id}`)[0].n as number;
+  await queueOf(rt).enqueue(sql,[{id:"q2-intro",memberId,to:phone,kind:"proactive",text:"Someone near you also climbs on Thursdays.",city:"nyc"}]);
+  // Cloud refuses admission four times (retryable): the row waits each time with the same key.
+  cloudMode.deliver="reject";
+  try {for (let n=0;n<4;n++) {await rt.deliver();expect(await statusOf("q2-intro")).toBe("retry_scheduled");clock.advance(10*60_000);}}
+  finally {cloudMode.deliver="accept";}
+  // The fifth call: Cloud takes the text, then the commit of its acceptance fails (its statement is cancelled while it waits for a row lock).
+  const holder=await sql.reserve();
+  let cancelled:Promise<void>|undefined;
+  deliverHook=async id=>{
+    if (id!=="q2-intro") return;
+    deliverHook=undefined;
+    await holder`begin`;
+    await holder`select id from platform.outbound where id='q2-intro' for update`;
+    cancelled=(async()=>{
+      for (let i=0;i<500;i++) {
+        const [w]=await admin`select pid from pg_stat_activity where datname=${db} and pid<>pg_backend_pid() and wait_event_type='Lock' and query like '%provider_message_id=%'`;
+        if (w) {await admin`select pg_cancel_backend(${w.pid})`;break;}
+        await Bun.sleep(10);
+      }
+      await holder`rollback`;
+    })();
+  };
+  try {await rt.deliver();} finally {deliverHook=undefined;await cancelled;holder.release();}
+  expect(dispatched.filter(id=>id==="q2-intro").length).toBe(5);
+  expect(await statusOf("q2-intro")).toBe("unknown_acceptance");
+  expect(await slots("q2-intro")).toBe(1);
+  // The next drain looks the receipt up: Cloud took the text. Nothing is sent again.
+  cloudMode.receipt="accept";clock.advance(60_000);
+  try {await rt.deliver();} finally {cloudMode.receipt="unknown";}
+  expect(await statusOf("q2-intro")).toBe("accepted");
+  expect(dispatched.filter(id=>id==="q2-intro").length).toBe(5);
+  expect(await slots("q2-intro")).toBe(1);
 },60_000);
