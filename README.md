@@ -67,6 +67,10 @@ bun run test:e2e                                      # tests/e2e
 
 There are no unit or smoke tests ([docs/tests-policy.md](docs/tests-policy.md)). Runs with real LLM calls and the matching-algorithm measurements are in [CONTRIBUTING.md](CONTRIBUTING.md) section 7. [AGENTS.md](AGENTS.md) has every other command.
 
+## Formal modeling
+
+All code in the app must be modeled at two levels: Quint at the high level (flows, states and invariants) and LemmaScript at the low level (proved contracts on the functions that the shipping code calls). A change to code updates both. The rule applies to every PR from 2026-11-07, for the code that the PR changes. Existing code that no PR touches does not meet it yet. The ledger of every source file, with its models, is [docs/formal-coverage.md](docs/formal-coverage.md). [CONTRIBUTING.md](CONTRIBUTING.md) section 14 has the rule.
+
 ## The Eliza seam
 
 The member conversation runs in Eliza, upstream in elizaOS/eliza (`plugins/plugin-network`). This repository has no plugin package and no eliza submodule. It talks to Eliza only over the signed contract mirrored in `packages/core/src/svc/contract.ts` and `svc-auth.ts`: `/internal/turn`, `/internal/turn-receipt`, `/internal/set-state`, `/internal/signals`, `/internal/updates` and `/internal/relay` on this backend, and `/api/internal/network/deliver` on Eliza Cloud.

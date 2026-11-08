@@ -23,9 +23,7 @@ import { join } from "node:path";
 import { SQL } from "bun";
 import { pgEnv } from "./backup.ts";
 import { backupBucketFromEnv, backupKey, compareCounts, decryptFile, pgBin, redactUrls, rowCounts, run, safeDbName, sameServer, withDatabase, type BackupKey, type Manifest } from "./lib.ts";
-
-/** Database names a restore never creates: the live ones. */
-const LIVE_NAMES = new Set(["railway", "network", "postgres", "template0", "template1"]);
+import { manifestVersionKnown, placementRefusal, privilegeFlags, runsRoles, targetNameRefused, type RestorePlacement } from "./restore-core.ts";
 
 export interface RestoreResult { db: string; url: string; manifest: Manifest; mismatches: ReturnType<typeof compareCounts>; ms: number }
 
@@ -36,15 +34,21 @@ export interface RestoreResult { db: string; url: string; manifest: Manifest; mi
  */
 export async function restore(o: { serverUrl: string; db: string; dir: string; keepPrivileges?: boolean; roles?: boolean; log?: (msg: string, f?: Record<string, unknown>) => void }): Promise<RestoreResult> {
   const t0 = performance.now();
-  if (!safeDbName(o.db) || LIVE_NAMES.has(o.db)) throw new Error(`refusing to restore into "${o.db}": use a new scratch name such as restore_drill_<date>`);
+  // The refusal rules are in restore-core.ts (proved). This function reads the inputs and keeps the messages.
+  if (targetNameRefused(o.db, safeDbName(o.db))) throw new Error(`refusing to restore into "${o.db}": use a new scratch name such as restore_drill_<date>`);
   const manifest = JSON.parse(await Bun.file(join(o.dir, "manifest.json")).text()) as Manifest;
-  if (manifest.version !== 1) throw new Error(`unknown manifest version ${manifest.version}`);
+  if (!manifestVersionKnown(manifest.version)) throw new Error(`unknown manifest version ${manifest.version}`);
   const target = pgEnv(withDatabase(o.serverUrl, o.db));
-  // A backup without a recorded source (older than the field) counts as taken on this server.
-  const onSource = !manifest.source || sameServer(manifest.source, { host: target.PGHOST!, port: target.PGPORT! });
-  if (o.db === manifest.database && onSource) throw new Error(`refusing to restore into the backup's own database "${o.db}" on its own server`);
-  if (o.roles && onSource) throw new Error("refusing --roles: roles.sql changes roles for the whole server, and this is the source server (or the backup does not name its source)");
-  if (manifest.encryption && !existsSync(join(o.dir, manifest.files.dump))) throw new Error("the backup is encrypted: download it with restore.ts --r2 (BACKUP_ENCRYPTION_KEY), which decrypts it");
+  // A backup without a recorded source (older than the field) counts as taken on this server (onSourceServer).
+  const placement: RestorePlacement = {
+    db: o.db, sourceDatabase: manifest.database, sourceRecorded: !!manifest.source,
+    sameServer: !!manifest.source && sameServer(manifest.source, { host: target.PGHOST!, port: target.PGPORT! }),
+    roles: !!o.roles, encrypted: !!manifest.encryption, dumpPresent: !manifest.encryption || existsSync(join(o.dir, manifest.files.dump)),
+  };
+  const refusal = placementRefusal(placement);
+  if (refusal === "ownDatabase") throw new Error(`refusing to restore into the backup's own database "${o.db}" on its own server`);
+  if (refusal === "rolesOnSource") throw new Error("refusing --roles: roles.sql changes roles for the whole server, and this is the source server (or the backup does not name its source)");
+  if (refusal === "encrypted") throw new Error("the backup is encrypted: download it with restore.ts --r2 (BACKUP_ENCRYPTION_KEY), which decrypts it");
   const admin = new SQL({ url: o.serverUrl, max: 1 });
   try {
     const [exists] = await admin`select 1 as x from pg_database where datname = ${o.db}`;
@@ -54,10 +58,10 @@ export async function restore(o: { serverUrl: string; db: string; dir: string; k
   const url = withDatabase(o.serverUrl, o.db);
   const env = pgEnv(url);
   // Roles (without passwords) only on another server, and only when asked: errors for roles that already exist are expected and ignored.
-  if (o.roles && manifest.files.roles && existsSync(join(o.dir, manifest.files.roles))) {
-    await run([pgBin("psql"), "--no-password", "--quiet", "-v", "ON_ERROR_STOP=0", "-f", join(o.dir, manifest.files.roles)], { env: { ...env, PGOPTIONS: "-c client_min_messages=error" } }).catch(e => o.log?.("roles: some statements failed", { error: redactUrls((e as Error).message) }));
+  if (runsRoles(placement, !!o.roles && !!manifest.files.roles && existsSync(join(o.dir, manifest.files.roles)))) {
+    await run([pgBin("psql"), "--no-password", "--quiet", "-v", "ON_ERROR_STOP=0", "-f", join(o.dir, manifest.files.roles!)], { env: { ...env, PGOPTIONS: "-c client_min_messages=error" } }).catch(e => o.log?.("roles: some statements failed", { error: redactUrls((e as Error).message) }));
   }
-  const privileges = o.keepPrivileges ? [] : ["--no-owner", "--no-privileges"];
+  const privileges = privilegeFlags(!!o.keepPrivileges);
   await run([pgBin("pg_restore"), "--no-password", "--exit-on-error", ...privileges, `--dbname=${env.PGDATABASE}`, join(o.dir, manifest.files.dump)], { env });
   const sql = new SQL({ url, max: 1 });
   let got: Record<string, number>;

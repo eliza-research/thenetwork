@@ -1396,6 +1396,17 @@ A simulated city of persona agents that use The Network exactly as real members 
 - Reports in JSONL and an admin dashboard; CI runs bun run sim on every push; --quick is the fast subset and --nightly adds the capital block.
 ## 34.6 Shadow mode and pilot evaluation
 Before proactive matching is switched on in a city, the engine runs in shadow mode on real seed data for at least two weeks. Reviewers label proposals as if they were to be sent; this sets the precision baseline required by Section 20.3. During the pilot, a share of review decisions is double-reviewed to measure reviewer agreement. Shadow proposals appear in the console review queue with a 'shadow' tag and are never sent. The Observatory's 'Run engine (shadow)' builds the snapshot from the read replica and writes nothing.
+## 34.7 Formal modeling: Quint and LemmaScript
+<!-- Added 2026-11-07 on the user's request in PR eliza-research/thenetwork#419. Not yet in the Google Doc: see docs/prd-pending-edits.md. Founder confirmation needed. -->
+All code in the app is modeled at two levels.
+- High level: each flow is a Quint model of its states, transitions and invariants, across the browser and the server. Models live in `quint/`. Each model has a reachability witness, so a vacuous pass is visible.
+- Low level: each function that takes a step in a flow has LemmaScript contracts that Dafny proves, and the shipping code calls that function. Each core file is listed in `LemmaScript-files.txt`, and its proofs are in `proofs/`.
+- The two levels use the same invariant names, so a reader can follow one rule from the model to the proof.
+- A change to code updates both levels in the same pull request, with one mutation for each new contract or invariant that the tool catches.
+- Code that LemmaScript cannot express (the DOM, React components, `await`, SQL, regex tables, crypto) moves its decisions into an import-free core. The rest stays a thin shell that calls the core and does not recompute the decision.
+- Integration tests, end-to-end tests and `bun run sim` stay the validation layer for what the models do not cover.
+
+The rule applies to every pull request from 2026-11-07, for the code that the pull request changes. Existing code that no pull request touches does not meet it yet. Coverage today: docs/formal-coverage.md lists every source file with its Quint model and its LemmaScript core, or the reason it needs none. The models are on three branches that are not yet merged into main.
 # 35. Admin console, backend tools, and data analysis
 The team must be able to see everything happening in the Network, from any member's point of view, and understand why the system did what it did. These tools are MVP scope, not polish. They are also how reviewers do their jobs and how the simulator is inspected. The console serves every app (Section 40.3): an app switcher, roles per app and a reason-gated, audited cross-app person view.
 ## 35.1 Principles

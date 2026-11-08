@@ -469,13 +469,13 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
         return phonePage(c.app, r.id, client.name, redirectHost, { error: text, turnstileSiteKey: o.turnstile?.siteKey });
       }
       await store.updateAuthRequest(r.id, { e164, step: "code" });
-      return codePage(c.app, r.id, e164.slice(-4));
+      return codePage(c.app, r.id, e164.slice(-4), { redirectHost });
     }
 
     if (step === "code") {
       if (r.step !== "code" || !r.e164) return messagePage(c.app, "This page has expired", "Go back to the assistant and connect again.");
       const code = (form.get("code") ?? "").replace(/\s/g, "");
-      if (!(await o.platform.verifyOtp(c.app.id, r.e164, code, c.ip))) return codePage(c.app, r.id, r.e164.slice(-4), { error: "That code did not work. Check the newest text and try again." });
+      if (!(await o.platform.verifyOtp(c.app.id, r.e164, code, c.ip))) return codePage(c.app, r.id, r.e164.slice(-4), { error: "That code did not work. Check the newest text and try again.", redirectHost });
       const who = await o.platform.login(r.e164);
       if (who === "held" || !(await customSlopEligible(c, client, who.personId, o.platform.phoneKey(r.e164)))) {
         await store.deleteAuthRequest(r.id);

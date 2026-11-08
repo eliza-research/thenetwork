@@ -1,5 +1,6 @@
 import { APPS, keywordApp, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import type { Membership } from "../../platform/src/store.ts";
+import { ownSubject, readDecision } from "./profile-core.ts";
 
 export type ProfileReadRequest = { kind: "read"; app?: AppId } | { kind: "ambiguous" } | { kind: "refused" };
 
@@ -27,27 +28,32 @@ export function profileReadRequest(
     /^(?:please )?(?:show|read)(?: me| back| me back)? (.+)$/u.exec(t) ??
     /^what does (.+) say$/u.exec(t) ??
     /^what is (.+)$/u.exec(t);
-  if (!read || !/\bprofiles?\b/u.test(read[1]!)) return;
-  // A combined read/edit is still an edit request, never a read-only operation.
-  if (
-    /\b(?:edit|change|update|delete|remove|replace|set|save|join|leave|stop|start|add|enroll|suggest|introduce)\b/u.test(
-      t,
-    )
-  )
-    return;
-  let subject = read[1]!;
-  if (subject.startsWith("my ")) subject = subject.slice(3);
-  else if (subject.startsWith("the ") && subject.endsWith(" i saved")) subject = subject.slice(4, -8);
-  else return { kind: "refused" };
-  subject = subject.replace(/ (?:i saved|you saved|you have saved)$/u, "");
-  if (!/\bprofiles?$/u.test(subject)) return { kind: "ambiguous" };
+  // The regular expressions stay here; readDecision (profile-core.ts) decides from their results.
+  const object = read ? read[1]! : "";
+  const owned = ownSubject(object);
+  const subject = (owned ?? "").replace(/ (?:i saved|you saved|you have saved)$/u, "");
   const appText = subject
     .replace(/\bprofiles?$/u, "")
     .replace(/\b(?:saved|stored|current)\b/gu, "")
     .trim();
-  if (!appText) return { kind: "read" };
-  const app = keywordApp(appText, apps);
-  return app ? { kind: "read", app } : { kind: "ambiguous" };
+  const app = appText ? keywordApp(appText, apps) : undefined;
+  const decision = readDecision({
+    readForm: read !== null,
+    namesProfile: /\bprofiles?\b/u.test(object),
+    asksChange:
+      /\b(?:edit|change|update|delete|remove|replace|set|save|join|leave|stop|start|add|enroll|suggest|introduce)\b/u.test(
+        t,
+      ),
+    own: owned !== null,
+    endsWithProfile: /\bprofiles?$/u.test(subject),
+    appText: appText !== "",
+    appKnown: app !== undefined,
+  });
+  if (decision === "notRead") return;
+  if (decision === "refused") return { kind: "refused" };
+  if (decision === "ambiguous") return { kind: "ambiguous" };
+  if (decision === "read") return { kind: "read" };
+  return { kind: "read", app: app! };
 }
 
 /** Stored member-supplied fields only; no inferred facts, suggestions or model call. */

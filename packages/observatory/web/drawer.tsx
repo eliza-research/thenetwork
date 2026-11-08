@@ -6,6 +6,8 @@ import type { EngineRunSummary, ObsFeedItem } from "../src/types.ts";
 import { EDGE_STYLE } from "./graph.ts";
 import { BiasMonitor, Config, Growth, Lab, Requests, RunDiffView, SafetyCases, Scorecard } from "./admin.tsx";
 import { Levels } from "./network.tsx";
+import { APPLIES } from "./logic/filters.ts";
+import { effectiveTab, rate as wholeRate, tabVisible, type TabCaps } from "./logic/views.ts";
 import { CostPanel } from "./ops.tsx";
 import { stateLabel } from "./panels.tsx";
 import { ReviewQueue } from "./review.tsx";
@@ -17,31 +19,22 @@ import { Badge, Bars, Components, dur, humanize, Kpi, Lorenz, MemberLink, num, p
 export const TAB_LABEL: Record<DrawerTab, string> = {
   review: "Review", feed: "Feed", pipeline: "Pipeline", requests: "Requests", engine: "Runs", safety: "Safety", metrics: "Metrics", lab: "Lab", config: "Config", game: "Game",
 };
-/** Which global filters apply to each drawer tab (the filter bar dims the others). */
-const APPLIES: Record<DrawerTab, FilterKey[]> = {
-  review: ["borough", "members", "origin"],
-  feed: ["range", "borough", "members", "origin"],
-  pipeline: ["range", "borough", "members", "origin", "stateGroup"],
-  engine: ["range"],
-  safety: ["range", "borough", "members"],
-  metrics: ["range", "borough", "origin"],
-  requests: ["range", "borough", "members"],
-  lab: [],
-  config: [],
-  game: [],
-};
 export const filterApplies = (tab: DrawerTab, k: FilterKey) => APPLIES[tab].includes(k);
+/** What this viewer can open. */
+function tabCaps(s: typeof store): TabCaps {
+  return {
+    showReview: s.showReviewTab(), game: !!s.env?.capabilities.canIntervene, hasRequests: s.requests.length > 0 || s.network?.kind === "consent",
+    analyst: s.can("analyst"), realOnly: s.realOnly(),
+  };
+}
+/** The tab on screen. A saved tab that this viewer cannot open falls back. */
+export const shownTab = (s: typeof store): DrawerTab => effectiveTab(s.ui.drawer, tabCaps(s));
 
 export function Drawer() {
   const s = useStore();
-  const game = !!s.env?.capabilities.canIntervene;
-  const showReview = s.showReviewTab();
-  const show: Partial<Record<DrawerTab, boolean>> = {
-    review: showReview, game, requests: s.requests.length > 0 || s.network?.kind === "consent",
-    lab: s.can("analyst") && !s.realOnly(), config: s.can("analyst"),
-  };
-  const tabs = DRAWER_TABS.filter(t => show[t] ?? true);
-  const tab = tabs.includes(s.ui.drawer) ? s.ui.drawer : "feed";
+  const caps = tabCaps(s);
+  const tabs = DRAWER_TABS.filter(t => tabVisible(t, caps));
+  const tab = shownTab(s);
   const now = s.now();
   const queued = [...s.opps.values()].filter(o => o.state === "IN_REVIEW");
   const dueSoon = queued.some(o => o.review && o.review.deadline - now < 3_600_000);
@@ -76,10 +69,14 @@ export function Drawer() {
   );
 }
 
+/** a of b as percent text from the proved rate. `none` shows when there is no base. The proof models whole counts that are not negative. */
+const whole = (x: number) => (Number.isFinite(x) ? Math.max(0, Math.floor(x)) : 0);
+const ratePct = (a: number, b: number, none: string) => { const p = wholeRate(whole(a), whole(b)); return p === undefined ? none : `${p}%`; };
+
 // ---------------------------------------------------------------- feed
 type Seg = "all" | "people" | "safety" | "system" | "mine";
 const PEOPLE = new Set(["accept", "decline", "meeting", "outcome", "feedback", "proposal", "message", "join", "invite", "probe", "request", "growth"]);
-const SAFETY = new Set(["block", "opt_out", "adversarial", "invariant", "error", "trust"]);
+const SAFETY = new Set(["block", "opt_out", "adversarial", "invariant", "error", "trust", "guard"]);
 const SYSTEM = new Set(["engine", "skip", "scenario", "game", "review"]);
 
 /** Feed text with the members' names as focus links. */
@@ -139,7 +136,7 @@ function Ladder() {
   if (!n) return null;
   if (n.kind === "stub") return <div className="muted small">Stub network: no consent data.</div>;
   const c = (k: string) => n.counters[k] ?? 0;
-  const rate = (a: number, b: number) => (b ? pct(a / b) : "–");
+  const rate = (a: number, b: number) => ratePct(a, b, "–");
   const candidates = c("engineProposals"), passed = candidates - (c("gatedOut") - (n.gateReasons.daily_cap ?? 0));
   const answered = c("probeYes") + c("probeNo") + c("probeExpired");
   const rv = n.review;
@@ -310,7 +307,7 @@ function RunDetail({ run }: { run: EngineRunSummary }) {
 }
 
 // ---------------------------------------------------------------- safety
-const SAFETY_FEED = new Set(["block", "opt_out", "adversarial", "invariant", "trust"]);
+const SAFETY_FEED = new Set(["block", "opt_out", "adversarial", "invariant", "trust", "guard"]);
 function Safety() {
   const s = useStore();
   const st = s.stats;
@@ -376,7 +373,7 @@ function Metrics() {
   const proactive = st.proactive / Math.max(1, st.joined) / weeks;
   const showDen = st.attended + st.noShows + st.cancelledWithNotice;
   const c = (k: string) => n?.counters[k] ?? 0;
-  const inviteYes = n?.kind === "consent" ? (c("reveals") ? c("revealYes") / c("reveals") : 0) : st.invites ? st.accepts / st.invites : 0;
+  const inviteYes = n?.kind === "consent" ? ratePct(c("revealYes"), c("reveals"), "0%") : ratePct(st.accepts, st.invites, "0%");
   const byOrigin: Record<string, number> = {};
   for (const o of s.opps.values()) if (o.source !== "shadow" && s.inRange(o.createdAt) && s.matchOpp(o, { range: true, members: true, stateGroup: true })) { const k = originLabel(originOf(o)); byOrigin[k] = (byOrigin[k] ?? 0) + 1; }
   const byState: Record<string, number> = {};
@@ -386,11 +383,11 @@ function Metrics() {
       <div className="kpis">
         <Kpi label="messages / member / week" value={(st.messages / Math.max(1, st.joined) / weeks).toFixed(1)} />
         <Kpi label="proactive / member / week" value={proactive.toFixed(2)} tone={proactive > 2 ? "warn" : undefined} title="Budget: normal ≤ 2 proactive messages per member per week" />
-        <Kpi label="invite yes rate" value={pct(inviteYes)} title={n?.kind === "consent" ? "Yes answers to revealed invitations" : "Accepts per invite sent"} />
-        <Kpi label={`show rate · ${st.noShows} no-shows · ${st.cancelledWithNotice} with notice`} value={pct(showDen ? st.attended / showDen : 0)} />
+        <Kpi label="invite yes rate" value={inviteYes} title={n?.kind === "consent" ? "Yes answers to revealed invitations" : "Accepts per invite sent"} />
+        <Kpi label={`show rate · ${st.noShows} no-shows · ${st.cancelledWithNotice} with notice`} value={ratePct(st.attended, showDen, "0%")} />
         <Kpi label="mean enjoyment" value={st.enjoymentN ? pct(st.enjoymentSum / st.enjoymentN) : "–"} />
         <Kpi label="members who met someone" value={num([...s.members.values()].filter(m => m.counters.meetings > 0).length)} />
-        {game && <Kpi label="precision (truth)" value={pct(st.oracleJudged ? st.compatible / st.oracleJudged : 0)} title="Proposals the hidden truth says were truly compatible" />}
+        {game && <Kpi label="precision (truth)" value={ratePct(st.compatible, st.oracleJudged, "0%")} title="Proposals the hidden truth says were truly compatible" />}
         {game && <Kpi label="unsafe" value={num(st.unsafe)} tone={st.unsafe ? "bad" : "good"} title="Proposals the hidden truth says were unsafe" />}
         <Kpi label="opt-outs" value={num(st.optOuts)} tone={st.optOuts ? "warn" : undefined} />
       </div>

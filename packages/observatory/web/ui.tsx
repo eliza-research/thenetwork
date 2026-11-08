@@ -3,6 +3,7 @@ import { useEffect, useState, type ReactNode, type RefObject } from "react";
 import type { ScoreComponents } from "@thenetwork/core";
 import type { ObsOpportunity } from "../src/types.ts";
 import { OPP_COLOR } from "./graph.ts";
+import { durParts } from "./logic/views.ts";
 import { store } from "./store.ts";
 
 const tf = new Map<string, Intl.DateTimeFormat>();
@@ -23,8 +24,8 @@ export const sentence = (s: string) => { const h = humanize(s); return h.charAt(
 export function ago(t: number, now = store.now()) { return `${dur(Math.max(0, now - t))} ago`; }
 /** Compact duration: "45m", "4h 12m", "2d 3h". */
 export function dur(ms: number) {
-  const m = Math.floor(ms / 60_000), h = Math.floor(m / 60), d = Math.floor(h / 24);
-  return d >= 1 ? `${d}d${h % 24 ? ` ${h % 24}h` : ""}` : h >= 1 ? `${h}h${m % 60 ? ` ${m % 60}m` : ""}` : `${m}m`;
+  const { d, h, m } = durParts(Number.isFinite(ms) ? Math.max(0, ms) : 0);
+  return d >= 1 ? `${d}d${h ? ` ${h}h` : ""}` : h >= 1 ? `${h}h${m ? ` ${m}m` : ""}` : `${m}m`;
 }
 
 /** Close the open popover (store.ui.popover) on a click outside `ref`. */

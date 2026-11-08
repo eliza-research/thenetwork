@@ -12,8 +12,9 @@ import { DAY, HOUR } from "../../core/src/clock.ts";
 import type { AppId, AppInfo } from "./apps.ts";
 import { devShortcutsAllowed, type Env } from "./env.ts";
 import { otpConfigProblems } from "./otp-config.ts";
+import { OTP_REFUSED_GLOBAL, otpCodeShape, otpExpiry, otpMayAttempt, otpRetryAfterMs } from "./otp-core.ts";
 import { keyedHash, maskPhone, safeEqual } from "./phone.ts";
-import type { PeopleStore } from "./store.ts";
+import type { HitRule, PeopleStore } from "./store.ts";
 
 export interface OtpProvider {
   readonly name: string;
@@ -165,28 +166,28 @@ export class OtpService {
   /** Rate-limit, then send. A provider error is logged and not shown (the response stays the same). */
   async start(app: AppInfo, e164: string, ip: string): Promise<OtpStart> {
     const at = this.now(), L = this.limits;
-    const hourLeft = HOUR - (at % HOUR);
-    const limited = (retryAfterMs = hourLeft): OtpStart => ({ ok: false, error: "rate_limited", retryAfterMs });
-    // The client IP (the socket address, or the IP a trusted site router signed: proxy.ts).
-    if (!(await this.store.hit(`otp:ip:${keyedHash(this.opts.hashKey, ipBucket(ip))}`, HOUR, at, { limit: L.perIpPerHour })).ok) return limited();
-    // The number alone, not the app: one number gets 3 codes an hour and 6 a day whatever site asks.
     const phoneKey = keyedHash(this.opts.hashKey, e164);
-    const byPhone = await this.store.hit(`otp:phone:${phoneKey}`, HOUR, at, { limit: L.perPhonePerHour, minGapMs: L.minGapMs });
-    if (!byPhone.ok) {
-      const gap = byPhone.prevAt !== null && at - byPhone.prevAt < L.minGapMs;
-      return limited(gap ? L.minGapMs - (at - byPhone.prevAt!) : hourLeft);
-    }
-    if (!(await this.store.hit(`otp:phone_day:${phoneKey}`, DAY, at, { limit: L.perPhonePerDay })).ok) return limited(DAY - (at % DAY));
-    const all = await this.store.hit("otp:global", HOUR, at, { limit: L.globalPerHour });
-    if (!all.ok) {
-      this.opts.log?.(`[otp] ALERT: the global budget of ${L.globalPerHour} codes an hour is used up; sends are refused until the hour ends`);
-      return limited();
+    // The limits in order (otp-core.ts OTP_REFUSED_*). The first one that refuses stops the start.
+    const limits: [string, number, HitRule][] = [
+      // The client IP (the socket address, or the IP a trusted site router signed: proxy.ts).
+      [`otp:ip:${keyedHash(this.opts.hashKey, ipBucket(ip))}`, HOUR, { limit: L.perIpPerHour }],
+      // The number alone, not the app: one number gets 3 codes an hour and 6 a day whatever site asks.
+      [`otp:phone:${phoneKey}`, HOUR, { limit: L.perPhonePerHour, minGapMs: L.minGapMs }],
+      [`otp:phone_day:${phoneKey}`, DAY, { limit: L.perPhonePerDay }],
+      ["otp:global", HOUR, { limit: L.globalPerHour }],
+    ];
+    for (let refused = 0; refused < limits.length; refused++) {
+      const [bucket, windowMs, rule] = limits[refused]!;
+      const hit = await this.store.hit(bucket, windowMs, at, rule);
+      if (hit.ok) continue;
+      if (refused === OTP_REFUSED_GLOBAL) this.opts.log?.(`[otp] ALERT: the global budget of ${L.globalPerHour} codes an hour is used up; sends are refused until the hour ends`);
+      return { ok: false, error: "rate_limited", retryAfterMs: otpRetryAfterMs(refused, at, hit.prevAt !== null, hit.prevAt ?? 0, { hourMs: HOUR, dayMs: DAY, minGapMs: L.minGapMs }) };
     }
     try {
       const { code, ref, chatId } = await this.provider.send(e164, app);
       await this.store.putChallenge({
         app: app.id, e164, provider: this.provider.name, providerRef: ref ?? null, providerChatId: chatId ?? null, codeHash: code ? keyedHash(this.opts.hashKey, `${app.id}:${e164}:${code}`) : null,
-        attempts: 0, createdAt: at, expiresAt: at + L.ttlMs, consumedAt: null,
+        attempts: 0, createdAt: at, expiresAt: otpExpiry(at, L.ttlMs), consumedAt: null,
       });
     } catch (e) {
       this.opts.log?.(`[otp] send failed for ${app.id}: ${(e as Error).message}`);
@@ -196,13 +197,15 @@ export class OtpService {
 
   /** True once for the right code on the newest live challenge. Wrong, expired, used-up and unknown all give false. */
   async verify(app: AppId, e164: string, code: string, ip = "unknown"): Promise<boolean> {
-    if (!/^\d{4,10}$/.test(code)) return false;
+    if (!otpCodeShape(code)) return false;
     const at = this.now(), L = this.limits;
     // Guessing across apps and challenges: a ceiling on code checks per number and per IP.
     if (!(await this.store.hit(`otp:verify:ip:${keyedHash(this.opts.hashKey, ipBucket(ip))}`, HOUR, at, { limit: L.verifyPerIpPerHour })).ok) return false;
     if (!(await this.store.hit(`otp:verify:phone:${keyedHash(this.opts.hashKey, e164)}`, HOUR, at, { limit: L.verifyPerPhonePerHour })).ok) return false;
     const c = await this.store.latestChallenge(app, e164);
     if (!c || c.provider !== this.provider.name) return false;
+    // The proved rule (otp-core.ts) on the challenge as read. claimAttempt checks it again on the row.
+    if (!otpMayAttempt({ attempts: c.attempts, expiresAt: c.expiresAt, consumed: c.consumedAt !== null }, L.maxAttempts, at)) return false;
     if (!(await this.store.claimAttempt(c.id, this.limits.maxAttempts, at))) return false;
     let ok: boolean;
     if (c.codeHash) ok = safeEqual(c.codeHash, keyedHash(this.opts.hashKey, `${app}:${e164}:${code}`));
