@@ -184,10 +184,14 @@ export function contactVariants(s: string): string[] {
 }
 
 const YEAR = /^(?:19|20)\d\d$/;
+/** A full North American number (area code and exchange start with 2-9), with or without the country code 1. */
+const NANP = /^1?[2-9]\d\d[2-9]\d{6}$/;
 /** A phone-pattern match that is not an order number, a booking reference or a list of years. */
 function isPhone(text: string, m: RegExpExecArray): boolean {
   const before = text.slice(Math.max(0, m.index - 24), m.index);
-  if (/#\s*$|\b(?:order|conf|confirmation|ref|reference|booking|ticket|tracking|invoice|receipt|account|acct|case|id)\b[\s:#.no]*$/.test(before)) return false;
+  // A reference word does not exempt a full phone number ("my id 2125550102"): the 7-digit pattern cannot match inside it.
+  if (/#\s*$|\b(?:order|conf|confirmation|ref|reference|booking|ticket|tracking|invoice|receipt|account|acct|case|id)\b[\s:#.no]*$/.test(before)
+    && !NANP.test(m[0].replace(/\D/g, ""))) return false;
   const groups = m[0].split(/[^\d]+/).filter(Boolean);
   if (groups.length >= 2 && groups.every(g => YEAR.test(g))) return false;
   return true;
