@@ -207,7 +207,8 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
   const isHiddenMinor = (id: MemberId) => { const p = personas.get(id); return !!p && p.trueAge < 18 && !isMinorAge(p.claimedAge); };
   // The network's own age signals (minor_signal, unresolved age_unknown) make a member a minor from then on.
   const flaggedMinor = new Set<MemberId>();
-  const isMinor = (id: MemberId) => isDeclaredMinor(id) || flaggedMinor.has(id);
+  const ageUnknown = new Set<MemberId>();
+  const isMinor = (id: MemberId) => isDeclaredMinor(id) || flaggedMinor.has(id) || ageUnknown.has(id);
   const names = nameMatcher([...personas.values()]);
   // Opportunities whose ROSTER includes a minor: a participant, invitee or host, or an alternate who
   // was actually contacted about it. An alternate never contacted is not on the roster: a reminder
@@ -307,7 +308,8 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
   };
 
   for (const r of records) {
-    if (r.type === "block") blocked.add(pairKey(r.from, r.to));
+    // A block counts from the persona's own act (block_intent, simulator), not only from the Network's record.
+    if (r.type === "block" || r.type === "block_intent") blocked.add(pairKey(r.from, r.to));
     if (r.type === "invariant_violation") violate(r.rule, r.detail);
     if (r.type === "join") { const l = line(r.memberId); l.lastIn = r.t; l.outSince = 0; addApp(r.memberId, r.app ?? (appsUsed && !personas.get(r.memberId)?.apps?.length ? "ntwrk" : undefined)); }
     if (r.type === "opt_out") line(r.memberId).optedOut = true;
@@ -317,7 +319,8 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
     if (r.type === "contact_swap") swapped.add(pairKey(r.members[0], r.members[1]));
     if (r.type === "decision") {
       const opp = r.proposalId ?? msgOpp.get(r.messageId);
-      if (opp) {
+      // An ignored message sent nothing: its `decision` is what the persona would have said, not consent.
+      if (opp && r.intent !== "ignore") {
         const yes = r.decision === "accept" || r.decision === "counter" || r.intent === "accept" || r.intent === "probe_yes" || r.intent === "confirm_schedule" && r.decision !== "decline";
         const no = r.decision === "decline" || r.intent === "decline" || r.intent === "probe_no";
         if (yes) accept(r.memberId, opp);
@@ -326,8 +329,11 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
     }
     if (r.type === "network_log") {
       const d = r.detail ?? {};
-      if (r.kind === "minor_signal" || r.kind === "age_unknown") { if (typeof d.memberId === "string") flaggedMinor.add(d.memberId); }
-      else if ((r.kind === "age_confirmed" || r.kind === "age_resolved") && typeof d.memberId === "string" && !isMinorAge(d.age)) flaggedMinor.delete(d.memberId);
+      // A minor_signal stays for good (the lowest age wins). An age_unknown clears when the Network logs
+      // age_resolved { memberId, minor: false } (ConsentNetwork.handleInbound).
+      if (r.kind === "minor_signal") { if (typeof d.memberId === "string") flaggedMinor.add(d.memberId); }
+      else if (r.kind === "age_unknown") { if (typeof d.memberId === "string") ageUnknown.add(d.memberId); }
+      else if (r.kind === "age_resolved" && typeof d.memberId === "string" && d.minor === false) ageUnknown.delete(d.memberId);
       if (r.kind === "contact_swap") {
         const ms = Array.isArray(d.members) ? d.members : [d.a, d.b];
         if (typeof ms[0] === "string" && typeof ms[1] === "string") swapped.add(pairKey(ms[0], ms[1]));
@@ -404,6 +410,8 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
       for (const id of r.participants) accept(id, r.proposalId);
       addOpp(r.proposalId, r.participants); addRoster(r.proposalId, r.participants);
     }
+    // A blocked pair must not meet, also when the block came after the meeting was booked.
+    if (r.type === "outcome") blockCheck(Object.keys(r.attendance).filter(id => r.attendance[id]!.showed), "blocked_pair_meeting", `outcome of meeting ${r.meetingId}`);
     if (r.type !== "message") continue;
     onMessage(r.msg);
   }
@@ -441,16 +449,15 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
     // Carrier auto-replies: only a system message next to the member's own keyword (STOP/START/HELP).
     const carrier = !!m.system && (keywordTimes.get(to) ?? []).some(t => Math.abs(t - m.ts) <= 60_000);
     const probe = (meta.probe ?? undefined) as { key?: unknown; participants?: unknown } | undefined;
-    const plan = (meta.plan ?? undefined) as { id?: unknown; invited?: unknown; alternates?: unknown; participants?: unknown; hostId?: unknown } | undefined;
-    const oppId = [meta.proposalId, probe?.key, plan?.id].find((x): x is string => typeof x === "string" && !!x);
+    // A plan probe names its plan by core PlanMeta.planId; its roster comes from probe_started and the recipients.
+    const plan = (meta.plan ?? undefined) as { planId?: unknown } | undefined;
+    const oppId = [meta.proposalId, probe?.key, plan?.planId].find((x): x is string => typeof x === "string" && !!x);
     if (oppId) {
       msgOpp.set(m.id, oppId);
       if (m.status === "delivered") l.lastOpp = oppId;
       addOpp(oppId, meta.participants); addOpp(oppId, probe?.participants);
-      addOpp(oppId, plan?.invited); addOpp(oppId, plan?.alternates); addOpp(oppId, plan?.participants); addOpp(oppId, [plan?.hostId]);
       // The recipient was contacted about it (a backfilled alternate joins the roster here).
       addRoster(oppId, [to]); addRoster(oppId, meta.participants); addRoster(oppId, probe?.participants);
-      addRoster(oppId, plan?.invited); addRoster(oppId, plan?.participants); addRoster(oppId, [plan?.hostId]);
       if (meta.type === "probe" || probe) probed.add(oppId);
     }
     const relayFrom = typeof meta.relayFrom === "string" ? meta.relayFrom : undefined;

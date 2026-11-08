@@ -327,7 +327,7 @@ export const SCENARIOS: NetScenario[] = [
     },
   },
   {
-    id: "bad_invitee", title: "A bad invitee", days: 7,
+    id: "bad_invitee", title: "A bad invitee", days: 12,
     description: "A member invites someone who turns out to be a spammer. The invitee is stopped, and the inviter loses invites for a month (vouches carry weight).",
     setup(ps, s) {
       const id = nth(adults(ps), 81).id;
@@ -338,6 +338,8 @@ export const SCENARIOS: NetScenario[] = [
       const attempts = invitee ? ctx.records.filter(r => r.type === "adversarial_attempt" && r.memberId === invitee).length : 0;
       return [
         c("invitee joined", !!invitee && ctx.records.some(r => r.type === "join" && r.memberId === invitee), invitee ?? "none"),
+        // Evidence: without a spam attempt the checks below test nothing.
+        c("invitee spammed", attempts > 0, `${attempts} attempts`),
         c("invitee flagged once they spam", !invitee || attempts === 0 || ctx.net.trust.get(invitee).score > 0, invitee ? `${attempts} attempts, trust ${ctx.net.trust.level(invitee)} (score ${ctx.net.trust.get(invitee).score})` : ""),
         c("invitee never matched after spamming", !invitee || !inOppAfter(ctx, invitee, ctx.records.find(r => r.type === "adversarial_attempt" && r.memberId === invitee)?.t ?? Infinity) || ctx.net.trust.level(invitee) === "ok", ""),
         c("inviter accountable", !invitee || ctx.net.trust.level(invitee) !== "hold" || ctx.net.trust.get(ctx.ids.inviter!).events.some(e => e.kind === "invitee_held"), ""),
@@ -353,15 +355,26 @@ export const SCENARIOS: NetScenario[] = [
     },
     check(ctx) {
       const bad: string[] = [];
+      let checked = 0, known = 0;
       for (const id of Object.values(ctx.ids)) {
         const p = ctx.world.personaList().find(x => x.id === id)!;
-        const announced = ctx.world.snapshot().presence.some(x => x.memberId === id && x.type === "temporary");
-        for (const tr of p.hidden.trips.filter(tr => tr.city !== "nyc" && announced)) {
+        const joinedAt = ctx.records.find(r => r.type === "join" && r.memberId === id)?.t ?? Infinity;
+        // A trip is announced when the snapshot showed it during the run: from 2 days before it starts until it
+        // ends, to a member who had joined (sim snapshot.ts). Not from the snapshot at the end: a trip that ended
+        // before then is no longer in it.
+        const announced = (tr: { fromDay: number; toDay: number }) => joinedAt < ctx.start + (tr.toDay + 1) * DAY && ctx.start + (tr.fromDay - 2) * DAY < ctx.world.end;
+        const trips = p.hidden.trips.filter(tr => tr.city !== "nyc" && announced(tr));
+        known += trips.length;
+        for (const tr of trips) {
+          checked++;
           const from = ctx.start + (tr.fromDay - 2) * DAY, to = ctx.start + (tr.toDay + 1) * DAY;
           if (logs(ctx.records, "probe_sent").some(l => l.detail.memberId === id && l.t >= from && l.t < to - DAY)) bad.push(id);
         }
       }
-      return [c("no asks while away", bad.length === 0, bad.length ? `asked: ${bad.join(",")}` : `${Object.keys(ctx.ids).length} travelers checked`)];
+      return [
+        c("no asks while away", bad.length === 0, bad.length ? `asked: ${bad.join(",")}` : `${checked} trips checked`),
+        c("every announced trip checked", known > 0 && checked === known, `${checked} of ${known}`),
+      ];
     },
   },
 ];

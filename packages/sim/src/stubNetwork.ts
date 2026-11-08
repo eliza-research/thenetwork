@@ -50,6 +50,8 @@ interface Invite { status: "pending" | "yes" | "no" | "expired" | "dropped"; sen
 interface Opp {
   p: Proposal; invites: Map<MemberId, Invite>; stage: "inviting" | "scheduled" | "done" | "cancelled";
   quorum: number; deadline: number; meetingAt?: number; reminded?: boolean; feedbackSent?: boolean;
+  /** When the feedback requests went out; cleared when they expire (INVITE_TTL with no reply). */
+  feedbackAt?: number;
 }
 
 const ZERO: ScoreComponents = {
@@ -110,7 +112,7 @@ export class StubNetwork implements NetworkUnderTest {
     }
     if (/can'?t make it|have to bail|can'?t come|cancel/i.test(body)) {
       const opp = [...this.opps.values()].find(o => o.stage === "scheduled" && o.invites.get(m.id)?.status === "yes");
-      if (opp) return this.handleDrop(m, opp);
+      if (opp) { this.handleDrop(m, opp); return; }
     }
     if (m.awaiting?.kind === "feedback") {
       this.ctx.log("feedback", { memberId: m.id, proposalId: m.awaiting.pid, text: body });
@@ -135,11 +137,12 @@ export class StubNetwork implements NetworkUnderTest {
 
   // ------------------------------------------------------------------ tick
   async tick(now: number) {
-    // Deferred proactive invites (they came due during someone's quiet hours).
+    // Deferred proactive invites (they came due during someone's quiet hours). Only to a member who is still
+    // invited: STOP during the deferral drops the invite (dropFromOpenOpps).
     const waiting = this.deferred; this.deferred = [];
     for (const d of waiting) {
       const opp = this.opps.get(d.pid);
-      if (opp?.stage === "inviting") this.invite(this.member(d.memberId), opp, now);
+      if (opp?.stage === "inviting" && opp.invites.get(d.memberId)?.status === "pending") this.invite(this.member(d.memberId), opp, now);
     }
     for (const opp of this.opps.values()) this.advance(opp, now);
     for (const city of ["sf", "nyc"] as City[]) {
@@ -308,9 +311,10 @@ export class StubNetwork implements NetworkUnderTest {
     }
   }
 
-  private handleDrop(m: MemberState, opp: Opp) {
+  /** `ack` false: the member sent STOP, so they get no reply. Returns true when the meeting is called off. */
+  private handleDrop(m: MemberState, opp: Opp, ack = true): boolean {
     opp.invites.set(m.id, { ...opp.invites.get(m.id)!, status: "dropped" });
-    this.send(m, "No worries, thanks for the heads up.", { type: "info" });
+    if (ack) this.send(m, "No worries, thanks for the heads up.", { type: "info" });
     const still = [...opp.invites].filter(([, i]) => i.status === "yes").map(([id]) => id);
     const keep = still.length >= Math.min(opp.quorum, 2) && (opp.p.participants.length > 2 ? still.length >= 2 : false);
     for (const id of still) {
@@ -319,7 +323,19 @@ export class StubNetwork implements NetworkUnderTest {
         : `Quick update: ${m.first} can't make it today, so I'm calling this one off. Sorry about that, I'll look for another time.`,
         { type: "cancellation", proposalId: opp.p.id });
     }
-    if (!keep) opp.stage = "cancelled";
+    if (!keep) { opp.stage = "cancelled"; this.release(opp); }
+    return !keep;
+  }
+
+  /**
+   * The opportunity is over: no member still waits on its invite. A group member who did not answer keeps
+   * `awaiting` until then, so a late yes can still join (handleInviteReply).
+   */
+  private release(opp: Opp) {
+    for (const id of opp.invites.keys()) {
+      const m = this.member(id);
+      if (m.awaiting?.kind === "invite" && m.awaiting.pid === opp.p.id) m.awaiting = undefined;
+    }
   }
 
   private advance(opp: Opp, now: number) {
@@ -341,13 +357,22 @@ export class StubNetwork implements NetworkUnderTest {
           this.send(this.member(id), `Reminder: today at ${hourText(localHour(opp.meetingAt, opp.p.city))}. Have fun!`, { type: "reminder", proposalId: opp.p.id });
       }
       if (!opp.feedbackSent && now >= opp.meetingAt + 3 * HOUR && localHour(now, opp.p.city) >= ALLOWED[0] && localHour(now, opp.p.city) < 21) {
-        opp.feedbackSent = true; opp.stage = "done";
+        opp.feedbackSent = true; opp.stage = "done"; opp.feedbackAt = now;
+        this.release(opp);
         for (const [id, inv] of opp.invites) if (inv.status === "yes") {
           const m = this.member(id);
           const others = [...opp.invites].filter(([x, i]) => x !== id && i.status === "yes").map(([x]) => this.member(x).first).join(" and ") || "the group";
           m.awaiting = { kind: "feedback", pid: opp.p.id };
           this.send(m, `How did it go with ${others}?`, { type: "feedback_request", proposalId: opp.p.id });
         }
+      }
+    }
+    // A feedback request with no reply expires like an invite, so the member can be proposed again.
+    if (opp.stage === "done" && opp.feedbackAt !== undefined && now >= opp.feedbackAt + INVITE_TTL) {
+      opp.feedbackAt = undefined;
+      for (const id of opp.invites.keys()) {
+        const m = this.member(id);
+        if (m.awaiting?.kind === "feedback" && m.awaiting.pid === opp.p.id) m.awaiting = undefined;
       }
     }
   }
@@ -379,9 +404,14 @@ export class StubNetwork implements NetworkUnderTest {
   }
 
   private dropFromOpenOpps(id: MemberId) {
-    for (const opp of this.opps.values()) if (opp.stage === "inviting" && opp.invites.has(id)) {
-      opp.invites.get(id)!.status = "dropped";
-      if (opp.p.participants.length === 2) this.cancel(opp, "opted_out");
+    for (const opp of this.opps.values()) {
+      if (opp.stage === "inviting" && opp.invites.has(id)) {
+        opp.invites.get(id)!.status = "dropped";
+        if (opp.p.participants.length === 2) this.cancel(opp, "opted_out");
+      } else if (opp.stage === "scheduled" && opp.invites.get(id)?.status === "yes") {
+        // A booked meeting: no reminder or feedback request to this member, and the others are told.
+        if (this.handleDrop(this.member(id), opp, false)) this.ctx.log("opportunity_closed", { proposalId: opp.p.id, reason: "opted_out" });
+      }
     }
   }
 

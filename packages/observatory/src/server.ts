@@ -29,7 +29,7 @@ import { randomBytes } from "node:crypto";
 import { parseArgs } from "node:util";
 import type { Server, ServerWebSocket } from "bun";
 import index from "../web/index.html";
-import { Lab, LAB_LIMITS, validateLab, type LabOptions } from "./lab.ts";
+import { Lab, LAB_LIMITS, LabQueueFull, validateLab, type LabOptions } from "./lab.ts";
 import { runDiff } from "./runDiff.ts";
 import { SQL } from "bun";
 import { APP_IDS, appUrlEnv, consoleApps, DEFAULT_APP, isAppId, slaHours, toNetworkReason, type AppId } from "./apps.ts";
@@ -751,11 +751,18 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           if (body?.app !== undefined && body.app !== app) return json({ ok: false, error: `the run's app (${body.app}) is not the request's app (${app})`, code: "app_mismatch" }, 400);
           const v = validateLab({ ...body, app });
           if (typeof v === "string") return json({ ok: false, error: v }, 400);
-          if (lab.queued + v.seeds.length > LAB_LIMITS.maxQueued) return json({ ok: false, error: `the lab queue is full (${LAB_LIMITS.maxQueued} seeds wait at most): try again when runs finish`, code: "queue_full" }, 429);
-          const no = await record(u, app, { action: "lab_run", targetType: "run", ok: true, detail: { arms: v.arms, seeds: v.seeds, days: v.days, app: v.app } });
+          const full = () => json({ ok: false, error: `the lab queue is full (${LAB_LIMITS.maxQueued} seeds wait at most): try again when runs finish`, code: "queue_full" }, 429);
+          if (lab.queued + v.seeds.length > LAB_LIMITS.maxQueued) return full();
+          const detail = { arms: v.arms, seeds: v.seeds, days: v.days, app: v.app };
+          const no = await record(u, app, { action: "lab_run", targetType: "run", ok: true, detail });
           if (no) return no;
-          const run = await lab.start(v, u.id);
-          return json({ ok: true, run });
+          // Another request can take the last places while the audit row is written.
+          const run = await lab.start(v, u.id).catch(async (e: unknown) => {
+            if (!(e instanceof LabQueueFull)) throw e;
+            await record(u, app, { action: "lab_run", targetType: "run", ok: false, detail: { ...detail, refused: "queue_full" } });
+            return undefined;
+          });
+          return run ? json({ ok: true, run }) : full();
         }, LAB_ROLES),
       },
       // ------------------------------------------------------------ cross-app person view (plan 5, 2.4)
