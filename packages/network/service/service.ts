@@ -2148,7 +2148,9 @@ export class NetworkService implements RuntimeHost {
       const rt = await this.runtimeOfMember(cached.app, cached.memberId);
       const binding = rt && await this.accounts.activeMembership(rt.app, {e164: input.from, personId: null});
       const current = binding?.membership.memberId === cached.memberId ? await rt!.sharedContext(cached.memberId) : null;
-      if (!current || !isDeepStrictEqual(current, cached.context)) return json({error: "turn_context_changed", retryable: false}, 409);
+      if (!current) return json({error: "turn_context_changed", retryable: false}, 409);
+      // The context changed after it was stored (a window edge, a state the agent set): the answer carries the current one.
+      if (!isDeepStrictEqual(current, cached.context)) return json({...cached, context: current});
     }
     if (result.status===200 && result.body && typeof result.body==="object" && "outcome" in result.body && result.body.outcome==="handled") {
       const handled=result.body as Extract<TurnResponse,{outcome:"handled"}>;

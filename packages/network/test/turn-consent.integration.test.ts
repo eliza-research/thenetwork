@@ -332,4 +332,23 @@ describe.skipIf(!pgAvailable)("turn and consent", () => {
     expect(start.consent).toMatchObject({state: "opted_in", scope: "app", app: "friends"});
     expect(await service.accounts.optedIn("friends", phone)).toBe(true);
   }, 60_000);
+  test("SD-313: the replay of an open turn after a context change answers with the current context", async () => {
+    const phone = "+12125550313";
+    await friendsByText("sd313", phone, "Ivy, 29");
+    clock.advance(MINUTE);
+    const input = turn("sd313-open", phone, "Tell me something about the weather", "friends");
+    const opened = await (await post(input)).json() as any;
+    expect([opened.outcome, opened.context.state]).toEqual(["open", "open"]);
+    // The gateway lost that answer. Meanwhile the agent records a pause the member asked for in another turn.
+    const raw = JSON.stringify({channel: "blooio", messageId: "sd313-open", idempotencyKey: "sd313-pause", app: "friends", memberId: opened.memberId, state: "paused", from: null, until: null, note: null});
+    const paused = await fetch(new URL(SET_STATE_PATH, server.url), {method: "POST", body: raw, headers: {"content-type": "application/json",
+      ...await svcSign(secret, {method: "POST", path: SET_STATE_PATH, id: "sd313-pause", body: raw, nowS: Math.floor(clock.now() / 1000)})}});
+    expect(paused.status).toBe(200);
+    clock.advance(1000);
+    // The gateway retries the same turn: the person must still get an answer, with the context as it is now.
+    const r = await post(input);
+    const body = await r.json() as any;
+    expect([r.status, body.outcome, body.memberId]).toEqual([200, "open", opened.memberId]);
+    expect(body.context.state).toBe("paused");
+  }, 60_000);
 });
