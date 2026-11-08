@@ -46,7 +46,10 @@ function useLive<T>(load: () => Promise<Fetched<T>>, key: string, deps: unknown[
   const last = useRef(0), prevKey = useRef(key), gen = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const run = () => { const g = gen.current; last.current = Date.now(); load().then(x => { if (g === gen.current) setD(x); }); };
-  useEffect(() => { gen.current++; run(); return () => { gen.current++; clearTimeout(timer.current); }; }, deps);
+  // A credential change (another staff member, a 401): the view shaped for the old credential leaves the screen and is read again.
+  const epoch = useRef(store.authEpoch);
+  useEffect(() => { if (epoch.current !== store.authEpoch) { epoch.current = store.authEpoch; setD(undefined); } }, [store.authEpoch]);
+  useEffect(() => { gen.current++; run(); return () => { gen.current++; clearTimeout(timer.current); }; }, [...deps, store.authEpoch]);
   useEffect(() => {
     if (prevKey.current === key) return;
     prevKey.current = key;
