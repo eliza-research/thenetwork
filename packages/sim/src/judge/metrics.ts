@@ -317,7 +317,8 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
     if (r.type === "contact_swap") swapped.add(pairKey(r.members[0], r.members[1]));
     if (r.type === "decision") {
       const opp = r.proposalId ?? msgOpp.get(r.messageId);
-      if (opp) {
+      // An ignored message sent nothing: its `decision` is what the persona would have said, not consent.
+      if (opp && r.intent !== "ignore") {
         const yes = r.decision === "accept" || r.decision === "counter" || r.intent === "accept" || r.intent === "probe_yes" || r.intent === "confirm_schedule" && r.decision !== "decline";
         const no = r.decision === "decline" || r.intent === "decline" || r.intent === "probe_no";
         if (yes) accept(r.memberId, opp);
