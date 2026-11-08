@@ -719,6 +719,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       // Safety record first: the adults this member met, before anything is dropped (network-consent-3).
       this.minorAfterContact(m.id);
       this.dropMember(m.id, "minors policy");
+      // The adult interview stops: a minor is onboarded as "active", like welcome() does.
+      if (m.stage === "q1" || m.stage === "q2" || m.stage === "q3") { m.stage = "active"; if (m.awaiting?.kind === "interview") m.awaiting = undefined; }
       this.ctx.log("minor_signal", { memberId: m.id });
       if (this.app.minJoinAge > 13) {
         // An 18+ app: no teen copy and no teen service; out of matching, and staff review (network-consent-19).

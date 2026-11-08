@@ -233,3 +233,13 @@ test("SD-127: a text join that waits on a web join of the same phone keeps the w
   const active = await sql`select id from network.members where app_id = 'friends' and person_id = ${person!.id} and account_status = 'active'`;
   expect(active.map((r: any) => r.id)).toEqual([memberId]);
 }, 60_000);
+
+test("SD-213: a member who becomes a minor during the interview gets no further adult interview question", async () => {
+  const phone = "+12125550315";
+  await join(phone, "friends.help", "friends", "Sam, 25");
+  await say(phone, "i have homework tonight", "friends");
+  const r = await say(phone, "hey", "friends");
+  const replies: string[] = r.replies ?? [];
+  expect(replies.some(t => t.includes("When are you usually free"))).toBe(false);
+  expect(replies.some(t => t.includes("one-on-one or small groups"))).toBe(false);
+}, 60_000);
