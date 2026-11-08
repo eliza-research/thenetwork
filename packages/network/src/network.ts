@@ -1935,12 +1935,16 @@ export class ConsentNetwork implements NetworkUnderTest {
   /**
    * Why a review decision must be refused, or undefined when it may go ahead. Approve (and edit) is
    * refused when any participant is a known minor, was declined at join, or is unknown (age policy:
-   * never matched), and while matching is off. Reason "other" needs a note. No caller can skip this:
+   * never matched), and while matching is off. Every decision is refused once the item is past its
+   * review deadline. Reason "other" needs a note. No caller can skip this:
    * decide() runs it on every decision.
    */
   reviewBlock(oppId: string, decision: ReviewDecision, opts: { reason?: string; note?: string } = {}): string | undefined {
     const o = this.opps.get(oppId);
     if (!o || o.stage !== "review" || !o.review) return "not_in_review";
+    // Past its SLA the item expires at the next tick and is never sent late (PRD 32.8): the clock can
+    // pass the deadline before that tick runs, so no decision is applied in that gap.
+    if (this.now() >= o.review.deadline) return "review_expired";
     if (opts.reason === "other" && !opts.note?.trim()) return "note_required";
     if (decision === "approve" || decision === "edit") {
       for (const id of o.participants) {
