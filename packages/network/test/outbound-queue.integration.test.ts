@@ -9,7 +9,7 @@ import {SimClock} from "@thenetwork/core";
 import {applySchema} from "../../observatory/db/dev-pg.ts";
 import {APPS} from "../../platform/src/apps.ts";
 import {svcSign,svcVerify} from "../../core/src/svc/svc-auth.ts";
-import {DELIVER_PATH,TURN_RECEIPT_PATH,type TurnReceiptRequest} from "../../core/src/svc/contract.ts";
+import {DELIVER_PATH,TURN_PATH,TURN_RECEIPT_PATH,type TurnReceiptRequest,type TurnRequest} from "../../core/src/svc/contract.ts";
 import {CloudChannelAdapter} from "../service/cloud-channel.ts";
 import {NetworkService} from "../service/service.ts";
 import type {NetworkRuntime} from "../service/runtime.ts";
@@ -254,4 +254,29 @@ test("SD-117: a database error in the admission transaction does not end the row
   await rt.deliver();
   expect(dispatched).toContain("sd117-reminder");
   expect(await statusOf("sd117-reminder")).toBe("accepted");
+},60_000);
+
+const turnPost=async(s:NetworkService,input:TurnRequest)=>{
+  const body=JSON.stringify(input);
+  return s.fetch(new Request(`http://127.0.0.1${TURN_PATH}`,{method:"POST",body,
+    headers:{"content-type":"application/json",...await svcSign(secret,{method:"POST",path:TURN_PATH,id:input.messageId,body,nowS:Math.floor(clock.now()/1000)})}}));
+};
+
+test("SD-131: Cloud's accepted receipt with no history is recorded for a reply to a number the service gave no account",async()=>{
+  await primary();
+  const s=services[0]!;
+  const phone="+12125550190";
+  // The person asked to delete everything: the number is suppressed. Later they text the line again to come back.
+  await s.people.deleteAll(null,phone,s.accounts.phoneHash(phone),clock.now());
+  const r=await turnPost(s,{messageId:"sd131-back",channel:"blooio",from:phone,to:null,text:"friends.help",transport:"imessage",receivedAt:clock.now(),app:"friends"});
+  expect(r.status).toBe(200);
+  const handled=await r.json() as {outcome:string;accountEligible:boolean;replyIds:string[];replyKind:string;reason:string};
+  expect(handled.outcome).toBe("handled");
+  expect(handled.accountEligible).toBe(false);
+  expect(handled.replyIds.length).toBeGreaterThan(0);
+  // Cloud sends the join question; with no Eliza account it has no history to record.
+  const receipt=await turnReceipt(s,{channel:"blooio",messageId:"sd131-back",replyIds:handled.replyIds,providerMessageIds:["provider:sd131"],historyRecorded:false,outcome:"accepted"});
+  expect(receipt.status).toBe(200);
+  const [row]=await sql`select receipt->>'outcome' as outcome from platform.inbound where id='msg:blooio:sd131-back'`;
+  expect(row.outcome).toBe("accepted");
 },60_000);
