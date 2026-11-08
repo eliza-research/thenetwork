@@ -15,7 +15,7 @@
 import { createHash, randomInt } from "node:crypto";
 import { isQuietAt } from "../../blooio/src/quiet-hours.ts";
 import { composeText } from "./compose.ts";
-import type { NotifyStore } from "./store.ts";
+import type { DeliveryRecord, NotifyStore } from "./store.ts";
 import { resolveDelivery, type Delivery, type SurfacePrefs } from "./surface.ts";
 import { newToken, TOKEN_TTL_MS, type TaskToken } from "./tokens.ts";
 import type { Channel, InboxItem, InboxItemInput, Surface } from "./types.ts";
@@ -181,7 +181,13 @@ export class Notifier {
       const fresh = (await this.store.getItems(p.itemIds)).filter(i => i.seenAt === undefined && i.notifiedAt === undefined);
       if (fresh.length === 0) { cancelled.push(p.deliveryId); continue; }
       const final = fresh.length === p.itemIds.length ? p : await this.build((await this.directory.get(p.personId))!, fresh, now);
-      const target: Surface = final.delivery.mode === "deeplink" ? final.delivery.assistant : final.channel;
+      // The surface the message pointed at (DeliveryRecord.target): the channel for a thread message,
+      // else the assistant. A button page steers at its primary assistant (assistants[0]), so an
+      // unanswered page lands the "ignored" streak on that assistant, matching the acted path and
+      // the two-strikes drop-out (surface.ts). Blaming the channel left the drop-out dead for every
+      // SMS / Telegram member.
+      const d = final.delivery;
+      const target: Surface = d.mode === "deeplink" ? d.assistant : d.mode === "button_page" ? d.assistants[0]! : final.channel;
       // Record first: a crash after this and before enqueue loses one text, never sends two.
       const recorded = await this.store.recordDelivery({
         deliveryId: final.deliveryId, personId: final.personId, itemIds: final.itemIds, target,
@@ -276,6 +282,22 @@ export class Notifier {
   /** Close deliveries whose outcome window passed with no action; run with dispatch. */
   async sweep(now: number) {
     for (const d of await this.store.expireDeliveries(now - this.cfg.outcomeWindowMs, now))
-      await this.store.recordOutcome(d.personId, d.target, "ignored", now);
+      if (await this.wasShown(d, now)) await this.store.recordOutcome(d.personId, d.target, "ignored", now);
+  }
+
+  /**
+   * Did the target really get an unanswered message? Only then is an expired delivery "ignored".
+   * The outbound queue drops a queued message (queuePolicy in wiring.ts) once its items are erased,
+   * expired, or all seen on another surface; and the member can read a page's items on the target
+   * itself (readUpdates/shownSubjects, no token), which leaves all items seen. In every one of these
+   * no link went unused, so the delivery must not add to the target's ignored streak (the two-strikes
+   * drop-out, surface.ts). Mirrors the queue's obsolescence check, without stillNeeded's delivery-id
+   * gate so a recorded (non-"ntf_") send still counts.
+   */
+  private async wasShown(d: DeliveryRecord, now: number): Promise<boolean> {
+    const items = await this.store.getItems(d.itemIds);
+    if (items.length !== d.itemIds.length) return false;
+    if (items.some(i => i.expiresAt !== undefined && i.expiresAt <= now)) return false;
+    return items.some(i => i.seenAt === undefined);
   }
 }

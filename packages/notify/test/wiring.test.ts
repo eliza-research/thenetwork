@@ -106,6 +106,31 @@ describe.skipIf(!pgAvailable)("notify + the Postgres outbound queue", () => {
     expect(await queue.statusOf(sent[0]!.deliveryId)).toBe("suppressed_ineligible");
   });
 
+  test("an unanswered button page drops its assistant out, not the channel (SMS)", async () => {
+    // SMS member who chose Claude: every digest is a button page pointing at Claude (not a deeplink).
+    const { clock, now, store, notifier, sink, r } = await setup({ channel: "sms", explicit: "claude" });
+    await notifier.setActive(r.personId, "claude", true);
+    const send = async (subject: string) => {
+      await notifier.add(req(r.personId, subject), now());
+      const { sent } = await notifier.dispatch(now(), sink);
+      expect(sent).toHaveLength(1);
+      return sent[0]!;
+    };
+    // Two Claude button pages nobody tapped. The ignored outcome must land on Claude, not on "sms".
+    for (const subject of ["b1", "b2"]) {
+      const s = await send(subject);
+      expect(s.delivery).toMatchObject({ mode: "button_page", assistants: ["claude"] });
+      expect((await store.getDelivery(s.deliveryId))!.target).toBe("claude");
+      clock.advance(notifier.cfg.outcomeWindowMs + 60_000);
+      await notifier.sweep(now());
+    }
+    const sigs = await store.signals(r.personId);
+    expect(sigs.find(s => s.surface === "claude")).toMatchObject({ ignored: 2, ignoredStreak: 2 });
+    expect(sigs.find(s => s.surface === "sms")?.ignoredStreak ?? 0).toBe(0);
+    // Claude's link went unused twice: the explicit choice now falls back to the plain thread.
+    expect((await send("b3")).delivery).toMatchObject({ mode: "thread", reason: "explicit_link_unused" });
+  });
+
   test("thread hooks: readUpdates clears the inbox; an inbound message counts as acting", async () => {
     const { now, store, notifier, sink, r } = await setup();
     await notifier.add(req(r.personId, "m1", "You have a new match."), now());
