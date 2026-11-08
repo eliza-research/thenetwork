@@ -756,9 +756,10 @@ export class NetworkService implements RuntimeHost {
       onJoin: (ctx: JoinHookContext) => this.joined(ctx),
       onStop: ctx => this.stopped(ctx.app, ctx.personId, ctx.scope),
       onForget: async (ctx: MemberHookContext) => {
-        // The app's photos go first (leave, delete everything, a new owner of the number).
-        await this.photos.deleteFor(ctx.personId, ctx.app.id);
+        // The Network forgets the member first, so an upload in flight is refused when it adds its row
+        // (no member age); then the app's photos go (leave, delete everything, a new owner of the number).
         await this.forget(ctx.app, ctx.memberId);
+        await this.photos.deleteFor(ctx.personId, ctx.app.id);
         // Other parts of the backend that hold data about the person in this app (the MCP server's OAuth grants).
         for (const f of this.forgetListeners) {
           try { await f(ctx); } catch (e) { this.log(`[forget] listener failed for ${ctx.app.id}: ${(e as Error).message}`); }

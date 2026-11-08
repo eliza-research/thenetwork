@@ -367,16 +367,31 @@ export function photoStorageFromEnv(env: Record<string, string | undefined> = pr
 
 // ------------------------------------------------------------------------------------ rows
 export interface PhotoStore {
-  put(r: PhotoRow): Promise<void>;
+  /**
+   * Add the row under the person's row lock, after `check` and the count limit in the same transaction:
+   * two parallel uploads cannot both pass the limit, and a change to the person (an age under 18, a
+   * leave, a failed age check) commits either before the check or before deleteFor lists the rows.
+   */
+  add(r: PhotoRow, max: number, check: (tx?: SQL) => Promise<PhotoRefusal | undefined>): Promise<PhotoRefusal | undefined>;
   get(id: string): Promise<PhotoRow | undefined>;
   list(personId: string, app?: AppId): Promise<PhotoRow[]>;
+  /** The rows deleteFor removes, read under the person's row lock (an upload that holds it lands first). */
+  listLocked(personId: string, app?: AppId): Promise<PhotoRow[]>;
   delete(id: string): Promise<void>;
 }
+/** Memory rows (the simulation's safety block): one process; no await comes between the count and the insert. */
 export class MemoryPhotoStore implements PhotoStore {
   readonly rows = new Map<string, PhotoRow>();
-  async put(r: PhotoRow) { this.rows.set(r.id, { ...r }); }
+  async add(r: PhotoRow, max: number, check: () => Promise<PhotoRefusal | undefined>) {
+    const no = await check();
+    if (no) return no;
+    if ([...this.rows.values()].filter(x => x.personId === r.personId).length >= max) return "too_many" as const;
+    this.rows.set(r.id, { ...r });
+    return undefined;
+  }
   async get(id: string) { const r = this.rows.get(id); return r && { ...r }; }
   async list(personId: string, app?: AppId) { return [...this.rows.values()].filter(r => r.personId === personId && (!app || r.app === app)).sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1)).map(r => ({ ...r })); }
+  listLocked(personId: string, app?: AppId) { return this.list(personId, app); }
   async delete(id: string) { this.rows.delete(id); }
 }
 const photoRow = (r: Record<string, any>): PhotoRow => ({
@@ -386,9 +401,17 @@ const photoRow = (r: Record<string, any>): PhotoRow => ({
 /** platform.photos (migration 0011). A deleted photo's row is removed (the bytes first). */
 export class PgPhotoStore implements PhotoStore {
   constructor(private readonly sql: SQL) {}
-  async put(r: PhotoRow) {
-    await this.sql`insert into platform.photos (id, person_id, app_id, storage_key, content_type, bytes, sha256, consent_version, created_at)
-      values (${r.id}, ${r.personId}, ${r.app}, ${r.storageKey}, ${r.contentType}, ${r.bytes}, ${r.sha256}, ${r.consentVersion}, ${new Date(r.createdAt)})`;
+  async add(r: PhotoRow, max: number, check: (tx?: SQL) => Promise<PhotoRefusal | undefined>) {
+    return this.sql.begin(async tx => {
+      await tx`select id from platform.people where id = ${r.personId}::uuid for update`;
+      const no = await check(tx);
+      if (no) return no;
+      const [c] = await tx`select count(*)::int as n from platform.photos where person_id = ${r.personId}::uuid and deleted_at is null`;
+      if (c.n >= max) return "too_many" as const;
+      await tx`insert into platform.photos (id, person_id, app_id, storage_key, content_type, bytes, sha256, consent_version, created_at)
+        values (${r.id}, ${r.personId}, ${r.app}, ${r.storageKey}, ${r.contentType}, ${r.bytes}, ${r.sha256}, ${r.consentVersion}, ${new Date(r.createdAt)})`;
+      return undefined;
+    });
   }
   async get(id: string) { const [r] = await this.sql`select * from platform.photos where id = ${id} and deleted_at is null`; return r ? photoRow(r) : undefined; }
   async list(personId: string, app?: AppId) {
@@ -396,6 +419,12 @@ export class PgPhotoStore implements PhotoStore {
       ? await this.sql`select * from platform.photos where person_id = ${personId}::uuid and app_id = ${app} and deleted_at is null order by created_at, id`
       : await this.sql`select * from platform.photos where person_id = ${personId}::uuid and deleted_at is null order by created_at, id`;
     return (rows as Record<string, any>[]).map(photoRow);
+  }
+  async listLocked(personId: string, app?: AppId) {
+    return this.sql.begin(async tx => {
+      await tx`select id from platform.people where id = ${personId}::uuid for update`;
+      return new PgPhotoStore(tx).list(personId, app);
+    });
   }
   async delete(id: string) { await this.sql`delete from platform.photos where id = ${id}`; }
 }
@@ -469,7 +498,10 @@ export class PhotoService {
     const id = newPhotoId();
     const key = randomBytes(24).toString("hex");
     await this.o.storage.put(key, bytes, type);
-    await this.o.meta.put({ id, personId, app, storageKey: key, contentType: type, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), consentVersion, createdAt: this.now() });
+    // Checked again with the row: the person can stop being an adult member while the bytes are written.
+    const no = await this.o.meta.add({ id, personId, app, storageKey: key, contentType: type, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), consentVersion, createdAt: this.now() },
+      PHOTO_MAX_PER_PERSON, tx => this.mayTake(personId, app, tx));
+    if (no) { await this.o.storage.delete(key); return { ok: false, reason: no }; }
     await this.rate(personId, app).catch(e => this.o.log?.(`[photos] rating failed: ${(e as Error).message}`));
     return { ok: true, value: { id } };
   }
@@ -560,7 +592,7 @@ export class PhotoService {
 
   /** Every photo of a person (on one app, or every app): leave, delete everything, a minor age, a ban. Bytes first, then rows. */
   async deleteFor(personId: string, app?: AppId): Promise<number> {
-    const rows = await this.o.meta.list(personId, app);
+    const rows = await this.o.meta.listLocked(personId, app);
     for (const r of rows) { await this.o.storage?.delete(r.storageKey); await this.o.meta.delete(r.id); await this.o.onRemoved?.(personId, r.app, r.id); }
     if (rows.length) this.o.log?.(`[photos] deleted ${rows.length} photo(s)${app ? ` on ${app}` : ""}`);
     return rows.length;
