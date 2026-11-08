@@ -427,7 +427,7 @@ interface SendOpts {
 type SendHook =
   | { t: "interview" } | { t: "age" } | { t: "suggested"; venues: string[] } | { t: "retry_found"; oppId: string }
   | { t: "probe"; oppId: string; id: MemberId } | { t: "reveal"; oppId: string; id: MemberId } | { t: "times"; oppId: string; id: MemberId }
-  | { t: "drop_notice"; oppId: string } | { t: "feedback"; oppId: string }
+  | { t: "drop_notice"; oppId: string; meetingAt?: number } | { t: "feedback"; oppId: string }
   | { t: "growth"; kind: string } | { t: "reengage" } | { t: "ask"; reason: AskRecord["reason"]; also?: string[]; follow?: boolean } | { t: "checkin" }
   | { t: "plan_probe"; oppId: string; id: MemberId } | { t: "crew_offer"; crewId: string };
 interface HookFns { valid?: () => boolean; onSent?: () => void; onRefused?: () => void }
@@ -2542,7 +2542,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const keep = o.participants.length > 2 && still.length >= 2;
     // Only members who were told about the plan hear that it changed.
     for (const id of still) if (o.bookedTold?.includes(id)) this.send(this.member(id), copy.dropNotice(m.first, keep), { type: "cancellation", proposalId: o.id }, "cancellation",
-      { hook: { t: "drop_notice", oppId: o.id } });
+      { hook: { t: "drop_notice", oppId: o.id, meetingAt: o.meetingAt } });
     if (!keep) {
       this.expireReveals(o); o.closedFrom = o.stage; o.closedReason = "participant dropped"; o.stage = "closed"; this.ctx.log("opportunity_closed", { proposalId: o.id, reason: "participant dropped" });
       // The requester still wants it (another member called it off): the request waits again, and the standing retry looks again.
@@ -4135,7 +4135,9 @@ export class ConsentNetwork implements NetworkUnderTest {
         valid: () => this.crewOffers.some(c => c.crew.id === h.crewId && !c.resolved),
         onSent: () => this.expect(m, { kind: "crew", crewId: h.crewId, at: now() }),
       };
-      case "drop_notice": return { valid: () => !!o && now() < (o.meetingAt ?? Infinity) };
+      // The meeting time is in the hook: the notice still goes when the opportunity was deleted with the
+      // member who dropped (forget, in quiet hours), as the partner must not go to the venue (SD-248).
+      case "drop_notice": return { valid: () => now() < (o?.meetingAt ?? h.meetingAt ?? Infinity) };
       case "feedback": return { onSent: () => { if (o) this.expect(m, { kind: "feedback", oppId: o.id, at: now() }); } };
       case "growth": return { onSent: () => { this.expect(m, { kind: "growth", at: now() }); this.counters.growthAsks++; this.ctx.log("growth_ask", { memberId: m.id, kind: h.kind }); } };
       case "reengage": return { onSent: () => { this.counters.reengagements++; this.ctx.log("reengagement", { memberId: m.id }); } };
