@@ -1,202 +1,188 @@
 # Quint findings: `quint/relay.qnt`
 
 Hand-written. Model: [quint/relay.qnt](../../../quint/relay.qnt). Module plan: section 6.8 of
-[2026-11-07-state-machines.md](../2026-11-07-state-machines.md). Code at commit ad67275.
+[2026-11-07-state-machines.md](../2026-11-07-state-machines.md). The first version of the model followed the code at
+commit ad67275 and showed the defects in section 3. The model now follows the code after the fixes on branch
+`wave2/relay` (commits e2a3043 to f72d226). Every check passes (section 2).
 
 ## 1. What the model covers
 
 | Machine | Code | In the model |
 |---|---|---|
-| relay-item | packages/network/src/relay.ts:178-266, 347-376 | `commitText`, `apply`, `deliver`, `staffRelease`, `staffReject` |
-| relay-swap | packages/network/src/relay.ts:269-312 | `commitShare`, `commitWithdraw` |
-| relay-match-view | packages/network/src/network.ts:4895-4903 | `w.matchOpen` (and `closeMatch`) |
+| relay-item | packages/network/src/relay.ts (request, apply, deliver, unsent, prior, log, release, reject, forget) | `commitText`, `apply`, `deliver`, `syncUnsent`, `staffRelease`, `staffReject` |
+| relay-swap | packages/network/src/relay.ts:278-339 (swap, cancelSwaps) | `commitShare`, `commitWithdraw` |
+| relay-match-view | packages/network/src/network.ts (relayMatchOf) | `w.matchOpen` (and `closeMatch`) |
 | photo-relay-item | packages/platform/src/photo-relay.ts:111-224 | `selectPhoto`, `reviewPhoto`, `revokePhoto`, `photoRequest`, `staffPhotoReject`, `resolvePhoto`, `fetchBytes` |
-| action-receipt | packages/network/service/relay-endpoint.ts:175-261 | `claim`, `commit*`, `unitThrow`, `postCommitThrow`, `answer`, `crash`, `replay` |
-| relay-classifier-hook | packages/engine/src/relay.ts:430-445 | oracle outcomes `minorClef`, `hold`, `block` in `textDecision` |
+| action-receipt | packages/network/service/relay-endpoint.ts:175-263 | `claim`, `commit*`, `unitThrow`, `postCommitDeliverError`, `answer`, `crash`, `replay` |
+| relay-classifier-hook | packages/engine/src/relay.ts:430-447 | oracle outcomes `minorClef`, `hold`, `block` in `textDecision` |
 
-Other actions: the Network tick that flushes deferred sends (`tickFlush`, network.ts:3269-3276), the queue
-admission (`queueSend`, runtime.ts:238-269), a queue end for reasons outside the relay (`queueFail`), STOP,
-block, close, safety hold, minor flag, erasure (`erase`, runtime.ts:525-552 and relay.ts:398-402), quiet
-hours and time.
+Other actions: the Network tick that flushes deferred sends and takes back a refused relayed item (`tickFlush`,
+network.ts:3269-3277), the queue admission (`queueSend`, runtime.ts:246-281), a queue end for reasons outside the
+relay (`queueFail`), the review SLA check (`slaTick`, service.ts:533-537), STOP, block, close, safety hold, minor
+flag, erasure (`erase`, runtime.ts:537-571 and relay.ts:430-434), quiet hours and time.
 
-Bounds: 2 members, 1 match, 4 member requests, 1 photo item. One fault at most per committed request (the
-faults combine across requests). `RELAY_LOG_MAX` is scaled from 5000 to 3. The photo path is on in the model
-as a regression guard; it is off in production (no `PhotoRelayPolicy`).
+Bounds: 2 members, 1 match, 4 member requests, 1 photo item. One fault at most per committed request (the faults
+combine across requests). `RELAY_LOG_MAX` is scaled from 5000 to 3. The review SLA (6 to 24 hours in
+`DEFAULT_SLA_HOURS`) is scaled to 30 minutes. The photo path is on in the model as a regression guard; it is off in
+production (no `PhotoRelayPolicy`).
 
-## 2. Check results
+## 2. Check results (final state)
 
 `bun run quint:check quint/relay.qnt` (seed 0x5eed, max-steps 25, max-samples 10000):
 
 ```
 ok   typecheck
-ok   test                     (15 run tests pass)
-FAIL safety                   (expected: the model shows the defects below)
-ok   witness_bothNumbersGo, witness_heldReleased, witness_deferredFlushed, witness_withdrawn, witness_photoServed
+ok   test                     (20 run tests pass)
+ok   safety                   (16 invariants, no violation in 10000 traces of 25 steps)
+ok   witness_bothNumbersGo, witness_heldReleased, witness_deferredFlushed, witness_withdrawn,
+     witness_photoServed, witness_heldAlerted, witness_unsentSynced   (all reachable)
 ```
 
-Each conjunct of `safety`, simulated alone with the same seed and bounds:
+`bun run quint:check --verify quint/relay.qnt` (the same steps, then `quint verify --invariant safety --max-steps 3`,
+Apalache): every step `ok`, 1 model, 0 failures, 55 s in all. See section 6 for the bounds.
 
-| Invariant | Simulation | Register |
+### Invariants in `safety`
+
+| Invariant | Rule | Defect it guards |
 |---|---|---|
-| noOneWayNumber | violated | SD-007 |
-| numberMovesOnlyIfBothConsented | holds | - |
-| withdrawnNotSent | holds in simulation; violated by `withdrawAfterSwapTest` | SD-039 |
-| rowSentImpliesPass | holds | - |
-| threadOnlyDelivered | violated | Q-relay-1 |
-| minorTextNeverKept | violated | SD-064 |
-| contactSharedImpliesDelivered | violated | SD-252 |
-| erasedNumberGone | violated | SD-040 |
-| waitingSwapAsked | violated | SD-138 |
-| askInsideWindow | violated | SD-138 |
-| effectAtMostOncePerKey | holds | - |
-| completedIffCommitted | holds | - |
-| failureMeansNoEffect | violated | SD-137 |
-| bytesServedImpliesApprovedBound | holds | - |
-| photoHeldDecidable | holds (see SD-320 below) | - |
-| photoRetryAfterRateHold | violated by `photoRateHoldTest` | SD-320 |
-| recordReviewMatches | violated (log cap scaled to 3) | SD-387 |
+| numberMovesOnlyIfBothConsented | founder decision 9 | - |
+| withdrawnNotSent | founder decision 9, relay-endpoint.ts "won't share" | SD-039 |
+| rowSentImpliesPass | AGENTS.md Relay (#7), runtime.ts final dispatch | - |
+| decisionsReadDelivered | relay.ts:93 (thread), engine relay.ts:125 (contactShared) | Q-relay-1, SD-252 |
+| minorTextNeverKept | relay.ts "never a minor's words" | SD-064 |
+| erasedNumberGone | runtime.ts forget path | SD-040 |
+| waitingSwapAsked, askInsideWindow | relay.ts:15, relay.ts:154 | SD-138 |
+| effectAtMostOncePerKey, completedIffCommitted | relay-endpoint.ts:8-9, 26-27 | - |
+| failureMeansNoEffect | RelaySendResponse, retryable:false | SD-137 |
+| bytesServedImpliesApprovedBound | photo-relay.ts:215-224 | - |
+| photoHeldDecidable | service.ts staff route | SD-320 (safety half) |
+| photoRetryAfterRateHold | relay.ts rate-only hold comment | SD-320 |
+| recordReviewMatches | store.ts:143-144 | SD-387 |
+| heldSlaAlerted | AGENTS.md human review, service.ts afterTick | SD-133 |
 
-Properties outside `safety` (no rule states them as safety; checked alone):
+`decisionsReadDelivered` replaces the state invariants `threadOnlyDelivered` and `contactSharedImpliesDelivered` in
+`safety`. The fix is lazy by design: `RelayDesk.unsent` runs before each endpoint decision in the match
+(relay-endpoint.ts:232) and in the tick for a refused deferred item, not when the outbound row ends. So the state forms
+fail between the loss of a row and the next decision. The rule that matters is that no decision reads a lost item as
+delivered: the ghost `staleRead` records every endpoint decision (text, share, photo) that can deliver and reads a
+lost item in the thread or as `contactShared`. Before the fix this ghost fills at once (`queueFail(a1)` then any
+request of B). The two state forms stay in the model as named values (section 4).
 
-| Property | Result | Register |
+`heldSlaAlerted` is new. It reads the ghost of the SLA check: every held item that waited past the SLA at the last
+check raised the alert. Before the fix `slaAlerts` read only the review queue, so this fails.
+
+### Properties outside `safety` (each simulated alone with the same seed and bounds)
+
+| Property | Result | Why it is outside `safety` |
 |---|---|---|
-| consentFreshAtDelivery | violated: a number goes 20 minutes after the consent | (by design, see below) |
-| heldDecidedInTime | violated: a held item waits past 60 minutes, with no alert | SD-133 |
-| noStuckKey | violated: a crash leaves the key `processing` | SD-093 |
-| heldAnswerHasRow | violated: a rate-only hold answers "held" with no held row | SD-426 |
+| noOneWayNumber | violated | SD-007, not in this fix batch (section 4) |
+| threadOnlyDelivered, contactSharedImpliesDelivered | violated | lazy sync by design; the decision form is in `safety` |
+| releaseReadsDelivered | violated | Q-relay-1 residual on the staff route (section 4) |
+| consentFreshAtDelivery | violated | by design: freshness is checked at decision time |
+| heldDecidedInTime | violated | by design: a held relay item does not expire; SD-133 is fixed by the alert |
+| noStuckKey | violated | SD-093, liveness, not in this batch |
+| heldAnswerHasRow | violated | SD-426, skipped (copy change) |
 
-`quint verify --invariant safety --max-steps 7` (Apalache) finds a counterexample in 8 s (the refused swap
-ask, SD-138, at step 2). The Apalache runs for the invariants that hold are in section 5.
+## 3. Defects: status and model changes
 
-## 3. Defects and traces
+| Id | Status | Commit | Model change | Run tests |
+|---|---|---|---|---|
+| SD-039 | fixed | e2a3043 | `commitWithdraw` adds `withdrawn` to each passed share of the member; `queueSend` refuses an item row whose record is `withdrawn` | `withdrawAfterSwapTest` |
+| SD-040 | fixed | 5b49e03 | `erase` also nulls rows of items relayed from the member (by their `relay_records` row) and ends the ones that wait | `erasedNumberGoneTest`, `erasedQueuedShareTest` |
+| SD-064 | fixed (flag half) | d77edd7 | `textDecision("minorClef")` sets `ageSignal`, so the held row keeps no text | `clefMinorNotKeptTest` |
+| SD-133 | fixed | 7226ac6 | new action `slaTick`; new invariant `heldSlaAlerted` | `heldSlaAlertTest` |
+| SD-137 | fixed | 65f8618 | `postCommitThrow` became `postCommitDeliverError`, which answers the committed decision | `postCommitDeliverErrorTest` |
+| SD-138 | fixed | 8da2400 | the swap ask is not deferred; a refused or quiet-hours ask logs nothing and leaves no swap; `queueSend` sends an ask only while its swap waits inside 15 minutes | `askRefusedTest`, `askQuietTest`, `askLateTest` |
+| SD-252 | fixed | 1457b23 | `syncUnsent` before each endpoint decision; `tickFlush` calls `unsentDesk` for refused deferred items | `unsentShareResetTest`, `deferredShareRefusedTest`, `oneWayDeferredTest` |
+| Q-relay-1 | fixed (endpoint path) | 1457b23 | the same sync removes the wording from the thread | `threadDropsUndeliveredTest` |
+| SD-320 | fixed (rate half) | 26731a6 | `LogRec.rateOnly`; `priorReplays` does not replay a rate-only hold, so `photoRequest` can run again | `photoRateHoldTest` |
+| SD-387 | fixed | f72d226 | `logPut` never drops the row of an item in status `held` | `logCapTest` |
+| SD-426 | skipped | - | none; `heldAnswerHasRow` stays outside `safety` | - |
 
-Traces are in short form: `action(args)`; time in minutes.
+Notes:
 
-### SD-007: a number swap goes one way (reproduced, three triggers)
+- SD-064: only the flag half is fixed. A relay age signal still does not change the member's age state. That needs a
+  founder decision on whether a Clef model guess alone may mark a member as a minor and drop them from matching. The
+  model has no age state change on this path.
+- SD-320: the safety-hold half is not reproduced. `relayPairAdmission` refuses a held party before the desk runs, so
+  no desk-held photo row is made (`photoHeldDecidable` holds).
+- SD-426: skipped. Copy change, not allowed. The rate-only hold is answered and not queued on purpose (relay.ts "the
+  member can try again"). A fix needs either a new notice text or a new behaviour that keeps the item and sends it
+  later (a feature outside scope, which needs a founder decision).
+- SD-138: an ask that the queue refuses (`relay:ask_expired`) after its swap completed or expired is correct: the
+  number shares themselves carry the swap from then on.
 
-Rule: "Both go out only when both pass and the first one was delivered, so nobody's number goes one way"
-(packages/network/src/relay.ts:284-286). The verdict for SD-007 is "refuted" because the deferral trigger was
-thought to need one share deferred and one sent. Quiet hours are per member
-(packages/engine/src/attention.ts:269-279, `m.quietHours`), so the model reaches it. It also reaches two
-other triggers. I recommend that the verdict is opened again.
+## 4. Open findings after the fixes
 
-1. Deferral (`oneWayDeferredTest`): `claim(a1,share) commitShare(a1)` -> `setQuiet(A,true)` ->
-   `claim(b1,share) commitShare(b1)`: A's number to B is queued, B's number to A is deferred
-   (relay.ts:248 answers "sent" for "deferred", so line 294 lets the second share go) -> `queueSend(a1)` ->
-   `blockPair` -> `setQuiet(A,false) tickFlush`: the deferred share is refused (network.ts:3272-3276).
-   B has A's number; A has nothing.
-2. Queue (`oneWayQueueTest`, outbound D2): both rows are queued; `queueSend(b1)`; `queueFail(a1)` (the
-   unanswered rule, a leak park or a provider failure). The simulator also found a variant: a safety hold
-   on A between the two admissions (`queueSend(b1) safetyHold(A) queueSend(a2)`).
-3. Inside one unit (`oneWayInUnitTest`): the first share is queued; `Network.send` refuses the second (the
-   conversation streak, network.ts:3884, or the leak guard). relay.ts:299 returns the refusal, but the first
-   share is already in the unit. B has A's number, and A is told "I can't swap numbers right now".
+### SD-007: a number swap still goes one way (open; not in this batch)
 
-### SD-039: withdrawal does not stop a queued number share (reproduced)
+`noOneWayNumber` is outside `safety` with a comment. The register verdict is "refuted"; the first version of this
+file asked to open it again. Four triggers are reachable:
 
-`withdrawAfterSwapTest`: both shares pass while both members are in quiet hours, so both wait in
-`Network.deferred` -> `claim(a2,withdraw) commitWithdraw(a2)`: `cancelSwaps` removes nothing
-(relay.ts:308-312; relay-endpoint.ts:216 ignores the count) and the answer is "Okay, I won't share your
-number" (relay-endpoint.ts:217) -> quiet hours end -> `tickFlush` -> `queueSend(a1)`. A's number goes. The
-tick (network.ts:3269-3276) and the admission (runtime.ts:238-269) read no withdrawal.
+1. Deferral (`oneWayDeferredTest`): B's share to A waits for A's quiet hours, B blocks A, the tick refuses it. A's
+   share to B already went. (The SD-252 fix now writes B's record as not shared.)
+2. Queue (`oneWayQueueTest`): one row goes, the other ends unsent.
+3. Inside one unit: `Network.send` refuses the second share after the first is queued.
+4. New with the SD-039 fix (`withdrawAfterSwapTest`): both shares pass in quiet hours, A withdraws, only A's share
+   is stopped. B's number still goes to A, who took the swap back.
 
-### SD-040: an erased member's number stays in the recipient's rows (reproduced)
+A fix needs a design decision on an all-or-nothing swap (for example, both rows wait until both are admitted, and a
+withdrawal or refusal of one stops the other). That is outside this step.
 
-`erasedNumberStaysTest`: the swap completes -> `erase(A)`. The forget path nulls only rows with
-`member_id = A` (runtime.ts:548-550). Row `a1` (to B) keeps A's number. The simulator also found the case
-where the row to B is still queued: admission refuses it later, but the body stays.
+### Q-relay-1 residual: a staff release reads the thread with no sync
 
-### SD-064: a text that Clef reads as a minor's is kept for staff (reproduced)
+`releaseReadsDelivered` (outside `safety`; `releaseReadsLostTest`). The staff release route (service.ts) does not
+call `relayUnsent` before `RelayDesk.release`, and the release decides again with the thread as context
+(relay.ts:389). A text that never went can still be in the thread then. The effect is low: it makes the release check
+stricter, not looser. The fix direction is to call the same sync in the staff release unit.
 
-`clefMinorKeptTest`: `claim(a1,text) commitText(a1, minorClef)`. The rules pass, Clef flags
-`clef:minor_signal` (engine relay.ts:433-444 keeps the rules' `ageSignal`, false), so the held row keeps the
-text (relay.ts:241-242). The model has no age state change on this path either, which is the second half of
-SD-064.
+### Lazy sync leaves stale rows when no decision comes
 
-### SD-133: held items have no SLA (reproduced, outside `safety`)
+`threadOnlyDelivered` and `contactSharedImpliesDelivered` fail for ever when no later endpoint decision comes in the
+match: the match closed, or a member was erased (the forget path drops deferred sends with no `unsent`). No decision
+reads them then, but `network.relay_records.contact_shared` can stay `true` for a share that never went.
 
-`heldDecidedInTime`: `commitText(.., hold)` then `timePass(20)` x4. The item stays `held`; no action in the
-code moves it or raises an alert (relay.ts:405-407 keeps `held` for ever).
+### Withdrawal and the log cap (not reachable in the bounds)
 
-### SD-137: a post-commit delivery error returns failure (reproduced)
+`cancelSwaps` marks only shares still in the in-memory log. A passed share whose log row the cap dropped (5000 newer
+rows in the match's app) keeps its `relay_records` row without `consent:withdrawn`. The model cannot reach it with 4
+requests; the gap is in the code.
 
-`postCommitThrowTest`: `claim(a1,text) commitText(a1,pass) postCommitThrow(a1)`. The unit committed the row,
-the log and the receipt `completed`; `rt.unitOfWork` then calls `deliver()` (runtime.ts:671-673), which can
-throw. The catch (relay-endpoint.ts:257-260) writes nothing, because the receipt is no longer `processing`,
-and answers 409 `action_unresolved`, `retryable:false`. The row still goes.
+### SD-137 residual: the answer read after commit
 
-### SD-138: the swap ask result is ignored, and the ask can arrive late (reproduced, both parts)
+`answer()` (relay-endpoint.ts:127-136) reads the outbound row after the unit committed. If that read fails, the same
+catch answers 409 `action_unresolved` though the effect committed. The model does not have this action; it needs a
+database error on a read.
 
-`askRefusedTest`: `commitShare(a1, refuseAsk)`. `host.send` refuses the ask (relay.ts:281 ignores the
-result); the swap still waits and A hears "I'll share your number as soon as they say".
-`askLateTest`: the ask row waits in the queue for 20 minutes and then goes; its text says "in the next 15
-minutes" (relay.ts:154), and the swap has expired (relay.ts:270).
+### SD-093: a crashed key stays `processing` (open; not in this batch)
 
-### SD-252: a failed number share stays `contactShared: true` (reproduced)
-
-`oneWayQueueTest` also breaks `contactSharedImpliesDelivered`: the log row of `a1` says `contactShared`
-(engine relay.ts:394) though the row ended unsent. `alreadyShared` (engine relay.ts:377) then blocks a new
-share for A in this match. The deferral trigger and erasure of the recipient do the same.
-
-### SD-320: desk-held photo items cannot be decided (partly reproduced)
-
-`photoRateHoldTest`: `selectPhoto reviewPhoto(safe) photoRequest(rate)`. A rate-only hold logs `hold` on the
-fixed id `pri_...` with no held row (relay.ts:236-238). Every later request and every staff release replays
-"held" (relay.ts:319-321, service.ts:2450-2452). The photo stays `approved` and cannot go, against the comment
-"the member can try again" (relay.ts:236).
-
-The model cannot reach the other half of SD-320 (a desk `held` row for a photo because a party is on a safety
-hold): `approvedForParty` -> `current()` -> `relayPhotoParties` -> `relayPairAdmission`
-(photo-relay.ts:103-110, runtime.ts:290-313) refuses a held party before the desk runs, and the desk reads the
-same stored state inside the same unit. `photoHeldDecidable` holds. The photo path is off in production.
-
-### SD-387: a held relay row can stay `held` in `relay_records` (reproduced at a scaled cap)
-
-`logCapTest` (LOG_MAX = 3 for 5000): a held item's log row is pushed out by newer rows (relay.ts:326-330);
-`staffReject` then changes only the held entry, and `relayRows` writes records only from the log
-(store.ts:146-162), so `network.relay_records.review` stays `held`.
-
-### SD-426: a rate notice says "held" for an item that is not kept (reproduced, outside `safety`)
-
-`heldAnswerHasRow`: a rate-only hold answers "held" and stores no held row (relay.ts:236-238). The comment
-says this is by design; the defect is the wording. Copy change, not a code defect for this step.
-
-### SD-093: a crashed key stays `processing` (reproduced, outside `safety`)
-
-`noStuckKey`: `claim(k) crash(k) replay(k)` answers 409 for ever (relay-endpoint.ts:197). No effect was
-committed, so at-most-once holds.
-
-### Q-relay-1 (new): the relay thread keeps wording that the other member never got
-
-Rule: "One relay thread per match: the delivered wording only" (packages/network/src/relay.ts:93) and engine
-relay.ts:495-500 ("The delivered wording").
-
-`threadKeepsUndeliveredTest`: `claim(a1,text) commitText(a1,pass)` -> `closeMatch` -> `queueSend(a1)`: the
-admission refuses the row, but `RelayDesk.deliver` (relay.ts:259-264) added the wording to the thread when
-`host.send` answered "sent" (queued) or "deferred". A deferred item that the tick later refuses does the same.
-The thread feeds the leak guard's split-number check (`recentTexts`, relay.ts:215) and the Clef context
-(relay.ts:224), so later decisions read text the recipient never saw. The effect is low: it makes decisions
-stricter, not looser. Fix direction: add the wording to the thread only when the row is admitted, or remove
-it when the send ends unsent.
+`noStuckKey`: `claim(k) crash(k) replay(k)` answers 409 for ever. No effect was committed, so at-most-once holds.
 
 ### Consent freshness at delivery (not a defect)
 
-`consentFreshAtDelivery` fails: a share decided inside the 15-minute TTL is delivered 20 minutes later after
-quiet hours. The engine checks freshness at decision time (engine relay.ts:319-324), and deferral is by design
-("I'll pass that on when it's a reasonable hour", relay.ts:152). Withdrawal is the real gap (SD-039).
+A share decided inside the 15-minute TTL can be delivered later after quiet hours. The engine checks freshness at
+decision time, and deferral is by design. Withdrawal now stops a waiting share (SD-039).
 
-## 4. Register defects of this module not reproduced
+## 5. Register defects of this module not reproduced
 
 | Id | Why |
 |---|---|
-| SD-007 deferral trigger | Reproduced (section 3); the register verdict should be opened again. |
-| SD-319 | The model agrees that `review === "rejected"` with `decision === "pass"` is unreachable (a reject never changes the decision). |
-| SD-321, SD-374, SD-375 | Photo states with no transition after expiry or a revoke over a rejection change nothing that the model's invariants read; the fixed delivery deadline is modelled and fails closed. |
-| SD-332 | The endpoint receipt stops a replay of the same signed request before the desk; the model has no path to the desk with an old item id. |
+| SD-319 | `review === "rejected"` with `decision === "pass"` is unreachable (a reject never changes the decision). |
+| SD-321, SD-374, SD-375 | Photo states with no transition after expiry or a revoke over a rejection change nothing that the invariants read; the fixed delivery deadline is modelled and fails closed. |
+| SD-332 | The endpoint receipt stops a replay of the same signed request before the desk. |
 | SD-445 | Copy promise while the RELAY flag is off: outside the relay machine. |
 
-## 5. Apalache
+## 6. Apalache
 
-`quint verify --invariant safety --max-steps 7`: counterexample in 8 s (SD-138, two steps). Runs of the
-invariants that hold, `--max-steps 6`, on a private Apalache port (the shared default port dropped the
-connection while other sessions used it): see the results appended below.
+The model header sets `verify-steps=3` (it was 7). The first version found a counterexample at step 2 in 8 s, so 7
+steps did not cost much then. With every invariant holding, Apalache must explore every path:
+
+| Command | Result |
+|---|---|
+| `quint verify ... --invariant safety --max-steps 3` | no violation, 27 s (also through `bun run quint:check --verify`) |
+| `quint verify ... --invariant safety --max-steps 4 --server-endpoint localhost:18847` | no violation up to the last invariant checks of state 4, when the 580 s limit stopped the run; not finished |
+| `quint verify ... --invariant safety --max-steps 7 --server-endpoint localhost:18847` | stopped after 30 min with no result |
+
+The default Apalache port (8822) is shared with other sessions on this machine and once dropped the connection
+("Connection dropped"); the runs above with `--server-endpoint` used a private port. The random simulation (10000
+traces of 25 steps) covers the longer traces.
