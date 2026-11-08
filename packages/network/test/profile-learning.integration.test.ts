@@ -63,3 +63,16 @@ test("a STOP in the consent ledger blocks collect and accept before the projecti
   expect(await sql`select id from network.facets`).toHaveLength(0);
   expect(await sql`select id from platform.profile_suggestion_batches`).toHaveLength(1);
 });
+
+// SD-240: the store accepts a future Calendar event start by design; the review must show it and let the member decide.
+test("a batch with a future Calendar event renders, and the member can reject its rows", async () => {
+  const eventStart = now + 3_600_000;
+  const calendar: SourceSuggestion = { ...gmail(), source: "google_calendar", observedAt: eventStart, value: "I enjoy group walks", tags: ["walking"] };
+  const batch = (await store.propose(owner, input([gmail(), calendar], eventStart + 1000), now))!;
+  expect(batch.suggestions).toHaveLength(2);
+  const text = renderSuggestionReview(batch, owner, now);
+  expect(text).not.toBeNull();
+  const index = batch.suggestions.findIndex(s => s.source === "google_calendar") + 1;
+  expect(await reviewSuggestionMessage(store, owner, batch.id, `reject ${batch.id}.${batch.revision} ${index}`, now))
+    .toMatchObject({ kind: "saved", rejected: [batch.suggestions[index - 1]!.id] });
+});
