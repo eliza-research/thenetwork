@@ -106,6 +106,8 @@ Local platform (`bun run platform:dev`, sends dry-run, a fresh dev database), sl
 |---|---|---|---|
 | OpenAI Codex CLI 0.149.1 | OpenAI, gpt-5.6-sol, reasoning high (the configured gpt-6.1-sol is not available on this account) | Signup: read the skill, `/api/app`, profile in conversation, consent, OTP start, code, verify, `/api/join`, export | Pass. Membership active. The client noted that the export does not show the age; `exportApp` is unchanged from a0ed7bc, so this is older than this work. |
 | OpenAI Codex CLI 0.149.1 | as above | Sign-in after a staff ban by phone | Pass. OTP start answered as for any number, no code was issued (none in the dev log), the old code was refused, no session. |
-| Claude Code 2.1.246 | not run | | The CLI login has expired (`OAuth session expired`). It needs the owner to sign in. |
+| Claude Code desktop app (Code tab) | Anthropic, claude-opus-5-5 | Signup by the skill steps with HTTP calls and a private cookie jar: `/api/app`, `/api/me` 401, `/api/auth/mode` otp, OTP start, verify once, `/api/join` once, `/api/me`, `/api/me/export`. Fictional (415) 555-0143, Mission, region `sf` | Pass. Membership active, `home.homeCity` and the stored profile are `sf`, the biography matches. Caveat: this agent also wrote this change, so it knew the code. |
+| Claude Code desktop app (Code tab) | as above | Staff ban by phone, then the old session, a new code and the old code | Pass. The old session gets 403 on `/api/me` and `/api/me/export`. OTP start answers `ok:true` and issues no code. The old code is refused (400) and no session opens. |
+| Claude Code CLI 2.1.246 | not run | | The CLI login has expired (`OAuth session expired`). It needs the owner to sign in. |
 
 STOP and "leave <app>" are text commands and are not part of an agent client flow. The integration tests and the sims cover them.
