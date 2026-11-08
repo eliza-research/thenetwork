@@ -293,3 +293,15 @@ test("SD-488: the reply to a staff invite with name and age joins the invited ap
   expect(r.app).toBe("friends");
   expect(await liveMemberships(phone)).toEqual(["friends"]);
 }, 60_000);
+
+test("Q-join_age-1: the bare answer \"friends\" to the looking-for question enrolls, not a new join", async () => {
+  const phone = "+12125550320";
+  await say(phone, "hi");
+  const joined = await say(phone, "Sam, 25");
+  expect(joined.reason).toBe("joined");
+  const r = await say(phone, "friends");
+  expect(r.app).toBe("ntwrk");
+  expect(r.reason).not.toBe("join_asked");
+  expect(await (service as any).pendingOf(phone, "join")).toBeUndefined();
+  expect((await liveMemberships(phone)).sort()).toEqual(["friends", "ntwrk"]);
+}, 60_000);

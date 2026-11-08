@@ -946,7 +946,8 @@ export class NetworkService implements RuntimeHost {
   /**
    * The app of an inbound message on the shared line (platform plan 4.4, founder decision 2):
    *  1. a per-app webhook path or a line in platform.app_lines names the app;
-   *  2. the whole message is an app's word ("slop", "slop.date", "join friends.help"): that app;
+   *  2. the whole message is an app's word ("slop", "slop.date", "join friends.help"): that app, except as the
+   *     answer of a member of The Network to "what are you looking for?" (The Network enrolls them);
    *  3. a join the person started (they sent the app's word) takes the answer that follows, if the
    *     answer reads as a join answer or the person is not a member anywhere;
    *     the same for an app that invited the person (a staff invite);
@@ -965,9 +966,11 @@ export class NetworkService implements RuntimeHost {
     const read = profileReadRequest(ev.text, this.apps);
     if (read?.kind === "read" && read.app) return { app: read.app, shared: true };
     const named = this.namedApp(ev.text);
-    if (named) return { app: named, shared: true };
     const mine = (await this.memberApps(ev.from)).filter(x => this.runtimeFor(x.app));
     const e164 = normalizePhone(ev.from);
+    // The bare answer "friends" to The Network's "what are you looking for?" is that answer, not a new join.
+    if (named && named !== "ntwrk" && e164 && mine.some(x => x.app === "ntwrk") && (await this.pendingOf(e164, "looking_for"))) return { app: "ntwrk", shared: true };
+    if (named) return { app: named, shared: true };
     const pending = e164 ? await this.pendingOf(e164, "join") : undefined;
     if (pending && !mine.some(x => x.app === pending.app)
       && (!mine.length || parseJoinText(ev.text, this.appWords(), true).age !== undefined)) return { app: pending.app, shared: true };
@@ -1118,7 +1121,8 @@ export class NetworkService implements RuntimeHost {
       if (!kw && e164 && /^\s*share\W*$/i.test(ev.text) && (await this.pendingOf(e164, "share", app.id))) return this.share(rt, app, memberId, e164, ev, rowId);
       // The answer to The Network's "what are you looking for?": enroll in the apps they named.
       if (!kw && !profileRead && e164 && app.id === "ntwrk" && (await this.pendingOf(e164, "looking_for"))) {
-        const wants = lookingFor(ev.text).filter(a => a !== "ntwrk" && this.runtimeFor(a));
+        const named = this.namedApp(ev.text);
+        const wants = [...new Set([...lookingFor(ev.text), ...(named ? [named] : [])])].filter(a => a !== "ntwrk" && this.runtimeFor(a));
         if (wants.length) {
           // The answer is read like any other message first (ages, minor signals, reports, blocks):
           // an age stated in it counts before any app is joined.
