@@ -91,11 +91,18 @@ export class Inbox {
       // A turn whose worker stopped (no completion within the lease) is unresolved, not processing forever.
       await tx`update platform.inbound set status='unresolved',event=null,sender=null
         where sender_hash=${senderHash} and status='processing' and request_hash is not null and arrived_at<${new Date(now - PROCESSING_LEASE_MS)}`;
-      return tx`insert into platform.inbound(id,line,sender,received_at,arrived_at,event,status,request_hash,sender_hash,network_authority)
+      const inserted = await tx`insert into platform.inbound(id,line,sender,received_at,arrived_at,event,status,request_hash,sender_hash,network_authority)
       select ${id},null,null,${new Date(input.receivedAt)},${new Date(now)},null,'processing',${requestHash},${senderHash},${input.networkAuthority ?? null}::jsonb
       where ${admitUntil === undefined || now < admitUntil} and not exists(select 1 from platform.inbound where sender_hash=${senderHash} and (status='processing'
         or (not ${keyword} and (status='pending' or (status='unresolved' and arrived_at>${new Date(now - UNRESOLVED_BLOCK_MS)})))))
       on conflict do nothing returning id`;
+      if (inserted.length || !keyword) return inserted;
+      // A compliance turn that never answered (its worker died, or staff resolved it) runs again on the retry of
+      // the same request: the consent ledger and the member's unit are idempotent per message.
+      return tx`update platform.inbound set status='processing',arrived_at=${new Date(now)},sender_hash=${senderHash}
+        where id=${id} and request_hash=${requestHash} and status='unresolved' and handled_at is null and response is null
+        and ${admitUntil === undefined || now < admitUntil} and not exists(select 1 from platform.inbound where sender_hash=${senderHash} and status='processing')
+        returning id`;
     });
     if (!wrote.length) {
       const [prior] = await this.o.sql`select request_hash,status,response from platform.inbound where id=${id}`;
