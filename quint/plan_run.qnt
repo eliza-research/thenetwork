@@ -1,15 +1,16 @@
 // -*- mode: Bluespec; -*-
-// quint-check: max-steps=40 max-samples=20000 verify-steps=8
+// quint-check: max-steps=40 max-samples=50000 verify-steps=8
 //
 // The plan run, the plan fallback and the crew offer and sessions (docs/research/2026-11-07-state-machines.md
 // section 6.7: M-045 plan-run, M-046 plan-fallback, M-124 crew-offer-and-crew).
 //
 // Code: packages/engine/src/plans.ts (startPlanRun, recordPlanAnswer, checkPlanDeadline, planFallback,
-// crewOptIn, crewSessionPlan) and packages/network/src/network.ts (submitPlan 2925, beginPlan 2940,
-// planLane 2952, planProbe 2966, planAnswer 3008, planAct 3018, bookPlan 3041, planReveal 3076, planJoin 3091,
-// planFallback 3109, planOut 3133, crewCheck 3162, onCrewAnswer 3192, resolveCrew 3203, crewSessions 3220,
-// advance 3352, handleDrop 2512, close 2532, dropMember 2564, checkRecipient 4219, busy 4373, bookedNear 2869,
-// onPlanProbeAnswer 2340, applyBlock 1426, the reveal and plan_probe send hooks 4076-4100, intro reveal 2411).
+// crewOptIn, crewSessionPlan) and packages/network/src/network.ts (submitPlan 2945, beginPlan 2964,
+// planLane 2976, planProbe 2990, planDeadline 3032, planAnswer 3039, planAct 3051, bookPlan 3076, planReveal 3122,
+// planJoin 3137, planFallback 3151, planOut 3183, crewCheck 3212, onCrewAnswer 3242, resolveCrew 3252,
+// crewSessions 3270, handleDrop 2525, close 2550, dropMember 2588, checkRecipient 4265, bookedNear 2893,
+// onPlanProbeAnswer 2351, applyBlock 1423, the reveal and plan_probe send hooks 4125-4150, intro reveal 2425).
+// The model follows the code at the commit that adds this note (branch wave2/plan_run).
 //
 // The ConsentNetwork is in memory and has no await between the calls of one handler, so one inbound message,
 // one tick or one actor event is one action. The send window, the one-a-day rule and the allowance only
@@ -29,8 +30,10 @@
 //    plan's time: evidence() counts only scheduled items as away (network.ts:2285), so an intro may pick it.
 //  - The crew machine runs on its own: one crew offer to a, b, c, then sessions by abstract week slot.
 //
-// Register defects this model reproduces (each invariant names its id): SD-008, SD-078, SD-046, SD-204,
-// SD-268, SD-423, SD-479, SD-480, SD-144, SD-444, and the new Q-plan_run-1. See docs/research/quint-findings/plan_run.md.
+// The model follows the code after the fixes for SD-008, SD-046, SD-078, SD-144, SD-204, SD-268, SD-423,
+// SD-444 (counting), SD-480, Q-plan_run-1 and Q-plan_run-2. Each invariant names its defect id. SD-479 and the
+// notice part of SD-444 are skipped (founder decisions): their invariants stay out of `safety` (see below).
+// See docs/research/quint-findings/plan_run.md.
 module plan_run {
 
   // ------------------------------------------------------------------------------------------------
@@ -40,7 +43,8 @@ module plan_run {
   pure val INVITED = Set("a", "b", "c", "d")   // a group plan invites up to size.target (3-6), quorum 3
   pure val BENCH0 = ["e"]
   pure val CREW0 = Set("a", "b", "c")
-  pure val QUORUM = 3          // DEFAULT_PLANS.quorum.group (engine/src/config.ts:497)
+  pure val QUORUM = 3          // DEFAULT_PLANS.quorum.group (engine/src/config.ts:497); a run may also use 4
+  pure val GROUP_MIN = 3       // a group plan is 3-6 people (D15, PRD 33.4)
   pure val D = 4               // plan.probeDeadline
   pure val S = 10              // plan.window.start
   pure val LATEJOIN = 3        // pcfg.lateJoinHours
@@ -73,6 +77,7 @@ module plan_run {
     msgs: Set[Msg],
     // ghosts
     named: Set[(str, str)],     // (learner, named member): a reveal named that member to the learner
+    earlyName: bool,            // a reveal named someone before a group of GROUP_MIN yes-sayers was seated
     promised: Set[str],         // heard "Great, thanks. I'll tell you once enough people are in." (network.ts:2347)
     told: Set[str],             // heard how the plan ended for them (reveal, note, event, cancel notice)
     excused: Set[str],          // left on their own or by policy (STOP, minor, watch, block, "can't make it")
@@ -80,12 +85,13 @@ module plan_run {
     staleRefused: Set[str],     // probe refused only because of a member who is no longer in the run
     lateYesBooked: bool,        // a yes after the probe deadline booked the plan
     fallbackKind: str,          // none | smaller | solo_event | next_week | "" (no fallback ran)
+    partnerAsked: Set[str],     // the pair of a group plan that fell to two: a fresh partner plan was submitted
     closedReason: str           // o.closedReason
   }
 
   type Env = {
     now: int, optedOut: Set[str], watch: Set[str], minors: Set[str], blocks: Set[(str, str)],
-    intro: str -> str, minSize: int,
+    intro: str -> str, minSize: int, quorum: int,
     // oracles
     streakBad: Set[str], eventExists: bool
   }
@@ -103,6 +109,7 @@ module plan_run {
   var minors: Set[str]
   var blocks: Set[(str, str)]
   var minSize: int
+  var quorum: int              // plan.quorum: 3 (the default) or 4
   var intro: str -> str        // none | probing | yes | booked (an intro booked at the plan's time)
   // crew (network.ts:3162-3237, engine/src/plans.ts:664-740)
   var crewStage: str           // offered | formed | none
@@ -168,6 +175,10 @@ module plan_run {
   /** noteFor (network.ts:3130): a note folded into the member's next message. Counted as told. */
   pure def note(o: Opp, ids: Set[str]): Opp = { ...o, told: o.told.union(ids) }
 
+  /** bookPlan's `tell` (network.ts:3099): the note, never to a minor or a member on watch (SD-480 fixed). */
+  pure def noteLeft(e: Env, o: Opp, ids: Set[str]): Opp =
+    note(o, ids.filter(id => not(e.minors.contains(id)) and not(e.watch.contains(id))))
+
   // ------------------------------------------------------------------------------------------------
   // Engine: recordPlanAnswer (engine/src/plans.ts:568-591), group plans only, and without opts.canMatch
   // (network.ts:3011 passes none).
@@ -183,8 +194,8 @@ module plan_run {
         else ({ ...o1, answers: a1.put(m, "late") }, NONE)
       } else {
         val y = yesOf(a1)
-        // No deadline check here: a yes at any time while probing books (SD-423).
-        if (y.size() >= QUORUM) ({ ...o1, runStage: "booked" }, { kind: "book", member: "", going: y })
+        // No deadline check here (plans.ts:577-578): the network runs planDeadline before the answer (SD-423).
+        if (y.size() >= e.quorum) ({ ...o1, runStage: "booked" }, { kind: "book", member: "", going: y })
         else (o1, NONE)
       }
     } else if (o.runStage == "booked") (o1, NONE)
@@ -193,7 +204,7 @@ module plan_run {
       val nx = o.bench.head()
       ({ ...o1, bench: o.bench.tail(), answers: a1.put(nx, "pending") }, { kind: "backfill", member: nx, going: Set() })
     }
-    else if (pendingOf(a1).size() == 0 and yesOf(a1).size() < QUORUM) ({ ...o1, runStage: "closed" }, { kind: "fallback", member: "", going: Set() })
+    else if (pendingOf(a1).size() == 0 and yesOf(a1).size() < e.quorum) ({ ...o1, runStage: "closed" }, { kind: "fallback", member: "", going: Set() })
     else (o1, NONE)
   }
 
@@ -216,7 +227,8 @@ module plan_run {
     val o1 = { ...withStatus(o, Set(m), "dropped"),
                answers: if (o.runStage != "none") o.answers.put(m, "no") else o.answers }
     val still = yesMembers(o1)
-    val keep = o1.participants.size() > 2 and still.size() >= 2
+    // A group stays on with 3 or more yes (network.ts:2538, SD-078 fixed).
+    val keep = still.size() >= 3
     val o2 = still.intersect(o1.bookedTold).fold(o1, (acc, id) => tell(e, acc, id, "dropNotice"))
     if (keep) o2 else { ...o2, stage: "closed" }
   }
@@ -229,7 +241,8 @@ module plan_run {
       if (checkRecipient(e, id, going)._1 == "ok") {
         val o1 = send(e, o, id, "reveal", going)
         { ...o1, bookedTold: o1.bookedTold.union(Set(id)), told: o1.told.union(Set(id)),
-                 named: o1.named.union(going.exclude(Set(id)).map(x => (id, x))) }
+                 named: o1.named.union(going.exclude(Set(id)).map(x => (id, x))),
+                 earlyName: o1.earlyName or going.size() < GROUP_MIN or going.exists(x => getOr(o.answers, x, "") != "yes") }
       }
       // onRefused: the plan cannot stand without them (network.ts:4087).
       else handleDrop(e, o, id, false)
@@ -241,18 +254,20 @@ module plan_run {
    */
   pure def bookPlanCore(e: Env, o: Opp, going: Set[str], fromFallback: bool): (Opp, str) = {
     val keep1 = going.filter(id => not(bookedNear(e, id)))
-    val o1 = withStatus(o, going.exclude(keep1), "unavailable")   // plan_conflict, never told (SD-480)
+    val o1 = withStatus(o, going.exclude(keep1), "unavailable")   // plan_conflict
     val seated = keep1.fold(Set(), (acc, id) =>
       if (checkRecipient(e, id, acc.union(Set(id)))._1 == "ok" and not(e.streakBad.contains(id))) acc.union(Set(id)) else acc)
-    val o2 = withStatus(o1, keep1.exclude(seated), "unavailable")   // refused at reveal check, never told (SD-480)
-    // A group plan with groupSize[0] <= 2 books two people (SD-008).
-    val enough = seated.size() >= QUORUM or (seated.size() >= 2 and e.minSize <= 2)
+    val o2 = withStatus(o1, keep1.exclude(seated), "unavailable")   // refused at the reveal check
+    val left = going.exclude(seated)                               // both kinds are told (SD-480 fixed)
+    // A smaller group of 3 or more is booked; a group plan is never booked as a pair (network.ts:3101, SD-008 fixed).
+    val enough = seated.size() >= e.quorum or (seated.size() >= GROUP_MIN and e.minSize <= 2)
     if (not(enough)) {
       val o3 = { ...o2, runStage: "closed" }
-      if (fromFallback or seated.size() < 2) (closeF(e, note(o3, seated), "plan did not come together"), "closed")
+      if (fromFallback or seated.size() < 2) (closeF(e, noteLeft(e, note(o3, seated), left), "plan did not come together"), "closed")
+      // planFallback tells every yes-sayer, the left-out ones too.
       else (o3, "fallback")
     } else {
-      val o3 = { ...withStatus(o2, seated, "yes"), stage: "scheduled", runStage: "booked", seated: seated }
+      val o3 = { ...withStatus(noteLeft(e, o2, left), seated, "yes"), stage: "scheduled", runStage: "booked", seated: seated }
       (seated.fold(o3, (acc, id) => planReveal(e, acc, id)), "booked")
     }
   }
@@ -262,9 +277,13 @@ module plan_run {
     val o1 = { ...o, runStage: "closed" }
     val yes = yesOf(o1.answers)
     if (yes.size() == 0) closeF(e, { ...o1, fallbackKind: "none" }, "plan did not come together")
-    else if (yes.size() >= 2 and e.minSize <= 2 and S - e.now > LATEJOIN)
-      // fallback.partnerPlan (fresh one-to-one consent) is ignored: the yes-sayers are booked (SD-008).
-      bookPlanCore(e, { ...o1, fallbackKind: "smaller" }, yes, true)._1
+    else if (yes.size() >= 2 and e.minSize <= 2 and S - e.now > LATEJOIN) {
+      if (yes.size() == 2)
+        // Exactly two: the plan closes and a fresh partner plan is submitted for review (network.ts:3160-3168,
+        // SD-008 fixed). The two hear "that plan didn't come together" (Q-plan_run-2 fixed).
+        { ...note(closeF(e, { ...o1, fallbackKind: "smaller" }, "plan did not come together"), yes), partnerAsked: yes }
+      else bookPlanCore(e, { ...o1, fallbackKind: "smaller" }, yes, true)._1
+    }
     else if (e.eventExists) {
       val c = closeF(e, { ...o1, fallbackKind: "solo_event" }, "plan did not come together")
       yes.fold(c, (acc, id) => tell(e, acc, id, "planEvent"))
@@ -276,7 +295,7 @@ module plan_run {
     if (r._2 == "fallback") planFallbackF(e, r._1) else r._1
   }
 
-  /** planJoin (network.ts:3091): a late yes after booking. The reveal goes to the joiner only (SD-479). */
+  /** planJoin (network.ts:3137): a late yes after booking. The reveal goes to the joiner only (SD-479, skipped). */
   pure def planJoin(e: Env, o: Opp, j: str): Opp =
     if (bookedNear(e, j) or checkRecipient(e, j, yesMembers(o))._1 != "ok") withStatus(o, Set(j), "unavailable")
     else planReveal(e, withStatus(o, Set(j), "yes"), j)
@@ -286,7 +305,8 @@ module plan_run {
     if (act.kind == "book") bookPlanMain(e, o, act.going)
     else if (act.kind == "join") planJoin(e, o, act.member)
     else if (act.kind == "backfill")
-      { ...withStatus(o, Set(act.member), "probing"),
+      // The alternate joins plan.invited, so the probe copy is built for them (network.ts:3059, SD-204 fixed).
+      { ...withStatus(o, Set(act.member), "probing"), invited: o.invited.union(Set(act.member)),
         participants: o.participants.union(Set(act.member)), alternates: o.alternates.exclude(Set(act.member)) }
     else if (act.kind == "fallback") planFallbackF(e, o)
     else o
@@ -298,7 +318,9 @@ module plan_run {
       val r = record(e, o, m, yes)
       val o1 = withStatus(r._1, Set(m), if (yes) "available" else if (silent) "unavailable" else "no")
       val o2 = { ...o1, lateYesBooked: o1.lateYesBooked or (yes and r._2.kind == "book" and e.now >= D) }
-      planAct(e, o2, r._2)
+      // A yes after the late-join cutoff is out and hears so in the next message (network.ts:3047, Q-plan_run-1 fixed).
+      if (getOr(o2.answers, m, "") == "late") note(withStatus(o2, Set(m), "unavailable"), Set(m))
+      else planAct(e, o2, r._2)
     }
 
   /** planOut (network.ts:3133). */
@@ -324,18 +346,19 @@ module plan_run {
     }
 
   /**
-   * planProbe (network.ts:2966) once the plan lane lets it go out: seat check, the probe copy
+   * planProbe (network.ts:2990) once the plan lane lets it go out: seat check, the probe copy
    * (buildPlanProbe returns null for a recipient not in plan.invited, engine/src/plans.ts:488, or when the
-   * leak gate drops every frame: copyOk), then send() with about = o.plan.invited (network.ts:2995) and the
-   * send-time leak guard (leakOk).
+   * leak gate drops every frame: copyOk), then send() with about = the participants still in the plan
+   * (status not no, unavailable or dropped: network.ts:3019, SD-046 fixed) and the send-time leak guard (leakOk).
    */
   pure def probeF(e: Env, o: Opp, m: str, copyOk: bool, leakOk: bool): Opp =
     if (not(seatOk(e, m))) planAnswerF(e, o, m, false, true)
     else if (not(o.invited.contains(m)) or not(copyOk)) planAnswerF(e, o, m, false, true)   // refuse "plan_copy"
     else {
-      val chk = checkRecipient(e, m, o.invited)
+      val about = o.participants.filter(x => not(Set("no", "unavailable", "dropped").contains(getOr(o.status, x, ""))))
+      val chk = checkRecipient(e, m, about)
       if (chk._1 == "ok" and leakOk) {
-        val o1 = send(e, o, m, "probe", o.invited)
+        val o1 = send(e, o, m, "probe", about)
         { ...o1, contacted: o1.contacted.union(Set(m)), sentAt: o1.sentAt.put(m, e.now) }
       } else {
         val stale = chk._1 == "other" and chk._2.forall(x => not(live(o, x)))
@@ -344,14 +367,18 @@ module plan_run {
       }
     }
 
-  /** advance (network.ts:3352-3368, 3405-3412) for the plan: probe silence, the deadline, the meeting is over. */
+  /** planDeadline (network.ts:3032): at the probe deadline without quorum, the fallback runs. */
+  pure def planDeadlineF(e: Env, o: Opp): Opp =
+    if (o.stage == "probing" and o.runStage == "probing" and e.now >= D) planFallbackF(e, { ...o, runStage: "closed" }) else o
+
+  /** advance (network.ts:3400-3420) for the plan: probe silence, the deadline, the meeting is over. */
   pure def tickF(e: Env, o: Opp): Opp = {
     val active = o.runStage != "none" and (o.stage == "probing" or o.stage == "scheduled")
     val o1 = if (not(active)) o else MEMBERS.fold(o, (acc, p) =>
       if (getOr(acc.answers, p, "") == "pending" and acc.sentAt.keys().contains(p) and e.now >= acc.sentAt.get(p) + PROBE_TTL)
         planAnswerF(e, acc, p, false, true)
       else acc)
-    val o2 = if (o1.stage == "probing" and o1.runStage == "probing" and e.now >= D) planFallbackF(e, { ...o1, runStage: "closed" }) else o1
+    val o2 = planDeadlineF(e, o1)
     if (o2.stage == "scheduled" and e.now >= S + 1)
       withStatus({ ...o2, stage: "done" }, pendingOf(o2.answers), "unavailable")
     else o2
@@ -361,7 +388,7 @@ module plan_run {
   // Environment record from the state
 
   def envOf(streakBad: Set[str], eventExists: bool): Env = {
-    now: now, optedOut: optedOut, watch: watch, minors: minors, blocks: blocks, intro: intro, minSize: minSize,
+    now: now, optedOut: optedOut, watch: watch, minors: minors, blocks: blocks, intro: intro, minSize: minSize, quorum: quorum,
     streakBad: streakBad, eventExists: eventExists
   }
   def env0: Env = envOf(Set(), false)
@@ -381,21 +408,22 @@ module plan_run {
   pure val OPP0: Opp = {
     stage: "review", runStage: "none", answers: Map(), bench: BENCH0, participants: INVITED, alternates: Set("e"),
     invited: Set(), status: Map(), contacted: Set(), sentAt: Map(), bookedTold: Set(), msgs: Set(),
-    named: Set(), promised: Set(), told: Set(), excused: Set(), seated: Set(), staleRefused: Set(),
-    lateYesBooked: false, fallbackKind: "", closedReason: ""
+    named: Set(), earlyName: false, promised: Set(), told: Set(), excused: Set(), seated: Set(), staleRefused: Set(),
+    lateYesBooked: false, fallbackKind: "", partnerAsked: Set(), closedReason: ""
   }
 
-  action initWith(ms: int): bool = all {
-    now' = 0, plan' = OPP0, optedOut' = Set(), watch' = Set(), minors' = Set(), blocks' = Set(), minSize' = ms,
+  action initWith(ms: int): bool = initQ(ms, QUORUM)
+  action initQ(ms: int, q: int): bool = all {
+    now' = 0, plan' = OPP0, optedOut' = Set(), watch' = Set(), minors' = Set(), blocks' = Set(), minSize' = ms, quorum' = q,
     intro' = MEMBERS.mapBy(_ => "none"),
     crewStage' = "offered", crewYes' = Set(), crewNo' = Set(), crewMembers' = CREW0, crewTold' = Set(),
     crewSessions' = List(), crewOpps' = Map(), crewOppSlot' = Map(), crewWeek' = 0, crewHandedOff' = false,
     crewEndTold' = false,
   }
-  action init = { nondet ms = Set(2, 3).oneOf() initWith(ms) }
+  action init = { nondet ms = Set(2, 3).oneOf() nondet q = Set(3, 4).oneOf() initQ(ms, q) }
 
   action keepEnv = all {
-    optedOut' = optedOut, watch' = watch, minors' = minors, blocks' = blocks, minSize' = minSize, intro' = intro,
+    optedOut' = optedOut, watch' = watch, minors' = minors, blocks' = blocks, minSize' = minSize, quorum' = quorum, intro' = intro,
   }
   action keepCrew = all {
     crewStage' = crewStage, crewYes' = crewYes, crewNo' = crewNo, crewMembers' = crewMembers, crewTold' = crewTold,
@@ -432,12 +460,18 @@ module plan_run {
     now' = now, keepEnv, keepCrew,
   }
 
-  /** The member answers the probe (onPlanProbeAnswer, network.ts:2340); m.awaiting routes it while the opp is open. */
+  /**
+   * The member answers the probe (onPlanProbeAnswer, network.ts:2351); m.awaiting routes it while the opp is
+   * open. planDeadline runs first: when it closes the plan, the answer is not counted and gets no ack, and a
+   * yes gets the "didn't come together" note (SD-423 fixed).
+   */
   action answer(m: str, yes: bool, streakBad: Set[str], eventExists: bool): bool = all {
     plan.contacted.contains(m), getOr(plan.answers, m, "") == "pending",
     plan.stage == "probing" or plan.stage == "scheduled", not(optedOut.contains(m)),
-    val o = if (yes) { ...plan, promised: plan.promised.union(Set(m)) } else plan
-    plan' = planAnswerF(envOf(streakBad, eventExists), o, m, yes, false),
+    val e = envOf(streakBad, eventExists)
+    val o0 = planDeadlineF(e, plan)
+    plan' = if (o0.stage == "closed") (if (yes) note(o0, Set(m)) else o0)
+            else planAnswerF(e, if (yes) { ...o0, promised: o0.promised.union(Set(m)) } else o0, m, yes, false),
     now' = now, keepEnv, keepCrew,
   }
 
@@ -465,7 +499,7 @@ module plan_run {
     val e = { ...env0, optedOut: optedOut.union(Set(m)) }
     plan' = dropMember(e, plan, m, false),
     optedOut' = optedOut.union(Set(m)),
-    now' = now, watch' = watch, minors' = minors, blocks' = blocks, minSize' = minSize, intro' = intro, keepCrew,
+    now' = now, watch' = watch, minors' = minors, blocks' = blocks, minSize' = minSize, quorum' = quorum, intro' = intro, keepCrew,
   }
 
   /** Trust goes to watch (onTrustChange, network.ts:1188): dropMember. */
@@ -474,7 +508,7 @@ module plan_run {
     val e = { ...env0, watch: watch.union(Set(m)) }
     plan' = dropMember(e, plan, m, false),
     watch' = watch.union(Set(m)),
-    now' = now, optedOut' = optedOut, minors' = minors, blocks' = blocks, minSize' = minSize, intro' = intro, keepCrew,
+    now' = now, optedOut' = optedOut, minors' = minors, blocks' = blocks, minSize' = minSize, quorum' = quorum, intro' = intro, keepCrew,
   }
 
   /** A minor signal (network.ts:721): dropMember with the minors policy. */
@@ -483,7 +517,7 @@ module plan_run {
     val e = { ...env0, minors: minors.union(Set(m)) }
     plan' = dropMember(e, plan, m, true),
     minors' = minors.union(Set(m)),
-    now' = now, optedOut' = optedOut, watch' = watch, blocks' = blocks, minSize' = minSize, intro' = intro, keepCrew,
+    now' = now, optedOut' = optedOut, watch' = watch, blocks' = blocks, minSize' = minSize, quorum' = quorum, intro' = intro, keepCrew,
   }
 
   /** A member blocks another (applyBlock, network.ts:1426): an open opportunity with both is closed. */
@@ -498,26 +532,30 @@ module plan_run {
       else o1
     plan' = if (both) closeF(e, o2, "blocked") else plan,
     blocks' = blocks.union(Set((m, x))),
-    now' = now, optedOut' = optedOut, watch' = watch, minors' = minors, minSize' = minSize, intro' = intro, keepCrew,
+    now' = now, optedOut' = optedOut, watch' = watch, minors' = minors, minSize' = minSize, quorum' = quorum, intro' = intro, keepCrew,
   }
 
   /** An intro probe reaches a plan member who is not busy (network.ts:4373-4379: a plan yes is not busy). */
   action introProbe(m: str): bool = all {
     getOr(intro, m, "none") == "none", not(busyInPlan(m)), seatOk(env0, m),
     intro' = intro.set(m, "probing"),
-    now' = now, plan' = plan, optedOut' = optedOut, watch' = watch, minors' = minors, blocks' = blocks, minSize' = minSize, keepCrew,
+    now' = now, plan' = plan, optedOut' = optedOut, watch' = watch, minors' = minors, blocks' = blocks, minSize' = minSize, quorum' = quorum, keepCrew,
   }
   /** The member picks the plan's time: evidence() counts only scheduled items as away (network.ts:2285). */
   action introYes(m: str): bool = all {
     getOr(intro, m, "none") == "probing",
     intro' = intro.set(m, "yes"),
-    now' = now, plan' = plan, optedOut' = optedOut, watch' = watch, minors' = minors, blocks' = blocks, minSize' = minSize, keepCrew,
+    now' = now, plan' = plan, optedOut' = optedOut, watch' = watch, minors' = minors, blocks' = blocks, minSize' = minSize, quorum' = quorum, keepCrew,
   }
-  /** The other side says yes: reveal() (network.ts:2411) books it, with no bookedNear check. */
+  /**
+   * The other side says yes: reveal() (network.ts:2443) books it. A member booked in the plan near that time
+   * is left out (bookedNear, refused "booked_elsewhere"): the intro is over for them (SD-268 fixed).
+   */
   action introBook(m: str): bool = all {
     getOr(intro, m, "none") == "yes", seatOk(env0, m),
-    intro' = intro.set(m, "booked"),
-    now' = now, plan' = plan, optedOut' = optedOut, watch' = watch, minors' = minors, blocks' = blocks, minSize' = minSize, keepCrew,
+    val clash = plan.stage == "scheduled" and getOr(plan.status, m, "") == "yes"
+    intro' = intro.set(m, if (clash) "none" else "booked"),
+    now' = now, plan' = plan, optedOut' = optedOut, watch' = watch, minors' = minors, blocks' = blocks, minSize' = minSize, quorum' = quorum, keepCrew,
   }
 
   // ------------------------------------------------------------------------------------------------
@@ -554,25 +592,27 @@ module plan_run {
   }
 
   /**
-   * crewSessions (network.ts:3220-3237): no open session for the crew, enough seats, then the dedupe
-   * `crew.sessions.some(id => this.opps.get(id)?.plan?.window.start === next.window.start)`. crew.sessions
-   * holds PLAN ids; this.opps is keyed by OPPORTUNITY ids (newOpp, network.ts:2928), so the lookup is never
-   * found (SD-144). The hand-off counts proposals, not sessions held, and tells nobody (SD-444).
+   * crewSessions (network.ts:3270-3290): no open session for the crew; then the hand-off when 3 sessions took
+   * place (stage done: SD-444 counting fixed; still no member hears it, the skipped notice part); then enough
+   * seats; then the dedupe on the plan id, which the crew and the slot fix (SD-144 fixed).
    */
   action crewTick = all {
     crewStage == "formed", not(crewHandedOff),
     crewOpps.keys().forall(k => crewOpps.get(k) != "review"),
-    crewMembers.filter(id => seatOk(env0, id)).size() >= CREW_MIN,
+    val held = crewOpps.keys().filter(k => crewOpps.get(k) == "held").size()
     val slot = crewWeek
     val planId = slot
-    val dup = crewSessions.select(pid => crewOpps.keys().contains(pid) and crewOppSlot.get(pid) == slot).length() > 0
+    val dup = crewSessions.select(pid => pid == planId).length() > 0
     val oppId = 100 + crewSessions.length()
-    all {
+    if (held >= HANDOFF) all {
+      crewSessions' = crewSessions, crewOpps' = crewOpps, crewOppSlot' = crewOppSlot, crewHandedOff' = true,
+    } else all {
+      crewMembers.filter(id => seatOk(env0, id)).size() >= CREW_MIN,
       not(dup),
       crewSessions' = crewSessions.append(planId),
       crewOpps' = crewOpps.put(oppId, "review"),
       crewOppSlot' = crewOppSlot.put(oppId, slot),
-      crewHandedOff' = crewSessions.length() + 1 >= HANDOFF,
+      crewHandedOff' = false,
     },
     crewStage' = crewStage, crewYes' = crewYes, crewNo' = crewNo, crewMembers' = crewMembers, crewTold' = crewTold,
     crewWeek' = crewWeek, crewEndTold' = crewEndTold, keepPlanSide,
@@ -608,7 +648,6 @@ module plan_run {
     nondet okR = 0.to(7).oneOf()
     nondet streakR = 0.to(2).oneOf()
     nondet eventExists = Set(true, false).oneOf()
-    nondet sid = Set(100, 101, 102).oneOf()
     val yes = yesR > 0
     val streakBad = if (streakR == 0) Set(m) else Set()
     any {
@@ -620,7 +659,7 @@ module plan_run {
       // Actor events are rarer than plan steps: one branch picks one of them.
       any { stop(m), goWatch(m), minorSignal(m), block(m, x), cantMakeIt(m) },
       any { introProbe(m), introYes(m), introBook(m) },
-      crewAnswer(m, yes), crewTimeout, crewTick, crewSessionEnd(sid, yes), any { crewWeekPass },
+      crewAnswer(m, yes), crewTimeout, crewTick, crewSessionEnd(99 + crewSessions.length(), yes), any { crewWeekPass },
     }
   }
 
@@ -629,72 +668,77 @@ module plan_run {
   // Safety invariants (written from the rules, not from the code)
 
   /**
-   * SD-008. A group plan is never booked with two people. Rule: plans are groups of 3-6 (D15, PRD 33.4,
-   * engine/src/config.ts resolvePlans), and a group's two yes-sayers "said yes to a group, not to a one-to-one
-   * meeting, so the pair is NEVER booked directly" (engine/src/plans.ts:600-606). Code: network.ts:3118 books
-   * fallback.members and ignores fallback.partnerPlan; bookPlan's `enough` (network.ts:3060) accepts 2.
+   * SD-008 (fixed). A group plan is never booked with fewer than 3 people. Rule: plans are groups of 3-6 (D15,
+   * PRD 33.4, engine/src/config.ts resolvePlans), and a group's two yes-sayers "said yes to a group, not to a
+   * one-to-one meeting, so the pair is NEVER booked directly" (engine/src/plans.ts:600-606). Before the fix,
+   * planFallback booked fallback.members and ignored fallback.partnerPlan, and bookPlan's `enough` accepted 2.
+   * Now bookPlan needs 3 (network.ts:3101) and the pair gets the partner plan (network.ts:3160-3170).
    */
   val pairNeverBookedFromGroup: bool =
-    (plan.stage == "scheduled" or plan.seated.size() > 0) implies plan.seated.size() >= QUORUM
+    (plan.stage == "scheduled" or plan.seated.size() > 0) implies plan.seated.size() >= GROUP_MIN
 
   /**
-   * SD-078. A booked group never shrinks to a two-person meeting that nobody agreed to. Rule: as above, plus
-   * partnerPlanFor's doc "a booking that shrank to two ... becomes a fresh activity-partner plan" (engine
-   * plans.ts:612-616). Code: handleDrop keeps a group of 3+ participants on with 2 left (network.ts:2524).
+   * SD-078 (fixed). A booked group never shrinks to a two-person meeting that nobody agreed to: a scheduled plan
+   * always has 3 or more yes. Rule: as above, plus partnerPlanFor's doc "a booking that shrank to two ... becomes
+   * a fresh activity-partner plan" (engine plans.ts:612-616). Before the fix handleDrop kept a group of 3+
+   * participants on with 2 left; now it keeps it only with 3 or more (network.ts:2538).
    */
   val groupNeverShrinksToPair: bool =
-    (plan.stage == "scheduled" and plan.seated.size() >= QUORUM) implies yesMembers(plan).size() != 2
+    plan.stage == "scheduled" implies yesMembers(plan).size() >= GROUP_MIN
 
   /**
-   * Names only after quorum. Rule: the probe promises "I'll share who's coming once enough people say yes"
-   * (engine plans.ts FRAME_COPY); a reveal names only members who said yes to this plan, and only after the
-   * group reached quorum. Fails with SD-008 (the pair learns each other's names without quorum).
+   * Names only once enough people are in. Rule: the probe promises "I'll share who's coming once enough people
+   * say yes" (engine plans.ts FRAME_COPY); a reveal names only members who said yes to this plan, and only when a
+   * group of 3 or more is seated (quorum, or the fallback's smaller group). Checked at each reveal (earlyName),
+   * because a member named in a reveal can drop out later. Failed with SD-008 (the pair learned each other's names).
    */
   val noNameBeforeQuorum: bool =
-    plan.named.forall(p => getOr(plan.answers, p._2, "") == "yes" and plan.seated.size() >= QUORUM)
+    not(plan.earlyName)
 
   /**
-   * SD-204. A backfilled alternate is part of the plan. Rule: Plan.invited is "Members probed (primary group,
-   * plus alternates once backfilled)" (engine/src/plans.ts:199). Code: beginPlan sets o.plan.invited once
-   * (network.ts:2942); planAct's backfill adds only to o.participants (network.ts:3024); buildPlanProbe returns
-   * null for a recipient not in plan.invited (engine plans.ts:488), so the alternate is refused "plan_copy".
+   * SD-204 (fixed). A backfilled alternate is part of the plan. Rule: Plan.invited is "Members probed (primary group,
+   * plus alternates once backfilled)" (engine/src/plans.ts:199). Before the fix planAct's backfill added only
+   * to o.participants, buildPlanProbe returned null for the alternate (engine plans.ts:488) and the probe was
+   * refused "plan_copy". Now the backfill adds the alternate to plan.invited (network.ts:3059).
    */
   val planInvitedCurrent: bool =
     plan.runStage != "none" implies plan.answers.keys().subseteq(plan.invited)
 
   /**
-   * SD-046. A probe is never refused because of a member who has already left the run. Rule: checkRecipient
+   * SD-046 (fixed). A probe is never refused because of a member who has already left the run. Rule: checkRecipient
    * checks "every other person" the message is about (network.ts:4216-4218); a member who said no, went
-   * silent or was dropped is no longer someone the plan is about. Code: the probe's about is the stale
-   * o.plan.invited (network.ts:2995).
+   * silent or was dropped is no longer someone the plan is about. Before the fix the probe's about was the
+   * stale o.plan.invited; now it is the participants whose status is not no, unavailable or dropped
+   * (network.ts:3019).
    */
   val noStaleRefusal: bool = plan.staleRefused == Set()
 
   /**
-   * SD-423. A yes after the probe deadline never books the plan. Rule: the probe "Expires at the probe
+   * SD-423 (fixed). A yes after the probe deadline never books the plan. Rule: the probe "Expires at the probe
    * deadline" (engine plans.ts:440-443) and "At the probe deadline without quorum: close and fall back"
-   * (plans.ts:593). Code: recordPlanAnswer has no deadline check for a yes (plans.ts:577-578); only the tick
-   * runs checkPlanDeadline (network.ts:3365-3367).
+   * (plans.ts:593). recordPlanAnswer has no deadline check for a yes (plans.ts:577-578). Before the fix only
+   * the tick ran checkPlanDeadline; now onPlanProbeAnswer runs planDeadline first (network.ts:2353-2355).
    */
   val noBookAfterDeadline: bool = not(plan.lateYesBooked)
 
   /**
-   * SD-268. A member is never booked twice at the same time. Rule: bookPlan "Anyone booked elsewhere within 4
-   * hours of the start is left out" (network.ts:3036) and "A member's booked plans count as away when a time
-   * is chosen for anything else (plans ask 5)" (network.ts:2284). Code: busy() skips a plan yes
-   * (network.ts:4376), and the intro reveal (network.ts:2411) has no bookedNear check.
+   * SD-268 (fixed). A member is never booked twice at the same time. Rule: bookPlan "Anyone booked elsewhere within 4
+   * hours of the start is left out" (network.ts:3071) and "A member's booked plans count as away when a time
+   * is chosen for anything else (plans ask 5)". busy() still skips a plan yes, so an intro can probe the member;
+   * the intro reveal now leaves out a member booked near its time (network.ts:2441-2449).
    */
   val noDoubleBooking: bool =
     MEMBERS.forall(m => not(getOr(intro, m, "none") == "booked" and plan.stage == "scheduled" and getOr(plan.status, m, "") == "yes"))
 
   /**
-   * SD-480. A yes-sayer always hears how the plan ended. Rule: the ack promises "I'll tell you once enough
+   * SD-480, Q-plan_run-1 and Q-plan_run-2 (fixed). A yes-sayer always hears how the plan ended. Rule: the ack promises "I'll tell you once enough
    * people are in" (network.ts:2347); planFallback "Yes-sayers hear 'that plan didn't come together'"
    * (network.ts:3106). Exempt: members who left on their own or by policy, and a plan closed for the minors
    * policy or a block (any later message about it is a minor contact or says why, dropMember network.ts:2568-2571,
-   * applyBlock network.ts:1437). Code: bookPlan drops plan_conflict (network.ts:3046) and refused seats
-   * (network.ts:3056) with no note. Q-plan_run-1: a yes after the late-join cutoff is acked and then marked "late"
-   * (engine plans.ts:574) with no note.
+   * applyBlock network.ts:1437). Fixed paths: bookPlan notes the members it leaves out (plan_conflict and refused
+   * seats, not minors or members on watch, network.ts:3097-3110, SD-480); a yes after the late-join cutoff is
+   * marked "late" and gets the note (network.ts:3047, Q-plan_run-1); the pair of a group plan that fell to two
+   * gets the note with its partner plan (network.ts:3160-3170, Q-plan_run-2).
    */
   val yesSayerTold: bool =
     (plan.stage == "closed" or plan.stage == "done" or plan.stage == "scheduled")
@@ -702,9 +746,12 @@ module plan_run {
       plan.promised.exclude(plan.excused).exclude(yesMembers(plan)).exclude(pendingOf(plan.answers)).subseteq(plan.told)
 
   /**
-   * SD-479. Reveals are mutual: in a booked plan, a member who learned another's name is also named to them.
-   * Rule: double opt-in and "I'll share who's coming once enough people say yes" to every invitee (FRAME_COPY).
-   * Code: planJoin sends planReveal to the joiner only (network.ts:3095-3100).
+   * SD-479 (SKIPPED: needs a founder decision on member text). Reveals are mutual: in a booked plan, a member
+   * who learned another's name is also named to them. Rule: double opt-in and "I'll share who's coming once
+   * enough people say yes" to every invitee (FRAME_COPY). Code: planJoin sends planReveal to the joiner only
+   * (network.ts:3137-3145). A fix needs new text to the booked members or the removal of late joins (a change to
+   * docs/network.md); re-sending the reveal re-emits plan_accepted and resets the 48-hour opt-out. Kept out of
+   * `safety` until the founder decides; `sd479LateJoinTest` shows it still fails.
    */
   val revealSymmetric: bool =
     plan.stage == "scheduled" implies plan.named.forall(p =>
@@ -724,7 +771,7 @@ module plan_run {
   val reviewBeforeContact: bool = plan.runStage == "none" implies plan.msgs == Set()
 
   /**
-   * SD-144. One session proposal per crew slot. Rule: the dedupe in crewSessions (network.ts:3230) and "weekly,
+   * SD-144 (fixed). One session proposal per crew slot. Rule: the dedupe in crewSessions (network.ts:3230) and "weekly,
    * same time and place, each session opt-in and reviewed like any plan" (network.ts:3214). Code: the dedupe
    * looks up plan ids in a map keyed by opportunity ids, so it never matches.
    */
@@ -732,15 +779,17 @@ module plan_run {
     crewSessions.indices().forall(i => crewSessions.indices().forall(j => i == j or crewSessions[i] != crewSessions[j]))
 
   /**
-   * SD-444 (part 2). The crew is handed off after 3 sessions (network.ts:3215 "the Network hands the crew off
+   * SD-444 counting part (fixed). The crew is handed off after 3 sessions (network.ts:3215 "the Network hands the crew off
    * after 3 sessions"), not after 3 proposals: a failed session does not count.
    */
   val handoffCountsSessions: bool =
     crewHandedOff implies crewOpps.keys().filter(k => crewOpps.get(k) != "failed").size() >= HANDOFF
 
   /**
-   * SD-444 (part 1). crewFormed promises "Your weekly crew is on" (copy.ts:154); when the last session is
-   * over after the hand-off, the members hear that the weekly crew ended. Code: only a log line (network.ts:3235).
+   * SD-444 notice part (SKIPPED: needs new member text and a founder decision on what the handoff means in the
+   * Network, which has no group chat). crewFormed promises "Your weekly crew is on" (copy.ts:154); when the last
+   * session is over after the hand-off, the members hear that the weekly crew ended. Code: only a log line
+   * (network.ts:3277). Kept out of `safety`; `crewHandoffTest` shows it still fails.
    */
   val crewEndHeard: bool =
     (crewHandedOff and crewOpps.keys().forall(k => crewOpps.get(k) != "review")) implies crewEndTold
@@ -748,25 +797,40 @@ module plan_run {
   /** A crew forms only with members who opted in (crewOptIn, founder decision 2026-10-08). */
   val crewOptedIn: bool = crewStage == "formed" implies (crewMembers.subseteq(crewYes) and crewMembers.size() >= CREW_MIN)
 
+  /**
+   * A group plan that falls to two yes-sayers becomes a fresh partner plan for the pair (engine plans.ts:600-606,
+   * network.ts:3160-3170): the plan is closed, and nobody was seated (SD-008 fixed).
+   */
+  val partnerPlanNotBooked: bool =
+    plan.partnerAsked != Set() implies (plan.stage == "closed" and plan.seated == Set() and plan.partnerAsked.size() == 2)
+
   val safety: bool = and {
     pairNeverBookedFromGroup, groupNeverShrinksToPair, noNameBeforeQuorum, planInvitedCurrent, noStaleRefusal,
-    noBookAfterDeadline, noDoubleBooking, yesSayerTold, revealSymmetric, noMinorContact, noContactAcrossBlock,
-    noContactAfterStop, reviewBeforeContact, sessionSlotOnce, handoffCountsSessions, crewEndHeard, crewOptedIn,
+    noBookAfterDeadline, noDoubleBooking, yesSayerTold, noMinorContact, noContactAcrossBlock,
+    noContactAfterStop, reviewBeforeContact, sessionSlotOnce, handoffCountsSessions, crewOptedIn, partnerPlanNotBooked,
   }
 
-  // Safety without the register defects this model shows (the guards that must hold today).
+  // The guards that must hold whatever else changes (minors, blocks, STOP, review, crew opt-in).
   val guards: bool = and { noMinorContact, noContactAcrossBlock, noContactAfterStop, reviewBeforeContact, crewOptedIn }
+
+  // The invariants of the skipped defects (SD-479, SD-444 notice part). They fail today; see their comments.
+  val skippedDefects: bool = and { revealSymmetric, crewEndHeard }
 
   // ------------------------------------------------------------------------------------------------
   // Witnesses (each must be violated: the state is reachable)
 
-  val witness_quorumBooks = not(plan.stage == "scheduled" and plan.seated.size() >= QUORUM)
+  val witness_quorumBooks = not(plan.stage == "scheduled" and plan.seated.size() >= quorum)
   val witness_soloEventCloses = not(plan.stage == "closed" and plan.fallbackKind == "solo_event" and plan.msgs.exists(m => m.kind == "planEvent"))
   val witness_backfill = not(plan.participants.contains("e") and getOr(plan.answers, "e", "") != "")
   val witness_lateJoin = not(plan.stage == "scheduled" and yesMembers(plan).size() > plan.seated.size())
   val witness_stopWhileProbing = not(plan.stage == "probing" and optedOut.size() > 0 and plan.contacted.size() > 0)
   val witness_crewSession = not(crewOpps.keys().exists(k => crewOpps.get(k) == "held"))
   val witness_crewNotFormed = not(crewStage == "none")
+  val witness_partnerPlan = not(plan.partnerAsked.size() == 2 and plan.partnerAsked.subseteq(plan.told))
+  val witness_crewHandedOff = not(crewHandedOff)
+  // A yes-sayer left out at booking (plan_conflict or a refused seat: the answer stays "yes") hears the note.
+  val witness_leftOutTold = not(plan.stage == "scheduled" and plan.promised.exists(x =>
+    not(plan.seated.contains(x)) and getOr(plan.answers, x, "") == "yes" and getOr(plan.status, x, "") == "unavailable" and plan.told.contains(x)))
 
   // ------------------------------------------------------------------------------------------------
   // Run tests (concrete traces)
@@ -780,52 +844,65 @@ module plan_run {
       .then(answer("a", true, NOSTREAK, false)).then(answer("b", true, NOSTREAK, false)).then(answer("c", true, NOSTREAK, false))
       .expect(plan.stage == "scheduled" and plan.seated == Set("a", "b", "c") and plan.named.size() == 6 and safety)
 
-  /** SD-008 (register: bouldering, groupSize [2, 6]): two yes, two no, the bench drains, the pair is booked with names. */
-  run sd008PairBookedTest =
+  /**
+   * SD-008 fixed (register: bouldering, groupSize [2, 6]): two yes, two no, the bench drains. The plan closes,
+   * nobody is named, the pair gets a fresh partner plan and hears that the group plan did not come together
+   * (Q-plan_run-2 fixed). e is backfilled and probed now (SD-204 fixed); e says no.
+   */
+  run sd008PairNotBookedTest =
     initWith(2).then(approve)
       .then(probe("a", true, true)).then(probe("b", true, true)).then(probe("c", true, true)).then(probe("d", true, true))
       .then(answer("a", true, NOSTREAK, false)).then(answer("b", true, NOSTREAK, false))
       .then(answer("c", false, NOSTREAK, false))
-      // c's no backfills e; e's probe has no copy (e is not in plan.invited, SD-204): a silent no.
       .then(probe("e", true, true))
+      .expect(plan.contacted.contains("e") and plan.invited.contains("e"))
+      .then(answer("e", false, NOSTREAK, false))
       .then(answer("d", false, NOSTREAK, false))
-      .expect(plan.stage == "scheduled" and plan.seated == Set("a", "b") and plan.named.contains(("a", "b"))
-              and plan.fallbackKind == "smaller" and not(pairNeverBookedFromGroup) and not(noNameBeforeQuorum))
+      .expect(plan.stage == "closed" and plan.seated == Set() and plan.named == Set() and plan.fallbackKind == "smaller"
+              and plan.partnerAsked == Set("a", "b") and Set("a", "b").subseteq(plan.told) and safety)
 
-  /** SD-204: c says no, e is backfilled and never gets a probe: the plan's invited list does not have e. */
+  /** SD-204 fixed: c says no, e is backfilled into plan.invited and gets the probe. */
   run sd204BackfillTest =
     initWith(3).then(approve)
       .then(probe("c", true, true)).then(answer("c", false, NOSTREAK, false))
-      .expect(not(planInvitedCurrent))
+      .expect(planInvitedCurrent and plan.invited.contains("e"))
       .then(probe("e", true, true))
-      .expect(getOr(plan.answers, "e", "") == "no" and not(plan.contacted.contains("e")))
+      .expect(getOr(plan.answers, "e", "") == "pending" and plan.contacted.contains("e") and safety)
 
-  /** SD-078: a group of 3 is booked; one says "can't make it"; the other two stay booked as a pair. */
+  /** SD-078 fixed: a group of 3 is booked; one says "can't make it"; the plan is off for the other two. */
   run sd078ShrinkTest =
     initWith(3).then(approve)
       .then(probe("a", true, true)).then(probe("b", true, true)).then(probe("c", true, true))
       .then(answer("a", true, NOSTREAK, false)).then(answer("b", true, NOSTREAK, false)).then(answer("c", true, NOSTREAK, false))
       .then(cantMakeIt("c"))
-      .expect(plan.stage == "scheduled" and yesMembers(plan) == Set("a", "b") and not(groupNeverShrinksToPair))
+      .expect(plan.stage == "closed")
+      .expect(Set("a", "b").subseteq(plan.told))
+      .expect(groupNeverShrinksToPair)
+      .expect(yesSayerTold)
+      .expect(safety)
 
-  /** SD-046 (register trace): probes wait; c goes on watch (a silent no); d's probe is refused because of c. */
+  /** SD-046 fixed (register trace): c goes on watch (a silent no); d's probe is no longer about c and goes out. */
   run sd046StaleInvitedTest =
     initWith(3).then(approve)
       .then(probe("a", true, true))
       .then(goWatch("c"))
       .then(probe("d", true, true))
-      .expect(plan.staleRefused.contains("d") and not(noStaleRefusal) and getOr(plan.answers, "d", "") == "no")
+      .expect(plan.contacted.contains("d") and getOr(plan.answers, "d", "") == "pending" and noStaleRefusal and safety)
 
-  /** SD-423: two yes before the deadline; the third yes after it, before the tick, books the plan. */
+  /** SD-423 fixed: two yes before the deadline; the third yes after it, before the tick, closes the plan with a note. */
   run sd423LateYesTest =
     initWith(3).then(approve)
       .then(probe("a", true, true)).then(probe("b", true, true)).then(probe("c", true, true))
       .then(answer("a", true, NOSTREAK, false)).then(answer("b", true, NOSTREAK, false))
       .then(clock).then(clock).then(clock).then(clock)
       .then(answer("c", true, NOSTREAK, false))
-      .expect(plan.stage == "scheduled" and not(noBookAfterDeadline))
+      .expect(plan.stage == "closed" and plan.seated == Set() and plan.told.contains("c") and not(plan.promised.contains("c"))
+              and noBookAfterDeadline and safety)
 
-  /** SD-268: a's plan yes leaves a free for an intro at the same time; the plan books, then the intro books. */
+  /**
+   * SD-268 fixed: a's plan yes leaves a free for an intro at the same time; the plan books with a; the intro
+   * then leaves a out (booked_elsewhere).
+   */
   run sd268DoubleBookTest =
     initWith(3).then(approve)
       .then(probe("a", true, true)).then(probe("b", true, true)).then(probe("c", true, true))
@@ -833,38 +910,51 @@ module plan_run {
       .then(introProbe("a")).then(introYes("a"))
       .then(answer("b", true, NOSTREAK, false)).then(answer("c", true, NOSTREAK, false))
       .then(introBook("a"))
-      .expect(not(noDoubleBooking))
+      .expect(getOr(intro, "a", "") == "none" and getOr(plan.status, "a", "") == "yes" and noDoubleBooking and safety)
 
   /**
-   * SD-480: activity groupSize[0] = 2. a says yes, then is booked in an intro at the plan's time. b and c say
-   * yes: bookPlan drops a (plan_conflict) and books b and c. a heard "I'll tell you once enough people are in"
-   * and hears nothing more.
+   * SD-480 fixed (the integration test's trace, quorum 4): a says yes, then is booked in an intro at the plan's
+   * time. b, c and d say yes: bookPlan leaves a
+   * out (plan_conflict), books b, c and d, and a hears "that plan didn't come together".
    */
-  run sd480ConflictSilentTest =
+  run sd480ConflictToldTest =
+    initQ(2, 4).then(approve)
+      .then(probe("a", true, true)).then(probe("b", true, true)).then(probe("c", true, true)).then(probe("d", true, true))
+      .then(answer("a", true, NOSTREAK, false))
+      .then(introProbe("a")).then(introYes("a")).then(introBook("a"))
+      .then(answer("b", true, NOSTREAK, false)).then(answer("c", true, NOSTREAK, false))
+      .expect(plan.stage == "probing")
+      .then(answer("d", true, NOSTREAK, false))
+      .expect(plan.stage == "scheduled" and plan.seated == Set("b", "c", "d") and getOr(plan.status, "a", "") == "unavailable"
+              and plan.told.contains("a") and yesSayerTold and safety)
+
+  /**
+   * SD-008 and SD-480: with the old rule the two seated members b, c were booked as a pair. Now a is left out
+   * and two are not enough. a's answer is still yes, so the fallback has three yes-sayers: it tries the smaller
+   * group of a, b, c again, a is left out again, and the plan closes. All three yes-sayers hear the note.
+   */
+  run sd480PairLeftTest =
     initWith(2).then(approve)
       .then(probe("a", true, true)).then(probe("b", true, true)).then(probe("c", true, true))
       .then(answer("a", true, NOSTREAK, false))
       .then(introProbe("a")).then(introYes("a")).then(introBook("a"))
       .then(answer("b", true, NOSTREAK, false)).then(answer("c", true, NOSTREAK, false))
-      .expect(plan.stage == "scheduled" and getOr(plan.status, "a", "") == "unavailable" and not(plan.told.contains("a"))
-              and not(yesSayerTold))
+      .expect(plan.stage == "closed" and plan.seated == Set() and Set("a", "b", "c").subseteq(plan.told) and safety)
 
-  /** SD-479: a, b, c are booked with d pending; d's late yes joins; d learns a, b, c; they never learn d. */
+  /** SD-479 (skipped): a, b, c are booked with d pending; d's late yes joins; d learns a, b, c; they never learn d. */
   run sd479LateJoinTest =
     initWith(3).then(approve)
       .then(probe("a", true, true)).then(probe("b", true, true)).then(probe("c", true, true)).then(probe("d", true, true))
       .then(answer("a", true, NOSTREAK, false)).then(answer("b", true, NOSTREAK, false)).then(answer("c", true, NOSTREAK, false))
       .then(answer("d", true, NOSTREAK, false))
       .expect(getOr(plan.status, "d", "") == "yes" and plan.named.contains(("d", "a")) and not(plan.named.contains(("a", "d")))
-              and not(revealSymmetric))
+              and not(revealSymmetric) and safety)
 
   /**
-   * Q-plan_run-1: a, b, c are booked. The plan lane still probes d after booking, until the late-join cutoff
-   * (network.ts:2954). d says yes after the cutoff, inside the probe silence window: the ack says "I'll tell you
-   * once enough people are in" (network.ts:2347), recordPlanAnswer marks the answer "late" (engine
-   * plans.ts:573-575), planAct does nothing, and d hears nothing more.
+   * Q-plan_run-1 fixed: a, b, c are booked. The plan lane still probes d until the late-join cutoff. d says yes
+   * after the cutoff: the answer is "late", d is out (unavailable) and hears the note.
    */
-  run qLateYesSilentTest =
+  run qLateYesToldTest =
     initWith(3).then(approve)
       .then(probe("a", true, true)).then(probe("b", true, true)).then(probe("c", true, true))
       .then(answer("a", true, NOSTREAK, false)).then(answer("b", true, NOSTREAK, false)).then(answer("c", true, NOSTREAK, false))
@@ -872,15 +962,32 @@ module plan_run {
       .then(probe("d", true, true))
       .then(clock)
       .then(answer("d", true, NOSTREAK, false))
-      .expect(plan.stage == "scheduled" and getOr(plan.answers, "d", "") == "late" and plan.promised.contains("d")
-              and not(plan.told.contains("d")) and not(yesSayerTold))
+      .expect(plan.stage == "scheduled" and getOr(plan.answers, "d", "") == "late" and getOr(plan.status, "d", "") == "unavailable"
+              and plan.told.contains("d") and yesSayerTold and safety)
 
-  /** SD-144 and SD-444: a crew forms; two sessions fail in review and the same slot is proposed again; hand-off after 3. */
-  run sd144sd444CrewTest =
+  /** SD-144 fixed: a session that fails in review is not proposed again for the same slot. */
+  run sd144SlotOnceTest =
     initWith(3)
       .then(crewAnswer("a", true)).then(crewAnswer("b", true)).then(crewAnswer("c", true))
       .then(crewTick).then(crewSessionEnd(100, false))
-      .then(crewTick).then(crewSessionEnd(101, false))
-      .then(crewTick).then(crewSessionEnd(102, true))
-      .expect(crewHandedOff and not(sessionSlotOnce) and not(handoffCountsSessions) and not(crewEndHeard))
+      // crewTick is disabled here: slot 0's plan id is already in crew.sessions.
+      .expect(crewSessions.select(pid => pid == crewWeek).length() > 0)
+      .then(crewWeekPass).then(crewTick)
+      .expect(crewSessions == List(0, 1) and sessionSlotOnce and safety)
+
+  /**
+   * SD-444 counting fixed: two failed sessions do not count; the hand-off comes after three sessions held. The
+   * notice part is skipped: nobody hears that the crew ended (crewEndHeard fails).
+   */
+  run crewHandoffTest =
+    initWith(3)
+      .then(crewAnswer("a", true)).then(crewAnswer("b", true)).then(crewAnswer("c", true))
+      .then(crewTick).then(crewSessionEnd(100, false))
+      .then(crewWeekPass).then(crewTick).then(crewSessionEnd(101, false))
+      .then(crewWeekPass).then(crewTick).then(crewSessionEnd(102, true))
+      .then(crewTick).then(crewSessionEnd(103, true))
+      .then(crewTick).then(crewSessionEnd(104, true))
+      .expect(not(crewHandedOff) and crewSessions.length() == 5)
+      .then(crewTick)
+      .expect(crewHandedOff and crewSessions.length() == 5 and handoffCountsSessions and not(crewEndHeard) and safety)
 }
