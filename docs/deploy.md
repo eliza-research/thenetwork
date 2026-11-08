@@ -443,6 +443,7 @@ Every minute, inside the backend's tick, the ops round reads each network and th
 | `safety_signal:<network>` | bad | Agent `safety_concern` signals (`POST /internal/signals`) that wait for a person in `GET /signals`. Posted again when the count goes up. |
 | `precision:<network>` | warn | Shadow precision under 80% over 7 days (person review decisions approved without edits, at least 20 decisions; PRD 32.8). |
 | `bias_report:<network>` | warn | The weekly bias monitor wrote a report with groups under 0.8x in the last 24 h. Counts only; the groups are in the console's bias panel. |
+| `bias_late:<network>` | warn | A photo-app network (slop) has no bias monitor report newer than 8 days (the monitor runs every 7 days after a tick). The after-tick work failed: look for `[tick] after-tick work failed` in the log. |
 | `safety_action:<network>` | warn | A ban or a hold in 24 h |
 | `line_safety` | bad | Blooio put the shared line under a safety action (`platform.line_safety`: review, reply_only, pause_new): new and agent texts wait; STOP and HELP still go. The text names the action and since when, never the number. |
 | `leak_review:<app>` | warn | Texts parked for leak review wait for a person (`GET /queue/leak-review`, the console's held texts). Posted again when the count goes up. |
