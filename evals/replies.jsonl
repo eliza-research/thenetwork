@@ -182,3 +182,11 @@
 {"text":"no puedo el viernes","label":"no"}
 {"text":"si puedo ir, sí","label":"unsure"}
 {"text":"si tengo tiempo","label":"unsure"}
+{"text":"are you sure?","label":"unsure"}
+{"text":"is that ok?","label":"unsure"}
+{"text":"ok?","label":"unsure"}
+{"text":"yes?","label":"unsure"}
+{"text":"sure?","label":"unsure"}
+{"text":"sounds good?","label":"unsure"}
+{"text":"why not?","label":"yes"}
+{"text":"yes! what time?","label":"yes"}
