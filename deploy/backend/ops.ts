@@ -422,6 +422,8 @@ export class AlertDispatcher {
         const s: AlertState = prev?.open
           ? { ...prev, level: a.level, count: a.count, text: a.text, lastAt: now }
           : { key: a.key, level: a.level, count: a.count, text: a.text, open: true, firstAt: now, lastAt: now };
+        // A count that fell (staff cleared items) lowers the bump baseline, so the next rise is posted (SD-161).
+        if (s.lastSentCount !== undefined && a.count < s.lastSentCount) s.lastSentCount = a.count;
         const due = s.lastSentAt === undefined
           || RANK[a.level] > RANK[s.lastSentLevel ?? "warn"]
           || (!!a.bump && a.count > (s.lastSentCount ?? 0))
