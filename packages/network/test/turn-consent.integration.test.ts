@@ -282,4 +282,14 @@ describe.skipIf(!pgAvailable)("turn and consent", () => {
     // A second decision on the same signal is refused.
     expect((await staff("POST", {id: listed[0]!.id, decision: "rejected"})).status).toBe(409);
   }, 60_000);
+  test("SD-314: \"leave slop.date\" from a stranger leaves that app and does not start a join", async () => {
+    const phone = "+12125550314";
+    const body = await (await post(turn("sd314-leave", phone, "leave slop.date"))).json() as any;
+    expect(body.outcome).toBe("handled");
+    expect(body.reason).toBe("left");
+    // No join ask, no pending join row: the person asked for less contact, not more.
+    expect((await sql`select kind from platform.pending_texts where phone_hash = ${phoneKey(phone)}`).length).toBe(0);
+    expect(body.consent).toMatchObject({state: "opted_out", scope: "app", app: "slop"});
+    expect(await service.accounts.optedIn("slop", phone)).toBe(false);
+  }, 60_000);
 });

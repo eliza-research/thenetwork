@@ -1100,11 +1100,12 @@ export class NetworkService implements RuntimeHost {
       const lrt = (leaveMember && await this.runtimeOfMember(leaving.id, leaveMember.memberId)) || this.runtimeFor(leaving.id);
       if (lrt && lrt !== rt) await lrt.identities();
       const lid = lrt?.memberOf(ev.from);
-      if (lrt && lid) {
+      // A person who is not a member of that app leaves it too (an opt-out for that app): never a join.
+      if (lrt) {
         const person = await this.accounts.personFor(e164);
         const at = this.consentAt(ev);
         if (person) await this.accounts.leave(leaving, { e164, personId: person.id }, { at, ref: rowId });
-        else { await this.accounts.recordConsent({ e164, app: leaving.id, line, state: "opted_out", source: "leave", ref: rowId, at }); if (!(await this.accounts.optedIn(leaving.id, e164))) await this.forget(leaving, lid); }
+        else { await this.accounts.recordConsent({ e164, app: leaving.id, line, state: "opted_out", source: "leave", ref: rowId, at }); if (lid && !(await this.accounts.optedIn(leaving.id, e164))) await this.forget(leaving, lid); }
         if (turn) { turn.app = leaving.id; turn.memberId = lid; turn.consent = {state: "opted_out", scope: "app", app: leaving.id, at}; turn.confirmation = {id: `sys:${rowId}`, body: this.copyOf(leaving).leftApp}; }
         await this.direct(lrt, ev.from, this.copyOf(leaving).leftApp, `sys:${rowId}`, "compliance");
         return "left";
