@@ -164,6 +164,18 @@ describe.skipIf(!pgAvailable)("photo-object and clef-rating through the service 
     expect(t.files()).toEqual([]);
   }, T);
 
+  test("SD-053: a failed staff age check deletes the photos and the rating", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const t = service(clock, { photoRater: rater });
+    const a = await adult(t, clock);
+    expect((await a.web.upload()).ok).toBe(true);
+    expect(await ratings(a.id)).toBe(1);
+    expect(await (await staff(t.s, "saf-tok", "POST", `/apps/slop/members/${a.id}/verify`, { check: "age", result: "fail", note: "staff review" })).json()).toEqual({ ok: true });
+    expect(await ratings(a.id)).toBe(0);
+    expect(await rows(a.person_id)).toBe(0);
+    expect(t.files()).toEqual([]);
+  }, T);
 
   test("SD-372: parallel uploads never pass the photo limit", async () => {
     await fresh();

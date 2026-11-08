@@ -30,7 +30,7 @@
 //    route or shown in the console. No rater: ratings are off and everything else works.
 //  - Delete: the member deletes one photo (the rating is dropped, then made again from what is left);
 //    leaving the app or deleting everything deletes them all; a person whose lowest age drops under 18
-//    loses them all (deleteFor), and their rating with them.
+//    loses them all (deleteFor), and their rating with them; a failed staff age check deletes them on that app.
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";

@@ -1647,8 +1647,8 @@ export class NetworkService implements RuntimeHost {
       return 1;
     });
     const r: ActionResult = n ? { ok: true } : { ok: false, reason: "unknown_member" };
-    // A failed age check: no rating of looks may stay on this app (adults only, decision 9).
-    if (n && check === "age" && result === "fail") { const pid = await this.personOfMember(rt, memberId); if (pid) await this.dropRatings(pid, rt.app.id); }
+    // A failed age check: no photo and no rating of looks may stay on this app (adults only, decision 9).
+    if (n && check === "age" && result === "fail") { const pid = await this.personOfMember(rt, memberId); if (pid) { await this.photos.deleteFor(pid, rt.app.id); await this.dropRatings(pid, rt.app.id); } }
     await this.audit.write({ ...base, at: this.clock.now(), ok: r.ok, detail: { safety: "verify", check, result, phase: "result", ...(r.ok ? {} : { reason: r.reason }) } }).catch(e => this.log(`[audit] result row failed: ${(e as Error).message}`));
     return r;
   }

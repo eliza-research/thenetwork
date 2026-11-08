@@ -306,11 +306,13 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     // Founder decision 9: no ID check, a stated adult age is enough.
     expect((await upload()).status).toBe(200);
     expect(readdirSync(dir)).toHaveLength(1);
-    // A failed age check recorded by staff (safety only) refuses further photos.
+    // A failed age check recorded by staff (safety only) deletes the photos and refuses further photos.
     expect((await staff(s, "rev-tok", "POST", `/apps/slop/members/${a}/verify`, { check: "age", result: "fail", note: "staff review" })).status).toBe(403);
     expect(await (await staff(s, "saf-tok", "POST", `/apps/slop/members/${a}/verify`, { check: "age", result: "fail", note: "staff review" })).json()).toEqual({ ok: true });
+    expect(readdirSync(dir)).toHaveLength(0);
     expect(await (await upload()).json()).toEqual({ ok: false, error: "not_verified" });
     expect(await (await staff(s, "saf-tok", "POST", `/apps/slop/members/${a}/verify`, { check: "age", result: "pass", note: "staff review" })).json()).toEqual({ ok: true });
+    expect((await upload()).status).toBe(200);
     // A 16-year-old member (13+ may join slop): verified or not, never photos.
     web.forget("slop");
     await web.login("slop", kid);
