@@ -63,7 +63,11 @@ export interface PhoneChange {
   oldHash?: string | null; newHash?: string | null;
 }
 /** What movePhone moves: the person's phone from one number to another, and everything keyed to the number. */
-export interface PhoneMove { personId: string; changeId: string; oldE164: string; newE164: string; oldHash: string; newHash: string; at: number }
+export interface PhoneMove {
+  personId: string; changeId: string; oldE164: string; newE164: string; oldHash: string; newHash: string; at: number;
+  /** The keys of the one-time Eliza notice row (platform.eliza_notices) of the old and the new number (Accounts.noticeHash). */
+  oldNoticeHash: string; newNoticeHash: string;
+}
 export type PhoneMoveResult = "ok" | "number_in_use" | "no_phone" | "banned";
 
 /** A rate-limit rule for hit(): a hit over `limit` in the window, or within `minGapMs` of the last counted hit, is refused and not counted. */

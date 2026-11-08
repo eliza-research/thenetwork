@@ -1175,7 +1175,7 @@ export class NetworkService implements RuntimeHost {
     if (ok) await this.direct(rt, ev.from, app.brand.stoppedHint, `sys:${rowId}`, "compliance");
   }
 
-  private noticeKey(e164: string) { return keyedHash(this.hashKey, `eliza_notice:${e164}`); }
+  private noticeKey(e164: string) { return this.accounts.noticeHash(e164); }
 
   /**
    * The one-time notice on the eliza.app line (README "The Eliza seam"; copy ELIZA_NOTICE, a DRAFT until

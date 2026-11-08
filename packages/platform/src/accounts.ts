@@ -137,6 +137,8 @@ export class Accounts {
   private now() { return (this.opts.now ?? Date.now)(); }
   private get hooks() { return this.opts.hooks ?? {}; }
   phoneHash(e164: string) { return keyedHash(this.opts.hashKey, `phone:${e164}`); }
+  /** The key of the number's one-time Eliza notice row (platform.eliza_notices). */
+  noticeHash(e164: string) { return keyedHash(this.opts.hashKey, `eliza_notice:${e164}`); }
 
   /** The person for a verified phone, if any (never created here). A number on hold has no person until staff decide. */
   async personFor(e164: string): Promise<Person | undefined> {
@@ -257,7 +259,8 @@ export class Accounts {
       if (await this.banned(who.e164, person)) return { ok: false, error: "review" };
       if (await this.store.isBanned(this.phoneHash(newE164))) return { ok: false, error: "review" };
       if (await this.store.findPhone(newE164)) return { ok: false, error: "number_in_use" };
-      const moved = await this.store.movePhone({ personId: person.id, changeId: change.id, oldE164: who.e164, newE164, oldHash: this.phoneHash(who.e164), newHash: this.phoneHash(newE164), at: this.now() });
+      const moved = await this.store.movePhone({ personId: person.id, changeId: change.id, oldE164: who.e164, newE164, oldHash: this.phoneHash(who.e164), newHash: this.phoneHash(newE164),
+        oldNoticeHash: this.noticeHash(who.e164), newNoticeHash: this.noticeHash(newE164), at: this.now() });
       if (moved !== "ok") return { ok: false, error: moved === "number_in_use" ? "number_in_use" : "review" };
       await this.store.unsuppress(this.phoneHash(newE164));
       return { ok: true };

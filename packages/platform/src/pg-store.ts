@@ -411,8 +411,8 @@ export class PgPeopleStore implements PeopleStore {
       await tx`update platform.outbound set status = 'suppressed_ineligible', note = 'number changed', to_address = null, ended_at = ${ts(m.at)}, updated_at = ${ts(m.at)},
           lease_owner = null, lease_until = null
         where to_address = ${m.oldE164} and status = any(${OUTBOUND_WAITING}::text[])`;
-      await tx`insert into platform.eliza_notices (phone_hash, sent_at) select ${m.newHash}, sent_at from platform.eliza_notices where phone_hash = ${m.oldHash} on conflict do nothing`;
-      await tx`delete from platform.eliza_notices where phone_hash = ${m.oldHash}`;
+      await tx`insert into platform.eliza_notices (phone_hash, sent_at) select ${m.newNoticeHash}, sent_at from platform.eliza_notices where phone_hash = ${m.oldNoticeHash} on conflict do nothing`;
+      await tx`delete from platform.eliza_notices where phone_hash = ${m.oldNoticeHash}`;
       // The person's linked agents (MCP OAuth grants) hold the keyed hash: they move with the number (PRD 11.5, F25).
       const [oauth] = await tx`select case when to_regclass('oauth.grants') is null then false
         else has_schema_privilege('oauth', 'USAGE') and has_table_privilege(to_regclass('oauth.grants'), 'UPDATE') end as ok`;

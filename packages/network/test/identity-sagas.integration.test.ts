@@ -551,4 +551,23 @@ describe.skipIf(!pgAvailable)("identity sagas: stop half way, retry, races (Post
     expect(values).toContain("plays cello");
     for (const hidden of ["rating", "verify:age:pass", "seemed upset"]) expect(values).not.toContain(hidden);
   }, T);
+
+  test("SD-379: a number change moves the Eliza notice row to the new number", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const s = service(clock);
+    const [a, b] = [newPhone(), newPhone()];
+    expect(await text(s, clock, a, "slop")).toBe("join_asked");
+    expect(await text(s, clock, a, "Wes, 31")).toBe("joined");
+    // The one-time Eliza notice went to the old number (the row the service writes in a signed turn).
+    const noticeKey = (e164: string) => (s as unknown as { noticeKey(x: string): string }).noticeKey(e164);
+    await sql`insert into platform.eliza_notices (phone_hash, sent_at) values (${noticeKey(a)}, ${new Date(clock.now())})`;
+
+    const api = await startMove(s, clock, a, b);
+    expect((await api("/api/me/phone/confirm", { code: "123456" })).body).toMatchObject({ ok: true });
+    // The notice follows the person; the old number (maybe someone else's next) keeps no row.
+    const rows = (await sql`select phone_hash from platform.eliza_notices`).map((r: any) => r.phone_hash as string);
+    expect(rows).toEqual([noticeKey(b)]);
+  }, T);
+
 });
