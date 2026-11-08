@@ -798,9 +798,11 @@ export class NetworkService implements RuntimeHost {
    * "paused" (GET /api/me shows it; START on the app's line makes it active again), and the Network
    * drops the member from open opportunities.
    */
-  private async stopped(app: AppInfo, personId: string, scope: StopScope, skip?: { rt: NetworkRuntime; memberId: MemberId }) {
+  private async stopped(app: AppInfo, personId: string, scope: StopScope, skip?: { rt: NetworkRuntime; memberId: MemberId }, e164?: string) {
     const ms = (await this.people.memberships(personId)).filter(m => m.state !== "removed" && m.state !== "invited" && (scope === "global" || m.app === app.id));
     for (const m of ms) {
+      // A STOP by text: an app with a newer opt-in in the ledger (an older STOP that arrived late) stays as it is.
+      if (e164 && (await this.accounts.optedIn(m.app, e164))) continue;
       if (m.state === "active") await this.people.putMembership({ ...m, state: "paused" });
       const rt = await this.runtimeOfMember(m.app, m.memberId);
       if (!rt || (skip && skip.rt === rt && skip.memberId === m.memberId)) continue;
@@ -1329,11 +1331,15 @@ export class NetworkService implements RuntimeHost {
     // The STOP is recorded: its confirmation goes out even if a later step of this turn fails (Inbox.rescueCompliance).
     if (turn && event && reply && normalizeAddress(from) === normalizeAddress(turn.from)) turn.confirmation = {id: `sys:${ref}`, body: reply};
     if (e164) await this.people.deletePending(this.phoneKey(e164));
-    if (memberId && ev) await this.memberMessage(rt, memberId, ev, ref, kw, reply);
+    // The ledger orders events by their time: an older STOP (a late gateway retry) never undoes a newer START or
+    // join of an app. That app's membership and network member stay as the ledger reads; the STOP is still confirmed.
+    const resumed = !!(e164 && event) && (await this.accounts.optedIn(app.id, e164));
+    if (memberId && resumed) { if (reply) await this.direct(rt, from, reply, `sys:${ref}`, "compliance"); }
+    else if (memberId && ev) await this.memberMessage(rt, memberId, ev, ref, kw, reply);
     else if (memberId) await rt.unitOfWork(async n => { await n.onInbound({ id: ref, memberId, body: "STOP", ts: t, channel: "imessage", keyword: "STOP" }); rt.unit.optOut.set(memberId, true); });
     else if (reply) await this.direct(rt, from, reply, `sys:${ref}`, "compliance");
     const person = e164 ? await this.accounts.personFor(e164) : undefined;
-    if (person) await this.stopped(app, person.id, scope, memberId ? { rt, memberId } : undefined);
+    if (person) await this.stopped(app, person.id, scope, memberId ? { rt, memberId } : undefined, e164);
     else if (scope === "global") {
       // A member from before the platform (no person): every app where this address is a member.
       for (const other of this.runtimes.values()) {

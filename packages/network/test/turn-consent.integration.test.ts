@@ -132,4 +132,21 @@ describe.skipIf(!pgAvailable)("turn and consent", () => {
     // The gateway copies the consent field into its fence: it must not say opted_in while the ledger says opted_out.
     expect(body.consent?.state).not.toBe("opted_in");
   }, 60_000);
+  test("SD-104: an older STOP that arrives after a newer START leaves the member as the ledger reads", async () => {
+    const phone = "+12125550104";
+    expect((await (await post(turn("sd104-join", phone, "Sam, 29"))).json() as any).reason).toBe("joined");
+    clock.advance(MINUTE);
+    const stopSentAt = clock.now();
+    clock.advance(MINUTE);
+    expect((await post(turn("sd104-start", phone, "START"))).status).toBe(200);
+    clock.advance(MINUTE);
+    expect((await post({...turn("sd104-stop", phone, "STOP"), receivedAt: stopSentAt})).status).toBe(200);
+    // The ledger orders by send time: the newer START wins for ntwrk.
+    expect(await service.accounts.optedIn("ntwrk", phone)).toBe(true);
+    const person = (await service.accounts.personFor(phone))!;
+    const m = (await service.people.getMembership(person.id, "ntwrk"))!;
+    expect(m.state).toBe("active");
+    const [row] = await sql`select opted_out from network.members where app_id = 'ntwrk' and id = ${m.memberId}`;
+    expect(row.opted_out).toBe(false);
+  }, 60_000);
 });
