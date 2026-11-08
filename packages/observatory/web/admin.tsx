@@ -278,8 +278,11 @@ function ReportRow({ r, canBan, canAct, onDone }: { r: SafetyReport; canBan: boo
             <div className="review-actions">
               <input className="input grow" placeholder="Decision note (logged, at least 5 characters)" value={note} onChange={e => setNote(e.target.value)} />
               <button className="btn" disabled={!ok} title={`Hold the person on ${scope} until a review`} onClick={() => act({ action: "hold", memberId: r.subjectId, note: n, reportId: r.id }, `Person held on ${scope}`)}>Hold</button>
-              <button className="btn" disabled={!ok} title="This phone number can never join again" onClick={() => act({ action: "ban", memberId: r.subjectId, by: "phone", note: n, reportId: r.id }, "Banned by phone")}>Ban phone</button>
-              <button className="btn" disabled={!ok} title="Every phone of this person, on every app" onClick={() => act({ action: "ban", memberId: r.subjectId, by: "person", note: n, reportId: r.id }, "Banned by person")}>Ban person</button>
+              {/* The service bans only for safety@* or admin@* (service.ts ban: needs_safety_everywhere). */}
+              {store.canEverywhere("safety") && <>
+                <button className="btn" disabled={!ok} title="This phone number can never join again" onClick={() => act({ action: "ban", memberId: r.subjectId, by: "phone", note: n, reportId: r.id }, "Banned by phone")}>Ban phone</button>
+                <button className="btn" disabled={!ok} title="Every phone of this person, on every app" onClick={() => act({ action: "ban", memberId: r.subjectId, by: "person", note: n, reportId: r.id }, "Banned by person")}>Ban person</button>
+              </>}
               <button className="btn ghost" disabled={!ok} onClick={() => act({ action: "dismiss", reportId: r.id, note: n }, "Report dismissed")}>Dismiss</button>
             </div>
           )}
