@@ -44,8 +44,7 @@ Code abbreviations: `oq` = `packages/blooio/src/outbound-queue.ts`, `ch` = `pack
 | `safety` (simulation, seed 0x5eed, 40 steps, 8000 samples) | violated (expected: the model shows the defects) |
 | 6 witnesses | all reachable |
 | `quint verify --invariant safety --max-steps 3` (Apalache) | violated in 3 steps (SD-100), 21 s |
-| `quint verify --invariant leakGate --max-steps 8` | see section 6 |
-| `quint verify --invariant slotOnlyForLiveRow --max-steps 8` | see section 6 |
+| `quint verify --invariant leakGate --max-steps 8` | not finished after 20 min (stopped at step 7) |
 
 Each invariant was also simulated alone (same seed and bounds):
 
@@ -182,3 +181,9 @@ Each one is a run test in the model (the name is in section 2) and, where marked
 
 `quint verify --invariant safety --max-steps 3` finds SD-100 in 21 s. The trace: `turnStart`, `collect(r2)`,
 `turnFinish(unresolved)`.
+
+`quint verify --invariant leakGate --max-steps 8` did not finish: after 20 minutes on a shared machine (load average
+about 30) it was still at step 7, and I stopped it. A send needs 6 steps (enqueue, drainStart, lockLine, decide,
+applyDecision, providerCall), so a bounded proof of `leakGate`, `unknownNeverResends` and `slotOnlyForLiveRow` needs a
+depth that Apalache does not reach on this model in reasonable time. For those three invariants the evidence is the
+simulation only (8000 samples of 40 steps, seed 0x5eed). The file sets `verify-steps=3`, so that `--verify` finishes.

@@ -1,5 +1,5 @@
 // -*- mode: Bluespec; -*-
-// quint-check: max-steps=40 max-samples=8000 verify-steps=5
+// quint-check: max-steps=40 max-samples=8000 verify-steps=3
 //
 // The persisted outbound queue of the shared Blooio line (platform.outbound) and the Cloud deliver path.
 // Plan: docs/research/2026-11-07-state-machines.md section 6.5. Source reports:
