@@ -2350,6 +2350,8 @@ export class NetworkService implements RuntimeHost {
   fetch = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
     if (url.pathname === RELAY_PHOTO_RESOLVE_PATH) return this.resolveRelayPhoto(req);
+    // Learning consent proofs exist only for profile review: with review off, collect answers 503, so this does too.
+    if (url.pathname === LEARNING_CONSENT_CONTEXT_PATH && !this.suggestionIdentity) return json({ error: "identity_unavailable" }, 503);
     if (url.pathname === LEARNING_CONSENT_CONTEXT_PATH) return learningConsentContextEndpoint({ sql: this.sql, now: () => this.clock.now(), secret: this.env.SERVICE_TURN_SECRET, routePolicy: this.routePolicy }, req);
     if (url.pathname === PROFILE_REVIEW_WITHDRAWAL_PATH) {
       const resolver = this.suggestionWithdrawalOwner;
