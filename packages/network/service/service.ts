@@ -1115,6 +1115,8 @@ export class NetworkService implements RuntimeHost {
         const at = this.consentAt(ev);
         if (person) await this.accounts.leave(leaving, { e164, personId: person.id }, { at, ref: rowId });
         else { await this.accounts.recordConsent({ e164, app: leaving.id, line, state: "opted_out", source: "leave", ref: rowId, at }); if (lid && !(await this.accounts.optedIn(leaving.id, e164))) await this.forget(leaving, lid); }
+        // A join of that app that waits for a name or age ends too: a later answer does not join the app they left.
+        await this.people.deletePending(this.phoneKey(e164), "join", leaving.id);
         if (turn) { turn.app = leaving.id; turn.memberId = lid; turn.consent = {state: "opted_out", scope: "app", app: leaving.id, at}; turn.confirmation = {id: `sys:${rowId}`, body: this.copyOf(leaving).leftApp}; }
         await this.direct(lrt, ev.from, this.copyOf(leaving).leftApp, `sys:${rowId}`, "compliance");
         return "left";

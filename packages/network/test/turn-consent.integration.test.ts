@@ -362,4 +362,20 @@ describe.skipIf(!pgAvailable)("turn and consent", () => {
     const [signal] = await sql`select last_used_at from notify.surface_signals where person_id = ${person.id} and surface = 'imessage'`;
     expect(new Date(signal.last_used_at).getTime()).toBe(clock.now());
   }, 60_000);
+  test("SD-490: \"leave slop\" during a pending slop join ends that join, so a later name does not join", async () => {
+    const phone = "+12125550490";
+    for (const [i, text] of ["slop.date", "29"].entries()) {
+      clock.advance(MINUTE);
+      expect((await (await post(turn(`sd490-${i}`, phone, text))).json() as any).reason).toBe("onboarding_asked");
+    }
+    clock.advance(MINUTE);
+    const left = await (await post(turn("sd490-leave", phone, "leave slop"))).json() as any;
+    expect([left.reason, left.consent?.state]).toEqual(["left", "opted_out"]);
+    // The leave confirmation says what the person shared here is deleted: the pending join (with the age) goes too.
+    expect((await sql`select kind from platform.pending_texts where phone_hash = ${phoneKey(phone)}`).length).toBe(0);
+    clock.advance(MINUTE);
+    const after = await (await post(turn("sd490-name", phone, "Sam"))).json() as any;
+    expect(after.reason).not.toBe("joined");
+    expect(await service.accounts.optedIn("slop", phone)).toBe(false);
+  }, 60_000);
 });
