@@ -70,7 +70,8 @@ export const TTL = {
   /** A consent lasts at most this long; then the person signs in again. */
   grantMs: 90 * 24 * 3_600_000,
   codeMs: 5 * 60_000,
-  requestMs: 15 * 60_000,
+  /** A sign-in request (it holds the number once the person types it) lasts at most this long; then it is swept. */
+  requestMs: 10 * 60_000,
 };
 export const LIMITS = {
   registerPerIpHour: 20,
@@ -90,6 +91,8 @@ export interface McpHandler {
    * are then deleted, so nothing keeps the phone next to the app (the person left or deleted everything).
    */
   revokeAllFor(e164: string, app?: McpAppId, o?: { forget?: boolean }): Promise<number>;
+  /** Delete what expired (store.sweep), at most once a minute. Every OAuth request calls it; call it on a timer too, so nothing waits for traffic. */
+  sweep(): Promise<void>;
 }
 
 interface Ctx { app: McpApp; issuer: string; ip: string; req: Request; url: URL }
@@ -198,6 +201,11 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   const secureCookies = (a: McpApp) => issuerOf(a).startsWith("https:");
   const browserCookie = (a: McpApp) => (secureCookies(a) ? "__Host-mcp_auth" : "mcp_auth");
   let lastSweep = 0;
+  async function sweep() {
+    if (now() - lastSweep < 60_000) return;
+    lastSweep = now();
+    await store.sweep(now());
+  }
 
   const resourceFor = (issuer: string, surface: Surface) => `${issuer}${surface === "openai" ? "/mcp/openai" : "/mcp"}`;
   const prmUrl = (resource: string) => { const u = new URL(resource); return `${u.origin}/.well-known/oauth-protected-resource${u.pathname}`; };
@@ -981,11 +989,12 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       if (ro.forget) await store.forgetPhone(key, e164, app);
       return n;
     },
+    sweep,
     async fetch(req, server) {
       const url = new URL(req.url);
       if (!OWNED(url.pathname)) return undefined;
       try {
-        if (now() - lastSweep > 10 * 60_000) { lastSweep = now(); await store.sweep(now()); }
+        await sweep();
         let peer: string | undefined;
         try { peer = server?.requestIP(req)?.address; } catch { /* not a served request (tests) */ }
         return await handle(req, url, peer);

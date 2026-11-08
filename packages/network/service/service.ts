@@ -309,6 +309,7 @@ export class NetworkService implements RuntimeHost {
   private api?: PublicApi;
   private readonly copies = new Map<AppId, Copy>();
   private readonly forgetListeners: Array<(ctx: ForgetContext) => Promise<unknown> | unknown> = [];
+  private readonly tickListeners: Array<() => Promise<unknown>> = [];
   /** Private member photos (slop; verified adults only). */
   readonly photos: PhotoService;
   readonly photoRelay: PhotoRelayService;
@@ -536,7 +537,11 @@ export class NetworkService implements RuntimeHost {
   async afterTick(rt: NetworkRuntime): Promise<void> {
     for (const line of slaAlerts(rt.id, rt.net.reviewQueue(), this.clock.now(), DEFAULT_SLA_HOURS[rt.app.id], this.slaAlerted)) this.log(line);
     if (PHOTO_APPS.includes(rt.app.id)) await this.weeklyBias(rt);
+    for (const f of this.tickListeners) await f().catch(e => this.log(`[tick] after-tick listener failed: ${(e as Error).message}`));
   }
+
+  /** Work that runs after each tick that ran on this instance (the MCP server's OAuth sweep). */
+  onTick(fn: () => Promise<unknown>) { this.tickListeners.push(fn); }
 
   /** The bias monitor of one network when its last stored report is a week old (or there is none). Returns the new report, if one was made. */
   async weeklyBias(rt: NetworkRuntime, force = false): Promise<StoredBiasReport | undefined> {

@@ -102,6 +102,8 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
     // The token's hostname must be one of that site's hosts (as on the platform API), never another site.
     turnstile: siteKey && env.TURNSTILE_SECRET_KEY ? { siteKey, verify: (t, ip, app) => new CloudflareTurnstile(env.TURNSTILE_SECRET_KEY!).verify(t, ip, dev ? undefined : app ? siteHosts(app, env) : []) } : undefined,
   });
+  // Expired sign-in requests (they hold a number), codes and tokens go without waiting for OAuth traffic.
+  svc.onTick(() => mcp.sweep());
   svc.onForget(async ctx => {
     // Leaving an app (or deleting everything) also deletes the grants: no row keeps the phone next to the app.
     // No app: every app's grants, also of an app the person never joined.

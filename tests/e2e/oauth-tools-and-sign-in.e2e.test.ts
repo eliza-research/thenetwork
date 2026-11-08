@@ -121,4 +121,23 @@ describe.skipIf(!pgAvailable)("OAuth tool calls and sign-in requests", () => {
     expect(r.res.status).toBe(200);
     expect(toolData(r).submitted).toBe(true);
   }, T);
+
+  // SD-393: "A sign-in request keeps the number only while it is open (at most 10 minutes, then swept)"
+  // (packages/mcp/README.md section 3). Before the fix a request lived 15 minutes, and only an OAuth request
+  // ran the sweep: with no MCP traffic the number stayed in oauth.auth_requests.
+  // This test moves the clock 10 minutes, so it stays last in the file.
+  test("a sign-in request with a number is swept 10 minutes after it starts, with no OAuth traffic", async () => {
+    const phone = newPhone(), b = new Browser();
+    const client = (await (await st.site("friends", "/oauth/register", { json: { client_name: "E2E Assistant", redirect_uris: [REDIRECT], token_endpoint_auth_method: "none" } })).json()) as { client_id: string };
+    const q = new URLSearchParams({ response_type: "code", client_id: client.client_id, redirect_uri: REDIRECT, code_challenge: pkceS256(VERIFIER), code_challenge_method: "S256", state: "e2e", resource: `${st.sites.friends.origin}/mcp` });
+    const rid = /name="rid" value="([^"]+)"/.exec(await (await st.site("friends", `/oauth/authorize?${q}`, { browser: b })).text())![1]!;
+    expect((await st.site("friends", "/oauth/authorize/phone", { browser: b, form: { rid, phone } })).status).toBe(200);
+    const stored = async () => (await sql`select 1 from oauth.auth_requests where id = ${rid} and e164 = ${phone}`).length;
+    expect(await stored()).toBe(1);
+
+    st.clock.advance(10 * 60_000 + 1_000);
+    // Only the networks tick: no OAuth or MCP request reaches the server.
+    for (const rt of st.svc.runtimes.values()) await rt.tick();
+    expect(await stored()).toBe(0);
+  }, T);
 });
