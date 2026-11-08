@@ -549,6 +549,15 @@ export class NetworkRuntime {
       await tx`update platform.outbound set body = null, to_address = null, ended_at = coalesce(ended_at, ${new Date(this.clock.now())}),
         status = case when status = any(${`{${WAITING_STATUSES.join(",")}}`}::text[]) then 'dropped_forgotten' else status end
         where app_id = ${app} and member_id = ${id}`;
+      // What the relay carried from them to their match (their words, their number, the swap question) is theirs too:
+      // the other member's rows keep the id only, and what still waits is never sent.
+      const relayed = (await tx`select item_id from network.relay_records where app_id = ${app} and from_member = ${id}`).flatMap((r: Row) => [`relay:${r.item_id}`, `relay:${r.item_id}:ask`]);
+      if (relayed.length) {
+        await tx`update network.messages set body = '' where app_id = ${app} and direction = 'outbound' and id in ${tx(relayed)}`;
+        await tx`update platform.outbound set body = null, ended_at = coalesce(ended_at, ${new Date(this.clock.now())}),
+          status = case when status = any(${`{${WAITING_STATUSES.join(",")}}`}::text[]) then 'dropped_forgotten' else status end
+          where app_id = ${app} and id in ${tx(relayed)}`;
+      }
     }
     // The persisted queue: the unit's sends in this same transaction (delivered after the commit). The one
     // decline to a member the unit forgets goes as a text to a non-member. Sends it does not queue (the live

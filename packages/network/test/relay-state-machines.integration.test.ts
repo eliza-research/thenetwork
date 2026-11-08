@@ -77,3 +77,19 @@ test("relay-swap: a withdrawal stops a number share that waits for quiet hours t
     where r.kind='contact_share' and r.from_member=${ariId}`;
   expect(share?.status).toMatch(/^suppressed/);
 },60_000);
+
+// Keep this case last: Ari deletes everything.
+test("relay-item: erasure removes the member's number and words from the rows of the other member (SD-040)",async()=>{
+  await fixturePair("swap-erase");toNyHour(12);
+  for(const [phone,id] of [[a,"erase-ari-reply"],[b,"erase-sam-reply"]] as const){clock.advance(MINUTE);expect((await post(TURN_PATH,turn(phone,id,"Sounds good, thanks"))).status).toBe(200);}
+  expect((await relay("erase-ask-ari","send Sam my number")).body).toMatchObject({decision:"hold"});
+  expect((await relay("erase-ask-sam","send Ari my number",b)).body).toMatchObject({decision:"pass",delivered:true});
+  expect(sent.some(x=>x.to===b&&x.text.includes(a))).toBe(true);
+  expect((await relay("erase-text-ari","tell Sam I will bring the trail map")).body).toMatchObject({decision:"pass"});
+  const who=(await service.accounts.personFor(a))!;
+  await service.accounts.leave(service.apps.friends,{e164:a,personId:who.id});
+  expect((await sql`select id,body from network.messages where app_id='friends' and member_id=${samId} and position(${a} in body)>0`).length).toBe(0);
+  expect((await sql`select id from platform.outbound where app_id='friends' and member_id=${samId} and position(${a} in coalesce(body,''))>0`).length).toBe(0);
+  expect((await sql`select id from network.messages where app_id='friends' and member_id=${samId} and position('trail map' in body)>0`).length).toBe(0);
+  expect((await sql`select id from platform.outbound where app_id='friends' and member_id=${samId} and position('trail map' in coalesce(body,''))>0`).length).toBe(0);
+},60_000);
