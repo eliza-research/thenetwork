@@ -37,3 +37,8 @@
 {"text":"turns out he's married","kind":"lying"}
 {"text":"she was much older than she said","kind":"lying"}
 {"text":"I want to report him","kind":"other"}
+{"text":"My date was a teenager","kind":"minor"}
+{"text":"I think I met a kid, report him","kind":"minor"}
+{"text":"report Ben, my match is a child","kind":"minor"}
+{"text":"my match looked like a teen","kind":"minor"}
+{"text":"great night, my date has a kid and we swapped stories","kind":null}
