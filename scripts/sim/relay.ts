@@ -373,6 +373,7 @@ function fakeHost(over: { ratesPhotos?: boolean; members?: Partial<Record<"a" | 
     member: id => members.get(id),
     matchesOf: id => (h.match.participants.includes(id) ? [h.match] : []),
     blocked: () => false,
+    severeBlock: () => {},
     privateFacts: () => ({ forbidden: [{ text: "Halcyon Biotech", owner: "b" }], canaries: [] }),
     send: (to, body, o) => { h.sent.push({ to, body, key: o.key, ...(o.contact ? { contact: o.contact } : {}) }); return "sent"; },
   };

@@ -4847,6 +4847,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         return out;
       },
       blocked: (a, b) => this.blocked(a, b),
+      severeBlock: (id, families) => { this.caseEvent(id, { at: this.now(), kind: `relay_block:${families.join(",")}`, points: 0 }); this.dirty = true; },
       privateFacts: () => {
         const priv = this.snapshotCached().facets.filter(f => f.scope === "agent_private");
         return { forbidden: priv.map(f => ({ text: f.value, owner: f.memberId })), canaries: priv.flatMap(f => [...f.value.matchAll(CANARY_RE)].map(x => x[1]!)) };
