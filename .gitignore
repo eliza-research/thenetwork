@@ -10,3 +10,4 @@ runs/
 __pycache__/
 .wrangler/
 .dev.vars
+_apalache-out/
