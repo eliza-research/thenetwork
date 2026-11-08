@@ -663,13 +663,19 @@ module relay {
       w' = w, desk' = desk, queue' = queue, ep' = ep, g' = g,
     }
   }
-  // delivery (photo-relay.ts:215-224): the provider fetches the bytes with the signed capability.
-  action fetchBytes: bool = {
+  // delivery (photo-relay.ts:215-224): the provider fetches the bytes with a URL that carries `reqExp` and a
+  // signature. The guard is what delivery() checks on the request and the stored row; `ok` is the rule
+  // (bytesServedImpliesApprovedBound), so the checker shows that the checks imply the rule. The signature binds the
+  // descriptor, the action, the intent and the exp (sign()): only the issued capability (reqExp == dexp) verifies.
+  action fetchBytes(reqExp: int): bool = {
     val ok = photo.state == "approved" and photo.claimed and photo.intent and w.now < photo.dexp and photo.dexp <= photo.exp
              and w.now < photo.exp and pairOk(w, "A", "B")
+    val sigOk = photo.intent and photo.claimed and reqExp == photo.dexp
     all {
-      photo.intent,
-      photo.state == "approved", photo.claimed, w.now < photo.dexp, photo.dexp <= photo.exp, pairOk(w, "A", "B"),
+      w.now < reqExp, reqExp <= w.now + FETCH_TTL,                     // exp <= now or exp > now + FETCH_TTL: refused
+      photo.claimed, photo.intent, photo.state == "approved",         // actionId, deliveryIntent, state
+      reqExp == photo.dexp, reqExp <= photo.exp,                      // exp === deliveryExpiresAt, exp <= expiresAt
+      sigOk, pairOk(w, "A", "B"),                                     // timingSafeEqual(sig), current()
       photo' = photo.with("served", true).with("servedOk", photo.servedOk and ok),
       w' = w, desk' = desk, queue' = queue, ep' = ep, g' = g,
     }
@@ -723,7 +729,8 @@ module relay {
     nondet dt = Set(5, 20).oneOf()
     any { setQuiet(m, b), timePass(dt) },
     // The photo item: the forward path in one branch (one of its actions is enabled at a time), faults in another.
-    any { selectPhoto, reviewPhoto(true), photoRequest(false, false), resolvePhoto, fetchBytes },
+    // The provider fetches with the URL it was given (the issued exp). Another exp fails the signature (sigOk).
+    any { selectPhoto, reviewPhoto(true), photoRequest(false, false), resolvePhoto, fetchBytes(photo.dexp) },
     nondet b = Set(false, true).oneOf()
     nondet f = Set(false, true).oneOf()
     any { reviewPhoto(false), revokePhoto, photoRequest(b, f), staffPhotoReject },
@@ -1048,6 +1055,19 @@ module relay {
   run photoServedTest =
     init
       .then(selectPhoto).then(reviewPhoto(true)).then(photoRequest(false, false))
-      .then(queueSend(PHOTO_ITEM)).then(resolvePhoto).then(fetchBytes)
+      .then(queueSend(PHOTO_ITEM)).then(resolvePhoto).then(fetchBytes(photo.dexp))
       .expect(photo.served and bytesServedImpliesApprovedBound)
+
+  // delivery() refuses a fetch after the deadline that the first resolve fixed (exp <= now), and a URL whose exp is not
+  // the issued one (the signature binds it).
+  run lateFetchRefusedTest =
+    init
+      .then(selectPhoto).then(reviewPhoto(true)).then(photoRequest(false, false))
+      .then(queueSend(PHOTO_ITEM)).then(resolvePhoto).then(timePass(5)).then(fetchBytes(photo.dexp))
+      .fail()
+  run otherExpRefusedTest =
+    init
+      .then(selectPhoto).then(reviewPhoto(true)).then(photoRequest(false, false))
+      .then(queueSend(PHOTO_ITEM)).then(resolvePhoto).then(fetchBytes(photo.dexp - 1))
+      .fail()
 }
