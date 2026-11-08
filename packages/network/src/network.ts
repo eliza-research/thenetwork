@@ -386,8 +386,8 @@ interface Opp {
   plan?: plans.Plan; planRun?: plans.PlanRun;
   /** When the booked plan reached each member, who confirmed it in words, and who confirmed by silence (48 h). */
   bookedAt?: Record<MemberId, number>; explicit?: MemberId[]; confirmed?: MemberId[];
-  /** Post-plan answers: came, would do it again, reported someone missing, and who they named as there. */
-  post?: Record<MemberId, { came: boolean; again: boolean; otherNoShow: boolean; named: MemberId[] }>;
+  /** Post-plan answers: came, would do it again, reported someone missing, who they named as there, and whether they said it went well (value_received at finalize). */
+  post?: Record<MemberId, { came: boolean; again: boolean; otherNoShow: boolean; named: MemberId[]; good?: boolean }>;
   /** Attendance resolved and the ledger told (plan_attended / plan_no_show / plan_ghosted). */
   finalized?: boolean;
   /** Members whose no-show `finalize` counted: a late feedback answer does not count it again (SD-328). */
@@ -733,12 +733,13 @@ export class ConsentNetwork implements NetworkUnderTest {
     } else {
       // A stated age resolves a missing record age: 13-17 stays a minor, 18 or more is an adult
       // (unless something else they said reads like a minor).
-      if (attested === undefined && m.minor && !isMinor(known) && !m.minorSignal && !m.ageConflict && !m.minorReported) m.minor = false;
+      if (attested === undefined && m.minor && !isMinor(known) && !m.minorSignal && !m.ageConflict && !m.minorReported) { m.minor = false; this.ledgerAge(m); }
       if (m.ageUnknown) { m.ageUnknown = false; this.ctx.log("age_resolved", { memberId: m.id, minor: m.minor }); if (m.stage !== "new") this.ledgerJoined(m); }
     }
     const age = Math.min(...[attested, m.statedAge].filter(validAge));
     if ((isMinor(age) || c.minorSignal) && !m.minor) {
       m.minor = true; m.minorSignal = true;
+      this.ledgerAge(m);
       // Safety record first: the adults this member met, before anything is dropped (network-consent-3).
       this.minorAfterContact(m.id);
       this.dropMember(m.id, "minors policy");
@@ -915,7 +916,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!validAge(m.age)) {
       this.dirty = true;
       const a = this.snapshotCached().members.find(x => x.id === m.id)?.age;
-      if (validAge(a)) { m.age = a; m.minor = m.minor || isMinor(a); }
+      if (validAge(a)) { m.age = a; if (!m.minor && isMinor(a)) { m.minor = true; this.ledgerAge(m); } }
     }
     return validAge(m.age) ? m.age : undefined;
   }
@@ -1649,6 +1650,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.ctx.log("minor_reported", { memberId: target.id, by });
     if (target.minor) return;
     target.minor = true; target.minorSignal = true; target.minorReported = true;
+    this.ledgerAge(target);
     this.minorAfterContact(target.id);
     this.dropMember(target.id, "minors policy");
   }
@@ -1668,6 +1670,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (record < 18) return { ok: false, reason: "record_minor" };
     if (m.statedAge !== undefined && m.statedAge < 18) return { ok: false, reason: "stated_minor" };
     m.minor = false; m.minorSignal = false; m.minorReported = false; m.ageConflict = false;
+    this.ledgerAge(m);
     this.dirty = true;
     const c = this.openCase(memberId);
     this.caseEvent(memberId, { at: this.now(), kind: "minor_signal_cleared", points: 0 });
@@ -2759,7 +2762,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     const crewId = o.plan ? this.planPost(m, o, body, f) : undefined;
     if (!o.plan) o.post = { ...o.post, [m.id]: { came: !f.selfNoShow, again: f.again, otherNoShow: f.otherNoShow || NOBODY_CAME.test(body), named: others.filter(x => this.namedIn(body, x)) } };
     const good = !f.selfNoShow && !f.otherNoShow && (f.sentiment === "positive" || !!o.post?.[m.id]?.again);
-    if (good) this.emit({ type: "value_received", member: m.id, with: others }, `${o.id}:${m.id}`);
+    // value_received is emitted at finalize, with the confirmations of the others who came (capital-1).
+    if (good) o.post![m.id]!.good = true;
     this.helpFeedback(m, o, f);
     // The check-in after a date (AppHooks.postDateReports): harassment, lying, a no-show or an unsafe
     // date is a report about the other person, a block between them, and a staff case.
@@ -2869,13 +2873,24 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** This member's effort overlay (the floor without a capital reader). Applies to their own asks only. */
   private effort(id: MemberId): NetworkEffort { return this.opts.capital?.effort(id, this.now()) ?? FLOOR_EFFORT; }
 
-  /** member_joined, once, when the age is known. A member treated as a minor is sent with no age (the ledger excludes them). */
+  /** The age the ledger gets: null for a member treated as a minor or with no known age (the ledger excludes them). */
+  private ledgerAgeOf(m: MemberState): number | null {
+    const ages = [m.age, m.statedAge].filter((a): a is number => validAge(a));
+    return m.minor || !ages.length ? null : Math.min(...ages);
+  }
+
+  /** member_joined, once, when the age is known. */
   private ledgerJoined(m: MemberState) {
     if (m.joinedLedger || m.ageUnknown) return;
     m.joinedLedger = true;
-    const ages = [m.age, m.statedAge].filter((a): a is number => validAge(a));
-    const age = m.minor || !ages.length ? null : Math.min(...ages);
-    this.emit({ type: "member_joined", member: m.id, age, ...(m.invitedBy ? { vouchedBy: m.invitedBy } : {}) }, m.id);
+    this.emit({ type: "member_joined", member: m.id, age: this.ledgerAgeOf(m), ...(m.invitedBy ? { vouchedBy: m.invitedBy } : {}) }, m.id);
+  }
+
+  /** age_updated when a joined member becomes, or stops being, a minor: eligibility in the ledger follows (capital-4). */
+  private ledgerAge(m: MemberState) {
+    if (!m.joinedLedger) return;
+    const age = this.ledgerAgeOf(m);
+    this.emit({ type: "age_updated", member: m.id, age }, `${m.id}:${age ?? "minor"}:${this.now()}`);
   }
 
   /** Onboarding is done: the member is active (member_activated, once, for adults). */
@@ -2929,6 +2944,9 @@ export class ConsentNetwork implements NetworkUnderTest {
         const verifiedBy: ("counterpart" | "organizer")[] = [...(v.length ? ["counterpart" as const] : []), ...(checkIn.includes(p) ? ["organizer" as const] : [])];
         this.emit({ type: "plan_attended", member: p, planId: o.id, counterparts: present.filter(x => x !== p), verifiedBy, origin, publicVenue: true, confirmers: [...v, ...(checkIn.includes(p) && host ? [host] : [])] }, key);
         if (said(p)) this.emit({ type: "feedback_given", member: p, planId: o.id }, key);
+        // The member said it went well: the value counts toward a vouch only with the confirmation of
+        // another attendee who came (their own check-in) or the host's check-in (capital-1).
+        if (said(p)?.good) this.emit({ type: "value_received", member: p, with: present.filter(x => x !== p), confirmedBy: v, verifiedBy: checkIn.includes(p) ? ["organizer"] : [] }, key);
       } else if (out === "no_show") this.emit({ type: "plan_no_show", member: p, planId: o.id }, key);
       else if (out === "ghosted") this.emit({ type: "plan_ghosted", member: p, planId: o.id }, key);
     }
@@ -4658,7 +4676,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       const acct = r.accountStatus === "paused" || r.accountStatus === "restricted" ? r.accountStatus : undefined;
       if (acct !== m.account) { if (acct) m.account = acct; else delete m.account; }
       if (validAge(r.age) && r.age !== m.age) m.age = r.age;
-      if (validAge(r.age) && isMinor(r.age) && !m.minor) { m.minor = true; this.ctx.log("minor_record", { memberId: m.id }); this.minorAfterContact(m.id); }
+      if (validAge(r.age) && isMinor(r.age) && !m.minor) { m.minor = true; this.ledgerAge(m); this.ctx.log("minor_record", { memberId: m.id }); this.minorAfterContact(m.id); }
     }
     return m.minor || !!m.account;
   }

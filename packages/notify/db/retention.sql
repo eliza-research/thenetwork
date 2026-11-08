@@ -114,13 +114,14 @@ begin
   ) where token.person_id = person;
   delete from notify.task_tokens where person_id = person and cardinality(item_ids) = 0;
   -- Signals are person/surface data, not app data. Preserve them for another
-  -- live or pending membership; a sealed removed member cannot retain them.
+  -- live or pending (invited) membership, the same rule as the insert trigger
+  -- (notify_surface_live_member); a sealed removed member cannot retain them.
   if app is not null then
     for other in select app_id, member_id from platform.memberships where person_id::text = person
-      and app_id <> app and state not in ('removed', 'invited') order by app_id loop
+      and app_id <> app and state <> 'removed' order by app_id loop
       perform set_config('app.app_id', other.app_id, true);
       select account_status into other_status from network.members where app_id = other.app_id and id = other.member_id;
-      if other_status is null or other_status not in ('removed', 'invited') then keep_signals := true; exit; end if;
+      if other_status is distinct from 'removed' then keep_signals := true; exit; end if;
     end loop;
   end if;
   perform set_config('app.app_id', coalesce(old_app, ''), true);

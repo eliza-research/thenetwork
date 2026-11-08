@@ -162,7 +162,8 @@ export class NetworkRuntime {
         const s = summarizeRun(log, proposals, { at, city: this.city as City, wallMs: Math.round(log.timingsMs.total ?? 0) });
         this.unit.runs.push({ id: this.app.id === "ntwrk" ? s.id : `${this.app.id}.${s.id}`, app_id: this.app.id, at: new Date(at), city: this.city, engine_version: s.engineVersion, proposals: s.proposals, wall_ms: s.wallMs, summary: s });
       },
-      onLedger: e => { this.capital.onLedger(e); this.unit.capital.push(e); },
+      // Only an event the live ledger accepted is stored: a replay must give the live ledger (SD-156).
+      onLedger: e => { if (this.capital.onLedger(e)) this.unit.capital.push(e); },
       // An age a member stated (network-consent-12): the service writes it to the person after the unit.
       onAgeStated: (memberId, age, o) => { this.statedAges.push({ memberId, age, ...o }); this.unit.ages.push({ memberId, age, ...o }); },
       // peon (#9): a posting the manager confirmed (or staff saved) is written with the unit (writeUnit).
@@ -354,8 +355,8 @@ export class NetworkRuntime {
    * about an opportunity that closed.
    */
   async start() {
-    // The ledger starts from what is stored (events this process did not emit), oldest first.
-    for (const r of await this.scoped(tx => tx`select event from network.capital_events where app_id = ${this.app.id} order by t, id`) as any[]) {
+    // The ledger starts from what is stored (events this process did not emit), in the order it accepted them (seq).
+    for (const r of await this.scoped(tx => tx`select event from network.capital_events where app_id = ${this.app.id} order by seq`) as any[]) {
       try { this.capital.ledger.record(typeof r.event === "string" ? JSON.parse(r.event) : r.event); } catch { /* out of order: counted by the wiring only for new events */ }
     }
     if (!this.adapter.enqueue) {await this.projectNotifications();return;}

@@ -170,7 +170,7 @@ export class CapitalLedger {
         // Value only counts toward the vouch when an eligible adult member other than the voucher
         // provided it: a voucher cannot manufacture their invitee's value. Nor can the voucher's
         // close circle: providers tied to the voucher by member-controlled credits (help, needs,
-        // member-started plans) inside the pair window do not count.
+        // member-started plans) inside their pair window do not count.
         const ties = this.tiesOf(m.vouchedBy, ev.t);
         const others = uniq(ev.with.filter(w => w !== m.vouchedBy && w !== ev.member && !ties.has(w) && this.isEligible(w)));
         // The invitee's own say-so is not proof (capital-1): a sybil can say "it was great" about
@@ -338,10 +338,13 @@ export class CapitalLedger {
 
   // ---------------------------------------------------------------------------------------------- rules
 
-  /** Members tied to `member` by member-controlled credits (either direction) inside the pair window. */
+  /**
+   * Members tied to `member` by member-controlled credits (either direction) inside the pair window
+   * of those credits (controlledPairWindowDays), the window in which they decay as a pair.
+   */
   private tiesOf(member: MemberId, t: number): Set<MemberId> {
     const ties = new Set<MemberId>();
-    const from = t - this.cfg.antiGaming.pairWindowDays * DAY;
+    const from = t - this.cfg.antiGaming.controlledPairWindowDays * DAY;
     for (let i = this.log.length - 1; i >= 0; i--) {
       const e = this.log[i]!;
       if (e.t < from) break;

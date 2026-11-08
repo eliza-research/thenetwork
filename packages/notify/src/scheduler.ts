@@ -104,10 +104,9 @@ export class Notifier {
    */
   async recordSent(input: InboxItemInput, d: { deliveryId: string; channel: Channel; countsTowardCap: boolean; sentAt: number }) {
     if (d.deliveryId.startsWith("ntf_")) throw new Error("ntf_ delivery ids belong to the scheduler");
-    const r = await this.add(input, d.sentAt);
-    if (r.item.notifiedAt === undefined)
-      await this.store.recordDelivery({ deliveryId: d.deliveryId, personId: input.personId, itemIds: [r.item.id], target: d.channel, countsTowardCap: d.countsTowardCap, sentAt: d.sentAt });
-    return r;
+    if (!input.summary.trim()) throw new Error("inbox item needs a summary");
+    // One transaction: a failure after the item is stored must not leave it pending (dispatch would text it again).
+    return this.store.addDelivered(input, { deliveryId: d.deliveryId, target: d.channel, countsTowardCap: d.countsTowardCap, sentAt: d.sentAt });
   }
 
   private dueAt(i: InboxItem): number {
