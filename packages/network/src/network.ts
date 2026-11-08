@@ -2648,7 +2648,8 @@ export class ConsentNetwork implements NetworkUnderTest {
         s.add(m.id); this.again.set(k, s);
       }
     }
-    this.interactions.push({ id: `${o.id}:fb:${m.id}`, kind: o.kind, category: o.category, participants: [...o.participants], at: this.now(), outcome: f.selfNoShow ? "no_show" : "completed", contributors: [] });
+    // The answer is about this member (by): their own date or their own no-show, at the time of the meeting.
+    this.interactions.push({ id: `${o.id}:fb:${m.id}`, kind: o.kind, category: o.category, participants: [...o.participants], at: o.meetingAt!, outcome: f.selfNoShow ? "no_show" : "completed", contributors: [], by: m.id });
     // Growth: a good experience is the best moment to ask (at most monthly, while invites last).
     if (!crewId && this.invitesWork && f.sentiment === "positive" && this.canInvite(m) && this.now() - m.lastGrowthAsk > 30 * DAY) {
       m.lastGrowthAsk = this.now();
