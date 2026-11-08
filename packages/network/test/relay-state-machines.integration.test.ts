@@ -19,10 +19,12 @@ const secret="synthetic-relay-state-machine-secret-20261108",clock=new SimClock(
 const a="+12125550311",b="+12125550312";
 let sql:SQL,service:NetworkService,server:ReturnType<typeof Bun.serve>,cloud:ReturnType<typeof Bun.serve>,ariId:string,samId:string;
 const sent:Array<{id:string;text:string;kind:string;to:string}>=[];
+/** What the classifier boundary answers next: hold flags (Clef categories). */
+let clefFlags:string[]=[];
 const start=async()=>{
   service=new NetworkService({url,clock,photoStorage:null,env:{PLATFORM_ENV:"dev",CLEF_RATINGS:"off",SERVICE_TURN_SECRET:secret},
     networks:[{id:"friends:nyc",matchingEnabled:false}],log:()=>{},
-    relayClassifier:async()=>({flags:[],source:"clef" as const}),
+    relayClassifier:async()=>({flags:clefFlags,source:"clef" as const}),
     adapter:(_net,rt)=>new CloudChannelAdapter({app:rt.app.id,clock,city:rt.city,from:"+12125550310",origin:cloud.url.origin,secret,
       env:{PLATFORM_ENV:"dev",BLOOIO_ALLOW_SEND:"1",NTWRK_LIVE_APPROVED:"1",FRIENDS_LIVE_APPROVED:"1"}})});
   await service.start();server=Bun.serve({hostname:"127.0.0.1",port:0,fetch:req=>service.fetch(req)});
@@ -76,6 +78,19 @@ test("relay-swap: a withdrawal stops a number share that waits for quiet hours t
   const [share]=await sql`select o.status from platform.outbound o join network.relay_records r on o.id='relay:'||r.item_id
     where r.kind='contact_share' and r.from_member=${ariId}`;
   expect(share?.status).toMatch(/^suppressed/);
+},60_000);
+
+test("relay-item: a text that Clef reads as a minor's is not kept for staff (SD-064)",async()=>{
+  await fixturePair("clef-minor");toNyHour(12);
+  clefFlags=["minor_signal"];
+  try { expect((await relay("clef-minor-text","tell Sam my mom drives me to the park after class")).body).toMatchObject({decision:"hold"}); }
+  finally { clefFlags=[]; }
+  const held=await service.runtimeFor("friends")!.readState(n=>n.relayHeld());
+  const item=held.find(h=>h.matchId==="clef-minor");
+  expect(item?.reasons).toContain("clef:minor_signal");
+  expect(item?.text).toBeUndefined();
+  const [saved]=await sql`select state from network.network_state where id='friends:nyc'`;
+  expect(JSON.stringify(saved.state)).not.toContain("drives me to the park");
 },60_000);
 
 // Keep this case last: Ari deletes everything.
