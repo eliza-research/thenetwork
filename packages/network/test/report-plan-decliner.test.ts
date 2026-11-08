@@ -35,6 +35,16 @@ describe("a plan decliner's report and block", () => {
     expect(w.log("report_received").map(l => l.detail.met)).toEqual([false]);
   });
 
+  test("SD-044: after the plan, a check-in answer does not make the decliner someone who met them", async () => {
+    const { w } = await bookedWithDecliner();
+    const awaiting = (id: string) => w.net.memberList().find(m => m.id === id)?.awaiting?.kind;
+    expect(await w.runUntil(() => awaiting("a") === "feedback", 10 * DAY)).toBe(true);
+    await w.say("a", "It was great, thanks!");
+    expect(w.net.exportState().interactions.some(x => x.id.endsWith(":fb:a"))).toBe(true);
+    await w.say("d", "report Ana Diaz, she harassed me");
+    expect(w.log("report").map(l => [l.detail.target, l.detail.met])).toEqual([["a", false]]);
+  });
+
   test("SD-045: a block by a member who is not going does not call off the plan for the others", async () => {
     const { w, id } = await bookedWithDecliner();
     const from = w.mark();
