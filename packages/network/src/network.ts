@@ -1275,16 +1275,16 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   // ------------------------------------------------------------------ reports (reports.ts; docs/admin-console.md 3.7.1)
   /**
-   * A report about a member: a record with ids and a kind (never the words) and a staff case event.
-   * An urgent report (harassment, unsafe, scam, minor) by someone who met them (the check-in after a
-   * date, or a "report X" text; see reportHeld) takes the member out of matching until staff decide. A "report X" message keeps the trust
-   * rules (trust.ts: points need two reporters who met them; a stranger only opens the case).
+   * A report about a member: a record with ids and a kind (never the words). The caller
+   * (blockAndReport) writes the staff case event and keeps the trust rules (trust.ts: points need two
+   * reporters who met them; a stranger only opens the case). An urgent report (harassment, unsafe,
+   * scam, minor) by someone who met them (the check-in after a date, or a "report X" text; see
+   * reportHeld) takes the member out of matching until staff decide.
    */
-  private fileReport(reporter: MemberId, subject: MemberId, kind: ReportKind, o: { oppId?: string; source: SafetyReport["source"]; met: boolean; caseEvent?: boolean }) {
+  private fileReport(reporter: MemberId, subject: MemberId, kind: ReportKind, o: { oppId?: string; source: SafetyReport["source"]; met: boolean }) {
     const now = this.now();
     const r = { id: this.sid(`rp${++this.reportSeq}`), kind, reporterId: reporter, subjectId: subject, ...(o.oppId ? { opportunityId: o.oppId } : {}), at: now, status: "open" as const, source: o.source, met: o.met };
     this.reports.push(r);
-    if (o.caseEvent !== false) this.caseEvent(subject, { at: now, kind: `report:${kind}`, points: 0, by: reporter });
     this.ctx.log("report_received", { reportId: r.id, kind, memberId: reporter, target: subject, opportunityId: o.oppId ?? null, source: o.source, met: o.met });
     if (this.reportHeld(subject)) this.dropMember(subject, "report under review");
     this.dirty = true;
@@ -1432,6 +1432,16 @@ export class ConsentNetwork implements NetworkUnderTest {
       this.send(m, verb === "block" ? copy.blockUnmatched : copy.reportUnmatched, { type: "info" }, "reply");
       return;
     }
+    const met = this.blockAndReport(m, target, verb === "report" ? kind : undefined, { source: "message" });
+    this.send(m, verb === "block" ? (met ? copy.blocked : copy.blockUnmatched) : met ? copy.reported : copy.reportUnmatched, { type: "info" }, "reply");
+  }
+
+  /**
+   * The block, and the report when `kind` is set, with the trust rules (trust.ts). The same for a
+   * "report X" text and for a report in the check-in answer (SD-229). Returns whether they met.
+   */
+  private blockAndReport(m: MemberState, target: MemberState, kind: ReportKind | undefined, o: { source: SafetyReport["source"]; oppId?: string }): boolean {
+    const now = this.now();
     const met = this.metBefore(m.id, target.id);
     this.blocks.add(pairKey(m.id, target.id));
     this.ctx.recordBlock(m.id, target.id);
@@ -1439,15 +1449,15 @@ export class ConsentNetwork implements NetworkUnderTest {
     // Before any report is filed: an urgent report by someone who met them holds the subject (fileReport ->
     // dropMember), which would close a shared booked date as "participant dropped" with no word to them.
     this.callOffPair(m.id, target.id);
-    if (verb === "report") {
+    if (kind) {
       const points = this.trust.report(target.id, m.id, now, { met });
       if (!points) this.caseEvent(target.id, { at: now, kind: "report_received", points: 0, by: m.id });
       // The staff queue's record (the case event above already counts it).
-      this.fileReport(m.id, target.id, kind, { source: "message", met, caseEvent: false });
+      this.fileReport(m.id, target.id, kind, { ...o, met });
       this.ctx.log("report", { memberId: m.id, target: target.id, met, points });
       if (kind === "minor") this.minorReported(target, m.id);
     }
-    this.send(m, verb === "block" ? (met ? copy.blocked : copy.blockUnmatched) : met ? copy.reported : copy.reportUnmatched, { type: "info" }, "reply");
+    return met;
   }
 
   /**
@@ -2659,12 +2669,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** A report in the answer to the check-in after a date: a record for staff, a block between them, the "reported" reply. */
   private checkInReported(m: MemberState, o: Opp, others: MemberId[], kind: ReportKind) {
-    for (const other of others) {
-      this.fileReport(m.id, other, kind, { oppId: o.id, source: "check_in", met: true });
-      this.blocks.add(pairKey(m.id, other));
-      this.ctx.recordBlock(m.id, other);
-      if (kind === "minor") { const t = this.members.get(other); if (t) this.minorReported(t, m.id); }
-    }
+    for (const other of others) this.blockAndReport(m, this.member(other), kind, { source: "check_in", oppId: o.id });
     this.send(m, copy.reported, { type: "info" }, "reply");
   }
 
