@@ -458,10 +458,11 @@ export class World {
         if (m && ini.adversarial) this.rec({ type: "adversarial_attempt", memberId: id, kind: ini.adversarial, messageId: m.id });
       }
     }
-    // Next initiative: adversaries every 1-2 days; others ~ every 3-12 days by social energy.
+    // Next initiative: adversaries every 1-2 days; others ~ every 3-12 days by social energy. The chain goes on
+    // while the persona is opted out (it sends nothing then), so a START brings the persona's own messages back.
     const gapDays = p.hidden.adversarial ? r.range(1, 2) : r.logNormal(6 / (0.5 + p.hidden.socialEnergy), 0.4);
     const next = nextLocalHour(this.clock.now() + gapDays * DAY, p.homeCity, r.int(Math.max(p.routine.wake, 8), 21));
-    if (next < end && !mem.optedOut) this.scheduler.at(next, "initiative", { personaId: id });
+    if (next < end) this.scheduler.at(next, "initiative", { personaId: id });
   }
 
   private onFlakeCheck(meetingId: string, personaId: MemberId) {
