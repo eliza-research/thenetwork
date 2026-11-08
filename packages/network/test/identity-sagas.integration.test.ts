@@ -32,7 +32,7 @@ let sql: SQL;
 const open: NetworkService[] = [];
 function service(clock: SimClock, more: Partial<ServiceOptions> = {}) {
   const s = new NetworkService({
-    url: URL_, clock, instance: "sagas", log: () => {}, env: { PLATFORM_ENV: "dev" }, networks: NETS,
+    url: URL_, clock, instance: "sagas", log: process.env.SAGA_LOG ? console.log : () => {}, env: { PLATFORM_ENV: "dev" }, networks: NETS,
     tokens: "admin:adm-tok,safety:saf-tok", webhookSecret: SECRET,
     network: { seed: 1 }, publicApi: { otp: { name: "fake", send: async () => ({ code: "123456" }) }, minStartMs: 0, minVerifyMs: 0 }, photoStorage: null,
     adapter: () => new DryRunAdapter(() => {}),
@@ -73,6 +73,18 @@ function stopAfter<T extends object>(o: T, name: string) {
     const r = await real.apply(o, a);
     if (!fired) { fired = true; throw new Error(`process stopped after ${name}`); }
     return r;
+  };
+  return () => fired;
+}
+
+/** The process stops once, right before `name` runs (everything before it committed). */
+function stopBefore<T extends object>(o: T, name: string) {
+  const target = o as Record<string, any>;
+  const real = target[name] as (...a: unknown[]) => Promise<unknown>;
+  let fired = false;
+  target[name] = async (...a: unknown[]) => {
+    if (!fired) { fired = true; throw new Error(`process stopped before ${name}`); }
+    return real.apply(o, a);
   };
   return () => fired;
 }
@@ -169,5 +181,25 @@ describe.skipIf(!pgAvailable)("identity sagas: stop half way, retry, races (Post
     const rt = s.runtimeFor("slop")!;
     const send: Outbound = { id: "invite_1", memberId: "slop_nobody", to: phone, body: "x", kind: "transactional", proactive: false, system: false, ts: clock.now() };
     expect([...(await s.consentRefused(rt, [send]))]).toEqual(["invite_1"]);
+  }, T);
+
+  test("SD-029: a text leave that stops after the forget unit is finished by the member's second leave text", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const s = service(clock);
+    const cy = newPhone();
+    expect(await text(s, clock, cy, "slop")).toBe("join_asked");
+    expect(await text(s, clock, cy, "Cy, 40")).toBe("joined");
+
+    // The forget unit commits (the Network member is removed), then the process stops before the membership is removed.
+    const fired = stopBefore(s.people, "forgetMembership");
+    expect((await say(s, clock, cy, "leave slop.date")).result).not.toBe("left");
+    expect(fired()).toBe(true);
+    expect((await sql`select account_status from network.members where app_id = 'slop'`).map((r: any) => r.account_status)).toEqual(["removed"]);
+
+    // The member asks again. The inbox first handles the stopped message again, then the new one: the leave
+    // finishes (before the fix both went to the join flow and the membership stayed active with no member).
+    await text(s, clock, cy, "leave slop.date");
+    expect((await sql`select state, first_name from platform.memberships where app_id = 'slop'`).map((r: any) => [r.state, r.first_name])).toEqual([["removed", null]]);
   }, T);
 });

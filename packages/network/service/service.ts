@@ -1082,9 +1082,11 @@ export class NetworkService implements RuntimeHost {
       const leaveMember = (await this.memberApps(ev.from)).find(m => m.app === leaving.id);
       const lrt = (leaveMember && await this.runtimeOfMember(leaving.id, leaveMember.memberId)) || this.runtimeFor(leaving.id);
       if (lrt && lrt !== rt) await lrt.identities();
-      const lid = lrt?.memberOf(ev.from);
+      const person = await this.accounts.personFor(e164);
+      // A leave that stopped after the forget unit: the Network member is gone, the membership still reads live. This leave finishes it.
+      const kept = !lrt?.memberOf(ev.from) && person ? await this.people.getMembership(person.id, leaving.id) : undefined;
+      const lid = lrt?.memberOf(ev.from) ?? (kept && kept.state !== "removed" && kept.state !== "invited" ? kept.memberId as MemberId : undefined);
       if (lrt && lid) {
-        const person = await this.accounts.personFor(e164);
         if (person) await this.accounts.leave(leaving, { e164, personId: person.id });
         else { await this.accounts.recordConsent({ e164, app: leaving.id, line, state: "opted_out", source: "leave", ref: rowId, at: this.consentAt(ev) }); await this.forget(leaving, lid); }
         if (turn) { turn.app = leaving.id; turn.memberId = lid; turn.consent = {state: "opted_out", scope: "app", app: leaving.id, at: t}; turn.confirmation = {id: `sys:${rowId}`, body: this.copyOf(leaving).leftApp}; }
