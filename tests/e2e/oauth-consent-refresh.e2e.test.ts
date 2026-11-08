@@ -7,7 +7,7 @@ import { SQL } from "bun";
 import type { Outbound } from "../../packages/network/service/channel.ts";
 import type { NetworkRuntime } from "../../packages/network/service/runtime.ts";
 import { sha256hex } from "../../packages/mcp/src/util.ts";
-import { Browser, connectMcp, newPhone, pgAvailable, rpc, startStack, toolData, webJoin, type Stack } from "./harness.ts";
+import { Browser, connectMcp, newPhone, pgAvailable, rpc, signIn, startStack, toolData, webJoin, type Stack } from "./harness.ts";
 
 const T = 180_000;
 const CLAUDE = "https://claude.ai/api/mcp/auth_callback";
@@ -98,5 +98,26 @@ describe.skipIf(!pgAvailable)("OAuth consent, refresh and assistant signals", ()
     expect(((await sql`select lowest_age from platform.people where id = ${m.person_id}::uuid`)[0] as { lowest_age: number }).lowest_age).toBe(16);
     const r = toolData(await rpc(st, "peon", "/mcp", "tools/call", { name: "get_updates", arguments: {} }, c.token!.access_token));
     expect(r.updates).toEqual([]);
+  }, T);
+
+  // SD-384: a number change moves the person's grants to the new number's key. Before the fix the
+  // grant's signup draft kept the old key, so the person could not open it on the new number.
+  test("a signup draft follows its grant to the new number", async () => {
+    const phone = newPhone(), next = newPhone(), b = new Browser();
+    expect((await webJoin(st, "slop", phone, { age: 30, browser: b })).res.status).toBe(200);
+    const c = await connectMcp(st, "friends", phone);
+    expect(c.token?.access_token, c.html.slice(0, 300)).toBeString();
+    const prepared = toolData(await rpc(st, "friends", "/mcp", "tools/call", { name: "prepare_signup", arguments: { firstName: "Rae" } }, c.token!.access_token));
+    expect(prepared.prepared).toBe(true);
+
+    st.clock.advance(31_000);
+    expect((await st.site("slop", "/api/me/phone/start", { browser: b, json: { phone: next } })).status).toBe(200);
+    expect((await st.site("slop", "/api/me/phone/confirm", { browser: b, json: { code: st.otp.last(next) } })).status).toBe(200);
+
+    const onFriends = new Browser();
+    await signIn(st, "friends", next, onFriends);
+    const claim = await st.site("friends", "/oauth/signup-draft", { browser: onFriends, json: {} });
+    expect(claim.status).toBe(200);
+    expect(((await claim.json()) as { draft: unknown }).draft).toEqual({ firstName: "Rae" });
   }, T);
 });

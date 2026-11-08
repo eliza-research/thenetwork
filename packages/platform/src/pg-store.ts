@@ -370,7 +370,11 @@ export class PgPeopleStore implements PeopleStore {
       // The person's linked agents (MCP OAuth grants) hold the keyed hash: they move with the number (PRD 11.5, F25).
       const [oauth] = await tx`select case when to_regclass('oauth.grants') is null then false
         else has_schema_privilege('oauth', 'USAGE') and has_table_privilege(to_regclass('oauth.grants'), 'UPDATE') end as ok`;
-      if (oauth?.ok) await tx`update oauth.grants set phone_key = ${m.newHash} where phone_key = ${m.oldHash}`;
+      if (oauth?.ok) {
+        await tx`update oauth.grants set phone_key = ${m.newHash} where phone_key = ${m.oldHash}`;
+        // A grant's signup draft is claimed by the same key as the grant (packages/mcp/db/oauth.sql).
+        await tx`update oauth.signup_drafts set phone_key = ${m.newHash} where phone_key = ${m.oldHash}`;
+      }
       const changed = await tx`update platform.phone_changes set confirmed_at = ${ts(m.at)}, new_e164 = null, old_hash = ${m.oldHash}, new_hash = ${m.newHash}
         where id = ${m.changeId}::uuid and person_id = ${m.personId}::uuid and confirmed_at is null returning id`;
       if (!changed.length) throw new Error("no waiting number change for this person");
