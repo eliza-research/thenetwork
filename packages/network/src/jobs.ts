@@ -182,9 +182,9 @@ export function readPostingText(body: string, ctx: { draft?: PostingDraft; posti
   return { draft: merged, text: POSTING_COPY.readBack(merged), ready: true };
 }
 
-/** The posting a confirmed draft saves (an update keeps what the draft does not change). */
+/** The posting a confirmed draft saves (an update keeps what the draft does not change). A closed post is final: undefined. */
 export function postingFromDraft(d: PostingDraft, managerId: MemberId, now: number, prev?: JobPosting): JobPosting | undefined {
-  if (!d.id) return undefined;
+  if (!d.id || (prev && prev.status !== "active")) return undefined;
   if (d.close) return prev ? { ...prev, status: "closed", closedReason: "closed", updatedAt: now } : undefined;
   const title = d.title ?? prev?.title;
   const payMin = d.payMin ?? prev?.payMin, payMax = d.payMax ?? prev?.payMax;

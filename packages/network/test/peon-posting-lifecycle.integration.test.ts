@@ -8,6 +8,7 @@ import { MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { DryRunAdapter } from "../service/channel.ts";
+import { jobPostingRoutes } from "../service/postings.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
 import { START } from "./mini.ts";
 
@@ -20,7 +21,7 @@ const URL_ = `postgres://${USER}@localhost:${DEV_PG_PORT}/${DB}`;
 async function admin(q: string) { const sql = new SQL({ url: ADMIN_URL, max: 1 }); try { await sql.unsafe("set lock_timeout = '5s'"); await sql.unsafe(q); } finally { await sql.close(); } }
 
 const SECRET = "whsec_peon_lifecycle";
-const SAM = "+12125550181";
+const SAM = "+12125550181", ALEX = "+12125550182";
 const POST = "We're hiring a data analyst (level 2), 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL";
 
 let sql: SQL;
@@ -90,6 +91,49 @@ describe.skipIf(!pgAvailable)("peon posting lifecycle (NetworkService, Postgres)
     await text(s, clock, SAM, "yes");
     expect(await last(sam.id)).toMatch(/^Posted: data analyst\./);
     expect((await postings(sam.id)).map(p => p.status)).toEqual(["active"]);
+    await s.close(); svc = undefined;
+  }, T);
+
+  // SD-114: "closed" is terminal. A staff edit or a stale update draft does not reopen a closed post
+  // (with its openings read back as 1).
+  test("a closed post stays closed after a staff edit and after a stale update draft", async () => {
+    const clock = new SimClock(START + 7 * 24 * 60 * MINUTE);
+    const s = svc = service(clock);
+    await s.start();
+    await text(s, clock, ALEX, "peon");
+    await text(s, clock, ALEX, "Alex, 38");
+    const alex = (await member(ALEX))!;
+    const routes = jobPostingRoutes({ rt: s.runtimeFor("peon")!, user: { id: "staff:test", roles: ["admin"] }, need: () => undefined, audit: async () => {}, now: () => clock.now() });
+    const call = async (method: string, path: string, b?: unknown) => {
+      const res = await routes(new Request(`http://127.0.0.1:4848/apps/peon${path}`, { method, ...(b ? { headers: { "content-type": "application/json" }, body: JSON.stringify(b) } : {}) }), path.split("?")[0]!);
+      return { status: res!.status, body: await res!.json() as any };
+    };
+    const openings = async (postingId: string) =>
+      ((await sql`select tags from network.facets where app_id = 'peon' and id = ${`${postingId}-open`}`)[0] as { tags: string[] }).tags.filter(t => t.startsWith("peon:openings:"));
+
+    // Trigger A: staff close the post, then staff save it again to fix the pay.
+    await text(s, clock, ALEX, POST);
+    await text(s, clock, ALEX, "yes");
+    const [a] = await postings(alex.id);
+    expect(a!.status).toBe("active");
+    expect((await call("POST", `/postings/${encodeURIComponent(a!.id)}/close`, { reason: "filled" })).body.ok).toBe(true);
+    const edit = await call("POST", "/postings", { id: a!.id, managerId: alex.id, payMin: 95, payMax: 125 });
+    expect(edit.status).toBe(409);
+    expect((await postings(alex.id)).find(p => p.id === a!.id)!.status).toBe("closed");
+    expect(await openings(a!.id)).toEqual(["peon:openings:0"]);
+
+    // Trigger B: the manager asks to update a second post and gets the read-back; staff close it; the manager says yes.
+    await text(s, clock, ALEX, "We're hiring a bookkeeper, 3 openings, $60k-$70k, onsite in Queens");
+    await text(s, clock, ALEX, "yes");
+    const b = (await postings(alex.id)).find(p => p.id !== a!.id)!;
+    expect(b.status).toBe("active");
+    await text(s, clock, ALEX, "Update my bookkeeper post: $65k-$75k");
+    expect(await last(alex.id)).toMatch(/^Here.s your job post: Bookkeeper, .*\$65k-\$75k/);
+    expect((await call("POST", `/postings/${encodeURIComponent(b.id)}/close`, { reason: "closed" })).body.ok).toBe(true);
+    await text(s, clock, ALEX, "yes");
+    expect(await last(alex.id)).not.toMatch(/^Updated:/);
+    expect((await postings(alex.id)).find(p => p.id === b.id)!.status).toBe("closed");
+    expect(await openings(b.id)).toEqual(["peon:openings:0"]);
     await s.close(); svc = undefined;
   }, T);
 });
