@@ -53,6 +53,7 @@ function valueOf(p: SlopOnboarding, f: string): unknown {
 }
 function matches(p: SlopOnboarding, f: string, want: unknown): boolean {
   const got = valueOf(p, f);
+  if (want === null) return got === undefined;
   if (f === "location") return typeof got === "string" && typeof want === "string" && got.toLowerCase() === want.toLowerCase();
   if (f === "values") return Object.entries(want as Record<string, unknown>).every(([k, v]) => (got as Record<string, unknown>)[k] === v);
   if (f === "free") return same([...(got as string[])].sort(), [...(want as string[])].sort());
@@ -443,6 +444,24 @@ async function llmMergeGate(b: Block): Promise<void> {
     const teen = await run("sophomore year lol", { selfAge: { value: 15, quote: "sophomore year" } });
     if (!teen.minor || teen.declined) throw new Error("an LLM age must mark a minor and never decline");
     if ((await run("im 30 lol", { selfAge: { value: 45, quote: "im 30" } })).age?.value !== 30) throw new Error("an LLM age raised the age");
+
+    // Regression: LLM-filled seeks at 0.7 confidence must not be cleared upon subsequent gender/orientation correction
+    const llmPrior = await run("living in ny", { seeks: { value: ["woman"], quote: "living in ny" }, gender: { value: "man", quote: "living in ny" } });
+    const afterCorr = applyCorrection(llmPrior, "actually I am gay");
+    if (!same(afterCorr.seeks?.value, ["woman"]) || afterCorr.seeks?.source !== "llm") {
+      throw new Error(`LLM-filled seeks must not be cleared by later correction: ${JSON.stringify(afterCorr.seeks)}`);
+    }
+
+    // Regressions: questions, hedges, and conditions must not lock confirmation
+    const baseP = extractSlopProfile(["woman looking for men 28-38 within 5 mi of 11211"]);
+    if (applyCorrection(baseP, "Right?").confirmed) throw new Error("question mark must not confirm");
+    if (applyCorrection(baseP, "Correct?").confirmed) throw new Error("question mark must not confirm");
+    if (applyCorrection(baseP, "Right, maybe").confirmed) throw new Error("hedge must not confirm");
+    if (applyCorrection(baseP, "Right, let me check").confirmed) throw new Error("hedge must not confirm");
+    if (applyCorrection(baseP, "Perfect, if 11211 includes Greenpoint").confirmed) throw new Error("condition must not confirm");
+    if (!applyCorrection(baseP, "Right").confirmed) throw new Error("standalone affirmation must confirm");
+    if (!applyCorrection(baseP, "Correct").confirmed) throw new Error("standalone affirmation must confirm");
+    if (!applyCorrection(baseP, "Perfect").confirmed) throw new Error("standalone affirmation must confirm");
   });
 }
 
