@@ -170,10 +170,15 @@ function Search() {
   const hits = conv ? [] : searchHits(s.ui.query);
   const done = () => { store.setUI({ query: "" }); setConv(null); (document.getElementById("obs-search") as HTMLInputElement | null)?.blur(); };
   const pickHit = (h: Hit) => { h.go(); done(); };
+  // Each search is an audited read: one at a time, and an answer for a query that is gone is dropped.
+  const inFlight = useRef<string | null>(null);
   const runConv = async () => {
-    if (!canConv) return;
+    if (!canConv || inFlight.current === q) return;
+    inFlight.current = q;
     setConv({ q });
     const r = await store.search(q);
+    if (inFlight.current === q) inFlight.current = null;
+    if (store.ui.query.trim() !== q) return;
     setConv({ q, hits: r.data, error: r.data ? undefined : r.error });
   };
   const openHit = (h: SearchHit) => {
