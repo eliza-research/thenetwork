@@ -449,6 +449,8 @@ const EMPLOYER_TAGS = /^(employer|employer_type|occupation|company|job|job_title
 const EMPLOYER_TEXT = /\b(works? (at|for)|employer|employed|company|job|occupation|workplace|engineer at|manager at)\b/i;
 /** How long a want a member told us about stays fresh (the engine's intent horizon). */
 const LEARNED_DESIRE_DAYS = 60;
+/** The gate keeps a declined pair apart this long (gateReason: pair_history); app packs see it as an avoid edge. */
+const PAIR_HISTORY_DAYS = 60;
 const OPEN_STAGES = new Set(["review", "probing", "scheduled"]);
 const EMPTY_SET: ReadonlySet<string> = new Set();
 const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
@@ -3605,7 +3607,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       // pair history and responsiveness still apply.
       for (let i = 0; i < p.participants.length; i++) for (let j = i + 1; j < p.participants.length; j++) {
         const [a, b] = [p.participants[i]!, p.participants[j]!];
-        if (this.avoid.has(pairKey(a, b)) || this.blocked(a, b) || this.pairHistory(a, b, 60)) return "pair_history";
+        if (this.avoid.has(pairKey(a, b)) || this.blocked(a, b) || this.pairHistory(a, b, PAIR_HISTORY_DAYS)) return "pair_history";
       }
       if (this.opts.selective && p.participants.some(id => this.responsiveness(id) < this.opts.minResponsiveness)) return "unresponsive";
       return undefined;
@@ -3629,7 +3631,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     for (let i = 0; i < p.participants.length; i++) for (let j = i + 1; j < p.participants.length; j++) {
       const k = pairKey(p.participants[i]!, p.participants[j]!);
-      if (this.avoid.has(k) || this.blocked(p.participants[i]!, p.participants[j]!) || this.pairHistory(p.participants[i]!, p.participants[j]!, 60)) return "pair_history";
+      if (this.avoid.has(k) || this.blocked(p.participants[i]!, p.participants[j]!) || this.pairHistory(p.participants[i]!, p.participants[j]!, PAIR_HISTORY_DAYS)) return "pair_history";
     }
     return undefined;
   }
@@ -3759,7 +3761,13 @@ export class ConsentNetwork implements NetworkUnderTest {
       ...input,
       members: input.members.filter(x => adult.has(x.id)),
       facets, intents: input.intents.filter(i => adult.has(i.memberId)), presence: input.presence.filter(p => adult.has(p.memberId)),
-      edges: input.edges.filter(e => both(e.from, e.to)),
+      edges: [
+        ...input.edges.filter(e => both(e.from, e.to)),
+        // Pairs the gate refuses (a "no", a review reject): the pack's own re-probe window is shorter,
+        // and every pick the gate drops takes both members' slot of the run.
+        ...[...this.declined].filter(([k, at]) => at > now - PAIR_HISTORY_DAYS * DAY && both(...(k.split("|") as [MemberId, MemberId])))
+          .map(([k, at]) => { const [a, b] = k.split("|") as [MemberId, MemberId]; return { from: a, to: b, type: "avoid" as const, strength: 1, explicit: false, createdAt: at }; }),
+      ],
       recentProposals: (input.recentProposals ?? []).filter(p => p.participants.every(id => adult.has(id))),
       safetyHolds: (input.safetyHolds ?? []).filter(h => adult.has(h.memberId)),
       feedback: (input.feedback ?? []).filter(f => both(f.from, f.about)),
