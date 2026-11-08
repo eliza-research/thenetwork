@@ -64,8 +64,7 @@ export function healthAlerts(x: AlertInput): HealthAlert[] {
     if (n > 0) add("info", `send_refused:${reason}`, n, `${n} send(s) refused in the last 24 h: ${reason.replace(/_/g, " ")}`);
   if (x.guardBlocked > 0) add("warn", "guard_blocked", x.guardBlocked, `The leak guard stopped ${x.guardBlocked} message(s) in the last 24 h`);
   if (x.expectEngine) {
-    if (x.matchingLocked) add("info", "matching_off", 0, "Proactive matching is off until this app's engine pack ships: joins, onboarding and safety only");
-    else if (!x.matchingEnabled) add("info", "matching_off", 0, "Proactive matching is off (admin switch): no engine runs");
+    if (!x.matchingEnabled) add("info", "matching_off", 0, x.matchingLocked ? "Proactive matching is off until this app's engine pack ships: joins, onboarding and safety only" : "Proactive matching is off (admin switch): no engine runs");
     else if (x.lastEngineRun === undefined) { if (x.now - x.start > HEARTBEAT) add("bad", "matcher_heartbeat", 0, "No engine run yet"); }
     else if (x.now - x.lastEngineRun > HEARTBEAT) {
       const h = Math.round((x.now - x.lastEngineRun) / HOUR);
@@ -328,9 +327,11 @@ export function appHealth(app: AppId, st: ObsState, slaHours: number): AppHealth
   const expired = alerts.find(a => a.key === "review_sla_missed")?.count ?? 0;
   const failures = alerts.filter(a => a.key.startsWith("send_refused:") || a.key.startsWith("service_channel:") || a.key === "guard_blocked").reduce((n, a) => n + a.count, 0);
   const worst = alerts.map(a => a.level).sort((a, b) => LEVEL[a] - LEVEL[b])[0];
+  // The stored switch first: the service matches when its registry row allows it, whatever the pack list
+  // says. With no stored state, real mode is off (the service's default); game mode's stub Network matches.
   return {
     app, available: !st.env.error, ...(st.env.error ? { error: st.env.error } : {}),
     members: st.members.filter(m => m.joined && !m.declined).length, reviewBacklog: open.length, slaMisses: late + expired, slaHours, sendFailures: failures,
-    matching: !matchingAllowed(app) ? "locked" : st.network?.matchingEnabled === false ? "off" : "on", ...(worst ? { worst } : {}),
+    matching: st.network?.matchingEnabled ? "on" : !matchingAllowed(app) ? "locked" : st.network || st.env.mode === "real" ? "off" : "on", ...(worst ? { worst } : {}),
   };
 }

@@ -570,7 +570,7 @@ export class RealSource implements DataSource {
       now, start: this.store.clock.start, reviewOpen: opps.filter(o => o.state === "IN_REVIEW" && o.review).map(o => ({ deadline: o.review!.deadline, queuedAt: o.review!.queuedAt })),
       sla: { app: this.app, hours: slaHours()[this.app] }, matchingLocked: !matchingAllowed(this.app),
       reviewExpired: (expired as any[])[0]?.n ?? 0, deferred: this.netState?.deferred ?? null, refusals, guardBlocked,
-      lastEngineRun: ms((lastRun as any[])[0]?.at), expectEngine: !!this.netState || s.runs.some(r => !r.shadow), matchingEnabled: this.netState?.matchingEnabled ?? matchingAllowed(this.app),
+      lastEngineRun: ms((lastRun as any[])[0]?.at), expectEngine: !!this.netState || s.runs.some(r => !r.shadow), matchingEnabled: this.netState?.matchingEnabled ?? false,
       invariants: s.counts.invariantViolations, canaryLeaks: leaks, minorContacts,
       extra: service ? serviceAlerts(service, Date.now()) : [],
     });
@@ -846,7 +846,7 @@ export class RealSource implements DataSource {
       last[key] = to;
     }
     return {
-      matchingEnabled: this.netState?.matchingEnabled ?? matchingAllowed(this.app), reviewMode: this.netState ? "human" : null, network: {},
+      matchingEnabled: this.netState?.matchingEnabled ?? false, reviewMode: this.netState ? "human" : null, network: {},
       outreach: JSON.parse(JSON.stringify(OUTREACH)), history, canChange: !!this.service,
     };
   }
