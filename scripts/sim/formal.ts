@@ -10,7 +10,7 @@ import { dirname, join, relative } from "node:path";
 import { type Block, expect } from "./gate.ts";
 
 const ROOT = join(import.meta.dir, "..", "..");
-const SCAN = ["packages", "deploy", "scripts", "sites", "tests"];
+const SCAN = ["packages", "deploy", "scripts", "sites", "tests", "tools"];
 const LSC = join(ROOT, "node_modules", ".bin", "lsc");
 const CHECK_TIMEOUT_MS = 600_000;
 
@@ -74,6 +74,20 @@ export async function formalBlock(b: Block): Promise<void> {
     expect(Object.keys(now).filter(k => now[k]! > (limit[k] ?? 0)).map(k => `${k}: ${now[k]} over ${limit[k] ?? 0}`)).toEqual([]);
   });
 
+  await b.run("docs/formal-coverage.md has one row for every source file, no gap, and names only models that exist", () => {
+    const rows = coverageRows();
+    const files = [...new Set(LEDGER_SCAN.flatMap(d => existsSync(join(ROOT, d)) ? walkAll(join(ROOT, d)) : []).map(p => relative(ROOT, p)))]
+      .filter(f => LEDGER_EXT.test(f) && !isTest(f) && !/(^|\/)e2e\//.test(f) && !f.startsWith("proofs/") && !f.endsWith(".d.ts"));
+    const byFile = new Map(rows.map(r => [r.file, r]));
+    expect(files.filter(f => !byFile.has(f))).toEqual([]);
+    expect(rows.filter(r => !existsSync(join(ROOT, r.file))).map(r => r.file)).toEqual([]);
+    expect(rows.filter(r => r.verdict.startsWith("gap")).map(r => r.file)).toEqual([]);
+    expect(rows.filter(r => r.lemma.startsWith("self") && !listed.includes(r.file)).map(r => r.file)).toEqual([]);
+    const models = new Set(readdirSync(join(ROOT, "quint")).filter(n => n.endsWith(".qnt")).map(n => n.slice(0, -4)));
+    const named = rows.flatMap(r => r.quint.replace(/\[[^\]]*\]|\([^)]*\)/g, "").split(",").map(s => s.trim()).filter(s => /^[a-z_]+$/.test(s) && s !== "none"));
+    expect([...new Set(named.filter(m => !models.has(m)))]).toEqual([]);
+  });
+
   const dafny = Bun.which("dafny");
   if (!dafny || !existsSync(LSC)) {
     b.gate("proofs ran", process.env.REQUIRE_DAFNY !== "1", `skipped: ${dafny ? "lsc" : "dafny"} not found`, process.env.REQUIRE_DAFNY === "1");
@@ -87,6 +101,31 @@ export async function formalBlock(b: Block): Promise<void> {
       if (code !== 0 || !/ 0 errors/.test(out)) throw new Error(`lsc check exited ${code}\n${(out + err).trim().split("\n").slice(-12).join("\n")}`);
     });
   }
+}
+
+// The coverage ledger (docs/formal-coverage.md, AGENTS.md "Formal modeling requirement"): every source file has a row.
+const LEDGER_SCAN = [".github", "deploy", "design", "packages", "plugins", "scripts", "sites", "tools"];
+const LEDGER_EXT = /\.(ts|tsx|js|mjs|sql|sh|py)$/;
+
+function walkAll(dir: string, out: string[] = []): string[] {
+  for (const name of readdirSync(dir).sort()) {
+    if (name === "node_modules" || name === "dist" || name === ".wrangler") continue;
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) walkAll(p, out);
+    else out.push(p);
+  }
+  return out;
+}
+
+interface CoverageRow { file: string; quint: string; lemma: string; verdict: string }
+
+export function coverageRows(text = readFileSync(join(ROOT, "docs", "formal-coverage.md"), "utf8")): CoverageRow[] {
+  const lines = text.split("\n");
+  const head = lines.findIndex(l => l.startsWith("| File | Role |"));
+  return lines.slice(head + 2).filter(l => l.startsWith("| ")).map(l => {
+    const c = l.split(/(?<!\\)\|/).map(s => s.trim());
+    return { file: c[1]!, quint: c[3]!, lemma: c[4]!, verdict: c[5]! };
+  });
 }
 
 /** True when an import in `from` names the file `target` (a basename match alone is not enough). */
