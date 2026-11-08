@@ -1,8 +1,103 @@
 # Quint findings: notify_capital
 
-Date: 2026-11-08. Model: [quint/notify_capital.qnt](../../../quint/notify_capital.qnt). Plan: [2026-11-07-state-machines.md](../2026-11-07-state-machines.md) section 6.17. Base commit ad67275. This file is hand-written. The traces are from `quint run` (rust backend) and `quint verify` (Apalache 0.62.4), shortened by hand. No code was changed.
+Date: 2026-11-08. Model: [quint/notify_capital.qnt](../../../quint/notify_capital.qnt). Plan: [2026-11-07-state-machines.md](../2026-11-07-state-machines.md) section 6.17. This file is hand-written.
 
-## 1. What the model covers
+Sections 0 and 0.1 give the final state on branch `wave2/notify_capital` (base ad67275 plus the fixes). Sections 1 to 6 are the first report on the base commit ad67275; they are kept as the record of the defects before the fixes. Where they disagree with section 0, section 0 is correct.
+
+## 0. Final state (after the fixes)
+
+The model follows the fixed code. Changes to the model:
+
+| Defect | Fix commit | Model change | Run test |
+|---|---|---|---|
+| SD-151 | 472cecb | `projAdd` and `projRecord` are one action `projRecord` (`store.addDelivered`, one transaction). An item made from a Network text is never pending. | `projectionAtomicTest` |
+| SD-150 | a66f44e (test type fix 7a681db) | `recordDelivery` records nothing when an item of the plan is gone or already notified (`select ... for update`), and dispatch cancels the plan. | `replicaOverlapTest` |
+| SD-303 (dedupe key) | 893944f | The subject of a Network text is the text id: text t is subject t. | `twoTextsTwoItemsTest` |
+| SD-341 | 428e246 | `leave` keeps the signals when another membership is not removed (active or invited). | `leaveKeepsInvitedSignalsTest` |
+| SD-049 | f3f09b7 | `cLearnMinor` emits `age_updated` (age null); the ledger applies it. | `minorLosesEligibilityTest` |
+| SD-153 | 777711f | `network.capital_events` is a list in `seq` order; restart replays it in that order (no sort by t, id). | `helpReplayTest`, `activateReplayTest` |
+| SD-156 | 95c3d82 | `emit` puts into the unit only the events that the live ledger accepted. | `clockBackReplayTest` |
+| SD-154 | 226f278 | `onFeedback` only keeps "it went well" (`cSayGood`); `cFinalize` emits `value_received` with `confirmedBy` = the other attendee. | `vouchCreditedTest` |
+| SD-350 | 5781195 | `value_received` drops providers tied to the voucher by a help credit (`tied`). The model's four time points are all inside the 90-day window. | `tiedProviderNoVouchTest` |
+
+A new action `notifyAdd` models `Notifier.add`. No production producer calls it (notify README "Not yet: producers"). After the SD-151 fix it is the only way an item becomes pending, so without it the scheduler would be dead code in the model and `witness_digestSent` would be unreachable. The defects that need it (SD-095, SD-152, SD-339 and the SD-150 residual below) have no production path.
+
+`safety` now holds: `oneNotifyTextPerItem`, `noRepeatOfNetworkText`, `signalsKeptForPending`, `everyNetworkTextInInbox`, `noMinorEligibleInOrder`, `replayEqualsLive`, `vouchCreditFollowsValue`.
+
+These invariants still fail. Each is a named value outside `safety`, with a comment in the model that gives the id and the reason. No invariant was weakened inside `safety` to make it pass; two are scoped, as the table says.
+
+| Invariant | Status | Id | Reason |
+|---|---|---|---|
+| `refusedNotCounted`, `refusedItemsStayPending` | fails (run test `refusedStillCountsTest`) | SD-095 | Skipped: needs a design decision (a feedback path from the outbound queue to the inbox, a new retry identity). No production item is pending. |
+| `pausedAppGetsNoProactive` | fails (run test `pausedSlopViaNtwrkTest`) | SD-152 | Skipped: needs a founder or product decision on the Recipient contract. No production item reaches dispatch. |
+| `droppedSurfaceReturnsOnUse` | fails (run test `droppedSurfaceStaysTest`) | SD-339 | Not reproduced in production (disputed). Reached only through `Notifier.add`. A fix needs a new scoring rule (product decision). |
+| `forgetKeepsOthers` | fails (run test `forgetVoucherTest`) | SD-155 | Refuted in the register; latent (nothing reads the replayed ledger, `reader: false`). |
+| `schedulerRespectsCap` | fails (run test `replicaRebuildCapTest`) | SD-150 residual (new) | See 0.1. |
+| `noMinorEligible` (full form) | fails (run tests `minorAfterAbortTest`, `minorClockBackTest`) | SD-049 residual (new), with SD-344 and SD-156 | See 0.1. `safety` holds `noMinorEligibleInOrder`: the same rule on traces where every unit committed and the clock did not step back. |
+
+`vouchCreditFollowsValue` is checked on traces with no failed unit, no clock step back and no restart after a forget. These three conditions are the SD-344 behaviour (refuted), the SD-156 design (a refused event is lost, not stored) and SD-155 (refuted).
+
+### 0.1 Residuals found after the fixes
+
+1. **SD-150, the cap part.** The fix stops one item in two texts. But two overlapping replicas still pass the weekly cap: r1 plans {3}; item 4 arrives; r2 plans {3, 4} (no delivery yet, so the cap check passes); r1 records {3}; r2's re-read keeps {4}, and dispatch rebuilds the plan without a new cap check (`scheduler.ts:182-183`); {4} is recorded and sent. Two counting texts go out with a cap of 1. It needs two replicas (the backend guards one process) and a `Notifier.add` producer (none in production), so no production path reaches it. A fix (check the cap again when dispatch rebuilds a plan) needs its own failing integration test. It is not in this branch.
+2. **SD-049, two routes that remain.** (a) A unit that joined the member as an adult fails; the in-memory ledger keeps `member_joined` (SD-344); the member joins again as a minor with the same event id, and the ledger skips it. (b) The wall clock steps back; the ledger refuses `age_updated` (t < lastT), and since SD-156 the refused event is not stored either. Both are latent: nothing reads the ledger in production (`runtime.ts:118`, `reader: false`). A fix needs a design decision (a ledger that follows only the committed state, or a rule for clock skew).
+
+### 0.2 Register defects of this module, final
+
+| Id | Result | Note |
+|---|---|---|
+| SD-049 | fixed (f3f09b7) | Two latent residual routes (0.1). |
+| SD-095 | skipped | Needs a design decision; no production path after SD-151. |
+| SD-150 | fixed (a66f44e, 7a681db) | The cap residual is open (0.1). |
+| SD-151 | fixed (472cecb) | |
+| SD-152 | skipped | Needs a founder or product decision; no production path after SD-151. |
+| SD-153 | fixed (777711f, migration 0057 adds `seq`) | |
+| SD-154 | fixed (226f278) | |
+| SD-156 | fixed (95c3d82) | |
+| SD-303 | partly fixed (893944f) | Dedupe key fixed. Retention skipped: needs a retention schedule from the founder (PRD Section 30). The model has no time, so it cannot show retention. |
+| SD-339 | not reproduced | Disputed; no production path; a fix needs a new scoring rule. |
+| SD-341 | fixed (428e246, migration 0057) | |
+| SD-342 | skipped | Dead API, no behaviour can fail a test; removal needs maintainer scope. Not in the model. |
+| SD-348 | skipped | A missing reversal transition; needs a founder or product decision. Not in the model (no such action exists). |
+| SD-350 | fixed (5781195) | |
+| SD-354 | not reproduced | A gap in the sim gates, not a product state. |
+| SD-355 | not reproduced | Config written and never read; no behaviour goes wrong. |
+
+### 0.3 Checks run (final)
+
+```
+bun run quint:check quint/notify_capital.qnt
+ok   typecheck
+ok   test     (19 run tests)
+ok   safety   (rust simulator, seed 0x5eed, max-steps 25, max-samples 6000)
+ok   witness_digestSent, witness_networkTextProjected, witness_assistantLinkIgnored,
+     witness_attendanceCredited, witness_helpCredited, witness_minorExcluded,
+     witness_restartWithEvents (all reachable)
+1 models, 0 failures   (2 min 37 s)
+```
+
+```
+bun run quint:check --verify quint/notify_capital.qnt
+... (as above)
+ok   verify safety      (Apalache 0.62.4, verify-steps=3, both parts; 3 min 13 s in all)
+1 models, 0 failures
+```
+
+Deeper bounded runs, each on a private Apalache server (`--server-endpoint localhost:<port>`, JVM heap 6-8 GB), because the shared default server dropped the connection while other sessions used it:
+
+| Command | Bound | Result | Time |
+|---|---|---|---|
+| `quint verify --invariant safety` | 4 steps, both parts | no violation | 5 min 28 s |
+| `quint verify --init initNotify --step stepNotify --invariant notifySafety` | 6 steps | no violation | 31 s |
+| same | 8 steps | did not finish in 500 s (stopped) | - |
+| same | 10 steps | did not finish in 540 s (stopped) | - |
+| `quint verify --init initCapital --step stepCapital --invariant capitalSafety` | 5 steps | no violation | 3 min |
+
+The model header keeps `verify-steps=3`, because 4 steps takes more than 5 minutes. The traces deeper than these bounds (SD-150 overlap, 12 steps; SD-339, 18 steps) are run tests.
+
+The replay no longer sorts (`sortedLog` is gone; the stored events are a list in seq order), so Apalache is faster than on the base commit.
+
+## 1. What the model covers (base commit ad67275)
 
 Two parts in one file, with no shared state. A variable `part` picks one part for each simulated trace, so that random traces reach deep states. Apalache explores both values.
 
