@@ -1494,11 +1494,13 @@ export class NetworkService implements RuntimeHost {
     const joinAt = this.consentAt(ev);
     await this.accounts.recordConsent({ e164, app: app.id, line: ev.to ? normalizeAddress(ev.to) : null, state: "opted_in", source: "inbound_message", wording: ask, ref: rowId, at: joinAt });
     // The gateway mirrors the opt-in into its send-time fence (only when the ledger now reads opted in: an older join never undoes a newer STOP).
-    const turn = this.inboundTurn();
-    if (turn && (await this.accounts.optedIn(app.id, e164))) turn.consent = { state: "opted_in", scope: "app", app: app.id, at: joinAt };
+    const turn = this.inboundTurn(), optedIn = await this.accounts.optedIn(app.id, e164);
+    if (turn && optedIn) turn.consent = { state: "opted_in", scope: "app", app: app.id, at: joinAt };
     if (membership.state !== "active") return "joined";
     rt = this.runtimeForHome(app.id, homeCity ?? rt.city) ?? rt;
     await this.createMember(rt, membership, { age: Math.min(age, check.effective ?? age), firstName: name, homeCity });
+    // An older join answer than the last STOP: the member reads as after that STOP (paused, opted out), and nothing is said.
+    if (!optedIn) { await this.stopped(app, who.id, "app", undefined, e164); return "joined"; }
     // Their answer is their first message: the Network welcomes them as a reply to it.
     await this.memberMessage(rt, membership.memberId, ev, rowId, undefined);
     // A person who uses another app with this number: the link notice (never names the other app).

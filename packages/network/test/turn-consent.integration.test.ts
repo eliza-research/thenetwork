@@ -437,4 +437,23 @@ describe.skipIf(!pgAvailable)("turn and consent", () => {
     // A retry of the same turn gets the same answer.
     expect(await box.signed(input, "q1-hash", async () => { throw new Error("not run again"); })).toEqual(r);
   }, 60_000);
+  test("Q-turn_consent-2: a join answer older than a STOP that arrives after it leaves the member as the ledger reads", async () => {
+    const phone = "+12125559002";
+    const joinSentAt = clock.now();
+    clock.advance(MINUTE);
+    // The STOP was sent after the join answer but reaches the service first (the gateway retried the join).
+    expect((await (await post(turn("q2-stop", phone, "STOP"))).json() as any).consent).toMatchObject({state: "opted_out", scope: "all"});
+    clock.advance(MINUTE);
+    const body = await (await post({...turn("q2-join", phone, "Sam, 29"), receivedAt: joinSentAt})).json() as any;
+    expect(body.outcome).toBe("handled");
+    // The ledger orders by send time: the newer STOP wins.
+    expect(await service.accounts.optedIn("ntwrk", phone)).toBe(false);
+    expect(body.consent?.state).not.toBe("opted_in");
+    // The membership and the Network member follow the ledger, as after a STOP: paused and opted out.
+    const person = (await service.accounts.personFor(phone))!;
+    const m = (await service.people.getMembership(person.id, "ntwrk"))!;
+    expect(m.state).toBe("paused");
+    const [row] = await sql`select opted_out from network.members where app_id = 'ntwrk' and id = ${m.memberId}`;
+    expect(row.opted_out).toBe(true);
+  }, 60_000);
 });
