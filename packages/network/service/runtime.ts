@@ -536,6 +536,10 @@ export class NetworkRuntime {
         or coalesce(payload->'participants', '[]'::jsonb) @> to_jsonb(${id}::text) or coalesce(payload->'members', '[]'::jsonb) @> to_jsonb(${id}::text)
         or jsonb_exists(coalesce(payload->'attendance', '{}'::jsonb), ${id}))`;
       await tx`delete from network.capital_events where app_id = ${app} and (member_id = ${id} or position(${`"${id}"`} in event::text) > 0)`;
+      // The run summaries keep the top pairs with their members and scores (summarizeRun): the pairs that name them go.
+      await tx`update network.matching_runs set summary = jsonb_set(summary, '{top}', coalesce((select jsonb_agg(t order by n) from jsonb_array_elements(summary->'top') with ordinality as x(t, n)
+          where not coalesce(t->'participants', '[]'::jsonb) @> to_jsonb(${id}::text)), '[]'::jsonb))
+        where app_id = ${app} and jsonb_typeof(summary->'top') = 'array' and position(${`"${id}"`} in (summary->'top')::text) > 0`;
       await tx`delete from network.facets where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.intents where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.presence where app_id = ${app} and member_id = ${id}`;

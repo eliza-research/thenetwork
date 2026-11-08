@@ -421,4 +421,29 @@ describe.skipIf(!pgAvailable)("identity sagas: stop half way, retry, races (Post
       ["grant_cloud_1", "old", true], ["grant_site", "new", false],
     ]);
   }, T);
+
+  test("SD-124: a member's leave removes their id from the stored matching-run summaries", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const s = service(clock);
+    const [kim, lu] = [newPhone(), newPhone()];
+    for (const [p, intro] of [[kim, "Kim, 31"], [lu, "Lu, 33"]] as const) {
+      expect(await text(s, clock, p, "slop")).toBe("join_asked");
+      expect(await text(s, clock, p, intro)).toBe("joined");
+    }
+    const [k, l] = [(await memberOf("slop", kim))!.id, (await memberOf("slop", lu))!.id];
+    // A daily run put Kim and Lu in its top pairs (the row onEngineRun writes with the unit; summary as summarizeRun makes it).
+    const rt = s.runtimeFor("slop")!;
+    const pair = (a: string, b: string, score: number) => ({ key: `one_to_one:${a}|${b}`, generator: "intent", participants: [a, b], score, eligible: true, reason: null, selected: false, components: { fit: score } });
+    await rt.unitOfWork(() => { rt.unit.runs.push({ id: "slop.run_sagas", app_id: "slop", at: new Date(clock.now()), city: rt.city, engine_version: "engine-v1", proposals: 0, wall_ms: 1,
+      summary: { id: "run_sagas", at: clock.now(), proposals: 0, top: [pair(k, l, 0.9), pair(l, "slop_someone_else", 0.5)], proposalIds: [] } }); });
+    expect((await sql`select count(*)::int as n from network.matching_runs where position(${k} in summary::text) > 0`)[0].n).toBe(1);
+
+    // Kim leaves slop.date: the forget path.
+    expect(await text(s, clock, kim, "leave slop.date")).toBe("left");
+    expect((await sql`select count(*)::int as n from network.matching_runs where position(${k} in summary::text) > 0`)[0].n).toBe(0);
+    // The run stays, with the pairs that do not name Kim.
+    const [run] = await sql`select summary from network.matching_runs where id = 'slop.run_sagas'`;
+    expect((run.summary.top as { participants: string[] }[]).map(t => t.participants)).toEqual([[l, "slop_someone_else"]]);
+  }, T);
 });
