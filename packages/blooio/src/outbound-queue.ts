@@ -202,6 +202,8 @@ export const WAITING = ["pending", "retry_scheduled", "deferred_quiet_hours", "h
 /** Statuses the provider accepted; a receipt ends them. */
 const IN_FLIGHT = ["accepted", "sent"];
 const DUE = ["pending", "retry_scheduled", "deferred_quiet_hours"];
+/** The statuses of a row that a send owns after its claim (acceptReceipt writes from the same ones). */
+const OWNED = ["sending", "unknown_acceptance"] as const;
 const PROVIDER_RANK: Record<string, number> = { accepted: 1, queued: 1, sent: 2, delivered: 3, read: 4 };
 /** Statuses that did not go out: their person-cap slot goes back. failed_unknown may have gone out: it keeps its slot. */
 export const NOT_SENT = /^(refused|suppressed|blocked|parked|failed(?!_unknown)|expired|dropped)/;
@@ -314,11 +316,16 @@ export class OutboundQueue {
           // One bad row never stops the drain. A database error (a deadlock, a lock timeout, a lost connection) is
           // not about the row: it waits with a backoff and goes through every check again with the same provider key.
           // An error that repeats until the attempts are used up parks the row for a person.
-          const error = (e as Error).message.slice(0, 500);
-          const [r] = await this.sql`update platform.outbound set attempts = attempts + 1, last_error = ${error} where id = ${row.id} returning attempts`;
-          const tries = Number(r?.attempts ?? row.attempts + 1);
-          c = tries >= this.opt("maxAttempts", 6) ? await this.end(row, "parked_error", error)
-            : await this.wait(row, "retry_scheduled", this.now + Math.min(this.opt("baseBackoffMs", 30_000) * 2 ** (tries - 1), 30 * MINUTE), "dispatch error");
+          // The row may have left the status this drain read (its own claim, or a receipt lookup or erasure that ran
+          // during the provider call): only a row still in one of those statuses takes the error.
+          const error = (e as Error).message.slice(0, 500), from = [row.status, ...OWNED];
+          const [r] = await this.sql`update platform.outbound set attempts = attempts + 1, last_error = ${error}
+            where id = ${row.id} and status = any(${`{${from.join(",")}}`}::text[]) returning attempts`;
+          if (r) {
+            const tries = Number(r.attempts);
+            c = tries >= this.opt("maxAttempts", 6) ? await this.end(row, "parked_error", error, undefined, from)
+              : await this.wait(row, "retry_scheduled", this.now + Math.min(this.opt("baseBackoffMs", 30_000) * 2 ** (tries - 1), 30 * MINUTE), "dispatch error", from);
+          }
           this.o.onAlert?.(row.id, "dispatch_error");
         }
         if (c) changes.push(c);
@@ -357,22 +364,32 @@ export class OutboundQueue {
     return age > this.opt("ttlMs", 3 * DAY) || (row.kind === "proactive" && age > this.opt("ttlProactiveMs", DAY));
   }
 
-  /** A row ends (nothing more will happen to it). A row to a non-member keeps no address and no text. */
-  private async end(row: QueueRow, status: string, note?: string, error?: string): Promise<StatusChange> {
+  /**
+   * A row ends (nothing more will happen to it). A row to a non-member keeps no address and no text.
+   * `from`: write only while the row still has one of these statuses (it may have left them while the provider call ran).
+   */
+  private async end(row: QueueRow, status: string, note?: string, error?: string): Promise<StatusChange>;
+  private async end(row: QueueRow, status: string, note: string | undefined, error: string | undefined, from: readonly string[]): Promise<StatusChange | undefined>;
+  private async end(row: QueueRow, status: string, note?: string, error?: string, from?: readonly string[]): Promise<StatusChange | undefined> {
     const now = new Date(this.now);
     // A text parked for leak review keeps its text and address until staff decide (a drop ends it and clears them).
     const keep = status === "parked_leak_review";
-    await this.sql`update platform.outbound set status = ${status}, note = ${note ?? null}, last_error = coalesce(${error ?? null}, last_error), ended_at = ${now}, updated_at = ${now},
+    const wrote = await this.sql`update platform.outbound set status = ${status}, note = ${note ?? null}, last_error = coalesce(${error ?? null}, last_error), ended_at = ${now}, updated_at = ${now},
       lease_owner = null, lease_until = null,
       to_address = case when member_id is null and ${!keep} then null else to_address end, body = case when member_id is null and ${!keep} then null else body end
-      where id = ${row.id}`;
+      where id = ${row.id} and (${!from} or status = any(${`{${(from ?? []).join(",")}}`}::text[])) returning id`;
+    if (!wrote.length && from) return undefined;
     if (row.personCap && NOT_SENT.test(status)) await this.o.checks.capRelease?.(row).catch(() => {});
     return { id: row.id, app: row.app, memberId: row.memberId, status };
   }
 
-  /** The row waits (not an end): a later drain tries again at `at`. */
-  private async wait(row: QueueRow, status: string, at: number, note: string): Promise<StatusChange> {
-    await this.sql`update platform.outbound set status = ${status}, next_attempt_at = ${new Date(at)}, note = ${note}, updated_at = ${new Date(this.now)}, lease_owner = null, lease_until = null where id = ${row.id}`;
+  /** The row waits (not an end): a later drain tries again at `at`. `from`: as for end(). */
+  private async wait(row: QueueRow, status: string, at: number, note: string): Promise<StatusChange>;
+  private async wait(row: QueueRow, status: string, at: number, note: string, from: readonly string[]): Promise<StatusChange | undefined>;
+  private async wait(row: QueueRow, status: string, at: number, note: string, from?: readonly string[]): Promise<StatusChange | undefined> {
+    const wrote = await this.sql`update platform.outbound set status = ${status}, next_attempt_at = ${new Date(at)}, note = ${note}, updated_at = ${new Date(this.now)}, lease_owner = null, lease_until = null
+      where id = ${row.id} and (${!from} or status = any(${`{${(from ?? []).join(",")}}`}::text[])) returning id`;
+    if (!wrote.length && from) return undefined;
     return { id: row.id, app: row.app, memberId: row.memberId, status };
   }
 
@@ -381,12 +398,16 @@ export class OutboundQueue {
    * last_inbound_at that dispatch read: when the person wrote since, inbound() may have run before this write
    * and found nothing to release, so the row is due again at once instead.
    */
-  private async hold(row: QueueRow, note: string, seenInbound: unknown): Promise<StatusChange> {
+  private async hold(row: QueueRow, note: string, seenInbound: unknown): Promise<StatusChange>;
+  private async hold(row: QueueRow, note: string, seenInbound: unknown, from: readonly string[]): Promise<StatusChange | undefined>;
+  private async hold(row: QueueRow, note: string, seenInbound: unknown, from?: readonly string[]): Promise<StatusChange | undefined> {
     const now = new Date(this.now), seen = ms(seenInbound);
     const [r] = await this.sql`update platform.outbound set status = case when exists (select 1 from platform.line_conversations c
         where c.line = ${this.line} and c.address = ${row.to} and c.last_inbound_at is distinct from ${seen === undefined ? null : new Date(seen)}::timestamptz)
         then 'pending' else 'held_awaiting_reply' end,
-      next_attempt_at = ${now}, note = ${note}, updated_at = ${now}, lease_owner = null, lease_until = null where id = ${row.id} returning status`;
+      next_attempt_at = ${now}, note = ${note}, updated_at = ${now}, lease_owner = null, lease_until = null
+      where id = ${row.id} and (${!from} or status = any(${`{${(from ?? []).join(",")}}`}::text[])) returning status`;
+    if (!r && from) return undefined;
     return { id: row.id, app: row.app, memberId: row.memberId, status: String(r?.status ?? "held_awaiting_reply") };
   }
 
@@ -554,23 +575,25 @@ export class OutboundQueue {
     } catch (err) {
       const e = err instanceof ChannelSendError ? err : new ChannelSendError(err instanceof Error ? err.message : String(err), "retryable");
       const error = `${e.failure}${e.status ? ` ${e.status}` : ""}${e.code ? ` ${e.code}` : ""}: ${e.message}`.slice(0, 500);
-      await this.sql`update platform.outbound set last_error = ${error} where id = ${row.id}`;
+      // While the provider call ran, a receipt lookup may have recorded the acceptance or erasure may have ended the row:
+      // every write below changes the row only while it is still this send's (OWNED), so a recorded outcome stays.
+      await this.sql`update platform.outbound set last_error = ${error} where id = ${row.id} and status = any(${`{${OWNED.join(",")}}`}::text[])`;
       switch (e.failure) {
         case "unknown":
-          return this.wait(row,"unknown_acceptance",this.now,"provider acceptance unresolved; receipt lookup only");
+          return this.wait(row,"unknown_acceptance",this.now,"provider acceptance unresolved; receipt lookup only",OWNED);
         case "retryable": {
-          if (attempts >= this.opt("maxAttempts", 6)) { this.o.onAlert?.(row.id, "send_failed"); return this.end(row, "failed", "retries used up", error); }
+          if (attempts >= this.opt("maxAttempts", 6)) { this.o.onAlert?.(row.id, "send_failed"); return this.end(row, "failed", "retries used up", error, OWNED); }
           const backoff = e.retryAfterMs ?? Math.min(this.opt("baseBackoffMs", 30_000) * 2 ** (attempts - 1), 30 * MINUTE);
-          return this.wait(row, "retry_scheduled", this.now + backoff, e.code ?? "retry");
+          return this.wait(row, "retry_scheduled", this.now + backoff, e.code ?? "retry", OWNED);
         }
         case "await_recipient":
-          return this.hold(row, e.code ?? "conversation limit", seenInbound);
+          return this.hold(row, e.code ?? "conversation limit", seenInbound, OWNED);
         case "blocked":
           this.o.onAlert?.(row.id, e.code ?? "blocked");
-          return this.end(row, "blocked", e.code, error);
+          return this.end(row, "blocked", e.code, error, OWNED);
         default:
           this.o.onAlert?.(row.id, `send_${e.failure}`);
-          return this.end(row, "failed", e.code, error);
+          return this.end(row, "failed", e.code, error, OWNED);
       }
     }
   }
