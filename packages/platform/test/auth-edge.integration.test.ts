@@ -110,6 +110,22 @@ describe.skipIf(!pgAvailable)("auth edge (Postgres)", () => {
     expect((await c.call("slop", "GET", "/api/me/export", undefined, { cookie: own })).body.membership.firstName).toBe("Ana");
   });
 
+  test("SD-491 an under-13 web join keeps no session with the number", async () => {
+    // AGENTS.md age policy: under 13 is declined kindly with nothing stored (only the keyed age floor).
+    const c = make(store), phone = newPhone();
+    const own = await c.login("slop", phone);
+    const other = await c.login("slop", phone);
+    const refused = await c.call("slop", "POST", "/api/join", joinBody(10), { cookie: own });
+    expect(refused.status).toBe(400);
+    expect(refused.body.error).toBe("under_age");
+    expect(refused.cookie).toBe(`${own.split("=")[0]}=`);
+    const rows = await store.sql`select count(*)::int as n from platform.sessions where e164 = ${phone}`;
+    expect(rows[0].n).toBe(0);
+    expect((await c.call("slop", "GET", "/api/me", undefined, { cookie: own })).status).toBe(401);
+    expect((await c.call("slop", "GET", "/api/me", undefined, { cookie: other })).status).toBe(401);
+    expect(await c.api.accounts.personFor(phone)).toBeUndefined();
+  });
+
   // The Cloud sign-in on the production delegation path (own-pages realm), with the qualified Cloud producer
   // fixture on its own clock. api.ts allows 30 s of Cloud clock lead (CLOUD_CLOCK_SKEW_MS).
   async function cloudSignIn(leadMs: number) {

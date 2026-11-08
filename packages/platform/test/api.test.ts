@@ -249,12 +249,14 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
     expect(await store.isSuppressed(c.api.accounts.phoneHash(phone))).toBe(false);
   });
 
-  test("PLAT-01 the under-age refusal is sticky: refused at 12, a retry at 25 is refused in the same and in a new session (web)", async () => {
+  test("PLAT-01 the under-age refusal is sticky: refused at 12, the session ends and a retry at 25 in a new session is refused (web)", async () => {
     // Before the fix an under-age refusal stored nothing, so the same session joined at once by saying 25.
+    // An under-13 refusal also ends the session (SD-491), so a retry needs a new login.
     const c = make(store), phone = newPhone();
     const cookie = await login(c, "slop", phone);
     expect((await join(c, "slop", cookie, 12)).body.error).toBe("under_age");
-    expect((await join(c, "slop", cookie, 25)).body.error).toBe("under_age");
+    expect((await join(c, "slop", cookie, 25)).status).toBe(401);
+    expect((await join(c, "slop", await login(c, "slop", phone), 25)).body.error).toBe("under_age");
     expect((await join(c, "peon", await login(c, "peon", phone), 30)).body.error).toBe("under_age");
     expect(await store.findPhone(phone)).toBeUndefined(); // still nothing stored for the app: only the age floor
     expect(await store.ageFloor(c.api.accounts.phoneHash(phone))).toBe(12);

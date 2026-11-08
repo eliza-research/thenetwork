@@ -554,6 +554,11 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           if (!input) return json(400, { ok: false, error: "invalid" });
           try {
             const r = await accounts.join(app, who, input);
+            if (!r.ok && r.error === "under_age" && who.personId === null) {
+              const response = json(400, { ok: false, error: r.error, message: app.brand.underAge }, { "set-cookie": cookie(appId, "", 0) });
+              response.headers.append("set-cookie", identityCookie(appId, "", 0));
+              return response;
+            }
             if (!r.ok) return json(400, { ok: false, error: r.error, ...(r.error === "invite_only" ? { message: app.brand.inviteOnly } : r.error === "under_age" ? { message: app.brand.underAge } : r.error === "review" ? { message: REVIEW_MESSAGE } : {}) });
             return json(200, { ok: true, membership: publicMembership(r.membership) });
           } catch (e) {

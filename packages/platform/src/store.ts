@@ -142,6 +142,8 @@ export interface PeopleStore {
    * gets the person, and every other one ends at `at`: it may belong to an earlier holder of the number.
    */
   bindSessions(e164: string, personId: string, keep: string | null, at: number): Promise<void>;
+  /** Delete the sessions of a number that has no person (an under-13 join: nothing stays with the number). */
+  forgetPersonlessSessions(e164: string): Promise<void>;
 
   /**
    * Count one hit in a fixed window, atomically. With a rule, a hit that would pass the limit or come
@@ -317,6 +319,10 @@ export class MemoryPeopleStore implements PeopleStore {
       if (s.tokenHash === keep) s.personId = personId;
       else s.revokedAt = s.revokedAt === null ? at : Math.min(s.revokedAt, at);
     }
+  }
+
+  async forgetPersonlessSessions(e164: string) {
+    for (const [k, s] of this.sessions) if (s.e164 === e164 && s.personId === null) this.sessions.delete(k);
   }
 
   async hit(bucket: string, windowMs: number, at: number, rule: HitRule = {}) {

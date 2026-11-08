@@ -228,6 +228,10 @@ export class PgPeopleStore implements PeopleStore {
       where e164 = ${e164} and person_id is null`;
   }
 
+  async forgetPersonlessSessions(e164: string) {
+    await this.sql`delete from platform.sessions where e164 = ${e164} and person_id is null`;
+  }
+
   async hit(bucket: string, windowMs: number, at: number, rule: HitRule = {}): Promise<HitResult> {
     return (await this.hitAll([{ bucket, windowMs, rule }], at))[0]!;
   }

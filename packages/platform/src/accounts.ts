@@ -373,7 +373,9 @@ export class Accounts {
     const age = joinAgeCheck(input.age, await this.lowestAge(who.e164, person), app);
     if (!age.ok) {
       // Nothing is stored for this app: only the age, on the phone's age floor (and the person, if any).
+      // A number with no person keeps no web session either (the session row holds the number in plain text).
       await this.recordAge(who.e164, person, input.age);
+      if (!person) await this.store.forgetPersonlessSessions(who.e164);
       return { ok: false, error: "under_age" };
     }
     if (!person) person = await this.createPerson(who.e164, "otp_sms", age.effective ?? input.age, who.session ?? null);
