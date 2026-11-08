@@ -73,6 +73,8 @@ export type PhoneMoveResult = "ok" | "number_in_use" | "no_phone" | "banned";
 /** A rate-limit rule for hit(): a hit over `limit` in the window, or within `minGapMs` of the last counted hit, is refused and not counted. */
 export interface HitRule { limit?: number; minGapMs?: number }
 export interface HitResult { count: number; prevAt: number | null; ok: boolean }
+/** One bucket of hitAll(). */
+export interface Hit { bucket: string; windowMs: number; rule?: HitRule }
 
 export interface PeopleStore {
   findPhone(e164: string): Promise<PhoneIdentity | undefined>;
@@ -149,8 +151,13 @@ export interface PeopleStore {
   putSession(s: Session): Promise<void>;
   getSession(tokenHash: string): Promise<Session | undefined>;
   revokeSession(tokenHash: string, at: number): Promise<void>;
-  /** Sessions of a verified phone that had no person get the person after a join. */
-  attachPerson(e164: string, personId: string): Promise<void>;
+  /**
+   * The number has a person now. Of its sessions with no person, `keep` (the web join's own session)
+   * gets the person, and every other one ends at `at`: it may belong to an earlier holder of the number.
+   */
+  bindSessions(e164: string, personId: string, keep: string | null, at: number): Promise<void>;
+  /** Delete the sessions of a number that has no person (an under-13 join: nothing stays with the number). */
+  forgetPersonlessSessions(e164: string): Promise<void>;
 
   /**
    * Count one hit in a fixed window, atomically. With a rule, a hit that would pass the limit or come
@@ -158,6 +165,11 @@ export interface PeopleStore {
    * Returns the count with this hit (or the count so far when refused) and the last counted hit before it.
    */
   hit(bucket: string, windowMs: number, at: number, rule?: HitRule): Promise<HitResult>;
+  /**
+   * hit() for several buckets as one request, atomically: the buckets are checked in order, and the
+   * hit is counted in all of them or in none. The results stop at the first refused bucket.
+   */
+  hitAll(hits: Hit[], at: number): Promise<HitResult[]>;
 
   /** Run fn while holding a lock on `key` (one holder per key across processes on Postgres). */
   withLock<T>(key: string, fn: () => Promise<T>): Promise<T>;
@@ -333,18 +345,34 @@ export class MemoryPeopleStore implements PeopleStore {
   async putSession(s: Session) { this.sessions.set(s.tokenHash, { ...s }); }
   async getSession(tokenHash: string) { const s = this.sessions.get(tokenHash); return s && { ...s }; }
   async revokeSession(tokenHash: string, at: number) { const s = this.sessions.get(tokenHash); if (s) s.revokedAt = s.revokedAt === null ? at : Math.min(s.revokedAt, at); }
-  async attachPerson(e164: string, personId: string) { for (const s of this.sessions.values()) if (s.e164 === e164 && s.personId === null) s.personId = personId; }
+  async bindSessions(e164: string, personId: string, keep: string | null, at: number) {
+    for (const s of this.sessions.values()) if (s.e164 === e164 && s.personId === null) {
+      if (s.tokenHash === keep) s.personId = personId;
+      else s.revokedAt = s.revokedAt === null ? at : Math.min(s.revokedAt, at);
+    }
+  }
+
+  async forgetPersonlessSessions(e164: string) {
+    for (const [k, s] of this.sessions) if (s.e164 === e164 && s.personId === null) this.sessions.delete(k);
+  }
 
   async hit(bucket: string, windowMs: number, at: number, rule: HitRule = {}) {
-    const windowStart = at - (at % windowMs);
-    const cur = this.limits.get(bucket);
-    const prevAt = cur?.lastAt ?? null;
-    const count = cur && cur.windowStart === windowStart ? cur.count : 0;
-    if ((rule.limit !== undefined && count >= rule.limit) || (rule.minGapMs !== undefined && prevAt !== null && at - prevAt < rule.minGapMs)) {
-      return { count: count + 1, prevAt, ok: false };
+    return (await this.hitAll([{ bucket, windowMs, rule }], at))[0]!;
+  }
+  async hitAll(hits: Hit[], at: number) {
+    const results: HitResult[] = [];
+    for (const { bucket, windowMs, rule = {} } of hits) {
+      const cur = this.limits.get(bucket);
+      const prevAt = cur?.lastAt ?? null;
+      const count = cur && cur.windowStart === at - (at % windowMs) ? cur.count : 0;
+      const ok = !((rule.limit !== undefined && count >= rule.limit) || (rule.minGapMs !== undefined && prevAt !== null && at - prevAt < rule.minGapMs));
+      results.push({ count: count + 1, prevAt, ok });
+      if (!ok) return results;
     }
-    this.limits.set(bucket, { windowStart, count: count + 1, lastAt: at, keepUntil: rule.minGapMs !== undefined ? at + rule.minGapMs : null });
-    return { count: count + 1, prevAt, ok: true };
+    for (const [i, { bucket, windowMs, rule = {} }] of hits.entries()) {
+      this.limits.set(bucket, { windowStart: at - (at % windowMs), count: results[i]!.count, lastAt: at, keepUntil: rule.minGapMs !== undefined ? at + rule.minGapMs : null });
+    }
+    return results;
   }
 
   async withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {

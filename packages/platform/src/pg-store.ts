@@ -3,7 +3,7 @@
 import { SQL } from "bun";
 import type { AppId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
-import type { Ban, HitResult, HitRule, Membership, MembershipState, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneChange, PhoneHold, PhoneIdentity, PhoneMethod, PhoneMove, PhoneMoveResult, Session, ShareGrant } from "./store.ts";
+import type { Ban, Hit, HitResult, HitRule, Membership, MembershipState, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneChange, PhoneHold, PhoneIdentity, PhoneMethod, PhoneMove, PhoneMoveResult, Session, ShareGrant } from "./store.ts";
 
 type Row = Record<string, any>;
 const ms = (v: unknown): number | null => (v === null || v === undefined ? null : new Date(v as string | Date).getTime());
@@ -251,25 +251,44 @@ export class PgPeopleStore implements PeopleStore {
   async revokeSession(tokenHash: string, at: number) {
     await this.sql`update platform.sessions set revoked_at = least(coalesce(revoked_at, ${ts(at)}), ${ts(at)}) where token_hash = ${tokenHash}`;
   }
-  async attachPerson(e164: string, personId: string) {
-    await this.sql`update platform.sessions set person_id = ${personId} where e164 = ${e164} and person_id is null`;
+  async bindSessions(e164: string, personId: string, keep: string | null, at: number) {
+    await this.sql`update platform.sessions set person_id = case when token_hash = ${keep} then ${personId}::uuid else person_id end,
+      revoked_at = case when token_hash = ${keep} then revoked_at else least(coalesce(revoked_at, ${ts(at)}), ${ts(at)}) end
+      where e164 = ${e164} and person_id is null`;
+  }
+
+  async forgetPersonlessSessions(e164: string) {
+    await this.sql`delete from platform.sessions where e164 = ${e164} and person_id is null`;
   }
 
   async hit(bucket: string, windowMs: number, at: number, rule: HitRule = {}): Promise<HitResult> {
-    const start = new Date(at - (at % windowMs));
+    return (await this.hitAll([{ bucket, windowMs, rule }], at))[0]!;
+  }
+  async hitAll(hits: Hit[], at: number): Promise<HitResult[]> {
     return this.sql.begin(async tx => {
       // One writer per bucket at a time: parallel requests see each other's hits (one SMS for 20 parallel starts).
-      await tx`select pg_advisory_xact_lock(hashtext(${`rate:${bucket}`}))`;
-      const [prev] = await tx`select max(last_at) as last_at, coalesce(sum(count) filter (where window_start = ${start}), 0)::int as n from platform.rate_limits where bucket = ${bucket}`;
-      const prevAt = ms(prev?.last_at), n = (prev?.n as number) ?? 0;
-      if ((rule.limit !== undefined && n >= rule.limit) || (rule.minGapMs !== undefined && prevAt !== null && at - prevAt < rule.minGapMs)) return { count: n + 1, prevAt, ok: false };
-      // A minimum gap outlives the retention purge: the row stays until the gap ends.
-      const keepUntil = rule.minGapMs !== undefined ? ts(at + rule.minGapMs) : null;
-      const [r] = await tx`insert into platform.rate_limits (bucket, window_start, count, last_at, keep_until) values (${bucket}, ${start}, 1, ${ts(at)}, ${keepUntil})
-        on conflict (bucket, window_start) do update set count = platform.rate_limits.count + 1, last_at = excluded.last_at, keep_until = excluded.keep_until returning count`;
-      // Old windows are not needed after the next one starts.
-      await tx`delete from platform.rate_limits where bucket = ${bucket} and window_start < ${new Date(start.getTime() - windowMs)}`;
-      return { count: r!.count as number, prevAt, ok: true };
+      // The locks are taken in name order, so two requests on the same buckets never wait for each other in a cycle.
+      for (const bucket of [...new Set(hits.map(h => h.bucket))].sort()) await tx`select pg_advisory_xact_lock(hashtext(${`rate:${bucket}`}))`;
+      const results: HitResult[] = [];
+      for (const { bucket, windowMs, rule = {} } of hits) {
+        const start = new Date(at - (at % windowMs));
+        const [prev] = await tx`select max(last_at) as last_at, coalesce(sum(count) filter (where window_start = ${start}), 0)::int as n from platform.rate_limits where bucket = ${bucket}`;
+        const prevAt = ms(prev?.last_at), n = (prev?.n as number) ?? 0;
+        const ok = !((rule.limit !== undefined && n >= rule.limit) || (rule.minGapMs !== undefined && prevAt !== null && at - prevAt < rule.minGapMs));
+        results.push({ count: n + 1, prevAt, ok });
+        if (!ok) return results;
+      }
+      for (const [i, { bucket, windowMs, rule = {} }] of hits.entries()) {
+        const start = new Date(at - (at % windowMs));
+        // A minimum gap outlives the retention purge: the row stays until the gap ends.
+        const keepUntil = rule.minGapMs !== undefined ? ts(at + rule.minGapMs) : null;
+        const [r] = await tx`insert into platform.rate_limits (bucket, window_start, count, last_at, keep_until) values (${bucket}, ${start}, 1, ${ts(at)}, ${keepUntil})
+          on conflict (bucket, window_start) do update set count = platform.rate_limits.count + 1, last_at = excluded.last_at, keep_until = excluded.keep_until returning count`;
+        results[i]!.count = r!.count as number;
+        // Old windows are not needed after the next one starts.
+        await tx`delete from platform.rate_limits where bucket = ${bucket} and window_start < ${new Date(start.getTime() - windowMs)}`;
+      }
+      return results;
     });
   }
 

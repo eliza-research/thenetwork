@@ -190,7 +190,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   const cloudApp = cloudAuth ? appForHost(new URL(cloudAuth.siteOrigin).host, hostMap) : undefined;
   if (cloudAuth && !productionCloud && !cloudApp) throw new Error("Cloud auth site must map to a canonical app");
   const cloudFor = (app: AppId) => cloudAuth && (productionCloud || cloudApp === app) ? { ...cloudAuth, siteOrigin: productionCloud ? cloudSites[app] : cloudAuth.siteOrigin } : undefined;
-  const productionDelegation = productionCloud ? productionCloudDelegation({ realm: cloudRealm, secret: env.SERVICE_TURN_SECRET!, now, fetch: o.cloudAuthFetch }) : undefined;
+  const productionDelegation = productionCloud ? productionCloudDelegation({ realm: cloudRealm, secret: env.SERVICE_TURN_SECRET!, now, skewMs: CLOUD_CLOCK_SKEW_MS, fetch: o.cloudAuthFetch }) : undefined;
   const log = o.log ?? (s => console.log(s));
   const accounts = new Accounts(o.store, {
     hashKey, now, env, apps: id => apps[id],
@@ -388,7 +388,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
     const withSession = async (fn: (who: Who, a: NonNullable<Awaited<ReturnType<typeof auth>>>) => Promise<Response>): Promise<Response> => {
       const a = await auth();
       if (!a) return json(401, { ok: false, error: "unauthorized" });
-      const res = await fn({ e164: a.session.e164, personId: a.session.personId }, a);
+      const res = await fn({ e164: a.session.e164, personId: a.session.personId, session: a.session.tokenHash }, a);
       if (!res.headers.has("set-cookie")) rotatedCookies(res, a);
       return res;
     };
@@ -468,6 +468,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           if (!phoneOtpOnlyApps.has(appId) && o.turnstile && !(await o.turnstile.verify(typeof b.turnstileToken === "string" ? b.turnstileToken : undefined, ip, dev ? undefined : siteHosts(appId, env)))) {
             return json(400, { ok: false, error: "turnstile" });
           }
+          // A banned number gets the same answer as any other, and no code is sent (as MCP startOtp: no sign-in).
+          if (await accounts.banned(e164)) return json(200, { ok: true });
           const r = await otp.start(app, e164, ip);
           if (!r.ok) return json(429, { ok: false, error: "rate_limited" }, { "retry-after": String(Math.ceil(r.retryAfterMs / 1000)) });
           return json(200, { ok: true });
@@ -482,7 +484,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         try {
           const e164 = normalizePhone(b.phone);
           const code = typeof b.code === "string" ? b.code.trim() : "";
-          if (!e164 || !(await otp.verify(appId, e164, code, ip))) return json(400, { ok: false, error: "invalid_code" });
+          if (!e164 || !(await otp.verify(appId, e164, code, ip)) || await accounts.banned(e164)) return json(400, { ok: false, error: "invalid_code" });
           // A new session at every login (the old cookie on this request is revoked: no fixation).
           await sessions.revoke(cookies.get(cookieName(appId)));
           // A number not seen for 12 months goes on hold: the session gets no person until staff decide.
@@ -552,6 +554,11 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           if (!input) return json(400, { ok: false, error: "invalid" });
           try {
             const r = await accounts.join(app, who, input);
+            if (!r.ok && r.error === "under_age" && who.personId === null) {
+              const response = json(400, { ok: false, error: r.error, message: app.brand.underAge }, { "set-cookie": cookie(appId, "", 0) });
+              response.headers.append("set-cookie", identityCookie(appId, "", 0));
+              return response;
+            }
             if (!r.ok) return json(400, { ok: false, error: r.error, ...(r.error === "invite_only" ? { message: app.brand.inviteOnly } : r.error === "under_age" ? { message: app.brand.underAge } : r.error === "review" ? { message: REVIEW_MESSAGE } : {}) });
             return json(200, { ok: true, membership: publicMembership(r.membership) });
           } catch (e) {
@@ -671,7 +678,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
     async validateCloudGrant(grant) {
       const authority=grant.cloudAuthority;
       if(!productionDelegation || !authority || authority.version!==1 || authority.app!==grant.app || authority.resource!==grant.resource
-        || authority.phoneKey!==grant.phoneKey || !Number.isSafeInteger(authority.issuedAt) || authority.issuedAt*1000>now()
+        || authority.phoneKey!==grant.phoneKey || !Number.isSafeInteger(authority.issuedAt) || authority.issuedAt*1000>now()+CLOUD_CLOCK_SKEW_MS
         || !Number.isSafeInteger(authority.expiresAt) || authority.expiresAt<=now()
         || typeof authority.sealed!=="string" || authority.sealed.length>16000)return "invalid";
       const value=unseal("cloud-grant",authority.sealed);

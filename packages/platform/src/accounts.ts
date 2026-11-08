@@ -122,7 +122,8 @@ export interface AccountHooks {
   onAgeLowered?(ctx: { personId: string; age: number }): Promise<void> | void;
 }
 
-export interface Who { e164: string; personId: string | null }
+/** `session`: the token hash of the web session that acts (a web join binds only that session to the person). */
+export interface Who { e164: string; personId: string | null; session?: string }
 
 /** The public shape of a membership: this app only. */
 export const publicMembership = (m: Membership | undefined) =>
@@ -293,9 +294,16 @@ export class Accounts {
     }
   }
 
-  /** A new person for a verified phone (or the tombstone of this phone's earlier person, revived). */
-  createPerson(e164: string, method: PhoneMethod, lowestAge: number | null) {
-    return this.store.createPerson({ id: randomUUID(), e164, method, at: this.now(), lowestAge, phoneHash: this.phoneHash(e164) });
+  /**
+   * A new person for a verified phone (or the tombstone of this phone's earlier person, revived). Web
+   * sessions of the number with no person end, except `session` (the web join's own): one of them may
+   * belong to an earlier holder of the number, and it must never act for this person.
+   */
+  async createPerson(e164: string, method: PhoneMethod, lowestAge: number | null, session: string | null = null) {
+    const at = this.now();
+    const person = await this.store.createPerson({ id: randomUUID(), e164, method, at, lowestAge, phoneHash: this.phoneHash(e164) });
+    await this.store.bindSessions(e164, person.id, session, at);
+    return person;
   }
 
   /**
@@ -368,11 +376,13 @@ export class Accounts {
     const age = joinAgeCheck(input.age, await this.lowestAge(who.e164, person), app);
     if (!age.ok) {
       // Nothing is stored for this app: only the age, on the phone's age floor (and the person, if any).
+      // A number with no person keeps no web session either (the session row holds the number in plain text).
       await this.recordAge(who.e164, person, input.age);
       await this.declineUnderAge(who.e164, person);
+      if (!person) await this.store.forgetPersonlessSessions(who.e164);
       return { ok: false, error: "under_age" };
     }
-    if (!person) person = await this.createPerson(who.e164, "otp_sms", age.effective ?? input.age);
+    if (!person) person = await this.createPerson(who.e164, "otp_sms", age.effective ?? input.age, who.session ?? null);
     await this.recordAge(who.e164, person, input.age);
     // A new opt-in by the person: a delete of everything no longer suppresses the number.
     const suppressed = await this.store.isSuppressed(this.phoneHash(who.e164));
@@ -387,7 +397,7 @@ export class Accounts {
     };
     await this.store.putMembership(membership);
     await this.store.addConsent({ e164: who.e164, app: app.id, state: "opted_in", source: "web_form", wording: app.consent.text, wordingVersion: app.consent.version, at });
-    await this.store.attachPerson(who.e164, person.id);
+    await this.store.bindSessions(who.e164, person.id, who.session ?? null, at);
     try {
       // The network member gets the person's lowest age, not the one typed now (a minor anywhere is a minor here).
       await this.hooks.onJoin?.({ app, person, membership, e164: who.e164, age: age.effective ?? input.age, input });
