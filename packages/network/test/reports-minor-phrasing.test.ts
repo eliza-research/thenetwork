@@ -46,10 +46,19 @@ describe("minor report and age detection phrasing", () => {
       "she lied about her age, she is way older than she said",
       "12 yo whisky is great",
       "our team is 15 people",
+      "dinner was 10/10",
+      "coffee was 6",
+      "parking was 15",
+      "my uber was 14",
+      "the bill was 15 each",
+      "weather was 15 degrees",
+      "great time, we talked about how my son is a 12-year-old",
     ];
 
     for (const text of benignCases) {
+      expect(reportKindOf(text)).not.toBe("minor");
       expect(checkInReport(text)).not.toBe("minor");
+      expect(otherAgeStated(text)).toBeUndefined();
     }
   });
 
@@ -85,6 +94,13 @@ describe("minor report and age detection phrasing", () => {
     expect(c2.kind).toBe("report");
     expect(c2.target).toBe("Alice");
     expect(c2.otherAge).toBe(15);
+
+    // Negative control: company age in a report does not set otherAge or trigger minor report
+    const c3 = classify("report Bob: he threatened me. I run a 15 yr old company");
+    expect(c3.kind).toBe("report");
+    expect(c3.target).toBe("Bob");
+    expect(c3.otherAge).toBeUndefined();
+    expect(reportKindOf("report Bob: he threatened me. I run a 15 yr old company")).toBe("unsafe");
   });
 
   it("ensures minor is flagged as an urgent report kind", () => {
