@@ -33,7 +33,7 @@
 //             site builds, the sites' API client and the Cloudflare deploy guard (refused commands only)
 //   judge     the simulator's judge on small hand-written run logs: each log holds one wrong act it must see
 //   persona   the simulated member's opt-out state on short scripted worlds with a silent Network: keywords after STOP, START
-//   worlds    the per-app worlds' own flow rules on one small pinned world each: no slop probe to a held member
+//   worlds    the per-app worlds' own flow rules on one small pinned world each: no slop probe to a held member, no peon step for a candidate who left
 //   onboard   slop.date onboarding: evals/slop-onboarding corpus gates (rules only) and the persona onboarding sim (seeds 13-14)
 //   clef      P2 Clef weight fitting: synthetic labels from the slop world's hidden appearance (seed 1, 2,000 labels
 //             per dimension); ranking recovery, weights file round trip, extraction, bias audit, labelling page

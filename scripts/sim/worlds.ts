@@ -1,7 +1,9 @@
-// The worlds block: regression gates for the per-app worlds' own flow rules (slop-world-flow in
-// docs/research/state-machines/sim.md). Each gate runs one small world on a
+// The worlds block: regression gates for the per-app worlds' own flow rules (slop-world-flow and
+// peon-application-flow in docs/research/state-machines/sim.md). Each gate runs one small world on a
 // pinned seed and checks one rule the world applies at each step. No model call.
 import { canBeMatched, type MemberId } from "../../packages/core/src/index.ts";
+import { keywordMatcher } from "../../packages/sim/src/apps/peon/baselines.ts";
+import { REALISM_V2, runPeonWorld } from "../../packages/sim/src/apps/peon/world.ts";
 import { runSlopWorld } from "../../packages/sim/src/apps/slop/world.ts";
 import { Block, expect } from "./gate.ts";
 
@@ -28,5 +30,20 @@ export async function worldsBlock(b: Block): Promise<void> {
       expect(f.stage).toBe("dropped_policy");
       expect(f.firstYes).toBe(undefined);
     }
+  });
+  // SD-406 (sim S-29): `exited` guarded only new probes. Review, interview, offer and hire checked `hired` only,
+  // so a candidate who had left the search was still invited, interviewed, offered a job and hired.
+  await b.run("peon world: a candidate who left the search gets no interview, offer or hire", async () => {
+    const exitedBy = new Map<number, Set<MemberId>>();
+    const r = await runPeonWorld({
+      seed: 13, perCity: 400, jobsPerCity: 80, weeks: 8, realism: REALISM_V2,
+      matcher: w => ({ ...keywordMatcher, propose: ctx => { exitedBy.set(ctx.week, new Set(w.state.exited)); return keywordMatcher.propose(ctx); } }),
+    });
+    const gone = (week: number | undefined, id: MemberId) => week !== undefined && !!exitedBy.get(week)?.has(id);
+    const steps = r.flows.filter(f => (f.employerYes && gone(f.reviewWeek, f.cand)) || (f.interviewed && gone(f.interviewWeek, f.cand))
+      || (f.offered && gone(f.interviewWeek! + 1, f.cand))).length + r.hires.filter(h => gone(h.week, h.cand)).length;
+    expect(r.world.state.exited.size).toBeGreaterThan(0);
+    expect(r.hires.length).toBeGreaterThan(0);
+    expect(steps).toBe(0);
   });
 }
