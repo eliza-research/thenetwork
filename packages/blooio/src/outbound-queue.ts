@@ -114,7 +114,7 @@ export interface StatusChange { id: string; app: string; memberId?: string; stat
 export interface AppChecks {
   /** The live flags for this app (BLOOIO_ALLOW_SEND, NTWRK_LIVE_APPROVED, <APP>_LIVE_APPROVED). */
   live(): boolean;
-  /** True when the message is about something that closed (it is stored as expired). */
+  /** True when the message is about something that closed (it is stored as expired). A throw: the row waits (drain's error path). */
   stale?(row: QueueRow): boolean | Promise<boolean>;
   /** True when the consent ledger or the member's own flag says the person opted out of this app. */
   optedOut?(row: QueueRow): boolean | Promise<boolean>;
@@ -400,8 +400,9 @@ export class OutboundQueue {
     const agent = isAgentInitiated(row.kind);
     const compliance = row.kind === "compliance";
 
-    // 0. Too old, or about something that closed.
-    if (this.tooOld(row) || (await this.guarded(() => c.stale?.(row) ?? false, false))) return this.end(row, "expired");
+    // 0. Too old, or about something that closed. A stale check that throws is not "current": the error goes to
+    // drain(), and the row waits and runs every check again (it is never sent on a check that did not answer).
+    if (this.tooOld(row) || (await (c.stale?.(row) ?? false))) return this.end(row, "expired");
     // 1. The live flags (founder approval), checked again at send time.
     if (!(await this.guarded(() => c.live(), false))) return this.end(row, "refused_not_approved");
     if (!compliance) {

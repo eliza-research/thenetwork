@@ -354,3 +354,23 @@ test("SD-148: a collected reply that Cloud accepted counts in the line's unanswe
   expect([await statusOf("sd148-1"),await statusOf("sd148-2"),await statusOf("sd148-3")]).toEqual(["accepted","accepted","held_awaiting_reply"]);
   expect(dispatched).not.toContain("sd148-3");
 },60_000);
+
+test("SD-299: when the stale check of a notification throws, the row is not sent; it waits and goes once the check reads it as current",async()=>{
+  toNewYork(12,0);
+  const rt=await primary();
+  const phone="+12125550196",memberId=await join(services[0]!,phone,"Lev");
+  await rt.unitOfWork(()=>undefined);
+  await rt.adapter.engaged!(phone);
+  await queueOf(rt).enqueue(sql,[{id:"ntf_sd299",memberId,to:phone,kind:"transactional",text:"Your weekly digest is ready.",city:"nyc"}]);
+  // The notify store read fails (a lost connection): the drain cannot know whether the digest is still needed.
+  const current=rt.notificationCurrent;
+  rt.notificationCurrent=async()=>{throw new Error("Connection terminated unexpectedly");};
+  try {await rt.deliver();} finally {rt.notificationCurrent=async()=>true;}
+  expect(dispatched).not.toContain("ntf_sd299");
+  expect(await statusOf("ntf_sd299")).toBe("retry_scheduled");
+  // The store answers again and the digest is still needed: the next drain after the backoff sends it.
+  clock.advance(60_000);
+  try {await rt.deliver();} finally {rt.notificationCurrent=current;}
+  expect(dispatched).toContain("ntf_sd299");
+  expect(await statusOf("ntf_sd299")).toBe("accepted");
+},60_000);
