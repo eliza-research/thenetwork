@@ -1433,21 +1433,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.trust.block(m.id, now, { target: target.id, met });
     // Before any report is filed: an urgent report by someone who met them holds the subject (fileReport ->
     // dropMember), which would close a shared booked date as "participant dropped" with no word to them.
-    // Only an item both of them are still in: a member who said no to a plan (or dropped out) stays in
-    // `participants`, and their block keeps the pair apart without calling the plan off for the others (F23).
-    const out = (o: Opp, id: MemberId) => { const s = o.status.get(id); return s === "no" || s === "unavailable" || s === "dropped"; };
-    for (const o of [...this.opps.values()]) {
-      if (!OPEN_STAGES.has(o.stage) || !o.participants.includes(m.id) || !o.participants.includes(target.id) || out(o, m.id) || out(o, target.id)) continue;
-      if (o.stage === "scheduled") {
-        // The other member hears it is off, never why or who (network-consent-18).
-        for (const id of o.participants) if (id !== m.id && o.status.get(id) === "yes" && o.bookedTold?.includes(id)) {
-          const x = this.members.get(id);
-          if (x) this.send(x, copy.declinedQuiet, { type: "cancellation", proposalId: o.id }, "cancellation");
-        }
-        this.ctx.log("meeting_cancelled", { proposalId: o.id, reason: "blocked" });
-      }
-      this.close(o, "blocked");
-    }
+    this.callOffPair(m.id, target.id);
     if (verb === "report") {
       const points = this.trust.report(target.id, m.id, now, { met });
       if (!points) this.caseEvent(target.id, { at: now, kind: "report_received", points: 0, by: m.id });
@@ -1457,6 +1443,27 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (kind === "minor") this.minorReported(target, m.id);
     }
     this.send(m, verb === "block" ? (met ? copy.blocked : copy.blockUnmatched) : met ? copy.reported : copy.reportUnmatched, { type: "info" }, "reply");
+  }
+
+  /**
+   * A block between two members: every open item both of them are still in closes. A member who said
+   * no to a plan (or dropped out) stays in `participants`, and their block keeps the pair apart without
+   * calling the plan off for the others (F23). The others told about a booked one hear it is off, never
+   * why or who (network-consent-18); the blocker gets the block reply instead.
+   */
+  private callOffPair(blocker: MemberId, other: MemberId) {
+    const out = (o: Opp, id: MemberId) => { const s = o.status.get(id); return s === "no" || s === "unavailable" || s === "dropped"; };
+    for (const o of [...this.opps.values()]) {
+      if (!OPEN_STAGES.has(o.stage) || !o.participants.includes(blocker) || !o.participants.includes(other) || out(o, blocker) || out(o, other)) continue;
+      if (o.stage === "scheduled") {
+        for (const id of o.participants) if (id !== blocker && o.status.get(id) === "yes" && o.bookedTold?.includes(id)) {
+          const x = this.members.get(id);
+          if (x) this.send(x, copy.declinedQuiet, { type: "cancellation", proposalId: o.id }, "cancellation");
+        }
+        this.ctx.log("meeting_cancelled", { proposalId: o.id, reason: "blocked" });
+      }
+      this.close(o, "blocked");
+    }
   }
 
   /**
@@ -3280,6 +3287,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (!this.timingOk(m, d.timing ?? "logistics", now)) { this.deferred.push(d); continue; }
       this.send(m, d.body, d.meta, d.kind, d.o);
     }
+    // Blocks are person to person (PRD 40.3): a block made on another app reaches this one through the
+    // snapshot, and the pair's open items here close too.
+    for (const e of this.snapshotCached().edges) if (e.type === "blocked") this.callOffPair(e.from, e.to);
     for (const m of this.members.values()) this.refreshUnanswered(m, now);
     for (const o of [...this.opps.values()]) this.advance(o, now);
     this.checkSeats();
