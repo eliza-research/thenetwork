@@ -7,18 +7,24 @@ import type { AuditEntry, BiasReportView, HeldQueue, HeldText, ConfigInfo, DiffN
 import { store, useStore } from "./store.ts";
 import { Badge, Countdown, dur, humanize, Kpi, MemberLink, num, OppLink, pct, Section, stamp } from "./ui.tsx";
 
-/** Load from an endpoint on mount, when `key` changes, and every `everyMs` (0: never). */
+/**
+ * Load from an endpoint on mount, when `key` changes, and every `everyMs` (0: never). A read for the same
+ * key that fails with a network error or a 5xx keeps the last good data, so the rows (and the notes and
+ * reasons typed in them) stay mounted. A 401, a 403 or another refusal replaces the data.
+ */
 function useFetch<T>(load: () => Promise<{ data?: T; status: number; error?: string }>, key: unknown, everyMs = 0) {
-  const [d, setD] = useState<{ data?: T; status: number; error?: string }>();
+  const [d, setD] = useState<{ key: unknown; r: { data?: T; status: number; error?: string } }>();
   const [n, setN] = useState(0);
   useEffect(() => {
     let live = true;
-    const run = () => load().then(x => { if (live) setD(x); });
+    const run = () => load().then(x => {
+      if (live) setD(p => p && p.key === key && p.r.data !== undefined && x.data === undefined && (x.status === 0 || x.status >= 500) ? p : { key, r: x });
+    });
     run();
     const h = everyMs ? setInterval(run, everyMs) : undefined;
     return () => { live = false; if (h) clearInterval(h); };
   }, [key, n, everyMs]);
-  return { ...d, reload: () => setN(x => x + 1) };
+  return { ...d?.r, reload: () => setN(x => x + 1) };
 }
 const Err = ({ status, error }: { status?: number; error?: string }) =>
   status === undefined ? <div className="muted small">Loading…</div> : <div className="muted small">{status === 403 ? "Your role cannot see this." : error}</div>;
