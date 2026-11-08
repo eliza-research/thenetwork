@@ -2499,7 +2499,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /**
    * A participant drops out of a booked meeting. `ack` = they told us (reply to them). The others
-   * hear it is off (pairs) or still on (groups of 3 or more), never why.
+   * hear it is still on (3 or more left) or off (fewer), never why.
    */
   private handleDrop(m: MemberState, o: Opp, ack = true) {
     // Counted as a reveal decision only for a member the booked plan reached who had not confirmed it.
@@ -2513,7 +2513,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (ack) this.send(m, "No worries, thanks for the heads up.", { type: "info" }, "reply");
     if (m.awaiting?.oppId === o.id) m.awaiting = undefined;
     const still = o.participants.filter(p => o.status.get(p) === "yes");
-    const keep = o.participants.length > 2 && still.length >= 2;
+    // A group stays on with 3 or more. Two who are left said yes to a group, not to a meeting of two.
+    const keep = still.length >= 3;
     // Only members who were told about the plan hear that it changed.
     for (const id of still) if (o.bookedTold?.includes(id)) this.send(this.member(id), copy.dropNotice(m.first, keep), { type: "cancellation", proposalId: o.id }, "cancellation",
       { hook: { t: "drop_notice", oppId: o.id } });

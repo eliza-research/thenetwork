@@ -73,4 +73,17 @@ describe("plan run", () => {
     expect(w.log("send_refused").filter(l => l.detail.reason === "other_on_watch")).toEqual([]);
     expect(w.meetings.map(m => [...m.participants].sort())).toEqual([["a", "b", "d"]]);
   });
+
+  // SD-078: a booked group that shrank to two stayed on as a two-person meeting nobody agreed to.
+  test("a booked group plan that shrinks to two is off", async () => {
+    const w = await world(["a", "b", "c"]);
+    const id = submit(w, groupPlan(w, ["a", "b", "c"]));
+    expect(await answer(w, { a: "yes", b: "yes", c: "yes" })).toBe(true);
+    expect(opp(w, id).stage).toBe("scheduled");
+    const from = w.mark();
+    await w.say("c", "sorry, I can't make it anymore");
+    expect(opp(w, id).status.get("c")).toBe("dropped");
+    for (const x of ["a", "b"]) expect(w.to(x, from).map(s => s.body)).toEqual([expect.stringMatching(/this one is off now/)]);
+    expect(opp(w, id).stage).toBe("closed");
+  });
 });
