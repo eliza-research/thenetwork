@@ -1122,6 +1122,8 @@ export class NetworkService implements RuntimeHost {
           await this.enroll(rt, memberId, e164, wants, ev, rowId);
           return out;
         }
+        // A reply that names no app answers the question too: it closes, so a later chance word enrolls nothing.
+        await this.people.deletePending(this.phoneKey(e164), "looking_for");
       }
       // After STOP the member's texts still reach the Network (a report is never dropped), but its replies are
       // refused: the person gets one hint instead (founder decision 2026-10-11, #22).

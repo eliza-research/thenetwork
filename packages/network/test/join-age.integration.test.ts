@@ -198,3 +198,13 @@ test("SD-125: the answer to the looking-for question is a turn of The Network th
   expect(r.replies.some((t: string) => t.startsWith("Done: you're in friends.help"))).toBe(true);
   expect(await liveMemberships(phone)).toContain("friends");
 }, 60_000);
+
+test("SD-179: a reply that names no app closes the looking-for question; a later chance word enrolls nothing", async () => {
+  const phone = "+12125550313";
+  await say(phone, "hi");
+  expect((await say(phone, "Sam, 25")).reason).toBe("joined");
+  await say(phone, "not sure yet");
+  await say(phone, "going out with friends tonight");
+  expect(await liveMemberships(phone)).toEqual(["ntwrk"]);
+  expect(await service.accounts.optedIn("friends", phone)).toBe(false);
+}, 60_000);
