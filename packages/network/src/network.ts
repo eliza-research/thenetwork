@@ -716,7 +716,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const age = Math.min(...[attested, m.statedAge].filter(validAge));
     if ((isMinor(age) || c.minorSignal) && !m.minor) {
       this.handleMinorSignal(m.id);
-      return;
+      if (this.app.minJoinAge > 13 || m.stage !== "new") return;
     }
     if (m.stage === "new") return this.welcome(m);
     if (m.stage === "age" && this.afterAgeQuestion(m, known !== undefined)) return;

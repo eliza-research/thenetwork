@@ -515,7 +515,7 @@ async function deskGates(b: Block): Promise<void> {
     for (const text of ["im 12 is that ok", "i am 10 years old", "11 yo", "im 9"]) {
       expect(classifyRelayText(text).minorSignal).toBe(true);
     }
-    for (const text of ["i'm 3 years into my PhD", "i'm 2 months into my new job", "i'm 5 years older than you", "i'm 12 years in finance", "i'm 5 minutes away"]) {
+    for (const text of ["I'm 5'8", "I'm 6'1\"", "I'm 6 ft 2", "I'm 1 of 3 siblings", "I'm 2 drinks in", "i'm 3 years into my PhD", "i'm 2 months into my new job", "i'm 5 years older than you", "i'm 12 years in finance", "i'm 5 minutes away"]) {
       expect(classifyRelayText(text).minorSignal).toBe(false);
     }
   });
