@@ -590,24 +590,27 @@ export class OutboundQueue {
         where id=${row.id} and app_id=${row.app} and line=${this.line} and status in ('sending','unknown_acceptance')
         and to_address=${row.to} and body=${row.text} and fingerprint=${fingerprint(row.to,row.text,row.mediaUrls,row.kind,row.approvedPhotos)} returning id`;
       if (!wrote.length) return false;
-      if (status!=="failed") {
-        const unanswered=row.kind==="compliance"?0:1;
-        // A send accepted at the same instant as the person's last message counts toward the streak (a reply
-        // follows the message it answers); only a send accepted before their message is already answered.
-        await tx`insert into platform.line_conversations(line,address,unanswered,reengagement_used,first_outbound_at,last_outbound_at)
-          values(${this.line},${row.to},${unanswered},${row.reengagement},${at},${at})
-          on conflict(line,address) do update set
-            unanswered=case when line_conversations.last_inbound_at>${at} then line_conversations.unanswered else line_conversations.unanswered+${unanswered} end,
-            last_outbound_at=greatest(line_conversations.last_outbound_at,excluded.last_outbound_at),
-            first_outbound_at=least(line_conversations.first_outbound_at,excluded.first_outbound_at),
-            reengagement_used=case when line_conversations.last_inbound_at>${at} then line_conversations.reengagement_used else line_conversations.reengagement_used or excluded.reengagement_used end`;
-      }
+      if (status!=="failed") await this.countSend(tx,this.line,row.to,row.kind,row.reengagement,at);
       return true;
     });
     if (!committed) return {id:row.id,app:row.app,memberId:row.memberId,status:"dropped_forgotten"};
     if (status==="failed") return this.end(row,"failed","provider reported failure");
     if (status==="delivered"||status==="read") return this.end(row,status);
     return {id:row.id,app:row.app,memberId:row.memberId,status};
+  }
+
+  /** A send the provider (or another transport) accepted joins the conversation's streak (Apple line safety) and its 14-day clock. */
+  private async countSend(tx: SQL, line: string, to: string, kind: MessageKind, reengagement: boolean, at: Date): Promise<void> {
+    const unanswered=kind==="compliance"?0:1;
+    // A send accepted at the same instant as the person's last message counts toward the streak (a reply
+    // follows the message it answers); only a send accepted before their message is already answered.
+    await tx`insert into platform.line_conversations(line,address,unanswered,reengagement_used,first_outbound_at,last_outbound_at)
+      values(${line},${to},${unanswered},${reengagement},${at},${at})
+      on conflict(line,address) do update set
+        unanswered=case when line_conversations.last_inbound_at>${at} then line_conversations.unanswered else line_conversations.unanswered+${unanswered} end,
+        last_outbound_at=greatest(line_conversations.last_outbound_at,excluded.last_outbound_at),
+        first_outbound_at=least(line_conversations.first_outbound_at,excluded.first_outbound_at),
+        reengagement_used=case when line_conversations.last_inbound_at>${at} then line_conversations.reengagement_used else line_conversations.reengagement_used or excluded.reengagement_used end`;
   }
 
   /**
@@ -739,14 +742,19 @@ export class OutboundQueue {
     }
   }
 
-  /** Cloud's turn receipt for collected replies: accepted ones enter the thread history (sent_at); the others end. A receipt after unknownTtlMs finds the row ended (reconcileUnknown). */
+  /**
+   * Cloud's turn receipt for collected replies: accepted ones enter the thread history (sent_at) and the
+   * conversation's streak, as a send this queue made; the others end. A receipt after unknownTtlMs finds the
+   * row ended (reconcileUnknown).
+   */
   async collectedReceipt(tx: SQL, ids: string[], outcome: "accepted" | "unknown" | "rejected", at: number): Promise<void> {
     if (!ids.length) return;
     const status = outcome === "accepted" ? "sent" : outcome === "unknown" ? "send_unknown" : "refused_gateway";
-    await tx`update platform.outbound set status = ${status}, updated_at = ${new Date(this.now)},
+    const moved = await tx`update platform.outbound set status = ${status}, updated_at = ${new Date(this.now)},
       sent_at = case when ${outcome === "accepted"} then coalesce(sent_at, ${new Date(at)}) else sent_at end,
       ended_at = case when ${outcome === "unknown"} then null else coalesce(ended_at, ${new Date(this.now)}) end
-      where app_id = ${this.app} and id = any(${tx.array(ids, "TEXT")}) and status in ('collected', 'send_unknown')`;
+      where app_id = ${this.app} and id = any(${tx.array(ids, "TEXT")}) and status in ('collected', 'send_unknown') returning line, to_address, kind`;
+    if (outcome === "accepted") for (const r of moved as any[]) await this.countSend(tx, r.line, r.to_address, r.kind, false, new Date(at));
   }
 
   /** Rows of this app the leak guard parked for a person (GET /queue/leak-review), oldest first. */

@@ -336,3 +336,21 @@ test("SD-147: a row the unanswered cap holds while the person writes back is not
   expect(dispatched).toContain("sd147-fourth");
   expect(await statusOf("sd147-fourth")).toBe("accepted");
 },60_000);
+
+test("SD-148: a collected reply that Cloud accepted counts in the line's unanswered streak and moves last_outbound_at",async()=>{
+  toNewYork(12,0);
+  const rt=await primary(),s=services[0]!;
+  const phone="+12125550195",memberId=await join(s,phone,"Kit");
+  await rt.unitOfWork(()=>undefined);
+  // The member writes; the reply goes back through Cloud (a collected reply) and Cloud accepts it.
+  expect(await signedTurn(s,rt,"sd148-turn",phone,memberId,[["sd148-reply","See you Saturday."]])).toEqual(["sd148-reply"]);
+  clock.advance(1_000);
+  expect((await turnReceipt(s,{channel:"blooio",messageId:"sd148-turn",replyIds:["sd148-reply"],providerMessageIds:["provider:sd148-reply"],historyRecorded:true,outcome:"accepted"})).status).toBe(200);
+  const [c]=await sql`select unanswered,last_outbound_at from platform.line_conversations where address=${phone}`;
+  expect(c.unanswered).toBe(1);
+  expect(new Date(c.last_outbound_at).getTime()).toBe(clock.now());
+  // Three agent texts follow with no answer: with the reply, the third is the fourth unanswered message. It waits.
+  for (const n of [1,2,3]) {clock.advance(60_000);await rt.unitOfWork(()=>{rt.system(memberId as never,`sd148-${n}`,`Plan note ${n} is ready.`,"transactional");});}
+  expect([await statusOf("sd148-1"),await statusOf("sd148-2"),await statusOf("sd148-3")]).toEqual(["accepted","accepted","held_awaiting_reply"]);
+  expect(dispatched).not.toContain("sd148-3");
+},60_000);
