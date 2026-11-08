@@ -34,7 +34,7 @@ import { BlooioAdapter, DryRunAdapter, WAITING_STATUSES, type ChannelAdapter, ty
 import { normalizeAddress } from "../../blooio/src/phone.ts";
 import type { InboundTurn, CollectedReply } from "./inbox.ts";
 import { parseApprovedRelayPhotos, type TurnContext } from "../../core/src/svc/contract.ts";
-import { canBeMatched } from "../../core/src/policy.ts";
+import { canBeMatched, isMinor } from "../../core/src/policy.ts";
 import type { PhotoRelayService } from "../../platform/src/photo-relay.ts";
 import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import { isDeepStrictEqual } from "node:util";
@@ -65,8 +65,11 @@ export interface Unit {
   completeAction?: (tx: SQL) => Promise<void>;
   /** peon job postings saved in this unit (a manager's confirmed text, or staff): their rows go in the save transaction. */
   postings: JobPosting[];
+  /** Ages members stated in this unit (onAgeStated): the person and the phone's age floor keep the lowest in the save transaction. */
+  ages: StatedAge[];
 }
-const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), collected: new Set(), postings: [] });
+type StatedAge = { memberId: MemberId; age: number; explicit: boolean; declined: boolean };
+const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), collected: new Set(), postings: [], ages: [] });
 
 /** What the service gives each runtime: the shared connection and clock, and the checks that span apps. */
 export interface RuntimeHost {
@@ -128,7 +131,7 @@ export class NetworkRuntime {
   /** Sends committed with their state, waiting to be delivered (in commit order). */
   private committed: Outbound[] = [];
   /** Ages members stated in the units since the service last took them (takeAges). */
-  private statedAges: { memberId: MemberId; age: number; explicit: boolean; declined: boolean }[] = [];
+  private statedAges: StatedAge[] = [];
   /** The ages this member stated (and whether the Network declined them), taken once. */
   takeAges(memberId: MemberId) {
     const mine = this.statedAges.filter(a => a.memberId === memberId);
@@ -161,7 +164,7 @@ export class NetworkRuntime {
       },
       onLedger: e => { this.capital.onLedger(e); this.unit.capital.push(e); },
       // An age a member stated (network-consent-12): the service writes it to the person after the unit.
-      onAgeStated: (memberId, age, o) => { this.statedAges.push({ memberId, age, ...o }); },
+      onAgeStated: (memberId, age, o) => { this.statedAges.push({ memberId, age, ...o }); this.unit.ages.push({ memberId, age, ...o }); },
       // peon (#9): a posting the manager confirmed (or staff saved) is written with the unit (writeUnit).
       onPosting: p => { this.unit.postings.push(p); },
     });
@@ -459,6 +462,21 @@ export class NetworkRuntime {
         join network.members member on member.person_id=person.id where member.app_id=${app} and member.id in ${tx([...u.forget])}
         order by person.id for update of person`;
       for (const row of rows as Row[]) personIds.set(row.member_id as string, row.id as string);
+    }
+    // A stated age is a person-level safety fact: it commits with the unit that read it, so a failure or a
+    // crash before the service's statedAge step cannot lose it. Matching reads the lowest of these
+    // (platform.matching_ages). The service then records it again (Accounts.recordAge), which lowers
+    // every app's member and runs the age cleanups. The same filter and the same recorded age as statedAge.
+    for (const a of u.ages) {
+      if (!a.explicit && !a.declined && !isMinor(a.age)) continue;
+      const e164 = this.addressOf(a.memberId), accounts = this.host.accounts;
+      if (!e164 || !accounts) continue;
+      const age = a.declined ? a.age : Math.max(a.age, this.app.minJoinAge);
+      await tx`insert into platform.age_floor (phone_hash, lowest_age, at) values (${accounts.phoneHash(e164)}, ${age}, ${new Date(this.clock.now())})
+        on conflict (phone_hash) do update set lowest_age = least(platform.age_floor.lowest_age, excluded.lowest_age),
+          at = case when excluded.lowest_age < platform.age_floor.lowest_age then excluded.at else platform.age_floor.at end`;
+      await tx`update platform.people p set lowest_age = least(p.lowest_age, ${age}) from platform.phone_identities ph
+        where ph.e164 = ${e164} and ph.hold is null and p.id = ph.person_id and p.deleted_at is null`;
     }
     const named = new Set<string>([...u.sends.map(s => s.memberId), ...(u.inbound ? [u.inbound.member_id as string] : []), ...u.blocks.flat(), ...u.optOut.keys(), ...u.postings.map(p => p.managerId)]);
     const known = new Set<string>();

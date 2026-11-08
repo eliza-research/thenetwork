@@ -39,15 +39,28 @@ afterAll(async () => {
   await admin.unsafe(`drop database if exists ${db} with (force)`).catch(() => {}); await admin.close();
 });
 
-const say = async (from: string, text: string, app?: TurnRequest["app"]) => {
+const post = async (from: string, text: string, app?: TurnRequest["app"]) => {
   const input: TurnRequest = {messageId: `SMja${++seq}`, channel: "blooio", from, to: null, text, transport: "imessage", receivedAt: clock.now(), ...(app ? {app} : {})};
   const body = JSON.stringify(input);
   const headers = await svcSign(secret, {method: "POST", path: TURN_PATH, id: input.messageId, body, nowS: Math.floor(clock.now() / 1000)});
   const r = await fetch(new URL(TURN_PATH, server.url), {method: "POST", headers: {"content-type": "application/json", ...headers}, body});
-  expect(r.status).toBe(200);
   clock.advance(MINUTE);
+  return r;
+};
+const say = async (from: string, text: string, app?: TurnRequest["app"]) => {
+  const r = await post(from, text, app);
+  expect(r.status).toBe(200);
   return r.json() as Promise<any>;
 };
+/** Join an app by text with its keyword, then first name and age; returns the member id. */
+const join = async (phone: string, keyword: string, app: TurnRequest["app"], answer: string) => {
+  await say(phone, keyword, app);
+  const joined = await say(phone, answer, app);
+  expect(joined.reason).toBe("joined");
+  return joined.memberId as string;
+};
+const matchingAge = async (app: string, memberId: string) =>
+  (await sql`select age from platform.matching_ages where app_id = ${app} and member_id = ${memberId}`)[0]?.age as number | undefined;
 
 test("SD-010: an age held in a pending join is not replaced by a later, older age", async () => {
   const phone = "+12125550301";
@@ -68,4 +81,18 @@ test("SD-010: an age held in a pending join that expires stays on the phone's ag
   clock.advance(DAY); // the pending join expires (PENDING_MS)
   expect((await say(phone, "Sam 25", "friends")).reason).toBe("joined");
   expect(await service.accounts.lowestAge(phone, await service.accounts.personFor(phone))).toBe(15);
+}, 60_000);
+
+test("SD-011: a minor age stated in chat stays recorded when the step after the unit fails", async () => {
+  const phone = "+12125550303";
+  await join(phone, "friends.help", "friends", "Sam, 25");
+  const slop = await join(phone, "slop.date", "slop", "Sam, 25");
+  expect(await matchingAge("slop", slop)).toBe(25);
+  // The unit that reads "I'm 15" commits; the person-level write after it fails (a crash at this point loses memory too).
+  const recordAge = service.accounts.recordAge;
+  service.accounts.recordAge = async () => { throw new Error("synthetic failure after the unit"); };
+  try { await post(phone, "I'm 15 actually", "friends"); } finally { service.accounts.recordAge = recordAge; }
+  expect(await service.accounts.lowestAge(phone, await service.accounts.personFor(phone))).toBe(15);
+  // The other app's member is no longer matchable as an adult.
+  expect(await matchingAge("slop", slop)).toBe(15);
 }, 60_000);
