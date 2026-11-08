@@ -82,6 +82,7 @@ describe("minor signal safety and 18+ app policy", () => {
     const adultApp = { ...APPS.slop, minJoinAge: 18 };
     const w = new Mini([
       { id: "a", name: "Alex Roe", area: "Williamsburg", interests: ["dating"] },
+      { id: "b", name: "Bob Smith", age: 25, area: "Williamsburg", interests: ["dating"] },
     ], { review: "auto", app: adultApp });
 
     // First message asks age
@@ -101,6 +102,22 @@ describe("minor signal safety and 18+ app policy", () => {
     // No teen copy sent on 18+ app
     const msgsA = w.to("a", from).map(s => s.body);
     expect(msgsA.some(m => m.includes("under 18"))).toBe(false);
+
+    // 3rd message without numeric age or new minor signal:
+    // Alex must NOT become active or enter matching on 18+ app, and age_review must not duplicate
+    const from3 = w.mark();
+    await w.say("a", "Can you find me a date?");
+    expect(memA.stage).not.toBe("active");
+    expect(memA.stage).not.toBe("q1");
+    const msgsA3 = w.to("a", from3).map(s => s.body);
+    expect(msgsA3).toHaveLength(0);
+    const ageReviewEvents = caseA.events.filter((e: any) => e.kind === "age_review");
+    expect(ageReviewEvents).toHaveLength(1);
+
+    // 4th message: block and safety reports must NOT be dropped
+    (w.net as any).member("b");
+    await w.say("a", "block Bob");
+    expect((w.net as any).blocks.has("a|b")).toBe(true);
   });
 
   test("attested minor or explicit minor age on 18+ app is declined under min join age without teen welcome", async () => {
