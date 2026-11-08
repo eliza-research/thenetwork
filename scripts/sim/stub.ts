@@ -48,4 +48,27 @@ export async function stubBlock(b: Block): Promise<void> {
     expect(r.world.metrics.invariants.byRule.send_after_stop ?? 0).toBe(0);
     expect(out("ben", "cancellation").length).toBe(1);
   });
+  // SD-408 (sim S-16): `awaiting` outlived its opportunity. A group invite dropped at quorum kept the member's
+  // awaiting after the meeting, and a feedback request kept it until a reply. canPropose refuses a member with awaiting, so a
+  // member who did not answer once was never proposed again (the two-unanswered rule never ran).
+  await b.run("stub: a member who did not answer a group invite or a feedback request is proposed again", async () => {
+    const run = async (name: string, actions: Scenario["actions"], participants: string[]) => {
+      const s = {
+        name, description: "Dee goes silent; Eve joins later and the stub pairs at random.", seed: 61, days: 14, stub: { introRate: 1 },
+        personas: [...["ana:Ana Lindqvist", "ben:Ben Okafor", "cy:Cy Moreno", "dee:Dee Park"].map(x => adult(x.split(":")[0]!, x.split(":")[1]!, "sf", 11)),
+          { ...adult("eve", "Eve Brandt", "sf", 11), join: { day: 2, hour: 11 } }],
+        actions: [{ at: { day: 1, hour: 9 }, do: "propose", kind: participants.length > 2 ? "group" : "intro", participants, objective: "board game night", city: "sf" }, ...actions],
+        expectations: [],
+      } as Scenario;
+      const r = await runScenario(s, { network: stub });
+      // The stub's own random intros that include Dee (the scripted proposal is not one).
+      return r.world.records.filter(x => x.type === "proposal" && x.source === "network" && x.proposal.participants.includes("dee")).length;
+    };
+    // Dee is silent from day 1: the group meets without her, and her invite is dropped at quorum.
+    const group = await run("stub-awaiting-group", [{ at: { day: 1, hour: 8 }, do: "go_silent", persona: "dee" }], ["ana", "ben", "cy", "dee"]);
+    expect(group).toBeGreaterThan(0);
+    // Dee says yes and meets Ana, then is silent before the feedback request.
+    const feedback = await run("stub-awaiting-feedback", [{ at: { day: 3, hour: 21 }, do: "go_silent", persona: "dee" }], ["ana", "dee"]);
+    expect(feedback).toBeGreaterThan(0);
+  });
 }

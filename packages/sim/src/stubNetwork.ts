@@ -50,6 +50,8 @@ interface Invite { status: "pending" | "yes" | "no" | "expired" | "dropped"; sen
 interface Opp {
   p: Proposal; invites: Map<MemberId, Invite>; stage: "inviting" | "scheduled" | "done" | "cancelled";
   quorum: number; deadline: number; meetingAt?: number; reminded?: boolean; feedbackSent?: boolean;
+  /** When the feedback requests went out; cleared when they expire (INVITE_TTL with no reply). */
+  feedbackAt?: number;
 }
 
 const ZERO: ScoreComponents = {
@@ -321,7 +323,18 @@ export class StubNetwork implements NetworkUnderTest {
         : `Quick update: ${m.first} can't make it today, so I'm calling this one off. Sorry about that, I'll look for another time.`,
         { type: "cancellation", proposalId: opp.p.id });
     }
-    if (!keep) opp.stage = "cancelled";
+    if (!keep) { opp.stage = "cancelled"; this.release(opp); }
+  }
+
+  /**
+   * The opportunity is over: no member still waits on its invite. A group member who did not answer keeps
+   * `awaiting` until then, so a late yes can still join (handleInviteReply).
+   */
+  private release(opp: Opp) {
+    for (const id of opp.invites.keys()) {
+      const m = this.member(id);
+      if (m.awaiting?.kind === "invite" && m.awaiting.pid === opp.p.id) m.awaiting = undefined;
+    }
   }
 
   private advance(opp: Opp, now: number) {
@@ -343,13 +356,22 @@ export class StubNetwork implements NetworkUnderTest {
           this.send(this.member(id), `Reminder: today at ${hourText(localHour(opp.meetingAt, opp.p.city))}. Have fun!`, { type: "reminder", proposalId: opp.p.id });
       }
       if (!opp.feedbackSent && now >= opp.meetingAt + 3 * HOUR && localHour(now, opp.p.city) >= ALLOWED[0] && localHour(now, opp.p.city) < 21) {
-        opp.feedbackSent = true; opp.stage = "done";
+        opp.feedbackSent = true; opp.stage = "done"; opp.feedbackAt = now;
+        this.release(opp);
         for (const [id, inv] of opp.invites) if (inv.status === "yes") {
           const m = this.member(id);
           const others = [...opp.invites].filter(([x, i]) => x !== id && i.status === "yes").map(([x]) => this.member(x).first).join(" and ") || "the group";
           m.awaiting = { kind: "feedback", pid: opp.p.id };
           this.send(m, `How did it go with ${others}?`, { type: "feedback_request", proposalId: opp.p.id });
         }
+      }
+    }
+    // A feedback request with no reply expires like an invite, so the member can be proposed again.
+    if (opp.stage === "done" && opp.feedbackAt !== undefined && now >= opp.feedbackAt + INVITE_TTL) {
+      opp.feedbackAt = undefined;
+      for (const id of opp.invites.keys()) {
+        const m = this.member(id);
+        if (m.awaiting?.kind === "feedback" && m.awaiting.pid === opp.p.id) m.awaiting = undefined;
       }
     }
   }
