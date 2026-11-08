@@ -15,6 +15,24 @@ export function underBudget(ts: number[], now: number, span: number, n: number):
   return inWindow(ts, now, span).length <= n;
 }
 
+/**
+ * What a Network age log (age_resolved, age_confirmed) says about a member the judge flagged as a minor
+ * (from age_unknown, minor_signal or minor_reported). `saysMinor` / `saysAdult`: the log's `minor` field
+ * is true / false; `hasAge` and `age`: a stated age in the log.
+ */
+export interface AgeLog { saysMinor: boolean; saysAdult: boolean; hasAge: boolean; age: number; }
+
+/** The judge clears the flag only on a log that says adult: `minor: false`, or an adult age (18 to 120). */
+export function clearsMinorFlag(l: AgeLog): boolean {
+  //@ verify
+  //@ ensures \result ==> !l.saysMinor
+  //@ ensures \result ==> l.saysAdult || (l.hasAge && l.age >= 18 && l.age <= 120)
+  //@ ensures !l.saysMinor && l.saysAdult ==> \result
+  if (l.saysMinor) return false;
+  if (l.saysAdult) return true;
+  return l.hasAge && l.age >= 18 && l.age <= 120;
+}
+
 export interface Streak { streak: number; reengageUsed: boolean; }
 export interface StreakStep { ok: boolean; next: Streak; }
 

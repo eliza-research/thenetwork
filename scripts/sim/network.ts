@@ -53,6 +53,18 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
     expect(m.errors).toBe(0);
   });
 
+  await b.run("judge: an unknown age that resolves adult (age_resolved minor:false) clears the minor flag; minor:true keeps it", () => {
+    // network.ts logs age_resolved as { memberId, minor } with no age; the judge used to read the absent age as a minor.
+    const t = Date.UTC(2026, 9, 5);
+    const persona = (id: string) => ({ t, type: "persona", persona: { id, name: `${id} Q`, archetype: "regular", homeCity: "nyc", joinDay: 0, trueAge: 30, claimedAge: 30, quietHours: [22, 8], romanceOptIn: true } });
+    const log = (dt: number, kind: string, detail: Record<string, unknown>) => ({ t: t + dt, type: "network_log", kind, detail });
+    const records = (minor: boolean) => [persona("p1"), persona("p2"), log(1, "age_unknown", { memberId: "p1" }), log(2, "age_resolved", { memberId: "p1", minor }),
+      log(3, "review_decision", { oppId: "o1", decision: "approve", reviewer: "r" }), log(4, "probe_started", { oppId: "o1", proposal: { id: "o1", participants: ["p1", "p2"], alternates: [] } }),
+      log(5, "probe_sent", { oppId: "o1", memberId: "p1" })] as unknown as RunRecord[];
+    expect(computeMetrics(records(false), { requireReview: true }).safety.minorContacts).toBe(0);
+    expect(computeMetrics(records(true), { requireReview: true }).safety.minorContacts).toBe(2);
+  });
+
   await b.run("minors: no minor is ever an alternate (a possible backfill)", () => {
     const minors = new Set([...run.personas.values()].filter(p => p.public.claimedAge < 18).map(p => p.id));
     const started = logs(R, "probe_started");

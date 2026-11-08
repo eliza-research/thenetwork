@@ -14,7 +14,7 @@ export { gini };
 import { classifyYesNo, DAY, HOUR, isMinor as isMinorAge, type AppId, type MemberId, type ParticipationState } from "@thenetwork/core";
 import { CONNECTION, LANE_BUDGETS, PRD_BUDGETS } from "../../../network/src/outreach.ts";
 import { inHourWindow } from "../time.ts";
-import { inWindow, stepStreak, underBudget } from "./predicates.ts";
+import { clearsMinorFlag, inWindow, stepStreak, underBudget } from "./predicates.ts";
 import { checkMessage, findContactDetails, hasPausePath, normalizeCanary } from "./rules.ts";
 import type { LoggedMessage, LoggedPersona, RunRecord } from "@thenetwork/core";
 
@@ -332,7 +332,9 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
     if (r.type === "network_log") {
       const d = r.detail ?? {};
       if (r.kind === "minor_signal" || r.kind === "age_unknown" || r.kind === "minor_reported") { if (typeof d.memberId === "string") flaggedMinor.add(d.memberId); }
-      else if ((r.kind === "age_confirmed" || r.kind === "age_resolved") && typeof d.memberId === "string" && !isMinorAge(d.age)) flaggedMinor.delete(d.memberId);
+      // age_resolved logs { memberId, minor } with no age: read `minor`, not the absent age (which is a minor, fail closed).
+      else if ((r.kind === "age_confirmed" || r.kind === "age_resolved") && typeof d.memberId === "string"
+        && clearsMinorFlag({ saysMinor: d.minor === true, saysAdult: d.minor === false, hasAge: typeof d.age === "number" && Number.isFinite(d.age), age: typeof d.age === "number" && Number.isFinite(d.age) ? d.age : 0 })) flaggedMinor.delete(d.memberId);
       if (r.kind === "contact_swap") {
         const ms = Array.isArray(d.members) ? d.members : [d.a, d.b];
         if (typeof ms[0] === "string" && typeof ms[1] === "string") swapped.add(pairKey(ms[0], ms[1]));
