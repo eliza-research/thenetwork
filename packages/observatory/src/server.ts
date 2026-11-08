@@ -359,22 +359,24 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
   }
   const forbidden = (text: string) => json({ error: `forbidden: ${text}`, code: "forbidden" }, 403);
   type Req = Request & { params: Record<string, string> };
-  type Handler = (req: Req, user: StaffUser, app: AppId) => Response | Promise<Response>;
+  type Handler = (req: Req, user: StaffUser, app: AppId, seen: Mode) => Response | Promise<Response>;
   /**
    * An app route: the caller needs a role for the request's app; with `need`, one of those roles
-   * for that app (admin for the app always passes).
+   * for that app (admin for the app always passes). `seen` is the mode of these checks: an action
+   * runs in it, also when the mode changes while the handler awaits.
    */
   const guard = (h: Handler, need?: readonly StaffRole[]) => async (req: Req) => {
     const u = await identify(req);
     if (u instanceof Response) return u;
     const app = appOf(req);
     if (app instanceof Response) return app;
+    const seen = mode;
     if (!rolesFor(u, app, mode).size) return forbidden(`no role for ${app}${mode === "real" && u.roles.includes("engineer") ? " (engineer: simulated worlds only)" : ""}`);
     if (need && !allowed(u, need, app, mode)) return forbidden(`needs ${["admin", ...need].join(" or ")} for ${app}`);
     // A change sent from a page that still shows the other mode would act on the wrong world (audit observatory-21).
     const said = req.headers.get(MODE_HEADER);
     if (req.method !== "GET" && said && said !== mode) return json({ ok: false, error: `the console switched to ${mode} mode: reload before you act`, code: "mode_changed" }, 409);
-    try { return await h(req, u, app); } catch (e) { return fail(e); }
+    try { return await h(req, u, app, seen); } catch (e) { return fail(e); }
   };
   /** A route that is not about one app: any staff member, or with `need`, the role for every app (role@*). */
   const global = (h: (req: Req, user: StaffUser) => Response | Promise<Response>, need?: readonly StaffRole[]) => async (req: Req) => {
@@ -393,12 +395,12 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
    * detail panels reload a member as it changes: repeated reads of one member by one staff member
    * within 60 s keep only the first row (a reveal starts a new one).
    */
-  async function record(u: StaffUser, app: AppId | undefined, e: Omit<AuditEntry, "at" | "actor" | "roles" | "mode" | "app">): Promise<Response | undefined> {
+  async function record(u: StaffUser, app: AppId | undefined, e: Omit<AuditEntry, "at" | "actor" | "roles" | "mode" | "app">, m: Mode = mode): Promise<Response | undefined> {
     const at = Date.now();
-    const k = DEDUPED_READS.has(e.action) && e.ok ? `${u.id}|${e.action}|${app}|${e.targetId}|${e.detail?.revealed ? 1 : 0}|${mode}` : undefined;
+    const k = DEDUPED_READS.has(e.action) && e.ok ? `${u.id}|${e.action}|${app}|${e.targetId}|${e.detail?.revealed ? 1 : 0}|${m}` : undefined;
     if (k && at - (lastRead.get(k) ?? -Infinity) < READ_AUDIT_DEDUPE_MS) return undefined;
     try {
-      await audit.write({ at, actor: u.id, roles: u.roles, mode, ...(app ? { app } : {}), ...e });
+      await audit.write({ at, actor: u.id, roles: u.roles, mode: m, ...(app ? { app } : {}), ...e });
       if (k) {
         lastRead.set(k, at);
         if (lastRead.size > 5000) for (const [x, t] of lastRead) if (at - t >= READ_AUDIT_DEDUPE_MS) lastRead.delete(x);
@@ -594,7 +596,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         }, ["safety"]),
       },
       "/api/control": {
-        POST: guard(async (req, u, app) => {
+        POST: guard(async (req, u, app, seen) => {
           let cmd = await req.json().catch(() => null) as ControlCommand | null;
           if (!cmd || typeof cmd.type !== "string") return json({ ok: false, error: "bad command" }, 400);
           // Own keys only: "constructor" or "__proto__" is not a command (audit observatory-13).
@@ -602,8 +604,8 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           if (!need) return json({ ok: false, error: "unknown command" }, 400);
           const target = "oppId" in cmd ? { targetType: "opportunity" as const, targetId: cmd.oppId } : "memberId" in cmd ? { targetType: "member" as const, targetId: cmd.memberId } : cmd.type === "matching" || cmd.type === "review_mode" ? { targetType: "config" as const, targetId: cmd.type } : {};
           const detail = auditDetail(cmd);
-          if (!allowed(u, need, app, mode)) {
-            await record(u, app, { action: cmd.type, ...target, ok: false, detail: { ...detail, refused: "forbidden" } });
+          if (!allowed(u, need, app, seen)) {
+            await record(u, app, { action: cmd.type, ...target, ok: false, detail: { ...detail, refused: "forbidden" } }, seen);
             return forbidden(`${cmd.type} needs ${["admin", ...need].join(" or ")} for ${app}`);
           }
           if (realOnly && GAME_ONLY.has(cmd.type)) return json({ ok: false, error: `${cmd.type} is off on this server (OBSERVATORY_REAL_ONLY=1)`, code: "real_only" }, 403);
@@ -615,29 +617,29 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           }
           if (cmd.type === "review" && cmd.secondsSpent !== undefined) cmd = { ...cmd, secondsSpent: Math.min(REVIEW_SECONDS_MAX, Math.max(0, Number(cmd.secondsSpent) || 0)) };
           // Staff actions are audited before they run; the result follows in a second row.
-          if (!QUIET.has(cmd.type)) { const no = await record(u, app, { action: cmd.type, ...target, ok: true, detail: { ...detail, phase: "requested" } }); if (no) return no; }
-          const r = await (await source(mode, app)).control(cmd, u.id);
+          if (!QUIET.has(cmd.type)) { const no = await record(u, app, { action: cmd.type, ...target, ok: true, detail: { ...detail, phase: "requested" } }, seen); if (no) return no; }
+          const r = await (await source(seen, app)).control(cmd, u.id);
           if (r.ok && cmd.type === "lens") { if (cmd.on) lensOn.add(`${u.id}|${app}`); else lensOn.delete(`${u.id}|${app}`); }
           if (r.ok && cmd.type === "reset") for (const k of [...lensOn]) if (k.endsWith(`|${app}`)) lensOn.delete(k);
           if (r.ok && (cmd.type === "lens" || cmd.type === "reset")) for (const ws of sockets) if (ws.data.app === app) ws.data.truth = truthFor(ws.data.user, app);
           // The result row is best effort: the action already ran, and its "requested" row is written.
-          if (!QUIET.has(cmd.type)) await record(u, app, { action: cmd.type, ...target, ok: r.ok, detail: { ...detail, phase: "result", ...(r.code ? { code: r.code } : {}) } });
+          if (!QUIET.has(cmd.type)) await record(u, app, { action: cmd.type, ...target, ok: r.ok, detail: { ...detail, phase: "result", ...(r.code ? { code: r.code } : {}) } }, seen);
           return json(r, r.ok ? 200 : 409);
         }),
       },
       "/api/safety": {
         GET: guard(async (_r, _u, app) => json(await (await source(mode, app)).safety()), ["safety"]),
-        POST: guard(async (req, u, app) => {
+        POST: guard(async (req, u, app, seen) => {
           const a = await req.json().catch(() => null) as SafetyAction | null;
           const v = checkSafety(a);
           if (typeof v === "string") return json({ ok: false, error: v, code: "bad_action" }, 400);
           const target = v.action === "close" ? { targetType: "case" as const, targetId: v.caseId } : v.action === "dismiss" ? { targetType: "report" as const, targetId: v.reportId } : { targetType: "member" as const, targetId: v.memberId };
           const extra = v.action === "ban" ? { by: v.by } : {};
           const report = "reportId" in v && v.reportId ? { reportId: v.reportId } : {};
-          const no = await record(u, app, { action: `safety_${v.action}`, ...target, ok: true, ...(v.note ? { reason: v.note } : {}), detail: { phase: "requested", ...extra, ...report } });
+          const no = await record(u, app, { action: `safety_${v.action}`, ...target, ok: true, ...(v.note ? { reason: v.note } : {}), detail: { phase: "requested", ...extra, ...report } }, seen);
           if (no) return no;
-          const r = await (await source(mode, app)).safetyAction(v, u.id);
-          await record(u, app, { action: `safety_${v.action}`, ...target, ok: r.ok, detail: { phase: "result", ...extra, ...report, ...(r.code ? { code: r.code } : {}) } });
+          const r = await (await source(seen, app)).safetyAction(v, u.id);
+          await record(u, app, { action: `safety_${v.action}`, ...target, ok: r.ok, detail: { phase: "result", ...extra, ...report, ...(r.code ? { code: r.code } : {}) } }, seen);
           return json(r, r.ok ? 200 : 409);
         }, ["safety"]),
       },
@@ -670,24 +672,24 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           const r = await src.held(queue, u.id);
           return json(r, r.ok ? 200 : r.code === "not_available" ? 404 : 502);
         }, ["safety"]),
-        POST: guard(async (req, u, app) => {
+        POST: guard(async (req, u, app, seen) => {
           const b = await req.json().catch(() => null) as { queue?: unknown; id?: unknown; decision?: unknown; reason?: unknown; photoReviewed?:unknown } | null;
           const reason = typeof b?.reason === "string" ? b.reason.trim().slice(0, 500) : "";
           if (!b || (b.queue !== "leak" && b.queue !== "relay") || typeof b.id !== "string" || !b.id || b.id.length > 300 || (b.decision !== "release" && b.decision !== "reject")) {
             return json({ ok: false, error: "queue (leak or relay), id and decision (release or reject) are required", code: "bad_action" }, 400);
           }
           if (reason.length < PERSON_REASON_MIN) return json({ ok: false, error: `a reason (at least ${PERSON_REASON_MIN} characters) is required`, code: "reason_required" }, 400);
-          const src = await source(mode, app);
+          const src = await source(seen, app);
           if (!src.heldDecision) return json({ ok: false, error: "held texts exist on real data only", code: "real_only" }, 404);
           const photo=b.queue==="relay"&&b.id.startsWith("pri_");
           const preview=photo?photoPreviews.get(revealKey(u,app,`relay-photo:${b.id}`)):undefined;
           if(photo&&b.decision==="release"&&(b.photoReviewed!==true||!preview||preview.until<=Date.now()))return json({ok:false,error:"Load and review this selected photo before releasing it.",code:"photo_preview_required"},409);
           const target = { targetType: "case" as const, targetId: `${b.queue}:${b.id}` };
-          const no = await record(u, app, { action: `held_${b.decision}`, ...target, ok: true, reason, detail: { phase: "requested", queue: b.queue } });
+          const no = await record(u, app, { action: `held_${b.decision}`, ...target, ok: true, reason, detail: { phase: "requested", queue: b.queue } }, seen);
           if (no) return no;
           const r = await src.heldDecision(b.queue, b.id, b.decision, reason, u.id, photo&&b.decision==="release"?preview!.token:undefined);
           if(photo&&r.ok)photoPreviews.delete(revealKey(u,app,`relay-photo:${b.id}`));
-          await record(u, app, { action: `held_${b.decision}`, ...target, ok: r.ok, detail: { phase: "result", queue: b.queue, ...(r.code ? { code: r.code } : {}) } });
+          await record(u, app, { action: `held_${b.decision}`, ...target, ok: r.ok, detail: { phase: "result", queue: b.queue, ...(r.code ? { code: r.code } : {}) } }, seen);
           return json(r, r.ok ? 200 : r.code === "service_missing" ? 404 : 409);
         }, ["safety"]),
       },
