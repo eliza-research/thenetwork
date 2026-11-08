@@ -800,6 +800,12 @@ export class ConsentNetwork implements NetworkUnderTest {
       const o = [...this.opps.values()].find(o => o.stage === "scheduled" && o.status.get(m.id) === "yes");
       if (o) return this.handleDrop(m, o);
     }
+    // "Actually no" or "I need to cancel" after their yes to a probe, before the others answered: the
+    // yes is taken back (the answer slot was cleared by the yes, or by a time retry left unanswered).
+    if (!aw && (c.kind === "cancel" || this.yesNoOf(body) === "no")) {
+      const o = [...this.opps.values()].find(o => o.stage === "probing" && !o.plan && o.contacted.has(m.id) && o.status.get(m.id) === "available");
+      if (o) return this.onProbeAnswer(m, o.id, false);
+    }
     const isRequest = c.kind === "people_request" || c.kind === "plans_request";
     if ((aw?.kind === "feedback" && !isRequest && c.kind !== "invite_friend") || (c.kind === "feedback_like" && aw?.kind !== "interview")) {
       // Feedback is only for a meeting that already happened. An acknowledgement ("See you there.",
@@ -2297,7 +2303,8 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   private onProbeAnswer(m: MemberState, oppId: string, yes: boolean, keys: string[] = []) {
     const o = this.opps.get(oppId);
-    if (!o || o.stage !== "probing" || o.status.get(m.id) !== "probing") return;
+    // A no also takes back a yes that is not booked yet ("available"): consent holds until the reveal.
+    if (!o || o.stage !== "probing" || !(o.status.get(m.id) === "probing" || (!yes && o.status.get(m.id) === "available"))) return;
     const retry = !!o.timeRetry?.includes(m.id);
     const offered = o.offered?.[m.id] ?? [];
     const picked = offered.filter(x => keys.includes(x.key));
@@ -3387,10 +3394,10 @@ export class ConsentNetwork implements NetworkUnderTest {
         const sent = o.sentAt?.[p];
         if (now < (sent !== undefined ? sent + PROBE_TTL : (o.turnAt?.[p] ?? o.createdAt) + PROBE_WAIT)) continue;
         // They said yes and were offered other times: no answer keeps the yes (the best time for everyone).
-        if (o.timeRetry?.includes(p)) { o.status.set(p, "available"); continue; }
-        if (o.contacted.has(p)) { this.counters.probeExpired++; this.ctx.log("probe_answer", { oppId: o.id, memberId: p, yes: false, expired: true }); }
         const m = this.members.get(p);
         if (m?.awaiting?.oppId === o.id) m.awaiting = undefined;
+        if (o.timeRetry?.includes(p)) { o.status.set(p, "available"); continue; }
+        if (o.contacted.has(p)) { this.counters.probeExpired++; this.ctx.log("probe_answer", { oppId: o.id, memberId: p, yes: false, expired: true }); }
         o.status.set(p, "unavailable");
         this.replaceOrClose(o, p);
       }
