@@ -524,7 +524,8 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       }
     }
 
-    await store.deleteAuthRequest(r.id);
+    // An approval that took the request first wins: the denial then has nothing to deny.
+    if (!(await store.deleteAuthRequest(r.id))) return messagePage(c.app, "This page has expired", "Go back to the assistant and connect again.");
     await store.audit({ at: now(), kind: "consent_denied", clientId: client.id, grantId: null, app: c.app.id, detail: null });
     return redirectTo(r.redirectUri, { error: "access_denied", error_description: "Connection cancelled", state: r.state, iss: c.issuer }, 303, { "set-cookie": clearCookie });
   }

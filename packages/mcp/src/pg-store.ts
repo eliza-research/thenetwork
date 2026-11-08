@@ -131,7 +131,7 @@ export class PgOAuthStore implements OAuthStore {
       return { request: r, issued };
     });
   }
-  async deleteAuthRequest(id: string) { await this.sql`delete from oauth.auth_requests where id = ${id}`; }
+  async deleteAuthRequest(id: string) { return (await this.sql`delete from oauth.auth_requests where id = ${id} returning id`).length > 0; }
 
   async putGrant(g: Grant) {
     await this.sql`insert into oauth.grants (id, client_id, app_id, phone_key, person_id, scopes, resource, created_at, expires_at, revoked_at, cloud_authority)

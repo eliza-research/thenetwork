@@ -127,7 +127,8 @@ export interface OAuthStore {
    * grant. `issue` returns undefined to consume the approval and store nothing.
    */
   approveConsent<I extends Issue>(id: string, at: number, issue: (r: AuthRequest) => I | undefined): Promise<{ request: AuthRequest; issued?: I } | undefined>;
-  deleteAuthRequest(id: string): Promise<void>;
+  /** Delete a sign-in request. True when this call deleted it (false: it was already taken or deleted). */
+  deleteAuthRequest(id: string): Promise<boolean>;
 
   putGrant(g: Grant): Promise<void>;
   getGrant(id: string): Promise<Grant | undefined>;
@@ -231,7 +232,7 @@ export class MemoryOAuthStore implements OAuthStore {
     for (const a of issued.audit) this.rows.push({ ...a });
     return { request, issued };
   }
-  async deleteAuthRequest(id: string) { this.requests.delete(id); }
+  async deleteAuthRequest(id: string) { return this.requests.delete(id); }
 
   async putGrant(g: Grant) {
     if(g.id.startsWith("grant_cloud_") && (!g.cloudAuthority || g.cloudAuthority.version!==1))throw new Error("Cloud grant authority required");
