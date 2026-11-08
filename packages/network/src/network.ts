@@ -377,8 +377,8 @@ interface Opp {
   plan?: plans.Plan; planRun?: plans.PlanRun;
   /** When the booked plan reached each member, who confirmed it in words, and who confirmed by silence (48 h). */
   bookedAt?: Record<MemberId, number>; explicit?: MemberId[]; confirmed?: MemberId[];
-  /** Post-plan answers: came, would do it again, reported someone missing, and who they named as there. */
-  post?: Record<MemberId, { came: boolean; again: boolean; otherNoShow: boolean; named: MemberId[] }>;
+  /** Post-plan answers: came, would do it again, reported someone missing, who they named as there, and whether they said it went well (value_received at finalize). */
+  post?: Record<MemberId, { came: boolean; again: boolean; otherNoShow: boolean; named: MemberId[]; good?: boolean }>;
   /** Attendance resolved and the ledger told (plan_attended / plan_no_show / plan_ghosted). */
   finalized?: boolean;
   /**
@@ -2604,7 +2604,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     const crewId = o.plan ? this.planPost(m, o, body, f) : undefined;
     if (!o.plan) o.post = { ...o.post, [m.id]: { came: !f.selfNoShow, again: f.again, otherNoShow: f.otherNoShow || NOBODY_CAME.test(body), named: others.filter(x => this.namedIn(body, x)) } };
     const good = !f.selfNoShow && !f.otherNoShow && (f.sentiment === "positive" || !!o.post?.[m.id]?.again);
-    if (good) this.emit({ type: "value_received", member: m.id, with: others }, `${o.id}:${m.id}`);
+    // value_received is emitted at finalize, with the confirmations of the others who came (capital-1).
+    if (good) o.post![m.id]!.good = true;
     this.helpFeedback(m, o, f);
     // The check-in after a date (AppHooks.postDateReports): harassment, lying, a no-show or an unsafe
     // date is a report about the other person, a block between them, and a staff case.
@@ -2768,6 +2769,9 @@ export class ConsentNetwork implements NetworkUnderTest {
         const verifiedBy: ("counterpart" | "organizer")[] = [...(v.length ? ["counterpart" as const] : []), ...(checkIn.includes(p) ? ["organizer" as const] : [])];
         this.emit({ type: "plan_attended", member: p, planId: o.id, counterparts: present.filter(x => x !== p), verifiedBy, origin, publicVenue: true, confirmers: [...v, ...(checkIn.includes(p) && host ? [host] : [])] }, key);
         if (said(p)) this.emit({ type: "feedback_given", member: p, planId: o.id }, key);
+        // The member said it went well: the value counts toward a vouch only with the confirmation of
+        // another attendee who came (their own check-in) or the host's check-in (capital-1).
+        if (said(p)?.good) this.emit({ type: "value_received", member: p, with: present.filter(x => x !== p), confirmedBy: v, verifiedBy: checkIn.includes(p) ? ["organizer"] : [] }, key);
         continue;
       }
       if (said(p)?.came === false) { this.emit({ type: "plan_no_show", member: p, planId: o.id }, key); continue; }
