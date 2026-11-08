@@ -2586,7 +2586,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       else if (o.stage === "review") this.close(o, reason);
       else if (o.stage === "probing" && o.plan) this.planOut(o, id);
       else if (o.stage === "probing") { o.status.set(id, "unavailable"); this.replaceOrClose(o, id); }
-      else if (o.stage === "scheduled") { const m = this.members.get(id); if (m) this.handleDrop(m, o, false); }
+      // Only a member who is going leaves a booked meeting: one who said no or already dropped is not in it.
+      else if (o.stage === "scheduled" && o.status.get(id) === "yes") { const m = this.members.get(id); if (m) this.handleDrop(m, o, false); }
     }
   }
 
