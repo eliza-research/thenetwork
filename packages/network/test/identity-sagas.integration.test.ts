@@ -446,4 +446,56 @@ describe.skipIf(!pgAvailable)("identity sagas: stop half way, retry, races (Post
     const [run] = await sql`select summary from network.matching_runs where id = 'slop.run_sagas'`;
     expect((run.summary.top as { participants: string[] }[]).map(t => t.participants)).toEqual([[l, "slop_someone_else"]]);
   }, T);
+
+  /** A slop member with one photo row (the metadata the safety team reads), then banned by person after a report. */
+  async function bannedWithPhoto(s: NetworkService, clock: SimClock, intro: string) {
+    const phone = newPhone();
+    expect(await text(s, clock, phone, "slop")).toBe("join_asked");
+    expect(await text(s, clock, phone, intro)).toBe("joined");
+    const person = (await sql`select person_id from platform.phone_identities where e164 = ${phone}`)[0]!.person_id as string;
+    await sql`insert into platform.photos (id, person_id, app_id, storage_key, content_type, bytes, sha256, consent_version, created_at)
+      values (${`photo_${phone}`}, ${person}, 'slop', ${`key_${phone}`}, 'image/jpeg', 100, 'sha', 'v1', ${new Date(clock.now())})`;
+    const m = (await memberOf("slop", phone))!.id;
+    expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: m, by: "person", note: "harassment confirmed" })).json()).toEqual({ ok: true });
+    return { phone, person };
+  }
+  const photoRows = async (person: string) => (await sql`select count(*)::int as n from platform.photos where person_id = ${person}`)[0].n as number;
+
+  test("SD-275, SD-256: a banned person's leave text keeps the photos for the safety team", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const s = service(clock);
+    const { phone, person } = await bannedWithPhoto(s, clock, "Rex, 34");
+    expect(await text(s, clock, phone, "leave slop.date")).toBe("left");
+    expect(await photoRows(person)).toBe(1);
+  }, T);
+
+  test("SD-178: a banned person's delete everything keeps the photos for the safety team", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const s = service(clock);
+    const { phone, person } = await bannedWithPhoto(s, clock, "Sid, 41");
+    const api = site(s);
+    clock.advance(31_000);
+    expect((await api("/api/auth/otp/start", { phone })).status).toBe(200);
+    expect((await api("/api/auth/otp/verify", { phone, code: "123456" })).status).toBe(200);
+    expect((await api("/api/me/delete", { scope: "all" })).body).toEqual({ ok: true });
+    expect(await photoRows(person)).toBe(1);
+    // The ban stays.
+    expect(await s.accounts.banned(phone)).toBe(true);
+  }, T);
+
+  test("SD-275: a leave by a person who is not banned still deletes the photos", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const s = service(clock);
+    const phone = newPhone();
+    expect(await text(s, clock, phone, "slop")).toBe("join_asked");
+    expect(await text(s, clock, phone, "Tia, 29")).toBe("joined");
+    const person = (await sql`select person_id from platform.phone_identities where e164 = ${phone}`)[0]!.person_id as string;
+    await sql`insert into platform.photos (id, person_id, app_id, storage_key, content_type, bytes, sha256, consent_version, created_at)
+      values ('photo_tia', ${person}, 'slop', 'key_tia', 'image/jpeg', 100, 'sha', 'v1', ${new Date(clock.now())})`;
+    expect(await text(s, clock, phone, "leave slop.date")).toBe("left");
+    expect(await photoRows(person)).toBe(0);
+  }, T);
 });
