@@ -1290,10 +1290,11 @@ export class ConsentNetwork implements NetworkUnderTest {
    * An urgent report (harassment, unsafe, scam, minor) by someone who met them through the Network is
    * waiting for staff: out of matching until staff decide. The same for the answer to the check-in
    * after a date and for a "report X" text (PRD 36.3): what matters is that they met, not which
-   * question the member was answering. A report by someone they never met holds nobody.
+   * question the member was answering. A report by someone they never met holds nobody. Nor does a
+   * report by a member on hold or banned (SD-072): staff still see it, but it takes nobody out.
    */
   private reportHeld(id: MemberId): boolean {
-    return this.reports.some(r => r.subjectId === id && r.status === "open" && r.met && URGENT_REPORTS.has(r.kind));
+    return this.reports.some(r => r.subjectId === id && r.status === "open" && r.met && URGENT_REPORTS.has(r.kind) && this.trust.level(r.reporterId) !== "hold");
   }
 
   /** Reports for staff, newest first, each with how many earlier reports name the same member. Never the words. */
