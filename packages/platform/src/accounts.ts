@@ -137,6 +137,8 @@ export class Accounts {
   private now() { return (this.opts.now ?? Date.now)(); }
   private get hooks() { return this.opts.hooks ?? {}; }
   phoneHash(e164: string) { return keyedHash(this.opts.hashKey, `phone:${e164}`); }
+  /** The key of the number's one-time Eliza notice row (platform.eliza_notices). */
+  noticeHash(e164: string) { return keyedHash(this.opts.hashKey, `eliza_notice:${e164}`); }
 
   /** The person for a verified phone, if any (never created here). A number on hold has no person until staff decide. */
   async personFor(e164: string): Promise<Person | undefined> {
@@ -197,18 +199,14 @@ export class Accounts {
     if (!ph || ph.hold === null) return false;
     if (decision === "same_owner") {
       await this.store.setPhoneHold(e164, null, at);
-      await this.store.touchPhone(e164, at);
       return true;
     }
     for (const m of await this.store.memberships(ph.personId)) {
       if (m.state !== "removed") await this.hooks.onForget?.({ app: this.opts.apps(m.app), personId: ph.personId, memberId: m.memberId, e164 });
     }
-    const hash = this.phoneHash(e164);
-    await this.store.deleteAll(ph.personId, e164, hash, at);
-    // The old owner's tombstone keeps its blocks, but is never revived for the new owner of the number.
-    await this.store.detachPhoneHash(ph.personId);
-    await this.store.unsuppress(hash);
-    await this.store.clearAgeFloor(hash);
+    // One transaction: the delete, and the clean start (the old owner's tombstone keeps its blocks, but is
+    // never revived for the new owner). A stop before it leaves the hold in place, so staff can decide again.
+    await this.store.deleteAll(ph.personId, e164, this.phoneHash(e164), at, true);
     return true;
   }
 
@@ -260,9 +258,9 @@ export class Accounts {
       if (await this.banned(who.e164, person)) return { ok: false, error: "review" };
       if (await this.store.isBanned(this.phoneHash(newE164))) return { ok: false, error: "review" };
       if (await this.store.findPhone(newE164)) return { ok: false, error: "number_in_use" };
-      const moved = await this.store.movePhone({ personId: person.id, changeId: change.id, oldE164: who.e164, newE164, oldHash: this.phoneHash(who.e164), newHash: this.phoneHash(newE164), at: this.now() });
+      const moved = await this.store.movePhone({ personId: person.id, changeId: change.id, oldE164: who.e164, newE164, oldHash: this.phoneHash(who.e164), newHash: this.phoneHash(newE164),
+        oldNoticeHash: this.noticeHash(who.e164), newNoticeHash: this.noticeHash(newE164), at: this.now() });
       if (moved !== "ok") return { ok: false, error: moved === "number_in_use" ? "number_in_use" : "review" };
-      await this.store.unsuppress(this.phoneHash(newE164));
       return { ok: true };
     });
     if (!r.ok) return r;
@@ -411,10 +409,11 @@ export class Accounts {
   /** The site's stop button: every app on this number (PRD 40.3), unless PLATFORM_STOP_SCOPE=app. */
   async stop(app: AppInfo, who: Who, source = "web_form"): Promise<void> {
     const scope = stopScope(this.opts.env);
-    await this.store.addConsent({ e164: who.e164, app: scope === "global" ? null : app.id, state: "opted_out", source, at: this.now() });
+    // The person is read first: a number change that commits before the write below does not lose the STOP.
+    const person = await this.personFor(who.e164);
+    await this.store.addConsent({ e164: who.e164, app: scope === "global" ? null : app.id, state: "opted_out", source, at: this.now() }, person?.id);
     // The ledger above is what the send path reads. The hooks pause the person's members: on a global
     // stop every app's, even when the person has no membership on the app they stopped from.
-    const person = await this.personFor(who.e164);
     const m = person && (await this.store.getMembership(person.id, app.id));
     const live = m && m.state !== "removed" ? m : undefined;
     if (person && (live || scope === "global")) await this.hooks.onStop?.({ app, personId: person.id, memberId: live?.memberId, e164: who.e164, scope });
@@ -439,8 +438,8 @@ export class Accounts {
     }
   }
 
-  /** Record any consent event (keywords on a line, staff). */
-  async recordConsent(e: ConsentEvent) { await this.store.addConsent(e); }
+  /** Record any consent event (keywords on a line, staff). `personId`: see PeopleStore.addConsent. */
+  async recordConsent(e: ConsentEvent, personId?: string) { await this.store.addConsent(e, personId); }
 
   /**
    * True if the number may get messages from this app now. A number that deleted everything has no

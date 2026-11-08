@@ -120,8 +120,8 @@ export class PhotoIntake {
     const who = await this.member(e164);
     if (a === "yes") {
       const refused = who ? await this.d.photos.mayTake(who.person.id, PHOTO_APP) : "not_member";
-      if (who && !refused) {
-        await this.d.people.putMembership({ ...who.m, profile: { ...who.m.profile, photoConsent: PHOTO_CONSENT.version, photoConsentAt: this.d.now(), photoConsentSource: "text" } });
+      // Only while the membership is as read: a ban, leave or STOP since then is never undone.
+      if (who && !refused && (await this.d.people.updateMembership(who.person.id, PHOTO_APP, [who.m.state], { profile: { photoConsent: PHOTO_CONSENT.version, photoConsentAt: this.d.now(), photoConsentSource: "text" } }))) {
         await this.d.reply(e164, PHOTO_TEXT.agreed, `sys:${ref}`);
       } else if (refused === "adults_only" || refused === "not_verified") {
         // Not swallowed in silence: the same plain answer a photo gets (once a day).

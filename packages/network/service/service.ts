@@ -50,7 +50,7 @@ import { canJoin } from "../../core/src/policy.ts";
 import { CostLedger, costRatesFromEnv, PgCostSink } from "./cost.ts";
 import { BlooioAdapter, type ChannelAdapter, type DirectKind, type Outbound } from "./channel.ts";
 import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, type AppId, type AppInfo } from "../../platform/src/apps.ts";
-import { Accounts, homeCityOf, type AccountHooks, type HomeInput, type JoinHookContext, type MemberHookContext } from "../../platform/src/accounts.ts";
+import { Accounts, homeCityOf, RECYCLED_AFTER_MS, type AccountHooks, type HomeInput, type JoinHookContext, type MemberHookContext } from "../../platform/src/accounts.ts";
 import { joinAgeCheck } from "../../platform/src/age.ts";
 import { detectKeyword as platformKeyword, keywordEvent, leaveTarget, resolveConsent, stopScope, type StopScope } from "../../platform/src/consent.ts";
 import { devShortcutsAllowed, isProduction, platformEnv, type Env } from "../../platform/src/env.ts";
@@ -691,7 +691,8 @@ export class NetworkService implements RuntimeHost {
    * Sends to a number whose last consent event for this app (or for every app) is an opt-out
    * (platform.consent_events, PLATFORM_STOP_SCOPE). Compliance texts (the STOP confirmation, a decline)
    * still go. A number with no event at all (a member from before the platform) is not refused here:
-   * the member's own opted_out flag covers it.
+   * the member's own opted_out flag covers it. Sends to a number on hold or silent for 12 months, a
+   * banned number and a suppressed number are refused too.
    */
   async consentRefused(rt: NetworkRuntime, batch: Outbound[]): Promise<Set<string>> {
     const out = new Set<string>();
@@ -702,10 +703,18 @@ export class NetworkService implements RuntimeHost {
       if (e164) byPhone.set(e164, [...(byPhone.get(e164) ?? []), b]);
     }
     for (const [e164, sends] of byPhone) {
+      const phone = await this.people.findPhone(e164);
+      // A number on hold, or silent for 12 months (it may have a new owner: its next message puts it on hold,
+      // Accounts.seen), gets nothing but compliance texts until staff decide.
+      if (phone && (phone.hold !== null || (phone.lastSeenAt !== null && this.clock.now() - phone.lastSeenAt > RECYCLED_AFTER_MS))) {
+        for (const b of sends) out.add(b.id);
+        this.log(`[hold] ${sends.length} send(s) to a held or stale number refused (${rt.id})`);
+        continue;
+      }
       // A number that deleted everything stays suppressed until the person opts in again (platform-15).
       const suppressed = await this.people.isSuppressed(this.phoneKey(e164));
       // A banned number or person gets nothing but compliance texts, on every app (PRD 40.5).
-      const banned = !suppressed && (await this.people.isBanned(this.phoneKey(e164), (await this.people.findPhone(e164))?.personId ?? null));
+      const banned = !suppressed && (await this.people.isBanned(this.phoneKey(e164), phone?.personId ?? null));
       if (banned) { for (const b of sends) out.add(b.id); this.log(`[ban] ${sends.length} send(s) to a banned number refused (${rt.id})`); continue; }
       if (!suppressed && resolveConsent(await this.people.lastConsent(e164, rt.app.id)) !== "opted_out") continue;
       for (const b of sends) out.add(b.id);
@@ -756,15 +765,16 @@ export class NetworkService implements RuntimeHost {
       onJoin: (ctx: JoinHookContext) => this.joined(ctx),
       onStop: ctx => this.stopped(ctx.app, ctx.personId, ctx.scope),
       onForget: async (ctx: MemberHookContext) => {
-        // The app's photos go first (leave, delete everything, a new owner of the number).
-        await this.photos.deleteFor(ctx.personId, ctx.app.id);
+        // The app's photos go first (leave, delete everything, a new owner of the number). A banned
+        // person's photos stay for the safety team (see ban): a leave or a delete does not remove them.
+        if (!(await this.personBanned(ctx.personId))) await this.photos.deleteFor(ctx.personId, ctx.app.id);
         await this.forget(ctx.app, ctx.memberId);
         // Other parts of the backend that hold data about the person in this app (the MCP server's OAuth grants).
         for (const f of this.forgetListeners) {
           try { await f(ctx); } catch (e) { this.log(`[forget] listener failed for ${ctx.app.id}: ${(e as Error).message}`); }
         }
       },
-      onExport: (ctx: MemberHookContext) => this.exportMember(ctx.app, ctx.memberId),
+      onExport: (ctx: MemberHookContext) => this.exportMember(ctx.app, ctx.memberId, ctx.personId),
       onAgeLowered: ctx => this.ageLowered(ctx.personId, ctx.age),
     };
   }
@@ -804,7 +814,7 @@ export class NetworkService implements RuntimeHost {
     for (const m of ms) {
       // A STOP by text: an app with a newer opt-in in the ledger (an older STOP that arrived late) stays as it is.
       if (e164 && (await this.accounts.optedIn(m.app, e164))) continue;
-      if (m.state === "active") await this.people.putMembership({ ...m, state: "paused" });
+      await this.people.updateMembership(personId, m.app, ["active"], { state: "paused" });
       const rt = await this.runtimeOfMember(m.app, m.memberId);
       if (!rt || (skip && skip.rt === rt && skip.memberId === m.memberId)) continue;
       await rt.unitOfWork(async n => {
@@ -827,21 +837,24 @@ export class NetworkService implements RuntimeHost {
     await rt.unitOfWork(n => { n.forgetMember(memberId); rt.unit.forget.add(memberId); });
   }
 
-  /** This app's own data about the member: what they told it, their own messages, and their opportunities (kind and state only). */
-  private async exportMember(app: AppInfo, memberId: MemberId) {
+  /** This app's own data about the member: what they told it, their own messages, their opportunities (kind and state only) and their photos (no bytes, no score). */
+  private async exportMember(app: AppInfo, memberId: MemberId, personId: string) {
     const a = app.id;
     const rt = this.runtimeFor(a);
     if (!rt) return null;
     const [member, facets, intents, presence, messages, opps] = await rt.scoped(async tx => [
       await tx`select id, name, home_city, home_area, age, account_status, opted_out, joined_at from network.members where app_id = ${a} and id = ${memberId}`,
-      await tx`select kind, value, tags, provenance, status, valid_from from network.facets where app_id = ${a} and member_id = ${memberId} and privacy_scope <> 'agent_private' order by id`,
+      // Private facts go out when the member said them or accepted them (a Gmail or Calendar suggestion kept
+      // private); a rating of looks, a staff check and a signal for staff stay out.
+      await tx`select kind, value, tags, provenance, status, valid_from from network.facets where app_id = ${a} and member_id = ${memberId}
+        and (privacy_scope <> 'agent_private' or (status = 'confirmed' and (provenance = 'said' or source in ('gmail', 'google_calendar')))) order by id`,
       await tx`select objective, category, status, created_at from network.intents where app_id = ${a} and member_id = ${memberId} order by created_at, id`,
       await tx`select city, type, areas from network.presence where app_id = ${a} and member_id = ${memberId}`,
       await tx`select direction, body, ts from network.messages where app_id = ${a} and member_id = ${memberId} order by ts, id`,
       await tx`select o.id, o.kind, o.state, o.created_at, o.meeting_at, p.role from network.participations p join network.opportunities o on o.app_id = p.app_id and o.id = p.opportunity_id
         where p.app_id = ${a} and p.member_id = ${memberId} order by o.created_at, o.id`,
     ]);
-    return { member: member[0] ?? null, facets: [...facets], intents: [...intents], presence: [...presence], messages: [...messages], opportunities: [...opps] };
+    return { member: member[0] ?? null, facets: [...facets], intents: [...intents], presence: [...presence], messages: [...messages], opportunities: [...opps], photos: await this.photos.list(personId, a) };
   }
 
   /**
@@ -1117,10 +1130,12 @@ export class NetworkService implements RuntimeHost {
       const leaveMember = (await this.memberApps(ev.from)).find(m => m.app === leaving.id);
       const lrt = (leaveMember && await this.runtimeOfMember(leaving.id, leaveMember.memberId)) || this.runtimeFor(leaving.id);
       if (lrt && lrt !== rt) await lrt.identities();
-      const lid = lrt?.memberOf(ev.from);
+      const person = await this.accounts.personFor(e164);
+      // A leave that stopped after the forget unit: the Network member is gone, the membership still reads live. This leave finishes it.
+      const kept = !lrt?.memberOf(ev.from) && person ? await this.people.getMembership(person.id, leaving.id) : undefined;
+      const lid = lrt?.memberOf(ev.from) ?? (kept && kept.state !== "removed" && kept.state !== "invited" ? kept.memberId as MemberId : undefined);
       // A person who is not a member of that app leaves it too (an opt-out for that app): never a join.
       if (lrt) {
-        const person = await this.accounts.personFor(e164);
         const at = this.consentAt(ev);
         if (person) await this.accounts.leave(leaving, { e164, personId: person.id }, { at, ref: rowId });
         else { await this.accounts.recordConsent({ e164, app: leaving.id, line, state: "opted_out", source: "leave", ref: rowId, at }); if (lid && !(await this.accounts.optedIn(leaving.id, e164))) await this.forget(leaving, lid); }
@@ -1152,8 +1167,7 @@ export class NetworkService implements RuntimeHost {
         // The ledger orders events by their time: an older START (a late gateway retry) never undoes a newer STOP.
         if (!(await this.accounts.optedIn(app.id, e164))) { this.log(`[inbound] START older than the last STOP (${rt.id}): not opted in`); return "handled"; }
         if (turn) turn.consent = {state: "opted_in", scope: "app", app: app.id, at};
-        const m = person && (await this.people.getMembership(person.id, app.id));
-        if (m?.state === "paused") await this.people.putMembership({ ...m, state: "active" });
+        if (person) await this.people.updateMembership(person.id, app.id, ["paused"], { state: "active" });
         // The member asked for messages again: an availability pause (set by the agent) ends too.
         await this.endPause(rt, memberId);
       }
@@ -1222,7 +1236,7 @@ export class NetworkService implements RuntimeHost {
     if (ok) await this.direct(rt, ev.from, app.brand.stoppedHint, `sys:${rowId}`, "compliance");
   }
 
-  private noticeKey(e164: string) { return keyedHash(this.hashKey, `eliza_notice:${e164}`); }
+  private noticeKey(e164: string) { return this.accounts.noticeHash(e164); }
 
   /**
    * The one-time notice on the eliza.app line (README "The Eliza seam"; copy ELIZA_NOTICE, a DRAFT until
@@ -1386,7 +1400,9 @@ export class NetworkService implements RuntimeHost {
     await rt.identities();
     const memberId = rt.memberOf(from);
     const { event, reply } = keywordEvent(kw, e164 ?? from, app, this.consentAt(ev), { line, scope, ref });
-    if (e164 && event) await this.accounts.recordConsent(event);
+    // The person is read before the write: a number change that commits between them does not lose the STOP.
+    const person = e164 ? await this.accounts.personFor(e164) : undefined;
+    if (e164 && event) await this.accounts.recordConsent(event, person?.id);
     const turn = this.inboundTurn();
     if (turn && event) turn.consent = {state: "opted_out", scope: scope === "global" ? "all" : "app", app: scope === "global" ? null : app.id, at: event.at};
     // The STOP is recorded: its confirmation goes out even if a later step of this turn fails (Inbox.rescueCompliance).
@@ -1399,7 +1415,6 @@ export class NetworkService implements RuntimeHost {
     else if (memberId && ev) await this.memberMessage(rt, memberId, ev, ref, kw, reply);
     else if (memberId) await rt.unitOfWork(async n => { await n.onInbound({ id: ref, memberId, body: "STOP", ts: t, channel: "imessage", keyword: "STOP" }); rt.unit.optOut.set(memberId, true); });
     else if (reply) await this.direct(rt, from, reply, `sys:${ref}`, "compliance");
-    const person = e164 ? await this.accounts.personFor(e164) : undefined;
     if (person) await this.stopped(app, person.id, scope, memberId ? { rt, memberId } : undefined, e164);
     else if (scope === "global") {
       // A member from before the platform (no person): every app where this address is a member.
@@ -1828,27 +1843,39 @@ export class NetworkService implements RuntimeHost {
     const hashes = await this.people.phoneHashesOf(personId);
     if (by === "phone" && !hashes.length) return this.refused(user, rt, "ban", target, "no_phone");
     const already = by === "person" ? await this.people.isBanned("", personId) : (await Promise.all(hashes.map(h => this.people.isBanned(h)))).every(Boolean);
-    if (already) return this.refused(user, rt, "ban", target, "already_banned");
+    // A ban that stopped half way (its rows are in, a later step failed) is finished by the retry.
+    if (already && !(await this.banUnfinished(personId, members))) return this.refused(user, rt, "ban", target, "already_banned");
     return this.audited(rt, user, target, { safety: "ban", by, reportId: reportId ?? null }, async () => {
       const at = this.clock.now();
       const rows: Ban[] = by === "person"
         ? [{ id: `ban_${randomUUID()}`, scope: "person", personId, phoneHash: hashes[0] ?? null, reason: note, reportId: reportId ?? null, bannedBy: user.id, at },
           ...hashes.slice(1).map(h => ({ id: `ban_${randomUUID()}`, scope: "person" as const, personId, phoneHash: h, reason: note, reportId: reportId ?? null, bannedBy: user.id, at }))]
         : hashes.map(h => ({ id: `ban_${randomUUID()}`, scope: "phone" as const, personId, phoneHash: h, reason: note, reportId: reportId ?? null, bannedBy: user.id, at }));
-      for (const b of rows) await this.people.ban(b);
+      if (!already) for (const b of rows) await this.people.ban(b);
       for (const h of hashes) await this.people.suppress(h, "banned", at);
       // No rating of looks is kept for a banned person (they are never matched again). The photos stay for the safety team.
       await this.dropRatings(personId);
-      for (const m of await this.people.memberships(personId)) if (m.state !== "removed" && m.state !== "invited") await this.people.putMembership({ ...m, state: "restricted" });
+      for (const m of await this.people.memberships(personId)) await this.people.updateMembership(personId, m.app, ["onboarding", "active", "paused"], { state: "restricted" });
       let out: ActionResult = { ok: true };
       for (const x of members) {
-        await x.rt.scoped(tx => tx`update network.members set account_status = 'restricted' where app_id = ${x.rt.app.id} and id = ${x.memberId}`);
         const mine = x.rt === rt && x.memberId === memberId;
         const r = await x.rt.unitOfWork(o => o.markBanned(x.memberId, user.id, note, mine ? reportId : undefined));
+        // Last step for this member: a restricted member row tells a retry that the Network holds them.
+        await x.rt.scoped(tx => tx`update network.members set account_status = 'restricted' where app_id = ${x.rt.app.id} and id = ${x.memberId}`);
         if (mine) out = r;
       }
       return out;
     });
+  }
+
+  /** True when a ban of this person did not reach every step: a live membership or a Network member that is not restricted. */
+  private async banUnfinished(personId: string, members: { rt: NetworkRuntime; memberId: MemberId }[]): Promise<boolean> {
+    if ((await this.people.memberships(personId)).some(m => m.state !== "removed" && m.state !== "invited" && m.state !== "restricted")) return true;
+    for (const x of members) {
+      const [m] = await x.rt.scoped(tx => tx`select account_status from network.members where app_id = ${x.rt.app.id} and id = ${x.memberId}`);
+      if (m && !["restricted", "removed", "invited"].includes(m.account_status as string)) return true;
+    }
+    return false;
   }
 
   /** A safety action that spans networks: the audit row first (no row, no action), then `fn`, then a result row. */
