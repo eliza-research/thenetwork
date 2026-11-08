@@ -30,7 +30,7 @@ test("a case row loaded for one app never closes the case with the same id in an
   const button=(label:string)=>[...box.querySelectorAll("button")].find(b=>b.textContent===label);
   try{
     const {store}=await import("../web/store.ts"),{SafetyCases}=await import("../web/admin.tsx");
-    store.mode="real";store.app="slop";store.me={id:"fixture",roles:["safety"],grants:[{role:"safety",app:"*"}],via:"token"};
+    store.mode="real";store.app="slop";store.ui={...store.ui,focus:null};store.me={id:"fixture",roles:["safety"],grants:[{role:"safety",app:"*"}],via:"token"};
     await act(async()=>{root.render(createElement(SafetyCases));});await wait(()=>!!head("Xena"));
     await act(async()=>{(head("Xena") as any).click();});await wait(()=>!!button("Close case"));
     // The same state change as store.setApp (members emptied, app changed), without its socket and full load.

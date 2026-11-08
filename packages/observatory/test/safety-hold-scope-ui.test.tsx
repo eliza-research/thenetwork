@@ -38,7 +38,7 @@ test("hold and clear-minor success text says this app for staff with safety on o
       await act(async()=>{button(label)!.click();await Bun.sleep(35);});
       return {title,toast:store.ui.toast?.text??""};
     };
-    store.mode="real";store.app="slop";store.me={id:"fixture",roles:["safety"],grants:[{role:"safety",app:"slop"}],via:"token"};
+    store.mode="real";store.app="slop";store.ui={...store.ui,focus:null};store.me={id:"fixture",roles:["safety"],grants:[{role:"safety",app:"slop"}],via:"token"};
     await act(async()=>{root.render(createElement(SafetyCases));});await wait(()=>!!box.querySelector("button.case-head"));
     await act(async()=>{(box.querySelector("button.case-head") as any).click();});await wait(()=>!!button("Hold"));
     const oneHold=await press("Hold"),oneClear=await press("Clear minor signal");
