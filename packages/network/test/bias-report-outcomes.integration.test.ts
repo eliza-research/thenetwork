@@ -95,4 +95,15 @@ describe.skipIf(!pgAvailable)("weekly bias report: the outcomes it counts", () =
     expect(r.members).toBe(4);
     expect(r.dates).toBe(2);
   }, 120_000);
+
+  test("a second date in the window counts when the first date is older than the window (SD-454)", async () => {
+    // c1 and c2 met 35 days ago (that opportunity is from before the 28-day window) and again 5 days ago.
+    const r = await report("nyc", [{ id: "c1", joinedDaysAgo: 60 }, { id: "c2", joinedDaysAgo: 60 }], () => [
+      ["sd454a", date("sd454a", "c1", "c2", 35, { c1: { came: true, otherNoShow: false }, c2: { came: true, otherNoShow: false } })],
+      ["sd454b", date("sd454b", "c1", "c2", 5, { c1: { came: true, otherNoShow: false }, c2: { came: true, otherNoShow: false } })],
+    ]);
+    expect(r.members).toBe(2);
+    expect(r.dates).toBe(2);
+    expect(r.secondDates).toBe(2);
+  }, 120_000);
 });

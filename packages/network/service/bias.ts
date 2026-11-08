@@ -36,9 +36,13 @@ export function biasRows(members: readonly BiasMember[], opps: readonly BiasOpp[
   // Reached: a probe or a reveal went out to the member (SD-450). Held: attendance found the member and
   // someone else there; a booked date that one side missed or ghosted is not a date held (SD-451).
   const recent = opps.filter(o => o.createdAt >= from && o.createdAt <= now);
+  const pair = (o: BiasOpp) => [...o.attended!].sort().join("|");
   const held = recent.filter(o => (o.attended?.length ?? 0) >= 2);
+  // A second date: a pair with a date held in the window and two or more held dates in all, so a first
+  // date from before the window still counts (SD-454).
+  const inWindow = new Set(held.filter(o => o.attended!.length === 2).map(pair));
   const pairDates = new Map<string, number>();
-  for (const o of held) if (o.attended!.length === 2) { const k = [...o.attended!].sort().join("|"); pairDates.set(k, (pairDates.get(k) ?? 0) + 1); }
+  for (const o of opps) if (o.createdAt <= now && o.attended?.length === 2 && inWindow.has(pair(o))) pairDates.set(pair(o), (pairDates.get(pair(o)) ?? 0) + 1);
   return adults.map(m => ({
     group: quintile.get(m.id) ?? "unrated",
     memberMonths: (now - Math.max(m.joinedAt!, from)) / MONTH,
