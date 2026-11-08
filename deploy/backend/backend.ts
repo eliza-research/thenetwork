@@ -432,10 +432,13 @@ export function createBackend(d: BackendDeps) {
   const shutdown = (servers: { stop(force?: boolean): unknown }[] = []) => stopping ??= (async () => {
     draining = true;
     if (timer) clearInterval(timer);
-    for (const s of servers) { try { await s.stop(false); } catch { /* already stopped */ } }
-    let clean = true;
-    const wait = Promise.allSettled([...inFlight]);
+    // The grace period starts now: stop(false) waits for open requests, so a hung request must not hold it (SD-158).
     const grace = new Promise<"timeout">(r => { const t = setTimeout(() => r("timeout"), c.shutdownGraceMs); (t as { unref?: () => void }).unref?.(); });
+    let clean = true;
+    const wait = (async () => {
+      for (const s of servers) { try { await s.stop(false); } catch { /* already stopped */ } }
+      await Promise.allSettled([...inFlight]);
+    })();
     if ((await Promise.race([wait.then(() => "done" as const), grace])) === "timeout") { clean = false; log.warn("shutdown: work still running after the grace period", { inFlight: inFlight.size }); }
     for (const s of servers) { try { await s.stop(true); } catch { /* already stopped */ } }
     await svc.close().catch(e => log.error("shutdown: close failed", { error: (e as Error).message }));
