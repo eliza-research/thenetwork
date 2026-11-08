@@ -341,7 +341,7 @@ export async function safetyBlock(b: Block): Promise<void> {
   await b.run("bias monitor: a rating quintile with half the dates raises an alert under 0.8x; an even population raises none", () => {
     const now = T0 + 28 * DAY;
     const members: BiasMember[] = Array.from({ length: 60 }, (_, i) => ({ id: `m${i}`, age: 25 + (i % 10), joinedAt: T0, tags: [`appearance:face=0.00`, `appearance:body=0.00`, `appearance:overall=${(i / 60 - 0.5).toFixed(2)}`, "appearance:conf=0.80"] }));
-    const date = (a: number, b2: number, k: number): BiasOpp => ({ participants: [`m${a}`, `m${b2}`], stage: "done", createdAt: T0 + k * HOUR, meetingAt: T0 + (k + 24) * HOUR });
+    const date = (a: number, b2: number, k: number): BiasOpp => ({ participants: [`m${a}`, `m${b2}`], contacted: new Set([`m${a}`, `m${b2}`]), stage: "done", createdAt: T0 + k * HOUR, meetingAt: T0 + (k + 24) * HOUR });
     const even: BiasOpp[] = [];
     for (let i = 0; i < 60; i += 2) even.push(date(i, i + 1, i), date(i, i + 1, i + 100));
     expect(biasReport("slop:nyc", "slop", members, even, now).report.alerts).toEqual([]);
