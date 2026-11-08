@@ -225,16 +225,21 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
     const k = key(m, app);
     const have = sources.get(k);
     if (have) return have;
-    if (!starting.has(k)) starting.set(k, (async () => {
-      const s: DataSource = m === "game"
-        ? new (await import("./sources/game.ts")).GameSource({ ...opts.game, app })
-        : new RealSource({ ...opts.real, app, ...(opts.real?.appUrls?.[app] ? { appUrl: opts.real.appUrls[app] } : {}) });
-      await s.init();
-      known.set(k, new Map(s.state().members.map(x => [x.id, x])));
-      sources.set(k, s);
-      unsub.set(k, s.subscribe(d => broadcast(m, app, d)));
-      return s;
-    })());
+    if (!starting.has(k)) {
+      const p = (async () => {
+        const s: DataSource = m === "game"
+          ? new (await import("./sources/game.ts")).GameSource({ ...opts.game, app })
+          : new RealSource({ ...opts.real, app, ...(opts.real?.appUrls?.[app] ? { appUrl: opts.real.appUrls[app] } : {}) });
+        await s.init();
+        known.set(k, new Map(s.state().members.map(x => [x.id, x])));
+        sources.set(k, s);
+        unsub.set(k, s.subscribe(d => broadcast(m, app, d)));
+        return s;
+      })();
+      // A start that failed is not kept: the next call tries again.
+      p.catch(() => { if (starting.get(k) === p) starting.delete(k); });
+      starting.set(k, p);
+    }
     return starting.get(k)!;
   }
 
@@ -242,9 +247,10 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
     if (m !== "game" && m !== "real") throw new Error(`unknown mode ${m}`);
     if (m === "game" && realOnly) throw new Error("game mode is off on this server (OBSERVATORY_REAL_ONLY=1)");
     if (mode === m && sources.has(key(m, DEFAULT_APP))) return;
+    // The new mode's source starts first: if it fails, the server stays in the mode it was in.
+    await source(m, DEFAULT_APP);
     if (m === "real") for (const app of APP_IDS) await sources.get(key("game", app))?.control({ type: "pause" });
     mode = m;
-    await source(m, DEFAULT_APP);
     // A socket opened in one mode is authorized again for the new one (an engineer has no role in real mode).
     for (const ws of sockets) recheck(ws);
     server?.publish(TOPIC, JSON.stringify({ type: "mode", mode: m }));
