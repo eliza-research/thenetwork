@@ -1,5 +1,7 @@
 # Wave 1 defect checks
 
+> Superseded. A follow-up run checked the 157 candidates with fewer than two votes. The final verdict for all 510 candidates is in the Verdict column of [the register](../2026-11-07-state-machines.md#5-suspected-defect-register) and in [defect-verdicts.json](defect-verdicts.json): 225 confirmed, 134 disputed, 151 refuted. This table keeps the first run's votes as a record.
+
 The Nov. 7, 2026 Claude Code workflow checked the [suspected-defect register](../2026-11-07-state-machines.md#5-suspected-defect-register) against commit `a0ed7bc`. Two agents independently tried to refute each candidate using different review instructions. The run stopped before it wrote a final register. This table records the 708 structured votes that the workflow saved.
 
 | Paired result | Candidates |
