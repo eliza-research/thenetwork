@@ -104,6 +104,7 @@ bun run sim --quick          # fewer seeds, shorter runs; quality gates become t
 bun run sim --with-capital   # adds the network-capital block (32 paired seeds; nightly)
 bun run typecheck
 bun run plugins/build.ts --check
+bun run quint:check          # the Quint state-machine models in quint/ (quint/README.md); --verify adds Apalache
 bun run test:integration     # integration suite incl. the security files (real Postgres on :54339 via dev-pg; docs/tests-policy.md)
 bun run test:e2e             # e2e: the full service and platform through HTTP (tests/e2e; needs Postgres)
 bun run security             # the security subset of the integration suite (11 files; list below)
