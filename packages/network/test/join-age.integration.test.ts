@@ -266,3 +266,11 @@ test("SD-276: a first contact whose worker stops after the notice row commits st
   expect(next.outcome).toBe("handled");
   expect(next.replies[0]).toBe(ELIZA_NOTICE);
 }, 60_000);
+
+test("SD-315: a number whose age floor is under 13 is declined by text and gets no pending join", async () => {
+  const phone = "+12125550317";
+  expect(await webJoin("slop", phone, 12)).toEqual({ok: false, error: "under_age"});
+  const r = await say(phone, "hi");
+  expect(r.reason).toBe("under_age");
+  expect(await (service as any).pendingOf(phone, "join")).toBeUndefined();
+}, 60_000);

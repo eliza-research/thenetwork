@@ -1414,6 +1414,13 @@ export class NetworkService implements RuntimeHost {
     const homeCity = said.homeCity ?? p?.homeCity;
     const ask = invited ? c.invited(app.minJoinAge) : c.joinAsk(app.minJoinAge);
     if (age === undefined) {
+      // A phone whose age floor is under 13 (a decline on the web or by text) is declined again: no pending join, no join question.
+      const floor = await this.accounts.lowestAge(e164, person);
+      if (floor !== undefined && !canJoin(floor)) {
+        await this.people.deletePending(key, "join");
+        await this.direct(rt, ev.from, app.brand.underAge, `sys:${rowId}`, "compliance");
+        return "under_age";
+      }
       if (said.invalidHome) {
         await this.direct(rt, ev.from, "Tell me your home city: New York or San Francisco / Bay Area. Include your first name and age.", `sys:${rowId}`, "reply");
         return "join_asked";
