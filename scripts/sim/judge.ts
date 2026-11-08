@@ -77,4 +77,16 @@ export async function judgeBlock(b: Block): Promise<void> {
     expect(kept.world.records.some(r => r.type === "block")).toBe(true);
     expect(kept.world.metrics.invariants.byRule.blocked_pair_proposed ?? 0).toBe(0);
   });
+  // SD-399 (sim S-22, S-23): ConsentNetwork logs age_resolved as { memberId, minor } with no age. The judge read d.age,
+  // so an adult who gave an age after age_unknown stayed a minor. A minor_signal is never cleared (the lowest age wins).
+  await b.run("judge: an age_unknown flag clears on an adult age_resolved; a minor_signal never clears", () => {
+    const log = (t: number, kind: string, detail: Record<string, unknown>): RunRecord => ({ t, type: "network_log", kind, detail });
+    const probe = (who: MemberId): RunRecord => log(T0 + DAY, "probe_sent", { memberId: who });
+    const resolved = (flag: string) => computeMetrics([...base(), log(T0, flag, { memberId: "a" }),
+      log(T0 + 1, "age_resolved", { memberId: "a", minor: false }), probe("a")]).safety.minorContacts;
+    expect(resolved("age_unknown")).toBe(0);
+    expect(resolved("minor_signal")).toBe(1);
+    // Control: an age_unknown that stays unresolved keeps the member a minor.
+    expect(computeMetrics([...base(), log(T0, "age_unknown", { memberId: "a" }), probe("a")]).safety.minorContacts).toBe(1);
+  });
 }

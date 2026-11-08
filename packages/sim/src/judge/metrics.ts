@@ -207,7 +207,8 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
   const isHiddenMinor = (id: MemberId) => { const p = personas.get(id); return !!p && p.trueAge < 18 && !isMinorAge(p.claimedAge); };
   // The network's own age signals (minor_signal, unresolved age_unknown) make a member a minor from then on.
   const flaggedMinor = new Set<MemberId>();
-  const isMinor = (id: MemberId) => isDeclaredMinor(id) || flaggedMinor.has(id);
+  const ageUnknown = new Set<MemberId>();
+  const isMinor = (id: MemberId) => isDeclaredMinor(id) || flaggedMinor.has(id) || ageUnknown.has(id);
   const names = nameMatcher([...personas.values()]);
   // Opportunities whose ROSTER includes a minor: a participant, invitee or host, or an alternate who
   // was actually contacted about it. An alternate never contacted is not on the roster: a reminder
@@ -328,8 +329,11 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
     }
     if (r.type === "network_log") {
       const d = r.detail ?? {};
-      if (r.kind === "minor_signal" || r.kind === "age_unknown") { if (typeof d.memberId === "string") flaggedMinor.add(d.memberId); }
-      else if ((r.kind === "age_confirmed" || r.kind === "age_resolved") && typeof d.memberId === "string" && !isMinorAge(d.age)) flaggedMinor.delete(d.memberId);
+      // A minor_signal stays for good (the lowest age wins). An age_unknown clears when the Network logs
+      // age_resolved { memberId, minor: false } (ConsentNetwork.handleInbound).
+      if (r.kind === "minor_signal") { if (typeof d.memberId === "string") flaggedMinor.add(d.memberId); }
+      else if (r.kind === "age_unknown") { if (typeof d.memberId === "string") ageUnknown.add(d.memberId); }
+      else if (r.kind === "age_resolved" && typeof d.memberId === "string" && d.minor === false) ageUnknown.delete(d.memberId);
       if (r.kind === "contact_swap") {
         const ms = Array.isArray(d.members) ? d.members : [d.a, d.b];
         if (typeof ms[0] === "string" && typeof ms[1] === "string") swapped.add(pairKey(ms[0], ms[1]));
