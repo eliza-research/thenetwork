@@ -841,7 +841,10 @@ export class NetworkService implements RuntimeHost {
     if (!rt) return null;
     const [member, facets, intents, presence, messages, opps] = await rt.scoped(async tx => [
       await tx`select id, name, home_city, home_area, age, account_status, opted_out, joined_at from network.members where app_id = ${a} and id = ${memberId}`,
-      await tx`select kind, value, tags, provenance, status, valid_from from network.facets where app_id = ${a} and member_id = ${memberId} and privacy_scope <> 'agent_private' order by id`,
+      // Private facts go out when the member said them or accepted them (a Gmail or Calendar suggestion kept
+      // private); a rating of looks, a staff check and a signal for staff stay out.
+      await tx`select kind, value, tags, provenance, status, valid_from from network.facets where app_id = ${a} and member_id = ${memberId}
+        and (privacy_scope <> 'agent_private' or (status = 'confirmed' and (provenance = 'said' or source in ('gmail', 'google_calendar')))) order by id`,
       await tx`select objective, category, status, created_at from network.intents where app_id = ${a} and member_id = ${memberId} order by created_at, id`,
       await tx`select city, type, areas from network.presence where app_id = ${a} and member_id = ${memberId}`,
       await tx`select direction, body, ts from network.messages where app_id = ${a} and member_id = ${memberId} order by ts, id`,

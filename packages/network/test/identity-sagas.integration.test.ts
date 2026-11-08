@@ -528,4 +528,27 @@ describe.skipIf(!pgAvailable)("identity sagas: stop half way, retry, races (Post
     expect(out.network.photos).toEqual([{ id: "photo_uma", createdAt: at.getTime(), bytes: 100, contentType: "image/jpeg" }]);
   }, T);
 
+  test("SD-294: the export holds the private facts the member stated or accepted, not ratings, staff checks or staff signals", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const s = service(clock);
+    const phone = newPhone();
+    expect(await text(s, clock, phone, "slop")).toBe("join_asked");
+    expect(await text(s, clock, phone, "Val, 33")).toBe("joined");
+    const m = (await memberOf("slop", phone))!.id;
+    const at = new Date(clock.now());
+    const facet = (id: string, value: string, provenance: string, source: string, status = "confirmed") =>
+      sql`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, source, confidence, status, valid_from)
+        values ('slop', ${`${m}:${id}`}, ${m}, 'fact', ${value}, ${sql.array([`t:${id}`], "TEXT")}, 'agent_private', ${provenance}, ${source}, 0.9, ${status}, ${at})`;
+    await facet("zip", "11211", "said", "web_join");                      // the member's zip at the web join
+    await facet("gmail", "plays cello", "inferred", "gmail");             // a Gmail suggestion the member accepted as private
+    await facet("appearance", "rating", "inferred", "photo_rater");       // the rating of looks: never shown
+    await facet("verify", "verify:age:pass", "vouched", "staff");         // a staff check
+    await facet("signal", "seemed upset", "inferred", "chat", "proposed"); // a signal for staff
+    const out = await exportOf(s, clock, phone);
+    const values = (out.network.facets as { value: string }[]).map(f => f.value);
+    expect(values).toContain("11211");
+    expect(values).toContain("plays cello");
+    for (const hidden of ["rating", "verify:age:pass", "seemed upset"]) expect(values).not.toContain(hidden);
+  }, T);
 });
