@@ -866,7 +866,8 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
         const r = await callTool(tool, params.arguments, { apps, surface, host, hooks: o.platform, grant: auth?.grant ?? null, store, now: now(), assistant: auth ? assistantOf(auth.client) : undefined });
         log(`[mcp] ${host.id} ${surface} ${tool} ${r.kind}${auth ? ` grant=${auth.grant.id}` : ""}`);
         if (r.kind === "invalid_grant") {
-          if (auth) await revokeGrant(auth.grant.id, now());
+          if (auth && (await revokeGrant(auth.grant.id, now())))
+            await store.audit({ at: now(), kind: "consent_revoked", clientId: auth.client.id, grantId: auth.grant.id, app: c.app.id, detail: "the number or its person changed" });
           return out(401, rpcError(id, -31401, "The access token is not valid here"), { "www-authenticate": challenge(resource, { error: "invalid_token" }) });
         }
         if (r.kind === "error") return result({ content: [{ type: "text", text: r.message }], isError: true });
