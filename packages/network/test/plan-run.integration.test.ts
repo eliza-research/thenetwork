@@ -143,6 +143,22 @@ describe("plan run", () => {
     expect(opp(w, intro).stage).toBe("closed");
   });
 
+  // SD-444: the Network hands a crew off after 3 sessions, but it counted every session it proposed.
+  // Three sessions rejected in review ended the crew before it met once.
+  test("crew sessions rejected in review do not count toward the handoff", async () => {
+    const w = await world(["a", "b", "c"], { review: "human" });
+    const sat = START + 4 * DAY + 22 * HOUR;
+    w.net.crews.push({ id: "crew_test", activityId: "bouldering", city: "nyc", members: ["a", "b", "c"], cadenceDays: 7, hostRotation: ["a", "b", "c"], sessions: [], handedOff: false, slot: { start: sat - 7 * DAY } });
+    const open = () => [...(w.net as any).opps.values()].filter((o: any) => o.plan?.crewId === "crew_test" && o.stage === "review");
+    for (let i = 0; i < 3; i++) {
+      expect(await w.runUntil(() => open().length > 0, 8 * DAY)).toBe(true);
+      expect(w.net.review(open()[0].id, "reject")).toBe(true);
+    }
+    expect(w.net.crews[0]!.handedOff).toBe(false);
+    expect(await w.runUntil(() => open().length > 0, 8 * DAY)).toBe(true);
+    expect(w.net.crews[0]!.sessions).toHaveLength(4);
+  });
+
   // SD-204: a backfilled alternate was not in plan.invited, so the engine gave no probe text for them
   // (plan_copy) and the bench drained with no message sent.
   test("a backfilled alternate gets the plan probe", async () => {

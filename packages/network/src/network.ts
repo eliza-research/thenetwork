@@ -3258,7 +3258,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const offer of this.crewOffers) if (!offer.resolved && now - offer.at > 3 * DAY) this.resolveCrew(offer);
     for (const crew of this.crews) {
       if (crew.handedOff) continue;
-      if ([...this.opps.values()].some(o => o.plan?.crewId === crew.id && OPEN_STAGES.has(o.stage))) continue;
+      const sessions = [...this.opps.values()].filter(o => o.plan?.crewId === crew.id);
+      if (sessions.some(o => OPEN_STAGES.has(o.stage))) continue;
+      // Only sessions that took place count: one rejected or expired in review, or called off, never met.
+      if (sessions.filter(o => o.stage === "done").length >= this.pcfg.crews.handOffAfterSessions) { crew.handedOff = true; this.ctx.log("crew_handoff", { crewId: crew.id }); continue; }
       const v = PLAN_VENUES.find(x => x.id === crew.venueId);
       const place = v ? { name: v.name, area: v.area } : { name: "the usual spot" };
       const members = crew.members.filter(id => { const m = this.members.get(id); return !!m && this.planSeatOk(m); });
@@ -3270,7 +3273,6 @@ export class ConsentNetwork implements NetworkUnderTest {
       crew.sessions.push(plan.id);
       this.plansCounters.crewSessions++;
       this.ctx.log("crew_session", { crewId: crew.id, session: crew.sessions.length, invited: plan.invited.length });
-      if (crew.sessions.length >= this.pcfg.crews.handOffAfterSessions) { crew.handedOff = true; this.ctx.log("crew_handoff", { crewId: crew.id }); }
       this.submitPlan(plan, now);
     }
   }
