@@ -378,6 +378,23 @@ export interface DispatchResult { notices: Notice[]; posted: boolean; ok: boolea
 
 const RANK: Record<AlertLevel, number> = { warn: 1, bad: 2 };
 
+/**
+ * The alert keys that a failed read in this round leaves unknown (ops_read:<network>, line_read,
+ * cost_read): their condition was not read, so it did not end. They stay open until a read succeeds.
+ */
+function unread(current: Alert[]): (key: string) => boolean {
+  const networks = new Set<string>();
+  let line = false, cost = false;
+  for (const a of current) {
+    if (a.key.startsWith("ops_read:")) networks.add(a.key.slice("ops_read:".length));
+    else if (a.key === "line_read") line = true;
+    else if (a.key === "cost_read") cost = true;
+  }
+  return key => networks.has(key.slice(key.indexOf(":") + 1))
+    || (line && (key === "line_safety" || key.startsWith("leak_review:")))
+    || (cost && key.startsWith("budget:"));
+}
+
 export class AlertDispatcher {
   constructor(private o: {
     store: AlertStore;
@@ -413,8 +430,9 @@ export class AlertDispatcher {
         if (due) { notices.push({ key: a.key, level: a.level, count: a.count, text: a.text, state: "firing" }); firing.push(s); }
       }
       const resolved: AlertState[] = [];
+      const unknown = unread(current);
       for (const s of states.values()) {
-        if (!s.open || seen.has(s.key)) continue;
+        if (!s.open || seen.has(s.key) || unknown(s.key)) continue;
         // Never posted (it started and ended between rate-limited rounds): close it quietly.
         if (s.lastSentAt === undefined) { s.open = false; continue; }
         resolved.push(s);
