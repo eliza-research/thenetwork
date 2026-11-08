@@ -677,10 +677,14 @@ export class NetworkRuntime {
     return ran;
   }
 
-  /** A unit that waits for the lock (an inbound message or a staff action), then delivery. */
+  /**
+   * A unit that waits for the lock (an inbound message or a staff action), then delivery. The unit has
+   * committed before delivery starts: a delivery error is logged and never makes the committed unit look
+   * failed (the persisted queue keeps its rows for the next tick).
+   */
   async unitOfWork<T>(fn: (n: ConsentNetwork) => Promise<T> | T): Promise<T> {
     const out = await runStored(this.net, this.store, fn);
-    await this.deliver();
+    await this.deliver().catch(e => this.host.log(`[deliver] delivery after a committed unit failed (${this.id}): ${(e as Error).message}`));
     return out;
   }
 

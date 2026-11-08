@@ -106,6 +106,22 @@ test("relay-item: a held item that staff do not decide raises the review SLA ale
   expect(logs.filter(l=>l.startsWith("[alert] review SLA friends:nyc")&&l.includes(held.itemId))).toHaveLength(1);
 },60_000);
 
+test("action-receipt: a delivery error after the unit committed does not answer a failure (SD-137)",async()=>{
+  await fixturePair("post-commit");toNyHour(12);
+  for(const [phone,id] of [[a,"post-commit-ari-reply"],[b,"post-commit-sam-reply"]] as const){clock.advance(MINUTE);expect((await post(TURN_PATH,turn(phone,id,"Sounds good, thanks"))).status).toBe(200);}
+  const request=await open("post-commit-text","tell Sam I'm at the north gate");
+  // The status write after delivery (runtime.ts storeStatuses) fails once the unit has committed.
+  await sql.unsafe(`create function network.fail_status_fixture() returns trigger language plpgsql as $$ begin raise exception 'synthetic status write fault'; end $$`);
+  await sql.unsafe(`create trigger fail_status_fixture before update of status on network.messages for each row when (NEW.id like 'relay:%') execute function network.fail_status_fixture()`);
+  let r:Response;
+  try { r=await post(RELAY_PATH,request); }
+  finally { await sql.unsafe(`drop trigger fail_status_fixture on network.messages; drop function network.fail_status_fixture()`); }
+  // The row, the relay log and the receipt committed, and the text went: the answer says so.
+  expect(sent.some(x=>x.to===b&&x.text.includes("north gate"))).toBe(true);
+  expect(r.status).toBe(200);
+  expect(await r.json()).toMatchObject({decision:"pass",delivered:true,replayed:false});
+},60_000);
+
 // Keep this case last: Ari deletes everything.
 test("relay-item: erasure removes the member's number and words from the rows of the other member (SD-040)",async()=>{
   await fixturePair("swap-erase");toNyHour(12);
