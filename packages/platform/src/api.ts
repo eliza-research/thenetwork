@@ -190,7 +190,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   const cloudApp = cloudAuth ? appForHost(new URL(cloudAuth.siteOrigin).host, hostMap) : undefined;
   if (cloudAuth && !productionCloud && !cloudApp) throw new Error("Cloud auth site must map to a canonical app");
   const cloudFor = (app: AppId) => cloudAuth && (productionCloud || cloudApp === app) ? { ...cloudAuth, siteOrigin: productionCloud ? cloudSites[app] : cloudAuth.siteOrigin } : undefined;
-  const productionDelegation = productionCloud ? productionCloudDelegation({ realm: cloudRealm, secret: env.SERVICE_TURN_SECRET!, now, fetch: o.cloudAuthFetch }) : undefined;
+  const productionDelegation = productionCloud ? productionCloudDelegation({ realm: cloudRealm, secret: env.SERVICE_TURN_SECRET!, now, skewMs: CLOUD_CLOCK_SKEW_MS, fetch: o.cloudAuthFetch }) : undefined;
   const log = o.log ?? (s => console.log(s));
   const accounts = new Accounts(o.store, {
     hashKey, now, env, apps: id => apps[id],
@@ -673,7 +673,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
     async validateCloudGrant(grant) {
       const authority=grant.cloudAuthority;
       if(!productionDelegation || !authority || authority.version!==1 || authority.app!==grant.app || authority.resource!==grant.resource
-        || authority.phoneKey!==grant.phoneKey || !Number.isSafeInteger(authority.issuedAt) || authority.issuedAt*1000>now()
+        || authority.phoneKey!==grant.phoneKey || !Number.isSafeInteger(authority.issuedAt) || authority.issuedAt*1000>now()+CLOUD_CLOCK_SKEW_MS
         || !Number.isSafeInteger(authority.expiresAt) || authority.expiresAt<=now()
         || typeof authority.sealed!=="string" || authority.sealed.length>16000)return "invalid";
       const value=unseal("cloud-grant",authority.sealed);
