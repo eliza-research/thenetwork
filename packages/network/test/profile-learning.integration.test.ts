@@ -2,11 +2,12 @@
 // cases for the suggestion store, the review parser and the delete-everything path.
 import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { SQL } from "bun";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { applySchema, devPgUp, DEV_PG_PORT } from "../../observatory/db/dev-pg.ts";
 import { ProfileSuggestions, type SuggestionOwner, type SourceSuggestion } from "../service/profile-suggestions.ts";
 import { renderSuggestionReview, reviewSuggestionMessage } from "../service/profile-suggestion-review.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
+import type { ProfileReviewDisconnectProof, ProfileReviewDisconnectRequest } from "../../core/src/svc/profile-review-disconnect.ts";
 
 const now = Date.UTC(2026, 9, 17, 12);
 const e164 = "+12125550100";
@@ -75,4 +76,27 @@ test("a batch with a future Calendar event renders, and the member can reject it
   const index = batch.suggestions.findIndex(s => s.source === "google_calendar") + 1;
   expect(await reviewSuggestionMessage(store, owner, batch.id, `reject ${batch.id}.${batch.revision} ${index}`, now))
     .toMatchObject({ kind: "saved", rejected: [batch.suggestions[index - 1]!.id] });
+});
+
+// SD-462: network code reads time only from the Clock. The V1 and V2 cleanups read Date.now() when the store had no fence clock.
+test("revoked-connection cleanup reads time only from the store clock, never the wall clock", async () => {
+  const who = { ...owner, userId: randomUUID(), organizationId: randomUUID(), chatId: `personal:${randomUUID()}` };
+  const connectionId = randomUUID();
+  await new ProfileSuggestions(sql, async () => true).propose(who, input([{ ...gmail(), connectionId }]), now);
+  const v1 = (issuedAt: number) => {
+    const request: ProfileReviewDisconnectRequest = { version: 1, operation: "disconnect", app: who.app, personId: who.personId, memberId: "owned-member",
+      connectionId, revokedEventId: `fixture-revoked:${randomUUID()}`, requestNonce: randomUUID() };
+    const proof: ProfileReviewDisconnectProof = { ...request, purpose: "network-profile-review-revoked-owner-v1",
+      requestSha256: createHash("sha256").update(JSON.stringify(request)).digest("hex"), userId: who.userId, organizationId: who.organizationId,
+      chatId: who.chatId, connectionState: "revoked", revokedAt: issuedAt, issuedAt, expiresAt: issuedAt + 10_000 };
+    return { request, proof };
+  };
+  const wall = v1(Date.now());
+  const noClock = new ProfileSuggestions(sql, async () => false, async () => true);
+  expect(await noClock.applyRevokedConnection(who, wall.request, wall.proof, () => true)).toBeNull();
+  expect((await sql`select status from platform.profile_suggestions`)[0].status).toBe("proposed");
+  const clocked = new ProfileSuggestions(sql, async () => false, async () => true, { now: () => now + 1, valid: () => true });
+  const onClock = v1(now);
+  expect(await clocked.applyRevokedConnection(who, onClock.request, onClock.proof, () => true)).toEqual({ pending: 0, retainedAccepted: 0, linkedFacts: 0 });
+  expect((await sql`select status from platform.profile_suggestions`)[0].status).toBe("withdrawn");
 });
