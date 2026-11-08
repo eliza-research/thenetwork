@@ -8,8 +8,8 @@ import {SQL} from "bun";
 import {SimClock} from "@thenetwork/core";
 import {applySchema} from "../../observatory/db/dev-pg.ts";
 import {APPS} from "../../platform/src/apps.ts";
-import {svcVerify} from "../../core/src/svc/svc-auth.ts";
-import {DELIVER_PATH} from "../../core/src/svc/contract.ts";
+import {svcSign,svcVerify} from "../../core/src/svc/svc-auth.ts";
+import {DELIVER_PATH,TURN_RECEIPT_PATH,type TurnReceiptRequest} from "../../core/src/svc/contract.ts";
 import {CloudChannelAdapter} from "../service/cloud-channel.ts";
 import {NetworkService} from "../service/service.ts";
 import type {NetworkRuntime} from "../service/runtime.ts";
@@ -170,4 +170,48 @@ test("SD-094: under a Blooio line safety action compliance texts still go; other
     await rt.adapter.lineSafety!("pause_new","safety.state_changed");
     expect(await rt.adapter.direct("+12125550186","You're unsubscribed. Text START to come back.","sd094-stranger-stop","compliance")).toBe("accepted");
   } finally {await rt.adapter.lineSafety!(undefined);}
+},60_000);
+
+/** One signed turn of `memberId` whose Network unit sends `replies` (collected for the gateway). Returns the collected reply ids. */
+const signedTurn=async(s:NetworkService,rt:NetworkRuntime,messageId:string,phone:string,memberId:string,replies:[string,string][],engagedFirst=true)=>{
+  const r=await s.inbox.signed({messageId,channel:"blooio",from:phone,to:null,text:"what did you find?",transport:"imessage",receivedAt:clock.now()},`h-${messageId}`,async turn=>{
+    turn.app="friends";turn.memberId=memberId;
+    if (engagedFirst) await rt.adapter.engaged!(phone);
+    await rt.unitOfWork(()=>{for (const [id,body] of replies) rt.system(memberId as never,id,body,"reply");});
+    const [row]=await sql`select replies from platform.inbound where id=${turn.id}`;
+    const collected=row.replies as {id:string;body:string}[];
+    return {outcome:"handled",replies:collected.map(x=>x.body),replyIds:collected.map(x=>x.id),delivery:"collected",replyKind:"reply",accountEligible:true,app:"friends",memberId,reason:"handled"};
+  });
+  expect(r.status).toBe(200);
+  return (r.body as {replyIds:string[]}).replyIds;
+};
+const turnReceipt=async(s:NetworkService,input:TurnReceiptRequest)=>{
+  const body=JSON.stringify(input);
+  return s.fetch(new Request(`http://127.0.0.1${TURN_RECEIPT_PATH}`,{method:"POST",body,
+    headers:{"content-type":"application/json",...await svcSign(secret,{method:"POST",path:TURN_RECEIPT_PATH,id:`${input.messageId}:receipt`,body,nowS:Math.floor(clock.now()/1000)})}}));
+};
+const both=async(id:string)=>{
+  const [o]=await sql`select status,ended_at from platform.outbound where id=${id}`,[m]=await sql`select status from network.messages where id=${id}`;
+  return {outbound:o?.status,ended:o?.ended_at!=null,message:m?.status};
+};
+
+test("SD-100: a collected reply whose gateway receipt never comes, or comes as unknown, ends failed_unknown after the TTL",async()=>{
+  const s=services[0]!,rt=await primary();
+  const phone="+12125550187",memberId=await join(s,phone,"Eve");
+  await rt.unitOfWork(()=>undefined);
+  // Turn 1: the gateway dies before it sends a receipt.
+  expect(await signedTurn(s,rt,"sd100-lost",phone,memberId,[["sd100-lost-reply","See you Saturday."]])).toEqual(["sd100-lost-reply"]);
+  // Turn 2: the gateway answers "unknown".
+  clock.advance(60_000);
+  expect(await signedTurn(s,rt,"sd100-unknown",phone,memberId,[["sd100-unknown-reply","The class starts at 7."]])).toEqual(["sd100-unknown-reply"]);
+  expect((await turnReceipt(s,{channel:"blooio",messageId:"sd100-unknown",replyIds:["sd100-unknown-reply"],providerMessageIds:[],historyRecorded:false,outcome:"unknown"})).status).toBe(200);
+  expect(await both("sd100-lost-reply")).toEqual({outbound:"collected",ended:false,message:"collected"});
+  expect(await both("sd100-unknown-reply")).toEqual({outbound:"send_unknown",ended:false,message:"send_unknown"});
+  // Inside the TTL a drain leaves them: a late receipt can still settle them.
+  clock.advance(5*3_600_000);await rt.unitOfWork(()=>undefined);
+  expect((await both("sd100-lost-reply")).outbound).toBe("collected");
+  // After the TTL the queue ends both, and the message status follows.
+  clock.advance(3_600_000+2*60_000);await rt.unitOfWork(()=>undefined);
+  expect(await both("sd100-lost-reply")).toEqual({outbound:"failed_unknown",ended:true,message:"failed_unknown"});
+  expect(await both("sd100-unknown-reply")).toEqual({outbound:"failed_unknown",ended:true,message:"failed_unknown"});
 },60_000);

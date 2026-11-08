@@ -596,6 +596,14 @@ export class OutboundQueue {
       this.o.onAlert?.(row.id,"unknown_acceptance_expired");
       changes.push(await this.end(row,"failed_unknown","provider acceptance never resolved"));
     }
+    // A reply another transport took over (collectedReceipt) whose receipt never came, or came as "unknown":
+    // after the same TTL it ends failed_unknown (the gateway may have sent it), so nothing waits forever unseen.
+    for (const r of await this.sql`update platform.outbound set status='failed_unknown',ended_at=${new Date(this.now)},updated_at=${new Date(this.now)},
+      note='gateway receipt never resolved' where app_id=${this.app} and line=${this.line} and status in ('collected','send_unknown')
+      and created_at<${new Date(this.now-ttl)} returning id,member_id`) {
+      this.o.onAlert?.(r.id,"collected_receipt_expired");
+      changes.push({id:r.id,app:this.app,...(r.member_id?{memberId:r.member_id}:{}),status:"failed_unknown"});
+    }
     if (!this.o.provider.receipt) return changes;
     const rows=await this.sql`select * from platform.outbound where app_id=${this.app} and line=${this.line}
       and status='unknown_acceptance' and body is not null and to_address is not null order by updated_at,id limit 4`;
@@ -701,7 +709,7 @@ export class OutboundQueue {
     }
   }
 
-  /** Cloud's turn receipt for collected replies: accepted ones enter the thread history (sent_at); the others end. */
+  /** Cloud's turn receipt for collected replies: accepted ones enter the thread history (sent_at); the others end. A receipt after unknownTtlMs finds the row ended (reconcileUnknown). */
   async collectedReceipt(tx: SQL, ids: string[], outcome: "accepted" | "unknown" | "rejected", at: number): Promise<void> {
     if (!ids.length) return;
     const status = outcome === "accepted" ? "sent" : outcome === "unknown" ? "send_unknown" : "refused_gateway";
