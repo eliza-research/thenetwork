@@ -2300,6 +2300,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (yes) {
       if (!retry) this.counters.probeYes++;
       o.status.set(m.id, "available"); o.primed.add(m.id);
+      const declinedBefore = o.declinedTimes;
       if (offered.length) {
         o.picks = { ...o.picks, [m.id]: picked.map(x => x.start) };
         o.declinedTimes = [...(o.declinedTimes ?? []), ...offered.filter(x => !picked.includes(x)).map(x => x.start)];
@@ -2312,7 +2313,15 @@ export class ConsentNetwork implements NetworkUnderTest {
       // the plan would be set at a time this member never said works, and is often called off.
       // The retry never repeats a time anyone turned down. When the others named times and every one
       // of them is gone, there is nothing to offer and no time to book: the opportunity closes.
-      if (offered.length && !picked.length && this.commonTimeGone(o, m.id, this.now())) { this.ack(m, "No problem."); return this.closeNoCommonTime(o, m.id); }
+      if (offered.length && !picked.length && this.commonTimeGone(o, m.id, this.now())) {
+        this.ack(m, "No problem.");
+        if (o.participants.length <= 2) return this.closeNoCommonTime(o, m.id);
+        // A group goes on without this member, as after a no (docs/network.md 4.1). The times only
+        // they turned down are not held against the others.
+        if (declinedBefore) o.declinedTimes = declinedBefore; else delete o.declinedTimes;
+        o.status.set(m.id, "unavailable"); this.replaceOrClose(o, m.id);
+        return this.advanceProbes(o);
+      }
       const fresh = offered.length && !picked.length && !retry ? this.timeOptionsFor(o, m.id, this.now()) : [];
       if (fresh.length) {
         o.timeRetry = [...(o.timeRetry ?? []), m.id];
