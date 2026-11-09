@@ -48,6 +48,7 @@ export function makeCompat(w: World, category: Category) {
 }
 
 function canHost(w: World, id: MemberId, opts: ComposeOptions): boolean {
+  if (opts.forcedRole && opts.forcedRole !== "host" && (opts.forced ?? []).includes(id)) return false;
   return Boolean(w.get(id)?.isHost && !memberReason(w, id, { category: opts.category, role: "host", format: opts.format ?? "small_group", timeSensitive: false }));
 }
 

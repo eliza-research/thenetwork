@@ -143,4 +143,57 @@ describe("group composer host eligibility gates", () => {
     expect(g!.roles["m_valid_host"]).toBe("host");
     expect(Object.values(g!.roles)).toContain("host");
   });
+
+  test("forced member with isHost flag and non-host forcedRole does not satisfy needHost", () => {
+    const input: EngineInput = {
+      members: [
+        makeMember("m_guest1", "Guest 1", "sf", "normal"),
+        makeMember("m_guest2", "Guest 2", "sf", "normal"),
+        makeMember("m_newcomer", "Newcomer Host", "sf", "normal"),
+      ],
+      facets: [
+        { id: "f1", memberId: "m_guest1", kind: "interest", value: "board games", tags: ["boardgames"], scope: "shareable", provenance: "said", confidence: 0.9 },
+        { id: "f2", memberId: "m_guest2", kind: "interest", value: "board games", tags: ["boardgames"], scope: "shareable", provenance: "said", confidence: 0.9 },
+        { id: "f3", memberId: "m_newcomer", kind: "interest", value: "board games", tags: ["boardgames"], scope: "shareable", provenance: "said", confidence: 0.9 },
+        { id: "f_newcomer_host", memberId: "m_newcomer", kind: "skill", value: "dinner host", tags: ["host"], scope: "shareable", provenance: "said", confidence: 0.9 },
+      ],
+      intents: [],
+      presence: [
+        { memberId: "m_guest1", city: "sf", type: "home", areas: ["mission"] },
+        { memberId: "m_guest2", city: "sf", type: "home", areas: ["mission"] },
+        { memberId: "m_newcomer", city: "sf", type: "home", areas: ["mission"] },
+      ],
+      edges: [],
+      interactions: [],
+      feedback: [],
+      recentProposals: [],
+      now,
+    };
+
+    const w = new World(input, cfg, localEmbed);
+    expect(w.get("m_newcomer")!.isHost).toBe(true);
+
+    const pool = [
+      { id: "m_guest1", affinity: 0.8 },
+      { id: "m_guest2", affinity: 0.8 },
+    ];
+
+    const g = composeGroup(w, {
+      pool,
+      forced: ["m_newcomer"],
+      forcedRole: "newcomer",
+      category: "social",
+      minSize: 3,
+      maxSize: 3,
+      window: { start: now, end: now + 7 * DAY },
+      preferredCity: "sf",
+      requireCity: true,
+      needHost: true,
+      beamWidth: 4,
+      minPairwise: -1,
+      alternates: 0,
+    });
+
+    expect(g).toBeNull();
+  });
 });

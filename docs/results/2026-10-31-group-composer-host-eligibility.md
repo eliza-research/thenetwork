@@ -8,23 +8,35 @@ However, `host` is a contributor role (`CONTRIBUTOR_ROLES.has("host") === true`)
 - `contribution_budget`: members who have reached their contribution limit.
 - `category_quota` / `category_cooldown`: members subject to quota limits or cooldown declines in the category.
 - `safety_hold`: members with active holds.
+- Non-host `forcedRole`: when a member is forced with a non-host role (e.g. newcomer welcome calling `composeGroup` with `forcedRole: "newcomer"`), they cannot be assigned `"host"`.
 
 When a group containing such a member was evaluated:
 1. `evaluateGroup` computed `hasHost = true` and `roleCoverage = 1`.
 2. Beam search treated the group as having a valid host.
-3. During role assignment (`roles` mapping), the member failed `memberReason` and was demoted to `"guest"`.
+3. During role assignment (`roles` mapping), the member failed `memberReason` or was assigned `opts.forcedRole` ("newcomer").
 4. As a result, `composeGroup` returned a group where `roles` lacked a `"host"`, violating the `needHost` invariant and causing callers (such as `newcomerWelcome` in `generators.ts:511`) to drop the candidate entirely.
 
 ## Fix
 
 In `packages/engine/src/group.ts`:
-- Introduce a helper `canHost(w, id, opts)` checking both `w.get(id)?.isHost` and `!memberReason(w, id, { category: opts.category, role: "host", format: opts.format ?? "small_group", timeSensitive: false })`.
+- Introduce a helper `canHost(w, id, opts)` checking:
+  1. `opts.forcedRole && opts.forcedRole !== "host" && (opts.forced ?? []).includes(id) => false`.
+  2. `w.get(id)?.isHost && !memberReason(w, id, { category: opts.category, role: "host", format: opts.format ?? "small_group", timeSensitive: false })`.
 - Use `canHost` in `evaluateGroup` when computing `hasHost` and `roleCoverage`.
 - Use `canHost` in seed ordering when `opts.needHost` is requested.
 - Use `canHost` in role assignment.
 
 ## Verification
 
-- `bun test packages/network/test/group-composer-host-gates.test.ts` (2 pass, 0 fail, 8 assertions).
-- `bun run sim --only network --quick` (47/47 blocking gates pass).
-- `bun run typecheck` (tsc pass).
+- `bun test packages/network/test/group-composer-host-gates.test.ts` (3 pass, 0 fail, 10 assertions).
+- `bun run sim --only evals,friends,network` (104/104 blocking gates pass).
+- `bun x tsc --noEmit` across all 4 tsconfigs (0 errors).
+
+## Slop Contribution Receipt
+```json
+{
+  "provider": "google",
+  "model": "gemini-2.5-pro",
+  "client": "antigravity"
+}
+```
