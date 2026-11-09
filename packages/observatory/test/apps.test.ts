@@ -89,8 +89,8 @@ describe("roles per app", () => {
   });
 
   test("lab allows the shipped Slop pack and keeps Peon matching off", () => {
-    expect(labArgs({ arms: ["consent"], seeds: [1], days: 3, app: "peon" }, 1)).toContain("--max-new");
-    expect(labArgs({ arms: ["consent"], seeds: [1], days: 3, app: "slop" }, 1)).not.toContain("--max-new");
+    expect(labArgs({ arms: ["consent"], seeds: [1], days: 3, app: "peon" }, 1)).toContain("--matching-off");
+    expect(labArgs({ arms: ["consent"], seeds: [1], days: 3, app: "slop" }, 1)).not.toContain("--matching-off");
   });
 });
 
