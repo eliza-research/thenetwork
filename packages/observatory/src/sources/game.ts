@@ -627,8 +627,13 @@ export class GameSource implements DataSource {
       switch (cmd.type) {
         case "play": if (this.over()) return { ok: false, error: "game over: reset to play again" }; c.playing = true; break;
         case "pause": c.playing = false; break;
-        case "speed": c.speed = Math.max(MINUTE, Math.min(7 * DAY, cmd.speed)); break;
+        case "speed": {
+          if (!Number.isFinite(cmd.speed)) return { ok: false, error: "speed must be a finite number", code: "invalid_speed" };
+          c.speed = Math.max(MINUTE, Math.min(7 * DAY, cmd.speed));
+          break;
+        }
         case "step": {
+          if (!Number.isFinite(cmd.ms)) return { ok: false, error: "step duration must be a finite number", code: "invalid_step" };
           if (this.advancing) return { ok: false, error: this.takeover.waiting ? "waiting for your reply" : "the world is busy" };
           if (this.over()) return { ok: false, error: "game over: reset to play again" };
           c.playing = false;
