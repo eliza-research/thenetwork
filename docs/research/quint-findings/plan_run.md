@@ -29,15 +29,14 @@ each, and the run tests `sd479LateJoinTest` and `crewHandoffTest` show it.
 
 ## 2. What the model contains
 
-- **Code.** `packages/engine/src/plans.ts` (startPlanRun, recordPlanAnswer, checkPlanDeadline, planFallback,
-  crewOptIn, crewSessionPlan) and `packages/network/src/network.ts` (beginPlan, planLane, planProbe,
-  planDeadline, planAnswer, planAct, bookPlan, planReveal, planJoin, planFallback, planOut, dropMember,
-  handleDrop, close, the `plan_probe` and `reveal` send hooks, checkRecipient, busy, bookedNear, crewSessions,
-  resolveCrew, onCrewAnswer, applyBlock, and the intro `reveal`).
-- **Actions.** One inbound message, one tick, one review decision or one actor event is one action. `probe` is
+- **Code.** `packages/engine/src/plans.ts` (startPlanRun, recordPlanAnswer, checkPlanDeadline, planFallback)
+  and `packages/network/src/network.ts` (beginPlan, planLane, planProbe, planDeadline, planAnswer, planAct,
+  bookPlan, planReveal, planJoin, planFallback, planOut, dropMember, handleDrop, close, the `plan_probe` and
+  `reveal` send hooks, checkRecipient, busy, bookedNear, applyBlock, and the intro `reveal`). The crew code
+  (crewOptIn, crewSessionPlan, crewSessions, resolveCrew, onCrewAnswer) is in `plan_crew.qnt`.
+- **Actions.** One inbound message, one tick, one review decision or one actor event is one unit. `probe` is
   its own action because the send window, one-a-day and the allowance only defer a plan probe. Actor events:
-  STOP, trust watch, minor signal, block, "can't make it", an intro for a plan member (probe, yes, book), crew
-  answers, crew sessions.
+  STOP, trust watch, minor signal, block, "can't make it", an intro for a plan member (probe, yes, book).
 - **Oracles.** The probe copy leak gate, the send-time leak guard, the Blooio streak (`canSendLogistics`) and
   "a matching public event exists".
 - **Bounds.** Members a-e. One group plan: invited a, b, c, d; bench e; quorum 3 or 4 (chosen at init; 4 is
