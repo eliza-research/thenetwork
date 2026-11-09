@@ -383,8 +383,12 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
     for (const id of c.plan.invited) used.add(id);
     out.push(c.plan);
   }
-  // Alternates are never someone already invited elsewhere this run.
-  for (const p of out) p.alternates = p.alternates.filter(id => !used.has(id));
+  // Alternates are never someone already invited elsewhere this run, or assigned as alternate in an earlier plan.
+  const seenAlts = new Set<MemberId>();
+  for (const p of out) {
+    p.alternates = p.alternates.filter(id => !used.has(id) && !seenAlts.has(id));
+    for (const id of p.alternates) seenAlts.add(id);
+  }
   return out;
 }
 
@@ -622,7 +626,7 @@ export function partnerPlanFor(p: Plan, pair: [MemberId, MemberId], now: number,
     ...p, id: `plan_${sha256(`${p.id}|smaller|${now}`).slice(0, 16)}`, invited: ids, alternates: [], partner: true,
     size: { min: 2, target: 2, max: 2 }, quorum: pcfg.quorum.partner,
     probeDeadline: Math.min(p.window.start - pcfg.deadlineBeforeStartHours * HOUR, now + pcfg.probeWindowHours * HOUR),
-    u: Object.fromEntries(ids.map(id => [id, p.u[id] ?? 0])), familiar: Object.fromEntries(ids.map(id => [id, (p.familiar[id] ?? []).filter(x => ids.includes(x))])), createdAt: now,
+    u: Object.fromEntries(ids.map(id => [id, p.u?.[id] ?? 0])), familiar: Object.fromEntries(ids.map(id => [id, (p.familiar?.[id] ?? []).filter(x => ids.includes(x))])), createdAt: now,
   };
   // One-to-one: no host, and not a crew session (the crew frame would skip the partner probe copy).
   delete plan.hostId;
