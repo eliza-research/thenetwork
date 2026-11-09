@@ -4,10 +4,10 @@
 import { BASELINES } from "./baselines.ts";
 import { slopMetrics, type SlopMetrics } from "./metrics.ts";
 import { runSlopWorld } from "./world.ts";
+import { parseSeedRange } from "../seeds.ts";
 
 const arg = (k: string, d?: string) => { const i = process.argv.indexOf(`--${k}`); return i >= 0 ? process.argv[i + 1]! : d; };
-const [s0, s1] = (arg("seeds", "1-8")!).split("-").map(Number);
-const seeds = Array.from({ length: (s1 ?? s0!) - s0! + 1 }, (_, i) => s0! + i);
+const seeds = parseSeedRange(arg("seeds", "1-8"));
 const perCity = Number(arg("per-city", "300")), weeks = Number(arg("weeks", "4"));
 const only = (arg("only", "random,greedy,oracle")!).split(",") as (keyof typeof BASELINES)[];
 
