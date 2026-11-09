@@ -235,7 +235,7 @@ The server writes an audit row before it returns data or acts. If the row cannot
 
 ### 9.6 Simulation lab
 
-The Lab tab and `POST /api/lab/run` start child processes of `packages/network/harness/experiment.ts`, one per seed, at most 2 at a time. Each run records its app; the list shows the app's runs only. Every app runs The Network's NYC world; slop and peon runs get `--max-new 0` (matching off). The rest wait in a queue. Each run is saved to `runs/lab/<id>.json` (written to a temporary file, then renamed) and loaded again at startup. The experiment reports the judge counts per arm. You can run one seed alone:
+The Lab tab and `POST /api/lab/run` start child processes of `packages/network/harness/experiment.ts`, one per seed, at most 2 at a time. Each run records its app; the list shows the app's runs only. Every app runs The Network's NYC world; Peon runs get `--matching-off` to disable new opportunities in every arm. The rest wait in a queue. Each run is saved to `runs/lab/<id>.json` (written to a temporary file, then renamed) and loaded again at startup. The experiment reports the judge counts per arm. You can run one seed alone:
 
 ```bash
 bun run packages/network/harness/experiment.ts --only consent --days 1 --seed 1
