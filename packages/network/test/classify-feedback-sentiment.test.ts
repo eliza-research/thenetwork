@@ -51,6 +51,17 @@ describe("feedbackOf sentiment analysis", () => {
       "not my type",
       "nothing in common",
       "it was awkward",
+      "we never hit it off",
+      "we never clicked",
+      "didn't have a good time",
+      "we did not have a good time",
+      "didn't have a blast",
+      "it wasn't enjoyable",
+      "it was not enjoyable",
+      "she wasn't lovely",
+      "it was not lovely",
+      "it was not delightful",
+      "didn't go well",
     ];
 
     for (const reply of negativeReplies) {
@@ -80,5 +91,7 @@ describe("feedbackOf sentiment analysis", () => {
     expect(feedbackOf("we clicked right away").again).toBe(true);
     expect(feedbackOf("would not meet again").again).toBe(false);
     expect(feedbackOf("never want to see them again").again).toBe(false);
+    expect(feedbackOf("we never hit it off").again).toBe(false);
+    expect(feedbackOf("we never clicked").again).toBe(false);
   });
 });
