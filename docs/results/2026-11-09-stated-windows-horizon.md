@@ -1,6 +1,6 @@
 # Stated windows must stay inside the 7-day horizon (2026-11-09)
 
-Hand-written note. The code and tests are in the PR.
+Hand-written note. The code and the sim gate are in the PR.
 
 ## Problem
 
@@ -8,35 +8,54 @@ Hand-written note. The code and tests are in the PR.
 ("free Monday evenings") into this week's stated availability. It carries
 `until = now + 7 * DAY`. The loop walks 8 calendar days (`k <= 7`) so that a
 part that has already passed today still produces next week's same-weekday
-window. But it pushed that eighth-day window without checking the horizon, so a
-check-in whose weekday equals the check-in day produced TWO windows: this week
-AND next week. The next-week window begins after `until`, i.e. after the stated
-windows have expired, and makes the member look free a second time next week.
+window. The eighth calendar day repeats the check-in weekday, so a tag whose
+weekday equals the check-in day could produce TWO windows: this week AND next
+week, making the member look free a second time.
 
-## Reproduction
-
-`statedWindows(["evening:Mon"], now)` with `now = Monday 09:00 America/New_York`.
-
-- Before: 2 windows (this Monday 17:00-22:00 and next Monday 17:00-22:00); the
-  second starts at `now + 7d + 8h`, after `until = now + 7d`.
-- After: 1 window (this Monday), every window `start < until`.
-
-A check-in late the same day (Monday 23:00, the evening part already passed)
-still yields exactly next Monday's window, and it stays inside the horizon.
-
-Both cases are pinned by `packages/network/test/stated-windows.test.ts`
-(the first case fails before the fix).
+The first revision guarded the push with `start < until`. That removed the
+duplicate only when the check-in happened *before* the part began. A check-in
+made *during* this week's part (e.g. Monday 20:30 NY with `evening:Mon`, whose
+part is 17:00-22:00) still produced two windows, and this time the second one
+begins *before* `until` (next Monday 17:00 against `until` = next Monday 20:30),
+so it is live rather than expired — strictly worse than the case the guard
+fixed. All three parts (`morning [9,12]`, `afternoon [12,17]`, `evening
+[17,22]`) are multi-hour, so any member who answers inside the window they just
+named double-books.
 
 ## Fix
 
-Compute `until` before the loop and push a window only when `start < until`.
-This drops the redundant next-week window when this week's is already present,
-and keeps the next-week window when today's part has passed.
+Emit at most one window per stated (weekday, part) with a `seen` set keyed by
+`weekday|part`, and still require `start < until`. `seen` is recorded only on a
+push, so:
+
+- A check-in **before** the part: this week's window is pushed at `k = 0`; the
+  eighth-day repeat is skipped. One window.
+- A check-in **during** the part: this week's window is pushed at `k = 0`
+  (start clamped to `now`); the eighth-day repeat is skipped. One window, inside
+  the horizon.
+- A check-in **after** the part: nothing is pushed at `k = 0` (the part has
+  ended, so `end > now` is false and `seen` stays empty), and next week's window
+  is pushed at `k = 7`. One window, inside the horizon.
+
+## Reproduction
+
+`statedWindows(["evening:Mon"], now)` in `America/New_York`:
+
+| `now` (Mon 2026-11-02) | before fix | after fix |
+|---|---|---|
+| 09:00 (before the part) | 2 windows (2nd starts after `until`) | 1 window (this Mon) |
+| 20:30 (inside the part) | 2 windows (2nd starts **before** `until`) | 1 window (this Mon, from 20:30) |
+| 23:00 (after the part) | 1 window (next Mon) | 1 window (next Mon) |
+
+The 09:00 case fails on upstream main (base `a0ed7bc`); the 20:30 case fails on
+the PR's previous head (`dc2742f`), which only added the `start < until` guard.
 
 ## Validation
 
-- `bun test packages/network/test/stated-windows.test.ts` — 2 pass (first case
-  fails on base).
+- `bun run sim --only network` — the new gate "plans: statedWindows gives one
+  window per stated (weekday, part); none begins at/after `until`" asserts all
+  three cases (before / during / after the part) and the passed-part window. It
+  fails before the fix (the 20:30 case returns 2 windows) and passes after.
+  (A sim gate, not a `bun:test` unit test: the repository accepts a sim gate, a
+  scenario, a corpus row, or an integration/e2e case — docs/tests-policy.md.)
 - `bun run typecheck` — clean.
-- `bun run sim --only network --quick` — 47/47 blocking gates pass, 1 tracked;
-  minors, canary and leak invariants 0.

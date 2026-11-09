@@ -53,6 +53,7 @@ export function statedWindows(tags: readonly string[], now: number, tz = NY): pl
   const lp = localParts(now, tz);
   const until = now + 7 * DAY;
   const windows: { start: number; end: number }[] = [];
+  const seen = new Set<string>();
   for (let k = 0; k <= 7; k++) {
     const d = new Date(Date.UTC(lp.year, lp.month - 1, lp.day + k));
     const day = DAYS3[d.getUTCDay()]!;
@@ -63,9 +64,13 @@ export function statedWindows(tags: readonly string[], now: number, tz = NY): pl
       const start = fromLocal(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), h[0], tz);
       const end = fromLocal(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), h[1], tz);
       // The loop walks 8 calendar days so a part that has already passed today still gets next
-      // week's same-weekday window, but a window must not begin after the stated horizon (`until`):
-      // that would double a same-weekday check-in into this week AND next week.
-      if (end > now && start < until) windows.push({ start: Math.max(start, now), end });
+      // week's same-weekday window. Emit at most one window per stated (weekday, part): the eighth
+      // day repeats the check-in weekday, so without `seen` a check-in made before OR during this
+      // week's part would double into this week AND next week. `seen` is set only on a push, so a
+      // part that already passed today (no push at k=0) still yields next week's window at k=7. A
+      // window must also never begin at or after the stated horizon (`until`).
+      const key = `${day}|${part}`;
+      if (end > now && start < until && !seen.has(key)) { seen.add(key); windows.push({ start: Math.max(start, now), end }); }
     }
   }
   return windows.length ? { windows: windows.sort((a, b) => a.start - b.start), at: now, until } : undefined;
