@@ -29,12 +29,11 @@ describe.skipIf(!pgAvailable)("real mode: staff actions through the Network serv
     const g = new GameSource({ pushMs: 3_600_000, tickMs: 3_600_000, seed: 1, review: "human", scenario: "spam_wave" });
     await g.init();
     await g.control({ type: "step", ms: 2 * DAY });
-    // The service runs at the game's time, not the wall clock: items wait in review only until their
-    // deadline, and a decision past it is refused (SD-009). A wall-clock service sees them all expired.
-    clock = new SimClock(g.state().clock.now);
     const sql = new SQL(url);
     await writeRows(sql, rowsFromGame(g), { truncate: true });
     await sql.close();
+    // The service runs at the end of the simulated run, so the items in review are inside their deadline (SD-009).
+    clock = new SimClock(g.world.clock.now());
     await g.dispose();
     // The console's own token: only it may name the reviewer of record (X-Network-Staff-Id).
     svc = new NetworkService({ url, clock, tokens: `admin:${SERVICE_TOKEN}`, consoleToken: SERVICE_TOKEN, log: () => {} });

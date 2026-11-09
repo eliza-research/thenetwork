@@ -152,8 +152,7 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     expect((await sql`select count(*)::int as n from network.events where payload->>'oppId' = 'o2'`)[0].n).toBe(1);
     expect(s.net.isDeclined("u")).toBe(true);
     // Their phone is gone too: a later text is from a stranger. The age stays on the phone's age floor,
-    // so a later text with no age gets the kind decline again and no join question (SD-315), and a join
-    // that now says 25 is refused (NET-35).
+    // so a text without an age is declined again (SD-315) and a join that now says 25 is refused (NET-35).
     expect(await say(s, clock, "u", "hello?")).toBe("under_age");
     expect(await say(s, clock, "u", "Uma, 25")).toBe("under_age");
   }, T);

@@ -57,7 +57,10 @@ test("a held photo loads with a reason that has characters above 0xFF, and the a
   const nativeFetch = globalThis.fetch;
   globalThis.fetch = ((input: any, init?: RequestInit) => nativeFetch(typeof input === "string" ? new URL(input, obs.url) : input, init)) as typeof fetch;
   try {
-    const { store } = await import("../web/store.ts");
+    // A module instance of its own: the store keeps the token of the first import, and other console
+    // tests in the same process import web/store.ts with their own token.
+    const spec = "../web/store.ts?held-photo-reason";
+    const { store } = (await import(spec)) as typeof import("../web/store.ts");
     store.mode = "real"; store.app = "slop";
     const result = await store.heldPhoto(ID, REASON);
     expect(result.error).toBeUndefined();

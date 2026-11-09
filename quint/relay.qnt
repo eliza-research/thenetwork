@@ -70,8 +70,11 @@ module relay {
   type Row = { send: Send, status: str, body: bool }
   // One network.relay_records row (the persisted copy of the log that the queue admission reads).
   type TRec = { decision: str, dst: str, contactShared: bool, review: str, withdrawn: bool }
+  // `verdict`: ghost, the desk's last decision for every item it ever decided, with no log cap (the ground truth that
+  // rowSentImpliesPass compares the queue admission with; the admission reads network.relay_records).
   type Desk = {
     log: str -> LogRec, order: List[str], held: str -> Held, swaps: Set[Swap], deferred: Set[Send], thread: Set[str],
+    verdict: str -> LogRec,
   }
   type Queue = { rows: str -> Row, records: str -> TRec }
   type Endpoint = {
@@ -136,12 +139,13 @@ module relay {
     val known = d.log.keys().contains(iid)
     val order1 = if (known) d.order else d.order.append(iid)
     val log1 = d.log.put(iid, r)
+    val d0 = d.with("verdict", d.verdict.put(iid, r))
     val waiting = d.held.keys().filter(i => d.held.get(i).status == "held")
     val cands = order1.select(x => not(waiting.contains(x)))
     if (order1.length() > LOG_MAX and cands.length() > 0) {
       val drop = cands[0]
-      d.with("log", mapRemove(log1, drop)).with("order", order1.select(x => x != drop))
-    } else d.with("log", log1).with("order", order1)
+      d0.with("log", mapRemove(log1, drop)).with("order", order1.select(x => x != drop))
+    } else d0.with("log", log1).with("order", order1)
   }
 
   // RelayDesk.prior (relay.ts:346-351): a logged item replays its decision, except a rate-only hold (SD-320).
@@ -254,7 +258,7 @@ module relay {
     w' = { now: 0, matchOpen: true, blocked: false,
            optedOut: MEMBERS.mapBy(_ => false), trustHold: MEMBERS.mapBy(_ => false), minor: MEMBERS.mapBy(_ => false),
            erased: MEMBERS.mapBy(_ => false), quiet: MEMBERS.mapBy(_ => false) },
-    desk' = { log: Map(), order: List(), held: Map(), swaps: Set(), deferred: Set(), thread: Set() },
+    desk' = { log: Map(), order: List(), held: Map(), swaps: Set(), deferred: Set(), thread: Set(), verdict: Map() },
     queue' = { rows: Map(), records: Map() },
     ep' = { receipt: REQS.mapBy(_ => "absent"), phase: REQS.mapBy(_ => "idle"), kind: REQS.mapBy(_ => ""),
             commits: REQS.mapBy(_ => 0), response: REQS.mapBy(_ => "") },
@@ -379,7 +383,12 @@ module relay {
       val r = desk.log.get(i)
       if (r.src == src and r.kind == "share" and r.decision == "pass") r.with("withdrawn", true) else r
     })
-    val d1 = desk.with("swaps", desk.swaps.filter(s => s.src != src)).with("log", log1)
+    // Ghost: the member withdrew every passed share of theirs, whether or not its row is still in the capped log.
+    val verdict1 = desk.verdict.keys().mapBy(i => {
+      val r = desk.verdict.get(i)
+      if (r.src == src and r.kind == "share" and r.decision == "pass") r.with("withdrawn", true) else r
+    })
+    val d1 = desk.with("swaps", desk.swaps.filter(s => s.src != src)).with("log", log1).with("verdict", verdict1)
     all {
       ep.phase.get(k) == "claimed", ep.kind.get(k) == "withdraw",
       not(w.erased.get(src)),
@@ -457,8 +466,13 @@ module relay {
         and queue.records.get(s.iid).dst == s.dst and queue.records.get(s.iid).review != "rejected" and not(queue.records.get(s.iid).withdrawn))
     val ok = recOk and pairOk(w, s.src, s.dst)
     val c = g.consent.get(s.src)
+    // Ground truth, apart from what the admission read: the desk's own last decision for the item (no log cap, no
+    // persisted copy), or for the swap question its swap still waiting in the desk.
+    val truth = if (s.ask) desk.swaps.exists(sw => sw.iid == s.iid and sw.src == s.src)
+      else (desk.verdict.keys().contains(s.iid) and desk.verdict.get(s.iid).decision == "pass" and desk.verdict.get(s.iid).dst == s.dst
+        and desk.verdict.get(s.iid).staff != "rejected" and not(desk.verdict.get(s.iid).withdrawn))
     val ev = { key: key, ask: s.ask, number: s.number, src: s.src, live: c.live, peerAsked: g.consent.get(s.dst).asked,
-               fresh: w.now - c.at <= TTL, recPass: recOk, pairOk: pairOk(w, s.src, s.dst), late: s.ask and w.now - s.at > TTL }
+               fresh: w.now - c.at <= TTL, recPass: truth, pairOk: pairOk(w, s.src, s.dst), late: s.ask and w.now - s.at > TTL }
     all {
       queue.rows.keys().contains(key),
       r.status == "queued",
@@ -504,7 +518,9 @@ module relay {
   action staffReject(iid: str): bool = {
     val h = desk.held.get(iid)
     val d1 = desk.with("held", desk.held.set(iid, h.with("status", "rejected").with("hasText", false)))
-    val d2 = if (d1.log.keys().contains(iid)) d1.with("log", d1.log.set(iid, d1.log.get(iid).with("staff", "rejected"))) else d1
+    val d2a = if (d1.log.keys().contains(iid)) d1.with("log", d1.log.set(iid, d1.log.get(iid).with("staff", "rejected"))) else d1
+    // Ghost: staff rejected the item, whether or not its row is still in the capped log.
+    val d2 = if (d2a.verdict.keys().contains(iid)) d2a.with("verdict", d2a.verdict.set(iid, d2a.verdict.get(iid).with("staff", "rejected"))) else d2a
     all {
       iid != PHOTO_ITEM,
       desk.held.keys().contains(iid), h.status == "held",
@@ -647,13 +663,19 @@ module relay {
       w' = w, desk' = desk, queue' = queue, ep' = ep, g' = g,
     }
   }
-  // delivery (photo-relay.ts:215-224): the provider fetches the bytes with the signed capability.
-  action fetchBytes: bool = {
+  // delivery (photo-relay.ts:215-224): the provider fetches the bytes with a URL that carries `reqExp` and a
+  // signature. The guard is what delivery() checks on the request and the stored row; `ok` is the rule
+  // (bytesServedImpliesApprovedBound), so the checker shows that the checks imply the rule. The signature binds the
+  // descriptor, the action, the intent and the exp (sign()): only the issued capability (reqExp == dexp) verifies.
+  action fetchBytes(reqExp: int): bool = {
     val ok = photo.state == "approved" and photo.claimed and photo.intent and w.now < photo.dexp and photo.dexp <= photo.exp
              and w.now < photo.exp and pairOk(w, "A", "B")
+    val sigOk = photo.intent and photo.claimed and reqExp == photo.dexp
     all {
-      photo.intent,
-      photo.state == "approved", photo.claimed, w.now < photo.dexp, photo.dexp <= photo.exp, pairOk(w, "A", "B"),
+      w.now < reqExp, reqExp <= w.now + FETCH_TTL,                     // exp <= now or exp > now + FETCH_TTL: refused
+      photo.claimed, photo.intent, photo.state == "approved",         // actionId, deliveryIntent, state
+      reqExp == photo.dexp, reqExp <= photo.exp,                      // exp === deliveryExpiresAt, exp <= expiresAt
+      sigOk, pairOk(w, "A", "B"),                                     // timingSafeEqual(sig), current()
       photo' = photo.with("served", true).with("servedOk", photo.servedOk and ok),
       w' = w, desk' = desk, queue' = queue, ep' = ep, g' = g,
     }
@@ -707,7 +729,8 @@ module relay {
     nondet dt = Set(5, 20).oneOf()
     any { setQuiet(m, b), timePass(dt) },
     // The photo item: the forward path in one branch (one of its actions is enabled at a time), faults in another.
-    any { selectPhoto, reviewPhoto(true), photoRequest(false, false), resolvePhoto, fetchBytes },
+    // The provider fetches with the URL it was given (the issued exp). Another exp fails the signature (sigOk).
+    any { selectPhoto, reviewPhoto(true), photoRequest(false, false), resolvePhoto, fetchBytes(photo.dexp) },
     nondet b = Set(false, true).oneOf()
     nondet f = Set(false, true).oneOf()
     any { reviewPhoto(false), revokePhoto, photoRequest(b, f), staffPhotoReject },
@@ -1032,6 +1055,19 @@ module relay {
   run photoServedTest =
     init
       .then(selectPhoto).then(reviewPhoto(true)).then(photoRequest(false, false))
-      .then(queueSend(PHOTO_ITEM)).then(resolvePhoto).then(fetchBytes)
+      .then(queueSend(PHOTO_ITEM)).then(resolvePhoto).then(fetchBytes(photo.dexp))
       .expect(photo.served and bytesServedImpliesApprovedBound)
+
+  // delivery() refuses a fetch after the deadline that the first resolve fixed (exp <= now), and a URL whose exp is not
+  // the issued one (the signature binds it).
+  run lateFetchRefusedTest =
+    init
+      .then(selectPhoto).then(reviewPhoto(true)).then(photoRequest(false, false))
+      .then(queueSend(PHOTO_ITEM)).then(resolvePhoto).then(timePass(5)).then(fetchBytes(photo.dexp))
+      .fail()
+  run otherExpRefusedTest =
+    init
+      .then(selectPhoto).then(reviewPhoto(true)).then(photoRequest(false, false))
+      .then(queueSend(PHOTO_ITEM)).then(resolvePhoto).then(fetchBytes(photo.dexp - 1))
+      .fail()
 }
