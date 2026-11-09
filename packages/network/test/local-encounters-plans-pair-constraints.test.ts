@@ -44,6 +44,14 @@ describe("planAgainOf", () => {
     expect(planAgainOf("couldn't make it")).toBe("unclear");
     expect(planAgainOf("nobody else showed up")).toBe("unclear");
   });
+
+  it("rejects negated or hedged affirmative words without false positives", () => {
+    expect(planAgainOf("not sure")).toBe("unclear");
+    expect(planAgainOf("I'm not sure yet")).toBe("unclear");
+    expect(planAgainOf("not down")).toBe("no");
+    expect(planAgainOf("wasn't great, felt let down")).toBe("no");
+    expect(planAgainOf("didn't love that")).toBe("no");
+  });
 });
 
 describe("stale again and planAgain invalidation on block and avoid", () => {
@@ -200,5 +208,35 @@ describe("localEncounters constraints", () => {
     const welcomeOpps = [...(mini.net as any).opps.values()].filter((o: any) => o.origin === "newcomer_welcome");
     expect(welcomeOpps.length).toBe(1);
     expect(welcomeOpps[0].participants).toEqual(["newbie", "host5"]);
+  });
+
+  it("allows second_encounter for genuine recent meetups when both say again, while checking decline and open opps", async () => {
+    const now = Date.UTC(2026, 9, 20, 12);
+    const mini = new Mini([
+      { id: "m1", name: "Alice", age: 25, area: "Williamsburg" },
+      { id: "m2", name: "Bob", age: 25, area: "Williamsburg" },
+      { id: "m3", name: "Charlie", age: 25, area: "Williamsburg" },
+      { id: "m4", name: "Diana", age: 25, area: "Williamsburg" },
+    ], { matchingEnabled: true });
+    mini.clock.set(now);
+    await mini.onboard("m1", "m2", "m3", "m4");
+
+    const k1 = pairKey("m1", "m2");
+    // Simulate completed meetup yesterday between m1 and m2
+    (mini.net as any).interactions.push({ at: now - 1 * DAY, outcome: "completed", participants: ["m1", "m2"], id: "m_1_2" });
+    (mini.net as any).again.set(k1, new Set(["m1", "m2"]));
+
+    const k2 = pairKey("m3", "m4");
+    // m3 and m4 had recent decline within 60 days
+    (mini.net as any).declined.set(k2, now - 10 * DAY);
+    (mini.net as any).again.set(k2, new Set(["m3", "m4"]));
+
+    (mini.net as any).localEncounters(now);
+
+    const secondEncounterOpps = [...(mini.net as any).opps.values()].filter((o: any) => o.origin === "second_encounter");
+    // m1 & m2 should be proposed since metRecently does not block again pairs
+    expect(secondEncounterOpps.some((o: any) => o.participants.includes("m1") && o.participants.includes("m2"))).toBe(true);
+    // m3 & m4 should be blocked due to recent decline
+    expect(secondEncounterOpps.some((o: any) => o.participants.includes("m3") && o.participants.includes("m4"))).toBe(false);
   });
 });

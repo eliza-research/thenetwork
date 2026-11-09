@@ -3829,7 +3829,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       this.again.delete(k);
       const ma = this.members.get(a), mb = this.members.get(b);
       if (!ma || !mb || !this.eligible(a) || !this.eligible(b)) continue;
-      if (this.blocked(a, b) || this.avoid.has(pairKey(a, b)) || this.pairHistory(a, b, 60)) continue;
+      if (this.blocked(a, b) || this.avoid.has(pairKey(a, b)) || (this.declined.get(pairKey(a, b)) ?? -Infinity) > now - 60 * DAY || [...this.opps.values()].some(o => o.stage !== "closed" && o.participants.includes(a) && o.participants.includes(b))) continue;
       if (ma.first.toLowerCase() === mb.first.toLowerCase()) continue;
       const mins = this.minutesBetween(ma.area, mb.area);
       if (mins !== undefined && mins > 45) continue;

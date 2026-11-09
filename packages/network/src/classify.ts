@@ -776,8 +776,11 @@ export function availabilityTags(body: string): string[] {
 export function planAgainOf(body: string): "yes" | "no" | "unclear" {
   const t = body.toLowerCase().replace(/[‘’ʼ]/g, "'");
   if (/\b(couldn'?t make it|didn'?t (go|make it)|nobody else|no one else|never showed|didn'?t show)\b/.test(t)) return "unclear";
-  if (/\b(probably not|not really|no\b|nah|nope|wouldn'?t|won'?t|not again|never again|pass\b|hard pass|i'll pass|i will pass|rather not|i'd rather not|not for me|not my thing|don't think so|i don't think so|no thanks|decline)\b/.test(t)) return "no";
-  if (/\b(?:yes|yeah|yep|definitely|absolutely|for sure|again|count me in|i'd love to|would love to|love that|loved it|had a blast|sure thing|sure|totally|of course|sign me up|i'm down|im down|down to|down|anytime|let's do it|lets do it)\b|100%|💯/.test(t)) return "yes";
+  if (/\b(not\s+sure|unsure|not\s+certain|hard\s+to\s+say|maybe|perhaps|undecided|we'?ll\s+see)\b/.test(t)) return "unclear";
+  if (/\b(probably\s+not|not\s+really|no\b|nah|nope|wouldn'?t|won'?t|not\s+again|never\s+again|pass\b|hard\s+pass|i'?ll\s+pass|i\s+will\s+pass|rather\s+not|i'?d\s+rather\s+not|not\s+for\s+me|not\s+my\s+thing|don'?t\s+think\s+so|i\s+don'?t\s+think\s+so|no\s+thanks|decline|not\s+down|let\s+down|didn'?t\s+love|wasn'?t\s+great|not\s+great|disappointed)\b/.test(t)) return "no";
+  if (/\b(?:not|n't|never|hardly)\s+(?:really\s+)?(?:sure|down|again|love\s+that|loved?\s+it|into\s+it|for\s+me)\b/.test(t)) return "no";
+  if (/\b(?:yes|yeah|yep|definitely|absolutely|for\s+sure|count\s+me\s+in|i'?d\s+love\s+to|would\s+love\s+to|love\s+that|loved\s+it|had\s+a\s+blast|sure\s+thing|totally|of\s+course|sign\s+me\s+up|i'?m\s+down|im\s+down|down\s+to|down\s+for\s+it|anytime|let'?s\s+do\s+it)\b|100%|💯/.test(t)) return "yes";
+  if (/\b(?:again|sure)\b/.test(t) && !/\b(?:not|n't|never|no)\b/.test(t)) return "yes";
   return "unclear";
 }
 
