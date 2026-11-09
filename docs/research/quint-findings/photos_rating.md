@@ -9,7 +9,7 @@ Apalache output, cut to the action names.
 
 The model follows the code on branch `wave2/photos_rating` after the fixes 4d3258d (SD-052, SD-372),
 fb126c6 (SD-053), 1a48ff7 (SD-176) and 4fe59a5 (Q-photos_rating-1). `bun run quint:check` passes: the run
-tests, the `safety` simulation and all 11 witnesses. Bounded Apalache verification of `safety` passes (the
+tests, the `safety` simulation and all 13 witnesses (11 before section 7). Bounded Apalache verification of `safety` passes (the
 bounds are in section 2).
 
 | Defect | Status | Commit | Proof |
@@ -76,14 +76,19 @@ crash before the purge ran; a check of "nothing left for the purge" would pass w
 ### Rules kept out of `safety`
 
 No rule was weakened. Three full rules have a crash residue that this branch does not fix. Each stays as
-its own named value, and `safety` holds the same rule for traces without that residue. Two ghost flags
-mark the residue at the crash:
+its own named value, and `safety` holds the same rule for every state except that residue. The residue is
+scoped to what the crash left (review fix, section 7):
 
 - `rateWriteCrash` (Q-photos_rating-2): the crash hits `rate()` after `onRating` and before check 3 ends,
   and check 3 would refuse.
-- `sagaCrash` (SD-005 class X8 and Q-photos_rating-3): the crash hits a failed age check after its facet
-  commit and before `deleteFor` hides the rows, a ban after its commit, or a leave or delete everything
-  after the forget and before `deleteFor` hides the rows.
+- `verifyLeft` (X8): the photo ids that were live when a crash ended a failed age check after its facet
+  commit and before `deleteFor` hid the rows. Only these ids are left out of
+  `photoNotKeptAfterFailedAgeCheck_noSagaCrash`.
+- `forgetLeft` (Q-photos_rating-3): the rows and bytes that were live when a crash ended a leave or
+  delete everything after the forget and before `deleteFor`. Only these ids are left out of
+  `noPhotoForForgottenMember_noSagaCrash`.
+- `ratingLeft` (SD-005, X8): a rating that was live when a crash ended the ban or failed-age-check saga.
+  `ratingOnlyForEligible_noResidueCrash` leaves it out only while that rating is still stored.
 
 | Full rule (not in `safety`) | In `safety` | Why |
 |---|---|---|
@@ -99,11 +104,12 @@ mark the residue at the crash:
 
 ```
 ok   typecheck
-ok   test                       (17 run tests)
+ok   test                       (22 run tests; 17 before the review fix of section 7)
 ok   safety
 ok   witness_ratedAndMatched, witness_ageDropClears, witness_leaveClears, witness_textPhotoStored,
      witness_turnPhotoDropped, witness_banKeepsPhotos, witness_probeSent, witness_crash,
-     witness_showRefused, witness_swept, witness_reconciled (all reachable)
+     witness_showRefused, witness_swept, witness_reconciled, witness_exportRated,
+     witness_probeWithPhotos (all reachable; the last two since section 7)
 1 models, 0 failures
 ```
 
@@ -225,10 +231,11 @@ and `sd097TurnPhotoDroppedTest` show it.
 ## 5. Register defects the model cannot reach, and why
 
 - **SD-177** (no re-consent on a new consent version; NO PHOTOS does not withdraw). `PHOTO_CONSENT.version`
-  is a build constant (`photos.ts:100`); `rowHasConsent` holds. NO PHOTOS without a pending row is not an
-  answer (`photoIntake.ts:117-118`). Register: refuted.
-- **SD-230** (the probe says a photo is attached when none is). `SLOP_PROBE_PHOTOS = false` and
-  `photoIds: []` (`packs.ts:47`, `:257`), so `probeClaimMatches` holds. Register: refuted.
+  is a build constant (`photos.ts:100`); `rowHasConsent` holds on the version each request carried (section 7).
+  NO PHOTOS without a pending row is not an answer (`photoIntake.ts:117-118`). Register: refuted.
+- **SD-230** (the probe says a photo is attached when none is). The hook passes the literal `photoIds: []`
+  (`packs.ts:257`), so the engine rule gives no photo and the text claims none, with `SLOP_PROBE_PHOTOS` either
+  way; `probeClaimMatches` holds on that input (section 7). Register: refuted.
 - **SD-231** (`photoConsent` has two meanings). A naming issue with no state change. Register: refuted.
 - **SD-232** (Clef refuses a photo that is not one adult). Clef is an oracle; a null score ends the rating
   with no state change. Register: refuted.
@@ -243,3 +250,23 @@ and `sd097TurnPhotoDroppedTest` show it.
   hangs for more than an hour between `uploadBytes` and `uploadShow` and then crashes is not modelled.
 - `reconcileAges` runs in one slot with the age hook; the hook is idempotent, so a second run in parallel
   adds no new state.
+
+## 7. Review fix: the rules read the code's input (2026-11-09)
+
+A review found four checks that could not fail. The model now gives each rule the input the code reads, and each
+rule was shown to fail under a temporary mutation of the action (the mutated copy was run, the violation seen, and
+the file left as it is; the commands use seed 0x5eed, 40 steps, 10000 samples unless a run test is named).
+
+| Finding | Model change | Mutation (temporary) | Result |
+|---|---|---|---|
+| `rowHasConsent` could not fail: `uploadPut` wrote the constant version | `uploadStart` keeps the header of the request (`uplHeader`), `uploadPut` writes it (`photos.ts:540`); the text path writes the constant (`photoIntake.ts:99`). The rule also covers hidden rows. | `uploadStart` without `header == CONSENT` | violated at once (a request with header "old" stores a row) |
+| `scoresNeverShown` was constant-true (the reads added fixed field sets) | `exportMember` takes the stored facets through the code's filter `exportShows` (`service.ts:925-926`); the rating facet has the columns `writeRating` writes (`service.ts:1843-1845`) | (a) the rating facet with provenance "said"; (b) the filter without the `agent_private` clause | both violated (export shows "score") |
+| `probeClaimMatches` was constant-true (`PROBE_PHOTOS` and `PROBE_IDS_WIRED` false) | `probe` runs `probePhotoRefs` (`plan.ts:84-87`) and the copy rule of `slopProbeMessage` on the hook's input: the literal `photoIds: []` and `SLOP_PROBE_PHOTOS` either way (`st.probeFlag`, chosen at init); the hook returns only `.text`, so no id goes out | the hook passes the live photo ids | violated (the text claims a photo, none attached) |
+| The `sagaCrash` exclusion was sticky and too broad: a crash in any saga switched off two photo rules for good | `sagaCrash` is replaced by `verifyLeft`, `forgetLeft` and `ratingLeft` (section 1), each scoped to what its own crash left | `verifyHide` that hides nothing; `leaveHide` that hides nothing | both violated in simulation; run test `banCrashThenFailedAgeCheckTest` fails. The old model with the same mutation, after a ban crash, keeps the photos of a failed age check and `safety` holds (checked with a replay on the old file). |
+
+New run tests: `banCrashThenFailedAgeCheckTest`, `verifyCrashThenLeaveTest`, `probeFlagOnTest`,
+`exportHidesScoreTest`, `textPhotoVersionTest`. New witnesses: `witness_exportRated`, `witness_probeWithPhotos`.
+The step now continues an upload or a rating in flight, or reads a stored rating, in half of the draws (weights
+only; every action stays in the full branch): without it a probe or an export of a rated member was not reached in
+10000 samples. No new code defect: with the code's input every rule holds (`bun run quint:check quint/photos_rating.qnt`:
+typecheck, 22 run tests, `safety`, 13 witnesses).
