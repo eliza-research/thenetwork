@@ -3,14 +3,14 @@
 // over 21 days; every NYC scenario; every sim/scenarios/*.json at pass^3 against the push stub; the
 // attention and plans invariants on the consent arms; and the shared conformance rules for networkPack.
 import { readdirSync } from "node:fs";
-import { DAY, HOUR, MINUTE, type MemberId } from "../../packages/core/src/index.ts";
+import { DAY, fromLocal, HOUR, MINUTE, type MemberId } from "../../packages/core/src/index.ts";
 import { DEFAULT_ATTENTION } from "../../packages/engine/src/index.ts";
 import { networkPack } from "../../packages/engine/src/packs/network/index.ts";
 import type { RunRecord } from "../../packages/core/src/index.ts";
 import { computeMetrics } from "../../packages/sim/src/judge/metrics.ts";
 import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, loadScenario, runScenario as runSimScenario, runScenarioPassK } from "../../packages/sim/src/index.ts";
 import { friendFactory, nycPersonas, runArm, runScenario, SCENARIOS, type ArmResult } from "../../packages/network/harness/index.ts";
-import { allowedAt, ConsentNetwork, NY, OUTREACH, SIM_AUTO_REVIEWER, VENUES, type NetworkOptions } from "../../packages/network/src/index.ts";
+import { allowedAt, ConsentNetwork, NY, OUTREACH, SIM_AUTO_REVIEWER, statedWindows, VENUES, type NetworkOptions } from "../../packages/network/src/index.ts";
 import { styleViolations } from "../../packages/network/src/copy.ts";
 import { DATA_DIR } from "../synthetic/common.ts";
 import { conformance } from "./conformance.ts";
@@ -36,6 +36,24 @@ async function world(days: number, seed = 3, network: NetworkOptions = { review:
 }
 
 export async function networkBlock(b: Block, o: { quick: boolean }): Promise<void> {
+  // ---- stated windows stay inside the 7-day horizon (docs/results/2026-11-09-stated-windows-horizon.md) ----
+  // A weekly check-in states availability for THIS week only (`until = now + 7 days`). A tag whose
+  // weekday equals the check-in day must give exactly one window, whether the member checks in before,
+  // during, or after today's part; the eighth calendar day must not double it into next week as well.
+  await b.run("plans: statedWindows gives one window per stated (weekday, part); none begins at/after `until`", () => {
+    const beforePart = fromLocal(2026, 11, 2, 9, NY);               // Mon 09:00 NY, before the evening part
+    const duringPart = fromLocal(2026, 11, 2, 20, NY) + 30 * MINUTE; // Mon 20:30 NY, inside the evening part [17,22)
+    const afterPart = fromLocal(2026, 11, 2, 23, NY);               // Mon 23:00 NY, after the evening part
+    for (const now of [beforePart, duringPart, afterPart]) {
+      const st = statedWindows(["evening:Mon"], now);
+      expect(st).toMatchObject({ at: now, until: now + 7 * DAY });
+      expect(st!.windows.length).toBe(1);                           // this Monday OR next Monday, never both
+      for (const w of st!.windows) expect(w.start).toBeLessThan(st!.until);
+    }
+    // A part that has already passed today still yields next week's window, inside the horizon.
+    expect(statedWindows(["evening:Mon"], afterPart)!.windows[0]!.start).toBeGreaterThan(afterPart);
+  });
+
   // ---- invariants: NYC, 10 days, seed 3, simulated reviewer ---------------------------------------
   const run = await world(10);
   await run.w.advanceTo(run.w.end);
