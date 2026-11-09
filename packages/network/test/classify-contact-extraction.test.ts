@@ -61,6 +61,25 @@ describe("classify contact extraction abuse detection", () => {
     }
   });
 
+  test("never flags benign statements mentioning possessives without a request", () => {
+    const benignStatements = [
+      "Alice's WhatsApp is broken",
+      "Bob's Telegram account got hacked",
+      "Charlie's mobile was stolen",
+      "what's the coffee shop's instagram?",
+      "the store's number is busy",
+      "the building's address is 123 Main St",
+      "here's my friend's number if needed",
+      "that's nobody's number",
+      "the driver's phone died",
+    ];
+
+    for (const text of benignStatements) {
+      const res = classify(text);
+      expect(res.abuse).not.toContain("contact_extraction");
+    }
+  });
+
   test("never flags benign venue inquiries, personal disclosures, or conversational phrases", () => {
     const benign = [
       "can you tell me about the venue",
