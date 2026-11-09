@@ -32,14 +32,14 @@ module matching_engine {
   pure val AGE = Map("a" -> 30, "b" -> 28, "c" -> 32, "k" -> 15)
   pure val SMOKERS = Set("b")
   pure val PAIRS = Set(("a", "b"), ("a", "c"), ("b", "c"), ("a", "k"), ("b", "k"), ("c", "k"))
-  pure val MAX_ASKS = 2            // extract.ts:43 MAX_ASKS_PER_QUESTION (read-back cap: service/packs.ts:140); options.ts:176 maxAsksPerField
+  pure val MAX_ASKS = 2            // extract.ts:44 MAX_ASKS_PER_QUESTION (read-back cap: service/packs.ts:140); options.ts:176 maxAsksPerField
   pure val REPROBE_DAYS = 7        // packs/slop/options.ts:158 reprobeAfterDays
-  pure val GATE_DAYS = 60          // network.ts:455 PAIR_HISTORY_DAYS (gate and avoid edges)
-  pure val BUDGET_N = 2            // outreach.ts:19 budget.normal n=2 over 7 days; slop SLOP_ENGINE_CONFIG budgets limit 2 / 7 days
+  pure val GATE_DAYS = 60          // network.ts:481 PAIR_HISTORY_DAYS (gate and avoid edges)
+  pure val BUDGET_N = 2            // outreach.ts:20 budget.normal n=2 over 7 days; slop SLOP_ENGINE_CONFIG budgets limit 2 / 7 days
   pure val BUDGET_DAYS = 7
   pure val SWEEP_DAYS = 3          // network.ts awaiting cleared after 3 days
   pure val SILENT_DAYS = 7         // packs/slop/profile.ts SILENT_AFTER_DAYS
-  pure val BASICS_EVERY = 21       // packs/slop/index.ts:138
+  pure val BASICS_EVERY = 21       // packs/slop/index.ts:139
   pure val JUDGE_TTL = 7           // config.ts:183 judge.ttlMs = 7 days
   pure val HORIZON = 90            // jobs.ts intent horizonDays 90; world.ts live intents only
   pure val MAX_NOW = 150
@@ -127,7 +127,7 @@ module matching_engine {
                else (if (changedHard(o, k)) false else o.confirmed)
     { ...applyKind(o, k), confirmed: conf }
   // extract.ts slopOnboardTags, then network.ts learnAppTags (keep, replace, add). Fixed (SD-061, 8a14083):
-  // `replaces` always holds "slop:dealbreaker:" (extract.ts:939), so a dealbreaker taken back drops its tag.
+  // `replaces` always holds "slop:dealbreaker:" (extract.ts:941), so a dealbreaker taken back drops its tag.
   pure def tagsAfter(old: Set[str], o: Ob): Set[str] =
     val add = Set("core", "loc", "db:smoker", "goal").filter(t =>
       (t == "core" and o.core) or (t == "loc" and o.loc) or (t == "db:smoker" and o.db) or (t == "goal" and o.goal))
@@ -137,7 +137,7 @@ module matching_engine {
 
   def adult(m: str): bool = AGE.get(m) >= 18 and not(slop.minor.get(m))
   def inOpen(m: str): bool = PAIRS.exists(p => has(p, m) and isOpen(slop.opp.get(p).stage))
-  // world.ts recentProactive: recent proposals minus unsentProposalIds (network.ts:3770; SD-210, SD-262).
+  // world.ts recentProactive: recent proposals minus unsentProposalIds (network.ts:4003, world.ts:179-180; SD-210, SD-262).
   def engineCount(m: str): int = PAIRS.filter(p => has(p, m)).fold(0, (s, p) => s + window(slop.billed.get(p), now, BUDGET_DAYS))
   def sentCount(m: str): int = window(slop.sentTimes.get(m), now, BUDGET_DAYS)
   // profile.ts silentAsks: a slop_location ask at least 7 days old, none of them answered.
@@ -146,7 +146,7 @@ module matching_engine {
 
   // Engine member view: network.ts packInput (adults only), filters.ts memberReason core prefix (holds),
   // packs/slop/rules.ts needs_answer: missingFields reads tags, and since 60eecb2 (SD-209) also asks for a
-  // location (rules.ts:38) unless the location ask went silent for a week. slopAssign skips a member with
+  // location (rules.ts:39) unless the location ask went silent for a week. slopAssign skips a member with
   // no budget left (assign.ts:78-79, 8d018ed, SD-207).
   def engineMemberOk(m: str): bool = all {
     adult(m), not(slop.held.get(m)), slop.tags.get(m).contains("core"),
@@ -158,7 +158,7 @@ module matching_engine {
   def netMemberOk(m: str): bool = adult(m) and not(slop.held.get(m)) and not(inOpen(m)) and sentCount(m) < BUDGET_N
   def pairHistory(p: (str, str)): bool = now - slop.netDeclAt.get(p) < GATE_DAYS
   // packs/slop/rules.ts: already_introduced / reprobe_cooldown (interactions only), dealbreaker on tags,
-  // and the avoid edges packInput adds for pairs the gate refuses (network.ts:3829, 8e9120e, SD-223).
+  // and the avoid edges packInput adds for pairs the gate refuses (network.ts:4050, 8e9120e, SD-223).
   def enginePairOk(p: (str, str)): bool = all {
     not(slop.opp.get(p).everBooked),
     now - slop.engDeclAt.get(p) >= REPROBE_DAYS,
@@ -169,7 +169,7 @@ module matching_engine {
   def enginePairs: Set[(str, str)] = PAIRS.filter(p => engineMemberOk(p._1) and engineMemberOk(p._2) and enginePairOk(p))
 
   // ------------------------------------------------------------------ peon helpers
-  // service.ts:2251 registers jobPostingRoutes behind staff auth (f581d75, SD-225): the staff API is served in prod.
+  // service.ts:2546 registers jobPostingRoutes behind staff auth (f581d75, SD-225): the staff API is served in prod.
   pure val STAFF_API_SERVED = true
   pure val noDraft: Draft = { kind: "none", id: "", openings: 0, seniority: false, areaOk: false, mustDup: false, said: "" }
   pure val noPosting: Posting = { status: "none", openings: 0, stated: 0, reason: "", createdAt: NONE, version: 0, seniority: false, areaOk: false }
@@ -178,8 +178,8 @@ module matching_engine {
   def seatDeclined(id: str): bool = now - peon.declAt.get(id) < GATE_DAYS
   // peon/profile.ts p.open, world.ts live intent, peon/rules.ts (job_closed, employer_unverified,
   // seniority_band, locationOk), peon_not_onboarded for the candidate. packInput holds the seat with its
-  // manager (network.ts:3813, d2921d3, SD-296), and the (candidate, seat) avoid edge keeps a declined
-  // seat out (network.ts:3829 with seatSide, c05b9b2, SD-439).
+  // manager (network.ts:4028-4035 seatHolds, d2921d3, SD-296), and the (candidate, seat) avoid edge keeps a declined
+  // seat out (network.ts:4050 and 2164 with seatSide, c05b9b2, SD-439).
   def engineSeatOk(id: str): bool = all {
     peon.posting.get(id).status == "active",
     now < peon.posting.get(id).createdAt + HORIZON,
@@ -195,7 +195,7 @@ module matching_engine {
     else if (f.stage == "probing_partners") f.answers.keys().filter(m => f.answers.get(m) == "pending" and m != "x")
     else Set()
 
-  // ------------------------------------------------------------------ plan seat rule (plans.ts:146-150, filters.ts memberReason)
+  // ------------------------------------------------------------------ plan seat rule (plans.ts:148-152, filters.ts memberReason)
   // Fixed (7ca8fa2, SD-206): planMemberReason passes the budgets as `forgive`; the later rules still run.
   pure def planReason(f: PlanFacts): str =
     if (f.minor) "underage" else if (f.reliabilityHold) "reliability_holdout" else ""
@@ -272,7 +272,7 @@ module matching_engine {
   // One inbound text of member m. With an open question (awaiting), the onboarding loop reads it
   // (network.ts onAskAnswer, service/packs.ts:121-136), the tags are persisted at once (learnAppTags), and
   // the same turn sends the loop's next message (onboardNext with skip = the answered question).
-  // Fixed (461b02e, SD-427): with nothing awaited, network.ts:825 lateAnswer still reads the text as the
+  // Fixed (461b02e, SD-427): with nothing awaited, network.ts:863 lateAnswer (1168-1179) still reads the text as the
   // answer to the last unanswered ask when that reading changes the onboarding state.
   action memberSays(m: str, answers: bool, k0: str): bool = all {
     adult(m),
@@ -324,7 +324,7 @@ module matching_engine {
     sh' = sh, keepPeon, keepOther, now' = now, lastAction' = "setHold",
   }
 
-  // packs/slop/index.ts:138 extraAsks slop_basics, sent by network.ts sendAsks when the loop has nothing
+  // packs/slop/index.ts:139 extraAsks slop_basics, sent by network.ts sendAsks when the loop has nothing
   // left to ask. needsBasics (rules.ts) reads tags only: a member who said "no dealbreakers" has no
   // dealbreaker tag and no politics value. Fixed (45c479e, SD-419): at most maxAsksPerField asks.
   def basicsAskDue(m: str): bool = all {
@@ -351,7 +351,7 @@ module matching_engine {
     enginePairs.contains(p),
     val gateOk = netMemberOk(p._1) and netMemberOk(p._2) and not(pairHistory(p))
     // The judge reads every candidate pair of the run. Fixed (cdce14f, SD-420): the judge caches live
-    // across daily runs (network.ts:3488 judgeCaches), so a pair judged within the TTL is a cache hit.
+    // across daily runs (network.ts:3752 judgeCaches, used at 3710), so a pair judged within the TTL is a cache hit.
     val judged = if (slop.judgeOn) enginePairs.filter(q => now - slop.judgeLast.get(q) >= JUDGE_TTL) else Set()
     all {
       slop' = { ...slop,
@@ -390,7 +390,7 @@ module matching_engine {
 
   // Probe outcome (probe first, then the partner). A no is an interaction the engine sees (7-day reprobe)
   // and a Network decline (60 days, an avoid edge). Both yes: the booked date. Fixed (8f3673a, SD-443):
-  // plan.ts:149 keeps only the day slots for a daytime activity (hike).
+  // plan.ts:44 keeps only the day slots for a daytime activity (hike).
   action slopProbe(p: (str, str), outcome: str, activity: str, slot: str): bool = all {
     slop.opp.get(p).stage == "probing",
     if (outcome == "yes") all {
@@ -442,12 +442,12 @@ module matching_engine {
   pure def endSeat(s: Seat): Seat = if (s.stage == "review" or s.stage == "probing" or s.stage == "candYes") { ...s, stage: "closed" } else s
 
   // A "yes" to the read-back. `src` "sms" is the manager's own text; "mcp" is a profile from the member's
-  // assistant. Fixed (7c08084, SD-042): network.ts:764 runs postingTurn only for the member's own text,
+  // assistant. Fixed (7c08084, SD-042): network.ts:793 runs postingTurn only for the member's own text,
   // so an "mcp" yes leaves the draft and the postings as they are.
-  // The manager's yes: postingFromDraft (jobs.ts:188-198) on the stored posting, then applyPosting, then
+  // The manager's yes: postingFromDraft (jobs.ts:189-201, transitions.ts:567 postingAction) on the stored posting, then applyPosting, then
   // savePosting in the unit's transaction. Fixed (ce667b2, SD-114): a stored posting that is not active
-  // is final (jobs.ts:189: no posting, the draft is dropped). Fixed (dc84661, SD-327): closedReason
-  // "filled" for "we filled it" (jobs.ts:190).
+  // is final (jobs.ts:194: no posting, the draft is dropped). Fixed (dc84661, SD-327): closedReason
+  // "filled" for "we filled it" (jobs.ts:193).
   action mgrYes(src: str): bool = all {
     peon.draft.kind != "none",
     val d = peon.draft
@@ -518,7 +518,7 @@ module matching_engine {
 
   // ================================================================== peon engine run and seat items (job-seat-item)
   // dailyRun for peon: the engine proposes (candidate, seat); seatRoute swaps in the manager; gateReason
-  // checks the manager (managerProblem) and pair_history on the seat (network.ts:3662 with p.seat).
+  // checks the manager (managerProblem) and pair_history on the seat (network.ts:3872 gateReason with p.seat).
   action peonEngineRun(id: str): bool = all {
     engineSeatOk(id),
     val gateOk = not(peon.mgrHeld) and not(seatDeclined(id))
@@ -561,7 +561,7 @@ module matching_engine {
     flow' = { n: n, stage: "probing_first", answers: Set("x", "y").mapBy(m => if (m == "x" or n == 2) "pending" else "none") },
     keepSlop, keepPeon, plan' = plan, focus' = focus, now' = now, lastAction' = "flowStart",
   }
-  // Fixed (dcf24da, SD-063): attention.ts:820, the first member's yes reveals a flow with no partners.
+  // Fixed (dcf24da, SD-063): attention.ts:808, the first member's yes reveals a flow with no partners.
   action flowAnswer(m: str, yes: bool): bool = all {
     toProbe(flow).contains(m),
     val answers = flow.answers.set(m, if (yes) "yes" else "no")
@@ -648,7 +648,7 @@ module matching_engine {
 
   // AGENTS.md "Code invariants", platform decision 1: minors (13-17) are never matched; filters.ts:25-30.
   val minorNeverCandidate = not(sh.matchedMinor)
-  // AGENTS.md "Keep every safety guard": a held member is never put in a new opportunity (filters.ts:57, network.ts packInput holds).
+  // AGENTS.md "Keep every safety guard": a held member is never put in a new opportunity (filters.ts:60, network.ts packInput holds).
   val heldNeverCandidate = not(sh.matchedHeld)
   // extract.ts:41 HARD_FIELDS includes location; rules.ts hard filters run before scoring: the engine asks
   // for a location before it proposes the member. SD-209.
@@ -657,20 +657,20 @@ module matching_engine {
   val deletedFieldClearsTag = SLOP_MEMBERS.forall(m => slop.tags.get(m).contains("db:smoker") == slop.ob.get(m).db)
   // service/packs.ts:99-101: every answer goes to the onboarding loop. SD-427.
   val answersReachLoop = not(sh.lostAnswer)
-  // onboard.ts:120-121 ("undefined when there is nothing left to ask"), index.ts:135 one compatibility
+  // onboard.ts:122 ("undefined when there is nothing left to ask"), index.ts:135 one compatibility
   // message: the basics ask terminates (at most the per-question cap). SD-419.
   val askTerminates = SLOP_MEMBERS.forall(m => slop.basicsAsks.get(m) <= MAX_ASKS)
   // network.ts "a no is remembered for the pair: never probed again for a while, from any path";
   // the engine's view of a pair must agree with the gate, or the gate drops its pick every day. SD-223.
   val engineAgreesWithGate = not(sh.gateDisagree)
-  // world.ts:170 "proposals the Network never sent neither count against budgets nor block the pair";
+  // world.ts:179 "proposals the Network never sent neither count against budgets nor block the pair";
   // SLOP_ENGINE_CONFIG dispatch.billOnlySent. SD-262, SD-210.
   val unsentNotBilled = PAIRS.forall(p => slop.opp.get(p).stage == "rejected" implies not(listHas(slop.billed.get(p), slop.opp.get(p).at)))
   // PRD 40.3 caps, outreach.ts:14-21 budgets; engine config budgets limit 2 per 7 days. SD-207.
   val budgetAcrossAssign = not(sh.selectedOverBudget)
   // config.ts:183 judge ttlMs: a verdict is reused within its TTL. SD-420.
   val judgeCacheReused = not(sh.judgeRepeat)
-  // service/packs.ts:153-154 "a daytime hike"; packs/slop/plan.ts PUBLIC_VENUE trailhead daytime. SD-443.
+  // service/packs.ts:152 "a daytime hike"; packs/slop/plan.ts:20 PUBLIC_VENUE trailhead daytime. SD-443.
   val activityFitsSlot = not(sh.hikeAtNight)
 
   // jobs.ts closedReason; jobs.ts "no new candidates are sent": a closed post stays closed. SD-114.
@@ -686,7 +686,7 @@ module matching_engine {
   val acceptedPostingPersists = not(ph.saveFailed)
   // A no is about one job (seat copy jobs.ts); the engine keys it by seat. SD-439.
   val declineScopedToJob = not(ph.crossJobBlock)
-  // A held manager's seat is never selected (filters.ts:57 holds; managerProblem). SD-296.
+  // A held manager's seat is never selected (filters.ts:60 holds; managerProblem). SD-296.
   val engineNeverSelectsHeld = not(ph.engineSelectedHeld)
   // network.ts checkSeats: a seat is never booked past its openings.
   val seatCapacity = POSTINGS.forall(id => peon.seat.get(id).stage == "booked" implies peon.posting.get(id).openings >= 1)

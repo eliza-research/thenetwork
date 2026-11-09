@@ -169,13 +169,14 @@ module observatory_sync {
   // ---------------------------------------------------------------- the shell's filter keys per tab
   // The keys the shell code applies to the list of each tab (read from the code, not from tabKeys):
   //   review   store.ts matchReview -> visible("review")
-  //   feed     drawer.tsx:104 matchFeed -> visible("feed")
-  //   pipeline drawer.tsx:166 matchOpp(o) -> every key
-  //   engine   drawer.tsx:211 inRange -> range
-  //   safety   drawer.tsx:313 matchMember (borough, members) and :317 matchFeed -> visible("safety")
-  //   metrics  drawer.tsx:376 inRange and matchOpp(skip range, members, stateGroup) -> range, borough,
-  //            origin; :378 inBorough -> borough
-  //   requests admin.tsx:294-295 matchMember and inRange -> borough, members, range
+  //   feed     drawer.tsx:108 matchFeed -> visible("feed")
+  //   pipeline drawer.tsx:168 matchOpp(o) -> every key
+  //   engine   drawer.tsx:213 inRange -> range
+  //   safety   drawer.tsx:315 matchMember (borough, members) and :319 matchFeed -> visible("safety");
+  //            admin.tsx:87 SafetyCases inBorough -> borough
+  //   metrics  drawer.tsx:378 inRange and matchOpp(skip range, members, stateGroup) -> range, borough,
+  //            origin; :380 inBorough -> borough
+  //   requests admin.tsx:318-319 matchMember and inRange -> borough, members, range
   //   lab, config, game: no filter
   // The filter bar dims a key that is not in APPLIES[tab] = tabKeys(tab) (drawer.tsx:22).
   pure def shellKeys(tab: str): Set[str] =
@@ -346,12 +347,20 @@ module observatory_sync {
     }
   }
 
-  /** The server sends a reset. */
+  /**
+   * The server sends a reset. src/store.ts takeDelta sets reset when edges were removed (a change, so
+   * the version goes up and the new feed items leave with it); sources/game.ts sets it on a game reset,
+   * also on a delta with no change (the version stays). The client reloads either way.
+   */
   action serverReset = {
     nondet a = APPS.oneOf()
+    nondet bump = Set(true, false).oneOf()
+    val v = srv.get(a)
     all {
-      wire' = wire.union(Set({ app: a, version: srv.get(a).ver, reset: true, lo: 1, hi: 0 })),
-      srv' = srv, ui' = ui, keepReveal, keepFilters,
+      not(bump) or v.ver < MAX_VER,
+      srv' = if (bump) srv.set(a, { ...v, ver: v.ver + 1, sent: v.seq }) else srv,
+      wire' = wire.union(Set({ app: a, version: if (bump) v.ver + 1 else v.ver, reset: true, lo: 1, hi: 0 })),
+      ui' = ui, keepReveal, keepFilters,
     }
   }
 

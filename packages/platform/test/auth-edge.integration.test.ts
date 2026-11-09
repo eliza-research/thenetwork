@@ -101,6 +101,30 @@ describe.skipIf(!pgAvailable)("auth edge (Postgres)", () => {
     expect((await c.call("slop", "GET", "/api/me/export", undefined, { cookie: own })).body.membership.firstName).toBe("Alice");
   });
 
+  test("SD-054 a rotation that races a text join makes no live session from before the person (Quint auth_edge rotateRead/rotateCommit)", async () => {
+    // The rotation reads the old session; the text join's bindSessions commits; then the rotation writes the next session.
+    let race: (() => Promise<unknown>) | undefined;
+    const racing = Object.create(store) as PgPeopleStore;
+    racing.getSession = async (h: string) => {
+      const s = await store.getSession(h);
+      const r = race; race = undefined;
+      if (r) await r();
+      return s;
+    };
+    const c = make(racing), phone = newPhone();
+    const old = await c.login("slop", phone);
+    c.clock.t += 25 * 3_600_000;
+    race = async () => {
+      const person = await c.api.accounts.createPerson(phone, "inbound_message", 30);
+      await store.putMembership({ app: "slop", personId: person.id, memberId: `slop_ae_${seq}`, state: "active", review: null, firstName: "Alice", profile: {}, joinedAt: c.clock.t, leftAt: null });
+    };
+    const first = await c.call("slop", "GET", "/api/me/export", undefined, { cookie: old });
+    expect(first.status).toBe(401);
+    // No next token came out of the race; a token that did must not read the new holder's data either.
+    if (first.cookie) expect((await c.call("slop", "GET", "/api/me/export", undefined, { cookie: first.cookie })).status).toBe(401);
+    expect(first.cookie).toBeUndefined();
+  });
+
   test("SD-054 a web join binds only the joining session, not an earlier holder's session", async () => {
     const c = make(store), phone = newPhone();
     const old = await c.login("slop", phone);

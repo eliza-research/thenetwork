@@ -16,16 +16,19 @@
 //     needs a common city (overlap). Hours and intervals are abstracted to "same city".
 //   - complementarity (packages/engine/src/complementarity.ts): romanceMutual gives a romance score
 //     only when both members opted in; the networkPack pair rule romance_incompatible
-//     (packs/network/rules.ts:76-78) is the hard gate. The friends pack excludes the romance lane
+//     (packs/network/rules.ts:67-69) is the hard gate. The friends pack excludes the romance lane
 //     (packs/friends/rules.ts romance_excluded).
 //   - group composition (packages/engine/src/group.ts composeGroup): minors leave the pool, compat is
 //     -Infinity for a pair that pairReason refuses, the primary group is minSize..maxSize members with
 //     a common city, and each alternate is compatible with each primary member. The ConsentNetwork
-//     then filters the alternates (packages/network/src/network.ts:3962 distinctAlternates).
+//     then filters the alternates (packages/network/src/network.ts:4271 distinctAlternates, called at 2222).
 //   - the friends planner (packages/engine/src/packs/friends/planner.ts planFriendsWeek) in its pass
 //     order: 1 crew sessions, 2 crew offers (plans.ts detectCrews), 3 same table again (repeats),
 //     4 new plans (tables and planProposals), 5 activity partners. `taken` (passes 1-3) and `used`
 //     (passes 4-5) are the code's sets. The default policy has spreadNew=false, so `busy` is empty.
+//     Pass 4 can also give a partner plan of two (run() -> planProposals with partnerPlans =
+//     pol.partnerFallback, default true; planner.ts:400) for members who attended a group meetup
+//     (an oracle here).
 //
 // ABSTRACTIONS (quint/README.md rule 7)
 //   - Scores, embeddings, the channels, venue choice and transit times are oracles. finish()
@@ -41,11 +44,11 @@
 // VALUES THAT ARE NOT IN `safety` (each one is a defect that this model found; the code is not changed;
 // each has a run test that reaches it):
 //   noAltPairBlockedEngine   group.ts:137-146: composeGroup checks each alternate against the primary
-//                            group only, not against the other alternates (plans.ts:345 checks both).
-//                            The ConsentNetwork repairs it (network.ts:3969), so `blockedApart` holds for the submitted group.
+//                            group only, not against the other alternates (plans.ts:348-355 checks both).
+//                            The ConsentNetwork repairs it (network.ts:4279), so `blockedApart` holds for the submitted group.
 //   noSessionBlocked         planner.ts:244-255: a crew session invites every eligible crew member and
 //                            has no block check. A block made after the crew formed is not seen.
-//   noOfferBlocked           planner.ts:266-279 and plans.ts:675 detectCrews: a crew offer has no block check.
+//   noOfferBlocked           planner.ts:266-279 and plans.ts:662 detectCrews: a crew offer has no block check.
 //   noRepeatBlocked          planner.ts:287-298: the repeat pass checks blocks among `ids` only; the
 //                            alternates (o.attended, line 298) are not checked, and finish() moves an
 //                            alternate into `invited` when an invitee is dropped for transit.
@@ -81,6 +84,7 @@ module candidate_pool {
   type Week = {
     phase: str,                       // "idle", "sessions", "offers", "repeats", "new"
     taken: Set[str], used: Set[str],
+    detected: Set[Crew],              // crews that detectCrews found this week (its own inCrew set)
     sessionsDone: Set[Crew], outcomesDone: Set[str], repeatsDone: Set[str],
     crewCount: str -> int,            // crews (session or offer) this member is in this week
     partnerCount: str -> int,
@@ -100,7 +104,7 @@ module candidate_pool {
     partnerMinor: bool, partnerBlocked: bool, partnerOverCap: bool,
     crewTwice: bool,
   }
-  type Count = { scores: int, intros: int, romanceIntros: int, groups: int, sessions: int, offers: int, repeats: int, plans: int, partners: int, weeks: int }
+  type Count = { scores: int, intros: int, romanceIntros: int, groups: int, sessions: int, offers: int, repeats: int, plans: int, pairPlans: int, partners: int, weeks: int }
 
   // ------------------------------------------------------------------ state
   var pack: str
@@ -129,7 +133,7 @@ module candidate_pool {
   pure def anyIn(s: Set[str], f: str -> bool): bool = s.exists(x => f.get(x))
 
   pure val emptyWeek: Week = {
-    phase: "idle", taken: Set(), used: Set(), sessionsDone: Set(), outcomesDone: Set(), repeatsDone: Set(),
+    phase: "idle", taken: Set(), used: Set(), detected: Set(), sessionsDone: Set(), outcomesDone: Set(), repeatsDone: Set(),
     crewCount: MEMBERS.mapBy(m => 0), partnerCount: MEMBERS.mapBy(m => 0),
   }
   pure val noHist: Hist = {
@@ -146,7 +150,7 @@ module candidate_pool {
   }
 
   // filters.ts memberReason core prefix (minors, holds) plus the pack rule for the lane: networkPack
-  // romance_opt_out (packs/network/rules.ts:15), friendsPack romance_excluded (packs/friends/rules.ts).
+  // romance_opt_out (packs/network/rules.ts:20), friendsPack romance_excluded (packs/friends/rules.ts).
   def memberOk(m: str, lane: str): bool = all {
     not(minor.get(m)), not(held.get(m)),
     lane == "romance" implies (pack == "network" and optIn.get(m)),
@@ -162,8 +166,8 @@ module candidate_pool {
   // complementarity.ts romanceMutual: both opted in (the orientation and age-range checks are an oracle
   // that can only remove).
   def romanceMutual(x: str, y: str): bool = optIn.get(x) and optIn.get(y)
-  // The pack ontology mutualPreferenceMatch that complementarity.ts:72 satisfy calls: networkPack uses
-  // romanceMutual (packs/network/ontology.ts:72), friendsPack is always false (packs/friends/index.ts:88).
+  // The pack ontology mutualPreferenceMatch that complementarity.ts:71 satisfy calls: networkPack uses
+  // romanceMutual (packs/network/ontology.ts:72), friendsPack is always false (packs/friends/index.ts:89).
   def romanceSat(x: str, y: str): bool = if (pack == "network") romanceMutual(x, y) else false
   // plans.ts planMemberReason, as the planner's `eligible` (planner.ts:192): not a minor, no hold.
   def planEligible(m: str): bool = not(minor.get(m)) and not(held.get(m))
@@ -185,7 +189,7 @@ module candidate_pool {
     offered' = Set(),
     outcomes' = Set({ id: "o1", act: "dinner", attended: Set("a", "d", "e", "f"), positive: Set("a", "d", "e") }),
     wk' = emptyWeek, h' = noHist,
-    n' = { scores: 0, intros: 0, romanceIntros: 0, groups: 0, sessions: 0, offers: 0, repeats: 0, plans: 0, partners: 0, weeks: 0 },
+    n' = { scores: 0, intros: 0, romanceIntros: 0, groups: 0, sessions: 0, offers: 0, repeats: 0, plans: 0, pairPlans: 0, partners: 0, weeks: 0 },
     lastAction' = "init",
   }
   action init = {
@@ -251,11 +255,11 @@ module candidate_pool {
     val involved = if (useVia) Set(a, b, v) else Set(a, b)
     all {
       a != NO_ONE, pool.contains(b),
-      not(involved.exists(m => minor.get(m))),          // filters.ts:173 involvesMinor
-      viaOk,                                            // filters.ts:176-182
-      memberOk(a, lane), memberOk(b, lane),             // filters.ts:183-191 memberReason
-      pairOk(a, b, lane),                               // filters.ts:192-195 pairReason
-      city.get(a) == city.get(b),                       // filters.ts:201 presence overlap (geo.ts overlap)
+      not(involved.exists(m => minor.get(m))),          // filters.ts:175 involvesMinor
+      viaOk,                                            // filters.ts:178-184
+      memberOk(a, lane), memberOk(b, lane),             // filters.ts:185-193 memberReason
+      pairOk(a, b, lane),                               // filters.ts:194-197 pairReason
+      city.get(a) == city.get(b),                       // filters.ts:203-209 presence overlap (geo.ts overlap)
       // complementarity.ts satisfy: a romance want scores SAT.romance only when romanceMutual holds.
       val romanceScore = lane == "romance" and romanceSat(a, b)
       all {
@@ -274,7 +278,7 @@ module candidate_pool {
     }
   }
 
-  // complementarity.ts:108 complementarity: the score of a pool pair, with no hard filter before it
+  // complementarity.ts:124 complementarity: the score of a pool pair, with no hard filter before it
   // (ranking runs on the pool, and the hard gate comes later). A romance want scores SAT.romance
   // only when the ontology says that both sides admit each other. This is the only gate on the
   // score, so romanceScoredOneSided depends on romanceSat alone.
@@ -291,7 +295,9 @@ module candidate_pool {
   // maxSize; `complete` needs minSize) with a common city (overlap). Alternates (group.ts:137-146):
   // each is compatible with each primary member and in the group's city. Then candidateReason
   // (group_size for friends, involvesMinor, memberReason, pairReason over participants), and the
-  // ConsentNetwork distinctAlternates (network.ts:3962): `kept` is its result.
+  // ConsentNetwork distinctAlternates (network.ts:4271): `kept` is its result. distinctAlternates also
+  // drops a member with unknown age or a minor signal (here: minor) and a second person with the same
+  // first name as someone already in it (an oracle here), so any alternate can be dropped.
   action composeGroup(lane: str, primary: Set[str], alts: Set[str], kept: Set[str]): bool = {
     val cand = pool.filter(m => not(minor.get(m)))
     all {
@@ -303,10 +309,10 @@ module candidate_pool {
       // candidateReason
       not(primary.union(alts).exists(m => minor.get(m))),
       primary.forall(m => memberOk(m, lane)),
-      // distinctAlternates: drops minors and anyone blocked with a participant or a kept alternate.
+      // distinctAlternates: drops minors, anyone blocked with a participant or a kept alternate, and
+      // first-name duplicates (any other alternate, an oracle).
       kept.subseteq(alts), kept.forall(m => not(minor.get(m))),
       crossOk(blocked, primary, kept), pairwiseOk(blocked, kept),
-      alts.exclude(kept).forall(m => minor.get(m) or not(crossOk(blocked, primary.union(kept), Set(m)))),
       h' = { ...h,
         groupMinor: h.groupMinor or primary.union(alts).exists(m => minor.get(m)),
         groupBlocked: h.groupBlocked or not(pairwiseOk(blocked, primary)),
@@ -365,11 +371,13 @@ module candidate_pool {
     }
   }
 
-  // Pass 2 (planner.ts:266-279, plans.ts:675 detectCrews with minPlans 1): the positive members of a
-  // recent outcome who are not in a crew (live or offered) of that activity; then filter eligible and
-  // not taken; at least minMembers (3); finish() keeps `invited` (quorum 3) or refuses.
+  // Pass 2 (planner.ts:266-279, plans.ts:662 detectCrews with minPlans 1): the positive members of a
+  // recent outcome who are not in a crew (live or offered at the start of the week) of that activity,
+  // and not in a crew that detectCrews found this week (`detected`: its inCrew set grows by every crew
+  // it finds, also one that the planner then skips); then filter eligible and not taken; at least
+  // minMembers (3); finish() keeps `invited` (quorum 3) or refuses.
   action crewOffer(o: Outcome, invited: Set[str], refused: bool): bool = {
-    val inCrew = crews.union(offered).filter(c => c.act == o.act).fold(Set(), (s, c) => s.union(c.members))
+    val inCrew = crews.union(offered).union(wk.detected).filter(c => c.act == o.act).fold(Set(), (s, c) => s.union(c.members))
     val pos = o.positive.exclude(inCrew)
     val members = pos.filter(m => planEligible(m) and not(wk.taken.contains(m)))
     val ok = not(refused) and pos.size() >= MIN_G and members.size() >= MIN_G
@@ -377,6 +385,7 @@ module candidate_pool {
       wk.phase == "offers", outcomes.contains(o), not(wk.outcomesDone.contains(o.id)),
       if (ok) all { invited.subseteq(members), invited.size() >= MIN_G } else invited == Set(),
       wk' = { ...wk, outcomesDone: wk.outcomesDone.union(Set(o.id)), taken: wk.taken.union(invited),
+              detected: if (pos.size() >= MIN_G) wk.detected.union(Set({ act: o.act, members: pos })) else wk.detected,
               // The offered crew is c2 (all `members`), so every member of it is in that crew this week.
               crewCount: if (ok) MEMBERS.mapBy(m => wk.crewCount.get(m) + (if (members.contains(m)) 1 else 0)) else wk.crewCount },
       offered' = if (ok) offered.union(Set({ act: o.act, members: members })) else offered,
@@ -426,25 +435,26 @@ module candidate_pool {
   }
 
   // Pass 4 (planner.ts:324-410 tables and run): the pool is eligible members not `used` (busy is empty
-  // with spreadNew=false); scorePlanGroup is null for a -Infinity pair (plans.ts:173), so the whole
+  // with spreadNew=false); scorePlanGroup is null for a -Infinity pair (plans.ts:176), so the whole
   // table (primary and alternates) is pairwise compatible; primary MIN_G..MAX_G (slice to size.max);
-  // finish() keeps at least size.min invitees; used += invited + alternates.
-  action newPlan(primary: Set[str], alts: Set[str]): bool = {
+  // finish() keeps at least size.min invitees; used += invited + alternates. `partner`: run() gives a
+  // partner plan of two with no alternates (planProposals partnerPlans; finish() quorum 2).
+  action newPlan(primary: Set[str], alts: Set[str], partner: bool): bool = {
     val cand = MEMBERS.filter(m => planEligible(m) and not(wk.used.contains(m)))
     val g = primary.union(alts)
     all {
       wk.phase == "new",
       primary.subseteq(cand), alts.subseteq(cand.exclude(primary)),
-      primary.size() >= MIN_G, primary.size() <= MAX_G,
+      if (partner) primary.size() == 2 and alts == Set() else primary.size() >= MIN_G and primary.size() <= MAX_G,
       g.forall(x => g.forall(y => x == y or compat(x, y, "social"))),
       wk' = { ...wk, used: wk.used.union(g) },
       h' = { ...h,
         planMinor: h.planMinor or g.exists(m => minor.get(m)),
         planBlocked: h.planBlocked or not(pairwiseOk(blocked, g)),
-        planSizeBad: h.planSizeBad or primary.size() < MIN_G or primary.size() > MAX_G,
+        planSizeBad: h.planSizeBad or (if (partner) primary.size() != 2 else (primary.size() < MIN_G or primary.size() > MAX_G)),
         planSeatTwice: h.planSeatTwice or g.exists(m => wk.used.contains(m)),
       },
-      n' = { ...n, plans: n.plans + 1 },
+      n' = { ...n, plans: n.plans + 1, pairPlans: n.pairPlans + (if (partner) 1 else 0) },
       crews' = crews, offered' = offered, outcomes' = outcomes,
       keepWorld, keepPool, lastAction' = "newPlan",
     }
@@ -521,7 +531,6 @@ module candidate_pool {
       .filter(y => p.forall(x => compat(x, y, lane) and city.get(x) == city.get(y)))
   def keptOk(p: Set[str], alts: Set[str], k: Set[str]): bool = all {
     crossOk(blocked, p, k), pairwiseOk(blocked, k),
-    alts.exclude(k).forall(m => minor.get(m) or not(crossOk(blocked, p.union(k), Set(m)))),
   }
   action composeGuided(lane: str): bool = {
     val ps = validPrimaries(lane)
@@ -575,8 +584,9 @@ module candidate_pool {
       crewOffer(o, s1, r),
       repeatPlan(o, repeatPos(o), repeatAlts(o), Set(), Set()),
       repeatPlan(o, s1, s2, s3, s4),
-      newPlan(s1, s2),
-      newPlan(s3.filter(m => planEligible(m)), Set()),
+      newPlan(s1, s2, false),
+      newPlan(s3.filter(m => planEligible(m)), Set(), false),
+      newPlan(s1, Set(), true),
       partnerPlan(x, y),
       crewOptIn(off, s1),
       meetup(oid, act, s1, s2),
@@ -586,28 +596,28 @@ module candidate_pool {
 
   // ------------------------------------------------------------------ invariants
   // AGENTS.md code invariants (age policy) and platform decision 1: minors (13-17) are never matched or
-  // connected, in any app. retrieval.ts:27 eligibleMembers (memberReason underage), filters.ts:173
+  // connected, in any app. retrieval.ts:27 eligibleMembers (memberReason underage), filters.ts:175
   // involvesMinor (participants, alternates, via), group.ts:82-83, planner.ts:192 `eligible`.
   val noMinorEnters = not(h.poolUnsafe or h.introMinor or h.groupMinor or h.sessionMinor or h.offerMinor
                           or h.repeatMinor or h.planMinor or h.partnerMinor)
   // AGENTS.md hard rule "blocks" (PRD 40, keep every safety guard): a blocked pair is never put together.
-  // filters.ts:72 pairReason (blocks win), group.ts:32 makeCompat, plans.ts:173 scorePlanGroup,
-  // network.ts:3969 distinctAlternates. The engine-level gaps are the values below `safety`.
+  // filters.ts:71-73 pairReason (blocks win), group.ts:32 makeCompat, plans.ts:176 scorePlanGroup,
+  // network.ts:4279 distinctAlternates. The engine-level gaps are the values below `safety`.
   val blockedApart = not(h.introBlocked or h.introViaUnsafe or h.groupBlocked or h.groupAltBlockedWithPrimary
                          or h.submittedBlocked or h.planBlocked or h.partnerBlocked)
-  // Romance needs mutual opt-in: packs/network/rules.ts:78 romance_incompatible, rules.ts:15
-  // romance_opt_out, complementarity.ts:64 romanceMutual (the score gate, also for a pool pair that
+  // Romance needs mutual opt-in: packs/network/rules.ts:67-69 romance_incompatible, rules.ts:20
+  // romance_opt_out, complementarity.ts:63 romanceMutual (the score gate, also for a pool pair that
   // no hard filter saw: scorePair); friends.help never matches romance
   // (packs/friends/rules.ts romance_excluded).
   val romanceMutualOptIn = not(h.introRomanceOneSided or h.romanceScoredOneSided or h.groupRomanceOneSided or h.friendsRomance)
-  // geo.ts cityBucketGeo overlap: members meet only in one common city (filters.ts:201, group.ts:62-64).
+  // geo.ts cityBucketGeo overlap: members meet only in one common city (filters.ts:207, group.ts:62-64).
   val coLocated = not(h.introApart or h.groupApart)
   // packs/friends/rules.ts group_size (3..6, scaled to MIN_G..MAX_G), FRIENDS_PLANS.size, planner.ts
   // finish() (repeat quorum, `invited.length < pcfg.size.min` for new plans), group.ts minSize/maxSize.
   val groupSizeBounds = not(h.groupSizeBad or h.offerSizeBad or h.repeatSizeBad or h.planSizeBad)
   // One crew per member per week, the part that holds: a crew offer never invites a member who is
   // already taken this week (planner.ts:269 `!taken.has(id)`); new plans never seat a member twice
-  // (planner.ts:326 and 405 `used`); partner intros keep partnerIntros (planner.ts:456).
+  // (planner.ts:326, 389 and 407 `used`); partner intros keep partnerIntros (planner.ts:456).
   val seatsOnce = not(h.offerInvitedTwice or h.planSeatTwice or h.partnerOverCap)
 
   val safety = all { noMinorEnters, blockedApart, romanceMutualOptIn, coLocated, groupSizeBounds, seatsOnce }
@@ -629,6 +639,7 @@ module candidate_pool {
   val witness_offer = n.offers == 0
   val witness_repeat = n.repeats == 0
   val witness_plan = n.plans == 0
+  val witness_pairPlan = n.pairPlans == 0
   val witness_partner = n.partners == 0
 
   // ------------------------------------------------------------------ run tests
@@ -730,9 +741,9 @@ module candidate_pool {
   // A new table of four, then the same members cannot get a second table this week.
   run newPlanTest = initWith("friends")
     .then(startWeek).then(nextPhase).then(nextPhase).then(nextPhase)
-    .then(newPlan(Set("a", "b", "c", "d"), Set("e")))
+    .then(newPlan(Set("a", "b", "c", "d"), Set("e"), false))
     .expect(n.plans == 1 and safety)
-    .then(newPlan(Set("a", "e", "f"), Set()))
+    .then(newPlan(Set("a", "e", "f"), Set(), false))
     .fail()
 
   // The friends pack never makes a romance intro.

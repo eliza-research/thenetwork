@@ -27,11 +27,17 @@
 //     the same way, over the budget window of the member's state; here there is one state).
 //   - The core pair prefix (filters.ts pairReason: duplicate, underage, blocked) is NOT in this model.
 //     So romanceAdultsOnly checks that romancePairReason refuses a minor by itself (defense in depth).
-//   - One market: mutualMarkets has at most one entry, so the radius decision is marketMutual.
+//   - One market: mutualMarkets has at most one entry, so the radius decision is marketMutual. Both
+//     members are known and have a limit (radiusPairReason unknown_member and distance_unknown are not here).
+//   - A pair decline stands for every cooling outcome of the pair (coolingOutcome: declined, expired,
+//     cancelled; network.ts closes an item with at = the close time). A send decline stands for a
+//     declined or an expired item (world.ts memberCategoryDeclines keeps the latest `at`).
+//   - `admits` is romanceAdmits (age range and orientation) as one fixed fact per direction.
 //
 // OUTSIDE THE MODEL
-//   - Quotas, only-when-asked, the reliability holdout, dealbreakers and active duplicates: the same
-//     shape of decision (proved in rulesCore.ts), not repeated here.
+//   - Quotas, the contribution budget, only-when-asked, the reliability holdout, the negative feedback
+//     cooldown, romance.requireStatedPrefs, dealbreakers and active duplicates: the same shape of
+//     decision (proved in rulesCore.ts), not repeated here.
 //   - The distance arithmetic (cellMiles) and the review queue.
 module engine_rules {
 

@@ -298,7 +298,10 @@ module join_flow {
     else if (m.marker != "" and m.marker != c)
       (if (current) send(resetAccount({ ...s, sh: { ...s.sh, profileBusy: true } }), KMeReroute, "", NO_FIELDS) else s)
     else if (s.srv.refused.contains(c)) (if (current) dispatch(s, Refused) else s)
-    else if (s.srv.members.contains(c)) s
+    // A member who is not refused gets ok with the existing membership (accounts.ts joinLocked,
+    // joinPlan "existing"), so the page takes it as a join: generation++, then joined.
+    else if (s.srv.members.contains(c))
+      (if (current) dispatch({ ...s, sh: { ...s.sh, generation: s.sh.generation + 1 } }, Joined) else s)
     else
       val s1 = { ...s, srv: { ...s.srv, members: s.srv.members.union(Set(c)) },
                        hist: { ...s.hist, joinedAs: c, joinedFor: m.ctx.account } }

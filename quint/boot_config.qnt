@@ -32,6 +32,9 @@
 //   - The OTP provider check (otp-config.ts otpConfigProblems) is one boolean: otpOk.
 //   - The two database URLs are one boolean: db (NETWORK_DATABASE_URL or DATABASE_URL is set).
 //   - The PLATFORM_DEV_* switches are one boolean: devSwitch (at least one is set to a value).
+//   - NETWORK_REVIEW_MODE: Unset (not in the environment), Human ("human"), Auto (set to any other
+//     value, "" included: env-core.ts refuses reviewModeSet && reviewMode !== "human").
+//   - TURNSTILE_SECRET_KEY is one boolean: turnstile (set and not ""; no length rule in env-core.ts).
 //   - The problem texts are outside the model; only "no problem" matters for the gate.
 //
 // OUTSIDE THE MODEL

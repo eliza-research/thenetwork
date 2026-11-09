@@ -4,32 +4,35 @@
 // slop-review-hold (M-056), safety-case (M-127), pending-safety-who (M-128). journey-help (M-183) has no
 // state in the Network (HELP returns before any safety state changes), so it is not modelled.
 //
-// The model follows the code on branch wave2/safety_trust (the fixes f8d9de8..49602b7):
+// The model follows the code on branch wave2/safety_trust (the fixes f8d9de8..49602b7). Line numbers below are
+// at formal-main; other "<file>:<line>" references in the body are lines at wave2/safety_trust (the function
+// names are the anchors):
 //   packages/network/src/trust.ts            add 83 (a points event restarts the decay clock, SD-141), block 99,
-//                                            report 113, lift 60, decay 125
+//                                            report 113, lift 60, decay 125; nextLevel, reportCounts,
+//                                            reportPoints, decayedScore and staffHoldPoints in transitions.ts
 //   packages/network/src/reports.ts          report kinds, URGENT_REPORTS, checkInReport (an oracle here; the
 //                                            corpus evals/network/check-in-reports.jsonl checks it, SD-067)
-//   packages/network/src/network.ts          onTrustChange 1192, caseEvent 1213, liftHold 1248, closeCase 1258,
-//                                            fileReport 1284, reportHeld 1300 (a held reporter holds nobody,
-//                                            SD-072), holdMember 1316, markBanned 1332, dismissReport 1346,
-//                                            metBefore 1394 (bookedTold, SD-044), handleBlock 1412, applyBlock 1428,
-//                                            blockAndReport 1443 (SD-229), callOffPair 1469 (SD-045, SD-025),
-//                                            counterparts 1488, safetyTargetAt 1549 (SD-250), answerWho 1571,
-//                                            minorReported 1593, dropMember 2607, onFeedback 2636 (record `by`,
+//   packages/network/src/network.ts          onTrustChange 1257, caseEvent 1278, liftHold 1313, closeCase 1323,
+//                                            fileReport 1349, reportHeld 1365 (a held reporter holds nobody,
+//                                            SD-072), holdMember 1381, markBanned 1396, dismissReport 1409,
+//                                            metBefore 1457 (bookedTold, SD-044), handleBlock 1475, applyBlock 1491,
+//                                            blockAndReport 1506 (SD-229), callOffPair 1532 (SD-045, SD-025),
+//                                            counterparts 1551, safetyTargetAt 1612 (SD-250), answerWho 1634,
+//                                            minorReported 1656, dropMember 2756, onFeedback 2786 (record `by`,
 //                                            the meeting time and the bookedTold people, SD-222, SD-442, SD-044;
 //                                            postDateReports),
-//                                            checkInReported 2687, lateCheckInReport 2698 (SD-220), forget 916,
-//                                            tick 3326 (personHold, callOffPair on snapshot blocks, decay 3358),
-//                                            syncMember/personHold/safetyHeld 4497-4514 (SD-021, SD-022),
-//                                            RelayHost.severeBlock 4850 (SD-254)
-//   packages/network/service/service.ts      route 980 (a block/report text goes to the app of the newest
-//                                            meeting, SD-250), forget 821 (leave writes a person hold, SD-021),
-//                                            liftHold 1562, hold 1720 (person_holds row first, SD-022), ban
+//                                            checkInReported 2845, lateCheckInReport 2856 (SD-220), forget 965,
+//                                            tick 3523 (personHold, callOffPair on snapshot blocks, decay 3559),
+//                                            syncMember/personHold/safetyHeld 4782-4799 (SD-021, SD-022),
+//                                            RelayHost.severeBlock 5154 (SD-254)
+//   packages/network/service/service.ts      route 1085 (a block/report text goes to the app of the newest
+//                                            meeting, SD-250), forget 921 (leave writes a person hold, SD-021),
+//                                            liftHold 1793, hold 1943 (person_holds row first, SD-022), ban 2010
 //   packages/network/service/packs.ts        peonHooks postDateReports (SD-221)
-//   packages/network/service/runtime.ts      send kind 430 (meta.safety is the "safety" kind, SD-475),
-//                                            person_blocks write
-//   packages/network/service/snapshot.ts     person_holds -> member.safetyHold
-//   packages/network/src/relay.ts            RelayDesk.apply 236-246 (a severe block calls severeBlock)
+//   packages/network/service/runtime.ts      send kind 466 (meta.safety is the "safety" kind, SD-475),
+//                                            person_blocks write 578
+//   packages/network/service/snapshot.ts     person_holds -> member.safetyHold (122)
+//   packages/network/src/relay.ts            RelayDesk.apply 244-252 (a severe block calls severeBlock)
 //   packages/engine/src/packs/slop/rules.ts  reviewReason (trust_review; SD-027 is skipped)
 //   packages/engine/src/packs/slop/profile.ts histories 232-260 (a record with `by` counts for that member only)
 //
@@ -579,7 +582,9 @@ module safety_trust {
       s' = { ...s,
         personHolds: rows,
         trust: s.trust.set(m, { ...t, score: 0, level: "ok", reportsFrom: Set(), lastDecay: s.now }),
-        caseSt: s.caseSt.set(m, if (s.caseSt.get(m) == "closed" or s.caseSt.get(m) == "none") "open" else "lifted"),
+        // trust.lift's hold_lifted event opens a case when none is open (caseEvent), and liftHold then marks
+        // the open case "lifted" (formal-main network.ts:1313-1317): the case always ends "lifted".
+        caseSt: s.caseSt.set(m, "lifted"),
         heldMids: s.heldMids.exclude(Set(m)),
         liftedMids: s.liftedMids.union(Set(m)),
         staffHeldP: s.staffHeldP.exclude(Set(m.p)),

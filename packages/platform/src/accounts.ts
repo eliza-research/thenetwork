@@ -369,7 +369,11 @@ export class Accounts {
       stated: validAge(input.age) ? input.age : null, lowest: (await this.lowestAge(who.e164, person)) ?? null, minJoinAge: app.minJoinAge,
     });
     // Every exit keeps the age it was told. A real join records it below, once the person exists.
-    if (plan.recordAge && plan.step !== "join") await this.recordAge(who.e164, person, input.age);
+    if (plan.recordAge && plan.step !== "join") {
+      await this.recordAge(who.e164, person, input.age);
+      // An age under 13 on any exit (invite_only, consent_wording, existing) declines the person on every app.
+      if (plan.step !== "under_age") await this.declineUnderAge(who.e164, person);
+    }
     if (plan.step === "under_age") {
       // Nothing is stored for this app: only the age, on the phone's age floor (and the person, if any).
       // Under 13 also removes every membership and the pending text join (declineUnderAge).

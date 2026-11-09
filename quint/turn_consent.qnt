@@ -190,23 +190,29 @@ module turn_consent {
         val e = { app: "", state: "out", at: cat, seq: 0, ref: m, src: "stop" }
         val wd1 = addConsent(wd, e)
         // Under a phone hold, memberOf and personFor are undefined: the STOP reaches the ledger only.
-        { wd: { ...wd1, named: if (wd1.seq > wd.seq) wd1.named.put(m, a) else wd1.named }, gh: addIntent(gh, wd, e),
+        // service.ts stop: deletePending(phoneKey) after the write: a pending join of any app ends.
+        { wd: { ...wd1, named: if (wd1.seq > wd.seq) wd1.named.put(m, a) else wd1.named, pendingJoin: "" }, gh: addIntent(gh, wd, e),
           wk: { ...wk, app: a, phase: 1, todo: if (isHeld) Set() else APPS.filter(x => live(wd, x)),
                 consent: { has: true, state: "out", scope: "all", app: "", at: cat }, conf: true } }
-      } else if (wk.phase == 1 and wk.todo.size() > 0) {
-        // service.ts stopped() and the routed member's unit, one unit of work per member: membership paused, member
-        // opted out. SD-104 fix: an app whose ledger reads opted in (an older STOP that arrived late) stays as it is.
+      } else if (wk.phase == 1) {
+        // service.ts stop: the confirmation is collected before stopped() runs: the routed member's unit (memberMessage
+        // with the STOP keyword; it opts that network member out in the same unit, unless the app's ledger reads opted
+        // in), or direct for a non-member.
+        val routedOut = wk.todo.contains(a) and resolve(wd.ledger, a) != "in"
+        { wd: if (routedOut) { ...wd, optOut: wd.optOut.set(a, true) } else wd, gh: gh,
+          wk: { ...wk, phase: if (wk.todo.size() > 0) 2 else 9, replies: wk.replies.union(Set("compliance")) } }
+      } else {
+        // service.ts stopped(), one membership at a time: membership paused, member opted out. SD-104 fix: an app whose
+        // ledger reads opted in (an older STOP that arrived late) stays as it is.
         val x = if (wk.todo.contains("A")) "A" else "B"
-        if (resolve(wd.ledger, x) == "in") { wd: wd, gh: gh, wk: { ...wk, todo: wk.todo.exclude(Set(x)) } }
+        val rest = wk.todo.exclude(Set(x))
+        if (resolve(wd.ledger, x) == "in") { wd: wd, gh: gh, wk: { ...wk, todo: rest, phase: if (rest.size() > 0) 2 else 9 } }
         else {
           { wd: { ...wd,
                   member: if (wd.member.get(x) == "active") wd.member.set(x, "paused") else wd.member,
                   optOut: wd.optOut.set(x, true) },
-            gh: gh, wk: { ...wk, todo: wk.todo.exclude(Set(x)) } }
+            gh: gh, wk: { ...wk, todo: rest, phase: if (rest.size() > 0) 2 else 9 } }
         }
-      } else {
-        // service.ts stop: the confirmation is collected (memberMessage or direct).
-        { wd: wd, gh: gh, wk: { ...wk, phase: 9, replies: wk.replies.union(Set("compliance")) } }
       }
     } else if (msg.kind == "Start") {
       if (isHeld or isBanned) {
@@ -215,6 +221,9 @@ module turn_consent {
       } else if (live(wd, a)) {
         if (wk.phase == 0) {
           // recordConsent(app, opted_in, at = receivedAt, ref).
+          // OPEN DRIFT (not modelled): service.ts startKeyword sets turn.consent right after this write, before the
+          // membership and the member are resumed; a throw between them is rescued as handled with the opt-in and the
+          // membership stays paused (projectionsConverge fails). This model sets the consent with the projections.
           val e = { app: a, state: "in", at: cat, seq: 0, ref: m, src: "start" }
           { wd: addConsent(wd, e), gh: addIntent(gh, wd, e), wk: { ...wk, app: a, phase: 1 } }
         } else if (resolve(wd.ledger, a) != "in") {
@@ -240,9 +249,10 @@ module turn_consent {
       }
     } else if (msg.kind == "Help") {
       { wd: wd, gh: gh, wk: { ...wk, app: a, phase: 9, replies: wk.replies.union(Set("compliance")) } }
-    } else if (msg.kind == "Leave" and not(isHeld)) {
+    } else if (msg.kind == "Leave") {
       // SD-314 fix: "leave <app>" leaves that app for a member and for a non-member alike; never a join. A ban does not
-      // stop it (the ban check comes after the leave).
+      // stop it (the ban check comes after the leave). A held number leaves too (service.ts inbound, the hold branch:
+      // the opt-out and the confirmation, consent is never held back), but nothing is forgotten: staff own the account.
       if (wk.phase == 0) {
         // SD-105 fix: accounts.leave / recordConsent(app, opted_out, at = consentAt, ref).
         val e = { app: a, state: "out", at: cat, seq: 0, ref: m, src: "leave" }
@@ -250,9 +260,9 @@ module turn_consent {
       } else if (wk.phase == 1) {
         // accounts.leave: onForget and forgetMembership only when the ledger does not read opted in (SD-105);
         // SD-490 fix: deletePending(join, app).
-        val forget = live(wd, a) and resolve(wd.ledger, a) != "in"
+        val forget = not(isHeld) and live(wd, a) and resolve(wd.ledger, a) != "in"
         { wd: { ...wd, member: if (forget) wd.member.set(a, "removed") else wd.member,
-                pendingJoin: if (wd.pendingJoin == a) "" else wd.pendingJoin },
+                pendingJoin: if (not(isHeld) and wd.pendingJoin == a) "" else wd.pendingJoin },
           gh: gh, wk: { ...wk, phase: 2 } }
       } else {
         // turn.consent (at = consentAt), turn.confirmation, the confirmation collected.
@@ -260,7 +270,7 @@ module turn_consent {
             consent: { has: true, state: "out", scope: "app", app: a, at: cat }, replies: wk.replies.union(Set("compliance")) } }
       }
     } else {
-      // Join, Chat, StopLikely (and a Leave from a held number).
+      // Join, Chat, StopLikely.
       val target = a
       if (isHeld) {
         // A held number gets nothing.
@@ -279,19 +289,22 @@ module turn_consent {
                   consent: if (ok) { has: true, state: "in", scope: "app", app: target, at: cat } else wk.consent,
                   replies: if (ok) wk.replies.union(Set("reply")) else wk.replies } }
         } else {
-          // The join ask; a stated age is kept in pending_texts (c2).
+          // The join ask; a stated age is kept in pending_texts (c2). collectGate (service.ts direct) refuses the ask when
+          // the app's ledger reads opted out; the hint goes instead.
           val h = hint(wd, target, t, isBanned)
+          val ask = if (isOut(wd.ledger, target)) Set() else Set("reply")
           { wd: { ...h.wd, pendingJoin: if (c2) target else h.wd.pendingJoin },
-            gh: gh, wk: { ...wk, app: a, phase: 9, replies: wk.replies.union(if (h.sent) Set("reply", "compliance") else Set("reply")) } }
+            gh: gh, wk: { ...wk, app: a, phase: 9, replies: wk.replies.union(ask).union(if (h.sent) Set("compliance") else Set()) } }
         }
       } else if (live(wd, target)) {
         if (isBanned) {
           // SD-073 fix: a banned member's text is not stored, handled or answered.
           { wd: wd, gh: gh, wk: { ...wk, app: a, phase: 9 } }
         } else {
-          // stopHint, then the member's unit of work. The Network answers only a member whose row is not opted out.
+          // stopHint, then the member's unit of work. The Network answers only a member whose row is not opted out, and
+          // collectGate (runtime.ts writeUnit) refuses its reply when the app's ledger reads opted out.
           val h = hint(wd, target, t, isBanned)
-          val netReply = c1 and not(wd.optOut.get(target))
+          val netReply = c1 and not(wd.optOut.get(target)) and not(isOut(wd.ledger, target))
           { wd: h.wd,
             gh: { ...gh, bannedReply: gh.bannedReply or (isBanned and netReply) },
             wk: { ...wk, app: a, phase: 9, open: not(netReply),
@@ -300,9 +313,10 @@ module turn_consent {
       } else if (isBanned) {
         { wd: wd, gh: gh, wk: { ...wk, app: a, phase: 9 } }
       } else {
-        // A non-member's text: the join ask, then stopHint.
+        // A non-member's text: the join ask (refused by collectGate when the app's ledger reads opted out), then stopHint.
         val h = hint(wd, target, t, isBanned)
-        { wd: h.wd, gh: gh, wk: { ...wk, app: a, phase: 9, replies: wk.replies.union(if (h.sent) Set("reply", "compliance") else Set("reply")) } }
+        val ask = if (isOut(wd.ledger, target)) Set() else Set("reply")
+        { wd: h.wd, gh: gh, wk: { ...wk, app: a, phase: 9, replies: wk.replies.union(ask).union(if (h.sent) Set("compliance") else Set()) } }
       }
     }
   }
@@ -320,8 +334,8 @@ module turn_consent {
   /** True when the next phase collects a reply into platform.inbound (Inbox.collect throws on a sealed row). */
   pure def collects(wd: World, wk: Worker, msg: Msg, isHeld: bool): bool = {
     val a = if (wk.phase == 0) routeApp(wd, msg) else wk.app
-    if (msg.kind == "Stop") wk.phase == 1 and wk.todo.size() == 0
-    else if (msg.kind == "Leave" and not(isHeld)) wk.phase == 2
+    if (msg.kind == "Stop") wk.phase == 1
+    else if (msg.kind == "Leave") wk.phase == 2
     else if (msg.kind == "Start" and live(wd, a)) wk.phase == 1
     else true
   }
@@ -448,7 +462,7 @@ module turn_consent {
         else { ...NORESP, kind: "err", err: "turn_unresolved", retry: false }
       // sharedTurn replay of an open turn (SD-313 fix): the current context when an open turn is still allowed
       // (sharedContext is taken as available on a replay); turn_context_changed only when it is not.
-      val ans2: Resp = if (ans.kind != "open") ans
+      val ans2: Resp = if (ans.kind != "open") admitted(w, ans)
         else if (openAllowed(ans.app)) { ...ans, ctx: w.ctx }
         else { ...NORESP, kind: "err", err: "turn_context_changed", retry: false }
       val d = deliverTo(w, g, ans2, m)
@@ -509,10 +523,22 @@ module turn_consent {
     now' = now, sent' = sent, gw' = gw, rows' = rows, w' = w, banned' = banned, held' = held,
   }
 
+  /**
+   * service.ts sharedTurn, storedTurnAdmitted: a handled answer (the first one or a replay) that holds a non-compliance
+   * reply goes out only while the number is still admitted (numberAllowed: no hold, no ban, the app's ledger not opted
+   * out); otherwise turn_context_changed, final. Banned and held numbers get no such reply in this model, so the ledger
+   * decides. The onboarding prompt (an unknown age) is outside the model.
+   */
+  pure def admitted(wd: World, resp: Resp): Resp =
+    if (resp.kind == "handled" and resp.replies.contains("reply") and isOut(wd.ledger, resp.app))
+      { ...NORESP, kind: "err", err: "turn_context_changed", retry: false }
+    else resp
+
   /** Send a run's answer to the gateway request that waits for that run, or lose it (the request timed out). */
-  pure def answer(gws: int -> Gw, wd: World, gh: Ghost, m: int, r: int, resp: Resp, lost: bool): { gws: int -> Gw, wd: World, gh: Ghost } =
+  pure def answer(gws: int -> Gw, wd: World, gh: Ghost, m: int, r: int, resp0: Resp, lost: bool): { gws: int -> Gw, wd: World, gh: Ghost } =
     if (lost or gws.get(m).st != "wait" or gws.get(m).rid != r) { gws: gws, wd: wd, gh: gh }
     else {
+      val resp = admitted(wd, resp0)
       val d = deliverTo(wd, gh, resp, m)
       { gws: gws.set(m, { ...gws.get(m), st: if (resp.kind == "err" and resp.retry) "call" else "final", ans: resp }),
         wd: if (resp.kind == "err") wd else d.wd, gh: if (resp.kind == "err") gh else d.gh }
@@ -567,7 +593,7 @@ module turn_consent {
     { rows: rows1,
       gws: a.gws, wd: a.wd,
       gh: { ...a.gh, echoBad: a.gh.echoBad or (partial and wk.consent.has and not(echoOk(readBy(wd, wk), wk.consent))),
-            cutShort: a.gh.cutShort or (partial and msg.kind == "Stop" and wk.phase == 1 and wk.todo.size() > 0) } }
+            cutShort: a.gh.cutShort or (partial and msg.kind == "Stop" and wk.todo.size() > 0) } }
   }
 
   action throwIn(r: int, lost: bool): bool = all {
@@ -881,13 +907,11 @@ module turn_consent {
    * noReplyAfterStop. Rule: service.ts stopHint and founder decision 2026-10-11 #22: after STOP only the hint and
    * confirmations go out. A non-compliance reply that a run decided after it had read an opted-out ledger is never
    * delivered past the fence. Signed path only (the legacy path never feeds the fence).
-   * NOT in `safety`: Q-turn_consent-5 (open, needs a maintainer design decision). The backend collects the join ask
-   * (service.ts inbound: "refused at send time"), and the Network's reply where the projection lags, for an app whose
-   * ledger the run read as opted out; it relies on the gateway fence. While the opt-out's own turn has not answered yet
-   * (it runs concurrently in the compliance slot, or it failed and the gateway retries it), the fence does not know the
-   * opt-out and the reply goes out. Closing it means filtering such replies in the backend instead of at the fence.
-   * The fence half of SD-029 and Q-turn_consent-1 (the fence never learns the opt-out) is fixed and checked by
-   * fenceMatchesLedger.
+   * Q-turn_consent-5 is closed in the backend: collectGate (decisions.ts; service.ts direct, runtime.ts writeUnit)
+   * refuses a non-compliance reply when the app's ledger reads opted out, and storedTurnAdmitted (service.ts
+   * sharedTurn) refuses a handled answer with such a reply when the ledger reads opted out at answer time. In the
+   * model the direct path's read and collect are one step (in the code they are two statements). The fence half of
+   * SD-029 and Q-turn_consent-1 (the fence never learns the opt-out) is checked by fenceMatchesLedger.
    */
   val noReplyAfterStop: bool = onlyGateway implies not(g.replyAfterStop)
 
@@ -935,6 +959,7 @@ module turn_consent {
     processingEnds,
     doneTurnAnswered,
     signalHasExit,
+    noReplyAfterStop,
   }
 
   // ------------------------------------------------------------------ witnesses (each must be reachable)
@@ -1278,19 +1303,20 @@ module turn_consent {
       .expect(gw.get(1).st == "final" and gw.get(1).ans.kind == "open" and gw.get(1).ans.ctx == 1 and doneTurnAnswered and safety)
 
   /**
-   * Q-turn_consent-1 (fixed): staff resolve a STOP's claim while its worker runs. The worker commits the STOP and its
-   * projections, the confirmation collect fails, and rescueCompliance still answers the committed consent.
+   * Q-turn_consent-1 (fixed): staff resolve a STOP's claim while its worker runs. The worker commits the STOP; the
+   * confirmation collect (the routed member's unit, before stopped()) fails, and rescueCompliance still answers the
+   * committed consent with the confirmation. The projections are cut short (Q-turn_consent-4, open).
    */
   run q1StopSealedWhileRunningTest =
     initWith("active", "none", false, false)
       .then(sendText(1, "Stop", "A", "gw"))
       .then(gwCall(1))
       .then(staffResolve(1))
-      .then(work(1, false, false)).then(work(1, false, false))
+      .then(work(1, false, false))
       .then(throwIn(1, false))
       .expect(and {
         gw.get(1).ans.kind == "handled", gw.get(1).ans.consent.scope == "all", gw.get(1).ans.replies.contains("compliance"),
-        isOut(w.ledger, "A"), isOut(w.fence, "A"), w.member.get("A") == "paused", fenceMatchesLedger, safety,
+        isOut(w.ledger, "A"), isOut(w.fence, "A"), w.member.get("A") == "active", g.cutShort, fenceMatchesLedger, safety,
       })
 
   /** Q-turn_consent-2 (fixed): a join answer handled after a newer STOP leaves the member paused and opted out, with no welcome. */
@@ -1359,8 +1385,8 @@ module turn_consent {
       .expect(gw.get(1).ans.consent.state == "out" and isOut(w.fence, "A") and fenceMatchesLedger and safety)
 
   /**
-   * Q-turn_consent-5 (open): a leave of A runs in the compliance slot beside a chat to A. The leave commits; the chat
-   * of the non-member now gets the join ask, which reaches the gateway before the leave's answer: the fence lets it go.
+   * Q-turn_consent-5 (closed by collectGate): a leave of A runs in the compliance slot beside a chat to A. The leave
+   * commits; the chat of the non-member gets no join ask (collectGate reads the opted-out ledger), only the hint.
    */
   run q5ReplyBeforeFenceTest =
     initWith("active", "none", false, false)
@@ -1369,5 +1395,26 @@ module turn_consent {
       .then(sendText(2, "Chat", "A", "gw"))
       .then(throwIn(1, false))
       .then(gwCall(2)).then(work(2, false, false)).then(complete(2, false, false))
-      .expect(gw.get(2).ans.replies.contains("reply") and isOut(w.ledger, "A") and not(isOut(w.fence, "A")) and not(noReplyAfterStop) and safety)
+      .expect(gw.get(2).ans.replies == Set("compliance") and isOut(w.ledger, "A") and not(isOut(w.fence, "A")) and noReplyAfterStop and safety)
+
+  /** Held number (service.ts inbound, hold branch): "leave A" records the app opt-out and its confirmation; nothing is forgotten. */
+  run heldLeaveTest =
+    initWith("active", "none", false, true)
+      .then(sendText(1, "Leave", "A", "gw"))
+      .then(gwCall(1)).then(work(1, false, false)).then(work(1, false, false)).then(work(1, false, false))
+      .then(complete(1, false, false))
+      .expect(and {
+        gw.get(1).ans.consent.state == "out", gw.get(1).ans.consent.scope == "app", gw.get(1).ans.replies == Set("compliance"),
+        isOut(w.ledger, "A"), isOut(w.fence, "A"), w.member.get("A") == "active", leaveNeverOptsIn, safety,
+      })
+
+  /** service.ts stop: deletePending(phoneKey): a STOP ends a pending join. */
+  run stopEndsPendingJoinTest =
+    initWith("none", "none", false, false)
+      .then(sendText(1, "Join", "A", "gw"))
+      .then(gwCall(1)).then(work(1, false, true)).then(complete(1, false, false))
+      .expect(w.pendingJoin == "A")
+      .then(sendText(2, "Stop", "A", "gw"))
+      .then(gwCall(2)).then(work(2, false, false)).then(work(2, false, false)).then(complete(2, false, false))
+      .expect(w.pendingJoin == "" and safety)
 }

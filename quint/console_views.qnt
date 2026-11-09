@@ -7,6 +7,7 @@
 //   The browser state of the member panel and the drawer in packages/observatory/web:
 //   - Detail reads (useLive in panels.tsx, Search in main.tsx). A read starts, the server answers
 //     late, out of order, more than once, or never. A dependency change cancels the reads that started.
+//     A credential change (authEpoch) also takes the data off the screen.
 //   - The photo gate (SlopPanel in panels.tsx). The rule comes from the last detail read that landed.
 //     The minor flag is the live store flag. A stated age can drop to a minor between two reads.
 //   - The drawer tab (shownTab in drawer.tsx). The saved tab and the viewer caps change.
@@ -40,7 +41,9 @@
 //   - The DOM, the text, fetch errors (a failed read is an answer that never comes), the 3 s reload
 //     gap (a key-change timer is one more read start), Search (it uses the same three functions as
 //     useLive; this model has one read gate).
-//   - durParts, rate and planView: no browser state machine. LemmaScript proves them.
+//   - durParts, rate, planCloses and planView: no browser state machine. LemmaScript proves them.
+//   - A photo answer for a SlopPanel that unmounted (authChange): React drops its setPhotos. The
+//     model drops the photo requests in flight at the unmount.
 //   - Strings in canPropose are person ids 1..3. Map<string, boolean> is a Quint Map.
 module console_views {
 
@@ -250,6 +253,24 @@ module console_views {
     drawerUnchanged, playUnchanged,
   }
 
+  // panels.tsx useLive, a credential change (store.authEpoch: another staff member, a 401): the view
+  // shaped for the old credential leaves the screen (`setD(undefined)`), so the member panel and its
+  // SlopPanel unmount (the photos go). authEpoch is also a dependency: the reads cancel and one starts.
+  action authChange = all {
+    gate.last < MAX_TICKET,
+    nondet r = RULES.oneOf()
+    val g1 = readStart(readCancel(readCancel(gate)))
+    all {
+      gate' = g1,
+      epoch' = epoch + 1,
+      inflight' = inflight.union(Set({ ticket: g1.last, epoch: epoch + 1, rule: r })),
+      hasData' = false, shown' = shown, lastLand' = lastLand,
+    },
+    photos' = { loaded: false, reqs: 0, trail: false },
+    members' = members, canSafety' = canSafety, opps' = opps,
+    drawerUnchanged, playUnchanged,
+  }
+
   // The server answers one read: late, out of order, and possibly more than once (`again`).
   // useLive: `const l = readLand(gate.current, ticket); gate.current = l.gate; if (l.show) setD(x)`.
   action readAnswer = all {
@@ -409,7 +430,7 @@ module console_views {
   }
 
   action step = any {
-    keyChangeRead, depChange, readAnswer, readLost,
+    keyChangeRead, depChange, authChange, readAnswer, readLost,
     storeChange, roleChange, photoAsk, photoAnswer,
     pickTab, capsChange,
     pick, clearPicks, gameChange, propose,
@@ -496,6 +517,8 @@ module console_views {
   // A read from before a dependency change comes back and does not show.
   val witness_cancelledReadDropped: bool =
     not(lastLand.landed and not(lastLand.show) and lastLand.startEpoch < lastLand.landEpoch)
+  // A credential change took the member panel off the screen.
+  val witness_authCleared: bool = not(not(hasData) and epoch > 0 and gate.last > 1)
   // A second read shows after a first one.
   val witness_secondReadShown: bool = not(lastLand.landed and lastLand.show and lastLand.before > 0)
   // The saved tab is hidden and the drawer falls back to the feed.

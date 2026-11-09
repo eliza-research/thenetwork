@@ -112,7 +112,7 @@ module chatjson_loop {
   }
 
   // Rule: "validate with `parse` (throw to reject)" (chatJson.ts tryChatJson doc). The loop returns a
-  // value only when `parse` returned it in the same attempt (chatJson.ts:75-76): the outcome of the
+  // value only when `parse` returned it in the same attempt (chatJson.ts:66 and 77): the outcome of the
   // last attempt is "valid", not only a field that the step sets.
   val okOnlyAfterValidation = match result {
     | Ok(r) => r.validated and lastOutcome == "valid"
@@ -130,7 +130,7 @@ module chatjson_loop {
   }
 
   // Rule: "Total wall time over all attempts in ms; each attempt gets what is left as its
-  // ChatOptions.deadlineMs" (chatJson.ts ChatJsonOptions.deadlineMs) and LLM_DEADLINE_MS (llm.ts:213).
+  // ChatOptions.deadlineMs" (chatJson.ts ChatJsonOptions.deadlineMs) and LLM_DEADLINE_MS (llm.ts:213-215 deadlineFor).
   // With a loop deadline: no call starts at or after it, and every call ends by it
   // (chatJson.ts:56-58 gate; llm.ts:246-278 per-call deadline).
   val deadlineStopsLoop = deadlineAt != NO_DEADLINE implies (not(lateStart) and callEndMax <= deadlineAt)
@@ -232,7 +232,7 @@ module chatjson_loop {
                 result' = Fail({ stopped: true, attempts: attempt + 1, errorSet: true, why: code }),
                 attempt' = attempt, grown' = grown,
               } else if (after == "exhausted") all {
-                // grow runs, then break; the shell returns the configured attempts (chatJson.ts:79).
+                // grow runs, then break; the shell returns the configured attempts (chatJson.ts:73 and 79).
                 result' = Fail({ stopped: false, attempts: cfgAttempts, errorSet: true, why: "exhausted" }),
                 attempt' = attempt, grown' = grown + 1,
               } else all {

@@ -299,8 +299,10 @@ module opportunity {
     // onRefused (SD-249, skipped); it carries the meeting time (SD-248).
     val s4 = still.foldl(s3, (acc, p) =>
       if (not(op(acc, o).bookedTold.contains(p))) acc else sendNotice(acc, p, "drop_notice", o, env))
-    // A pair: keep is false, so the opportunity closes on handleDrop's own path (not close()).
-    val keep = op(s4, o).parts.size() > 2 and still.length() >= 2
+    // network.ts:2693: a group stays on only with 3 or more still going ("two who are left said yes to a
+    // group, not to a meeting of two"). A pair: keep is false, so the opportunity closes on handleDrop's own
+    // path (not close()).
+    val keep = still.length() >= 3
     if (keep) s4
     else {
       val s5 = putO(s4, o, { ...op(s4, o), closedFrom: op(s4, o).stage, closedReason: "participant dropped", stage: "closed", everTerminal: true })

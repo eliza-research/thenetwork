@@ -5,8 +5,8 @@
 //
 // WHAT THIS MODELS
 //   A. The saved-profile read (packages/network/service/profile-read.ts profileReadRequest, and the
-//      member unit in packages/network/service/service.ts route() and inbound, lines 964-965 and
-//      1244-1270). A text arrives from one person for one member unit. The shell turns the text into
+//      member unit in packages/network/service/service.ts route() and inbound, lines 1092-1093 and
+//      1443-1470). A text arrives from one person for one member unit. The shell turns the text into
 //      ReadFacts; readDecision (profile-core.ts) gives notRead, read, readApp, ambiguous or refused.
 //      The member unit then rechecks the sender: the sender's person has an active membership in the
 //      routed app, that membership is the member of the unit, and that member did not opt out.
@@ -15,7 +15,9 @@
 //      renderSuggestionReview, parseSuggestionReview and reviewSuggestionMessage). currentBatch
 //      (profile-core.ts) selects the batch that a member may see and answer. A decision also needs
 //      the token revision of the batch. An accept with a scope or an edit gives a preview with the
-//      next revision; a reject resolves the batch (store decide, profile-suggestions.ts).
+//      next revision; any other decision (a reject, or an accept with no change) is saved: the decided
+//      suggestion leaves the batch and the revision goes up (store decide, profile-suggestions.ts
+//      reviewPath; view() lists only the "proposed" rows, so a batch with no row left is not current).
 //   Each LemmaScript function in profile-core.ts is a pure def here with the same name and the same
 //   decision: readOnly, readDecision, sameOwner, suggestionOk, currentBatch. Each shell handler is an
 //   action that calls them and does not decide again.
@@ -24,7 +26,10 @@
 //
 // BOUNDS
 //   People 1 and 2. Apps SLOP and PEON (NONE is no app). Time 0..MAX_T. One batch at a time. Each
-//   suggestion row is two values: valid (id, text, source and kind) and observedAt.
+//   suggestion row is three values: valid (id, text, a known source and a known kind), calendar (the
+//   source is google_calendar: its observedAt can be in the future, SD-240) and observedAt. A batch has
+//   one representative row and a count. The owner is (person, app, chat); the user and organization
+//   binding of the store (profile-suggestions.ts batch()) is part of `person` here.
 //
 // RELATION TO quint/profile_learning.qnt (branch wave2/profile_learning)
 //   That model has the whole connector journey. It reads currentBatch as one predicate (renderable) and
@@ -43,6 +48,9 @@
 //     owner words) is the flag `own`.
 //   - The reply copy and savedProfileText. A shown profile is a record of whose membership it is.
 //   - The store transaction of decide (profile_learning.qnt has it).
+//   - The member unit answers a read only when the text is not a carrier keyword and does not come from
+//     the assistant (MCP source); otherwise the text goes to onInbound. Such texts are ROpen here.
+//   - Safe-integer flags (numbersSafe, observedSafe): the model has ideal integers.
 module profile_read {
 
   // ---------------------------------------------------------------- constants
@@ -78,8 +86,8 @@ module profile_read {
 
   // ---------------------------------------------------------------- core B (profile-core.ts)
   type Status = Pending | Resolved
-  type Owner = { person: int, chat: int }
-  type Suggestion = { valid: bool, observedAt: int }
+  type Owner = { person: int, app: App, chat: int }
+  type Suggestion = { valid: bool, calendar: bool, observedAt: int }
   type Batch = {
     status: Status,
     owner: Owner,
@@ -93,7 +101,8 @@ module profile_read {
 
   pure def sameOwner(b: Batch, o: Owner): bool = b.owner == o
 
-  pure def suggestionOk(s: Suggestion, now: int): bool = s.valid and s.observedAt <= now
+  // A Calendar event start can be in the future (the store accepts it); a Gmail time cannot (SD-240).
+  pure def suggestionOk(s: Suggestion, now: int): bool = s.valid and (s.calendar or s.observedAt <= now)
 
   pure def currentBatch(b: Batch, o: Owner, now: int): bool = and {
     b.status == Pending, sameOwner(b, o),
@@ -136,7 +145,7 @@ module profile_read {
   pure def routeOf(d: ReadDecision, asked: App, lineApp: App, dedicated: bool): App =
     if (dedicated) lineApp else if (d == ReadApp) asked else lineApp
 
-  // service.ts 1244-1270: the member unit. `memberOf` is the person that the unit's member id belongs to.
+  // service.ts 1443-1470: the member unit. `memberOf` is the person that the unit's member id belongs to.
   pure def answer(f: ReadFacts, sender: int, memberOf: int, asked: App, route: App,
                   mem: Set[(int, App)], out: Set[(int, App)]): ReadLog =
     val d = readDecision(f)
@@ -203,16 +212,18 @@ module profile_read {
   action propose = all {
     not(hasBatch) or batch.status == Resolved,
     nondet person = PEOPLE.oneOf()
+    nondet app = APPS.oneOf()
     nondet chat = Set(1, 2).oneOf()
     nondet ttl = Set(1, 2, 3).oneOf()
     nondet count = Set(0, 1, 2, 11).oneOf()
     nondet dup = Set(true, false).oneOf()
     nondet idOk = Set(true, false).oneOf()
     nondet valid = Set(true, false).oneOf()
+    nondet calendar = Set(true, false).oneOf()
     nondet obs = Set(clock - 1, clock, clock + 1).oneOf()
-    batch' = { status: Pending, owner: { person: person, chat: chat }, idOk: idOk, expiresAt: clock + ttl,
+    batch' = { status: Pending, owner: { person: person, app: app, chat: chat }, idOk: idOk, expiresAt: clock + ttl,
                revision: 1, count: count, distinctIds: if (dup and count > 1) count - 1 else count,
-               rows: if (count == 0) Set() else Set({ valid: valid, observedAt: obs }) },
+               rows: if (count == 0) Set() else Set({ valid: valid, calendar: calendar, observedAt: obs }) },
     hasBatch' = true,
     clock' = clock, members' = members, optedOut' = optedOut, reads' = reads, batchLog' = batchLog,
   }
@@ -225,8 +236,9 @@ module profile_read {
   action render = all {
     hasBatch,
     nondet person = PEOPLE.oneOf()
+    nondet app = APPS.oneOf()
     nondet chat = Set(1, 2).oneOf()
-    val o = { person: person, chat: chat }
+    val o = { person: person, app: app, chat: chat }
     all {
       currentBatch(batch, o, clock),
       batchLog' = batchLog.union(Set(logOf("render", batch, o, clock, true))),
@@ -238,14 +250,20 @@ module profile_read {
   action decide = all {
     hasBatch,
     nondet person = PEOPLE.oneOf()
+    nondet app = APPS.oneOf()
     nondet chat = Set(1, 2).oneOf()
     nondet tokenRev = Set(batch.revision - 1, batch.revision, batch.revision + 1).oneOf()
-    nondet kind = Set("preview", "reject").oneOf()
-    val o = { person: person, chat: chat }
+    nondet kind = Set("preview", "saved").oneOf()
+    val o = { person: person, app: app, chat: chat }
     val revMatch = tokenRev == batch.revision
+    // decide(): every path bumps the revision. "saved" (a reject, or an accept with no edit and no
+    // scope change) takes the decided suggestion out of the proposed rows.
+    val left = batch.count - 1
     all {
       currentBatch(batch, o, clock), revMatch,
-      batch' = if (kind == "preview") { ...batch, revision: batch.revision + 1 } else { ...batch, status: Resolved },
+      batch' = if (kind == "preview") { ...batch, revision: batch.revision + 1 }
+               else { ...batch, revision: batch.revision + 1, count: left, distinctIds: left,
+                      status: if (left == 0) Resolved else Pending },
       batchLog' = batchLog.union(Set(logOf(kind, batch, o, clock, revMatch))),
     },
     clock' = clock, members' = members, optedOut' = optedOut, reads' = reads, hasBatch' = hasBatch,
@@ -256,7 +274,7 @@ module profile_read {
     hasBatch' = hasBatch, batchLog' = batchLog,
   }
 
-  pure val NO_BATCH: Batch = { status: Resolved, owner: { person: 0, chat: 0 }, idOk: false, expiresAt: 0,
+  pure val NO_BATCH: Batch = { status: Resolved, owner: { person: 0, app: NONE, chat: 0 }, idOk: false, expiresAt: 0,
                                revision: 0, count: 0, distinctIds: 0, rows: Set() }
 
   action init = all {
@@ -274,7 +292,7 @@ module profile_read {
   // ---------------------------------------------------------------- invariants
   // Rule: a member may read only the profile saved for their own number (service.ts reply
   // "I can only show the profile saved for your own number"; profile-read.ts savedProfileText uses
-  // own.membership). Code: service.ts 1250-1265 own check; profile-core.ts readDecision.
+  // own.membership). Code: service.ts 1446-1456 own check; profile-core.ts readDecision.
   // LemmaScript: readDecision `ensures (\result === "read" || \result === "readApp") ==> readOnly(f) && f.own ...`.
   val inv_onlyOwnProfileShown = reads.forall(r =>
     r.reply == RShow implies (r.profileOf == r.sender and r.recipient == r.sender and r.facts.own))
@@ -288,7 +306,7 @@ module profile_read {
   // LemmaScript: readDecision `ensures f.asksChange ==> \result === "notRead"`.
   val inv_changeNeverRead = reads.forall(r => r.facts.asksChange implies r.reply == ROpen)
 
-  // Rule: STOP stops every reply of the read path (AGENTS.md hard rule STOP; service.ts 1256-1259 optedOut check).
+  // Rule: STOP stops every reply of the read path (AGENTS.md hard rule STOP; service.ts 1452-1456 optedOut check).
   val inv_optedOutGetsNoProfile = reads.forall(r => r.optedOut implies (r.reply == RSilent or r.reply == ROpen))
 
   // Rule: a read of one app shows only that app's profile (service.ts "This line is for ..." reply).
@@ -329,8 +347,13 @@ module profile_read {
   val witness_noSilentForged = not(reads.exists(r => r.reply == RSilent and r.recipient != r.sender and r.facts.own))
   // A review text is shown.
   val witness_noRender = not(batchLog.exists(l => l.kind == "render"))
-  // A scope change or an edit gives a new revision, and a later reject resolves the batch.
-  val witness_noRejectAfterPreview = not(batchLog.exists(l => l.kind == "reject" and batch.revision > 1))
+  // A scope change or an edit gives a new revision, and a later saved decision is taken on it.
+  val witness_noRejectAfterPreview = not(batchLog.exists(l => l.kind == "saved") and batch.revision > 2)
+  // A Calendar suggestion with a future event start is still shown (SD-240).
+  val witness_noFutureCalendar = not(batchLog.exists(l => l.kind == "render") and batch.status == Pending
+                                     and batch.rows.exists(s => s.calendar and s.observedAt > clock))
+  // A saved decision on a batch of two leaves the batch current with the next revision.
+  val witness_noPartialSave = not(batchLog.exists(l => l.kind == "saved") and batch.status == Pending and batch.count > 0)
 
   // ---------------------------------------------------------------- traces
   pure val OWN_READ: ReadFacts = { readForm: true, namesProfile: true, asksChange: false, own: true,
@@ -343,8 +366,8 @@ module profile_read {
   }
 
   action makeBatch(person: int, chat: int, ttl: int): bool = all {
-    batch' = { status: Pending, owner: { person: person, chat: chat }, idOk: true, expiresAt: clock + ttl,
-               revision: 1, count: 1, distinctIds: 1, rows: Set({ valid: true, observedAt: clock }) },
+    batch' = { status: Pending, owner: { person: person, app: SLOP, chat: chat }, idOk: true, expiresAt: clock + ttl,
+               revision: 1, count: 1, distinctIds: 1, rows: Set({ valid: true, calendar: false, observedAt: clock }) },
     hasBatch' = true,
     clock' = clock, members' = members, optedOut' = optedOut, reads' = reads, batchLog' = batchLog,
   }
@@ -369,8 +392,16 @@ module profile_read {
 
   // The batch shows to its owner, not to another chat, and not after it expires.
   run batchExpiryTest = init.then(makeBatch(1, 1, 1))
-    .then(all { assert(currentBatch(batch, { person: 1, chat: 1 }, clock)
-                       and not(currentBatch(batch, { person: 1, chat: 2 }, clock))), stutter })
+    .then(all { assert(currentBatch(batch, { person: 1, app: SLOP, chat: 1 }, clock)
+                       and not(currentBatch(batch, { person: 1, app: SLOP, chat: 2 }, clock))
+                       and not(currentBatch(batch, { person: 1, app: PEON, chat: 1 }, clock))), stutter })
     .then(tick)
-    .then(all { assert(not(currentBatch(batch, { person: 1, chat: 1 }, clock))), stutter })
+    .then(all { assert(not(currentBatch(batch, { person: 1, app: SLOP, chat: 1 }, clock))), stutter })
+
+  // A Gmail time in the future is refused; a Calendar event start in the future is not (SD-240).
+  run futureCalendarTest = init.then(makeBatch(1, 1, 3))
+    .then(all { assert(not(currentBatch({ ...batch, rows: Set({ valid: true, calendar: false, observedAt: clock + 1 }) },
+                                        { person: 1, app: SLOP, chat: 1 }, clock))
+                       and currentBatch({ ...batch, rows: Set({ valid: true, calendar: true, observedAt: clock + 1 }) },
+                                        { person: 1, app: SLOP, chat: 1 }, clock)), stutter })
 }

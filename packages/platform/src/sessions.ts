@@ -51,10 +51,15 @@ export class SessionService {
     if (!s || !sessionLive(s.app, app, s.revokedAt, s.expiresAt, at)) return undefined;
     // Already rotated (in its grace time), young, or at the end of its chain: use it as it is.
     if (!rotate || s.revokedAt !== null || at - s.createdAt < (this.opts.rotateMs ?? SESSION_ROTATE_MS)) return { session: s, token, rotated: false };
-    await this.store.revokeSession(s.tokenHash, at + SESSION_GRACE_MS);
     const cloud = token.startsWith("cloud.");
-    const next = await this.create(app, s.e164, s.personId, s.tokenHash, s.startedAt, cloud ? s.expiresAt : undefined, cloud ? true : undefined);
-    return { session: next.session, token: next.token, rotated: true };
+    const nextToken = `${cloud ? "cloud." : ""}${newToken()}`;
+    const expiresAt = sessionExpiry(at, this.opts.ttlMs ?? SESSION_TTL_MS, s.startedAt, this.opts.maxMs ?? SESSION_MAX_MS, cloud ? s.expiresAt : undefined);
+    // The old row ends and the next one starts in one step, with the person the old row has at that moment.
+    const next = await this.store.rotateSession(s.tokenHash, {
+      tokenHash: this.hash(nextToken), app, e164: s.e164, personId: s.personId, createdAt: at, startedAt: s.startedAt, expiresAt, rotatedFrom: s.tokenHash, revokedAt: null,
+    }, at + SESSION_GRACE_MS, at);
+    if (!next) return undefined;
+    return { session: next, token: nextToken, rotated: true };
   }
 
   /** True when the session's OTP login is recent enough for delete everything. */

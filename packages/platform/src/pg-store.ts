@@ -245,6 +245,16 @@ export class PgPeopleStore implements PeopleStore {
     await this.sql`insert into platform.sessions (token_hash, app_id, e164, person_id, created_at, started_at, expires_at, rotated_from, revoked_at)
       values (${s.tokenHash}, ${s.app}, ${s.e164}, ${s.personId}, ${ts(s.createdAt)}, ${ts(s.startedAt)}, ${ts(s.expiresAt)}, ${s.rotatedFrom}, ${ts(s.revokedAt)})`;
   }
+  async rotateSession(from: string, next: Session, graceAt: number, at: number) {
+    // One statement: the update locks the old row and checks it again after a concurrent bindSessions commits.
+    const [r] = await this.sql`with prev as (
+        update platform.sessions set revoked_at = least(coalesce(revoked_at, ${ts(graceAt)}), ${ts(graceAt)})
+        where token_hash = ${from} and (revoked_at is null or revoked_at > ${ts(at)}) returning person_id)
+      insert into platform.sessions (token_hash, app_id, e164, person_id, created_at, started_at, expires_at, rotated_from, revoked_at)
+      select ${next.tokenHash}, ${next.app}, ${next.e164}, prev.person_id, ${ts(next.createdAt)}, ${ts(next.startedAt)}, ${ts(next.expiresAt)}, ${next.rotatedFrom}, null from prev
+      returning *`;
+    return r ? session(r) : undefined;
+  }
   async getSession(tokenHash: string) {
     const [r] = await this.sql`select * from platform.sessions where token_hash = ${tokenHash}`;
     return r ? session(r) : undefined;

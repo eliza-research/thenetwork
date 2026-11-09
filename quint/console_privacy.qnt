@@ -97,6 +97,17 @@ module console_privacy {
 
   pure def reasonOk(len: int): bool = len >= PERSON_REASON_MIN
 
+  // A hold line is well formed: a named app comes from a row that is not private (privacy-core.ts lineOk).
+  pure def lineOk(rows: List[Row], h: HoldLine): bool =
+    (h.row == -1 and h.app == ANY_APP and h.level == "restricted")
+      or (0 <= h.row and h.row < rows.length() and not(rows[h.row].hidden) and h.app == rows[h.row].app)
+
+  // The app of a hold or a block line names an app; ANY_APP names none (apps.tsx PersonView).
+  pure def namesApp(app: str): bool = app != ANY_APP
+
+  // The cross-app button shows only to a cross-app caller in real mode (apps.tsx CrossAppButton).
+  pure def crossAppShown(crossApp: bool, real: bool): bool = crossApp and real
+
   // ---------------------------------------------------------------- shell (shape.ts, people.ts, apps.tsx)
   pure val APPS = List("ntwrk", "slop", "peon", "friends")
   // PRIVATE_APPS in apps.ts is {"slop"} today. The model also lets friends be private, so that a
@@ -264,6 +275,8 @@ module console_privacy {
     holds.indices().forall(i => holds[i].app == ANY_APP implies holds[i].level == "restricted"),
     holds.indices().filter(i => holds[i].app == ANY_APP).size() <= 1,
     holds.indices().exists(i => holds[i].app == ANY_APP) iff rows.indices().exists(k => hiddenHeld(rows[k])),
+    // LemmaScript: holdLines, `ensures forall(i, lineOk(rows, \result[i]))`.
+    holdLines(rows).indices().forall(i => lineOk(rows, holdLines(rows)[i])),
   }
 
   // Rule: types.ts PersonSummary.blocks (a block made in a private app shows its origin as "*").
@@ -317,6 +330,12 @@ module console_privacy {
     oppFieldUse(Counts, "feedback") == Drop, oppFieldUse(Counts, "objective") == Mask,
     memberFieldUse(Full, "age") == Keep,
     classOf({ admin: false, reviewer: false, safety: false, engineer: false }) == Counts,
+  })
+
+  // namesApp hides the private app on hold and block lines; the cross-app button needs both conditions.
+  run namesAppTest = assert(and {
+    not(namesApp(ANY_APP)), namesApp("peon"), namesApp(blockOrigin("slop", false)), not(namesApp(blockOrigin("slop", true))),
+    crossAppShown(true, true), not(crossAppShown(true, false)), not(crossAppShown(false, true)),
   })
 
   // A reason of four characters does not open a panel; five does.

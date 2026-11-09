@@ -9,7 +9,10 @@
 //   packages/platform/src/photo-relay-core.ts is a pure def here with the same name and the same
 //   decision. Each action is one shell method under the item lock (PhotoRelayStore.locked); it calls
 //   these defs and does not decide again. `current` is the shell's PhotoRelayService.current (policy,
-//   expiry, parties); the parties check (RelayDesk) is the oracle `pair`.
+//   expiry, parties, photo); the oracle `pair` stands for both of its outside reads: the parties check
+//   (authorize, RelayDesk: match, adults, no block, no STOP) and the photo check (photos.relayPhoto: the
+//   owner may still take photos and the row is there with the same bytes). Both are read again on each
+//   call, so `pair` can come back (START after STOP, a hold lifted).
 //   relay.qnt (claude/quint-state-machines) holds the same item inside the whole relay desk. This
 //   model adds the consent input and the notice version, which relay.qnt leaves implicit.
 //
@@ -23,7 +26,9 @@
 //
 // OUTSIDE THE MODEL
 //   The photo bytes, the HMAC signature (an oracle: only the issued exp verifies), SQL and the row
-//   lock (each action is atomic), the request id and the request hash (replay returns the same item).
+//   lock (each action is atomic), the request id and the request hash (replay returns the same item),
+//   the reviewer authorization (authorizeReviewer: a refused reviewer changes nothing), and the
+//   descriptor and recipient checks of issueDelivery (a mismatch changes nothing).
 module photo_relay_item {
 
   pure val PHOTO_TTL = 15
@@ -197,6 +202,13 @@ module photo_relay_item {
     pair' = false,
     now' = now, pri' = pri, policyVersion' = policyVersion, g' = g,
   }
+  // authorize and relayPhoto are read again on every call: a START after a STOP or a lifted hold
+  // makes the item current again (photo-relay.ts current).
+  action pairResumes: bool = all {
+    not(pair),
+    pair' = true,
+    now' = now, pri' = pri, policyVersion' = policyVersion, g' = g,
+  }
 
   action step = any {
     nondet consent = Set(true, false).oneOf()
@@ -212,7 +224,7 @@ module photo_relay_item {
     fetch(e),
     nondet d = Set(1, 10, 20).oneOf()
     tick(d),
-    any { revoke, policyChange, pairEnds },
+    any { revoke, policyChange, pairEnds, pairResumes },
   }
 
   // ---------------------------------------------------------------- invariants

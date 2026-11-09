@@ -4,13 +4,17 @@
 // The plan run, the plan fallback and the crew offer and sessions (docs/research/2026-11-07-state-machines.md
 // section 6.7: M-045 plan-run, M-046 plan-fallback, M-124 crew-offer-and-crew).
 //
-// Code: packages/engine/src/plans.ts (startPlanRun, recordPlanAnswer, checkPlanDeadline, planFallback,
-// crewOptIn, crewSessionPlan) and packages/network/src/network.ts (submitPlan 2945, beginPlan 2964,
-// planLane 2976, planProbe 2990, planDeadline 3032, planAnswer 3039, planAct 3051, bookPlan 3076, planReveal 3122,
-// planJoin 3137, planFallback 3151, planOut 3183, crewCheck 3212, onCrewAnswer 3242, resolveCrew 3252,
-// crewSessions 3270, handleDrop 2525, close 2550, dropMember 2588, checkRecipient 4265, bookedNear 2893,
-// onPlanProbeAnswer 2351, applyBlock 1423, the reveal and plan_probe send hooks 4125-4150, intro reveal 2425).
-// The model follows the code at the commit that adds this note (branch wave2/plan_run).
+// Code: packages/engine/src/plans.ts (startPlanRun 537, recordPlanAnswer 560, checkPlanDeadline 582,
+// planFallback 627, crewOptIn 696, crewSessionPlan 704; planStep and smallerKind in engine/src/planCore.ts) and
+// packages/network/src/network.ts at formal-main (submitPlan 3151, beginPlan 3166, planLane 3178, planProbe 3192,
+// planDeadline 3234, planAnswer 3241, planAct 3254, bookPlan 3279, planReveal 3325, planJoin 3340,
+// planFallback 3354, planOut 3386, crewCheck 3415, onCrewAnswer 3447, resolveCrew 3457, crewSessions 3477,
+// handleDrop 2680, close 2710, dropMember 2756, checkRecipient 4527, bookedNear 3091, planSeatOk 3110,
+// onPlanProbeAnswer 2499, applyBlock 1491, callOffPair 1532, the reveal and plan_probe send hooks 4385-4410,
+// intro reveal 2578; quorumMet in network/src/transitions.ts:186).
+// The model follows the code at the commit that adds this note (branch wave2/plan_run). The other
+// "network.ts:<line>" references in this file are lines at that commit (now about 150-260 lines lower);
+// the function names above are the anchors. A reference marked "formal-main" is a current line.
 //
 // The ConsentNetwork is in memory and has no await between the calls of one handler, so one inbound message,
 // one tick or one actor event is one action. The send window, the one-a-day rule and the allowance only
@@ -342,7 +346,10 @@ module plan_run {
       else if (minor and o1.stage != "scheduled") closeF(e, o1, "minors policy")
       else if (o1.stage == "review") closeF(e, o1, "dropped")
       else if (o1.stage == "probing") planOut(e, o1, m)
-      else handleDrop(e, o1, m, false)
+      // Only a member who is going leaves a booked plan (formal-main network.ts:2774): one who said no, is out or
+      // still pending for a late join is not in it.
+      else if (getOr(o1.status, m, "") == "yes") handleDrop(e, o1, m, false)
+      else o1
     }
 
   /**
@@ -524,7 +531,9 @@ module plan_run {
   action block(m: str, x: str): bool = all {
     m != x, not(blocks.contains((m, x))),
     val e = { ...env0, blocks: blocks.union(Set((m, x))) }
-    val both = isOpen(plan) and plan.participants.contains(m) and plan.participants.contains(x)
+    // callOffPair (formal-main network.ts:1532-1545) skips an opportunity where either one is already out of it.
+    def out(id: str): bool = Set("no", "unavailable", "dropped").contains(getOr(plan.status, id, ""))
+    val both = isOpen(plan) and plan.participants.contains(m) and plan.participants.contains(x) and not(out(m)) and not(out(x))
     val o1 = { ...plan, excused: plan.excused.union(Set(m, x)) }
     val o2 = if (both and plan.stage == "scheduled")
       plan.participants.filter(id => id != m and getOr(plan.status, id, "") == "yes" and plan.bookedTold.contains(id))
@@ -563,10 +572,16 @@ module plan_run {
 
   action keepPlanSide = all { now' = now, plan' = plan, keepEnv }
 
-  action resolveCrew(yes: Set[str]): bool = all {
-    crewStage' = if (yes.size() >= CREW_MIN) "formed" else "none",
-    crewMembers' = if (yes.size() >= CREW_MIN) crewMembers.intersect(yes) else crewMembers,
-    crewTold' = crewTold.union(yes.filter(id => not(optedOut.contains(id)))),
+  // resolveCrew (formal-main network.ts:3457-3470): a yes counts only from a member who may still take a seat
+  // (planSeatOk with busyOk: not a minor, not opted out, trust ok); crewOptIn needs CREW_MIN of them, and only
+  // they hear crewFormed or crewNotFormed.
+  action resolveCrew(yes0: Set[str]): bool = {
+    val yes = yes0.filter(id => seatOk(env0, id))
+    all {
+      crewStage' = if (yes.size() >= CREW_MIN) "formed" else "none",
+      crewMembers' = if (yes.size() >= CREW_MIN) crewMembers.intersect(yes) else crewMembers,
+      crewTold' = crewTold.union(yes),
+    }
   }
 
   /** onCrewAnswer (network.ts:3192): when everyone answered, resolveCrew (network.ts:3203). */

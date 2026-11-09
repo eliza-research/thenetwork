@@ -1630,7 +1630,11 @@ export class NetworkService implements RuntimeHost {
     // A banned number or person never joins any app; nothing is stored and nothing is answered.
     if (step === "refuse_banned") { this.log(`[inbound] a banned number wrote to ${app.id}: not joined, not stored`); return "held"; }
     // A stated age counts on every exit past the ban check, so a later, older answer never lifts it.
-    if (age !== undefined && (step === "invite_only" || step === "need_home")) await this.accounts.recordAge(e164, person, age);
+    if (age !== undefined && (step === "invite_only" || step === "need_home")) {
+      await this.accounts.recordAge(e164, person, age);
+      // An age under 13 declines the person on every app, as on the web (Quint join_age under13StoresNothing).
+      await this.accounts.declineUnderAge(e164, person);
+    }
     if (step === "invite_only") {
       // The same answer whether or not the number uses another app; at most once a day per number.
       const { count } = await this.people.hit(`invite_only:${app.id}:${key}`, DAY, t);

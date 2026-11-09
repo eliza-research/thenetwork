@@ -34,8 +34,10 @@
 //   decisionOnlyToReviewerChoice (the remount variant of bug 3) is fixed and is now part of safety:
 //   quint run quint/review_desk.qnt --invariant=decisionOnlyToReviewerChoice --max-samples=20000 --max-steps=20 --seed=11
 //   (and --seed=29). remountMovesChoiceTest replays the old trace and shows that it now holds.
-//   KNOWN DEFECTS (expected to be violated today, see the comments at each one):
-//   serverApproveBeforeDeadline (bug 4 of the slice report, server side; random run finds it),
+//   serverApproveBeforeDeadline (bug 4 of the slice report, server side) is fixed: ConsentNetwork.reviewBlock
+//   refuses every decision at or past the deadline (network.ts reviewBlock, transitions.ts reviewLate,
+//   SD-009). It is now part of safety.
+//   KNOWN DEFECT (expected to be violated today, see the comment at it):
 //   approveMatchesSeenPeople (gap G6, server side; random run finds it).
 //
 // OUTSIDE THE MODEL
@@ -62,8 +64,9 @@ module review_desk {
   pure val CAN_ACT = true
   pure val PAIRS = Set([1, 2], [2, 1], [1, 3], [2, 4])
   pure val ADMINS = Set(1, 2)
-  // Bug 4 (network.ts:1941 reviewBlock has no deadline check). false = the shipping server today.
-  pure val SERVER_CHECKS_DEADLINE = false
+  // Bug 4 is fixed: network.ts reviewBlock refuses every decision (approve, edit, reject, re-roll) with
+  // "review_expired" when reviewLate(now, deadline), that is now >= deadline. true = the shipping server.
+  pure val SERVER_CHECKS_DEADLINE = true
 
   // ---------------------------------------------------------------- core types (logic/review.ts)
   // Mode: "idle" | "reject" | "edit" | "reroll". Ids are ints; 0 is the empty id "".
@@ -370,8 +373,10 @@ module review_desk {
   pure def partsOk(parts: List[int]): bool =
     parts.foldl(true, (b, i) => b and PEOPLE.keys().contains(i) and not(PEOPLE.get(i).minor) and not(PEOPLE.get(i).declined))
 
-  // The server applies one decision (ConsentNetwork.decide under its lock). `lost`: the answer that
-  // reaches the page says "failed", whether or not the server applied it.
+  // The server applies one decision (ConsentNetwork.decide under its lock, after reviewBlock). `lost`:
+  // the answer that reaches the page says "failed", whether or not the server applied it. reviewBlock
+  // refuses any decision past the deadline, and an approve (or edit) with matching off or with a
+  // participant who is a minor, declined or unknown.
   action serverApply = {
     nondet r = s.inflight.oneOf()
     nondet lost = Set(true, false).oneOf()
@@ -384,9 +389,8 @@ module review_desk {
     s.inflight.exists(x => x.rid == rid),
     val r = s.inflight.filter(x => x.rid == rid).getOnlyElement()
     val it = s.srv.get(r.id)
-    val accept = it.inReview and
-      (r.kind == "reject" or r.kind == "reroll" or
-        (partsOk(it.parts) and s.matchingOn and (not(SERVER_CHECKS_DEADLINE) or s.now < it.deadline)))
+    val accept = it.inReview and (not(SERVER_CHECKS_DEADLINE) or s.now < it.deadline) and
+      (r.kind == "reject" or r.kind == "reroll" or (partsOk(it.parts) and s.matchingOn))
     val doIt = accept and (not(lost) or applied)
     val it2 =
       if (not(doIt)) it
@@ -573,10 +577,10 @@ module review_desk {
   val approveOnlyBeforeDeadline =
     s.sent.forall(r => (r.kind == "approve" or r.kind == "edit") implies (not(r.blocked) and r.pageNow < r.pageDeadline))
 
-  // Rule: the same rule, on the server. KNOWN DEFECT (bug 4, network.ts:1941 reviewBlock): the server
-  // accepts an approve after the deadline until its tick expires the item, and the page clock can lag
-  // (G4). Holds only with SERVER_CHECKS_DEADLINE = true. LemmaScript: none in this slice (the fix is
-  // ConsentNetwork.reviewBlock; quint/opportunity.qnt decidedBeforeDeadline).
+  // Rule: the same rule, on the server. Bug 4 is fixed: network.ts reviewBlock refuses a decision when
+  // reviewLate(now, deadline), so an approve after the deadline is refused even before the tick expires
+  // the item, and even when the page clock lags (G4). LemmaScript: transitions.ts reviewLate,
+  // `ensures \result <==> now >= deadline`; quint/opportunity.qnt decidedBeforeDeadline.
   val serverApproveBeforeDeadline =
     ITEMS.forall(i => s.srv.get(i).decision == "approve" and s.srv.get(i).approvedVersion >= 0
                       implies s.srv.get(i).decidedAt < s.srv.get(i).deadline)
@@ -607,10 +611,10 @@ module review_desk {
     ITEMS.forall(i => s.srv.get(i).decision == "approve" and s.srv.get(i).approvedVersion >= 0
                       implies s.srv.get(i).approvedVersion == s.srv.get(i).version)
 
-  // The invariants that hold today. The two KNOWN DEFECT invariants are checked one by one.
+  // The invariants that hold today. The KNOWN DEFECT invariant (approveMatchesSeenPeople) is checked alone.
   val safety = and {
     ctlOkHolds, decisionOnlyToChosenItem, decisionOnlyToReviewerChoice, repeatNeverDecides, approveOnlyBeforeDeadline,
-    confirmSendsAskedDirection, draftsBoundToItem, approveCarriesOwnDrafts,
+    serverApproveBeforeDeadline, confirmSendsAskedDirection, draftsBoundToItem, approveCarriesOwnDrafts,
   }
 
   // ---------------------------------------------------------------- reachability witnesses
