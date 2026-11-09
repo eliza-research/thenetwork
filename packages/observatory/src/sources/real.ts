@@ -623,13 +623,13 @@ export class RealSource implements DataSource {
     };
   }
 
-  /** A member's messages. Unless revealed, inbound bodies are not selected at all (only their length). */
+  /** The member's full message history. Unless revealed, select only the length of inbound bodies. */
   private messages(id: string, rv: boolean) {
     const sql = this.sql!;
     return rv
-      ? sql`select id, ts, direction, body, status, type, opportunity_id, proactive, system from network.messages where app_id = ${this.app} and member_id = ${id} order by ts, id limit 2000`
+      ? sql`select id, ts, direction, body, status, type, opportunity_id, proactive, system from network.messages where app_id = ${this.app} and member_id = ${id} order by ts, id`
       : sql`select id, ts, direction, case when direction = 'inbound' then null else body end as body, length(body)::int as body_len, status, type, opportunity_id, proactive, system
-            from network.messages where app_id = ${this.app} and member_id = ${id} order by ts, id limit 2000`;
+            from network.messages where app_id = ${this.app} and member_id = ${id} order by ts, id`;
   }
 
   /** Times (ms) at which the leak guard sent a generic version to this member (the timeline marks those messages). */
@@ -650,7 +650,7 @@ export class RealSource implements DataSource {
       sql`select id, at, actor_type, actor_id, type, object_type, object_id, payload from network.events
           where app_id = ${this.app} and (actor_id = ${id} or object_id = ${id} or payload->>'memberId' = ${id} or payload->'participants' ? ${id} or payload->'members' ? ${id}
              or (object_type = 'opportunity' and object_id = any(${`{${[...theirs].map(x => `"${x.replace(/"/g, "")}"`).join(",")}}`}::text[])))
-          order by at, id limit 5000`,
+          order by at, id`,
       this.guardFallbacks(id),
       this.stateRow("deferred_sends").then(rows => rows.map(r => ({ d: (typeof r.deferred_sends === "string" ? JSON.parse(r.deferred_sends) : r.deferred_sends ?? []).filter((x: any) => x?.memberId === id) }))),
     ]);
@@ -703,7 +703,7 @@ export class RealSource implements DataSource {
       : await sql`select id, member_id, ts, direction, case when direction = 'inbound' then null else body end as body, length(body)::int as body_len, status, type, opportunity_id, proactive, system
                   from network.messages where app_id = ${this.app} and opportunity_id = ${id} order by ts, id`;
     const events = !sql ? [] : await sql`select id, at, actor_type, actor_id, type, object_type, object_id, payload from network.events
-      where app_id = ${this.app} and object_type = 'opportunity' and object_id = ${id} order by at, id limit 2000`;
+      where app_id = ${this.app} and object_type = 'opportunity' and object_id = ${id} order by at, id`;
     const name = (x: string) => this.store.member(x)?.name ?? x;
     return {
       opportunity: o, members: o.participants.map(x => this.store.member(x)!).filter(Boolean),
