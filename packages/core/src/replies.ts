@@ -274,6 +274,44 @@ const LIKELY_EN = /\b(?:stop (?:texting|messaging|sending|contacting|writing|bot
 const LIKELY_ES = /\b(?:no me (?:escribas|mandes|envies|contactes|mensajees)|deja de (?:escribirme|mandarme|enviarme|mensajearme)|dejen de (?:escribirme|mandarme|enviarme)|no (?:mas|quiero) mensajes|ya no (?:quiero|me) (?:mensajes|escriban|manden)|darme de baja|dame de baja|me quiero dar de baja|quitame de|borrame de|sacame de|numero equivocado)\b/;
 
 /**
+ * "I never want to hear from you again": a permanent refusal of all contact, said as a wish about the
+ * future. The member makes the same request as "do not contact me again", which both readers already
+ * read as a stop. The pattern needs "from you", so "I never want to hear that song again" and
+ * "I never want to hear from my ex again" are not matches.
+ *
+ * Only a permanent refusal counts. "never" carries the permanence alone; "don't" and "do not" need a
+ * permanent marker (again, anymore, any more, ever), so "I don't want to hear from you right now" and
+ * "I don't want to hear from you this week" stay the temporary pause they are. A temporary bound after
+ * the refusal ("right now", "today", "this week", "for now", "until") cancels it too. Both readers use
+ * this one pattern.
+ */
+const NOT_A_TEMPORARY_PAUSE = "(?!(?:\\s+again)?\\s(?:right now|today|tonight|this (?:week|weekend|month)|for (?:now|a bit|a while)|until)\\b)";
+const NO_HEAR_FROM_YOU = [
+  "\\bi (?:",
+  "never(?: ever)? want to hear (?:anything )?from you",
+  "|(?:do not|don't|dont) want to hear (?:anything )?from you (?:again|anymore|any more|ever)",
+  ")\\b", NOT_A_TEMPORARY_PAUSE,
+].join("");
+const NO_HEAR_FROM_YOU_RE = new RegExp(NO_HEAR_FROM_YOU);
+
+/**
+ * Reported speech about another person ("my ex said I never want to hear from you again") states what
+ * that person wants, not what the member asks. Only a third-person subject does that: "I said I never
+ * want to hear from you again" repeats the member's own request, so it stays a stop.
+ */
+const REPORTED_BY_ANOTHER = /\b(?:he|she|they|someone|somebody|everyone|my [a-z]+|his [a-z]+|her [a-z]+|their [a-z]+|an? [a-z]+) (?:said|says|saying|told|tells|wrote|writes|texted|texts|asked|asks|thinks|thought)\b/;
+
+/**
+ * True when the text states a permanent refusal of contact. A question ("I never want to hear from
+ * you?") asks about stopping, and reported speech about another person is not the member's request.
+ */
+const readsNoHearFromYou = (text: string, folded: string): boolean => {
+  if (/\?\s*$/.test(text)) return false;
+  const m = NO_HEAR_FROM_YOU_RE.exec(folded);
+  return m !== null && !REPORTED_BY_ANOTHER.test(folded.slice(0, m.index));
+};
+
+/**
  * Does `text` ask us to stop messaging? Exact keywords as the whole message are "exact"; free-text
  * requests ("please stop texting me", "no me escribas más") are "likely". Quoted or reported speech
  * ("my friend said stop") and questions about stopping ("how do I stop?") are "none".
@@ -290,7 +328,7 @@ export function parseOptOut(text: string, o: { apps?: readonly string[] } = {}):
   // "leave slop" / "stop slop": one app only (when the caller names its apps).
   const app = t.match(/^(?:leave|stop|quit|salir de|dejar) ([a-z0-9.]+)$/)?.[1];
   if (app && o.apps?.some(a => a.toLowerCase() === app || a.toLowerCase().split(".")[0] === app.split(".")[0])) return { match: "likely", scope: "app", lang };
-  if (LIKELY_EN.test(t) || LIKELY_ES.test(t)) return { match: "likely", scope: "all", lang };
+  if (LIKELY_EN.test(t) || LIKELY_ES.test(t) || readsNoHearFromYou(text ?? "", t)) return { match: "likely", scope: "all", lang };
   if ((/^(?:stop|unsubscribe|para|basta)\b/.test(t) || /\b(?:stop|unsubscribe)$/.test(t)) && !/\?\s*$/.test(text.trim())) return { match: "likely", scope: "all", lang };
   return { match: "none", scope: "all", lang };
 }
@@ -369,5 +407,7 @@ export function optOutPhrase(text: string, isLeave: (text: string) => boolean = 
   const t = foldKeywordText(text).toLowerCase().replace(/[^\p{L}\p{N}' ]+/gu, " ").replace(/\s+/g, " ").trim();
   if (!t || t.length > 160 || NOT_OPT_OUT.test(t)) return false;
   if (isLeave(text)) return false;
+  // "I never want to hear from you again": the same refusal as "do not contact me again".
+  if (readsNoHearFromYou(text, t)) return true;
   return OPT_OUT_EN.some(r => r.test(t)) || OPT_OUT_ES.some(r => r.test(t));
 }

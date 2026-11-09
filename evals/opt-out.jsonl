@@ -102,3 +102,10 @@
 {"text": "stop slop", "label": "not_stop", "lang": "en"}
 {"text": "quit peon", "label": "not_stop", "lang": "en"}
 {"text": "remove me from the group chat with Ana?", "label": "not_stop", "lang": "en"}
+{"text": "I never want to hear from you again", "label": "stop", "lang": "en"}
+{"text": "I don't want to hear from you right now", "label": "not_stop", "lang": "en"}
+{"text": "I don't want to hear from you this week", "label": "not_stop", "lang": "en"}
+{"text": "My ex said I never want to hear from you again", "label": "not_stop", "lang": "en"}
+{"text": "I don't want to hear from you?", "label": "not_stop", "lang": "en"}
+{"text": "I don't want to hear from you anymore", "label": "stop", "lang": "en"}
+{"text": "I do not want to hear from you again", "label": "stop", "lang": "en"}

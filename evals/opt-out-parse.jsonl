@@ -38,3 +38,10 @@
 {"text":"stop by later","match":"none"}
 {"text":"Stop it, I love this","match":"none"}
 {"text":"I'll stop at the store","match":"none"}
+{"text":"i never want to hear from you again","match":"likely"}
+{"text":"I don't want to hear from you right now","match":"none"}
+{"text":"I don't want to hear from you this week","match":"none"}
+{"text":"My ex said I never want to hear from you again","match":"none"}
+{"text":"I don't want to hear from you?","match":"none"}
+{"text":"I don't want to hear from you anymore","match":"likely"}
+{"text":"I do not want to hear from you again","match":"likely"}
