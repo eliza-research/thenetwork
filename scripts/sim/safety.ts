@@ -310,8 +310,22 @@ export async function safetyBlock(b: Block): Promise<void> {
       ["catfished. not who they said", "lying"],
       ["they never showed up", "no_show"],
       ["I felt unsafe, he wouldn't let me leave", "unsafe"],
+      ["he would not let me leave", "unsafe"],
+      ["he did not let me leave", "unsafe"],
+      ["I was terrified, he stalked me", "unsafe"],
+      ["he attacked me and hit me", "unsafe"],
+      ["he had a weapon and cornered me", "unsafe"],
+      ["he did not look like his photos", "lying"],
+      ["she did not show up", "no_show"],
+      ["he did not come", "no_show"],
+      ["they never arrived", "no_show"],
+      ["he demanded cash and asked to borrow money", "scam"],
+      ["she asked me to send money via paypal", "scam"],
+      ["he sent unsolicited photos", "harassment"],
+      ["he would not stop texting me", "harassment"],
       ["it was fine, not my type", undefined],
       ["great time, would see them again", undefined],
+      ["nice dinner, we talked about work", undefined],
     ];
     expect(cases.map(([t]) => checkInReport(t))).toEqual(cases.map(([, k]) => k));
     expect(URGENT_REPORTS.has("harassment") && URGENT_REPORTS.has("unsafe")).toBe(true);
