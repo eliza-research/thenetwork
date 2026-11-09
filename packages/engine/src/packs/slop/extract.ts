@@ -158,10 +158,22 @@ const ADJ_LITE = "straight|gay|bi|queer|trans|cis|single|lesbian|pan";
 
 const NOT_NOW = /(?:\blike|\bas if|\bas though|\bpretend(?:ing)?|\bwhen|\bif|\bimagine|\bsays?|\bsaid|\bfeel(?:s|ing)? like|\bacts?|\bacting|\bthink|\bthought|\bsince|\bwas|\bback then|"|')\s*$/;
 /** What may follow a number for it to be the sender's age ("I'm 15", "I'm 27, woman"); never "15 minutes", "5'4". */
-const AGE_END = "(?=\\s*(?:$|[,!?:)\\/&]|and\\b|but\\b|so\\b|lol\\b|lmao\\b|haha\\b|btw\\b|tho\\b|here\\b|now\\b|too\\b|turning\\b|actually\\b|tbh\\b|y\\/?o\\b|yrs?\\b(?!\\s+(?:in|into|sober|clean))|years?(?:\\s+old)?\\b(?!\\s+(?:in|into|sober|clean|ago|of))|f\\b|m\\b|nb\\b|female\\b|male\\b|woman\\b|man\\b|guy\\b|girl\\b|gal\\b|dude\\b|looking\\b|lookin\\b|lf\\b|from\\b|in\\b|living\\b|w\\/|with\\b|straight\\b|gay\\b|bi\\b|queer\\b|single\\b|trans\\b|nonbinary\\b|\\(|-(?!\\s*\\d)))";
+const AGE_END = "(?=\\s*(?:$|[,!?:)\\/&]|but\\b|so\\b|lol\\b|lmao\\b|haha\\b|btw\\b|tho\\b|here\\b|turning\\b|actually\\b|tbh\\b|y\\/?o\\b|yrs?\\b(?!\\s+(?:in|into|sober|clean))|years?(?:\\s+old)?\\b(?!\\s+(?:in|into|sober|clean|ago|of))|f\\b|m\\b|nb\\b|female\\b|male\\b|woman\\b|man\\b|guy\\b|girl\\b|gal\\b|dude\\b|looking\\b|lookin\\b|lf\\b|from\\b|in\\b|living\\b|w\\/|with\\b|straight\\b|gay\\b|bi\\b|queer\\b|single\\b|trans\\b|nonbinary\\b|\\(|-(?!\\s*\\d)))";
+/** A bare "and", "now" or "too" ends an age only at 13 or older. Under 13 it is not an age end. */
+const LOOSE_END = "(?=\\s+(?:and|now|too)\\b)";
+const atLeast13 = (n: number) => (n >= 13 && n < 100 ? n : NaN);
+/** "and a half", ".5" and "1/2" are part of the age. A measure after them is not ("12.5 minutes"). */
+const HALF = "(?:\\s+and\\s+(?:a|one)\\s+half\\b|\\s*\\.5(?!\\d)|\\s+1\\/2\\b)";
+const NOT_MEASURE = "(?!\\s*(?:minutes?|mins?|hours?|hrs?|miles?|mi\\b|km\\b|blocks?|percent|%|feet|ft\\b))";
 const YEARS_OLD = "(?:years?[\\s-]+old|yrs?[\\s-]+old|y\\/o|yo)(?![a-z])";
 const KIN_AFTER = /^\s*(?:son|daughter|kid|kids|boy|girl|child|dog|cat|nephew|niece|brother|sister|cousin|whisky|whiskey|scotch|car|laptop)/;
 const AGE_RULES: { rx: RegExp; age: (m: RegExpExecArray) => number; strict: boolean }[] = [
+  { rx: new RegExp(`\\b${ME}\\s+(?:only |just |literally |barely |like |about )?(\\d{1,2})(?!\\d|')${HALF}${NOT_MEASURE}`), age: m => Number(m[1]), strict: true },
+  { rx: new RegExp(`\\bi (?:just )?turned\\s+(\\d{1,2})${HALF}${NOT_MEASURE}`), age: m => Number(m[1]), strict: true },
+  { rx: new RegExp(`\\b${ME}\\s+(?:only |just )?(${NUM_WORD_RX})\\s+and\\s+(?:a|one)\\s+half\\b`), age: m => wordNum(m[1]!), strict: true },
+  { rx: new RegExp(`\\b${ME}\\s+(?:only |just |literally |barely |like |about )?(\\d{1,2})(?!\\d|')(?!\\s*(?:-|to)\\s*\\d)${LOOSE_END}`), age: m => atLeast13(Number(m[1])), strict: true },
+  { rx: new RegExp(`\\bi (?:just )?turned\\s+(\\d{1,2})\\b${LOOSE_END}`), age: m => atLeast13(Number(m[1])), strict: true },
+  { rx: new RegExp(`\\b${ME}\\s+(?:only |just )?(${NUM_WORD_RX})\\b${LOOSE_END}`), age: m => atLeast13(wordNum(m[1]!)), strict: true },
   { rx: new RegExp(`\\b${ME}\\s+(?:only |just |literally |barely |like |about )?(\\d{1,2})(?!\\d|')(?!\\s*(?:-|to)\\s*\\d)${AGE_END}`), age: m => Number(m[1]), strict: true },
   { rx: new RegExp(`\\bi (?:just )?turned\\s+(\\d{1,2})\\b${AGE_END}`), age: m => Number(m[1]), strict: true },
   { rx: new RegExp(`(?<!\\b(?:my|our|his|her|their|a|an|the)\\s+)\\b(\\d{1,2})\\s*${YEARS_OLD}`), age: m => Number(m[1]), strict: true },

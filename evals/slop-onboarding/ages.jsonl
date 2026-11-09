@@ -68,3 +68,7 @@
 {"text":"i'm 13","minor":true,"age":13}
 {"text":"im in middle school","minor":true}
 {"text":"my mom wont let me date yet","minor":true}
+{"text":"I'm 3 and 0 this season","minor":false}
+{"text":"im 8 now","minor":false}
+{"text":"I'm 4 and a half","minor":true,"declined":true,"age":4}
+{"text":"I'm 12.5 minutes away","minor":false}

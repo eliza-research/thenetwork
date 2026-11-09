@@ -204,9 +204,13 @@ const AGE_RX: AgeRule[] = [
   { rx: new RegExp(`^\\W*(?:(?:hi|hey|hello|yo)\\W+)?(?:my )?age\\s*[:=-]?\\s*(\\d{1,2})${AGE_END}`), age: m => Number(m[1]), explicit: true },
   // Leading "15 y/o here", "12yo." (only when it is about the sender: "12 yo whisky is great" is not).
   { rx: new RegExp(`^\\W*(?:(?:hi|hey|hello|yo)\\W+)?(\\d{1,2})\\s*${YEARS_OLD}(?=\\s*(?:$|[.,!?;:)]|here\\b|lol\\b|btw\\b))`), age: m => Number(m[1]), explicit: true },
-  // "I'm 15", "I'm only 15", "I just turned 12!", "I'm fifteen".
-  { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(\\d{1,2})${AGE_END}`), age: m => Number(m[1]) },
-  { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(\\d{1,2})${AGE_END_LOOSE}`), age: m => atLeast13(Number(m[1])) },
+  // "I'm 12 and a half", "I'm 4.5", "I just turned 12 1/2". A decimal is not a clause end, and a
+  // measure after it is not an age ("I'm 12.5 minutes away").
+  { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(\\d{1,2})(?:\\s+and\\s+(?:a|one)\\s+half\\b|\\s*\\.5(?!\\d)|\\s+1\\/2\\b)(?!\\s*(?:minutes?|mins?|hours?|hrs?|miles?|blocks?|percent|%|feet|ft\\b))`), age: m => Number(m[1]), explicit: true },
+  { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(${NUM_WORD})\\s+and\\s+(?:a|one)\\s+half\\b`), age: m => AGE_WORDS[m[1]!]!, explicit: true },
+  // "I'm 15", "I'm only 15", "I just turned 12!", "I'm fifteen". A digit after a decimal is not this age.
+  { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(\\d{1,2})(?!\\.\\d)${AGE_END}`), age: m => Number(m[1]) },
+  { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(\\d{1,2})(?!\\.\\d)${AGE_END_LOOSE}`), age: m => atLeast13(Number(m[1])) },
   { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(${NUM_WORD})${AGE_END}`), age: m => AGE_WORDS[m[1]!]! },
   { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(${NUM_WORD})${AGE_END_LOOSE}`), age: m => atLeast13(AGE_WORDS[m[1]!]!) },
   // "I'm almost 16", "I'm turning 16", "I'll be 16 in May", "I turn 16 next month": one less.
