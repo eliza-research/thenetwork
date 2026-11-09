@@ -135,7 +135,7 @@ export function summarize(arm: string, days: number, records: RunRecord[], w: Wo
   const bookedMsgs = new Set(invites.filter(r => r.type === "message" && r.msg.meta?.booked).map(r => (r as Extract<RunRecord, { type: "message" }>).msg.id));
   for (const d of decisions) {
     const said = bookedMsgs.has(d.messageId) && d.decision && d.decision !== "none" ? d.decision : d.intent;
-    const m = said === "accept" || said === "counter" ? yesBy : said === "decline" || said === "booked_cancel" ? noBy : undefined;
+    const m = said === "accept" ? yesBy : said === "decline" || said === "booked_cancel" ? noBy : undefined;
     if (!m) continue;
     if (!m.has(d.proposalId!)) m.set(d.proposalId!, new Set());
     m.get(d.proposalId!)!.add(d.memberId);
