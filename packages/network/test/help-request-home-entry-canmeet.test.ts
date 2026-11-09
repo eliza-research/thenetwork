@@ -357,4 +357,165 @@ describe("helpRequest generator home entry and canMeet gates", () => {
     // Must contain m_alt_acquainted (acquainted and overlapping)
     expect(solo!.alternates).toContain("m_alt_acquainted");
   });
+  test("small_group-only seeker asking for 2 helpers is not rejected prematurely", () => {
+    const input: EngineInput = {
+      members: [
+        // Seeker only opts in to small_group (one_to_one is disallowed)
+        makeMember("m_seeker", "Seeker Sam", "sf", ["small_group"]),
+        makeMember("m_h1", "Helper One", "sf"),
+        makeMember("m_h2", "Helper Two", "sf"),
+      ],
+      facets: [
+        { id: "f_h1", memberId: "m_h1", kind: "offer", value: "help moving heavy couch furniture", tags: ["moving", "couch"], scope: "matchable", provenance: "said", confidence: 0.9 },
+        { id: "f_h2", memberId: "m_h2", kind: "offer", value: "help moving heavy couch furniture", tags: ["moving", "couch"], scope: "matchable", provenance: "said", confidence: 0.9 },
+      ],
+      intents: [
+        {
+          id: "int_two",
+          memberId: "m_seeker",
+          category: "help",
+          objective: "need 2 people to help move a couch",
+          status: "active",
+          horizonDays: 14,
+          createdAt: now - DAY,
+        },
+      ],
+      presence: [
+        { memberId: "m_seeker", city: "sf", type: "home", areas: ["mission"] },
+        { memberId: "m_h1", city: "sf", type: "home", areas: ["mission"] },
+        { memberId: "m_h2", city: "sf", type: "home", areas: ["mission"] },
+      ],
+      edges: [],
+      interactions: [],
+      feedback: [],
+      recentProposals: [],
+      events: [],
+      now,
+    };
+
+    const w = new World(input, cfg, localEmbed);
+    const ctx = { w, memberExclusions: {}, rng: new Rng(42), unmatchedIntents: new Set<string>() };
+    const candidates = helpRequest(ctx);
+
+    // Seeker asking for 2 helpers must NOT be skipped prematurely on one_to_one format check
+    expect(candidates.length).toBeGreaterThan(0);
+    expect(candidates[0]!.format).toBe("small_group");
+    expect(candidates[0]!.participants.length).toBe(3);
+  });
+
+  test("records unmatchedIntents when all variants fail mutual overlap", () => {
+    const input: EngineInput = {
+      members: [
+        makeMember("m_seeker", "Seeker Sam", "sf"),
+        makeMember("m_h1", "Helper MonTue", "sf"),
+        makeMember("m_h2", "Helper WedThu", "sf"),
+      ],
+      facets: [
+        { id: "f_h1", memberId: "m_h1", kind: "offer", value: "help moving heavy couch furniture into apartment living room", tags: ["moving", "couch"], scope: "matchable", provenance: "said", confidence: 0.9 },
+        { id: "f_h2", memberId: "m_h2", kind: "offer", value: "help moving heavy couch furniture into apartment living room", tags: ["moving", "couch"], scope: "matchable", provenance: "said", confidence: 0.9 },
+      ],
+      intents: [
+        {
+          id: "int_couch",
+          memberId: "m_seeker",
+          category: "help",
+          objective: "need help moving heavy couch furniture into apartment living room",
+          status: "active",
+          horizonDays: 14,
+          createdAt: now - DAY,
+        },
+      ],
+      presence: [
+        // Seeker is home in SF all 14 days
+        { memberId: "m_seeker", city: "sf", type: "home", areas: ["mission"] },
+        // Helper 1 is only in SF days 0-2 (away in NYC days 2-14)
+        { memberId: "m_h1", city: "sf", type: "home", areas: ["mission"] },
+        { memberId: "m_h1", city: "nyc", type: "temporary", areas: ["soho"], from: now + 2 * DAY, to: now + 14 * DAY },
+        // Helper 2 is away in NYC days 0-2, only in SF days 2-14
+        { memberId: "m_h2", city: "sf", type: "home", areas: ["mission"] },
+        { memberId: "m_h2", city: "nyc", type: "temporary", areas: ["soho"], from: now, to: now + 2 * DAY },
+      ],
+      edges: [],
+      interactions: [],
+      feedback: [],
+      recentProposals: [],
+      events: [],
+      now,
+    };
+
+    const w = new World(input, cfg, localEmbed);
+    const ctx = { w, memberExclusions: {}, rng: new Rng(42), unmatchedIntents: new Set<string>() };
+    const candidates = helpRequest(ctx);
+
+    // Helpers have disjoint availability, so 2 unacquainted helpers cannot mutually meet
+    expect(candidates.length).toBe(0);
+    // Intent must be recorded in unmatchedIntents, not silently dropped
+    expect(ctx.unmatchedIntents.has("int_couch")).toBe(true);
+  });
+
+  test("alternate overlap check enforces mutual overlap with remaining co-helpers on multi-helper requests", () => {
+    const input: EngineInput = {
+      members: [
+        makeMember("m_seeker", "Seeker Sam", "sf"),
+        makeMember("m_h1", "Helper 1", "sf"),
+        makeMember("m_h2", "Helper 2", "sf"),
+        makeMember("m_alt_good", "Good Alt", "sf"),
+        makeMember("m_alt_disjoint", "Disjoint Alt", "sf"),
+      ],
+      facets: [
+        { id: "f_h1", memberId: "m_h1", kind: "offer", value: "help moving desk furniture", tags: ["moving", "desk"], scope: "matchable", provenance: "said", confidence: 0.95 },
+        { id: "f_h2", memberId: "m_h2", kind: "offer", value: "help moving desk furniture", tags: ["moving", "desk"], scope: "matchable", provenance: "said", confidence: 0.94 },
+        { id: "f_alt_good", memberId: "m_alt_good", kind: "offer", value: "help moving desk furniture", tags: ["moving", "desk"], scope: "matchable", provenance: "said", confidence: 0.90 },
+        { id: "f_alt_bad", memberId: "m_alt_disjoint", kind: "offer", value: "help moving desk furniture", tags: ["moving", "desk"], scope: "matchable", provenance: "said", confidence: 0.88 },
+      ],
+      intents: [
+        {
+          id: "int_desk",
+          memberId: "m_seeker",
+          category: "help",
+          objective: "need 2 people to help moving desk furniture",
+          status: "active",
+          horizonDays: 14,
+          createdAt: now - DAY,
+        },
+      ],
+      presence: [
+        // Seeker is in SF days 0-7
+        { memberId: "m_seeker", city: "sf", type: "home", areas: ["mission"] },
+        // H1 and H2 are in SF days 0-7
+        { memberId: "m_h1", city: "sf", type: "home", areas: ["mission"] },
+        { memberId: "m_h2", city: "sf", type: "home", areas: ["mission"] },
+        // Good alt is in SF days 0-7 (overlaps with seeker, H1, H2)
+        { memberId: "m_alt_good", city: "sf", type: "home", areas: ["mission"] },
+        // Disjoint alt is only in SF days 8-14 (away days 0-8 in NYC)
+        // Disjoint alt overlaps with seeker across horizon, but overlaps with neither H1 nor H2 when they are in SF
+        { memberId: "m_alt_disjoint", city: "sf", type: "home", areas: ["mission"] },
+        { memberId: "m_h1", city: "nyc", type: "temporary", areas: ["soho"], from: now + 7 * DAY, to: now + 14 * DAY },
+        { memberId: "m_h2", city: "nyc", type: "temporary", areas: ["soho"], from: now + 7 * DAY, to: now + 14 * DAY },
+        { memberId: "m_alt_disjoint", city: "nyc", type: "temporary", areas: ["soho"], from: now, to: now + 7 * DAY },
+      ],
+      edges: [],
+      interactions: [],
+      feedback: [],
+      recentProposals: [],
+      events: [],
+      now,
+    };
+
+    const w = new World(input, cfg, localEmbed);
+    const ctx = { w, memberExclusions: {}, rng: new Rng(42), unmatchedIntents: new Set<string>() };
+    const candidates = helpRequest(ctx);
+
+    expect(candidates.length).toBeGreaterThan(0);
+    const c = candidates.find(cand => cand.participants.includes("m_h1") && cand.participants.includes("m_h2"))!;
+    expect(c).toBeDefined();
+    expect(c.format).toBe("small_group");
+    // Good alt overlaps with remaining co-helper, so good alt must be accepted
+    expect(c.alternates).toContain("m_alt_good");
+    // Disjoint alt does not overlap with H1 or H2, so must be excluded
+    expect(c.alternates).not.toContain("m_alt_disjoint");
+    for (const cand of candidates) {
+      expect(cand.alternates).not.toContain("m_alt_disjoint");
+    }
+  });
 });
