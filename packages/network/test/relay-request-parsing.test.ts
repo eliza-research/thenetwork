@@ -27,6 +27,8 @@ test("parseRelayRequest: recognizes polite modal text requests and question form
     ["Could u let her know I'm parking", "I'm parking"],
     ["Please can you tell them I'm here", "I'm here"],
     ["Please could you tell them I'll be right outside", "I'll be right outside"],
+    ["Please can you tell them I'm here?", "I'm here"],
+    ["Please could you let them know I'm outside?", "I'm outside"],
     ["Can you ask them what table they are at?", "what table they are at?"],
     ["Could you ask them if 7 works?", "if 7 works?"],
   ];
@@ -124,6 +126,9 @@ test("parseRelayRequest: continues to hold true hedges, advice questions, and ex
     "Would it be okay to send my number?",
     "would that work if I send my number?",
     "would I be allowed to share my number?",
+    "Would she mind if you give her my number?",
+    "Would Sam care if you send him my number?",
+    "Would my match mind if you share my contact info with them?",
     "never give anyone my number",
     "what's their number?",
     "can I see their photo?",

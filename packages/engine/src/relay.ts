@@ -463,7 +463,7 @@ const TEXT_REQ = new RegExp(`^\\s*${MODAL_PREFIX}(tell|let|ask)\\s+${OTHER}\\s+(
 export function parseRelayRequest(text: string): RelayRequest {
   const t = text.replace(/[’‘`´]/g, "'").trim();
   const low = t.toLowerCase();
-  const hedged = HEDGE.test(low) || (/\?\s*$/.test(t) && /^\s*(?:should|would (?:it|that|i)|could i|is it|do you|can i)\b/i.test(t));
+  const hedged = HEDGE.test(low) || (/\?\s*$/.test(t) && /^\s*(?:should|would\s+(?!you\b|u\b)|could i|is it|do you|can i)\b/i.test(t));
   if (CONTACT_REQ.test(t)) {
     const contactNeg = NEG.test(low);
     return contactNeg || hedged ? { kind: "none" } : { kind: "contact_share" };
@@ -476,7 +476,7 @@ export function parseRelayRequest(text: string): RelayRequest {
   if (m) {
     const verb = m[1]!.toLowerCase();
     let body = m[2]!.trim();
-    if (/^\s*(?:can|could|would)\s+(?:you|u)\b/i.test(t) && /\?\s*$/.test(t) && (verb === "tell" || verb === "let")) {
+    if (/^\s*(?:please\s+)?(?:can|could|would)\s+(?:you|u)\b/i.test(t) && /\?\s*$/.test(t) && (verb === "tell" || verb === "let")) {
       body = body.replace(/\?+\s*$/, "").trim();
     }
     const preVerb = t.slice(0, m.index + m[0].indexOf(m[1]!)).toLowerCase();

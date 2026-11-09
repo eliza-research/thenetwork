@@ -14,7 +14,7 @@ In the matched member relay (`parseRelayRequest`), member requests are parsed in
 2. **Unconstrained `\bwould\b` question hedge false positives:**
    Line 465 checked:
    `hedged = HEDGE.test(low) || (/\?\s*$/.test(t) && /^\s*(?:should|would|could i|is it|do you|can i)\b/i.test(t));`
-   While `could i` and `can i` were properly constrained with `i`, `would` was unconstrained. Consequently, any polite question starting with `"Would you ... ?"` (e.g. `"Would you send them my number?"`, `"Would you please share my contact info with them?"`, `"Would you send them this photo?"`) was flagged as `hedged: true` and dropped as `{ kind: "none" }`. Constraining to `would (?:it|that|i)` preserves hedging checks on advice/uncertainty queries while allowing polite modal directives.
+   While `could i` and `can i` were properly constrained with `i`, `would` was unconstrained. Consequently, any polite question starting with `"Would you ... ?"` (e.g. `"Would you send them my number?"`, `"Would you please share my contact info with them?"`, `"Would you send them this photo?"`) was flagged as `hedged: true` and dropped as `{ kind: "none" }`. Constraining to `would\s+(?!you\b|u\b)` preserves hedging checks on advice, third-person hypothetical questions ("Would she mind if you give her my number?", "Would Sam care if you send him my number?"), and uncertainty queries while allowing second-person polite modal directives. Additionally, polite question-mark stripping on `body` extends to `^\s*(?:please\s+)?(?:can|could|would)\s+(?:you|u)\b` to avoid leaking trailing `?` for "Please can/could you ...?" requests.
 
 3. **Preposition and verb asymmetry in contact and photo requests:**
    - In `CONTACT_REQ`, the primary clause included `forward` and `text`, but the inverted prepositional clause `\b(?:share|send|give|pass)\s+my ... (?:with|to) ${OTHER}` omitted them, dropping `"text my number to her"` and `"forward my number to them"`.
@@ -61,7 +61,7 @@ Command: `bun test packages/network/test/relay-request-parsing.test.ts`
 
  6 pass
  0 fail
- 111 expect() calls
+ 118 expect() calls
 Ran 6 tests across 1 file. [34.00ms]
 ```
 
