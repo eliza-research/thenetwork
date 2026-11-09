@@ -1,4 +1,4 @@
-# Lab matching-disabled runs — 2026-11-10
+# App matching locks in simulations — 2026-11-10
 
 ## Requirement and cause
 
@@ -31,6 +31,8 @@ The operational documentation and existing argument assertion follow that flag.
 
 ## measurement
 
+### Lab runs
+
 Base: `a0ed7bc6495d9e524afc3d500738212a28dc7bc2`; candidate: this PR.
 Date: 2026-11-10 in Asia/Tokyo, 2026-11-09 UTC.
 Runtime: Windows, Bun 1.4.2, PostgreSQL 16.15 for the required database suites.
@@ -40,10 +42,10 @@ three default child-process arms. Meetings were 11 (`push_baseline`),
 10 (`push_v2`) and 4 (`consent`). All three reported zero judge invariants,
 canary leaks and minor contacts. No mock child or model output was used.
 
-One new integration case runs the real Lab and experiment children. It checks
-Peon's three arms, a matching-enabled Network control, judge counts and saved
-results. Before the fix it fails on consent's four meetings. After the fix,
-Peon has zero meetings and every Network control arm still has meetings.
+One new integration case runs real game HTTP controls and Lab experiment
+children. It checks locked Peon runs, matching-enabled Network controls,
+judge counts, configuration and saved Lab results. Peon's Lab arms have zero
+meetings after the fix, and every Network control arm still has meetings.
 
 The paired measurement runs the real experiment CLI with arguments produced
 by each revision's `labArgs`. Each revision runs 24 arms in eight child processes:
@@ -72,12 +74,64 @@ arm still ends with at least 250 joined members. Consent-based arms continue
 to record requests. The change removes simulated matching; it is not a
 claim of improved matching quality.
 
+### Game worlds and reset controls
+
+Game mode had a second path around the same app lock. Its ConsentNetwork
+used `matchingAllowed(app)`, but its external engine and random StubNetwork
+did not. Even while the state reported `matchingLocked: true`, two Peon
+worlds produced 168 automatic proposals and 13 meetings. These initial
+worlds used seed 1, 80 generated NYC personas and 14 days.
+
+The game now omits the external engine when matching is locked. It passes
+the app setting to StubNetwork, whose daily dispatch leaves new submissions
+queued while disabled. This covers random introductions and player or
+scenario proposals, not only engine output. The experiment passes its
+matching flag to StubNetwork as well. Stub defaults remain enabled.
+The game configuration now reports the app lock for stub worlds.
+
+The integration case uses real HTTP reset, step and propose
+commands before running its real Lab children. It checks both stub baselines,
+a player submission with the engine off, the configuration and enabled controls.
+On the base it sees 119 invitations where zero were expected. It passes with
+the fix, with 42 assertions. There is still only one added integration case.
+
+The paired HTTP measurement runs 64 generated worlds per revision:
+seeds 1, 7, 11 and 23, 80 NYC personas, 14 days, all four app labels.
+Each app gets engine-v1/stub, random/stub, engine-off/stub with a player
+proposal on day 7, and a ConsentNetwork control. Every world is configured
+through the HTTP reset route. Native worlds, agents and channel dispatch run
+without mocks or model calls.
+
+| Metric across the 12 affected Peon stub worlds | Before | After |
+|---|---:|---:|
+| Automatically generated proposals | 682 | 0 |
+| Outbound proposal messages | 780 | 0 |
+| Held meetings | 37 | 0 |
+| Judge invariants | 0 | 0 |
+| Canary leaks | 0 | 0 |
+| Minor contacts | 0 | 0 |
+
+All 52 control rows are deeply identical. This includes all reported metrics,
+native record hashes, channel message hashes and persona memory hashes.
+Record hashing excludes only the run identifier and final elapsed time.
+All four player submissions in locked worlds remain `PROPOSED`, without
+invitations or a scheduled meeting. Joins and non-matching activity continue.
+
+The unchanged seed-23 ConsentNetwork control has one `minor_contact`
+invariant under each of the Network, Slop and Friends app labels. These labels
+share the same generated NYC world. Each also reports one minor contact;
+canary leaks remain zero. These three pre-existing counts are not removed,
+hidden or attributed to this fix. The other 61 game worlds have zero invariants
+and minor contacts after the fix. A fully clean 64-world sample is not claimed.
+
+The final candidate reproduces all 24 fixed Lab results, including the controls.
+
 ## safety_gates
 
 The three before-fix violations belong to Peon's seed-23 push baseline:
 `decliner_exposed: 3`. Matching-off removes those exposures. The other eleven
 Peon results have zero invariants before and after. Enabled-app and daily-cap
-controls remain unchanged. All 24 candidate results have zero invariants,
+controls remain unchanged. All 24 candidate Lab results have zero invariants,
 canary leaks and minor contacts.
 
 The ConsentNetwork arms use simulated review (`review: "auto"`). The push
@@ -106,7 +160,7 @@ UI or member message copy changes; other agent clients are not claimed as tested
 ## Reproduction and limits
 
 Run `bun test --conditions eliza-source packages/observatory/test/lab-matching.integration.test.ts`.
-Expect one passing case with 18 assertions.
+Expect one passing case with 42 assertions.
 
 For a direct matching-off experiment, run:
 
@@ -119,9 +173,9 @@ invariants, canary leaks and minor contacts. Remove `--matching-off` to obtain
 the unchanged matching-enabled control. On the base revision, Lab instead
 passes `--max-new 0`, which reproduces the unwanted meetings above.
 
-The committed case tests real Lab child processes and persistence, not the
+The committed case tests real game HTTP controls, Lab children and persistence, not the
 browser UI or a live deployment. Existing stored Lab runs are historical
-results and are not rewritten. The measurement covers seven days and four
+results and are not rewritten. The measurements cover seven-day Lab and 14-day game worlds over four
 seeds, not every duration or seed. No secrets, raw run logs or member data
 are included in this PR.
 
@@ -135,8 +189,8 @@ The same committed regression case, before the production fix:
 ```text
  0 pass
  1 fail
- 4 expect() calls
-Ran 1 test across 1 file. [18.04s]
+ 1 expect() calls
+Ran 1 test across 1 file. [1228.00ms]
 ```
 
 After the production fix:
@@ -144,8 +198,8 @@ After the production fix:
 ```text
  1 pass
  0 fail
- 18 expect() calls
-Ran 1 test across 1 file. [26.13s]
+ 42 expect() calls
+Ran 1 test across 1 file. [27.76s]
 ```
 
 The affected blocks use their fixed seeds, including 21-day push seed 1,
@@ -161,7 +215,7 @@ PASS: 91/91 blocking gates, 0 tracked off target, 249.6s (network 220.7s, audit 
 after:
 
 ```text
-PASS: 91/91 blocking gates, 0 tracked off target, 245.8s (network 217s, audit 21.9s, ops 6.9s)
+PASS: 91/91 blocking gates, 0 tracked off target, 254.3s (network 225.5s, audit 21.4s, ops 7.4s)
 ```
 
 All 94 gate records match after elapsed-time normalization. This includes
@@ -173,12 +227,12 @@ All 94 gate records match after elapsed-time normalization. This includes
  676 pass
  8 skip
  6 fail
- 13759 expect() calls
-Ran 690 tests across 69 files. [478.15s]
+ 13783 expect() calls
+Ran 690 tests across 69 files. [474.62s]
 ```
 
 ```text
-(pass) real lab arms keep matching-disabled apps free of meetings [25247.07ms]
+(pass) game and lab runs honor app matching locks before dispatch [28455.99ms]
 ```
 
 All six failure names and causes match the recorded base failures: missing
@@ -192,7 +246,7 @@ All eight skip names also match the baseline. A green integration suite is not c
  1 skip
  0 fail
  654 expect() calls
-Ran 43 tests across 3 files. [34.83s]
+Ran 43 tests across 3 files. [37.42s]
 ```
 
 The optional browser SDK case is skipped, as on the baseline.
@@ -213,6 +267,19 @@ Measurement JSON SHA-256 (kept locally, not committed as run data):
 
 - before: `7bb4ed2a96d841964e9e44dadb21a8efb8ed7e8b5b014e8a8a1a1cf309d0ed1f`
 - after: `9bf5ac77bb0c66d5745f1843d71c5ae77fa80089886b8c37e198b48c385edb14`
+
+For the game measurement, run this from each checkout, changing the output
+name to before or after. Keep the program in their common parent directory:
+
+```text
+bun run --conditions eliza-source ../game-matching-measure.ts ../game-before.json
+bun run ../game-matching-compare.ts ../game-before.json ../game-after.json
+```
+
+Game measurement JSON SHA-256:
+
+- before: `d8c96d192e7b0eb7499ea3abf207d6afa3db0b21bb67a7acdf9759e84ac2e0dd`
+- after: `9b7f1e3936f5e227d7be3c8780c7cf09e25afcc14c7c292929714f1125fd1de1`
 
 ### lab-matching-measure.ts
 
@@ -314,4 +381,121 @@ if (!isDeepStrictEqual(gates(before), gates(after))) throw Error("Gate values ch
 if (after.gates.length !== 94 || after.gates.filter((g: any) => g.blocking).length !== 91 || after.gates.some((g: any) => !g.pass))
   throw Error("Expected all 91 blocking gates and three tracked gates to pass");
 console.log(JSON.stringify({ identicalGateRecords: 94, blockingGatesPassed: 91, trackedOffTarget: 0 }, null, 2));
+```
+
+### game-matching-measure.ts
+
+```ts
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+const root = process.cwd().replaceAll("\\", "/");
+const { createServer } = await import(pathToFileURL(`${root}/packages/observatory/src/server.ts`).href);
+const DAY = 86_400_000;
+const hash = (x: unknown) => new Bun.CryptoHasher("sha256").update(JSON.stringify(x)).digest("hex");
+const records = (source: any) => source.world.records.map((r: any) => {
+  if (r.type === "run_start") { const { runId, ...rest } = r; return rest; }
+  if (r.type === "run_end") { const { wallMs, ...rest } = r; return rest; }
+  return r;
+});
+const variants = [
+  { network: "stub", engine: "engine-v1", manual: false },
+  { network: "stub", engine: "random", manual: false },
+  { network: "stub", engine: "off", manual: true },
+  { network: "consent", engine: "engine-v1", manual: false },
+];
+const rows = [];
+for (const seed of [1, 7, 11, 23]) {
+  const dir = await mkdtemp(join(tmpdir(), "game-matching-measure-"));
+  const token = "local-game-matching-0000000000000000";
+  const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+  const server = await createServer({ port: 0, development: false, token, staffRolesUrl: false, peopleUrl: false,
+    audit: { dir: join(dir, "audit") }, lab: { dir: join(dir, "lab") },
+    game: { seed, personas: 80, days: 14, network: "stub", engine: "off", pushMs: 3_600_000, tickMs: 3_600_000 },
+    real: { url: undefined, service: false, pollMs: 3_600_000 },
+  });
+  try {
+    for (const app of ["peon", "ntwrk", "slop", "friends"]) for (const variant of variants) {
+      const source = await server.source("game", app);
+      const state = () => fetch(`${server.url}/api/state?app=${app}`, { headers }).then(r => r.json());
+      const control = async (body: unknown) => {
+        const res = await fetch(`${server.url}/api/control?app=${app}`, { method: "POST", headers, body: JSON.stringify(body) });
+        const result = await res.json();
+        if (res.status !== 200 || !result.ok) throw Error(`Control failed: ${JSON.stringify(result)}`);
+        return result;
+      };
+      await control({ type: "reset", network: variant.network, engine: variant.engine });
+      await control({ type: "step", ms: (variant.manual ? 7 : 14) * DAY });
+      let proposalId: string | undefined;
+      if (variant.manual) {
+        const pair = (await state()).members.filter((m: any) => m.joined && !m.minor && !m.declined && m.state !== "opted_out").slice(0, 2);
+        if (pair.length !== 2) throw Error("No eligible pair");
+        proposalId = (await control({ type: "propose", participants: pair.map((m: any) => m.id) })).data.id;
+        await control({ type: "step", ms: 7 * DAY });
+      }
+      const s = await state(), native = records(source);
+      const raw = source as any;
+      const config = await source.config();
+      const row = { seed, app, ...variant, locked: !!s.env.matchingLocked, matchingEnabled: config.matchingEnabled,
+        stats: s.stats, generatedProposals: native.filter((r: any) => r.type === "proposal" && r.source !== "player").length,
+        proposalMessages: native.filter((r: any) => r.type === "message" && r.msg.direction === "outbound" && r.msg.meta?.type === "proposal").length,
+        scheduled: native.filter((r: any) => r.type === "meeting_scheduled").length,
+        held: native.filter((r: any) => r.type === "outcome" && Object.values(r.attendance).filter((a: any) => a.showed).length >= 2).length,
+        manualState: proposalId ? s.opportunities.find((o: any) => o.id === proposalId)?.state : null,
+        recordsHash: hash(native), messagesHash: hash(raw.world.channel.all()), memoriesHash: hash([...raw.world.memories]),
+      };
+      rows.push(row);
+      process.stderr.write(`${seed}/${app}/${variant.network}/${variant.engine}: generated=${row.generatedProposals} invites=${row.proposalMessages} held=${row.held} invariant=${s.stats.judge.invariants}\n`);
+    }
+  } finally { await server.stop(); await rm(dir, { recursive: true, force: true }); }
+}
+await Bun.write(process.argv[2]!, JSON.stringify(rows, null, 2) + "\n");
+```
+
+### game-matching-compare.ts
+
+```ts
+import assert from "node:assert/strict";
+const before = await Bun.file(process.argv[2]!).json(), after = await Bun.file(process.argv[3]!).json();
+assert.equal(before.length, 64);
+assert.equal(after.length, 64);
+const summary = { worlds: 64, changedWorlds: 0, identicalControls: 0, generatedBefore: 0, generatedAfter: 0,
+  invitationsBefore: 0, invitationsAfter: 0, heldBefore: 0, heldAfter: 0, queuedPlayerProposals: 0,
+  unchangedControlInvariants: 0, changedWorldInvariantsBefore: 0, changedWorldInvariantsAfter: 0 };
+for (let i = 0; i < before.length; i++) {
+  const b = before[i], a = after[i];
+  const id = (x: any) => `${x.seed}/${x.app}/${x.network}/${x.engine}`;
+  assert.equal(id(a), id(b));
+  if (a.app !== "peon" || a.network !== "stub") {
+    assert.deepEqual(a, b, `${id(a)} changed`);
+    summary.identicalControls++;
+    summary.unchangedControlInvariants += a.stats.judge.invariants;
+    continue;
+  }
+  summary.changedWorlds++;
+  assert.equal(a.locked, true);
+  assert.equal(a.matchingEnabled, false);
+  assert.equal(a.generatedProposals, 0);
+  assert.equal(a.proposalMessages, 0);
+  assert.equal(a.stats.invites, 0);
+  assert.equal(a.scheduled, 0);
+  assert.equal(a.held, 0);
+  assert.equal(a.stats.judge.invariants, 0);
+  assert.equal(a.stats.judge.canaryLeaks, 0);
+  assert.equal(a.stats.judge.minorContacts, 0);
+  assert.ok(a.stats.joined > 0);
+  if (a.manual) { assert.equal(a.manualState, "PROPOSED"); summary.queuedPlayerProposals++; }
+  summary.generatedBefore += b.generatedProposals;
+  summary.generatedAfter += a.generatedProposals;
+  summary.invitationsBefore += b.proposalMessages;
+  summary.invitationsAfter += a.proposalMessages;
+  summary.heldBefore += b.held;
+  summary.heldAfter += a.held;
+  summary.changedWorldInvariantsBefore += b.stats.judge.invariants;
+  summary.changedWorldInvariantsAfter += a.stats.judge.invariants;
+}
+assert.equal(summary.changedWorlds, 12);
+assert.equal(summary.identicalControls, 52);
+console.log(JSON.stringify(summary, null, 2));
 ```

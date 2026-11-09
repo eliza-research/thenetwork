@@ -102,7 +102,7 @@ export async function runArm(arm: "push_baseline" | "push_v2" | "consent", o: { 
     ...(cap ? { onLedger: cap.onLedger, capital: cap.capital } : {}),
   });
   const simPlans = o.simPlans ?? (arm === "consent" && o.network?.plans !== false);
-  const network: NetworkUnderTest = consent ?? new StubNetwork({ seed: o.seed, randomIntros: false });
+  const network: NetworkUnderTest = consent ?? new StubNetwork({ seed: o.seed, randomIntros: false, matchingEnabled: o.network?.matchingEnabled });
   const records: RunRecord[] = [];
   const w = new World({
     seed: o.seed, personas, days: o.days, start, writeLog: false, network, agent: (a => (o.paraphrase ? new ParaphraseAgent(a) : a))(new PolicyPersonaAgent(start, { liveAsksOnly: o.liveAsks ?? false, ...(o.timeAware ? { timeAware: true } : {}), ...(simPlans ? { plans: true } : {}) })),
