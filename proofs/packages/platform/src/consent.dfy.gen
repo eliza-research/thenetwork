@@ -4,7 +4,7 @@ datatype Option<T> = None | Some(value: T)
 
 datatype ConsentState = opted_in | opted_out
 
-datatype ConsentEvent = ConsentEvent(e164: string, app: Option<string>, line: Option<string>, state: ConsentState, source: string, wording: Option<string>, wordingVersion: Option<string>, ref: Option<string>, at: int)
+datatype ConsentEvent = ConsentEvent(e164: string, app: Option<string>, line: Option<string>, state: ConsentState, source: string, wording: Option<string>, wordingVersion: Option<string>, namedApp: Option<string>, ref: Option<string>, at: int)
 
 datatype ConsentLast = ConsentLast(app: Option<ConsentEvent>, global: Option<ConsentEvent>)
 
