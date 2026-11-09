@@ -757,12 +757,12 @@ export class ConsentNetwork implements NetworkUnderTest {
     // Answers to what we asked (never from the assistant's profile: it can only teach, below).
     const aw = mcp && m.awaiting?.kind !== "interview" ? undefined : m.awaiting;
     if (mcp && c.kind !== "people_request") return this.learnFromProfile(m, aw, c, body);
-    if (aw?.kind === "probe" && this.opps.get(aw.oppId!)?.plan) {
+    if (c.kind !== "feedback_like" && aw?.kind === "probe" && this.opps.get(aw.oppId!)?.plan) {
       // A plan probe: yes or no to that plan at that time ("can't make that time" is a no, and a time they are not free).
       const yn = this.yesNoOf(body);
       if (yn === "yes" || yn === "no") { m.awaiting = undefined; return this.onPlanProbeAnswer(m, this.opps.get(aw.oppId!)!, yn === "yes", body); }
       if (yn === "unclear" && this.clarify(m, aw, c)) return;
-    } else if (aw?.kind === "probe") {
+    } else if (c.kind !== "feedback_like" && aw?.kind === "probe") {
       const o = this.opps.get(aw.oppId!);
       const options = o?.offered?.[m.id] ?? [];
       const r0 = mergeConsent(parseProbeReply(body, options), this.understood, options);
@@ -1995,10 +1995,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (m.minor) return "participant_minor";
       if (this.busy(id, o.id)) return "busy_elsewhere";
     }
-    for (let i = 0; i < o.participants.length; i++) for (let j = i + 1; j < o.participants.length; j++) {
+    for (let i = 0; i < o.participants.length; i++) for (let j = i + 1; j < o.participants.length; j++)
       if (this.blocked(o.participants[i]!, o.participants[j]!)) return "blocked_pair";
-      if (this.avoid.has(pairKey(o.participants[i]!, o.participants[j]!))) return "pair_history";
-    }
     if (o.origin === "engine") return this.gateReason({ ...this.toProposal(o), roles: o.roles ?? {}, anchor: o.anchor, ...(o.seat ? { seat: o.seat } : {}) } as SeatProposal, o.id);
     return undefined;
   }
@@ -2926,13 +2924,34 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** One plan = one review item (plans ask 3). */
   private submitPlan(plan: plans.Plan, now: number): Opp {
     const a = plans.activityById.get(plan.activityId)!;
-    const prop = plans.planToProposal(plan, this.pcfg);
+    const firsts = new Set<string>();
+    const invited: MemberId[] = [];
+    const alternates = [...plan.alternates];
+    for (const id of plan.invited) {
+      const f = this.members.get(id)?.first.toLowerCase();
+      if (f && firsts.has(f)) {
+        const repIdx = alternates.findIndex(alt => {
+          const af = this.members.get(alt)?.first.toLowerCase();
+          return af && !firsts.has(af);
+        });
+        if (repIdx !== -1) {
+          const [rep] = alternates.splice(repIdx, 1);
+          firsts.add(this.members.get(rep)!.first.toLowerCase());
+          invited.push(rep);
+        }
+        continue;
+      }
+      if (f) firsts.add(f);
+      invited.push(id);
+    }
+    const cleanPlan = { ...plan, invited, alternates };
+    const prop = plans.planToProposal(cleanPlan, this.pcfg);
     const o = this.newOpp({
-      origin: "planner", kind: prop.kind, category: plan.category, objective: prop.objective, detail: a.label, participants: plan.invited, alternates: plan.alternates,
-      primed: [], explanations: prop.explanations, score: plan.score, generator: plan.crewId ? "crew" : "plan", tags: a.tags.slice(0, 4),
+      origin: "planner", kind: prop.kind, category: cleanPlan.category, objective: prop.objective, detail: a.label, participants: cleanPlan.invited, alternates: cleanPlan.alternates,
+      primed: [], explanations: prop.explanations, score: cleanPlan.score, generator: cleanPlan.crewId ? "crew" : "plan", tags: a.tags.slice(0, 4),
     });
-    o.plan = plan;
-    for (const id of plan.invited) this.lastPlannedAt.set(id, now);
+    o.plan = cleanPlan;
+    for (const id of cleanPlan.invited) this.lastPlannedAt.set(id, now);
     this.plansCounters.plansProposed++;
     this.submit(o);
     return o;
@@ -3045,7 +3064,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const a = plans.activityById.get(plan.activityId)!;
     let keep = going.filter(id => {
       if (!this.bookedNear(id, plan.window.start, o.id)) return true;
-      o.status.set(id, "unavailable"); this.plansCounters.planConflictsDropped++;
+      o.status.set(id, "unavailable"); if (o.planRun) o.planRun.answers[id] = "no"; this.plansCounters.planConflictsDropped++;
       this.ctx.log("plan_conflict", { oppId: o.id, memberId: id });
       return false;
     });
@@ -3055,8 +3074,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const id of keep) {
       const chk = this.checkRecipient(id, "reveal", { about: [...seated, id], reply: false });
       const why = !chk.ok ? chk.reason : attention.canSendLogistics({ outboundSinceInbound: this.member(id).outbound ?? 0 }) ? undefined : "conversation_streak";
-      if (why) { this.refuse(id, "reveal", why); o.status.set(id, "unavailable"); continue; }
-      if (seated.some(s => this.avoid.has(pairKey(s, id)))) { this.refuse(id, "reveal", "pair_history"); o.status.set(id, "unavailable"); continue; }
+      if (why) { this.refuse(id, "reveal", why); o.status.set(id, "unavailable"); if (o.planRun) o.planRun.answers[id] = "no"; continue; }
+      if (seated.some(s => this.avoid.has(pairKey(s, id)))) { this.refuse(id, "reveal", "pair_history"); o.status.set(id, "unavailable"); if (o.planRun) o.planRun.answers[id] = "no"; continue; }
       seated.push(id);
     }
     keep = seated;
@@ -3097,7 +3116,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** A late yes after booking (until 6 hours before): the member joins and gets the booked plan; the sim's meeting is updated in place. */
   private planJoin(o: Opp, id: MemberId) {
     const plan = o.plan!;
-    if (this.bookedNear(id, plan.window.start, o.id) || !this.checkRecipient(id, "reveal", { about: o.participants.filter(p => o.status.get(p) === "yes"), reply: false }).ok) { o.status.set(id, "unavailable"); return; }
+    const seated = o.participants.filter(p => o.status.get(p) === "yes");
+    if (this.bookedNear(id, plan.window.start, o.id) || seated.some(s => this.avoid.has(pairKey(s, id))) || !this.checkRecipient(id, "reveal", { about: seated, reply: false }).ok) { o.status.set(id, "unavailable"); return; }
     o.status.set(id, "yes"); this.plansCounters.planLateJoins++;
     this.ctx.recordMeeting({ proposalId: o.id, participants: [id], at: plan.window.start, city: "nyc", kind: "plan" });
     this.planReveal(o, id);
@@ -3123,7 +3143,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         this.close(o, "plan did not come together");
         const [a, b] = fallback.members as [MemberId, MemberId];
         const ma = this.members.get(a), mb = this.members.get(b);
-        if (ma && mb && this.eligible(a) && this.eligible(b) && !this.blocked(a, b) && !this.avoid.has(pairKey(a, b)) && !this.pairHistory(a, b, 60) && ma.first.toLowerCase() !== mb.first.toLowerCase()) {
+        if (ma && mb && this.eligible(a) && this.eligible(b) && !this.blocked(a, b) && !this.avoid.has(pairKey(a, b)) && ma.first.toLowerCase() !== mb.first.toLowerCase()) {
           this.submitPlan(fallback.partnerPlan, now);
           return;
         }
@@ -3983,7 +4003,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       // whoever proposed it (search, engine, planner, player or scenario).
       const am = this.members.get(a);
       if (!am || am.minor || am.minorSignal) continue;
-      if (participants.includes(a) || [...participants, ...out].some(p => this.blocked(p, a) || this.avoid.has(pairKey(p, a)) || this.pairHistory(p, a, 60))) continue;
+      if (participants.includes(a) || [...participants, ...out].some(p => this.blocked(p, a) || this.avoid.has(pairKey(p, a)))) continue;
       const f = this.members.get(a)?.first.toLowerCase();
       if (f && firsts.has(f)) continue;
       if (f) firsts.add(f);

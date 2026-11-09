@@ -191,21 +191,62 @@ describe("plan fallback partner consent and pair constraints", () => {
     expect(distinct).toEqual(["d"]);
   });
 
-  test("approvalCheck invalidates opportunity review if participants have an avoid relationship", async () => {
-    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
-    await w.onboard("a", "b");
+
+  test("planJoin refuses late join if candidate has avoid edge with already seated member", async () => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+    await w.onboard("a", "b", "c");
 
     const netAny = w.net as any;
-    // Record avoid edge between a and b
-    netAny.avoid.add(pairKey("a", "b"));
+    netAny.avoid.add(pairKey("a", "c"));
 
     const o = netAny.newOpp({
-      origin: "player", kind: "intro", category: "social", objective: "climb", detail: "climbing",
-      participants: ["a", "b"], alternates: [], primed: [], explanations: {}, score: 0.8, generator: "player", tags: [],
+      origin: "planner", kind: "group", category: "social", objective: "climb", detail: "climbing",
+      participants: ["a", "b", "c"], alternates: [], primed: [], explanations: {}, score: 0.8, generator: "plan", tags: [],
     });
+    o.plan = {
+      id: "plan_test", city: "nyc", activityId: "bouldering",
+      place: { name: "Brooklyn Boulders" },
+      window: { start: netAny.now() + 48 * 3600_000, end: netAny.now() + 50 * 3600_000 },
+      invited: ["a", "b", "c"], alternates: [], quorum: 2,
+    };
+    o.stage = "scheduled";
+    o.status.set("a", "yes");
+    o.status.set("b", "yes");
+    o.status.set("c", "probing");
 
-    const check = netAny.approvalCheck(o);
-    expect(check).toBe("pair_history");
+    netAny.planJoin(o, "c");
+    expect(o.status.get("c")).toBe("unavailable");
+    expect(netAny.plansCounters.planLateJoins).toBe(0);
+  });
+
+  test("bookPlan updates planRun answers on drop so fallback derives partnerPlan", async () => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+    await w.onboard("a", "b", "c");
+
+    const netAny = w.net as any;
+    netAny.avoid.add(pairKey("a", "c"));
+
+    const o = netAny.newOpp({
+      origin: "planner", kind: "group", category: "social", objective: "climb", detail: "climbing",
+      participants: ["a", "b", "c"], alternates: [], primed: [], explanations: {}, score: 0.8, generator: "plan", tags: [],
+    });
+    o.plan = {
+      id: "plan_test2", city: "nyc", activityId: "bouldering",
+      place: { name: "Brooklyn Boulders" },
+      window: { start: netAny.now() + 48 * 3600_000, end: netAny.now() + 50 * 3600_000 },
+      invited: ["a", "b", "c"], alternates: [], quorum: 3,
+    };
+    o.planRun = {
+      plan: o.plan,
+      answers: { a: "yes", b: "yes", c: "yes" },
+      bench: [],
+      stage: "booked",
+    };
+
+    netAny.bookPlan(o, ["a", "b", "c"]);
+    // c was dropped due to avoid edge with a, answers['c'] should be 'no'
+    expect(o.planRun.answers["c"]).toBe("no");
+    // Submitted partnerPlan for [a, b]
+    expect(netAny.plansCounters.plansProposed).toBeGreaterThanOrEqual(1);
   });
 });
-
