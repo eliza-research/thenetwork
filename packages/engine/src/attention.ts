@@ -23,7 +23,8 @@
 // and calls these functions; see docs/results/2026-10-07-attention-budget.md for the integration note.
 import type { Category, MemberId, ParticipationState } from "@thenetwork/core";
 import { canBeMatched, DAY, fromLocal, HOUR, inQuietHours, localParts, MINUTE } from "@thenetwork/core";
-import { DEFAULT_ATTENTION, type AttentionConfig } from "./config.ts";
+import { capBlocks, capValue, itemHardGate } from "./attentionCore.ts";
+import { assertNoConfigErrors, attentionConfigErrors, DEFAULT_ATTENTION, type AttentionConfig } from "./config.ts";
 import { tokenize } from "./embed.ts";
 import { privateVocabulary } from "./explain.ts";
 import { checkMemberFacing } from "./judgeCommon.ts";
@@ -35,6 +36,8 @@ import { CONTRIBUTOR_ROLES } from "./types.ts";
 /** A send-time eligibility re-check (filters.ts): a reason the member cannot be contacted now, or null. `lane`: the item's category, when known. */
 export type EligibilityCheck = (memberId: MemberId, others: MemberId[], lane?: Category) => string | null;
 import type { AppPack } from "./pack.ts";
+import { groupQuorum } from "./planCore.ts";
+import { interpolate } from "./scoreCore.ts";
 import { DEFAULT_ENJOY_BY_CATEGORY, DEFAULT_ENJOY_KNOTS } from "./packs/network/calibrator.ts";
 import { GENERIC_ACTIVITY as NETWORK_GENERIC_ACTIVITY } from "./packs/network/copy.ts";
 import { networkPack } from "./packs/network/index.ts";
@@ -109,12 +112,11 @@ export interface Cap { limit: number; periodDays: number }
 export function capFor(m: MemberAttention, cfg: AttentionConfig = DEFAULT_ATTENTION): Cap {
   // Minors take the stricter of the minors cap and their state's cap (a Quiet minor keeps Quiet's
   // 1 per 30 days, engine-attention-plans-5).
-  const st = cfg.caps[m.state];
-  const base = isMinor(m.age) && cfg.minors.cap.limit / cfg.minors.cap.periodDays < st.limit / st.periodDays ? cfg.minors.cap : cfg.caps[m.state];
-  if (m.state === "paused" || m.onlyWhenAsked || m.prefs.mode === "only_when_asked") return { limit: 0, periodDays: base.periodDays };
   // An explicit request can lower the cap, or restore it, but never exceed the state cap (D11).
-  const limit = m.prefs.capOverride === undefined ? base.limit : Math.min(base.limit, Math.max(0, Math.floor(m.prefs.capOverride)));
-  return { limit, periodDays: base.periodDays };
+  const over = m.prefs.capOverride;
+  // capValue's proof needs limit >= 0 and periodDays > 0; a config handed in unresolved is checked here.
+  assertNoConfigErrors(attentionConfigErrors(cfg));
+  return capValue({ state: m.state, minor: isMinor(m.age), onlyWhenAsked: !!m.onlyWhenAsked || m.prefs.mode === "only_when_asked", capOverride: over === undefined ? undefined : Math.floor(over) }, cfg.caps, cfg.minors.cap);
 }
 
 /** Break-ins allowed per period (D4): Normal 1/7d, Open 2/7d, Quiet 0, minors 0, newcomers 1. Always within the cap. */
@@ -176,15 +178,8 @@ export { DEFAULT_ENJOY_BY_CATEGORY, DEFAULT_ENJOY_KNOTS } from "./packs/network/
 export function knotCalibrator(knots: [number, number][] = DEFAULT_ENJOY_KNOTS, byCategory: Partial<Record<Category, [number, number][]>> = DEFAULT_ENJOY_BY_CATEGORY): Calibrator {
   return (score, category) => interpolate(byCategory[category] ?? knots, score);
 }
-export function interpolate(knots: [number, number][], x: number): number {
-  if (!knots.length) return x;
-  if (x <= knots[0]![0]) return knots[0]![1];
-  for (let i = 1; i < knots.length; i++) {
-    const [x1, y1] = knots[i]!, [x0, y0] = knots[i - 1]!;
-    if (x <= x1) return x1 === x0 ? y1 : y0 + ((y1 - y0) * (x - x0)) / (x1 - x0);
-  }
-  return knots[knots.length - 1]![1];
-}
+// The calibrator itself is proved in scoreCore.ts (a probability in, a probability out).
+export { interpolate };
 
 /** w_kind; profiling questions and re-confirmations are worth their expected value of information, capped. */
 export function kindWeight(item: Pick<AttentionItem, "kind" | "evi">, cfg: AttentionConfig = DEFAULT_ATTENTION): number {
@@ -425,18 +420,11 @@ export const isInitialInvite = (it: Pick<AttentionItem, "kind">, cfg: AttentionC
 /** A message counts against the cap (once) iff it carries at least one initial invite. A "what's your week like?" check-in without a proposal does not. */
 export const countsAgainstCap = (items: readonly Pick<AttentionItem, "kind">[], cfg: AttentionConfig = DEFAULT_ATTENTION) => items.some(it => isInitialInvite(it, cfg));
 
-const MINOR_SAFE = (it: AttentionItem, cfg: AttentionConfig) => cfg.minors.allowedKinds.includes(it.kind) && it.others.length === 0 && !it.involvesMember;
-
 /** Why an item may not go to this member at all right now (null = eligible). */
 export function itemGate(m: MemberAttention, it: AttentionItem, now: number, cfg: AttentionConfig = DEFAULT_ATTENTION, pack: AppPack = networkPack): string | null {
-  if (it.memberId !== m.memberId) return "wrong_member";
-  if (it.urgency.expiresAt <= now) return "expired";
-  if (it.reviewState === "rejected") return "review_rejected";
-  if (it.involvesMember && it.reviewState !== "approved") return "awaiting_review";
-  if (isMinor(m.age)) {
-    // D9: events, places and solo plans only; never anything that involves another member.
-    if (!MINOR_SAFE(it, cfg)) return "minor_restricted";
-  }
+  // Wrong member, expired, review state; D9: minors get events, places and solo plans only, never anything that involves another member.
+  const hard = itemHardGate(m.memberId, isMinor(m.age), cfg.minors.allowedKinds.includes(it.kind), { memberId: it.memberId, expiresAt: it.urgency.expiresAt, reviewState: it.reviewState, involvesMember: !!it.involvesMember, others: [...it.others] }, now);
+  if (hard) return hard;
   // Pack lane gate (networkPack: romance only for opted-in adults, "romance_not_allowed").
   const laneGate = pack.attention.itemGate?.(m, it);
   if (laneGate) return laneGate;
@@ -494,7 +482,7 @@ export function composeMessage(inp: ComposeInput): ComposeResult {
   const next = nextDigestSlot(m, now, cfg);
   const eligible: { it: AttentionItem; v: number }[] = [];
   for (const it of inp.items) {
-    const why = atCap && isInitialInvite(it, cfg) ? "cap" : itemGate(m, it, now, cfg, P);
+    const why = capBlocks(used, cap.limit, isInitialInvite(it, cfg)) ? "cap" : itemGate(m, it, now, cfg, P);
     if (why) { res.skipped.push({ itemId: it.id, reason: why }); continue; }
     eligible.push({ it, v: itemValue(it, m.prefs, cfg, next) });
   }
@@ -784,7 +772,7 @@ export function startProbeFlow(p: Pick<EngineProposal, "id" | "participants" | "
   const first = group ? p.participants[0]! : firstToProbe(p);
   return {
     proposalId: p.id, first, partners: p.participants.filter(x => x !== first), group,
-    quorum: group ? Math.max(3, Math.ceil(p.participants.length * 0.66)) : 2,
+    quorum: group ? groupQuorum(p.participants.length) : 2,
     answers: Object.fromEntries(p.participants.map(x => [x, "pending" as ProbeAnswer])),
     stage: group || parallel ? "probing_partners" : "probing_first",
     ...(parallel ? { parallel: true } : {}),
@@ -816,7 +804,8 @@ export function recordProbeAnswer(f: ProbeFlow, member: MemberId, yes: boolean):
   let stage: ProbeFlow["stage"] = f.stage;
   if (f.parallel) stage = !yes ? "closed" : yesN === Object.keys(answers).length ? "revealed" : f.stage;
   else if (!f.group) {
-    if (member === f.first) stage = yes ? "probing_partners" : "closed";
+    // A one-participant proposal (network_growth) has no partner to probe: its yes completes the flow.
+    if (member === f.first) stage = !yes ? "closed" : f.partners.length ? "probing_partners" : "revealed";
     else stage = yes && answers[f.first] === "yes" ? "revealed" : "closed";
   } else if (yesN >= f.quorum) stage = "revealed";
   else if (yesN + open < f.quorum) stage = "closed";

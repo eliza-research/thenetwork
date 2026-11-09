@@ -3,7 +3,7 @@
 import { join } from "node:path";
 import { SQL } from "bun";
 import type { McpAppId } from "./apps.ts";
-import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, type AuditRow, type AuthCode, type AuthRequest, type Grant, type OAuthClient, type OAuthStore, type Token } from "./store.ts";
+import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, type AuditRow, type AuthCode, type AuthRequest, type Grant, type Issue, type Mint, type OAuthClient, type OAuthStore, type Token } from "./store.ts";
 
 export const OAUTH_SQL = join(import.meta.dir, "..", "db", "oauth.sql");
 
@@ -112,7 +112,26 @@ export class PgOAuthStore implements OAuthStore {
       returning *`;
     return r ? request(r) : undefined;
   }
-  async deleteAuthRequest(id: string) { await this.sql`delete from oauth.auth_requests where id = ${id}`; }
+  async approveConsent<I extends Issue>(id: string, at: number, issue: (r: AuthRequest) => I | undefined) {
+    return this.sql.begin(async tx => {
+      const [row] = await tx`delete from oauth.auth_requests
+        where id = ${id} and step = 'consent' and e164 is not null and expires_at > ${ts(at)}
+        returning *`;
+      if (!row) return undefined;
+      const r = request(row);
+      const issued = issue(r);
+      if (!issued) return { request: r };
+      // Same transaction: a failed insert keeps the approval and stores no grant without its code.
+      const g = issued.grant, c = issued.code;
+      await tx`insert into oauth.grants (id, client_id, app_id, phone_key, person_id, scopes, resource, created_at, expires_at, revoked_at, cloud_authority)
+        values (${g.id}, ${g.clientId}, ${g.app}, ${g.phoneKey}, ${g.personId}, ${tx.array(g.scopes, "TEXT")}, ${g.resource}, ${ts(g.createdAt)}, ${ts(g.expiresAt)}, ${ts(g.revokedAt)}, ${g.cloudAuthority ?? null}::jsonb)`;
+      await tx`insert into oauth.codes (hash, grant_id, client_id, redirect_uri, code_challenge, resource, scopes, created_at, expires_at, used_at)
+        values (${c.hash}, ${c.grantId}, ${c.clientId}, ${c.redirectUri}, ${c.codeChallenge}, ${c.resource}, ${tx.array(c.scopes, "TEXT")}, ${ts(c.createdAt)}, ${ts(c.expiresAt)}, ${ts(c.usedAt)})`;
+      for (const a of issued.audit) await tx`insert into oauth.audit (at, kind, client_id, grant_id, app_id, detail) values (${ts(a.at)}, ${a.kind}, ${a.clientId}, ${a.grantId}, ${a.app}, ${a.detail})`;
+      return { request: r, issued };
+    });
+  }
+  async deleteAuthRequest(id: string) { return (await this.sql`delete from oauth.auth_requests where id = ${id} returning id`).length > 0; }
 
   async putGrant(g: Grant) {
     await this.sql`insert into oauth.grants (id, client_id, app_id, phone_key, person_id, scopes, resource, created_at, expires_at, revoked_at, cloud_authority)
@@ -142,12 +161,23 @@ export class PgOAuthStore implements OAuthStore {
     const rows=await this.sql`select * from oauth.codes where hash=${hash}`;
     return rows[0]?code(rows[0]):undefined;
   }
-  async takeCode(hash: string, at: number) {
-    // One statement: the first caller gets used_at = null back, every later caller sees the earlier use.
-    const [r] = await this.sql`with prev as (select * from oauth.codes where hash = ${hash} for update)
-      update oauth.codes c set used_at = coalesce(c.used_at, ${ts(at)}) from prev where c.hash = prev.hash
-      returning prev.*`;
-    return r ? code(r) : undefined;
+  async redeemCode<M extends Mint>(hash: string, at: number, mint: (c: AuthCode) => M | undefined) {
+    return this.sql.begin(async tx => {
+      // The first caller gets used_at = null back, every later caller sees the earlier use.
+      const [r] = await tx`with prev as (select * from oauth.codes where hash = ${hash} for update)
+        update oauth.codes c set used_at = coalesce(c.used_at, ${ts(at)}) from prev where c.hash = prev.hash
+        returning prev.*`;
+      if (!r) return undefined;
+      const before = code(r);
+      const minted = before.usedAt === null ? mint(before) : undefined;
+      if (!minted) return { code: before };
+      // Same transaction: a failed insert leaves the code unused, so the client's retry is not a replay.
+      for (const t of minted.pair) await tx`insert into oauth.tokens (hash, kind, grant_id, client_id, app_id, resource, scopes, created_at, expires_at, revoked_at, rotated_at)
+        values (${t.hash}, ${t.kind}, ${t.grantId}, ${t.clientId}, ${t.app}, ${t.resource}, ${tx.array(t.scopes, "TEXT")}, ${ts(t.createdAt)}, ${ts(t.expiresAt)}, ${ts(t.revokedAt)}, ${ts(t.rotatedAt)})`;
+      const a = minted.audit;
+      await tx`insert into oauth.audit (at, kind, client_id, grant_id, app_id, detail) values (${ts(a.at)}, ${a.kind}, ${a.clientId}, ${a.grantId}, ${a.app}, ${a.detail})`;
+      return { code: before, minted };
+    });
   }
 
   async putToken(t: Token) {
@@ -167,16 +197,16 @@ export class PgOAuthStore implements OAuthStore {
       const [owner]=await tx`select revoked_at,expires_at,cloud_authority from oauth.grants where id=${pair[0].grantId} for update`;
       const liveAt=()=>at+Math.ceil(performance.now()-started);
       if(!owner || owner.revoked_at!==null || ms(owner.expires_at)!<=liveAt() || (pair[0].grantId.startsWith("grant_cloud_") && !owner.cloud_authority)
-        || pair.some(t=>t.expiresAt>ms(owner.expires_at)!))return false;
+        || pair.some(t=>t.expiresAt>ms(owner.expires_at)!))return "stale" as const;
       const r = await tx`update oauth.tokens set rotated_at = ${ts(at)} where hash = ${hash} and kind = 'refresh' and rotated_at is null and revoked_at is null returning hash`;
-      if (!r.length) return false;
+      if (!r.length) return "replay" as const;
       for (const t of pair) await tx`insert into oauth.tokens (hash, kind, grant_id, client_id, app_id, resource, scopes, created_at, expires_at, revoked_at, rotated_at)
         values (${t.hash}, ${t.kind}, ${t.grantId}, ${t.clientId}, ${t.app}, ${t.resource}, ${tx.array(t.scopes, "TEXT")}, ${ts(t.createdAt)}, ${ts(t.expiresAt)}, ${ts(t.revokedAt)}, ${ts(t.rotatedAt)})`;
       await tx`insert into oauth.audit (at, kind, client_id, grant_id, app_id, detail) values (${ts(audit.at)}, ${audit.kind}, ${audit.clientId}, ${audit.grantId}, ${audit.app}, ${audit.detail})`;
       if(ms(owner.expires_at)!<=liveAt())throw new Error("Cloud OAuth refresh authority expired during transaction");
-      return true;
+      return "rotated" as const;
     }); } catch(error) {
-      if(error instanceof Error && error.message==="Cloud OAuth refresh authority expired during transaction")return false;
+      if(error instanceof Error && error.message==="Cloud OAuth refresh authority expired during transaction")return "stale" as const;
       throw error;
     }
   }
@@ -208,15 +238,19 @@ export class PgOAuthStore implements OAuthStore {
     await this.sql`delete from oauth.rate_limits where window_start + make_interval(secs => window_ms / 1000.0) <= ${t}`;
     // Codes and tokens of a deleted grant go with it (on delete cascade).
     await this.sql`delete from oauth.grants where least(coalesce(revoked_at, expires_at), expires_at) <= ${ts(at - GRANT_KEEP_MS)}`;
-    await this.sql`delete from oauth.clients c where c.created_at <= ${ts(at - CLIENT_UNUSED_MS)} and not exists (select 1 from oauth.grants g where g.client_id = c.id)`;
+    // A client that ever got a grant stays: its connector keeps the client_id after the grant is deleted.
+    await this.sql`delete from oauth.clients c where c.created_at <= ${ts(at - CLIENT_UNUSED_MS)} and not exists (select 1 from oauth.grants g where g.client_id = c.id)
+      and not exists (select 1 from oauth.audit a where a.client_id = c.id and a.kind = 'consent_granted')`;
   }
 
   async forgetPhone(phoneKey: string, e164: string, app?: McpAppId) {
+    // The sign-in requests first: an approval that took its request holds that row until it commits
+    // (approveConsent), so this delete waits for it, and the grant delete after it sees the new grant.
+    if (app) await this.sql`delete from oauth.auth_requests where e164 = ${e164} and app_id = ${app}`;
+    else await this.sql`delete from oauth.auth_requests where e164 = ${e164}`;
     const rows = app
       ? await this.sql`delete from oauth.grants where phone_key = ${phoneKey} and app_id = ${app} returning id`
       : await this.sql`delete from oauth.grants where phone_key = ${phoneKey} returning id`;
-    if (app) await this.sql`delete from oauth.auth_requests where e164 = ${e164} and app_id = ${app}`;
-    else await this.sql`delete from oauth.auth_requests where e164 = ${e164}`;
     return rows.length;
   }
 }

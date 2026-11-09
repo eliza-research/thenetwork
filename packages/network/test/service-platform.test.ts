@@ -254,7 +254,10 @@ describe.skipIf(!pgAvailable)("the service as the platform's channel (Postgres)"
     expect(underAge.body).toMatchObject({ error: "under_age" });
     expect(await lowestAge(p)).toBe(12);
     expect((await web.join("slop", 30)).status).toBe(400);
-    expect(await count(sql`select count(*)::int as n from platform.consent_events where e164 = ${p}`)).toBe(consents);
+    // Under 13 cannot use any app (SD-014): every membership goes, with one opt-out per app.
+    expect(await count(sql`select count(*)::int as n from platform.consent_events where e164 = ${p}`)).toBe(consents + 2);
+    expect(await count(sql`select count(*)::int as n from platform.consent_events where e164 = ${p} and source = 'join_declined' and state = 'opted_out'`)).toBe(2);
+    expect(await count(sql`select count(*)::int as n from platform.memberships m join platform.phone_identities ph on ph.person_id = m.person_id where ph.e164 = ${p} and m.state <> 'removed'`)).toBe(0);
 
   }, T);
 

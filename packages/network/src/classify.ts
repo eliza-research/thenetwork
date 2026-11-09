@@ -7,6 +7,7 @@
 //
 // The rules were rebuilt against hand-written corpora (test/fixtures), not the simulator's own
 // sentences (audit 2026-10-08, network-consent-1, -2, -8, -9, -10, matching-e2e-1, -M1).
+import { probeRoute, readingOf, readingWhy, routeIsYes, type Reading, type ReadingWhy } from "./transitions.ts";
 import { parseReply, type Category } from "@thenetwork/core";
 import type { TimeOption } from "@thenetwork/core";
 import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
@@ -506,10 +507,12 @@ const NEGATIVE_FEEDBACK = /\b((was|is|it's|that's)?\s*(not|n't|wasn't|isn't)\s+(
 // (network-consent-1, -2). This parser lives here, not in the simulator, so the simulator never
 // grades its own parser (sim-worlds-3).
 
-export type YesNo = "yes" | "no" | "counter" | "unclear";
+export type YesNo = Reading;
 /** Why a reply reads as it does. "mixed": a refusal, then a yes ("no... ok fine yes"): ask again. */
-export type ConsentWhy = "affirm" | "refusal" | "mixed" | "conditional" | "hedged" | "counter" | "none";
+export type ConsentWhy = ReadingWhy;
 export interface Consent { answer: YesNo; why: ConsentWhy }
+/** A member's answer to a probe (parseProbeReply). */
+export interface ProbeReply { answer: "yes" | "no" | "unclear"; keys: string[]; why: ConsentWhy; otherTimes?: boolean }
 
 /** A time word right after a refusal makes it a refusal of that time, not of the offer ("can't do Thursday"). */
 const TIME_AHEAD = /^\s*(?:(?:do|make|on|at|for|the|that|this|until|till|before|after)\s+)*(?:(?:sun|mon|tues?|wed(?:nes)?|thu(?:rs?)?|fri|sat(?:ur)?)(?:day)?s?\b|first\b|second\b|third\b|last one\b|1st\b|2nd\b|3rd\b|option\b|\d{1,2}(?::\d\d)?\s*(?:am|pm)?\b|mornings?\b|afternoons?\b|evenings?\b|nights?\b|weekends?\b|weekdays?\b|[abc]\b(?!\s+\w{3,}))/;
@@ -528,6 +531,7 @@ const REFUSAL_RX: RegExp[] = [
   /\b(?:don'?t|do not) think (?:i can|i could|i'?ll make it|i'?ll be able)\b/,
   /\b(?:don'?t|do not|doesn'?t) (?:think so|want to|wanna|feel like it|really want|have (?:time|the time|room|the bandwidth)|need)\b/,
   /\b(?:i'?m|im|i am) (?:not|no longer) (?:in|down|up for (?:it|that)|interested|free|available|keen|able|looking)\b/,
+  /\b(?:not at all|no longer) interested\b/,
   /\b(?:i'?m|im|i am) (?:good|ok|okay|fine|all set)(?:,? (?:thanks?|thank you|tho|though|for now))?\s*$/,
   /\bcount me out\b|\b(?:i'?m|im) out\b|\bskip(?:ping)? (?:this|it|that)\b|\bi'?ll sit (?:this|that) one out\b/,
   /\b(?:not gonna|won'?t|can'?t|cannot|couldn'?t|not going to) make it\b/,
@@ -541,6 +545,12 @@ const CANT = /\b(?:can'?t|cannot|can not|won'?t be able to|unable to|not able to
 const DEFER = /\b(?:ask|text|message|ping|try) me (?:later|again|tomorrow|tmrw|tonight|in a bit)\b|\bget back to you\b|\btalk later\b|\btext later\b/;
 const CANT_HARMLESS = /^\s*(?:wait|believe|say no|complain|go wrong|resist|beat|miss (?:it|this))/;
 const AFFIRM_RX = /(?:^|[^\w'])(?:yes+|yess+|yeah+|yea|yah|yep|yup|sure|surely|ok+|okay+|okey|kk?|alright|aight|absolutely|definitely|def|of course|for sure|fosho|bet|deal|perfect|great|awesome|amazing|love (?:to|that|it)|i'?d love|would love|i'?d like that|would like that|happy to|glad to|let'?s (?:do (?:it|this|that)|go)|lets (?:do it|go)|(?:i'?m|im|i am) (?:totally |so |definitely |all |fully )?in|count me in|sign me up|i'?m down|im down|i am down|down for (?:it|that|this)|down to\b|so down|totally down|i'?m game|im game|(?:i'?m |i am |i'?d be |i would be |would be )?up for (?:it|that|this)|works for me|that works|works|sounds (?:good|great|fun|lovely|perfect|nice|like a plan|amazing|awesome)|why not|please do|go for it|go ahead|yes please|can do|i can (?:make it|do (?:it|that))|that'?d be (?:great|nice|fun|lovely)|would be (?:great|nice|fun)|count on me|can'?t wait|^\s*down\s*[!.]*\s*$|good with (?:that|it|me|this)|that'?s (?:good|great|fine|perfect)|fine by me|fine with me)(?![\w'])|💯|👍|🙌|✅|👌|🤝/;
+/**
+ * "Interested" is a yes only as the answer itself, at the start of its clause with at most a few intensifiers
+ * ("interested!", "definitely interested", "I'm interested, but another day"). "Not at all interested", "no longer
+ * interested", "less interested now" and "I'm interested in something else" are not consent (AGENTS decision 11).
+ */
+const INTERESTED_RX = /^[\s\W]*(?:(?:yes|yeah|yep|oh|ok|okay|so|very|really|super|definitely|def|totally|still|i'?m|im|i am)\s+)*interested(?![\w'])(?!\s+in\b)/;
 /** A word just before a yes that negates it ("not ok", "never down", "don't love it"). "Not sure" is a hedge. */
 const AFFIRM_NEG_BEFORE = /\b(?:not|never|don'?t|didn'?t|wouldn'?t|won'?t|isn'?t)\s+(?:\w+\s+)?$/;
 const HEDGE_RX = /\b(?:maybe|perhaps|possibly|probably|might|could be|not sure|unsure|idk|i don'?t know|dunno|no idea|let me (?:check|think|see|get back|look)|i'?ll (?:check|think|see|let you know|get back)|who is (?:it|this|that|he|she|they)|who'?s (?:it|this|that)|what'?s (?:it|this) about|depends|kinda|sort of|i guess|we'?ll see|tbd|on the fence|torn|not certain|hard to say|remind me|need to check|have to check)\b|^\s*\?+\s*$/;
@@ -572,7 +582,7 @@ export function consentOf(body: string): Consent {
         if (CANT_HARMLESS.test(x.slice(m.index! + m[0].length)) || TIME_AHEAD.test(x.slice(m.index! + m[0].length))) continue;
         refusalAt = Math.min(refusalAt, at + m.index!);
       }
-      const am0 = AFFIRM_RX.exec(y);
+      const am0 = AFFIRM_RX.exec(y) ?? INTERESTED_RX.exec(y);
       // An emoji is a yes only in a short reply with no question: "Still hoping to meet someone. Anything
       // come up? 💯" is an ask with decoration, not consent (the same rule as core parseReply).
       const am = am0 && !/[a-z]/.test(am0[0]) && (wordsIn > 3 || /\?/.test(t)) ? null : am0;
@@ -592,14 +602,17 @@ export function consentOf(body: string): Consent {
       if (COUNTER_RX.test(x)) counter = true;
     }
   }
-  if (refusalAt < Infinity) return affirmAt > refusalAt && affirmAt < Infinity ? { answer: "unclear", why: "mixed" } : { answer: "no", why: "refusal" };
-  if (counter) return { answer: "counter", why: "counter" };
-  if (cond) return { answer: "unclear", why: "conditional" };
-  if (hedge || question) return { answer: "unclear", why: "hedged" };
-  // A yes needs the shared reader (core parseReply, AGENTS decision 11) not to read a refusal: when the
-  // two disagree the member is asked again, never booked.
-  if (affirmAt < Infinity) return parseReply(body).answer === "no" ? { answer: "unclear", why: "mixed" } : { answer: "yes", why: "affirm" };
-  return { answer: "unclear", why: "none" };
+  // A yes needs the shared reader (core parseReply, AGENTS decision 11) not to read a refusal or a hedge:
+  // when the two disagree the member is asked again, never booked. A reading that is unsure only because
+  // it found no word it knows ("aight", "I'm game") or only about the time (this reader reads the time
+  // options itself) is no veto (SD-035).
+  const refused = refusalAt < Infinity, affirmed = affirmAt < Infinity;
+  const p = affirmed ? parseReply(body) : undefined;
+  const sharedVeto = !!p && (p.answer === "no" || (p.answer === "unsure" && !p.counter && p.reason !== "no_signal"));
+  const why = readingWhy(refused, affirmed && affirmAt > refusalAt, counter, cond, hedge || question, affirmed, sharedVeto);
+  // A counter-offer is a yes to meeting at another time only with a yes word ("sounds fun! how about next
+  // week"). A bare counter ("how about next week instead?") is no consent (SD-041): ask again.
+  return { answer: readingOf(why, affirmed), why };
 }
 
 /** A member's free-text yes or no (probes, plan probes, crew offers, the booked plan). */
@@ -652,18 +665,22 @@ function clauseAt(t: string, i: number, len: number): string {
  * A member's answer to a probe (founder decision 4a), in free text: "Thursday", "the first",
  * "either", "a or b", "neither", "none of those work", "yes", "no thanks". Returns the answer and,
  * when the probe offered time options, the keys of the options they picked. A yes with an empty
- * pick set means "yes, but none of those times" (neither). A plain yes picks every option except the
- * ones the member rules out ("yes, not Sunday though").
+ * pick set means "yes, but none of those times". A plain yes picks every option except the ones the
+ * member rules out ("yes, not Sunday though"). A counter ("rain check", "how about next week") and a
+ * bare "neither" are not a yes: the answer is "unclear", and `otherTimes` says other times may help.
  *
  * Refusals come first, sentence by sentence (network-consent-1): "No. Saturday I'm at a wedding",
  * "Thursday? lol no" and "absolutely not" are a no. A refusal followed by a pick ("no, Saturday
  * works"), a conditional ("sure, but only with a woman") and a hedge ("who is it? thursday maybe")
  * are "unclear": the member is asked again, never booked.
  */
-export function parseProbeReply(body: string, options: readonly TimeOption[] = []): { answer: "yes" | "no" | "unclear"; keys: string[]; why: ConsentWhy } {
+export function parseProbeReply(body: string, options: readonly TimeOption[] = []): ProbeReply {
   const t = normText(body);
   const c = consentOf(body);
-  if (!options.length) return { answer: c.answer === "no" ? "no" : c.answer === "yes" || c.answer === "counter" ? "yes" : "unclear", keys: [], why: c.why };
+  if (!options.length) {
+    const route = probeRoute(c.answer, c.why, { hasOptions: false, picked: false, firmPick: false, neither: false, anyOf: false, openLeft: false });
+    return { answer: routeIsYes(route) ? "yes" : route === "no" ? "no" : "unclear", keys: [], why: c.why };
+  }
   const all = options.map(o => o.key);
   // Every mention of an option, as a pick or a refusal. A key both picked and refused counts as picked.
   const pos = new Set<string>(), neg = new Set<string>(), strong = new Set<string>();
@@ -705,20 +722,26 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const picked = all.filter(k => pos.has(k));
   const open = all.filter(k => !neg.has(k) || pos.has(k));
   const unclear = { answer: "unclear" as const, keys: [], why: c.why };
-  // Refusal first. A pick after a refusal ("no, Saturday works") is mixed: ask again.
-  if (c.why === "refusal") return all.some(k => strong.has(k)) ? { ...unclear, why: "mixed" } : { answer: "no", keys: [], why: c.why };
-  if (c.why === "mixed" || c.why === "conditional" || c.why === "hedged") return unclear;
-  // A time they name and do not refuse is a yes to it ("no plans Thursday, so Thursday works").
-  // A named time with a yes or a firm pick ("Saturday works"); a bare mention ("I'm at a wedding saturday") is not a yes.
-  if (picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return { answer: "yes", keys: picked.filter(k => strong.has(k) || c.answer === "yes"), why: c.why };
-  if (NEITHER.test(t)) return { answer: "yes", keys: [], why: c.why };
   // "Any of them" (not refused, not a request for other days): every option the member did not rule out.
   const allAt = ALL.exec(t) ?? ALL_WEAK.exec(t);
-  if (allAt && c.answer !== "counter" && !negatedAt(t, allAt.index, allAt[0].length)) return open.length ? { answer: "yes", keys: open, why: c.why } : unclear;
-  if (c.answer === "yes") return { answer: "yes", keys: open, why: c.why };
-  if (c.answer === "counter") return { answer: "yes", keys: [], why: c.why };
-  // Only refusals ("Thursday doesn't work") are not a yes: the probe stays open for a clear answer.
-  return unclear;
+  const route = probeRoute(c.answer, c.why, {
+    hasOptions: true, picked: picked.length > 0, firmPick: picked.some(k => strong.has(k)), neither: NEITHER.test(t),
+    anyOf: !!allAt && !negatedAt(t, allAt.index, allAt[0].length), openLeft: open.length > 0,
+  });
+  switch (route) {
+    // Refusal first. A pick after a refusal ("no, Saturday works") is mixed: ask again.
+    case "no": return { answer: "no", keys: [], why: c.why };
+    case "mixed": return { ...unclear, why: "mixed" };
+    // A time they name and do not refuse is a yes to it ("no plans Thursday, so Thursday works").
+    // A named time with a yes or a firm pick ("Saturday works"); a bare mention ("I'm at a wedding saturday") is not a yes.
+    case "picked": return { answer: "yes", keys: picked.filter(k => strong.has(k) || c.answer === "yes"), why: c.why };
+    case "open": return { answer: "yes", keys: open, why: c.why };
+    case "none_fit": return { answer: "yes", keys: [], why: c.why };
+    // "Neither" or "how about next week" is not a yes (a counter is not consent): other times may be offered, and nothing is recorded.
+    case "ask_times": return { ...unclear, otherTimes: true };
+    // Only refusals ("Thursday doesn't work") are not a yes: the probe stays open for a clear answer.
+    default: return unclear;
+  }
 }
 
 /**

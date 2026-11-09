@@ -7,6 +7,7 @@
 // The server answers otp/start the same way for every number, so this code shows the same
 // screen for every number too.
 import { api, toE164 } from "./api.ts";
+import { type Flow, type FlowEvent, NO_FIELDS, flowNext, initialFlow } from "./join-core.ts";
 import { mountTurnstile } from "./turnstile.ts";
 import { $, busy, fill, message, setError, showStep } from "./ui.ts";
 
@@ -14,7 +15,31 @@ export function maskPhone(e164: string): string {
   return `(•••) •••-${e164.slice(-4)}`;
 }
 
-export function mountAuth(root: HTMLElement, onSignedIn: () => Promise<void> | void): void {
+/** The Join flow as this module sees it. flowNext owns the step and the number. */
+export interface AuthFlow {
+  current(): Flow;
+  dispatch(event: FlowEvent): Flow;
+  /** Runs after otp/verify passes for this number. The code form stays busy until it ends. */
+  onSignedIn(phone: string): Promise<void> | void;
+}
+
+/** A sign-in form without a Join form: the same flowNext decides the step. */
+function signInOnly(root: HTMLElement, onSignedIn: () => Promise<void> | void): AuthFlow {
+  let flow = flowNext(initialFlow(NO_FIELDS), { tag: "loaded", signedInAs: "", canJoin: false, member: false, inviteOnly: false, notice: "" });
+  return {
+    current: () => flow,
+    dispatch: event => {
+      const prev = flow;
+      flow = flowNext(prev, event);
+      if (flow.step !== prev.step) showStep(root, flow.step);
+      return flow;
+    },
+    onSignedIn,
+  };
+}
+
+export function mountAuth(root: HTMLElement, flowOrSignedIn: AuthFlow | (() => Promise<void> | void)): void {
+  const flow = typeof flowOrSignedIn === "function" ? signInOnly(root, flowOrSignedIn) : flowOrSignedIn;
   const form = root.querySelector<HTMLFormElement>('form[data-form="phone"]');
   if (!form) return;
   // The static form defaults to GET; block native submission before any await.
@@ -37,10 +62,10 @@ export function mountAuth(root: HTMLElement, onSignedIn: () => Promise<void> | v
     }
     if (!mode.ok) {
       // Older, unconfigured backends, and a mode lookup that keeps failing, keep the phone-code flow.
-      mountOtpAuth(root, onSignedIn);
+      mountOtpAuth(root, flow);
       return;
     }
-    if (mode.data.mode !== "cloud") { mountOtpAuth(root, onSignedIn); return; }
+    if (mode.data.mode !== "cloud") { mountOtpAuth(root, flow); return; }
     const explanation = form.parentElement?.querySelector(":scope > p");
     explanation?.remove();
     const error = form.querySelector<HTMLElement>("[data-error]");
@@ -60,11 +85,10 @@ export function mountAuth(root: HTMLElement, onSignedIn: () => Promise<void> | v
   });
 }
 
-function mountOtpAuth(root: HTMLElement, onSignedIn: () => Promise<void> | void): void {
+function mountOtpAuth(root: HTMLElement, flow: AuthFlow): void {
   const phoneForm = $(root, 'form[data-form="phone"]') as HTMLFormElement | null;
   const codeForm = $(root, 'form[data-form="code"]') as HTMLFormElement | null;
   if (!phoneForm || !codeForm) return;
-  let phone = "";
   const checkPending = root.getAttribute("data-msg-turnstile-wait") ?? "Wait for the check above to finish, then try again.";
   const checkFailed = root.getAttribute("data-msg-turnstile-failed") ?? "The security check failed. Refresh the page and try again.";
   const human = mountTurnstile(phoneForm, state => {
@@ -97,11 +121,9 @@ function mountOtpAuth(root: HTMLElement, onSignedIn: () => Promise<void> | void)
       setError(phoneForm, message(root, res.error));
       return;
     }
-    phone = e164;
-    fill(root, { phoneShown: maskPhone(e164) });
     (codeForm.elements.namedItem("code") as HTMLInputElement).value = "";
     setError(codeForm, "");
-    showStep(root, "code");
+    fill(root, { phoneShown: maskPhone(flow.dispatch({ tag: "otpStarted", number: e164 }).shown) });
   });
 
   codeForm.addEventListener("submit", async (ev) => {
@@ -115,29 +137,36 @@ function mountOtpAuth(root: HTMLElement, onSignedIn: () => Promise<void> | void)
       return;
     }
     input.removeAttribute("aria-invalid");
-    const res = await busy(codeForm, () => api.otpVerify(phone, code));
+    const phone = flow.current().phone;
+    // Keep the code form (and its change-number button) busy until onSignedIn has read /api/me.
+    // Otherwise the person can start a new number while the old answer is in flight (JF-1).
+    const res = await busy(codeForm, async () => {
+      const verified = await api.otpVerify(phone, code);
+      if (verified.ok) {
+        setError(codeForm, "");
+        await flow.onSignedIn(phone);
+      }
+      return verified;
+    });
     if (!res.ok) {
       setError(codeForm, message(root, res.error));
       input.select();
-      return;
     }
-    setError(codeForm, "");
-    await onSignedIn();
   });
 
   root.querySelector('[data-action="resend"]')?.addEventListener("click", async () => {
-    if (!phone) return showStep(root, "phone");
     // With Turnstile on, a new code needs a new check: go back to the phone step, number kept.
     if (human) {
       setError(phoneForm, "Confirm the check, then send a new code.");
-      return showStep(root, "phone");
+      flow.dispatch({ tag: "changeNumber" });
+      return;
     }
-    const res = await busy(codeForm, () => api.otpStart(phone));
+    const res = await busy(codeForm, () => api.otpStart(flow.current().phone));
     setError(codeForm, res.ok ? "We sent a new code." : message(root, res.error));
   });
 
   root.querySelector('[data-action="change-number"]')?.addEventListener("click", () => {
     setError(phoneForm, "");
-    showStep(root, "phone");
+    flow.dispatch({ tag: "changeNumber" });
   });
 }

@@ -1,0 +1,3062 @@
+[
+ {
+  "id": "SD-001",
+  "verdict": "confirmed",
+  "reason": "No guard, transaction, constraint or caller recovers a claimed STOP whose worker dies before the ledger write",
+  "source": "partA"
+ },
+ {
+  "id": "SD-002",
+  "verdict": "confirmed",
+  "reason": "A STOP that arrives while any row of the sender is processing inserts nothing, finds no prior row, and returns 409 turn_busy (inbox.ts:102)",
+  "source": "partA"
+ },
+ {
+  "id": "SD-003",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-004",
+  "verdict": "disputed",
+  "reason": "one vote: The cooldown is stored only in platform.rate_limits, through hit() with bucket stop_hint:<app>:<key> and minGapMs 30*DAY; other vote: The store-level mechanism is real, but the trigger cannot occur in production as deployed, because the...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-005",
+  "verdict": "confirmed",
+  "reason": "I reproduced it through the real staff route on the dev Postgres, using the real NetworkService. ban() is not atomic",
+  "source": "partA"
+ },
+ {
+  "id": "SD-006",
+  "verdict": "confirmed",
+  "reason": "In production ctx.send only collects the message for a platform.outbound row, committed with the state save",
+  "source": "partA"
+ },
+ {
+  "id": "SD-007",
+  "verdict": "refuted",
+  "reason": "The trigger needs exactly one share of a swap to be deferred by quiet hours while the other goes out",
+  "source": "partA"
+ },
+ {
+  "id": "SD-008",
+  "verdict": "confirmed",
+  "reason": "The cited lines in engine/src/plans.ts are only the contract (a doc comment)",
+  "source": "partA"
+ },
+ {
+  "id": "SD-009",
+  "verdict": "confirmed",
+  "reason": "No guard stops a reviewer approving an item after its deadline",
+  "source": "partA"
+ },
+ {
+  "id": "SD-010",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found; reproduced on real code",
+  "source": "partA"
+ },
+ {
+  "id": "SD-011",
+  "verdict": "confirmed",
+  "reason": "Nothing about the statement is durable at the person level until recordAge c",
+  "source": "partA"
+ },
+ {
+  "id": "SD-012",
+  "verdict": "refuted",
+  "reason": "The service half of the claim is true, but the messages do not reach the person, so the defect as stated (\"sends\") is refuted",
+  "source": "partA"
+ },
+ {
+  "id": "SD-013",
+  "verdict": "confirmed",
+  "reason": "I could not find any guard on the trigger sequence, and a throwaway run through the real createPublicApi reproduced it",
+  "source": "partA"
+ },
+ {
+  "id": "SD-014",
+  "verdict": "confirmed",
+  "reason": "The repeat-join branch at 357-362 has the same shape",
+  "source": "partA"
+ },
+ {
+  "id": "SD-015",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-016",
+  "verdict": "confirmed",
+  "reason": "PgPeopleStore.deleteAll (pg-store.ts:304) commits its own sql.begin and deletes the phone_identities row, and detachPhoneHash, unsuppress and clearAgeFloor are separate...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-017",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: no harmful trigger shown",
+  "source": "partA"
+ },
+ {
+  "id": "SD-018",
+  "verdict": "refuted",
+  "reason": "The conditional logic is real, but I found no reachable trigger",
+  "source": "partA"
+ },
+ {
+  "id": "SD-019",
+  "verdict": "confirmed",
+  "reason": "A throwaway probe reproduced it, but the defect is narrower than the title says",
+  "source": "partA"
+ },
+ {
+  "id": "SD-020",
+  "verdict": "confirmed",
+  "reason": "No guard, transaction or constraint covers non-relay rows",
+  "source": "partA"
+ },
+ {
+  "id": "SD-021",
+  "verdict": "confirmed",
+  "reason": "A real Postgres-backed probe through the signed webhook and staff API reproduced the trigger at commit a0ed7bc",
+  "source": "partA"
+ },
+ {
+  "id": "SD-022",
+  "verdict": "confirmed",
+  "reason": "PRD 40.3 (docs/prd-snapshot.md:1777) says \"A safety hold alone does not refuse a join\"",
+  "source": "partA"
+ },
+ {
+  "id": "SD-023",
+  "verdict": "confirmed",
+  "reason": "The gap is real, the trigger is reachable, and the upstream fence does block the sends",
+  "source": "partA"
+ },
+ {
+  "id": "SD-024",
+  "verdict": "confirmed",
+  "reason": "I reproduced it on the real service, with signed /internal/turn calls on the local Postgres and no forced app or line, which is the normal production form",
+  "source": "partA"
+ },
+ {
+  "id": "SD-025",
+  "verdict": "confirmed",
+  "reason": "The defect reproduces on the real service against Postgres in a throwaway database",
+  "source": "partA"
+ },
+ {
+  "id": "SD-026",
+  "verdict": "disputed",
+  "reason": "one vote: No guard stops the trigger sequence, and the store half reproduces on a real migrated Postgres database; other vote: Both triggers need a row in network.channel_identities, and nothing in production writes one",
+  "source": "partA"
+ },
+ {
+  "id": "SD-027",
+  "verdict": "confirmed",
+  "reason": "Each link in the trigger is present on the production path, and a throwaway run of the real rule reproduces it",
+  "source": "partA"
+ },
+ {
+  "id": "SD-028",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; reproduced on real code; other vote: The stated trigger still cannot occur in production as deployed, and it is not shown to be wrong in itself",
+  "source": "partA"
+ },
+ {
+  "id": "SD-029",
+  "verdict": "confirmed",
+  "reason": "I reproduced the whole sequence with the real NetworkService, HTTP signed turns and Postgres on :54339",
+  "source": "partA"
+ },
+ {
+  "id": "SD-030",
+  "verdict": "confirmed",
+  "reason": "ConsentNetwork.send() in packages/network/src/network.ts commits all its state synchronously, in the same call that hands the text to ctx.send",
+  "source": "partA"
+ },
+ {
+  "id": "SD-031",
+  "verdict": "confirmed",
+  "reason": "The only opt-out decision for a gateway turn is detectKeyword in packages/platform/src/consent.ts:65. service.ts:1049 calls it as platformKeyword. keywordKey keeps the...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-032",
+  "verdict": "disputed",
+  "reason": "one vote: The defect's facts hold at HEAD a0ed7bc, and neither refutation ground applies; other vote: no harmful trigger shown",
+  "source": "partA"
+ },
+ {
+  "id": "SD-033",
+  "verdict": "confirmed",
+  "reason": "The only '?' checks are in the branch with no decisive word, which handles emoji and 'question' replies",
+  "source": "partA"
+ },
+ {
+  "id": "SD-034",
+  "verdict": "refuted",
+  "reason": "The production inbound path never calls it",
+  "source": "partA"
+ },
+ {
+  "id": "SD-035",
+  "verdict": "confirmed",
+  "reason": "The defect reproduces, both at function level and in the real ConsentNetwork flow. classify.ts:601 turns an affirmation into \"unclear\" only when parseReply(body).answer...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-036",
+  "verdict": "confirmed",
+  "reason": "The trigger needs no special conditions, and no guard, constraint or caller gives a signal a review exit",
+  "source": "partA"
+ },
+ {
+  "id": "SD-037",
+  "verdict": "confirmed",
+  "reason": "The trigger reproduces against the real service, but the P0 severity looks overstated because the gateway's fence is not affected",
+  "source": "partA"
+ },
+ {
+  "id": "SD-038",
+  "verdict": "confirmed",
+  "reason": "I reproduced it on real Postgres through the service's signed webhook path",
+  "source": "partA"
+ },
+ {
+  "id": "SD-039",
+  "verdict": "confirmed",
+  "reason": "I ran the exact trigger on the real service code and the defect reproduced",
+  "source": "partA"
+ },
+ {
+  "id": "SD-040",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; reproduced on real code; other vote: AGENTS.md, go-live-handoff.md:137 and :145, and the service README all say it stays off until the founder sets",
+  "source": "partA"
+ },
+ {
+  "id": "SD-041",
+  "verdict": "confirmed",
+  "reason": "The defect reproduces end to end on the real ConsentNetwork, through the Mini harness with the auto reviewer and no LLM",
+  "source": "partA"
+ },
+ {
+  "id": "SD-042",
+  "verdict": "confirmed",
+  "reason": "A literal \"yes\" is blocked at the MCP tool, because about needs at least 10 characters",
+  "source": "partA"
+ },
+ {
+  "id": "SD-043",
+  "verdict": "confirmed",
+  "reason": "I reproduced it on two paths against the current packages/network/src/network.ts with the real ConsentNetwork in the Mini harness",
+  "source": "partA"
+ },
+ {
+  "id": "SD-044",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found; reproduced on real code",
+  "source": "partA"
+ },
+ {
+  "id": "SD-045",
+  "verdict": "confirmed",
+  "reason": "The trigger reproduces on the current code, and no guard stops it",
+  "source": "partA"
+ },
+ {
+  "id": "SD-046",
+  "verdict": "confirmed",
+  "reason": "The trigger reproduces on the current code, and no guard stops it",
+  "source": "partA"
+ },
+ {
+  "id": "SD-047",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: A plan member who said no stays in o.participants (planAnswer line 3014, bookPlan)",
+  "source": "partA"
+ },
+ {
+  "id": "SD-048",
+  "verdict": "confirmed",
+  "reason": "The defect reproduces on the real ConsentNetwork, and no guard, caller or sweep prevents the trigger",
+  "source": "partA"
+ },
+ {
+  "id": "SD-049",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: The literal claim is true, but the claimed harm cannot occur in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-050",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: On the production send path that cannot happen",
+  "source": "partA"
+ },
+ {
+  "id": "SD-051",
+  "verdict": "disputed",
+  "reason": "one vote: No guard, transaction, constraint or caller stops the sequence, and the backend ledger loses the STOP; other vote: The claimed harm is a STOP being forgotten so that a new text reaches the number",
+  "source": "partA"
+ },
+ {
+  "id": "SD-052",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; reproduced on real code; other vote: behaviour is intended or documented",
+  "source": "partA"
+ },
+ {
+  "id": "SD-053",
+  "verdict": "disputed",
+  "reason": "one vote: No guard, transaction, constraint or caller stops the trigger, and each cited line does what the defect says; other vote: Photo rows and bytes stay. adult() then returns not_verified, so staffLinks and view refuse",
+  "source": "partA"
+ },
+ {
+  "id": "SD-054",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; reproduced on real code; other vote: The trigger, however, needs a live session (e164=X, personId=P) while X belongs to a different person Q, and...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-055",
+  "verdict": "disputed",
+  "reason": "one vote: A real Postgres run of the actual code reproduces the defect; other vote: The race exists in the code, but I could not show a way to trigger it in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-056",
+  "verdict": "confirmed",
+  "reason": "Nothing serializes a staff phone-scope ban against a member's number change, and nothing checks again for a ban inside the move transaction",
+  "source": "partA"
+ },
+ {
+  "id": "SD-057",
+  "verdict": "refuted",
+  "reason": "The SQL claim is accurate as far as it goes",
+  "source": "partA"
+ },
+ {
+  "id": "SD-058",
+  "verdict": "confirmed",
+  "reason": "The two signup contracts contradict each other, both are live, and they reach the same agent at the same time",
+  "source": "partA"
+ },
+ {
+  "id": "SD-059",
+  "verdict": "refuted",
+  "reason": "both votes: no harmful trigger shown",
+  "source": "partA"
+ },
+ {
+  "id": "SD-060",
+  "verdict": "disputed",
+  "reason": "one vote: Production never waits for the read-back before matching; other vote: no harmful trigger shown",
+  "source": "partA"
+ },
+ {
+  "id": "SD-061",
+  "verdict": "confirmed",
+  "reason": "I reproduced the defect on the real code path",
+  "source": "partA"
+ },
+ {
+  "id": "SD-062",
+  "verdict": "refuted",
+  "reason": "A grep of the repo (packages, deploy and tests, node_modules excluded) shows no caller of revalidateHold, eligibilityFor or sendTimeReason outside filte",
+  "source": "partA"
+ },
+ {
+  "id": "SD-063",
+  "verdict": "disputed",
+  "reason": "one vote: The bug reproduces in the ProbeFlow library code, but the P0 rating only holds if the library is wired into production; other vote: A yes moves the flow to \"probing_partners\", toProbe() then returns [], and the flow never reaches \"revealed\"...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-064",
+  "verdict": "confirmed",
+  "reason": "The trigger is reachable in production, and no founder decision makes the behavior intended",
+  "source": "partA"
+ },
+ {
+  "id": "SD-065",
+  "verdict": "confirmed",
+  "reason": "The only checks between them are requests, which go to onPlans, and ACK_ONLY",
+  "source": "partA"
+ },
+ {
+  "id": "SD-066",
+  "verdict": "confirmed",
+  "reason": "Every step of the trigger goes through, and nothing restores the link between m.minor and singlePlayer",
+  "source": "partA"
+ },
+ {
+  "id": "SD-067",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-068",
+  "verdict": "confirmed",
+  "reason": "The sequence can happen in the deployed Observatory against the Network service",
+  "source": "partA"
+ },
+ {
+  "id": "SD-069",
+  "verdict": "refuted",
+  "reason": "The claim of an unlogged action is false",
+  "source": "partA"
+ },
+ {
+  "id": "SD-070",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-071",
+  "verdict": "confirmed",
+  "reason": "The gate check p.photos === \"reason_required\" (line 592) only controls the reason form",
+  "source": "partA"
+ },
+ {
+  "id": "SD-072",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: The suspected harm still cannot happen as described",
+  "source": "partA"
+ },
+ {
+  "id": "SD-073",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-074",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: behaviour is intended or documented",
+  "source": "partA"
+ },
+ {
+  "id": "SD-075",
+  "verdict": "confirmed",
+  "reason": "Nothing I found blocks the trigger sequence",
+  "source": "partA"
+ },
+ {
+  "id": "SD-076",
+  "verdict": "confirmed",
+  "reason": "The trigger sequence holds for a non-plan opportunity when the member on a time retry is the first person asked (o.first), and nothing on the path stops it",
+  "source": "partA"
+ },
+ {
+  "id": "SD-077",
+  "verdict": "confirmed",
+  "reason": "After a 1:1 meeting, the feedback ask goes out at meetingAt+3h (lines ~3405-3420)",
+  "source": "partA"
+ },
+ {
+  "id": "SD-078",
+  "verdict": "confirmed",
+  "reason": "The trigger works through the code as written",
+  "source": "partA"
+ },
+ {
+  "id": "SD-079",
+  "verdict": "refuted",
+  "reason": "The sequence can happen as described, but the PRD makes the behavior intended",
+  "source": "partA"
+ },
+ {
+  "id": "SD-080",
+  "verdict": "confirmed",
+  "reason": "The name step only stops \"Area\" if it is in NOT_NAMES, and it is not",
+  "source": "partA"
+ },
+ {
+  "id": "SD-081",
+  "verdict": "refuted",
+  "reason": "The trigger cannot happen in a real deployment, though",
+  "source": "partA"
+ },
+ {
+  "id": "SD-082",
+  "verdict": "confirmed",
+  "reason": "The bug is real, but it only affects what the staff console shows",
+  "source": "partA"
+ },
+ {
+  "id": "SD-083",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-084",
+  "verdict": "confirmed",
+  "reason": "Only POST /api/reveal checks for the safety role (line 578, [\"safety\"]; admin also passes)",
+  "source": "partA"
+ },
+ {
+  "id": "SD-085",
+  "verdict": "refuted",
+  "reason": "The claim is that minorAt does not follow the Network's age state over time",
+  "source": "partA"
+ },
+ {
+  "id": "SD-086",
+  "verdict": "refuted",
+  "reason": "both votes: behaviour is intended or documented",
+  "source": "partA"
+ },
+ {
+  "id": "SD-087",
+  "verdict": "confirmed",
+  "reason": "Only three places turn an abandoned processing row into something else",
+  "source": "partA"
+ },
+ {
+  "id": "SD-088",
+  "verdict": "refuted",
+  "reason": "Production keeps peon and friends local-only in other places",
+  "source": "partA"
+ },
+ {
+  "id": "SD-089",
+  "verdict": "confirmed",
+  "reason": "The only code that revokes MCP OAuth grants on a forget is the AccountHooks.onForget closure (service.ts:758-766)",
+  "source": "partA"
+ },
+ {
+  "id": "SD-090",
+  "verdict": "confirmed",
+  "reason": "The evidence comes from reading the code and the existing test",
+  "source": "partA"
+ },
+ {
+  "id": "SD-091",
+  "verdict": "confirmed",
+  "reason": "Rows in \"accepted\" only move on through applyStatus. applyStatus is reached only from a Blooio \"status\" webhook event (service.ts:1011)",
+  "source": "partA"
+ },
+ {
+  "id": "SD-092",
+  "verdict": "confirmed",
+  "reason": "The production deliver path writes the raw number",
+  "source": "partA"
+ },
+ {
+  "id": "SD-093",
+  "verdict": "refuted",
+  "reason": "Nothing sweeps it back to another state",
+  "source": "partA"
+ },
+ {
+  "id": "SD-094",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: behaviour is intended or documented",
+  "source": "partA"
+ },
+ {
+  "id": "SD-095",
+  "verdict": "disputed",
+  "reason": "one vote: Notifier.dispatch (packages/notify/src/scheduler.ts:186-199) calls store.recordDelivery before it calls sink.enqueue; other vote: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-096",
+  "verdict": "confirmed",
+  "reason": "A signed /internal/turn request runs NetworkService.inbound()",
+  "source": "partA"
+ },
+ {
+  "id": "SD-097",
+  "verdict": "confirmed",
+  "reason": "The production inbound path is the signed POST /internal/turn",
+  "source": "partA"
+ },
+ {
+  "id": "SD-098",
+  "verdict": "confirmed",
+  "reason": "Only an existing hold stops a send, and only an inbound message or login can create that hold",
+  "source": "partA"
+ },
+ {
+  "id": "SD-099",
+  "verdict": "refuted",
+  "reason": "The sequence can happen, but only the status field changes",
+  "source": "partA"
+ },
+ {
+  "id": "SD-100",
+  "verdict": "confirmed",
+  "reason": "The network.messages rows get status collected and inbound_id = the turn id",
+  "source": "partA"
+ },
+ {
+  "id": "SD-101",
+  "verdict": "confirmed",
+  "reason": "I reproduced the defect against the real service, CloudChannelAdapter, OutboundQueue and Postgres on :54339",
+  "source": "partA"
+ },
+ {
+  "id": "SD-102",
+  "verdict": "refuted",
+  "reason": "both votes: behaviour is intended or documented",
+  "source": "partA"
+ },
+ {
+  "id": "SD-103",
+  "verdict": "refuted",
+  "reason": "both votes: no harmful trigger shown",
+  "source": "partA"
+ },
+ {
+  "id": "SD-104",
+  "verdict": "confirmed",
+  "reason": "The code supports the claim, and the backend's own retry design makes the trigger reachable",
+  "source": "partA"
+ },
+ {
+  "id": "SD-105",
+  "verdict": "confirmed",
+  "reason": "The trigger is reachable, and I found no guard that blocks it",
+  "source": "partA"
+ },
+ {
+  "id": "SD-106",
+  "verdict": "refuted",
+  "reason": "The trigger does happen in the code, but the behaviour is by design",
+  "source": "partA"
+ },
+ {
+  "id": "SD-107",
+  "verdict": "disputed",
+  "reason": "one vote: The trigger runs as described, and no guard or other caller stops it; other vote: The 2026-10-19 founder correction in AGENTS.md says the sites have no standalone website account portal, and...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-108",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; reproduced on real code; other vote: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-109",
+  "verdict": "refuted",
+  "reason": "both votes: no harmful trigger shown",
+  "source": "partA"
+ },
+ {
+  "id": "SD-110",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: The design gap is real, but I could not show a production trigger, and the README already lists it as a known...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-111",
+  "verdict": "disputed",
+  "reason": "one vote: NetworkService.fromDatabase builds one NetworkRuntime per row and does not refuse a second network for the same app....; other vote: The code mechanism is real, but the trigger cannot happen in production as it is deployed now",
+  "source": "partA"
+ },
+ {
+  "id": "SD-112",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-113",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-114",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-115",
+  "verdict": "confirmed",
+  "reason": "The only page that still mounts mountJoin is peon.biz/public/join.html",
+  "source": "partA"
+ },
+ {
+  "id": "SD-116",
+  "verdict": "refuted",
+  "reason": "Neither file runs in production. metrics.ts is the simulator judge",
+  "source": "partA"
+ },
+ {
+  "id": "SD-117",
+  "verdict": "disputed",
+  "reason": "one vote: In OutboundQueue.drain() (packages/blooio/src/outbound-queue.ts lines 291-299), every row runs through dispatch() inside a...; other vote: behaviour is intended or documented",
+  "source": "partA"
+ },
+ {
+  "id": "SD-118",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: The design defines the mirror as exactly two files",
+  "source": "partA"
+ },
+ {
+  "id": "SD-119",
+  "verdict": "refuted",
+  "reason": "both votes: no harmful trigger shown",
+  "source": "partA"
+ },
+ {
+  "id": "SD-120",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: behaviour is intended or documented",
+  "source": "partA"
+ },
+ {
+  "id": "SD-121",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: I could not show this sequence happening in production as it is deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-122",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-123",
+  "verdict": "refuted",
+  "reason": "both votes: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-124",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: The forget loop in packages/network/service/runtime.ts (about lines 521-560) never touches...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-125",
+  "verdict": "confirmed",
+  "reason": "On the shared line, a no-keyword join stores a looking_for pending (service.ts:1458)",
+  "source": "partA"
+ },
+ {
+  "id": "SD-126",
+  "verdict": "confirmed",
+  "reason": "A 15-year-old who joins ntwrk with no keyword gets LOOKING_FOR_ASK_MINOR (service.ts:1459-1461)",
+  "source": "partA"
+ },
+ {
+  "id": "SD-127",
+  "verdict": "confirmed",
+  "reason": "The flagged lines are really at packages/network/service/service.ts:1442-1446 in the current tree",
+  "source": "partA"
+ },
+ {
+  "id": "SD-128",
+  "verdict": "refuted",
+  "reason": "The join steps at packages/network/service/service.ts:1435-1452 do commit separately",
+  "source": "partA"
+ },
+ {
+  "id": "SD-129",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: behaviour is intended or documented",
+  "source": "partA"
+ },
+ {
+  "id": "SD-130",
+  "verdict": "refuted",
+  "reason": "Under a phone hold, rt.memberOf and accounts.personFor do both return undefined",
+  "source": "partA"
+ },
+ {
+  "id": "SD-131",
+  "verdict": "confirmed",
+  "reason": "The receipt check (packages/network/service/service.ts:2028-2033) allows historyRecorded:false on an accepted receipt only when accountFree is true",
+  "source": "partA"
+ },
+ {
+  "id": "SD-132",
+  "verdict": "confirmed",
+  "reason": "No guard, constraint or caller stops it",
+  "source": "partA"
+ },
+ {
+  "id": "SD-133",
+  "verdict": "confirmed",
+  "reason": "A relay item that staff never act on stays held with no time limit and raises no alert",
+  "source": "partA"
+ },
+ {
+  "id": "SD-134",
+  "verdict": "refuted",
+  "reason": "The sequence can happen, but the result is the documented design, and it is not silent",
+  "source": "partA"
+ },
+ {
+  "id": "SD-135",
+  "verdict": "confirmed",
+  "reason": "The non-photo relay path (service.ts:2461) does not follow the service's own rule for staff actions",
+  "source": "partA"
+ },
+ {
+  "id": "SD-136",
+  "verdict": "disputed",
+  "reason": "one vote: The only code that writes those changes back to network.messages is NetworkRuntime.drainQueue -> storeStatuses...; other vote: behaviour is intended or documented",
+  "source": "partA"
+ },
+ {
+  "id": "SD-137",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-138",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-139",
+  "verdict": "confirmed",
+  "reason": "In reveal() (line 2442), the requester's Request is set to outcome \"booked\"",
+  "source": "partA"
+ },
+ {
+  "id": "SD-140",
+  "verdict": "confirmed",
+  "reason": "In close() (line 2559) the outcome is \"declined\" only when reason === \"declined\", so this probe gets outcome \"expired\". declinedBy is built from participants whose...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-141",
+  "verdict": "confirmed",
+  "reason": "In trust.ts:85, add() does r.lastDecay ??= now, so it keeps the decay grid of any record that already exists",
+  "source": "partA"
+ },
+ {
+  "id": "SD-142",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: The research note docs/research/state-machines/network-consent-core.md (D15) reproduced this, but it rates...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-143",
+  "verdict": "confirmed",
+  "reason": "Pair history is checked in only a few places. pairHistory() (network.ts:1747) reads this.declined and metRecently",
+  "source": "partA"
+ },
+ {
+  "id": "SD-144",
+  "verdict": "confirmed",
+  "reason": "The opportunity comes from submitPlan -> newOpp (line 2928/2100). newOpp is called without an id, so the opp gets sid(\"nw-<seed>-<seq>\"), and this.opps is keyed by that...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-145",
+  "verdict": "refuted",
+  "reason": "The trigger needs a web join where the age is unknown, and that cannot happen",
+  "source": "partA"
+ },
+ {
+  "id": "SD-146",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: In tick() (packages/network/src/network.ts:3274), a deferred reveal whose valid() check fails is dropped and...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-147",
+  "verdict": "confirmed",
+  "reason": "Drain holds the per-line advisory lock (withLine, packages/blooio/src/outbound-queue.ts:255-268)",
+  "source": "partA"
+ },
+ {
+  "id": "SD-148",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-149",
+  "verdict": "refuted",
+  "reason": "The trigger cannot occur in production as deployed, for two reasons",
+  "source": "partA"
+ },
+ {
+  "id": "SD-150",
+  "verdict": "disputed",
+  "reason": "one vote: Both re-reads can see A unnotified before either side records. pg-store.ts recordDelivery (lines 103-116) dedupes only through on...; other vote: The code-level race is real in the abstract",
+  "source": "partA"
+ },
+ {
+  "id": "SD-151",
+  "verdict": "confirmed",
+  "reason": "Notifier.recordSent (packages/notify/src/scheduler.ts:105-110) makes two separate commits",
+  "source": "partA"
+ },
+ {
+  "id": "SD-152",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: no harmful trigger shown",
+  "source": "partA"
+ },
+ {
+  "id": "SD-153",
+  "verdict": "confirmed",
+  "reason": "The impact is latent today, though, because nothing in production reads the replayed ledger",
+  "source": "partA"
+ },
+ {
+  "id": "SD-154",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-155",
+  "verdict": "refuted",
+  "reason": "The deployed service cannot run this trigger, and even if it could, nothing would change",
+  "source": "partA"
+ },
+ {
+  "id": "SD-156",
+  "verdict": "disputed",
+  "reason": "one vote: Nothing stops this sequence, so I could not refute it; other vote: At packages/network/service/runtime.ts:162, onLedger calls capitalWiring.onLedger(e) and then pushes e into...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-157",
+  "verdict": "refuted",
+  "reason": "both votes: behaviour is intended or documented",
+  "source": "partA"
+ },
+ {
+  "id": "SD-158",
+  "verdict": "disputed",
+  "reason": "one vote: Only after that does it build grace = setTimeout(..., c.shutdownGraceMs) (line 431); other vote: In deploy/backend/backend.ts, line 428 awaits s.stop(false) on each server, and only after that does line 431...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-159",
+  "verdict": "confirmed",
+  "reason": "Deactivating means deploying without --var BACKEND_ENABLED:true",
+  "source": "partA"
+ },
+ {
+  "id": "SD-160",
+  "verdict": "refuted",
+  "reason": "The early return at deploy/cloudflare/worker.ts:55 is on purpose, and the documented operator procedure already covers the trigger",
+  "source": "partA"
+ },
+ {
+  "id": "SD-161",
+  "verdict": "confirmed",
+  "reason": "The value changes only after a successful post (line 433)",
+  "source": "partA"
+ },
+ {
+  "id": "SD-162",
+  "verdict": "disputed",
+  "reason": "one vote: In sendOutcomes, \"unknown_acceptance\" does not match FAILED (/^(failed/parked_error/undeliverable)/) or REFUSED, and it is not in...; other vote: no harmful trigger shown",
+  "source": "partA"
+ },
+ {
+  "id": "SD-163",
+  "verdict": "confirmed",
+  "reason": "They are create role, then grant network_service, then grant connect",
+  "source": "partA"
+ },
+ {
+  "id": "SD-164",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: My first and only step read packages/platform/src/env.ts around line 57 and searched for...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-165",
+  "verdict": "confirmed",
+  "reason": "The check that blocks --roles on the source server compares host and port strings only, and the documented production setup gives the same server two different host...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-166",
+  "verdict": "confirmed",
+  "reason": "The backend accepts only one proxy secret, so rotating it breaks every /api, /mcp and OAuth request until the backend and all four site projects carry the same new value",
+  "source": "partA"
+ },
+ {
+  "id": "SD-167",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-168",
+  "verdict": "confirmed",
+  "reason": "In scripts/wrangler.sh, decide() sets help=1 on --help/-h (line 69) and never sets it back to \"--help=false\" falls into the \"--*=*\" branch, which ignores it, and...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-169",
+  "verdict": "confirmed",
+  "reason": "I found nothing that blocks the trigger, so the defect stands. /Users/nubs/thenetwork/deploy/cloudflare/worker.ts:70 sends every request to...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-170",
+  "verdict": "disputed",
+  "reason": "one vote: The route is wired in packages/network/service/service.ts:2193-2217 whenever the revoked-owner resolver is configured; other vote: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-171",
+  "verdict": "refuted",
+  "reason": "The chat_id filter is real. applyRevokedConnection (PS:319-322) and applyOwnerWithdrawal (PS:410-413) both add chat_id=${owner.chatId} on top of the user_id and...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-172",
+  "verdict": "disputed",
+  "reason": "one vote: No guard, transaction or constraint stops the trigger, but it only fires under clock skew, so I think P1 overstates it; other vote: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-173",
+  "verdict": "refuted",
+  "reason": "The sequence can happen, but the result is the specified fail-closed behavior, not a defect",
+  "source": "partA"
+ },
+ {
+  "id": "SD-174",
+  "verdict": "refuted",
+  "reason": "The trigger needs two member rows for one person and one app, and the schema blocks that",
+  "source": "partA"
+ },
+ {
+  "id": "SD-175",
+  "verdict": "disputed",
+  "reason": "one vote: I found no guard that closes the window; other vote: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-176",
+  "verdict": "confirmed",
+  "reason": "The key is randomBytes(24) and is kept only in memory",
+  "source": "partA"
+ },
+ {
+  "id": "SD-177",
+  "verdict": "refuted",
+  "reason": "I could not find a way to trigger this defect in the current code",
+  "source": "partA"
+ },
+ {
+  "id": "SD-178",
+  "verdict": "confirmed",
+  "reason": "After a correct code, the route calls sessions.create(appId, e164, person?.id). accounts.personFor (accounts.ts:142) filters out only a hold or a deleted person, not a...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-179",
+  "verdict": "confirmed",
+  "reason": "The code then falls through to memberMessage and does not delete the pending row",
+  "source": "partA"
+ },
+ {
+  "id": "SD-180",
+  "verdict": "refuted",
+  "reason": "Two parallel requests can carry the same cookie when it is more than a day old",
+  "source": "partA"
+ },
+ {
+  "id": "SD-181",
+  "verdict": "confirmed",
+  "reason": "The production login path never applies the 30 s clock-skew allowance",
+  "source": "partA"
+ },
+ {
+  "id": "SD-182",
+  "verdict": "disputed",
+  "reason": "one vote: The redirect in deploy/router.ts:40-49 is deliberate; other vote: The 2026-10-19 founder correction in AGENTS.md (\"no standalone website account portal\") and decision 10...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-183",
+  "verdict": "refuted",
+  "reason": "The sequence happens as described, but it loses nothing and does no harm",
+  "source": "partA"
+ },
+ {
+  "id": "SD-184",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-185",
+  "verdict": "confirmed",
+  "reason": "Nobody gets access they should not have, and the only harm is a false security event in the audit log",
+  "source": "partA"
+ },
+ {
+  "id": "SD-186",
+  "verdict": "disputed",
+  "reason": "one vote: The trigger is in the code and nothing stops it; other vote: behaviour is intended or documented",
+  "source": "partA"
+ },
+ {
+  "id": "SD-187",
+  "verdict": "refuted",
+  "reason": "At packages/mcp/src/handler.ts:736, cloudGrantCurrent returns \"valid\" without calling Cloud for a grant that has no grant_cloud_ prefix and no cloudAuthority",
+  "source": "partA"
+ },
+ {
+  "id": "SD-188",
+  "verdict": "confirmed",
+  "reason": "At packages/sim/src/judge/metrics.ts:321 the judge decides consent with r.decision === \"accept\" // r.decision === \"counter\" // ... and does not check r.intent",
+  "source": "partA"
+ },
+ {
+  "id": "SD-189",
+  "verdict": "disputed",
+  "reason": "one vote: Only World.scheduleMeeting writes a meeting_scheduled record (packages/sim/src/world.ts:210-229); other vote: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-190",
+  "verdict": "confirmed",
+  "reason": "The only producer of message meta.plan is the plan-probe send in packages/network/src/network.ts:2994",
+  "source": "partA"
+ },
+ {
+  "id": "SD-191",
+  "verdict": "refuted",
+  "reason": "both votes: no harmful trigger shown",
+  "source": "partA"
+ },
+ {
+  "id": "SD-192",
+  "verdict": "refuted",
+  "reason": "Line 509 of packages/sim/src/judge/metrics.ts does check only message records with meta.type proposal or probe, or with a meta.probe field",
+  "source": "partA"
+ },
+ {
+  "id": "SD-193",
+  "verdict": "disputed",
+  "reason": "one vote: In /Users/nubs/thenetwork/packages/sim/src/world.ts, the persona's block goes only into persona memory, and the Network is told...; other vote: The persona really did decide to block, so recording that in its own memory before the Network knows is...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-194",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-195",
+  "verdict": "confirmed",
+  "reason": "The pinned slop world assumes verification checks that production does not run",
+  "source": "partA"
+ },
+ {
+  "id": "SD-196",
+  "verdict": "refuted",
+  "reason": "The behavior is real but intended, and no production trigger exists. scripts/sim/network.ts:302-309 runs each packages/sim/scenarios/*.json at pass^k against new...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-197",
+  "verdict": "refuted",
+  "reason": "CLAUDE.md says StubNetwork has no review by design, so flagging every stub proposal as unreviewed would be wrong",
+  "source": "partA"
+ },
+ {
+  "id": "SD-198",
+  "verdict": "refuted",
+  "reason": "The flagged code is in packages/sim/src/agent/policy.ts:163, the simulated persona's reply policy",
+  "source": "partA"
+ },
+ {
+  "id": "SD-199",
+  "verdict": "refuted",
+  "reason": "Founder decision 7 says the cap is \"checked at send time\", and production does that",
+  "source": "partA"
+ },
+ {
+  "id": "SD-200",
+  "verdict": "refuted",
+  "reason": "The only place that emits it is the simulator's STOP keyword (sim/src/world.ts:251), and STOP on the shared line is defined as stopping every app",
+  "source": "partA"
+ },
+ {
+  "id": "SD-201",
+  "verdict": "confirmed",
+  "reason": "The gate cannot fail, because the slop arm never turns on the photo path",
+  "source": "partA"
+ },
+ {
+  "id": "SD-202",
+  "verdict": "refuted",
+  "reason": "both votes: simulator or harness code only; no production trigger",
+  "source": "partA"
+ },
+ {
+  "id": "SD-203",
+  "verdict": "refuted",
+  "reason": "At packages/sim/src/judge/metrics.ts:343 the judge exempts an opportunity from the review-before-contact check when the probe_started detail has reviewed === false",
+  "source": "partA"
+ },
+ {
+  "id": "SD-204",
+  "verdict": "confirmed",
+  "reason": "Following the trigger through the code shows the defect is real. packages/network/src/network.ts:2942 (beginPlan) fixes o.plan.invited as [...o.participants], here [a,...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-205",
+  "verdict": "refuted",
+  "reason": "The stated trigger does not produce an expired plan",
+  "source": "partA"
+ },
+ {
+  "id": "SD-206",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-207",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: The trigger cannot reach production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-208",
+  "verdict": "refuted",
+  "reason": "At extract.ts:1069, mergeLlm ignores an LLM selfAge below MIN_MEMBER_AGE (13), and then it calls finalize(p, true), which sets confirmed = false",
+  "source": "partA"
+ },
+ {
+  "id": "SD-209",
+  "verdict": "confirmed",
+  "reason": "The zip rule fires only on zipUnknown, which is false",
+  "source": "partA"
+ },
+ {
+  "id": "SD-210",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: behaviour is intended or documented",
+  "source": "partA"
+ },
+ {
+  "id": "SD-211",
+  "verdict": "refuted",
+  "reason": "both votes: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-212",
+  "verdict": "confirmed",
+  "reason": "Every step of the trigger holds in the code. parseJoinText(\"Nyc, 29\", ...) (packages/network/service/service.ts:243) returns {age:29, name:\"Nyc\"}",
+  "source": "partA"
+ },
+ {
+  "id": "SD-213",
+  "verdict": "confirmed",
+  "reason": "Either way it returns. dropMember (line 2564) only closes or changes opportunities",
+  "source": "partA"
+ },
+ {
+  "id": "SD-214",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-215",
+  "verdict": "confirmed",
+  "reason": "The web join (packages/platform/src/accounts.ts:85-86, parseJoin) only trims the first name and checks its length",
+  "source": "partA"
+ },
+ {
+  "id": "SD-216",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-217",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-218",
+  "verdict": "confirmed",
+  "reason": "The snapshot (line 114) passes only this state to the Network",
+  "source": "partA"
+ },
+ {
+  "id": "SD-219",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: no harmful trigger shown",
+  "source": "partA"
+ },
+ {
+  "id": "SD-220",
+  "verdict": "confirmed",
+  "reason": "First answer, for example \"It was fine.\" classify() returns feedback_like (RX.feedback matches \"it was fine\")",
+  "source": "partA"
+ },
+ {
+  "id": "SD-221",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-222",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-223",
+  "verdict": "confirmed",
+  "reason": "The two cooldowns really do disagree, and the code path runs in production for slop",
+  "source": "partA"
+ },
+ {
+  "id": "SD-224",
+  "verdict": "disputed",
+  "reason": "one vote: The pack needs the tag. packages/engine/src/packs/peon/profile.ts:116-118 builds a peon profile only from a facet tagged...; other vote: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-225",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-226",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: behaviour is intended or documented",
+  "source": "partA"
+ },
+ {
+  "id": "SD-227",
+  "verdict": "confirmed",
+  "reason": "The trigger is reachable and the database constraint is there. parsePosting (packages/network/src/jobs.ts:84-85) splits the must-have list and slugs each item, but it...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-228",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: Peon does not run that way in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-229",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-230",
+  "verdict": "refuted",
+  "reason": "The trigger cannot happen in the current code",
+  "source": "partA"
+ },
+ {
+  "id": "SD-231",
+  "verdict": "refuted",
+  "reason": "No path in the code today can trigger it",
+  "source": "partA"
+ },
+ {
+  "id": "SD-232",
+  "verdict": "refuted",
+  "reason": "At packages/engine/src/packs/slop/clef.ts:220, rows with gate.one_adult below 0.5 are dropped",
+  "source": "partA"
+ },
+ {
+  "id": "SD-233",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: The monitoring gap the defect describes is real in the code, but the trigger cannot be shown to happen in...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-234",
+  "verdict": "refuted",
+  "reason": "both votes: behaviour is intended or documented",
+  "source": "partA"
+ },
+ {
+  "id": "SD-235",
+  "verdict": "confirmed",
+  "reason": "The bias alert is raised only while network.bias_reports holds a row from the last 24 h (ops.ts:246 and 288), and biasMonitor writes a report once a week",
+  "source": "partA"
+ },
+ {
+  "id": "SD-236",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-237",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: The admin panel (packages/observatory/web/admin.tsx:42-44) then shows \"No group under 0.8x.\" So the sequence...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-238",
+  "verdict": "refuted",
+  "reason": "both votes: behaviour is intended or documented",
+  "source": "partA"
+ },
+ {
+  "id": "SD-239",
+  "verdict": "disputed",
+  "reason": "one vote: The only production path is packages/network/service/bias.ts, called from service.ts:547 and stored in network.bias_reports; other vote: The defect says the \"group\" half of the bias monitor does not exist",
+  "source": "partA"
+ },
+ {
+  "id": "SD-240",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: The code mismatch is real, but the trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-241",
+  "verdict": "refuted",
+  "reason": "both votes: behaviour is intended or documented",
+  "source": "partA"
+ },
+ {
+  "id": "SD-242",
+  "verdict": "refuted",
+  "reason": "both votes: no harmful trigger shown",
+  "source": "partA"
+ },
+ {
+  "id": "SD-243",
+  "verdict": "refuted",
+  "reason": "both votes: behaviour is intended or documented",
+  "source": "partA"
+ },
+ {
+  "id": "SD-244",
+  "verdict": "confirmed",
+  "reason": "The console has only one Clear minor signal control, in packages/observatory/web/admin.tsx:266-272, and it renders only when the row is a SafetyReport with kind \"minor\"...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-245",
+  "verdict": "confirmed",
+  "reason": "The only component that reads it is HeldRow (admin.tsx:135)",
+  "source": "partA"
+ },
+ {
+  "id": "SD-246",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-247",
+  "verdict": "confirmed",
+  "reason": "The End button in packages/observatory/web/panels.tsx:542 calls store.unreveal(id) without waiting for a result or checking one",
+  "source": "partA"
+ },
+ {
+  "id": "SD-248",
+  "verdict": "confirmed",
+  "reason": "Leaving one app goes through service.ts:820-824 forget() to n.forgetMember(id) and then Network.forget(id) (network.ts:913)",
+  "source": "partA"
+ },
+ {
+  "id": "SD-249",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: no harmful trigger shown",
+  "source": "partA"
+ },
+ {
+  "id": "SD-250",
+  "verdict": "confirmed",
+  "reason": "A plain report such as \"he was creepy, report him\" gets no line route and no profile-read route. namedApp also misses it, because an app name inside a sentence never...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-251",
+  "verdict": "refuted",
+  "reason": "The trigger runs as described, but it is the designed result of \"leave\", not a defect",
+  "source": "partA"
+ },
+ {
+  "id": "SD-252",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-253",
+  "verdict": "disputed",
+  "reason": "one vote: The only other match is the re-export in packages/engine/src/index.ts; other vote: NetworkService.ban (packages/network/service/service.ts:1734-1764) and markBanned...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-254",
+  "verdict": "disputed",
+  "reason": "one vote: RelayHost (packages/network/src/relay.ts:67-80) has only app, now, member, matchesOf, blocked, privateFacts, ratesPhotos and send; other vote: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-255",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: no harmful trigger shown",
+  "source": "partA"
+ },
+ {
+  "id": "SD-256",
+  "verdict": "confirmed",
+  "reason": "The inbound path in packages/network/service/service.ts (around lines 1052-1092) checks only for STOP and for a phone hold (accounts.seen()===\"held\", which covers the...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-257",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-258",
+  "verdict": "refuted",
+  "reason": "The opp stays in stage \"scheduled\" until the tick at meetingAt+3h moves it to \"done\" (packages/network/src/network.ts:3405-3406)",
+  "source": "partA"
+ },
+ {
+  "id": "SD-259",
+  "verdict": "confirmed",
+  "reason": "The booked text (copy.ts:79) says \"Reply if your plans change.\" The member is put in the awaiting state kind \"booked\" in only one place, at booking (network.ts:4079)",
+  "source": "partA"
+ },
+ {
+  "id": "SD-260",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: behaviour is intended or documented",
+  "source": "partA"
+ },
+ {
+  "id": "SD-261",
+  "verdict": "refuted",
+  "reason": "In ConsentNetwork.tick (packages/network/src/network.ts:3289-3296), this.lastRunDay = p.day is set before await this.dailyRun(now)",
+  "source": "partA"
+ },
+ {
+  "id": "SD-262",
+  "verdict": "confirmed",
+  "reason": "The engine supports excluding unsent proposals. packages/engine/src/world.ts:171 drops input.unsentProposalIds from recentProposals when cfg.dispatch.billOnlySent is true",
+  "source": "partA"
+ },
+ {
+  "id": "SD-263",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; reproduced on real code; other vote: Status \"yes\" is set only in reveal(), when the plan is booked",
+  "source": "partA"
+ },
+ {
+  "id": "SD-264",
+  "verdict": "confirmed",
+  "reason": "A later group member is offered only those common picks (timeOptionsFor, 2258-2261)",
+  "source": "partA"
+ },
+ {
+  "id": "SD-265",
+  "verdict": "refuted",
+  "reason": "both votes: behaviour is intended or documented",
+  "source": "partA"
+ },
+ {
+  "id": "SD-266",
+  "verdict": "confirmed",
+  "reason": "A member writes to the Eliza gateway, which calls POST /internal/turn",
+  "source": "partA"
+ },
+ {
+  "id": "SD-267",
+  "verdict": "disputed",
+  "reason": "one vote: The trigger can be reached and nothing guards against it; other vote: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-268",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-269",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-270",
+  "verdict": "refuted",
+  "reason": "both votes: behaviour is intended or documented",
+  "source": "partA"
+ },
+ {
+  "id": "SD-271",
+  "verdict": "refuted",
+  "reason": "Under founder decision 10, the agent collects the profile in conversation and sends it with the MCP submit_profile tool, whose about field is described as the person's...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-272",
+  "verdict": "refuted",
+  "reason": "I could not show this as a defect, because the founder chose this behavior",
+  "source": "partA"
+ },
+ {
+  "id": "SD-273",
+  "verdict": "refuted",
+  "reason": "The behavior is also intended when the mode is on",
+  "source": "partA"
+ },
+ {
+  "id": "SD-274",
+  "verdict": "refuted",
+  "reason": "The move is deliberate, documented and tested",
+  "source": "partA"
+ },
+ {
+  "id": "SD-275",
+  "verdict": "confirmed",
+  "reason": "The ban path (service.ts:1744-1763, safety \"ban\") drops only ratings",
+  "source": "partA"
+ },
+ {
+  "id": "SD-276",
+  "verdict": "confirmed",
+  "reason": "The only way to take the notice row back is an in-memory onFail closure (line 1195)",
+  "source": "partA"
+ },
+ {
+  "id": "SD-277",
+  "verdict": "refuted",
+  "reason": "The two take sites never take a slot twice for one message, and a row that waits keeps a slot that is still correct",
+  "source": "partA"
+ },
+ {
+  "id": "SD-278",
+  "verdict": "confirmed",
+  "reason": "The suite only runs when NETWORK_RETRY_RECONCILIATION_TEST is exactly \"1\"; otherwise it becomes describe.skip...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-279",
+  "verdict": "disputed",
+  "reason": "one vote: In ConsentNetwork, a booked pair plan that loses a participant goes through handleDrop (packages/network/src/network.ts:2518); other vote: no harmful trigger shown",
+  "source": "partA"
+ },
+ {
+  "id": "SD-280",
+  "verdict": "refuted",
+  "reason": "both votes: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-281",
+  "verdict": "confirmed",
+  "reason": "The console's real-mode load in packages/observatory/src/sources/real.ts (around lines 345-410) never removes anything it read on an earlier poll",
+  "source": "partA"
+ },
+ {
+  "id": "SD-282",
+  "verdict": "confirmed",
+  "reason": "The forget path in packages/network/service/runtime.ts:520-545 runs when a member leaves an app or deletes everything, not only on an under-13 decline",
+  "source": "partA"
+ },
+ {
+  "id": "SD-283",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-284",
+  "verdict": "confirmed",
+  "reason": "On the next render, ReportRow shows Hold, Ban phone, Ban person and Dismiss only when r.status === \"open\" (admin.tsx:258)",
+  "source": "partA"
+ },
+ {
+  "id": "SD-285",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-286",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-287",
+  "verdict": "confirmed",
+  "reason": "The only condition is that the service clock runs ahead of the console clock by more than the time one photo fetch takes",
+  "source": "partA"
+ },
+ {
+  "id": "SD-288",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: no harmful trigger shown",
+  "source": "partA"
+ },
+ {
+  "id": "SD-289",
+  "verdict": "refuted",
+  "reason": "both votes: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-290",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-291",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-292",
+  "verdict": "refuted",
+  "reason": "The row at packages/observatory/src/server.ts:643 is a pre-access, fail-closed audit row. record() refuses the read with a 503 if the row cannot be written",
+  "source": "partA"
+ },
+ {
+  "id": "SD-293",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-294",
+  "verdict": "disputed",
+  "reason": "one vote: No other part of the export adds those rows back. exportApp adds only membership.profile, consent events and this network blob; other vote: Part of the claim is false, and the rest is either intended or no longer the export path. \"Pending rows\" is...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-295",
+  "verdict": "refuted",
+  "reason": "Only half of the claim is true, and that half causes no wrong behavior",
+  "source": "partA"
+ },
+ {
+  "id": "SD-296",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-297",
+  "verdict": "confirmed",
+  "reason": "On line 641, heardFrom clears m.onlyWhenAsked without asking the member and writes only an internal log event, outreach_resumed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-298",
+  "verdict": "refuted",
+  "reason": "The in_doubt column is an audit marker, and the code is designed so the flag itself does not change behavior",
+  "source": "partA"
+ },
+ {
+  "id": "SD-299",
+  "verdict": "confirmed",
+  "reason": "The stale check fails open, and the trigger can occur in production",
+  "source": "partA"
+ },
+ {
+  "id": "SD-300",
+  "verdict": "disputed",
+  "reason": "one vote: Nothing serializes two receipts for the same message, and the write that sets the new status does not check the status it read; other vote: no harmful trigger shown",
+  "source": "partA"
+ },
+ {
+  "id": "SD-301",
+  "verdict": "disputed",
+  "reason": "one vote: Nine values are never written, not eight; other vote: The observation behind the claim is accurate, but nothing goes wrong because of it",
+  "source": "partA"
+ },
+ {
+  "id": "SD-302",
+  "verdict": "refuted",
+  "reason": "The access is real but it is intended, so this is not a defect",
+  "source": "partA"
+ },
+ {
+  "id": "SD-303",
+  "verdict": "confirmed",
+  "reason": "The only Notify deletes in the repo are inside notify.forget_data in packages/notify/db/retention.sql (lines 103, 109, 115 and 127), and those run only on account or app...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-304",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: behaviour is intended or documented",
+  "source": "partA"
+ },
+ {
+  "id": "SD-305",
+  "verdict": "refuted",
+  "reason": "both votes: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-306",
+  "verdict": "refuted",
+  "reason": "both votes: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-307",
+  "verdict": "refuted",
+  "reason": "The contract (packages/core/src/svc/contract.ts:342) is the byte-identical mirror of upstream and says the producer, Eliza Cloud, always includes acceptedAt in an...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-308",
+  "verdict": "disputed",
+  "reason": "one vote: Eliza Cloud issues the proofs with its own clock, and the backend checks them against its own clock, with no skew allowance...; other vote: I could not show that this causes a failure in production as deployed, and the behaviour looks intended",
+  "source": "partA"
+ },
+ {
+  "id": "SD-309",
+  "verdict": "refuted",
+  "reason": "Nothing executes it and nothing reads it, so it cannot cause a runtime trigger",
+  "source": "partA"
+ },
+ {
+  "id": "SD-310",
+  "verdict": "refuted",
+  "reason": "both votes: no harmful trigger shown",
+  "source": "partA"
+ },
+ {
+  "id": "SD-311",
+  "verdict": "refuted",
+  "reason": "both votes: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-312",
+  "verdict": "refuted",
+  "reason": "both votes: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-313",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-314",
+  "verdict": "confirmed",
+  "reason": "The message is not a profile read. namedApp/keywordApp only matches when the whole message names an app, so \"leave slop.date\" does not match",
+  "source": "partA"
+ },
+ {
+  "id": "SD-315",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-316",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: behaviour is intended or documented",
+  "source": "partA"
+ },
+ {
+  "id": "SD-317",
+  "verdict": "confirmed",
+  "reason": "After that it sends a member's text to the app with the newest open item (last_item) and only then to the app that wrote to them last (last_out)",
+  "source": "partA"
+ },
+ {
+  "id": "SD-318",
+  "verdict": "confirmed",
+  "reason": "The sequence holds up, and no founder decision makes it intended behaviour",
+  "source": "partA"
+ },
+ {
+  "id": "SD-319",
+  "verdict": "refuted",
+  "reason": "The claim that the check can never fire is true",
+  "source": "partA"
+ },
+ {
+  "id": "SD-320",
+  "verdict": "confirmed",
+  "reason": "Following the code path by path, the trigger can happen and nothing stops it",
+  "source": "partA"
+ },
+ {
+  "id": "SD-321",
+  "verdict": "refuted",
+  "reason": "both votes: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-322",
+  "verdict": "confirmed",
+  "reason": "The claim that the alert can never fire is slightly too strong. service.ts:534 calls slaAlerts with DEFAULT_SLA_HOURS[rt.app.id]",
+  "source": "partA"
+ },
+ {
+  "id": "SD-323",
+  "verdict": "refuted",
+  "reason": "both votes: behaviour is intended or documented",
+  "source": "partA"
+ },
+ {
+  "id": "SD-324",
+  "verdict": "confirmed",
+  "reason": "The sms_fallback cost row can never be created, because nothing in the repository writes the status 'fell_back'",
+  "source": "partA"
+ },
+ {
+  "id": "SD-325",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-326",
+  "verdict": "refuted",
+  "reason": "both votes: behaviour is intended or documented",
+  "source": "partA"
+ },
+ {
+  "id": "SD-327",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: no harmful trigger shown",
+  "source": "partA"
+ },
+ {
+  "id": "SD-328",
+  "verdict": "confirmed",
+  "reason": "A answers that they came and that B never showed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-329",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: no harmful trigger shown",
+  "source": "partA"
+ },
+ {
+  "id": "SD-330",
+  "verdict": "confirmed",
+  "reason": "OUTREACH is declared as const, and nothing in network.ts overrides the value",
+  "source": "partA"
+ },
+ {
+  "id": "SD-331",
+  "verdict": "refuted",
+  "reason": "Without it, the engine bench filter in packages/engine/src/plans.ts:544-556 does not drop anyone",
+  "source": "partA"
+ },
+ {
+  "id": "SD-332",
+  "verdict": "refuted",
+  "reason": "The suspected trigger is replaying the same signed contact_share item more than 15 minutes later",
+  "source": "partA"
+ },
+ {
+  "id": "SD-333",
+  "verdict": "refuted",
+  "reason": "Pushing \"raw_tag\" only when the raw_tag regex matches is the intended behavior, because that is how every rule in the function work",
+  "source": "partA"
+ },
+ {
+  "id": "SD-334",
+  "verdict": "confirmed",
+  "reason": "The trigger path is real, and no guard I found stops it",
+  "source": "partA"
+ },
+ {
+  "id": "SD-335",
+  "verdict": "refuted",
+  "reason": "The network.messages mirror and outboundWaiting (RT:760) are fed only by the network service's BlooioAdapter",
+  "source": "partA"
+ },
+ {
+  "id": "SD-336",
+  "verdict": "confirmed",
+  "reason": "No guard, transaction or later repair stops the trigger",
+  "source": "partA"
+ },
+ {
+  "id": "SD-337",
+  "verdict": "disputed",
+  "reason": "one vote: A send receipt can carry status \"failed\"; other vote: behaviour is intended or documented",
+  "source": "partA"
+ },
+ {
+  "id": "SD-338",
+  "verdict": "confirmed",
+  "reason": "In NetworkRuntime.save (packages/network/service/runtime.ts:468-490), when the adapter is a BlooioAdapter, the save step calls queue.recordCollected(...)",
+  "source": "partA"
+ },
+ {
+  "id": "SD-339",
+  "verdict": "disputed",
+  "reason": "one vote: Only recordOutcome(..., \"acted\") resets ignored_streak to 0 (packages/notify/src/pg-store.ts:193-197; the same in the in-memory...; other vote: The trigger cannot happen in production as deployed, for three reasons",
+  "source": "partA"
+ },
+ {
+  "id": "SD-340",
+  "verdict": "refuted",
+  "reason": "I could not find a failure that repeats on every tick, so I am refuting this",
+  "source": "partA"
+ },
+ {
+  "id": "SD-341",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-342",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-343",
+  "verdict": "refuted",
+  "reason": "After a member leaves, it still holds the capital events it recorded about them through onLedger, until the process restarts",
+  "source": "partA"
+ },
+ {
+  "id": "SD-344",
+  "verdict": "refuted",
+  "reason": "both votes: no harmful trigger shown",
+  "source": "partA"
+ },
+ {
+  "id": "SD-345",
+  "verdict": "refuted",
+  "reason": "The unit load (serviceStore().load -> refresh() + loadState()) never reloads network.capital_events",
+  "source": "partA"
+ },
+ {
+  "id": "SD-346",
+  "verdict": "refuted",
+  "reason": "On a \"watch\" trust change, network.ts:1192 emits safety_flag with serious:false. ledger.ts:187-190 then sets safetyFlagged=true and never clears it, so tryVouchCredit...",
+  "source": "partA"
+ },
+ {
+  "id": "SD-347",
+  "verdict": "refuted",
+  "reason": "The \"organized\" case, by contrast, adds its key only after a successful credit",
+  "source": "partA"
+ },
+ {
+  "id": "SD-348",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-349",
+  "verdict": "refuted",
+  "reason": "The trigger does happen, but it is intended behaviour, and the claimed cost is small and partly misattributed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-350",
+  "verdict": "confirmed",
+  "reason": "both votes: trigger reachable, no guard found",
+  "source": "partA"
+ },
+ {
+  "id": "SD-351",
+  "verdict": "refuted",
+  "reason": "JsonlCapitalStore (packages/capital/src/store.ts:32-65) only repairs a torn tail in load(); append() calls appendFileSync blindly",
+  "source": "partA"
+ },
+ {
+  "id": "SD-352",
+  "verdict": "refuted",
+  "reason": "Fraud items never exist in production (capital reader off), and the production reviewer is a staff user, not a member",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-353",
+  "verdict": "refuted",
+  "reason": "forget() adds the leaver to declinedIds first, and the fraud queue never fills in production",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-354",
+  "verdict": "disputed",
+  "reason": "one vote: trigger reachable, no guard found; other vote: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-355",
+  "verdict": "disputed",
+  "reason": "one vote: The only code that reads cfg.levers.vouch is vouchCapacity in packages/capital/src/levers.ts:71-78; other vote: trigger cannot happen in production as deployed",
+  "source": "partA"
+ },
+ {
+  "id": "SD-356",
+  "verdict": "refuted",
+  "reason": "Zero-amount entries are kept on purpose so detection sees them, and production runs with the ledger reader off",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-357",
+  "verdict": "refuted",
+  "reason": "Production never runs gaming detection, and positive entries name only members who were eligible when written",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-358",
+  "verdict": "refuted",
+  "reason": "Nothing calls entriesFor with a staff viewer, so the -Infinity stamp is never written",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-359",
+  "verdict": "refuted",
+  "reason": "A removed member cannot emit confirmations after removal, and the only emitter needs a held member",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-360",
+  "verdict": "confirmed",
+  "reason": "ops.tick pings the heartbeat after every round even when the alert webhook fails, so the monitor stays green while no alert arrives",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-361",
+  "verdict": "disputed",
+  "reason": "One vote: --local without --out deletes the dump it just reported as kept; other vote: the deployed backup job never runs --local",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-362",
+  "verdict": "confirmed",
+  "reason": "The restore command in deploy.md 8.2 sets neither BACKUP_PREFIX nor PLATFORM_ENV, so --r2 latest lists postgres/dev; fails safe",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-363",
+  "verdict": "disputed",
+  "reason": "One vote: a failed pg_restore or count check leaves the scratch database; other vote: the tool header says the operator drops it",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-364",
+  "verdict": "disputed",
+  "reason": "One vote: push deploys skip the --api smoke because BACKEND_LIVE is unset; other vote: a push deploy never writes the origin or proxy secret",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-365",
+  "verdict": "refuted",
+  "reason": "The only multi-MB route needs a web session that the agent-first sites no longer give, so the slow 8 MB upload does not occur",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-366",
+  "verdict": "confirmed",
+  "reason": "Both retained qualification workflows download an artifact from run 39497416295 that expired after 7 days",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-367",
+  "verdict": "confirmed",
+  "reason": "go-live-handoff.md says an unset CLEF_RATINGS is off; photos.ts, AGENTS.md and deploy.md treat it as on",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-368",
+  "verdict": "confirmed",
+  "reason": "tick_late takes the newer of the tick time and saved_at, and every non-tick save refreshes saved_at, so a stalled tick is hidden",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-369",
+  "verdict": "disputed",
+  "reason": "One vote: a running backup can block a boot migration and the readers queued behind it; other vote: lock_timeout bounds the wait and the boot fails cleanly",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-370",
+  "verdict": "disputed",
+  "reason": "One vote: TICK_MS, SHUTDOWN_GRACE_MS and TICK_LATE_MS are not range-checked (empty gives 0); other vote: the production config sets valid values",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-371",
+  "verdict": "confirmed",
+  "reason": "Push and manual repair runs share one concurrency group, so a pending repair dispatch is cancelled by the next push",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-372",
+  "verdict": "confirmed",
+  "reason": "The 6-photo cap check and the insert are not atomic, so concurrent web uploads can pass the cap",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-373",
+  "verdict": "confirmed",
+  "reason": "No production code writes a non-null memberships.review, but several places still read it",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-374",
+  "verdict": "refuted",
+  "reason": "rejected to revoked changes nothing that is read, and the feature cannot create rows in production",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-375",
+  "verdict": "refuted",
+  "reason": "The fixed delivery expiry is intended, commented and tested, and it fails closed",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-376",
+  "verdict": "disputed",
+  "reason": "One vote: deleted batches and terminal rows keep person, chat and connection ids with no purge; other vote: data-minimisation preference, no requirement broken",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-377",
+  "verdict": "confirmed",
+  "reason": "The deleteAll comment says own blocks are deleted, but both stores keep blocks on purpose; comment only",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-378",
+  "verdict": "disputed",
+  "reason": "One vote: the export never includes photos and no other path gives them; other vote: the founder correction moves export to help@ntwrk.party",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-379",
+  "verdict": "confirmed",
+  "reason": "movePhone moves eliza_notices by the phone: hash, but the service keys those rows by the eliza_notice: hash, so nothing moves",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-380",
+  "verdict": "confirmed",
+  "reason": "OTP buckets each commit their own hit, so a request refused by a later bucket still counts in earlier ones, against the header comment",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-381",
+  "verdict": "confirmed",
+  "reason": "clearHold runs setPhoneHold and touchPhone as two non-atomic updates, so a concurrent seen() can re-hold the number; small effect",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-382",
+  "verdict": "refuted",
+  "reason": "Cloudflare always sets cf-connecting-ip, and the fallback result is no worse than without the deletion",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-383",
+  "verdict": "confirmed",
+  "reason": "validAge accepts 0, so a join with age 0 records an age floor of 0 for the person",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-384",
+  "verdict": "disputed",
+  "reason": "One vote: movePhone moves grants but not oauth.signup_drafts; other vote: no site calls the number change and the draft fails closed and expires",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-385",
+  "verdict": "disputed",
+  "reason": "One vote: connection receipts and photo relay items survive erasure because people and members are only tombstoned; other vote: no harm shown from the kept rows",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-386",
+  "verdict": "refuted",
+  "reason": "No network_service transaction reaches the profile_suggestion tables without app.app_id set",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-387",
+  "verdict": "confirmed",
+  "reason": "The relay log cap drops entries of items still held, so a later staff decision writes no relay_records row",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-388",
+  "verdict": "refuted",
+  "reason": "The consent step always rejects the mixed auth-request row, so the race never yields a grant or code",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-389",
+  "verdict": "confirmed",
+  "reason": "finishAuthorization deletes the request, writes the grant, links it and writes the code as separate statements with no rollback",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-390",
+  "verdict": "confirmed",
+  "reason": "The sweep deletes any day-old client with no grant row now, including one whose grants were revoked, breaking the connector's client_id",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-391",
+  "verdict": "disputed",
+  "reason": "One vote: the CIMD paths never run in production because no caller passes cimdFetch; other vote: CIMD is off by design and advertised as off",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-392",
+  "verdict": "refuted",
+  "reason": "Nothing in production reads a signup draft, so a grant that cannot prepare a second draft loses nothing",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-393",
+  "verdict": "confirmed",
+  "reason": "The MCP README says a sign-in request keeps the number at most 10 minutes; the code TTL is 15 minutes plus the sweep interval",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-394",
+  "verdict": "confirmed",
+  "reason": "An invalid_grant tool result revokes the grant with no audit row, unlike every other revocation path",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-395",
+  "verdict": "disputed",
+  "reason": "One vote: the per-grant profile bucket is charged before the result, so refused submits count; other vote: the README limit of 5 accepted profiles still holds",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-396",
+  "verdict": "refuted",
+  "reason": "MemoryOAuthStore runs only in dev and tests; production always builds PgOAuthStore",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-397",
+  "verdict": "confirmed",
+  "reason": "Deny deletes the request without a lock or row check, so it can race an approve and audit a denial for a grant that was issued",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-398",
+  "verdict": "refuted",
+  "reason": "Nothing sets failureRate, so the sim channel never produces a failed send to retry",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-399",
+  "verdict": "confirmed",
+  "reason": "age_resolved carries no age, and isMinor(undefined) is true, so the judge's minor-clear branch is dead",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-400",
+  "verdict": "refuted",
+  "reason": "The judge can never clear a minor flag today, so the suspected wrong clear cannot happen",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-401",
+  "verdict": "confirmed",
+  "reason": "The sim opted-out guard lets only literal START through, dropping UNSTOP, RESUME and HELP that the channel accepts",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-402",
+  "verdict": "disputed",
+  "reason": "One vote: the sim initiative chain never restarts after START; other vote: a modelling choice in simulator code only",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-403",
+  "verdict": "refuted",
+  "reason": "Only the simulator calls this projection, and no ConsentNetwork run that sends probes feeds it",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-404",
+  "verdict": "disputed",
+  "reason": "One vote: the slop sim can probe a member held earlier in the same round; other vote: simulator only, and it does not flatter the safety results",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-405",
+  "verdict": "refuted",
+  "reason": "Every member in ageSignal gets a hold with no end, so later rounds treat them as held",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-406",
+  "verdict": "confirmed",
+  "reason": "In the peon sim, exited candidates are still interviewed, offered and hired, because later steps check only hired",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-407",
+  "verdict": "refuted",
+  "reason": "Blocks and holds always involve an adversary, and oracle.selfHangout already excludes adversaries",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-408",
+  "verdict": "disputed",
+  "reason": "One vote: StubNetwork never clears awaiting for members who ignore feedback; other vote: StubNetwork is the push baseline and never runs in production",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-409",
+  "verdict": "refuted",
+  "reason": "Engine-fed sim runs have their own weekly budget at the same limit",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-410",
+  "verdict": "confirmed",
+  "reason": "StubNetwork replays a deferred group invite to a member who sent STOP, overwriting the dropped status",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-411",
+  "verdict": "disputed",
+  "reason": "One vote: STOP leaves a scheduled stub opp, so reminders still reach the opted-out member; other vote: StubNetwork is sim only",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-412",
+  "verdict": "refuted",
+  "reason": "No peon hold is ever created with an end time, so ignoring to changes nothing",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-413",
+  "verdict": "refuted",
+  "reason": "A naming issue only; nothing reads the dropped_policy value",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-414",
+  "verdict": "refuted",
+  "reason": "The only producer of crew_offer proposals always sets crew",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-415",
+  "verdict": "disputed",
+  "reason": "One vote: the need channel is never added, so high-need low-similarity members are dropped; other vote: a recorded design decision kept by commit 47a46c3",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-416",
+  "verdict": "refuted",
+  "reason": "Each pack holds members back elsewhere, as the planAsks comment says, so the empty exclude set is harmless",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-417",
+  "verdict": "refuted",
+  "reason": "Only a strict under-13 statement declines; \"almost 13\" fails closed to minor, by design",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-418",
+  "verdict": "disputed",
+  "reason": "One vote: after two read-backs a correction leaves confirmed false for good; other vote: nothing in production reads that flag",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-419",
+  "verdict": "confirmed",
+  "reason": "needsBasics stays true for a member with no dealbreakers and no politics tag, so both compatibility asks repeat forever",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-420",
+  "verdict": "disputed",
+  "reason": "One vote: dailyRun passes no judge caches, so verdicts are not reused across runs; other vote: the engine judge is off by default in the service",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-421",
+  "verdict": "refuted",
+  "reason": "No caller passes idAliases, so raw and canonical ids are the same",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-422",
+  "verdict": "confirmed",
+  "reason": "Trimmed exploration picks keep the budget, pair and city capacity they took, and the greedy pass never gets it back; reproduced",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-423",
+  "verdict": "disputed",
+  "reason": "One vote: recordPlanAnswer books a yes after the probe deadline; other vote: the service expires pending probes after 26 h first",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-424",
+  "verdict": "refuted",
+  "reason": "The service reports a probe silent past PROBE_TTL as a no, so the comment holds",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-425",
+  "verdict": "disputed",
+  "reason": "One vote: friends minLeadHours equals the deadline offset, so a slot at now+30h gets a deadline of now; other vote: friends matching is local only",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-426",
+  "verdict": "disputed",
+  "reason": "One vote: the rate-limit notice says the item is held, but the item is dropped; other vote: not a defect",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-427",
+  "verdict": "confirmed",
+  "reason": "The 3-day awaiting sweep clears an active slop member's interview ask, so the answer to the age-range question is lost",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-428",
+  "verdict": "confirmed",
+  "reason": "A staff hold never changes platform.memberships, so the MCP status tool still reports the member as active",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-429",
+  "verdict": "refuted",
+  "reason": "timingOk runs before the budget check, and the paused cadence has no digest days, so no check-in goes out",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-430",
+  "verdict": "confirmed",
+  "reason": "Inbox items get no expiresAt, so a probe for a closed opportunity still comes back from get_updates as new",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-431",
+  "verdict": "refuted",
+  "reason": "Inbox summaries are the bodies of messages already sent to that member, so Eliza gets nothing new",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-432",
+  "verdict": "refuted",
+  "reason": "The wire contract defines activeItems null as \"cannot supply\", not an empty inbox",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-433",
+  "verdict": "confirmed",
+  "reason": "threadReply runs only on handled turns, so a free-chat (open) reply never marks the notify thread replied",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-434",
+  "verdict": "confirmed",
+  "reason": "No production path stores the participation states open or receiving, but code still reads them",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-435",
+  "verdict": "confirmed",
+  "reason": "SF members fall back to the NYC runtime, and unknown areas fall back to Midtown, so they get NYC venues",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-436",
+  "verdict": "refuted",
+  "reason": "The lowest stated age wins by founder decision, so a member who stated 17 stays a minor",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-437",
+  "verdict": "refuted",
+  "reason": "Using the free-text note only as a leak fact is a privacy choice, and no rule requires it to reach staff",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-438",
+  "verdict": "refuted",
+  "reason": "The reply-kind row is handled correctly by the production outbound queue",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-439",
+  "verdict": "disputed",
+  "reason": "One vote: a seat decline is keyed by the candidate and manager pair, so it blocks the manager's other seats; other vote: peon runs locally only",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-440",
+  "verdict": "disputed",
+  "reason": "One vote: editing an active posting does not re-ask candidates already in flight; other vote: peon runs locally only",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-441",
+  "verdict": "disputed",
+  "reason": "One vote: no Network row makes peon history count an answer or a ghost; other vote: the trigger cannot happen as deployed",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-442",
+  "verdict": "confirmed",
+  "reason": "The completed interaction is stamped with the check-in answer time, not meetingAt, so slot learning uses the wrong time",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-443",
+  "verdict": "confirmed",
+  "reason": "The hike plan says daytime trailhead, but slots are ranked without the activity, so evening slots are picked",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-444",
+  "verdict": "disputed",
+  "reason": "One vote: crew handoff only writes a log line and tells no member; other vote: friends matching is local only",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-445",
+  "verdict": "refuted",
+  "reason": "The \"write here and I'll pass it on\" copy matches the RELAY design, which stays off until the founder enables it",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-446",
+  "verdict": "confirmed",
+  "reason": "weeklyBias runs after the tick lock is released, so two processes can both write the weekly report",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-447",
+  "verdict": "disputed",
+  "reason": "One vote: the bias report counts members of every city of the app but opps of one network; other vote: one network per app is seeded",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-448",
+  "verdict": "disputed",
+  "reason": "One vote: afterTick can read state left unsaved by a failed save; other vote: every unit re-imports state, so nothing wrong is stored",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-449",
+  "verdict": "refuted",
+  "reason": "The threshold is a fixed constant of 0.8 with no override, so panel and report agree",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-450",
+  "verdict": "confirmed",
+  "reason": "biasRows credits every participant of a post-review opp as reached, not only the contacted members",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-451",
+  "verdict": "confirmed",
+  "reason": "Stage done is set on a timer at meetingAt+3h, so no-shows and ghosts count as held dates in the bias report",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-452",
+  "verdict": "refuted",
+  "reason": "onAgeLowered runs on every age statement and lowers network.members.age on all memberships",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-453",
+  "verdict": "disputed",
+  "reason": "One vote: a leave deletes shared done opps, so the stayer's dates drop out of bias counts; other vote: intended erasure",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-454",
+  "verdict": "disputed",
+  "reason": "One vote: two dates more than 28 days apart never count as a second date; reproduced; other vote: not reachable as deployed",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-455",
+  "verdict": "disputed",
+  "reason": "One vote: one Cloud proof call per suggestion can run past the 5 s source window; other vote: refuted",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-456",
+  "verdict": "refuted",
+  "reason": "Founder decisions make the open-turn requirement intended, and help@ntwrk.party covers deletion",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-457",
+  "verdict": "refuted",
+  "reason": "Profile review is off in production, and the pull-only design means stale Cloud consent cannot collect",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-458",
+  "verdict": "disputed",
+  "reason": "One vote: a retried decide or delete gets denied because no receipt is stored; other vote: not reachable as deployed",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-459",
+  "verdict": "disputed",
+  "reason": "One vote: an accepted suggestion with scope matching never reaches the matcher; other vote: intended deferral of Google-derived matching",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-460",
+  "verdict": "refuted",
+  "reason": "The review text holds only the owner's own suggestions and goes only to that owner",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-461",
+  "verdict": "refuted",
+  "reason": "The 16-receipt budget per turn is a deliberate bound, and no trigger was shown",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-462",
+  "verdict": "disputed",
+  "reason": "One vote: a Date.now() fallback in network service code breaks the Clock rule; other vote: production always passes a fence",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-463",
+  "verdict": "confirmed",
+  "reason": "Leave records opt-out, forgets the member and drops the membership in separate transactions, with a window between them",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-464",
+  "verdict": "disputed",
+  "reason": "One vote: the learning-consent endpoint runs with review disabled; other vote: a route policy exists only in staging",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-465",
+  "verdict": "refuted",
+  "reason": "Migrations run as the Postgres superuser, so the SECURITY DEFINER delete is not filtered by RLS",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-466",
+  "verdict": "confirmed",
+  "reason": "One failed safety poll unmounts the case rows and loses typed notes and reasons",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-467",
+  "verdict": "confirmed",
+  "reason": "A reason with a character above 0xFF throws in the header, and the error is shown as a wrong message",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-468",
+  "verdict": "confirmed",
+  "reason": "A per-app safety role sees Ban buttons that the service refuses for non-global roles",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-469",
+  "verdict": "disputed",
+  "reason": "One vote: Lift hold needs no note on any layer; other vote: leaving lift out of the note rule is deliberate",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-470",
+  "verdict": "confirmed",
+  "reason": "A 401 from a request sent with the old token reopens the auth prompt after a good token swap",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-471",
+  "verdict": "confirmed",
+  "reason": "Enter during an in-flight search repeats audited searches, and a stale answer can replace a newer one",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-472",
+  "verdict": "disputed",
+  "reason": "One vote: oracle peek and prompt text stay after the picks change; other vote: game mode only",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-473",
+  "verdict": "disputed",
+  "reason": "One vote: the banner says read-only while staff actions are live; other vote: the label is documented",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-474",
+  "verdict": "refuted",
+  "reason": "The shared re-engagement slot per line and address is the documented Blooio rule",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-475",
+  "verdict": "confirmed",
+  "reason": "A staff-started hold notice is queued as a normal send, not as a reply, so it waits behind the queue rules",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-476",
+  "verdict": "refuted",
+  "reason": "A lift on one app leaves the others held, which fails safe",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-477",
+  "verdict": "refuted",
+  "reason": "Bans are permanent by design and the service login cannot remove them",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-478",
+  "verdict": "confirmed",
+  "reason": "\"delete my info\" matches the opt-out pattern and stops every app instead of starting deletion",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-479",
+  "verdict": "confirmed",
+  "reason": "A late joiner learns everyone's names, but members already booked are never told about the joiner",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-480",
+  "verdict": "disputed",
+  "reason": "One vote: yes-sayers dropped at booking are never told; other vote: the silence is documented",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-481",
+  "verdict": "refuted",
+  "reason": "Closing the whole item when one participant fails the re-check is documented design",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-482",
+  "verdict": "refuted",
+  "reason": "A reject marking every pair for 60 days is documented in docs/network.md",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-483",
+  "verdict": "refuted",
+  "reason": "The quiet decline after a retry is the documented behaviour",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-484",
+  "verdict": "refuted",
+  "reason": "A refused reminder would be refused again on retry; deferred sends are already retried",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-485",
+  "verdict": "refuted",
+  "reason": "The premise is wrong: the info send uses logistics timing, not the slot",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-486",
+  "verdict": "refuted",
+  "reason": "The missing caller is a doc gap with no wrong behaviour in production",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-487",
+  "verdict": "refuted",
+  "reason": "The default meeting time for a seat intro is by design",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-488",
+  "verdict": "confirmed",
+  "reason": "An invited member's reply has no pending join and no keyword, so it is routed to the wrong app",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-489",
+  "verdict": "disputed",
+  "reason": "One vote: the number-change endpoints have no caller; other vote: intended by the 2026-10-19 founder correction",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-490",
+  "verdict": "confirmed",
+  "reason": "\"leave slop\" from a non-member with a pending join is parsed as a join reply",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-491",
+  "verdict": "confirmed",
+  "reason": "An under-age web join keeps the session row with the plain phone number",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-492",
+  "verdict": "disputed",
+  "reason": "One vote: a ban after a number change misses the old number; other vote: documented design that gives the banned person nothing",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-493",
+  "verdict": "disputed",
+  "reason": "One vote: a signed STOP does not cancel an older pending webhook row; other vote: production has no webhook path",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-494",
+  "verdict": "confirmed",
+  "reason": "The traveler check reads presence once at the end, so trips that end before day 8 are never checked; reproduced",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-495",
+  "verdict": "refuted",
+  "reason": "The growth model is harness only and documented as such; production has no invite path on purpose",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-496",
+  "verdict": "confirmed",
+  "reason": "Lease renewal rewrites arrived_at, which other code reads as the arrival time",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-497",
+  "verdict": "disputed",
+  "reason": "One vote: reset does not wait for an in-flight advance; other vote: simulator console only",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-498",
+  "verdict": "disputed",
+  "reason": "One vote: a late joiner makes the projector count accepts twice; other vote: simulator game only",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-499",
+  "verdict": "disputed",
+  "reason": "One vote: setState has no terminal guard for some record types; other vote: no trigger shown",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-500",
+  "verdict": "confirmed",
+  "reason": "Every save rewrites updated_at on every opportunity, closed or not",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-501",
+  "verdict": "confirmed",
+  "reason": "The console marks every yes participant of a done opp as attended, ignoring recorded attendance",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-502",
+  "verdict": "disputed",
+  "reason": "One vote: a failed save on the running transition leaves the lab run stuck; other vote: the deployed observatory is real-only",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-503",
+  "verdict": "disputed",
+  "reason": "One vote: concurrent lab runs pass the route check and audit ok before start throws; other vote: the lab is not deployed",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-504",
+  "verdict": "refuted",
+  "reason": "The server closes with 4401 or 4403 only when the session or role is really gone",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-505",
+  "verdict": "confirmed",
+  "reason": "A snapshot at version V already holds delta V's feed, so applying the delta again duplicates feed lines",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-506",
+  "verdict": "disputed",
+  "reason": "One vote: step or speed with no number sets NaN and drains the queue; other vote: game mode only",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-507",
+  "verdict": "refuted",
+  "reason": "Game mode is the simulator, where reading hidden truth is allowed",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-508",
+  "verdict": "refuted",
+  "reason": "Only one network per app exists, so the merge never sees a duplicate member",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-509",
+  "verdict": "confirmed",
+  "reason": "game.ts, lab.ts and docs/observatory.md say slop runs with matching off, but PACK_READY includes slop",
+  "source": "this-run"
+ },
+ {
+  "id": "SD-510",
+  "verdict": "confirmed",
+  "reason": "An approval invalidated by the re-check returns 409, and the console does not refresh the queue",
+  "source": "this-run"
+ }
+]

@@ -14,12 +14,20 @@ export interface SafetyReport {
 }
 export const URGENT_REPORTS: ReadonlySet<ReportKind> = new Set(["harassment", "unsafe", "scam", "minor"]);
 
+/**
+ * A report word that a negation comes just before ("not rude at all", "wasn't creepy", "never felt
+ * unsafe") names nothing (SD-067). Up to two filler words may stand between them.
+ */
+const NOT = String.raw`(?<!(?:\b(?:not|never|no|nor)|n't)\s+(?:(?:at all|really|very|too|even|remotely|super|particularly|overly|being|feel|felt|seem|seemed|a bit)\s+){0,2})`;
 const KINDS: [ReportKind, RegExp][] = [
-  ["minor", /\b(under ?age|underage|a minor|(he|she|they)(?:'s|'re| is| was| are| were) (?:only |just )?(1[0-7]|[0-9])(?![\d:.'"]|\s*(min|mins|minutes|hours?|hrs?|days?|weeks?|dollars|bucks|blocks|stops|am|pm|ft|foot|feet|out of|years? (older|younger))\b)|(1[0-7]|[0-9]) years? old|in (high|middle) school|a (kid|child|teen(ager)?))\b/i],
-  ["unsafe", /\b(unsafe|not safe|scared|afraid|threat(en(ed|ing)?)?|follow(ed|ing) me|wouldn'?t let me (go|leave)|grabbed|touched me|assault(ed)?|drugged|spiked|forced|hurt me|violent)\b/i],
-  ["harassment", /\b(harass(ed|ing|ment)?|creep(y)?|kept (texting|messaging|calling)|wouldn'?t stop|rude|insult(ed|ing)?|aggressive|hostile|abusive|slur|pushy|inappropriate|sexual comments?)\b/i],
-  ["scam", /\b(scam(mer|med)?|asked (me )?for money|venmo|cash ?app|zelle|crypto|bitcoin|gift cards?|invest(ment)?|wire (me|money))\b/i],
-  ["lying", /\b(lied|lying|liar|fake|catfish(ed)?|not (who|what) (they|he|she) said|(didn'?t|doesn'?t) look like (their|his|her) (photos?|pics?|pictures?)|old photos?|(lied|lying) about (their|his|her) age|older than|younger than (they|he|she) said|married|has a (girlfriend|boyfriend|wife|husband|partner))\b/i],
+  // An age is not a rating ("she's 10/10") or a time; "a kid" is about the person ("he's a kid", "my date was a
+  // teenager", "I met a kid"), not someone they have ("she has a kid").
+  ["minor", /\b(under ?age|underage|a minor|(he|she|they)(?:'s|'re| is| was| are| were) (?:only |just )?(1[0-7]|[0-9])(?![\d:.'"\/]|\s*(min|mins|minutes|hours?|hrs?|days?|weeks?|dollars|bucks|blocks|stops|am|pm|ft|foot|feet|out of|years? (older|younger))\b)|(1[0-7]|[0-9]) years? old|in (high|middle) school(?!\s+(?:once|back then|years ago|ages ago))|(he|she|they|my (?:date|match))(?:'s|'re| is| was| are| were| seems?| seemed| looks?| looked)(?: like)?(?: only| just| basically| literally| still| clearly| obviously| like)? (?:a |an )?(kid|child|teen(ager)?)|(?:met|dated|matched with|went out with) (?:a |an )(kid|child|teen(ager)?))\b/i],
+  ["unsafe", new RegExp(String.raw`\b${NOT}(unsafe|not safe|(?:scared|afraid)(?!\s+I(?:'?d|'?ll| would| might)\b)|threat(en(ed|ing)?)?|follow(ed|ing) me|wouldn'?t let me (go|leave)|grabbed|touched me|assault(ed)?|drugged|spiked|forced|hurt me|violent)\b`, "i")],
+  ["harassment", new RegExp(String.raw`\b${NOT}(harass(ed|ing|ment)?|creep(y)?|kept (texting|messaging|calling)|wouldn'?t stop|rude|insult(ed|ing)?|aggressive|hostile|abusive|slur|pushy|inappropriate|sexual comments?)\b`, "i")],
+  // Money words are a scam when they ask for something ("asked me to venmo him"), not a topic ("investment banking").
+  ["scam", new RegExp(String.raw`\b${NOT}(scam(mer|med)?|asked (me )?for money|(?:asked|wanted|tried to get|pushed|pressured|kept asking|begged|told) me (?:to |for |about |into )?(?:\w+ ){0,3}?(?:venmo|cash ?app|zelle|crypto|bitcoin|gift cards?|invest(?:ing|ment)?|money)|(?:venmo|cash ?app|zelle) (?:him|her|them)|gift cards?|wire (me|money))\b`, "i")],
+  ["lying", new RegExp(String.raw`\b${NOT}(lied|lying|liar|fake|catfish(ed)?|not (who|what) (they|he|she) said|(didn'?t|doesn'?t) look like (their|his|her) (photos?|pics?|pictures?)|old photos?|(lied|lying) about (their|his|her) age|older than (?:(?:they|he|she) said|(?:their|his|her) (?:photos?|pics?|pictures?|profile|age))|younger than (they|he|she) said|married|has a (girlfriend|boyfriend|wife|husband|partner))\b`, "i")],
   ["no_show", /\b(no[- ]?show(ed)?|never (showed|came|turned up)|didn'?t (show|come|turn up)|stood me up|ghosted me)\b/i],
 ];
 

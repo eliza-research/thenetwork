@@ -182,3 +182,38 @@
 {"text":"no puedo el viernes","label":"no"}
 {"text":"si puedo ir, sí","label":"unsure"}
 {"text":"si tengo tiempo","label":"unsure"}
+{"text":"yes?","label":"unsure"}
+{"text":"ok?","label":"unsure"}
+{"text":"Are you sure?","label":"unsure"}
+{"text":"are you sure","label":"unsure"}
+{"text":"you sure?","label":"unsure"}
+{"text":"is that ok?","label":"unsure"}
+{"text":"sure about that?","label":"unsure"}
+{"text":"she said yes","label":"unsure"}
+{"text":"my sister said yes","label":"unsure"}
+{"text":"He said ok","label":"unsure"}
+{"text":"they told me yes","label":"unsure"}
+{"text":"i will report you","label":"unsure"}
+{"text":"i will block you","label":"unsure"}
+{"text":"i can tell you're a bot","label":"unsure"}
+{"text":"what do you mean okay","label":"unsure"}
+{"text":"ok but i have a question","label":"unsure"}
+{"text":"yes who is this","label":"unsure"}
+{"text":"why not?","label":"yes"}
+{"text":"sure why not?","label":"yes"}
+{"text":"yes! what time?","label":"yes"}
+{"text":"yes, where?","label":"yes"}
+{"text":"ok what time?","label":"yes"}
+{"text":"i said yes","label":"yes"}
+{"text":"i can","label":"yes"}
+{"text":"yes i can","label":"yes"}
+{"text":"i will!","label":"yes"}
+{"text":"i can do that","label":"yes"}
+{"text":"i will be there","label":"yes"}
+{"text":"perfect would be someone else entirely","label":"unsure"}
+{"text":"perfect, but someone else","label":"unsure"}
+{"text":"great but somebody else please","label":"unsure"}
+{"text":"sure, a different person would be better","label":"unsure"}
+{"text":"are you sure?","label":"unsure"}
+{"text":"sure?","label":"unsure"}
+{"text":"sounds good?","label":"unsure"}

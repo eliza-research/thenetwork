@@ -33,7 +33,13 @@ export interface NotifyStore {
   /** Mark unseen items seen. `ids` omitted = all of the person's. Returns the ids changed. */
   markSeen(personId: string, surface: Surface, now: number, ids?: string[]): Promise<string[]>;
 
-  /** Record a delivery and mark its items notified, atomically. False if the delivery id exists. */
+  /**
+   * A message another sender already delivered: insert the item (or find it by its dedupe key) and,
+   * when it is not notified yet, record this delivery of it alone, in one transaction. An item that
+   * was delivered is never left pending for the scheduler.
+   */
+  addDelivered(input: InboxItemInput, d: Pick<DeliveryRecord, "deliveryId" | "target" | "countsTowardCap" | "sentAt">): Promise<{ item: InboxItem; created: boolean }>;
+  /** Record a delivery and mark its items notified, atomically. False if the delivery id exists, or an item is gone or already notified. */
   recordDelivery(d: DeliveryRecord): Promise<boolean>;
   getDelivery(deliveryId: string): Promise<DeliveryRecord | undefined>;
   /** Send times of cap-counting deliveries to a person at or after `since`. */
@@ -78,6 +84,15 @@ export class MemoryNotifyStore implements NotifyStore {
     return { item: { ...item }, created: true };
   }
 
+  async addDelivered(input: InboxItemInput, d: Pick<DeliveryRecord, "deliveryId" | "target" | "countsTowardCap" | "sentAt">) {
+    const r = await this.addItem(input, d.sentAt);
+    if (r.item.notifiedAt === undefined && (await this.recordDelivery({ ...d, personId: input.personId, itemIds: [r.item.id] }))) {
+      r.item.notifiedAt = d.sentAt;
+      r.item.deliveryId = d.deliveryId;
+    }
+    return r;
+  }
+
   async getItems(ids: string[]) {
     return ids.map(id => this.items.get(id)).filter((i): i is InboxItem => !!i).map(i => ({ ...i }));
   }
@@ -110,11 +125,11 @@ export class MemoryNotifyStore implements NotifyStore {
 
   async recordDelivery(d: DeliveryRecord) {
     if (this.deliveries.has(d.deliveryId)) return false;
+    // An item already in another delivery, or gone, refuses the whole delivery.
+    const items = d.itemIds.map(id => this.items.get(id));
+    if (items.some(i => !i || i.notifiedAt !== undefined)) return false;
     this.deliveries.set(d.deliveryId, { ...d, itemIds: [...d.itemIds] });
-    for (const id of d.itemIds) {
-      const i = this.items.get(id);
-      if (i && i.notifiedAt === undefined) { i.notifiedAt = d.sentAt; i.deliveryId = d.deliveryId; }
-    }
+    for (const i of items) { i!.notifiedAt = d.sentAt; i!.deliveryId = d.deliveryId; }
     return true;
   }
 

@@ -10,7 +10,8 @@
 #
 # Read-only, always allowed:
 #   whoami, login, logout, dev and pages dev (local only: never --remote), tail, types, docs, help, version (and --version, -v, --help, -h)
-#   deploy --dry-run, versions upload --dry-run (the last --dry-run / --no-dry-run wins, as in wrangler)
+#   deploy --dry-run, versions upload --dry-run (the last --dry-run / --no-dry-run wins, as in wrangler;
+#   the same for --help / --no-help, and a "true" or "false" word after a switch is its value)
 #   <noun> list|view|get|info|status: versions, deployments, secret, kv, r2, d1, pages, queues,
 #     vectorize, hyperdrive, workflows, containers, pipelines (kv key/namespace, r2 bucket/object,
 #     pages project/deployment take one more noun first)
@@ -56,17 +57,31 @@ is_read_verb() { case "$1" in list|view|get|info|status) return 0 ;; *) return 1
 # switches; mode "value" reads them as taking the next word.
 decide() {
   local mode="$1"; shift
-  local words=() dry_run=0 remote=0 help=0 skip_next=0 a
+  local words=() dry_run=0 remote=0 help=0 skip_next=0 last="" a
   for a in "$@"; do
     if [ "$skip_next" = 1 ]; then skip_next=0; continue; fi
-    case "$a" in
+    # yargs reads a "true" or "false" word after a bare boolean switch as its value: "--help false" is not help.
+    if [ -n "$last" ] && { [ "$a" = true ] || [ "$a" = false ]; }; then
+      local v=0; [ "$a" = true ] && v=1
+      case "$last" in dry_run) dry_run=$v ;; remote) remote=$v ;; help) help=$v ;; esac
+      last=""; continue
+    fi
+    last=""
+    # yargs also reads camel case and --no- forms: "--dryRun=false" and "--no-dryRun" turn the switch off.
+    local flag=""
+    case "$a" in -*) flag="$(printf '%s' "${a%%=*}" | tr -d '_-' | tr '[:upper:]' '[:lower:]')" ;; esac
+    case "$flag" in
       # wrangler (yargs) takes the LAST value of a switch: "--dry-run --no-dry-run" is a real deploy.
-      --dry-run|--dry-run=true) dry_run=1 ;;
-      --no-dry-run|--dry-run=*) dry_run=0 ;;
+      dryrun) case "$a" in --dry-run) dry_run=1; last=dry_run ;; --dry-run=true) dry_run=1 ;; *) dry_run=0 ;; esac; continue ;;
+      nodryrun) dry_run=0; continue ;;
       # "dev --remote" runs on Cloudflare (it uploads to the account): not read-only.
-      --remote|--remote=true|-r) remote=1 ;;
-      --no-remote|--remote=*) remote=0 ;;
-      --help|-h) help=1 ;;
+      remote|r) case "$a" in *=false) remote=0 ;; *=*) remote=1 ;; *) remote=1; last=remote ;; esac; continue ;;
+      noremote|nor) remote=0; continue ;;
+      # The same for help: "deploy --help --no-help" is a real deploy.
+      help|h) case "$a" in --help|-h) help=1; last=help ;; --help=true|-h=true) help=1 ;; *) help=0 ;; esac; continue ;;
+      nohelp|noh) help=0; continue ;;
+    esac
+    case "$a" in
       --*=*) ;;
       -*)
         if value_flag "$a"; then skip_next=1

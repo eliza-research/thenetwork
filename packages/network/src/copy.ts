@@ -136,7 +136,6 @@ export function copyFor(b: CopyBrand) {
   whoUnresolved: "I couldn't tell who you mean, so nothing has changed yet. Reply block or report with their first name anytime.",
   hold: "Your account is paused while our team takes a look. You'll hear from a person soon.",
   minorNotice: "Thanks for telling me. Since you're under 18, I won't introduce you to other members, but I'm happy to suggest public places and events.",
-  minorConcierge: (topic: string, ideas: string) => `For ${topic}, ${ideas}. Happy to suggest more anytime.`,
   stopWelcomeBack: "Welcome back. I'll only reach out when something looks worth it.",
   // Plans (plans v1.1). The probe itself is the engine's buildPlanProbe (no names, leak-checked).
   /** The booked plan, sent only once enough people said yes: names, time, public place, own way. Silence for 48 hours = in. */

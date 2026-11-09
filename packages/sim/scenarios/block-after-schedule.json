@@ -1,0 +1,31 @@
+{
+  "name": "block-after-schedule",
+  "description": "A pair says yes and the Network books the meeting. Before the meeting, one of them blocks the other. The Network calls the meeting off, so the world must not hold it: no outcome with the blocked pair together, and no meeting held.",
+  "seed": 61,
+  "days": 8,
+  "stub": { "randomIntros": false },
+  "personas": [
+    {
+      "ref": "ana", "name": "Ana Lindqvist", "age": 31, "city": "sf", "homeArea": "Noe Valley",
+      "interests": ["hiking", "coffee", "board_games"], "desires": ["new_friends"],
+      "capacity": 0.95, "flakiness": 0, "responsiveness": { "latencyMedianMin": 10, "ignoreProb": 0 },
+      "join": { "day": 0, "hour": 9 }
+    },
+    {
+      "ref": "ben", "name": "Ben Okafor", "age": 33, "city": "sf", "homeArea": "Noe Valley",
+      "interests": ["hiking", "coffee", "board_games"], "desires": ["new_friends"],
+      "capacity": 0.95, "flakiness": 0, "responsiveness": { "latencyMedianMin": 10, "ignoreProb": 0 },
+      "join": { "day": 0, "hour": 10 }
+    }
+  ],
+  "actions": [
+    { "at": { "day": 1, "hour": 11 }, "do": "propose", "kind": "intro", "participants": ["ana", "ben"], "objective": "coffee and a hike", "city": "sf", "explanation": "you both hike" },
+    { "at": { "day": 3, "hour": 12 }, "do": "say", "persona": "ana", "text": "block Ben Okafor" }
+  ],
+  "expectations": [
+    { "check": "metric", "path": "meetings.scheduled", "op": "==", "value": 1, "note": "the meeting was booked before the block" },
+    { "check": "blocked_pair_kept_apart", "personas": ["ana", "ben"] },
+    { "check": "metric", "path": "meetings.held", "op": "==", "value": 0, "note": "the Network called it off" },
+    { "check": "metric", "path": "invariants.byRule.blocked_pair_meeting", "op": "==", "value": 0 }
+  ]
+}

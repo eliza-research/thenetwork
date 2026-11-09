@@ -29,11 +29,12 @@ import { randomBytes } from "node:crypto";
 import { parseArgs } from "node:util";
 import type { Server, ServerWebSocket } from "bun";
 import index from "../web/index.html";
-import { Lab, LAB_LIMITS, validateLab, type LabOptions } from "./lab.ts";
+import { Lab, LAB_LIMITS, LabQueueFull, validateLab, type LabOptions } from "./lab.ts";
 import { runDiff } from "./runDiff.ts";
 import { SQL } from "bun";
 import { APP_IDS, appUrlEnv, consoleApps, DEFAULT_APP, isAppId, slaHours, toNetworkReason, type AppId } from "./apps.ts";
 import { appProfile, memberFacets, photosAllowed } from "./appProfile.ts";
+import { deployVerdict } from "./console-gate.ts";
 import { countsMember, countsOpp, shapeDelta, shapeState, viewClass, type ViewClass } from "./shape.ts";
 import { appHealth } from "./health.ts";
 import { PeopleView, peopleUrl } from "./people.ts";
@@ -46,6 +47,7 @@ import {
 // deployed image (real mode only) does not contain.
 import type { GameOptions } from "./sources/game.ts";
 import { HIDDEN_MESSAGE, RealSource, type RealOptions } from "./sources/real.ts";
+import { serviceFromEnv } from "./sources/service.ts";
 import type { DataSource } from "./sources/source.ts";
 import type { AppHealth, AuditEntry, ControlCommand, EnvInfo, Mode, ObsDelta, ObsMember, RevealGrant, SafetyAction, StaffRole, StaffUser } from "./types.ts";
 
@@ -158,25 +160,27 @@ const remoteDb = (url: string) => { try { return !LOCAL_DB_HOSTS.has(new URL(url
 
 /**
  * The console's start guard (docs/deploy.md 2.6), fail closed. The console holds real data when it is
- * real-only (OBSERVATORY_REAL_ONLY=1) or when any database it may read is not on this machine (a game
- * server can switch to real mode). Then:
+ * real-only (OBSERVATORY_REAL_ONLY=1) or when any database it may read, or the Network service it acts
+ * through, is not on this machine (a game server can switch to real mode). Then:
  *  - PLATFORM_ENV must be set (dev, staging or production);
  *  - staging and production need Cloudflare Access (no tokens);
- *  - PLATFORM_ENV=dev may use tokens only with local databases; a remote one needs Cloudflare Access too.
+ *  - staging and production need the Postgres audit log (a redeploy loses the file);
+ *  - PLATFORM_ENV=dev may use tokens only with local databases and a local service; a remote one needs Cloudflare Access too.
  * Returns why the server must not start, or undefined.
  */
-export function deployGuard(o: { realOnly: boolean; trustCfAccess: boolean; platformEnv?: string; databaseUrls: (string | undefined)[] }): string | undefined {
-  const remote = o.databaseUrls.some(u => !!u && remoteDb(u));
-  if (!o.realOnly && !remote) return undefined;
-  const env = o.platformEnv?.trim();
-  const why = o.realOnly ? "OBSERVATORY_REAL_ONLY=1" : "a database that is not on this machine";
+export function deployGuard(o: { realOnly: boolean; trustCfAccess: boolean; platformEnv?: string; databaseUrls: (string | undefined)[]; serviceUrl?: string; audit: AuditSink["kind"] }): string | undefined {
+  const remote = o.databaseUrls.some(u => !!u && remoteDb(u)) || (!!o.serviceUrl && remoteDb(o.serviceUrl));
+  const env = o.platformEnv?.trim() ?? "";
+  const why = o.realOnly ? "OBSERVATORY_REAL_ONLY=1" : "a database or Network service that is not on this machine";
   const access = "needs Cloudflare Access: OBSERVATORY_TRUST_CF_ACCESS=1 with OBSERVATORY_CF_ACCESS_TEAM and OBSERVATORY_CF_ACCESS_AUD";
-  if (!env) return `real data (${why}) needs PLATFORM_ENV (dev, staging or production)`;
-  if (env !== "dev" && env !== "staging" && env !== "production") return `unknown PLATFORM_ENV "${env}" (dev, staging or production)`;
-  if (o.trustCfAccess) return undefined;
-  if (env !== "dev") return `a deployed console (${why}, PLATFORM_ENV ${env}) ${access}`;
-  if (remote) return `PLATFORM_ENV=dev with a database that is not on this machine ${access} (tokens are for local databases only)`;
-  return undefined;
+  switch (deployVerdict(o.realOnly, o.trustCfAccess, env, remote, o.audit === "postgres")) {
+    case "ok": return undefined;
+    case "no_env": return `real data (${why}) needs PLATFORM_ENV (dev, staging or production)`;
+    case "unknown_env": return `unknown PLATFORM_ENV "${env}" (dev, staging or production)`;
+    case "needs_access": return `a deployed console (${why}, PLATFORM_ENV ${env}) ${access}`;
+    case "needs_audit": return `a deployed console (${why}, PLATFORM_ENV ${env}) needs OBSERVATORY_AUDIT_DATABASE_URL (a redeploy loses the file audit log)`;
+    case "dev_remote": return `PLATFORM_ENV=dev with a database or Network service that is not on this machine ${access} (tokens are for local databases only)`;
+  }
 }
 
 /** Hostname of a Host header or an origin, lowercased, without the port ("[::1]" keeps its brackets). */
@@ -225,16 +229,21 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
     const k = key(m, app);
     const have = sources.get(k);
     if (have) return have;
-    if (!starting.has(k)) starting.set(k, (async () => {
-      const s: DataSource = m === "game"
-        ? new (await import("./sources/game.ts")).GameSource({ ...opts.game, app })
-        : new RealSource({ ...opts.real, app, ...(opts.real?.appUrls?.[app] ? { appUrl: opts.real.appUrls[app] } : {}) });
-      await s.init();
-      known.set(k, new Map(s.state().members.map(x => [x.id, x])));
-      sources.set(k, s);
-      unsub.set(k, s.subscribe(d => broadcast(m, app, d)));
-      return s;
-    })());
+    if (!starting.has(k)) {
+      const p = (async () => {
+        const s: DataSource = m === "game"
+          ? new (await import("./sources/game.ts")).GameSource({ ...opts.game, app })
+          : new RealSource({ ...opts.real, app, ...(opts.real?.appUrls?.[app] ? { appUrl: opts.real.appUrls[app] } : {}) });
+        await s.init();
+        known.set(k, new Map(s.state().members.map(x => [x.id, x])));
+        sources.set(k, s);
+        unsub.set(k, s.subscribe(d => broadcast(m, app, d)));
+        return s;
+      })();
+      // A start that failed is not kept: the next call tries again.
+      p.catch(() => { if (starting.get(k) === p) starting.delete(k); });
+      starting.set(k, p);
+    }
     return starting.get(k)!;
   }
 
@@ -242,9 +251,10 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
     if (m !== "game" && m !== "real") throw new Error(`unknown mode ${m}`);
     if (m === "game" && realOnly) throw new Error("game mode is off on this server (OBSERVATORY_REAL_ONLY=1)");
     if (mode === m && sources.has(key(m, DEFAULT_APP))) return;
+    // The new mode's source starts first: if it fails, the server stays in the mode it was in.
+    await source(m, DEFAULT_APP);
     if (m === "real") for (const app of APP_IDS) await sources.get(key("game", app))?.control({ type: "pause" });
     mode = m;
-    await source(m, DEFAULT_APP);
     // A socket opened in one mode is authorized again for the new one (an engineer has no role in real mode).
     for (const ws of sockets) recheck(ws);
     server?.publish(TOPIC, JSON.stringify({ type: "mode", mode: m }));
@@ -262,13 +272,16 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
   const hostname = opts.hostname ?? process.env.OBSERVATORY_HOST ?? "127.0.0.1";
   const tokens = parseTokenGrants(opts.tokens ?? process.env.OBSERVATORY_TOKENS, { explicitApp: process.env.NODE_ENV === "production" || process.env.PLATFORM_ENV === "production", minLength: opts.minTokenLength ?? 32 });
   const trustCfAccess = opts.trustCfAccess ?? process.env.OBSERVATORY_TRUST_CF_ACCESS === "1";
+  // The audit sink createAudit will make (it is made after the guard, which may refuse it).
+  const auditKind: AuditSink["kind"] = opts.audit && "write" in opts.audit ? opts.audit.kind : (opts.audit?.url ?? process.env.OBSERVATORY_AUDIT_DATABASE_URL) ? "postgres" : "file";
   // A deployed console signs staff in through Cloudflare Access only: without it the server would make an
   // admin token and print it into the host's logs (docs/deploy.md 2.6). Fail closed (deployGuard).
   const refusal = deployGuard({
-    realOnly, trustCfAccess, platformEnv: opts.platformEnv ?? process.env.PLATFORM_ENV,
+    realOnly, trustCfAccess, audit: auditKind, platformEnv: opts.platformEnv ?? process.env.PLATFORM_ENV,
     databaseUrls: [opts.real?.url ?? process.env.NETWORK_DATABASE_URL ?? process.env.DATABASE_URL,
       ...APP_IDS.map(a => opts.real?.appUrls?.[a] ?? process.env[appUrlEnv(a)]), process.env.OBSERVATORY_PLATFORM_DATABASE_URL,
       typeof opts.peopleUrl === "string" ? opts.peopleUrl : undefined, typeof opts.staffRolesUrl === "string" ? opts.staffRolesUrl : undefined],
+    serviceUrl: (opts.real?.service === false ? undefined : opts.real?.service ?? serviceFromEnv())?.url,
   });
   if (refusal) throw new Error(`refusing to start: ${refusal}`);
   if (trustCfAccess && (tokens.size || opts.token || process.env.OBSERVATORY_TOKEN)) console.warn("Observatory: single sign-on is on, so OBSERVATORY_TOKENS and OBSERVATORY_TOKEN are refused (each person signs in as themselves)");
@@ -353,22 +366,24 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
   }
   const forbidden = (text: string) => json({ error: `forbidden: ${text}`, code: "forbidden" }, 403);
   type Req = Request & { params: Record<string, string> };
-  type Handler = (req: Req, user: StaffUser, app: AppId) => Response | Promise<Response>;
+  type Handler = (req: Req, user: StaffUser, app: AppId, seen: Mode) => Response | Promise<Response>;
   /**
    * An app route: the caller needs a role for the request's app; with `need`, one of those roles
-   * for that app (admin for the app always passes).
+   * for that app (admin for the app always passes). `seen` is the mode of these checks: an action
+   * runs in it, also when the mode changes while the handler awaits.
    */
   const guard = (h: Handler, need?: readonly StaffRole[]) => async (req: Req) => {
     const u = await identify(req);
     if (u instanceof Response) return u;
     const app = appOf(req);
     if (app instanceof Response) return app;
+    const seen = mode;
     if (!rolesFor(u, app, mode).size) return forbidden(`no role for ${app}${mode === "real" && u.roles.includes("engineer") ? " (engineer: simulated worlds only)" : ""}`);
     if (need && !allowed(u, need, app, mode)) return forbidden(`needs ${["admin", ...need].join(" or ")} for ${app}`);
     // A change sent from a page that still shows the other mode would act on the wrong world (audit observatory-21).
     const said = req.headers.get(MODE_HEADER);
     if (req.method !== "GET" && said && said !== mode) return json({ ok: false, error: `the console switched to ${mode} mode: reload before you act`, code: "mode_changed" }, 409);
-    try { return await h(req, u, app); } catch (e) { return fail(e); }
+    try { return await h(req, u, app, seen); } catch (e) { return fail(e); }
   };
   /** A route that is not about one app: any staff member, or with `need`, the role for every app (role@*). */
   const global = (h: (req: Req, user: StaffUser) => Response | Promise<Response>, need?: readonly StaffRole[]) => async (req: Req) => {
@@ -387,12 +402,12 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
    * detail panels reload a member as it changes: repeated reads of one member by one staff member
    * within 60 s keep only the first row (a reveal starts a new one).
    */
-  async function record(u: StaffUser, app: AppId | undefined, e: Omit<AuditEntry, "at" | "actor" | "roles" | "mode" | "app">): Promise<Response | undefined> {
+  async function record(u: StaffUser, app: AppId | undefined, e: Omit<AuditEntry, "at" | "actor" | "roles" | "mode" | "app">, m: Mode = mode): Promise<Response | undefined> {
     const at = Date.now();
-    const k = DEDUPED_READS.has(e.action) && e.ok ? `${u.id}|${e.action}|${app}|${e.targetId}|${e.detail?.revealed ? 1 : 0}|${mode}` : undefined;
+    const k = DEDUPED_READS.has(e.action) && e.ok ? `${u.id}|${e.action}|${app}|${e.targetId}|${e.detail?.revealed ? 1 : 0}|${m}` : undefined;
     if (k && at - (lastRead.get(k) ?? -Infinity) < READ_AUDIT_DEDUPE_MS) return undefined;
     try {
-      await audit.write({ at, actor: u.id, roles: u.roles, mode, ...(app ? { app } : {}), ...e });
+      await audit.write({ at, actor: u.id, roles: u.roles, mode: m, ...(app ? { app } : {}), ...e });
       if (k) {
         lastRead.set(k, at);
         if (lastRead.size > 5000) for (const [x, t] of lastRead) if (at - t >= READ_AUDIT_DEDUPE_MS) lastRead.delete(x);
@@ -403,9 +418,10 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
       return json({ error: "audit log unavailable: request refused" }, 503);
     }
   }
+  /** A live reveal of this member, for staff who hold safety (or admin) for the app now: a role taken away ends it (admin-console 4.4). */
   const revealFor = (u: StaffUser, app: AppId, memberId: string): RevealGrant | undefined => {
     const k = revealKey(u, app, memberId), g = reveals.get(k);
-    if (g && g.until <= Date.now()) { reveals.delete(k); return undefined; }
+    if (g && (g.until <= Date.now() || !allowed(u, ["safety"], app, mode))) { reveals.delete(k); return undefined; }
     return g;
   };
   /**
@@ -545,7 +561,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         const d = await (await source(mode, app)).opportunity(id, { truth: truthFor(u, app) });
         if (!d) return json({ error: "not found" }, 404);
         // An analyst sees the opportunity's shape, never the people in it or the texts written to them.
-        if (viewClass(rolesFor(u, app, mode)) === "counts") return json({ ...d, opportunity: countsOpp(d.opportunity), members: d.members.map(countsMember), messages: [] });
+        if (viewClass(rolesFor(u, app, mode)) === "counts") return json({ ...d, opportunity: countsOpp(d.opportunity), members: d.members.map(countsMember), messages: [], events: d.events.map(e => ({ t: e.t, type: e.type, text: e.type })) });
         // What a member wrote only for staff who may open that member (4.1); others get its length.
         const may = new Map<string, boolean>();
         for (const m of d.messages) {
@@ -587,7 +603,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         }, ["safety"]),
       },
       "/api/control": {
-        POST: guard(async (req, u, app) => {
+        POST: guard(async (req, u, app, seen) => {
           let cmd = await req.json().catch(() => null) as ControlCommand | null;
           if (!cmd || typeof cmd.type !== "string") return json({ ok: false, error: "bad command" }, 400);
           // Own keys only: "constructor" or "__proto__" is not a command (audit observatory-13).
@@ -595,8 +611,8 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           if (!need) return json({ ok: false, error: "unknown command" }, 400);
           const target = "oppId" in cmd ? { targetType: "opportunity" as const, targetId: cmd.oppId } : "memberId" in cmd ? { targetType: "member" as const, targetId: cmd.memberId } : cmd.type === "matching" || cmd.type === "review_mode" ? { targetType: "config" as const, targetId: cmd.type } : {};
           const detail = auditDetail(cmd);
-          if (!allowed(u, need, app, mode)) {
-            await record(u, app, { action: cmd.type, ...target, ok: false, detail: { ...detail, refused: "forbidden" } });
+          if (!allowed(u, need, app, seen)) {
+            await record(u, app, { action: cmd.type, ...target, ok: false, detail: { ...detail, refused: "forbidden" } }, seen);
             return forbidden(`${cmd.type} needs ${["admin", ...need].join(" or ")} for ${app}`);
           }
           if (realOnly && GAME_ONLY.has(cmd.type)) return json({ ok: false, error: `${cmd.type} is off on this server (OBSERVATORY_REAL_ONLY=1)`, code: "real_only" }, 403);
@@ -608,46 +624,49 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           }
           if (cmd.type === "review" && cmd.secondsSpent !== undefined) cmd = { ...cmd, secondsSpent: Math.min(REVIEW_SECONDS_MAX, Math.max(0, Number(cmd.secondsSpent) || 0)) };
           // Staff actions are audited before they run; the result follows in a second row.
-          if (!QUIET.has(cmd.type)) { const no = await record(u, app, { action: cmd.type, ...target, ok: true, detail: { ...detail, phase: "requested" } }); if (no) return no; }
-          const r = await (await source(mode, app)).control(cmd, u.id);
+          if (!QUIET.has(cmd.type)) { const no = await record(u, app, { action: cmd.type, ...target, ok: true, detail: { ...detail, phase: "requested" } }, seen); if (no) return no; }
+          const r = await (await source(seen, app)).control(cmd, u.id);
           if (r.ok && cmd.type === "lens") { if (cmd.on) lensOn.add(`${u.id}|${app}`); else lensOn.delete(`${u.id}|${app}`); }
           if (r.ok && cmd.type === "reset") for (const k of [...lensOn]) if (k.endsWith(`|${app}`)) lensOn.delete(k);
           if (r.ok && (cmd.type === "lens" || cmd.type === "reset")) for (const ws of sockets) if (ws.data.app === app) ws.data.truth = truthFor(ws.data.user, app);
           // The result row is best effort: the action already ran, and its "requested" row is written.
-          if (!QUIET.has(cmd.type)) await record(u, app, { action: cmd.type, ...target, ok: r.ok, detail: { ...detail, phase: "result", ...(r.code ? { code: r.code } : {}) } });
+          if (!QUIET.has(cmd.type)) await record(u, app, { action: cmd.type, ...target, ok: r.ok, detail: { ...detail, phase: "result", ...(r.code ? { code: r.code } : {}) } }, seen);
           return json(r, r.ok ? 200 : 409);
         }),
       },
       "/api/safety": {
         GET: guard(async (_r, _u, app) => json(await (await source(mode, app)).safety()), ["safety"]),
-        POST: guard(async (req, u, app) => {
+        POST: guard(async (req, u, app, seen) => {
           const a = await req.json().catch(() => null) as SafetyAction | null;
           const v = checkSafety(a);
           if (typeof v === "string") return json({ ok: false, error: v, code: "bad_action" }, 400);
           const target = v.action === "close" ? { targetType: "case" as const, targetId: v.caseId } : v.action === "dismiss" ? { targetType: "report" as const, targetId: v.reportId } : { targetType: "member" as const, targetId: v.memberId };
           const extra = v.action === "ban" ? { by: v.by } : {};
           const report = "reportId" in v && v.reportId ? { reportId: v.reportId } : {};
-          const no = await record(u, app, { action: `safety_${v.action}`, ...target, ok: true, ...(v.note ? { reason: v.note } : {}), detail: { phase: "requested", ...extra, ...report } });
+          const no = await record(u, app, { action: `safety_${v.action}`, ...target, ok: true, ...(v.note ? { reason: v.note } : {}), detail: { phase: "requested", ...extra, ...report } }, seen);
           if (no) return no;
-          const r = await (await source(mode, app)).safetyAction(v, u.id);
-          await record(u, app, { action: `safety_${v.action}`, ...target, ok: r.ok, detail: { phase: "result", ...extra, ...report, ...(r.code ? { code: r.code } : {}) } });
+          const r = await (await source(seen, app)).safetyAction(v, u.id);
+          await record(u, app, { action: `safety_${v.action}`, ...target, ok: r.ok, detail: { phase: "result", ...extra, ...report, ...(r.code ? { code: r.code } : {}) } }, seen);
           return json(r, r.ok ? 200 : 409);
         }, ["safety"]),
       },
       // Held texts: the leak guard's parked texts and held relay items (real mode, from the Network service).
       // Safety or admin; each read and each decision is audited; a decision needs a reason of 5+ characters.
       "/api/held/:id/photo": {GET:guard(async(req,u,app)=>{
-        const id=decodeURIComponent(req.params.id!),reason=req.headers.get("x-network-reason")?.trim()??"";
+        // The console sends the reason percent-encoded (UTF-8): a header value is a byte string.
+        let reason="";try{reason=decodeURIComponent(req.headers.get("x-network-reason")??"").trim();}catch{return json({error:"A selected item and review reason are required."},400);}
+        const id=decodeURIComponent(req.params.id!);
         if(!/^pri_[a-f0-9]{32}$/.test(id)||reason.length<PERSON_REASON_MIN||reason.length>500)return json({error:"A selected item and review reason are required."},400);
         const src=await source(mode,app);if(!src.heldPhoto)return json({error:"Selected photo review is unavailable."},404);
         const no=await record(u,app,{action:"read_relay_photo",targetType:"case",targetId:id,reason,ok:true});if(no)return no;
         const key=revealKey(u,app,`relay-photo:${id}`);photoPreviews.delete(key);
         const response=await src.heldPhoto(id,u.id,reason),token=response.headers.get("x-network-photo-review-token"),until=Number(token?.split(".")[0]);
         if(!response.ok)return response;
-        if(!token||!Number.isSafeInteger(until)||until<=Date.now()||until>Date.now()+5*60_000){await response.body?.cancel();return json({error:"This photo preview expired. Load it again."},409);}
+        if(!token||!Number.isSafeInteger(until)||until<=Date.now()){await response.body?.cancel();return json({error:"This photo preview expired. Load it again."},409);}
         for(const [k,v]of photoPreviews)if(v.until<=Date.now())photoPreviews.delete(k);
         if(photoPreviews.size>=1000){await response.body?.cancel();return json({error:"Too many active previews. Retry shortly."},429);}
-        photoPreviews.set(key,{token,until});
+        // The service sets until on its own clock: the console keeps the preview at most 5 minutes on its clock.
+        photoPreviews.set(key,{token,until:Math.min(until,Date.now()+5*60_000)});
         const headers=new Headers(response.headers);headers.delete("x-network-photo-review-token");
         headers.set("cache-control","no-store");headers.set("referrer-policy","no-referrer");
         return new Response(response.body,{status:200,headers});
@@ -663,24 +682,24 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           const r = await src.held(queue, u.id);
           return json(r, r.ok ? 200 : r.code === "not_available" ? 404 : 502);
         }, ["safety"]),
-        POST: guard(async (req, u, app) => {
+        POST: guard(async (req, u, app, seen) => {
           const b = await req.json().catch(() => null) as { queue?: unknown; id?: unknown; decision?: unknown; reason?: unknown; photoReviewed?:unknown } | null;
           const reason = typeof b?.reason === "string" ? b.reason.trim().slice(0, 500) : "";
           if (!b || (b.queue !== "leak" && b.queue !== "relay") || typeof b.id !== "string" || !b.id || b.id.length > 300 || (b.decision !== "release" && b.decision !== "reject")) {
             return json({ ok: false, error: "queue (leak or relay), id and decision (release or reject) are required", code: "bad_action" }, 400);
           }
           if (reason.length < PERSON_REASON_MIN) return json({ ok: false, error: `a reason (at least ${PERSON_REASON_MIN} characters) is required`, code: "reason_required" }, 400);
-          const src = await source(mode, app);
+          const src = await source(seen, app);
           if (!src.heldDecision) return json({ ok: false, error: "held texts exist on real data only", code: "real_only" }, 404);
           const photo=b.queue==="relay"&&b.id.startsWith("pri_");
           const preview=photo?photoPreviews.get(revealKey(u,app,`relay-photo:${b.id}`)):undefined;
           if(photo&&b.decision==="release"&&(b.photoReviewed!==true||!preview||preview.until<=Date.now()))return json({ok:false,error:"Load and review this selected photo before releasing it.",code:"photo_preview_required"},409);
           const target = { targetType: "case" as const, targetId: `${b.queue}:${b.id}` };
-          const no = await record(u, app, { action: `held_${b.decision}`, ...target, ok: true, reason, detail: { phase: "requested", queue: b.queue } });
+          const no = await record(u, app, { action: `held_${b.decision}`, ...target, ok: true, reason, detail: { phase: "requested", queue: b.queue } }, seen);
           if (no) return no;
           const r = await src.heldDecision(b.queue, b.id, b.decision, reason, u.id, photo&&b.decision==="release"?preview!.token:undefined);
           if(photo&&r.ok)photoPreviews.delete(revealKey(u,app,`relay-photo:${b.id}`));
-          await record(u, app, { action: `held_${b.decision}`, ...target, ok: r.ok, detail: { phase: "result", queue: b.queue, ...(r.code ? { code: r.code } : {}) } });
+          await record(u, app, { action: `held_${b.decision}`, ...target, ok: r.ok, detail: { phase: "result", queue: b.queue, ...(r.code ? { code: r.code } : {}) } }, seen);
           return json(r, r.ok ? 200 : r.code === "service_missing" ? 404 : 409);
         }, ["safety"]),
       },
@@ -733,11 +752,18 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           if (body?.app !== undefined && body.app !== app) return json({ ok: false, error: `the run's app (${body.app}) is not the request's app (${app})`, code: "app_mismatch" }, 400);
           const v = validateLab({ ...body, app });
           if (typeof v === "string") return json({ ok: false, error: v }, 400);
-          if (lab.queued + v.seeds.length > LAB_LIMITS.maxQueued) return json({ ok: false, error: `the lab queue is full (${LAB_LIMITS.maxQueued} seeds wait at most): try again when runs finish`, code: "queue_full" }, 429);
-          const no = await record(u, app, { action: "lab_run", targetType: "run", ok: true, detail: { arms: v.arms, seeds: v.seeds, days: v.days, app: v.app } });
+          const full = () => json({ ok: false, error: `the lab queue is full (${LAB_LIMITS.maxQueued} seeds wait at most): try again when runs finish`, code: "queue_full" }, 429);
+          if (lab.queued + v.seeds.length > LAB_LIMITS.maxQueued) return full();
+          const detail = { arms: v.arms, seeds: v.seeds, days: v.days, app: v.app };
+          const no = await record(u, app, { action: "lab_run", targetType: "run", ok: true, detail });
           if (no) return no;
-          const run = await lab.start(v, u.id);
-          return json({ ok: true, run });
+          // Another request can take the last places while the audit row is written.
+          const run = await lab.start(v, u.id).catch(async (e: unknown) => {
+            if (!(e instanceof LabQueueFull)) throw e;
+            await record(u, app, { action: "lab_run", targetType: "run", ok: false, detail: { ...detail, refused: "queue_full" } });
+            return undefined;
+          });
+          return run ? json({ ok: true, run }) : full();
         }, LAB_ROLES),
       },
       // ------------------------------------------------------------ cross-app person view (plan 5, 2.4)

@@ -156,3 +156,16 @@ test("service cleanup route defaults closed without revoked-owner callback and r
   try { f.clock.advance(120_000); expect((await f.post()).status).toBe(503); expect(f.calls).toBe(0); }
   finally { await f.close(); }
 });
+
+test("a signed cleanup request with an array where a string is expected is refused before any Cloud call", async () => {
+  await seed(false, true); const f = await fixture();
+  try {
+    // String(["friends"]) is "friends": the parser must test the type, not the text form.
+    for (const patch of [{ app: [owner.app] }, { operation: ["readback"] }]) {
+      const result = await f.post({ ...f.request(), ...patch } as unknown as ProfileReviewDisconnectRequest);
+      expect(result.status).toBe(400);
+    }
+    expect(f.calls).toBe(0);
+    expect(await sql`select request_nonce from platform.profile_suggestion_connection_receipts`).toHaveLength(0);
+  } finally { await f.close(); }
+});

@@ -31,25 +31,35 @@
 //   audit     regression gates for the 2026-10-08 audit's P0/P1 fixes that lost their tests in the cleanup
 //             (docs/audit/2026-10-09-platform-status.md): NYC world (seed 3, 9 days), trust, plans, the four
 //             site builds, the sites' API client and the Cloudflare deploy guard (refused commands only)
+//   judge     the simulator's judge on small hand-written run logs: each log holds one wrong act it must see
+//   persona   the simulated member's opt-out state on short scripted worlds with a silent Network: keywords after STOP, START
+//   stub      the push baseline (StubNetwork) on short scripted worlds: no invite or reminder after STOP
+//   worlds    the per-app worlds' own flow rules on one small pinned world each: no slop probe to a held member, no peon step for a candidate who left
 //   onboard   slop.date onboarding: evals/slop-onboarding corpus gates (rules only) and the persona onboarding sim (seeds 13-14)
 //   clef      P2 Clef weight fitting: synthetic labels from the slop world's hidden appearance (seed 1, 2,000 labels
 //             per dimension); ranking recovery, weights file round trip, extraction, bias audit, labelling page
+//   formal    LemmaScript proofs: lsc check on every entry of LemmaScript-files.txt (needs Dafny; tracked as skipped without it, REQUIRE_DAFNY=1 fails)
 //   capital   network capital: 32 paired seeds, 90 days (--with-capital or --only capital)
 import { auditBlock } from "./sim/audit.ts";
 import { capitalBlock } from "./sim/capital.ts";
 import { clefBlock } from "./sim/clef.ts";
 import { evalsBlock } from "./sim/evals.ts";
 import { friendsBlock } from "./sim/friends.ts";
+import { formalBlock } from "./sim/formal.ts";
+import { judgeBlock } from "./sim/judge.ts";
 import { Block, type Gate } from "./sim/gate.ts";
 import { onboardBlock } from "./sim/onboard.ts";
 import { networkBlock } from "./sim/network.ts";
 import { opsBlock } from "./sim/ops.ts";
 import { peonBlock } from "./sim/peon.ts";
 import { peonSeatsBlock } from "./sim/peon-seats.ts";
+import { personaBlock } from "./sim/persona.ts";
 import { pipelineBlock } from "./sim/pipeline.ts";
 import { safetyBlock } from "./sim/safety.ts";
 import { relayBlock } from "./sim/relay.ts";
 import { slopBlock } from "./sim/slop.ts";
+import { stubBlock } from "./sim/stub.ts";
+import { worldsBlock } from "./sim/worlds.ts";
 
 type Opts = { quick: boolean; llm: boolean };
 const BLOCKS: Record<string, (b: Block, o: Opts) => Promise<void>> = {
@@ -65,10 +75,15 @@ const BLOCKS: Record<string, (b: Block, o: Opts) => Promise<void>> = {
   safety: b => safetyBlock(b),
   ops: b => opsBlock(b),
   audit: b => auditBlock(b),
+  judge: b => judgeBlock(b),
+  persona: b => personaBlock(b),
+  stub: b => stubBlock(b),
+  worlds: b => worldsBlock(b),
   clef: b => clefBlock(b),
   capital: capitalBlock,
+  formal: b => formalBlock(b),
 };
-const DEFAULT = ["evals", "onboard", "network", "slop", "relay", "peon", "peon-seats", "friends", "clef", "safety", "ops", "pipeline", "audit"];
+const DEFAULT = ["formal", "evals", "onboard", "network", "slop", "relay", "peon", "peon-seats", "friends", "clef", "safety", "ops", "pipeline", "audit", "judge", "persona", "stub", "worlds"];
 
 const argv = process.argv.slice(2);
 const values = (k: string) => argv.flatMap((x, i) => (x === `--${k}` ? (argv[i + 1] ?? "").split(",") : x.startsWith(`--${k}=`) ? x.slice(k.length + 3).split(",") : [])).filter(Boolean);

@@ -17,14 +17,14 @@
 //    network-service-2).
 //  - Nothing here reads another app's rows; the person cap across apps (service.ts) goes through a
 //    SECURITY DEFINER function that returns ids only.
-import { DAY } from "@thenetwork/core";
+import { DAY, LeakGuard } from "@thenetwork/core";
 import { randomUUID } from "node:crypto";
 import type { SQL } from "bun";
 import type { City, Clock, MemberId, WorldSnapshot } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import type { NetworkContext, SimMessage } from "@thenetwork/core";
 import { ConsentNetwork, presentInNyc, relayDispatchCheck, type NetworkOptions, type NetworkState } from "../src/network.ts";
-import type { RelayCanonical } from "../src/relay.ts";
+import { RELAY_SWAP_TTL_MS, SWAP_WITHDRAWN, type RelayCanonical } from "../src/relay.ts";
 import { loadRelayRows, PgStore, runStored, runTick, type NetworkStore } from "../src/store.ts";
 import { capitalWiring, type CapitalEvent } from "../src/capital.ts";
 import type { AppInfo } from "../../platform/src/apps.ts";
@@ -34,7 +34,7 @@ import { BlooioAdapter, DryRunAdapter, WAITING_STATUSES, type ChannelAdapter, ty
 import { normalizeAddress } from "../../blooio/src/phone.ts";
 import type { InboundTurn, CollectedReply } from "./inbox.ts";
 import { parseApprovedRelayPhotos, type TurnContext } from "../../core/src/svc/contract.ts";
-import { canBeMatched } from "../../core/src/policy.ts";
+import { canBeMatched, isMinor } from "../../core/src/policy.ts";
 import type { PhotoRelayService } from "../../platform/src/photo-relay.ts";
 import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import { isDeepStrictEqual } from "node:util";
@@ -43,10 +43,11 @@ import { outputLeaks } from "../../mcp/src/leaks.ts";
 // The Observatory's event shape and run summaries, so the console reads what this writes.
 import { eventOf, membersOf, type EventRow } from "../../observatory/src/events.ts";
 
-import { NOT_SENT, type RecipientCheck } from "../../blooio/src/outbound-queue.ts";
+import { isNotSent, type OutboundStatus, type RecipientCheck } from "../../blooio/src/outbound-queue.ts";
 import { summarizeRun } from "../../observatory/src/engineCapture.ts";
 import type { JobPosting } from "../src/jobs.ts";
 import { savePosting } from "./postings.ts";
+import { collectGate, outboundKind, pairReason, relayCanonical, type ConsentState } from "./decisions.ts";
 
 type Row = Record<string, unknown>;
 
@@ -65,8 +66,13 @@ export interface Unit {
   completeAction?: (tx: SQL) => Promise<void>;
   /** peon job postings saved in this unit (a manager's confirmed text, or staff): their rows go in the save transaction. */
   postings: JobPosting[];
+  /** Replies of a signed turn that collectGate refused: stored as refused, never collected and never queued. */
+  refused: Set<string>;
+  /** Ages members stated in this unit (onAgeStated): the person and the phone's age floor keep the lowest in the save transaction. */
+  ages: StatedAge[];
 }
-const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), collected: new Set(), postings: [] });
+type StatedAge = { memberId: MemberId; age: number; explicit: boolean; declined: boolean };
+const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), collected: new Set(), postings: [], refused: new Set(), ages: [] });
 
 /** What the service gives each runtime: the shared connection and clock, and the checks that span apps. */
 export interface RuntimeHost {
@@ -80,6 +86,8 @@ export interface RuntimeHost {
   /** Canonical read checks inside an existing admission transaction, without another pool lease. */
   accountsFor?(tx: SQL): Pick<Accounts, "activeMembership" | "lowestAge" | "phoneHash">;
   inboundTurn?(): InboundTurn | undefined;
+  /** Suppression, bans, the hold and the consent ledger of one number for one app, read inside `tx`. */
+  numberFacts(e164: string, app: AppInfo["id"], tx: SQL): Promise<{ suppressed: boolean; banned: boolean; held: boolean; consent: ConsentState | undefined }>;
   collectReplies?(tx: SQL, replies: CollectedReply[]): Promise<void>;
   /** Proactive sends of this batch the person-level daily cap refuses (ids). Called before delivery. */
   capRefused(rt: NetworkRuntime, batch: Outbound[]): Promise<Set<string>>;
@@ -128,7 +136,7 @@ export class NetworkRuntime {
   /** Sends committed with their state, waiting to be delivered (in commit order). */
   private committed: Outbound[] = [];
   /** Ages members stated in the units since the service last took them (takeAges). */
-  private statedAges: { memberId: MemberId; age: number; explicit: boolean; declined: boolean }[] = [];
+  private statedAges: StatedAge[] = [];
   /** The ages this member stated (and whether the Network declined them), taken once. */
   takeAges(memberId: MemberId) {
     const mine = this.statedAges.filter(a => a.memberId === memberId);
@@ -154,18 +162,21 @@ export class NetworkRuntime {
       ...(w.pack ? { pack: w.pack } : {}), ...(w.hooks ? { hooks: w.hooks } : {}), ...(w.plansConfig ? { plansConfig: w.plansConfig } : {}), ...(w.plans !== undefined ? { plans: w.plans } : {}),
       ...o.network,
       ...(w.engine || o.network?.engine ? { engine: { ...w.engine, ...o.network?.engine } } : {}),
-      app: o.app, review: "human", store: this.store,
+      app: o.app, city: o.city, review: "human", store: this.store,
       onEngineRun: (log, proposals, at) => {
         const s = summarizeRun(log, proposals, { at, city: this.city as City, wallMs: Math.round(log.timingsMs.total ?? 0) });
         this.unit.runs.push({ id: this.app.id === "ntwrk" ? s.id : `${this.app.id}.${s.id}`, app_id: this.app.id, at: new Date(at), city: this.city, engine_version: s.engineVersion, proposals: s.proposals, wall_ms: s.wallMs, summary: s });
       },
-      onLedger: e => { this.capital.onLedger(e); this.unit.capital.push(e); },
+      // Only an event the live ledger accepted is stored: a replay must give the live ledger (SD-156).
+      onLedger: e => { if (this.capital.onLedger(e)) this.unit.capital.push(e); },
       // An age a member stated (network-consent-12): the service writes it to the person after the unit.
-      onAgeStated: (memberId, age, o) => { this.statedAges.push({ memberId, age, ...o }); },
+      onAgeStated: (memberId, age, o) => { this.statedAges.push({ memberId, age, ...o }); this.unit.ages.push({ memberId, age, ...o }); },
       // peon (#9): a posting the manager confirmed (or staff saved) is written with the unit (writeUnit).
       onPosting: p => { this.unit.postings.push(p); },
     });
     this.net.init(this.context());
+    // A number swap whose two shares waited keeps no number in the state: the tick reads it here.
+    this.net.contactOf = id => this.addressOf(id);
     this.adapter = typeof o.adapter === "function" ? o.adapter(this.net, this) : o.adapter ?? new DryRunAdapter(host.log);
     this.adapter.attach?.(this);
   }
@@ -220,9 +231,17 @@ export class NetworkRuntime {
         const binding = await accounts.activeMembership(this.app, { e164, personId: r.person_id as string });
         if (binding?.membership.memberId === id) { bound = true; adult = canBeMatched(await accounts.lowestAge(e164, binding.person)); }
       }
-      out.set(id, { adult, optedOut: !r || r.opted_out === true || !bound, held: !r || r.account_status !== "active" });
+      out.set(id, relayCanonical(!!r, r?.opted_out === true, r?.account_status === "active", bound, adult));
     }
     return out;
+  }
+
+  /** The relay items of this match that the desk passed and whose outbound row ended unsent (the proved isNotSent). */
+  async relayUnsent(matchId: string): Promise<Set<string>> {
+    const rows = await this.scoped(tx => tx`select r.item_id, o.status from network.relay_records r
+      join platform.outbound o on o.app_id = r.app_id and o.id = 'relay:' || r.item_id
+      where r.app_id = ${this.app.id} and r.opportunity_id = ${matchId} and r.decision = 'pass'`);
+    return new Set((rows as Row[]).filter(r => isNotSent(r.status as OutboundStatus)).map(r => r.item_id as string));
   }
 
   /**
@@ -248,9 +267,24 @@ export class NetworkRuntime {
       // The swap question names no item of its own: the match is the row's, the sender its other member.
       matchId = row.oppId;
       from = state.opps.find(o => o.id === matchId)?.participants.find(p => p !== to);
+      // The question asks for an answer "in the next 15 minutes": it goes only while its swap still waits.
+      const now = this.clock.now();
+      if (!state.relay?.swaps.some(x => x.itemId === id[1] && x.matchId === matchId && x.from === from && x.to === to && x.at <= now && now - x.at <= RELAY_SWAP_TTL_MS)) return no("relay:ask_expired");
     } else {
-      const [rec] = await tx`select opportunity_id,from_member,to_member,decision,review from network.relay_records where app_id=${app} and item_id=${id[1]!}`;
+      const [rec] = await tx`select opportunity_id,from_member,to_member,kind,at,decision,review,reasons from network.relay_records where app_id=${app} and item_id=${id[1]!}`;
       if (!rec || rec.to_member !== to || rec.decision !== "pass" || rec.review === "rejected") return no("relay:not_passed");
+      if ((rec.reasons as string[] | null)?.includes(SWAP_WITHDRAWN)) return no(SWAP_WITHDRAWN);
+      if (rec.kind === "contact_share") {
+        // A number swap goes both ways or not at all (relay.ts swapPlan): the other share of the same swap
+        // (same match and instant, the other direction) must still be passed, not withdrawn, not rejected,
+        // and its row must not have ended unsent.
+        const [other] = await tx`select r.decision,r.review,r.reasons,o.status from network.relay_records r
+          left join platform.outbound o on o.app_id = r.app_id and o.id = 'relay:' || r.item_id
+          where r.app_id=${app} and r.opportunity_id=${rec.opportunity_id} and r.kind='contact_share'
+            and r.from_member=${rec.to_member} and r.to_member=${rec.from_member} and r.at=${rec.at} limit 1`;
+        if (!other || other.decision !== "pass" || other.review === "rejected" || (other.reasons as string[] | null)?.includes(SWAP_WITHDRAWN)
+          || (other.status && isNotSent(other.status as OutboundStatus))) return no("relay:swap_partner");
+      }
       from = rec.from_member as MemberId; matchId = rec.opportunity_id as string;
       if (row.oppId && row.oppId !== matchId) return no("relay:pair");
     }
@@ -278,12 +312,8 @@ export class NetworkRuntime {
       union all select 1 from platform.person_blocks pb join network.members f on f.app_id=${app} and f.id=${from} join network.members t on t.app_id=${app} and t.id=${to}
       where (pb.from_person=f.person_id and pb.to_person=t.person_id) or (pb.from_person=t.person_id and pb.to_person=f.person_id) limit 1`;
     if (blocked) return no("party:blocked");
-    for (const [, c] of await this.relayParties([from, to], tx)) {
-      if (!c.adult) return no("party:age");
-      if (c.optedOut) return no("party:opted_out");
-      if (c.held) return no("party:held");
-    }
-    return { ok: true };
+    const reason = pairReason([...(await this.relayParties([from, to], tx)).values()]);
+    return reason === "ok" ? { ok: true } : no(reason);
   }
 
   /** Current canonical parties for a selected photo; no participant or phone is selected by the model. */
@@ -320,11 +350,16 @@ export class NetworkRuntime {
     }) as Promise<T>;
   }
 
-  /** The stored state of this network (inside an app-scoped transaction). */
-  private async loadState(): Promise<NetworkState | undefined> {
+  /**
+   * The stored state of this network (inside an app-scoped transaction). `fence`: the caller imports the state into
+   * `this.net`, so its row version becomes the one the queue fence compares (stateCurrent). A read that only looks at
+   * the stored state (health, the shared context) must not move the fence: this replica's memory stays old.
+   */
+  private async loadState(fence = false): Promise<NetworkState | undefined> {
     return this.scoped(async tx => {
-      const [r] = await tx`select state from network.network_state where id = ${this.pg.id}`;
+      const [r] = await tx`select state, xmin::text as v from network.network_state where id = ${this.pg.id}`;
       const s = r?.state;
+      if (fence) this.pg.seen = r?.v;
       // A state without its relay log gets it back from network.relay_records (store.ts).
       return loadRelayRows(tx, s === undefined ? undefined : ((typeof s === "string" ? JSON.parse(s) : s) as NetworkState), this.app.id, this.pg.id);
     });
@@ -338,8 +373,8 @@ export class NetworkRuntime {
    * about an opportunity that closed.
    */
   async start() {
-    // The ledger starts from what is stored (events this process did not emit), oldest first.
-    for (const r of await this.scoped(tx => tx`select event from network.capital_events where app_id = ${this.app.id} order by t, id`) as any[]) {
+    // The ledger starts from what is stored (events this process did not emit), in the order it accepted them (seq).
+    for (const r of await this.scoped(tx => tx`select event from network.capital_events where app_id = ${this.app.id} order by seq`) as any[]) {
       try { this.capital.ledger.record(typeof r.event === "string" ? JSON.parse(r.event) : r.event); } catch { /* out of order: counted by the wiring only for new events */ }
     }
     if (!this.adapter.enqueue) {await this.projectNotifications();return;}
@@ -356,7 +391,7 @@ export class NetworkRuntime {
       load: async () => {
         this.unit = newUnit();
         await this.refresh();
-        const state = await this.loadState();
+        const state = await this.loadState(true);
         // The registry's switch wins: a network whose matching is not allowed never matches, whatever was stored.
         if (state && !this.matchingAllowed) state.matchingEnabled = false;
         return state;
@@ -365,7 +400,7 @@ export class NetworkRuntime {
         const u = this.unit;
         // PgStore.save sets app.app_id for its own transaction; the unit's rows go in the same one.
         await this.pg.save(state, tx => this.writeUnit(tx, u));
-        this.committed.push(...u.sends.filter(s => !u.collected.has(s.id)));
+        this.committed.push(...u.sends.filter(s => !u.collected.has(s.id) && !u.refused.has(s.id)));
         this.unit = newUnit();
       },
       withTickLock: fn => this.pg.withTickLock(fn),
@@ -382,14 +417,15 @@ export class NetworkRuntime {
   /**
    * This app's joined members' addresses. An invited person (the invite gate has not let them in) or a
    * removed one is not a member here. A member the platform knows (members.person_id) gets the person's
-   * verified phone (platform.phone_identities, the one place a phone lives). Members from before the
-   * platform keep their channel_identities rows (one per app and address).
+   * verified phone (platform.phone_identities, the one place a phone lives: a legacy phone row of theirs
+   * is not read). Members from before the platform keep their channel_identities rows (one per app and address).
    */
   async identities() {
     const [legacy, platform] = await this.scoped(async tx => [
       await tx`select ci.member_id, ci.address, m.home_city from network.channel_identities ci
         join network.members m on m.app_id = ci.app_id and m.id = ci.member_id
-        where ci.app_id = ${this.app.id} and ci.channel in ('imessage', 'sms') and m.account_status not in ('invited', 'removed') order by ci.is_primary desc, ci.member_id`,
+        where ci.app_id = ${this.app.id} and ci.channel in ('imessage', 'sms') and m.account_status not in ('invited', 'removed')
+          and (m.person_id is null or left(ci.address, 1) <> '+') order by ci.is_primary desc, ci.member_id`,
       // A number on hold (it may have a new owner) is nobody's address until staff decide.
       await tx`select m.id as member_id, ph.e164 as address, m.home_city from network.members m join platform.phone_identities ph on ph.person_id = m.person_id
         where m.app_id = ${this.app.id} and m.account_status not in ('invited', 'removed') and ph.hold is null order by m.id`,
@@ -426,7 +462,8 @@ export class NetworkRuntime {
           id, memberId, to: this.memberToAddr.get(memberId), body,
           // "reply" only when the Network says so (send(): never a proactive send, a growth ask, a
           // re-engagement or a check-in), so the queue's quiet hours and caps still apply to those.
-          kind: o?.reply && (causal || this.replyingTo === memberId) ? "reply" : meta.proactive ? "proactive" : "transactional",
+          // A safety notice (the hold notice, meta.safety) goes at once, also to a held member.
+          kind: outboundKind(!!o?.reply, !!causal, this.replyingTo === memberId, !!meta.safety, !!meta.proactive),
           // A probe names its opportunity only in meta.probe (anonymous to the member); the row links it either way.
           ...(approvedPhotos ? { approvedPhotos } : {}),
           type: meta.type, oppId: meta.proposalId ?? meta.probe?.key, proactive: !!meta.proactive, system: false, ts: t,
@@ -460,20 +497,50 @@ export class NetworkRuntime {
         order by person.id for update of person`;
       for (const row of rows as Row[]) personIds.set(row.member_id as string, row.id as string);
     }
+    // A stated age is a person-level safety fact: it commits with the unit that read it, so a failure or a
+    // crash before the service's statedAge step cannot lose it. Matching reads the lowest of these
+    // (platform.matching_ages). The service then records it again (Accounts.recordAge), which lowers
+    // every app's member and runs the age cleanups. The same filter and the same recorded age as statedAge.
+    for (const a of u.ages) {
+      if (!a.explicit && !a.declined && !isMinor(a.age)) continue;
+      const e164 = this.addressOf(a.memberId), accounts = this.host.accounts;
+      if (!e164 || !accounts) continue;
+      const age = a.declined ? a.age : Math.max(a.age, this.app.minJoinAge);
+      await tx`insert into platform.age_floor (phone_hash, lowest_age, at) values (${accounts.phoneHash(e164)}, ${age}, ${new Date(this.clock.now())})
+        on conflict (phone_hash) do update set lowest_age = least(platform.age_floor.lowest_age, excluded.lowest_age),
+          at = case when excluded.lowest_age < platform.age_floor.lowest_age then excluded.at else platform.age_floor.at end`;
+      await tx`update platform.people p set lowest_age = least(p.lowest_age, ${age}) from platform.phone_identities ph
+        where ph.e164 = ${e164} and ph.hold is null and p.id = ph.person_id and p.deleted_at is null`;
+    }
     const named = new Set<string>([...u.sends.map(s => s.memberId), ...(u.inbound ? [u.inbound.member_id as string] : []), ...u.blocks.flat(), ...u.optOut.keys(), ...u.postings.map(p => p.managerId)]);
     const known = new Set<string>();
-    if (named.size) for (const r of await tx`select id from network.members where app_id = ${app} and id in ${tx([...named])}`) known.add(r.id);
+    const memberOut = new Set<string>();
+    if (named.size) for (const r of await tx`select id, opted_out from network.members where app_id = ${app} and id in ${tx([...named])}`) { known.add(r.id); if (r.opted_out) memberOut.add(r.id); }
     const ok = (id: string) => known.has(id) && !u.forget.has(id);
     if (u.inbound && ok(u.inbound.member_id as string)) await tx`insert into network.messages ${tx({ ...u.inbound, app_id: app })} on conflict (id) do nothing`;
     const turn = this.host.inboundTurn?.();
     const queue = this.adapter instanceof BlooioAdapter ? this.adapter.queue : undefined;
-    // Collected replies (Cloud sends them) get the queue's own leak guard first: canary shapes, contacts,
-    // the recipient's leak sources and the thread check. One that fails is not collected; it goes into
-    // the queue like any other send, where the same guard parks it for staff (parked_leak_review).
-    if (queue) for (const s of u.sends) {
-      if (!u.collected.has(s.id) || !s.to) continue;
-      const reasons = await queue.collectedLeaks(tx, { id: s.id, ...(u.forget.has(s.memberId) ? {} : { memberId: s.memberId }), to: s.to, kind: s.kind, text: s.body });
-      if (reasons.length) { u.collected.delete(s.id); this.host.log(`[alert] a collected reply failed the leak guard and goes to the queue for review (${this.id}, ${s.id})`); }
+    // A collected reply never reaches the queue's send-time checks, so collectGate reads the same answers here.
+    // A non-compliance reply to a banned, suppressed, opted-out or held number is refused: it stays in the
+    // member's history as refused and goes nowhere. The text gets the queue's own leak guard (canary shapes,
+    // contacts, the recipient's leak sources and the thread check), or the plain guard with a dry-run adapter:
+    // one that fails is not collected; it goes into the queue like any other send, where the same guard parks
+    // it for staff (parked_leak_review) at once: a send-time gate (a reply whose inbound is old because engaged
+    // runs after the turn's unit) must not end it before staff see it. A fixed compliance text (a STOP confirmation) always goes.
+    for (const s of u.sends) {
+      if (!u.collected.has(s.id)) continue;
+      const kind = s.kind === "compliance" ? "compliance" : "reply", fixedCopy = s.system && s.type !== "profile_read";
+      const always = kind === "compliance" && fixedCopy;
+      const n = always || !s.to ? undefined : await this.host.numberFacts(s.to, app, tx);
+      const reasons = always || !s.to ? [] : queue
+        ? await queue.collectedLeaks(tx, { id: s.id, ...(u.forget.has(s.memberId) ? {} : { memberId: s.memberId }), to: s.to, kind: s.kind, text: s.body })
+        : fixedCopy ? [] : new LeakGuard({ canaryShapes: true, contacts: kind !== "compliance" }).check(s.body, { exceptOwner: s.memberId });
+      const gate = collectGate({ kind, suppressed: n?.suppressed ?? false, banned: n?.banned ?? false, held: n?.held ?? false, optedOut: n?.consent === "opted_out",
+        memberOptedOut: u.optOut.get(s.memberId) ?? memberOut.has(s.memberId), leakChecked: !always && !!s.to && (!!queue || !fixedCopy), leakClean: reasons.length === 0, fixedCopy });
+      if (gate === "collect") continue;
+      u.collected.delete(s.id);
+      if (gate === "refuse") { u.refused.add(s.id); this.host.log(`[inbound] a collected reply refused: the number is not admitted (${this.id}, ${s.id})`); }
+      else { if (queue && reasons.length) s.leakReasons = reasons; this.host.log(`[alert] a collected reply failed the leak guard and goes to the queue for review (${this.id}, ${s.id})`); }
     }
     const captured = u.sends.filter(s => u.collected.has(s.id) && (ok(s.memberId) || u.forget.has(s.memberId)));
     if (captured.length) {
@@ -481,7 +548,7 @@ export class NetworkRuntime {
       await this.host.collectReplies(tx, captured.map(s => ({id:s.id, body:s.body, kind:s.kind === "compliance" ? "compliance" : "reply"})));
     }
     const out = u.sends.filter(s => ok(s.memberId)).map(s => ({
-      id: s.id, app_id: app, member_id: s.memberId, direction: "outbound", channel: "imessage", body: s.body, status: u.collected.has(s.id) ? "collected" : this.adapter.storedStatus,
+      id: s.id, app_id: app, member_id: s.memberId, direction: "outbound", channel: "imessage", body: s.body, status: u.refused.has(s.id) ? "refused_opted_out" : u.collected.has(s.id) ? "collected" : this.adapter.storedStatus,
       inbound_id: u.collected.has(s.id) ? turn!.id : null,
       type: s.type ?? null, opportunity_id: s.oppId ?? null, proactive: s.proactive, system: s.system, ts: new Date(s.ts),
     }));
@@ -535,7 +602,13 @@ export class NetworkRuntime {
         or coalesce(payload->'participants', '[]'::jsonb) @> to_jsonb(${id}::text) or coalesce(payload->'members', '[]'::jsonb) @> to_jsonb(${id}::text)
         or jsonb_exists(coalesce(payload->'attendance', '{}'::jsonb), ${id}))`;
       await tx`delete from network.capital_events where app_id = ${app} and (member_id = ${id} or position(${`"${id}"`} in event::text) > 0)`;
+      // The run summaries keep the top pairs with their members and scores (summarizeRun): the pairs that name them go.
+      await tx`update network.matching_runs set summary = jsonb_set(summary, '{top}', coalesce((select jsonb_agg(t order by n) from jsonb_array_elements(summary->'top') with ordinality as x(t, n)
+          where not coalesce(t->'participants', '[]'::jsonb) @> to_jsonb(${id}::text)), '[]'::jsonb))
+        where app_id = ${app} and jsonb_typeof(summary->'top') = 'array' and position(${`"${id}"`} in (summary->'top')::text) > 0`;
       await tx`delete from network.facets where app_id = ${app} and member_id = ${id}`;
+      // Profile suggestion batches go in this transaction too, not only when the membership row is removed later.
+      await tx`delete from platform.profile_suggestion_batches where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.intents where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.presence where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.edges where app_id = ${app} and (from_id = ${id} or to_id = ${id})`;
@@ -548,12 +621,21 @@ export class NetworkRuntime {
       await tx`update platform.outbound set body = null, to_address = null, ended_at = coalesce(ended_at, ${new Date(this.clock.now())}),
         status = case when status = any(${`{${WAITING_STATUSES.join(",")}}`}::text[]) then 'dropped_forgotten' else status end
         where app_id = ${app} and member_id = ${id}`;
+      // What the relay carried from them to their match (their words, their number, the swap question) is theirs too:
+      // the other member's rows keep the id only, and what still waits is never sent.
+      const relayed = (await tx`select item_id from network.relay_records where app_id = ${app} and from_member = ${id}`).flatMap((r: Row) => [`relay:${r.item_id}`, `relay:${r.item_id}:ask`]);
+      if (relayed.length) {
+        await tx`update network.messages set body = '' where app_id = ${app} and direction = 'outbound' and id in ${tx(relayed)}`;
+        await tx`update platform.outbound set body = null, ended_at = coalesce(ended_at, ${new Date(this.clock.now())}),
+          status = case when status = any(${`{${WAITING_STATUSES.join(",")}}`}::text[]) then 'dropped_forgotten' else status end
+          where app_id = ${app} and id in ${tx(relayed)}`;
+      }
     }
     // The persisted queue: the unit's sends in this same transaction (delivered after the commit). The one
     // decline to a member the unit forgets goes as a text to a non-member. Sends it does not queue (the live
     // flags are off, no address) get their status here.
     if (this.adapter.enqueue) {
-      const queued = u.sends.filter(s => !u.collected.has(s.id) && (ok(s.memberId) || u.forget.has(s.memberId)));
+      const queued = u.sends.filter(s => !u.collected.has(s.id) && !u.refused.has(s.id) && (ok(s.memberId) || u.forget.has(s.memberId)));
       const refused = await this.adapter.enqueue(tx, queued, u.forget);
       for (const [id, status] of refused) await tx`update network.messages set status = ${status} where app_id = ${app} and id = ${id} and direction = 'outbound'`;
     }
@@ -589,7 +671,7 @@ export class NetworkRuntime {
       const ds = await this.adapter.deliver(go);
       await this.storeStatuses(ds, new Set(go.map(b => b.id)));
       // A send the adapter refused did not go out: its person-cap slot goes back (dry-run counts as sent).
-      const notSent = ds.filter(d => NOT_SENT.test(d.status)).map(d => d.id);
+      const notSent = ds.filter(d => isNotSent(d.status as OutboundStatus)).map(d => d.id);
       if (notSent.length) await this.host.capRelease?.(notSent);
       if (this.host.delivered) {
         const accepted = new Set(ds.filter(d => /^(accepted|sent|delivered|read|dry_run)$/.test(d.status)).map(d => d.id));
@@ -610,11 +692,26 @@ export class NetworkRuntime {
    * out to the host (the inbox). An error leaves the rows in the queue for the next tick.
    */
   private async drainQueue() {
+    // Another replica saved the state since this one loaded it (a hold, a closed match, a new member): every
+    // send-time check here would read old state. The rows wait for a replica whose state is current.
+    if (!(await this.stateCurrent())) { this.host.log(`[deliver] the stored state is newer than this replica's: the queue waits (${this.id})`); return; }
     let ds: Delivery[];
     try { ds = await this.adapter.deliver([]); } catch (e) { this.host.log(`[deliver] the queue waits for the next tick (${this.id}): ${(e as Error).message}`); return; }
     const mine = ds.filter(d => d.memberId && (d.app ?? this.app.id) === this.app.id);
     await this.storeStatuses(mine);
+    // A drain that stopped after the queue commit (a crash, an error) lost its changes in memory: a message that
+    // still shows a waiting status takes the status of its queue row once that row left the waiting statuses.
+    await this.scoped(tx => tx`update network.messages m set status = o.status from platform.outbound o
+      where m.app_id = ${this.app.id} and m.direction = 'outbound' and m.status = any(${`{${WAITING_STATUSES.join(",")}}`}::text[])
+      and o.id = m.id and o.app_id = m.app_id and o.status <> all(${`{${WAITING_STATUSES.join(",")}}`}::text[])`);
     await this.projectNotifications();
+  }
+
+  /** True when the stored Network state is the one this replica last loaded or saved (or none is stored). `tx`: lock it for share until the caller commits. */
+  async stateCurrent(tx?: SQL): Promise<boolean> {
+    const read = (t: SQL) => tx ? t`select xmin::text as v from network.network_state where id = ${this.pg.id} for share` : t`select xmin::text as v from network.network_state where id = ${this.pg.id}`;
+    const [r] = tx ? await read(tx) : await this.scoped(read);
+    return !r || r.v === this.pg.seen;
   }
 
   /** Repair the existing Notify projection after acceptance, including a crash after its SQL commit. */
@@ -667,10 +764,14 @@ export class NetworkRuntime {
     return ran;
   }
 
-  /** A unit that waits for the lock (an inbound message or a staff action), then delivery. */
+  /**
+   * A unit that waits for the lock (an inbound message or a staff action), then delivery. The unit has
+   * committed before delivery starts: a delivery error is logged and never makes the committed unit look
+   * failed (the persisted queue keeps its rows for the next tick).
+   */
   async unitOfWork<T>(fn: (n: ConsentNetwork) => Promise<T> | T): Promise<T> {
     const out = await runStored(this.net, this.store, fn);
-    await this.deliver();
+    await this.deliver().catch(e => this.host.log(`[deliver] delivery after a committed unit failed (${this.id}): ${(e as Error).message}`));
     return out;
   }
 
@@ -713,23 +814,28 @@ export class NetworkRuntime {
         : participation.state === "quiet" ? "busy" : participation.state === "paused" ? "paused" : null;
       if (!state) return null;
       const firstName = member.name.trim().split(/\s+/)[0] ?? "";
-      const forbidden = [e164, binding.person.id, ...snapshot.facets.map(f => f.id), ...snapshot.members.flatMap(m => {
+      const ids = [e164, binding.person.id, ...snapshot.facets.map(f => f.id), ...snapshot.members.map(m => m.id)];
+      const forbidden = [...ids, ...snapshot.members.flatMap(m => {
         const first = m.name.trim().split(/\s+/)[0] ?? "";
         // A shared first name is also the caller's own public name. Keep other full names private.
         const otherName = m.name.trim().toLowerCase() !== firstName.toLowerCase() ? [m.name] : [];
-        return m.id === memberId ? [m.id] : [m.id, ...otherName, ...(first.toLowerCase() !== firstName.toLowerCase() ? [first] : [])];
+        return m.id === memberId ? [] : [...otherName, ...(first.toLowerCase() !== firstName.toLowerCase() ? [first] : [])];
       })];
       const facts = [...snapshot.facets.filter(f => f.scope === "agent_private").map(f => f.value),...(participation.window?.note?[participation.window.note]:[])];
       const safe = (text: string) => outputLeaks(text, {forbidden, facts, contacts: true}).length === 0;
-      if (!safe(firstName) || !safe(member.homeCity)) return null;
+      // The caller's own first name is public to their agent: another member's name inside it ("Ann" in "Ann-Marie",
+      // a member named "Nyc") is not a leak. The home city is the service's own code (nyc, sf) and needs no check.
+      if (outputLeaks(firstName, {forbidden: ids, facts, contacts: true}).length) return null;
       const facets = snapshot.facets.filter(f => f.memberId === memberId && f.scope === "shareable" && f.confirmedByMember === true
         && !f.sensitive && (f.validFrom === undefined || f.validFrom <= snapshot.now) && (f.validTo === undefined || f.validTo > snapshot.now)
         && safe(f.value)).map(f => f.value);
       // The deployed plugin contract rejects larger context. Withhold it whole; never truncate a fact.
       if (facets.length > 50 || facets.some(f => f.length > 300)) return null;
+      // The Network may hold a minor whose person-level age is adult (a school sign, a member report): single-player too.
+      const minor = (await this.loadState())?.members.find(m => m.id === memberId)?.minor === true;
       return {
         firstName, city: member.homeCity, state, stateFrom: participation.active?participation.window!.from:null, stateUntil: participation.active?participation.window!.until:null, facets,
-        activeItems: null, singlePlayer: !presentInNyc(snapshot, member.id, snapshot.now, snapshot.now + 6 * DAY) || !canBeMatched(await accounts.lowestAge(e164, binding.person)),
+        activeItems: null, singlePlayer: !presentInNyc(snapshot, member.id, snapshot.now, snapshot.now + 6 * DAY) || minor || !canBeMatched(await accounts.lowestAge(e164, binding.person)),
       };
     });
   }

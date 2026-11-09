@@ -21,6 +21,7 @@
 // market's anchor cell is used, the same as for a visitor). Production may swap in a full zip
 // table behind `zipCentroid`.
 import type { City } from "@thenetwork/core";
+import { distanceBandIndex } from "../decisions.ts";
 
 export interface ZipCentroid { zip: string; market: City; area: string; lat: number; lon: number }
 
@@ -450,6 +451,7 @@ export function cellMiles(a: Cell | undefined, b: Cell | undefined): number {
 
 /** The only distance a member is ever shown: a band, never a number of miles or a coordinate. */
 export type DistanceBand = "under 2 mi" | "2-5 mi" | "5-10 mi" | "10-25 mi" | "25+ mi";
+const DISTANCE_BANDS: readonly DistanceBand[] = ["under 2 mi", "2-5 mi", "5-10 mi", "10-25 mi", "25+ mi"];
 export function distanceBand(miles: number): DistanceBand {
-  return miles < 2 ? "under 2 mi" : miles < 5 ? "2-5 mi" : miles < 10 ? "5-10 mi" : miles < 25 ? "10-25 mi" : "25+ mi";
+  return DISTANCE_BANDS[distanceBandIndex(miles)]!;
 }

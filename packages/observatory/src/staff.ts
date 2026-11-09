@@ -21,6 +21,7 @@ import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { SQL } from "bun";
 import { APP_IDS, isAppId, type AppId } from "./apps.ts";
+import { allowedFor, crossAppAllowed, holdsEverywhere, roleCounts } from "./staff-roles.ts";
 import { STAFF_ROLES, type AuditEntry, type Mode, type RoleGrant, type StaffRole, type StaffUser } from "./types.ts";
 
 export const REPO = resolve(import.meta.dir, "../../..");
@@ -173,18 +174,14 @@ export function authenticate(req: Request, o: Pick<StaffAuthOptions, "tokens"> &
   return { status: 401, error: "missing or wrong token" };
 }
 
+const grantsOf = (u: StaffUser): RoleGrant[] => u.grants ?? u.roles.map(role => ({ role, app: "*" }));
+
 /**
  * The roles this user holds for one app: grants for that app and for every app. In real mode the
  * engineer role gives nothing (simulated worlds only). cross_app_safety is never a per-app role.
  */
 export function rolesFor(u: StaffUser, app: AppId, mode: Mode): Set<StaffRole> {
-  const out = new Set<StaffRole>();
-  for (const g of u.grants ?? u.roles.map(role => ({ role, app: "*" }))) {
-    if (g.app !== "*" && g.app !== app) continue;
-    if (g.role === "cross_app_safety" || (g.role === "engineer" && mode === "real")) continue;
-    out.add(g.role);
-  }
-  return out;
+  return new Set(grantsOf(u).filter(g => roleCounts(g, app, mode)).map(g => g.role));
 }
 
 /**
@@ -193,13 +190,12 @@ export function rolesFor(u: StaffUser, app: AppId, mode: Mode): Set<StaffRole> {
  */
 export function allowed(u: StaffUser, need: readonly StaffRole[], app?: AppId, mode: Mode = "game"): boolean {
   if (!app) return hasEverywhere(u, "admin") || need.some(r => hasEverywhere(u, r));
-  const r = rolesFor(u, app, mode);
-  return r.has("admin") || need.some(x => r.has(x));
+  return allowedFor(grantsOf(u), [...need], app, mode);
 }
 /** The role for every app ("role@*"). */
-export const hasEverywhere = (u: StaffUser, role: StaffRole) => (u.grants ?? u.roles.map(r => ({ role: r, app: "*" }))).some(g => g.role === role && g.app === "*");
+export const hasEverywhere = (u: StaffUser, role: StaffRole) => holdsEverywhere(grantsOf(u), role);
 /** The cross-app person view: cross_app_safety@* or admin@*. Never a reviewer. */
-export const canCrossApp = (u: StaffUser) => hasEverywhere(u, "admin") || hasEverywhere(u, "cross_app_safety");
+export const canCrossApp = (u: StaffUser) => crossAppAllowed(grantsOf(u));
 /** Apps where this user holds any role in this mode. */
 export const appsFor = (u: StaffUser, mode: Mode): AppId[] => APP_IDS.filter(a => rolesFor(u, a, mode).size > 0);
 

@@ -9,7 +9,7 @@ import type { OracleSummary, RunRecord, RunRecordInput } from "@thenetwork/core"
 import { computeMetrics, type Metrics } from "./judge/metrics.ts";
 import { PolicyPersonaAgent, templateText, timeConflict, type PolicyOptions } from "./agent/policy.ts";
 import { newMemory, type PersonaAgent, type PersonaContext, type PersonaMemory } from "./agent/types.ts";
-import { SimChannel, type Reaction, type SimMessage } from "./channel.ts";
+import { detectKeyword, SimChannel, type Reaction, type SimMessage } from "./channel.ts";
 import type { Engine, InboundMessage, MeetingReport, NetworkContext, NetworkUnderTest } from "./network.ts";
 import { Oracle, type OracleOptions, type OracleVerdict } from "./oracle.ts";
 import type { Persona } from "./persona.ts";
@@ -25,6 +25,8 @@ export type WorldAction =
   | { do: "go_silent"; persona: MemberId }
   | { do: "force_flake"; persona: MemberId; how: "notice" | "no_show" }
   | { do: "say"; persona: MemberId; text: string }
+  /** The persona blocks another member: "block <name>" to the Network, logged as a block_intent. */
+  | { do: "block"; persona: MemberId; other: MemberId }
   /** source "player": a human playing the Network in the observatory (counted like Network output). */
   | { do: "propose"; proposal: Proposal; source?: "scenario" | "player" }
   | { do: "opt_out"; persona: MemberId };
@@ -114,6 +116,7 @@ export class World {
   private proposals = new Map<string, Proposal>();
   private meetings = new Map<string, MeetingReport & { id: string }>();
   private notices = new Set<string>(); // `${proposalId}|${memberId}` flake notices given
+  private cancelled = new Set<string>(); // meeting ids the Network called off before they happened
   private nameIndex: { re: RegExp; id: MemberId }[] = [];
   private meetingSeq = 0;
   private spawnSeq = 0;
@@ -201,6 +204,9 @@ export class World {
         this.rec({ type: "block", from, to });
       },
       log: (kind, detail) => {
+        // The Network called off an opportunity: a meeting of it that is still ahead does not happen.
+        if ((kind === "opportunity_closed" || kind === "meeting_cancelled") && typeof detail.proposalId === "string")
+          for (const m of this.meetings.values()) if (m.proposalId === detail.proposalId && m.at > this.clock.now()) this.cancelled.add(m.id);
         if (kind === "feedback") this.rec({ type: "feedback", memberId: detail.memberId as string, proposalId: detail.proposalId as string, text: String(detail.text ?? "") });
         else this.rec({ type: "network_log", kind, detail });
       },
@@ -243,7 +249,9 @@ export class World {
   /** Persona sends a message to the Network (via the channel, so keywords apply). */
   private personaSend(p: Persona, text: string, reaction?: Reaction): SimMessage | undefined {
     const mem = this.memories.get(p.id)!;
-    if (mem.optedOut && text.trim().toUpperCase() !== "START") return undefined;
+    // After STOP only the carrier keywords that still work reach the channel: START (UNSTOP, RESUME...) and HELP.
+    const kw = reaction ? undefined : detectKeyword(text);
+    if (mem.optedOut && kw !== "START" && kw !== "HELP") return undefined;
     // A tapback is an inbound message too: it answers the Network (resets `unanswered` below).
     const m = this.channel.receive(p.id, text, reaction ? { reaction } : {});
     this.logMessage(m);
@@ -251,6 +259,17 @@ export class World {
     if (m.keyword === "STOP") { mem.optedOut = true; this.optedOut.add(p.id); this.rec({ type: "opt_out", memberId: p.id }); }
     if (m.keyword === "START") { mem.optedOut = false; this.optedOut.delete(p.id); }
     return m;
+  }
+
+  /**
+   * The persona sends its block of `otherId`. The World logs the block_intent itself, so the judge sees
+   * the block also when the Network does not read it (the Network's own record is "block").
+   */
+  private personaBlock(personaId: MemberId, otherId: MemberId) {
+    const mem = this.memories.get(personaId)!, other = this.personas.get(otherId);
+    if (!other) return;
+    if (!mem.blocked.includes(otherId)) mem.blocked.push(otherId);
+    if (this.personaSend(this.personas.get(personaId)!, `block ${other.name}`)) this.rec({ type: "block_intent", from: personaId, to: otherId });
   }
 
   // ------------------------------------------------------------------ run
@@ -306,6 +325,7 @@ export class World {
     s.on<{ personaId: MemberId }>("join", ev => this.onJoin(ev.data.personaId));
     s.on<{ msg: SimMessage }>("deliver", ev => this.onDeliver(ev.data.msg));
     s.on<{ personaId: MemberId; text: string; reaction?: Reaction }>("persona_send", ev => { this.personaSend(this.personas.get(ev.data.personaId)!, ev.data.text, ev.data.reaction); });
+    s.on<{ personaId: MemberId; otherId: MemberId }>("persona_block", ev => this.personaBlock(ev.data.personaId, ev.data.otherId));
     s.on<{ msg: SimMessage }>("network_inbound", async ev => {
       const m = ev.data.msg;
       const inbound: InboundMessage = { id: m.id, memberId: m.memberId, body: m.body, ts: m.ts, channel: m.channel, keyword: m.keyword };
@@ -415,10 +435,9 @@ export class World {
       this.scheduler.after(reply.delayMs, "persona_send", { personaId: p.id, text: reply.text, ...(reply.reaction ? { reaction: reply.reaction } : {}) });
       if (reply.block?.length) {
         for (const b of reply.block) {
-          const other = this.personas.get(b);
-          if (other && !mem.blocked.includes(b)) {
+          if (this.personas.has(b) && !mem.blocked.includes(b)) {
             mem.blocked.push(b);
-            this.scheduler.after(reply.delayMs + 2 * MINUTE, "persona_send", { personaId: p.id, text: `block ${other.name}` });
+            this.scheduler.after(reply.delayMs + 2 * MINUTE, "persona_block", { personaId: p.id, otherId: b });
           }
         }
       }
@@ -432,15 +451,18 @@ export class World {
     if (mem.joined && !mem.optedOut) {
       const ini = await this.agent.initiative(this.personaCtx(p, `ini${this.clock.now()}`));
       if (ini) {
-        if (ini.block) for (const b of ini.block) if (!mem.blocked.includes(b)) mem.blocked.push(b);
+        const blocks = (ini.block ?? []).filter(b => !mem.blocked.includes(b));
+        mem.blocked.push(...blocks);
         const m = this.personaSend(p, ini.text);
+        if (m) for (const b of blocks) this.rec({ type: "block_intent", from: id, to: b });
         if (m && ini.adversarial) this.rec({ type: "adversarial_attempt", memberId: id, kind: ini.adversarial, messageId: m.id });
       }
     }
-    // Next initiative: adversaries every 1-2 days; others ~ every 3-12 days by social energy.
+    // Next initiative: adversaries every 1-2 days; others ~ every 3-12 days by social energy. The chain goes on
+    // while the persona is opted out (it sends nothing then), so a START brings the persona's own messages back.
     const gapDays = p.hidden.adversarial ? r.range(1, 2) : r.logNormal(6 / (0.5 + p.hidden.socialEnergy), 0.4);
     const next = nextLocalHour(this.clock.now() + gapDays * DAY, p.homeCity, r.int(Math.max(p.routine.wake, 8), 21));
-    if (next < end && !mem.optedOut) this.scheduler.at(next, "initiative", { personaId: id });
+    if (next < end) this.scheduler.at(next, "initiative", { personaId: id });
   }
 
   private onFlakeCheck(meetingId: string, personaId: MemberId) {
@@ -468,6 +490,7 @@ export class World {
   }
 
   private onMeeting(meetingId: string) {
+    if (this.cancelled.has(meetingId)) return; // called off: no one meets, no outcome
     const m = this.meetings.get(meetingId)!;
     const prop = this.proposals.get(m.proposalId);
     const attendance: Record<MemberId, { showed: boolean; cancelledWithNotice: boolean; enjoyment: number }> = {};
@@ -520,6 +543,7 @@ export class World {
       case "go_silent": if (mem) mem.silentFrom = this.clock.now(); break;
       case "force_flake": if (mem) mem.forceFlake = a.how; break;
       case "say": this.personaSend(this.personas.get(a.persona)!, a.text); break;
+      case "block": this.personaBlock(a.persona, a.other); break;
       case "opt_out": this.personaSend(this.personas.get(a.persona)!, "STOP"); break;
       case "propose": {
         const p = { ...a.proposal, createdAt: this.clock.now() };

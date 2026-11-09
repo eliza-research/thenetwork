@@ -20,6 +20,8 @@ export interface ConsentEvent {
   wording?: string | null;
   /** The version of the canonical opt-in wording (apps.ts ConsentText), when the event is a web opt-in. */
   wordingVersion?: string | null;
+  /** A global STOP: the app its confirmation named ("Reply START to resume <app>"). START after it resumes that app. */
+  namedApp?: AppId | null;
   /** The inbound message (or request) that caused it: a retry of the same message writes no second event. */
   ref?: string | null;
   at: number;
@@ -34,10 +36,17 @@ export function stopScope(env: Record<string, string | undefined> = process.env)
 }
 
 /** The consent state for one app from the two last events. No event = not opted in. */
+//@ verify
+//@ ensures last.app === undefined ==> \result !== "opted_in"
+//@ ensures last.app !== undefined ==> \result === "opted_in" ==> last.app.state === "opted_in"
+//@ ensures last.app !== undefined ==> last.global !== undefined ==> \result === "opted_in" ==> last.global.state === "opted_out" ==> last.app.at > last.global.at
+//@ ensures last.app === undefined ==> last.global !== undefined ==> last.global.state === "opted_out" ==> \result === "opted_out"
+//@ ensures last.app === undefined ==> last.global === undefined ==> \result === undefined
 export function resolveConsent(last: ConsentLast): ConsentState | undefined {
   const { app, global } = last;
   if (!app) return global?.state === "opted_out" ? "opted_out" : undefined;
-  if (!global || global.state === "opted_in") return app.state;
+  if (!global) return app.state;
+  if (global.state === "opted_in") return app.state;
   // A global opt-out. Only a newer opt-in for this app (START on its line, a new join) beats it.
   return app.state === "opted_in" && app.at > global.at ? "opted_in" : "opted_out";
 }
@@ -54,19 +63,27 @@ export function lastEvents(events: readonly ConsentEvent[], e164: string, app: A
 }
 
 // Keywords: the one table and the free-text opt-out reading live in packages/core/src/replies.ts.
+//@ skip
 const STOP_ALL_WORDS = new Set<string>(KEYWORDS.stopAll);
+//@ skip
 const STOP_WORDS = new Set<string>([...KEYWORDS.stop, ...KEYWORDS.stopPolite]);
+//@ skip
 const START_WORDS = new Set<string>(KEYWORDS.start);
+//@ skip
 const HELP_WORDS = new Set<string>(KEYWORDS.help);
+//@ skip
 const SPANISH_STOP_WORDS = new Set<string>(KEYWORDS.stopEs);
+// A whole message that is only STOP, spelt any way ("STOPP"), with a courtesy or urgency word. It fails
+// closed: "stop it" or "STOP NOW" is honored as a STOP. A sentence with anything else in it is not read here.
+//@ skip
+const STOP_WITH_WORDS = /^(?:(?:PLEASE|PLS|PLZ|JUST) )*S+T+O+P+(?: (?:IT|THAT|THIS|NOW|RIGHT NOW|ALREADY|PLEASE|PLS|PLZ|THANKS|THANK YOU|THX|TY))*$/;
 
 export type Keyword = "stop" | "stop_all" | "start" | "help";
 
 export function detectKeyword(text: string): Keyword | undefined {
   const k = keywordKey(text);
   if (STOP_ALL_WORDS.has(k)) return "stop_all";
-  // "STOPP", "STOOOP": a misspelt STOP is still a STOP.
-  if (STOP_WORDS.has(k) || SPANISH_STOP_WORDS.has(k) || /^S+T+O+P+$/.test(k) || optOutPhrase(text)) return "stop";
+  if (STOP_WORDS.has(k) || SPANISH_STOP_WORDS.has(k) || STOP_WITH_WORDS.test(k) || optOutPhrase(text)) return "stop";
   if (START_WORDS.has(k)) return "start";
   if (HELP_WORDS.has(k)) return "help";
   return undefined;
@@ -94,10 +111,10 @@ export function keywordEvent(kw: Keyword, e164: string, app: AppInfo, at: number
   switch (kw) {
     case "stop":
       return scope === "global"
-        ? { event: { ...base, app: null, state: "opted_out" }, reply: app.brand.stop }
+        ? { event: { ...base, app: null, state: "opted_out", namedApp: app.id }, reply: app.brand.stop }
         : { event: { ...base, app: app.id, state: "opted_out" }, reply: app.brand.stopApp };
     case "stop_all":
-      return { event: { ...base, app: null, state: "opted_out" }, reply: app.brand.stop };
+      return { event: { ...base, app: null, state: "opted_out", namedApp: app.id }, reply: app.brand.stop };
     case "start":
       return { event: { ...base, app: app.id, state: "opted_in", wording: "START keyword" }, reply: app.brand.start };
     case "help":

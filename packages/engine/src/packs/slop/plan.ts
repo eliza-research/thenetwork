@@ -5,18 +5,19 @@
 import { canBeMatched, type City, type MemberId } from "@thenetwork/core";
 import { isOpaquePhotoId } from "../../relay.ts";
 import type { EngineInput } from "../../types.ts";
+import { PROBE_PHOTO_MAX, probePhotoIds } from "../decisions.ts";
 import { mutualMarkets } from "./geo.ts";
 import { SLOP_DEFAULT_OPTIONS, type SlopPackOptions } from "./options.ts";
 import { SLOTS, slopProfiles, type SlopProfile, type Slot } from "./profile.ts";
 import { dateActivity } from "./score.ts";
 import { distanceBand, type DistanceBand } from "./zips.ts";
 
-/** Public venue types per activity. There is no private or home option (safety basics). */
-export const PUBLIC_VENUE: Record<string, { venue: string; minutes: number }> = {
+/** Public venue types per activity. There is no private or home option (safety basics). `daytime`: only day slots. */
+export const PUBLIC_VENUE: Record<string, { venue: string; minutes: number; daytime?: true }> = {
   coffee: { venue: "a cafe", minutes: 60 }, drinks: { venue: "a bar", minutes: 75 }, walk: { venue: "a park", minutes: 60 },
   museum: { venue: "a museum", minutes: 90 }, dinner: { venue: "a restaurant", minutes: 90 }, live_music: { venue: "a music venue", minutes: 120 },
   comedy: { venue: "a comedy club", minutes: 90 }, climbing: { venue: "a climbing gym", minutes: 90 }, cooking_class: { venue: "a cooking class", minutes: 120 },
-  hike: { venue: "a popular trailhead (daytime)", minutes: 120 },
+  hike: { venue: "a popular trailhead (daytime)", minutes: 120, daytime: true },
 };
 
 export interface DatePlan {
@@ -40,6 +41,7 @@ export function planFirstDate(first: SlopProfile, partner: SlopProfile, markets:
   const activity = dateActivity(first, partner);
   const v = PUBLIC_VENUE[activity] ?? PUBLIC_VENUE.coffee!;
   const ranked = SLOTS.map((_, s) => ({ s, p: freeScore(first, s) * freeScore(partner, s) }))
+    .filter(x => !v.daytime || SLOTS[x.s]!.endsWith("_day"))
     .sort((x, y) => (y.p - x.p) || (x.s - y.s));
   const options = ranked.slice(0, 3).map(x => x.s);
   return {
@@ -73,7 +75,7 @@ export interface ProbePhotoSubject {
 }
 /** A photo reference in a probe: an opaque id the platform resolves to a short-lived image. Never a URL. */
 export interface ProbePhotoRef { id: string }
-export const PROBE_PHOTO_MAX = 1;
+export { PROBE_PHOTO_MAX };
 
 /**
  * The photo(s) a probe may carry: [] unless the subject AND the recipient are adults (core
@@ -81,6 +83,6 @@ export const PROBE_PHOTO_MAX = 1;
  * valid opaque photo id. At most PROBE_PHOTO_MAX.
  */
 export function probePhotoRefs(subject: ProbePhotoSubject, recipient: { age: number | undefined }): ProbePhotoRef[] {
-  if (!canBeMatched(subject.age) || !canBeMatched(recipient.age) || !subject.photoConsent || subject.held) return [];
-  return subject.photoIds.filter(isOpaquePhotoId).slice(0, PROBE_PHOTO_MAX).map(id => ({ id }));
+  const gate = { subjectAdult: canBeMatched(subject.age), recipientAdult: canBeMatched(recipient.age), photoConsent: subject.photoConsent, held: subject.held };
+  return probePhotoIds(gate, subject.photoIds.filter(isOpaquePhotoId)).map(id => ({ id }));
 }

@@ -3,8 +3,8 @@
 // invariants, and the conformance rules for slopPack (core rules, the stated filters, no rating text).
 //
 // PINNED (CI): seeds 13-16, 4 weeks, 300 per city; the iteration-5 world: population
-// {catfish 0.005, body types on}, world {verification, relay through the engine's relay.ts, 3-day review, widen, check-in, photo in
-// the probe (sd 1), rater on}; arms "random" (baseline) and the default slopPack (slop-pack-1.4.0, d+b).
+// {catfish 0.005, body types on}, world {relay through the engine's relay.ts, 3-day review, widen, check-in, rater on; no
+// verification step and no probe photo, as in production}; arms "random" (baseline) and the default slopPack (slop-pack-1.4.0, d+b).
 // Gate policy (decided for the founder, 2026-10-08):
 //   - BLOCKING: the safety gates (0 declared-minor contacts, 0 stated-filter violations, scammer
 //     median reach <= 1, 0 leaks, no rating / score text) and the quality gates that pass on the pinned seeds.
@@ -33,18 +33,19 @@ import { ageRangeOf } from "../../packages/engine/src/packs/slop/rules.ts";
 import { statedDealbreaker } from "../../packages/engine/src/packs/slop/score.ts";
 import { cellMiles } from "../../packages/engine/src/packs/slop/zips.ts";
 import { EngineRng as Rng } from "../../packages/core/src/index.ts";
+import { SLOP_PROBE_PHOTOS } from "../../packages/network/service/packs.ts";
 import { slopLiveArm } from "./slop-live.ts";
 import type { EngineInput, EngineProposal } from "../../packages/engine/src/types.ts";
 import { World, pairKey } from "../../packages/engine/src/world.ts";
 import { BODY_TYPE_DEFAULTS } from "../../packages/sim/src/apps/slop/bodyType.ts";
 import { slopEngineInput, slopEngineMatcher } from "../../packages/sim/src/apps/slop/enginePack.ts";
-import { gates3, runArm, type WorldSpec } from "../../packages/sim/src/apps/slop/packEval.ts";
+import { gates3, runArm, worldOptions, type WorldSpec } from "../../packages/sim/src/apps/slop/packEval.ts";
 import { generateSlopPersonas, type SlopPersona } from "../../packages/sim/src/apps/slop/persona.ts";
 import { buildSlopSnapshot, RATER_DEFAULTS, SLOP_WORLD_START, type SlopNetworkState } from "../../packages/sim/src/apps/slop/snapshot.ts";
 import { BASELINES } from "../../packages/sim/src/apps/slop/baselines.ts";
 import { slopMetrics } from "../../packages/sim/src/apps/slop/metrics.ts";
 import { runSlopWorld, runSlopWorldAsync } from "../../packages/sim/src/apps/slop/world.ts";
-import { mergeRelayStats } from "../../packages/sim/src/apps/slop/relay.ts";
+import { contactShaped, mergeRelayStats } from "../../packages/sim/src/apps/slop/relay.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
 
@@ -52,10 +53,12 @@ const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 
 export const SLOP_PINNED = { seeds: [13, 14, 15, 16], weeks: 4, perCity: 300 };
 const POPULATION: WorldSpec = { catfish: 0.005, bodyTypes: true };
-const WORLD: WorldSpec = { verification: true, relay: { engine: true }, review: 3, widen: true, checkin: true };
+// Founder decision 9: no ID check (production has no verification step), so the pinned world has none.
+const WORLD: WorldSpec = { relay: { engine: true }, review: 3, widen: true, checkin: true };
 // Founder decision 2026-10-11 (#22): no photo is shown between members (no photo in the probe, no photo relay);
-// the AI only rates photos. The sim matches the product: the rater is on, the probe photo is off.
-const PACK_WORLD: WorldSpec = { rater: true };
+// the AI only rates photos. The sim follows the product: the rater is on, and the probe photo path is on only when
+// the live flag SLOP_PROBE_PHOTOS is on, so the "0 probes carry a photo" gate fails if the product turns photos on.
+const PACK_WORLD: WorldSpec = { rater: true, ...(SLOP_PROBE_PHOTOS ? { photos: 1 } : {}) };
 /** Gates that fail in every photos arm on held-out seeds today (docs/results/2026-10-08-slop-pack.md I5.4): tracked, not blocking. */
 const TRACKED = [/^Dates per member-month vs random/, /^Minor contacts \(age liars\) cut/, /^Adversary contacts cut/, /^Lowest group vs overall/, /^Same, feasible members/,
   // Not in the founder's tracked list, but it does not pass on the pinned seeds (86.9%; I5.4 reports 87% on seeds 13-16 at 4 weeks).
@@ -114,8 +117,20 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
   b.gate("relay world: 0 relays to or from a minor (declared, or after an age slip); every slip blocked", rs.minorRelays === 0 && cls("minor_signal").stopped === cls("minor_signal").n, `${rs.minorRelays} relays, slips ${cls("minor_signal").stopped}/${cls("minor_signal").n}`);
   b.gate("relay world: contact shares only with explicit consent (0 without; every bad-consent item blocked)", rs.contactWithoutConsent === 0 && cls("contact_share").n > 0 && cls("bad_consent").stopped === cls("bad_consent").n, `${cls("contact_share").n - cls("contact_share").stopped} shared with consent, ${cls("bad_consent").stopped}/${cls("bad_consent").n} bad-consent blocked`);
   b.gate("relay world: relay log rows carry no message body or contact value", rs.logBodies === 0, String(rs.logBodies));
+  // The contact-leak counter above must not be the relay's own guard (a guard miss would then count as 0).
+  await b.run("relay world judge: the contact-leak counter catches contacts the relay guard passes (spelled number, split digits, email in words)", () => {
+    for (const t of ["two one two five five five, then zero one four seven", "two12 five55 o147", "I'm sam r at gmail"]) expect([t, contactShaped(t)]).toEqual([t, true]);
+    for (const t of ["Can we push it to 7:30 instead of 7?", "Running about 10 minutes late, sorry!", "I'll be the one in the green jacket."]) expect([t, contactShaped(t)]).toEqual([t, false]);
+  });
   const ph = pack.extra.reduce((s, e) => s + (e.photos?.withPhoto ?? 0), 0), noPh = pack.extra.reduce((s, e) => s + (e.photos?.withoutPhoto ?? 0), 0);
   await b.run(`no photo is shown between members: 0 probes carry a photo (${ph} with, ${noPh} without)`, () => expect(ph).toBe(0));
+  // Founder decision 9: no ID check, and production writes no verify:* fact (packages/network/service/packs.ts). The pinned world
+  // of the slop arm must not hold members on a check that does not exist live, or the safety gates above measure a filter production lacks.
+  await b.run("pinned world matches production: no verify:* fact in the slop arm's snapshot (decision 9, no ID check)", () => {
+    const wo = worldOptions({ ...POPULATION, ...WORLD, ...PACK_WORLD });
+    const snap = buildSlopSnapshot(generateSlopPersonas({ seed: SLOP_PINNED.seeds[0]!, perCity: 60 }), { ...emptySlopState(), ...(wo.verification ? { verification: wo.verification } : {}), ...(wo.platform ? { platform: wo.platform } : {}) });
+    expect(snap.facets.filter(f => f.tags.some(t => t.startsWith("verify:"))).length).toBe(0);
+  });
 
   // ---- world invariants: no hidden truth in the agent's view; baselines; the ban loop ----------------
   await b.run("world: personas deterministic by seed; the snapshot carries no hidden truth, canary or adversary label", () => {
@@ -176,6 +191,23 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
   const inputs = new Map(SEEDS.map(s => [s, slopWorld(s, { perCity: 60 })]));
   const results = new Map<number, Promise<EngineResult>>();
   const result = (s: number) => { if (!results.has(s)) results.set(s, run(inputs.get(s)!, s)); return results.get(s)!; };
+
+  // SD-207: slopAssign did not read the interruption budget, so a member at the weekly limit was picked
+  // again and took the partner's one slot for the run (the Network gate then dropped the pair).
+  await b.run("conformance slop: selection respects the interruption budget (members at the limit are never picked)", async () => {
+    const limits = resolveConfig(SLOP_ENGINE_CONFIG).budgets;
+    for (const s of SEEDS) {
+      const input = inputs.get(s)!, base = await result(s);
+      const full = new Set(base.proposals.flatMap(p => p.participants));
+      expect(full.size).toBeGreaterThan(0);
+      const state = new Map(input.members.map(m => [m.id, m.state] as const));
+      const recentProposals = [...(input.recentProposals ?? []), ...[...full].flatMap(id => Array.from({ length: limits[state.get(id) ?? "normal"].limit }, (_, k) => ({
+        ...base.proposals[0]!, id: `budget-${id}-${k}`, participants: [id, `budget-other-${id}-${k}`], alternates: [], createdAt: input.now - (k + 1) * DAY,
+      })))];
+      const r = await run({ ...input, recentProposals }, s);
+      for (const p of r.proposals) for (const id of p.participants) expect(full.has(id)).toBe(false);
+    }
+  });
 
   await b.run("conformance slop: stated filters respected both ways (orientation, age ranges, dealbreakers, mutual radius)", async () => {
     for (const s of SEEDS) {
@@ -279,6 +311,17 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
     for (const p of (await runEngine({ ...input, facets: forged }, cfg(5), { pack: slopPack })).proposals) for (const t of Object.values(p.explanations)) { expect(appearanceLeak(t)).toBeNull(); expect(t).not.toMatch(/looks|attractive|athletic|top 10/i); }
   });
 
+  await b.run("conformance slop: a romance item needs an adult with the lane in a stated opt-in list; a missing list is no consent", () => {
+    const gate = slopPack.attention!.itemGate!, item = { category: "romance" } as Parameters<typeof gate>[1];
+    const view = (v: object) => v as Parameters<typeof gate>[0];
+    expect(gate(view({ age: 30, categoriesOptIn: ["romance"] }), item)).toBeNull();
+    expect(gate(view({ age: 30 }), item)).toBe("romance_not_allowed");
+    expect(gate(view({ age: 30, categoriesOptIn: [] }), item)).toBe("romance_not_allowed");
+    expect(gate(view({ age: 17, categoriesOptIn: ["romance"] }), item)).toBe("romance_not_allowed");
+    expect(gate(view({ categoriesOptIn: ["romance"] }), item)).toBe("romance_not_allowed");
+    expect(appearanceLeak("they are plus_size")).not.toBeNull();
+  });
+
   await b.run("conformance slop: adults only; minors are never rated, never get a body-type preference, never shown in a photo", () => {
     let minors = 0;
     for (const p of res.world.personas) if (!canBeMatched(p.stated.claimedAge)) {
@@ -309,7 +352,7 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
       const { w, scored, ctx, result } = seen!;
       // The edge set stableRound saw: eligible two-person candidates, both members usable, at or
       // above minValue. The first pair for a key wins, as it does when the pack builds its edges.
-      const usable = (id: MemberId) => !ctx.exclude?.has(id) && !w.get(id)!.inOpenOpportunity;
+      const usable = (id: MemberId) => !w.get(id)!.inOpenOpportunity;
       const edges = new Map<string, { a: MemberId; b: MemberId; ownA: number; ownB: number }>();
       for (const x of scored) {
         if (!x.eligible || x.c.participants.length !== 2 || x.c.exploration) continue;

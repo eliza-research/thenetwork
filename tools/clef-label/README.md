@@ -7,6 +7,10 @@ own computer and never makes a network request: its Content-Security-Policy is `
 the page contains no network call. Labels are kept in the browser's local storage while you work, and
 **Save labels file** writes them to a local file.
 
+The decisions on flagged photos and undo are in `core.ts`, which is proved with LemmaScript. The page must
+stay one file, so `bun run tools/clef-label/build.ts` inlines the transpiled `core.ts` between the markers in
+`index.html`. Run it after a change to `core.ts`; `sites/test/clef-label.test.ts` fails when the block is stale.
+
 The fitter is `bun run clef fit`. The method, the label budget and the full operator runbook are in
 `docs/results/2026-10-09-clef-fitting.md`.
 

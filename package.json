@@ -12,6 +12,7 @@
     "sim": "bun run --conditions eliza-source scripts/sim.ts",
     "clef": "bun run --conditions eliza-source scripts/clef-fit.ts",
     "relay-eval": "bun run --conditions eliza-source scripts/relay-eval.ts",
+    "formal": "bun run sim --only formal",
     "check:mirror": "bun run scripts/check-contract-mirror.ts",
     "typecheck": "tsc --noEmit -p . && tsc --noEmit -p sites/tsconfig.json && tsc --noEmit -p packages/observatory/tsconfig.json && tsc --noEmit -p deploy/cloudflare",
     "observatory": "bun run packages/observatory/src/server.ts",
@@ -21,13 +22,17 @@
     "sites:dev": "bun run scripts/sites-dev.ts",
     "platform:dev": "bun run scripts/platform-dev.ts",
     "start:backend": "bun run deploy/backend/server.ts",
-    "sites:build": "bun run sites/sites.ts"
+    "sites:build": "bun run sites/sites.ts",
+    "quint:check": "bun run scripts/quint-check.ts",
+    "quint:drift": "bun run scripts/quint-drift.ts"
   },
   "devDependencies": {
     "@cloudflare/containers": "0.3.7",
     "@cloudflare/workers-types": "4.20260429.1",
+    "@informalsystems/quint": "0.33.1",
     "@types/bun": "1.4.2",
     "ajv": "8.20.0",
+    "lemmascript": "0.6.6",
     "typescript": "^5.6.0"
   }
 }

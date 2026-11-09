@@ -26,6 +26,11 @@ export interface InteractionRecord {
   acceptedBy?: MemberId[];
   /** Invitees who were asked but never answered before the invite expired. */
   noResponse?: MemberId[];
+  /**
+   * The record is one member's own answer to the check-in after the meeting: its outcome
+   * ("completed" or "no_show") is about this member only. Without it, the outcome is about every participant.
+   */
+  by?: MemberId;
 }
 export type { OpenOpportunity } from "@thenetwork/core";
 /** A question the agent asked a member instead of proposing (engine output "ask"; v1.2). */
@@ -149,8 +154,8 @@ export interface FunnelLog {
   rejectedBy: Record<string, number>; passedHardFilters: number; deduped: number;
   floorViolations: Record<string, number>; dealbreakers: number; belowThreshold: number;
   eligible: number; budgetSkips: number; selected: number; exploration: number;
-  /** v1.2: questions emitted this run, and members held back from proposals while a question is open. */
-  asks?: number; askFirst?: number;
+  /** v1.2: questions emitted this run. */
+  asks?: number;
   /** Selected configurations withheld by the final policy guard (should always be absent). */
   rejectedAfterSelection?: Record<string, number>;
 }

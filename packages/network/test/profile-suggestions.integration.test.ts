@@ -327,10 +327,36 @@ test("real HTTP review joins the signed stored turn, private preview, exact huma
     expect((await http.post("decide", "accept", b.id, { text })).body).toMatchObject({ kind: "saved", reviewText: "1 saved; 0 rejected." });
     expect(await facets()).toHaveLength(1);
     expect((await http.post("preview", "preview", b.id)).status).toBe(403);
-    expect((await http.post("decide", "accept", b.id, { text })).status).toBe(403);
+    // An exact retry returns the stored result and saves nothing again (SD-458).
+    expect((await http.post("decide", "accept", b.id, { text })).body).toMatchObject({ kind: "saved", reviewText: "1 saved; 0 rejected." });
     expect(await facets()).toHaveLength(1);
     await storedTurn("delete", `delete ${b.id}`);
     expect((await http.post("delete", "delete", b.id, { text: `delete ${b.id}` })).body.kind).toBe("deleted");
+    expect(await facets()).toHaveLength(0);
+  } finally { await http.stop(); }
+});
+
+// SD-458: a gateway retry of the same signed decide or delete, after the first reply was lost.
+test("an exact retry of an applied edit, accept or delete returns the stored result and applies nothing again", async () => {
+  const b = (await store.propose(owner, input([candidate(), { ...candidate(), value: "I enjoy hiking", tags: ["hiking"] }]), now))!;
+  const http = await reviewHttp(boundIdentity);
+  try {
+    const edit = `edit ${b.id}.${b.revision} 1: I enjoy outdoor climbing`;
+    await storedTurn("retry-edit", edit);
+    const edited = await http.post("decide", "retry-edit", b.id, { text: edit });
+    expect(edited.body).toMatchObject({ kind: "preview", batch: { revision: b.revision + 1 } });
+    expect(await http.post("decide", "retry-edit", b.id, { text: edit })).toEqual(edited);
+    const accept = `accept ${b.id}.${b.revision + 1} 2 private`;
+    await storedTurn("retry-accept", accept);
+    const saved = await http.post("decide", "retry-accept", b.id, { text: accept });
+    expect(saved.body).toMatchObject({ kind: "saved", accepted: [b.suggestions[1]!.id], reviewText: "1 saved; 0 rejected." });
+    expect(await http.post("decide", "retry-accept", b.id, { text: accept })).toEqual(saved);
+    expect(await facets()).toHaveLength(1);
+    expect((await sql`select revision from platform.profile_suggestion_batches where id=${b.id}`)[0].revision).toBe(b.revision + 2);
+    await storedTurn("retry-delete", `delete ${b.id}`);
+    const deleted = await http.post("delete", "retry-delete", b.id, { text: `delete ${b.id}` });
+    expect(deleted.body.kind).toBe("deleted");
+    expect(await http.post("delete", "retry-delete", b.id, { text: `delete ${b.id}` })).toEqual(deleted);
     expect(await facets()).toHaveLength(0);
   } finally { await http.stop(); }
 });
@@ -843,6 +869,31 @@ test("internal collect joins canonical signed owner/source proofs to one pending
   } finally { await http.stop(); f.stop(); }
 });
 
+// SD-455: one batch shares the earliest five-second source proof. Each Cloud source call takes time,
+// so one call per row for ten rows on one connection runs past that proof.
+test("a ten-row collect on one connection makes one source call and commits inside the five-second proof", async () => {
+  const f = await ownerProofFixture();
+  const batchId = randomUUID(), connectionId = randomUUID();
+  const proposal = input(Array.from({ length: 10 }, () => ({ ...candidate(), connectionId })));
+  const text = collectionText(batchId);
+  let clock: SimClock;
+  const callbacks = profileReviewFactory({ ...f.options, now: () => clock?.now() ?? now });
+  const http = await reviewHttp(callbacks.profileSuggestionIdentity, async (who, consent, tx) => {
+    const allowed = await callbacks.profileSuggestionAuthorization(who, consent, tx);
+    clock.advance(600); // Cloud round trip of one source call
+    return allowed;
+  }, f.policy);
+  clock = http.clock;
+  try {
+    f.setSourceAllowed(r => r.review.action === "collect" && r.consent.connectionId === connectionId);
+    await reviewCommandTurn(f, "ten-row-collect", text);
+    const result = await http.post("collect", "ten-row-collect", batchId, { text, proposal, networkAuthority: f.policy.authority });
+    expect(f.sourceCalls).toBe(1);
+    expect(result.status).toBe(200);
+    expect(result.body.batch.suggestions).toHaveLength(10);
+  } finally { await http.stop(); f.stop(); }
+});
+
 test("collect wire rejects raw source payloads, foreign identities, fake commands and malformed scope before import", async () => {
   const f = await ownerProofFixture();
   const batchId = randomUUID();
@@ -871,9 +922,21 @@ async function contextFixture() {
   const input: LearningConsentContextRequest = { version: 1, purpose: 'network_profile_learning_v1', selectionSha256: NETWORK_LEARNING_ENTRY_SELECTION_SHA256,
     review: { version: 1, channel: 'blooio', messageId: 'consent-identity', app: 'ntwrk', memberId: 'owned-member', batchId,
       action: 'collect', commandSha256: digest(`collect ${batchId}`), networkAuthority: f.policy.authority, requestNonce: randomUUID() } };
-  const http = await reviewHttp(undefined, undefined, f.policy);
+  const http = await reviewHttp(boundIdentity, undefined, f.policy);
   return { f, http, input, async stop() { await http.stop(); f.stop(); } };
 }
+
+// SD-464: with profile review off (no identity resolver), collect answers 503; the consent context must not sign a proof either.
+test("membership context signs no proof when profile review is off", async () => {
+  const t = await contextFixture();
+  const off = await reviewHttp(undefined, undefined, t.f.policy);
+  try {
+    const r = await off.context(t.input);
+    expect(r.status).toBe(503);
+    expect(r.headers.get("x-ntwrk-svc-id")).toBeNull();
+    expect((await t.http.context(t.input)).status).toBe(200);
+  } finally { await off.stop(); await t.stop(); }
+});
 
 test("membership context derives and signs only the current Network person without consent or Cloud identity inputs", async () => {
   const t = await contextFixture();

@@ -9,7 +9,10 @@ import { APPS, type AppId } from "../../packages/platform/src/apps.ts";
 import { createPublicApi, type PublicApi } from "../../packages/platform/src/api.ts";
 import type { OtpProvider } from "../../packages/platform/src/otp.ts";
 import { MemoryPeopleStore } from "../../packages/platform/src/store.ts";
-import { api, call, MESSAGES, PLATFORM_ERRORS } from "../shared/api.ts";
+import { api, call, MESSAGES, PLATFORM_ERRORS, toE164 } from "../shared/api.ts";
+import { normalizePhone } from "../../packages/platform/src/phone.ts";
+import { turnstileWarning } from "../sites.ts";
+import { skillsConfig } from "../skills.config.ts";
 
 const HOST = "slop.date";
 const APP: AppId = "slop";
@@ -120,7 +123,10 @@ describe("the client against createPublicApi", () => {
 describe("error parity (audit sites-infra-17)", () => {
   test("every error code the platform API can send has a message on the sites", () => {
     const src = ["api.ts", "accounts.ts"].map((f) => readFileSync(join(import.meta.dir, "../../packages/platform/src", f), "utf8")).join("\n");
-    const codes = new Set([...src.matchAll(/error: "([a-z_]+)"/g)].map((m) => m[1]!));
+    // The value of an error field, with the codes of a ternary too.
+    const fields = [...src.matchAll(/\berror: ([^,}\n]*)/g)].map((m) => m[1]!);
+    const codes = new Set(fields.flatMap((f) => [...f.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]!)));
+    expect(codes.has("not_member")).toBe(true);
     expect(codes.size).toBeGreaterThan(5);
     for (const c of codes) {
       expect(PLATFORM_ERRORS[c], `platform code ${c} has no mapping`).toBeDefined();
@@ -147,6 +153,19 @@ describe("error parity (audit sites-infra-17)", () => {
     }
   });
 
+  test("an error code with the name of an Object.prototype key is no platform code", async () => {
+    const keep = globalThis.fetch;
+    try {
+      for (const code of ["constructor", "toString", "__proto__"]) {
+        globalThis.fetch = (async () => Response.json({ ok: false, error: code }, { status: 400 })) as unknown as typeof fetch;
+        const result = await call("GET", "/api/me");
+        expect(result, code).toMatchObject({ ok: false, error: "unknown" });
+      }
+    } finally {
+      globalThis.fetch = keep;
+    }
+  });
+
   test("the Turnstile token goes in the otp/start body only when there is one", async () => {
     const bodies: string[] = [];
     const keep = globalThis.fetch;
@@ -161,5 +180,54 @@ describe("error parity (audit sites-infra-17)", () => {
       globalThis.fetch = keep;
     }
     expect(bodies.map((b) => JSON.parse(b))).toEqual([{ phone: "+12125550142" }, { phone: "+12125550142", turnstileToken: "tok-1" }]);
+  });
+});
+
+describe("one phone rule on the client and the server", () => {
+  const refused = [
+    // Another country code with 10 digits in all: the old client read each as a US number.
+    "+65 9234 5678", "+47 42 34 56 78", "+45 3212 3456", "+44 20 7946 0958",
+    // The rest of the server's rule: letters, toll-free, Caribbean, service exchange, reserved ranges.
+    "212 555 0123 ext", "(800) 555-0123", "876-555-0123", "212-911-0123", "212-555-012", "290-555-0123", "375-555-0123", "965-555-0123",
+    "012 555 0123", "212 155 0123", "+", "", " ".repeat(30) + "212 555 0123 " + " ".repeat(30),
+  ];
+  const accepted = [["(212) 555-0123", "+12125550123"], ["+1 212 555 0123", "+12125550123"], ["1.212.555.0123", "+12125550123"], ["\u00a0+1-416-555-0123 ", "+14165550123"]] as const;
+
+  test("each input gets the same answer from toE164 and normalizePhone", () => {
+    for (const input of refused) {
+      expect(toE164(input), input).toBeNull();
+      expect(normalizePhone(input), input).toBeUndefined();
+    }
+    for (const [input, e164] of accepted) {
+      expect(toE164(input), input).toBe(e164);
+      expect(normalizePhone(input), input).toBe(e164);
+      expect(normalizePhone(e164), e164).toBe(e164);
+    }
+  });
+
+  test("the bundle that a browser loads has no node dependency", async () => {
+    const built = await Bun.build({ entrypoints: [join(import.meta.dir, "../shared/join.ts")], target: "browser", format: "esm" });
+    expect(built.success).toBe(true);
+    const text = await built.outputs[0]!.text();
+    expect(text).toContain("data-form");
+    expect(text).not.toContain("node:");
+  });
+});
+
+describe("build configuration", () => {
+  const origins = { ntwrk: "https://hub.example.test", slop: "https://slop.example.test", peon: "https://peon.example.test", friends: "https://friends.example.test" };
+  const staging = { PLATFORM_ENV: "staging", STAGING_SITE_ORIGINS: JSON.stringify(origins) };
+
+  test("a staging build refuses each production site as its backend", () => {
+    expect(skillsConfig({ ...staging, BACKEND_ORIGIN: "https://backend.example.test" }).BACKEND_ORIGIN).toBe("https://backend.example.test");
+    for (const domain of Object.values(APPS).map((a) => a.domain)) {
+      expect(() => skillsConfig({ ...staging, BACKEND_ORIGIN: `https://${domain}` }), domain).toThrow("isolated");
+    }
+  });
+
+  test("a Turnstile key of spaces warns the same as no key", () => {
+    expect(turnstileWarning("peon.biz", { DEPLOY_TARGET: "production", TURNSTILE_SITE_KEY: "   " })).toContain("no TURNSTILE_SITE_KEY");
+    expect(turnstileWarning("peon.biz", { DEPLOY_TARGET: "production" })).toContain("no TURNSTILE_SITE_KEY");
+    expect(turnstileWarning("peon.biz", { DEPLOY_TARGET: "production", TURNSTILE_SITE_KEY: "0x4AAA" })).toBeUndefined();
   });
 });

@@ -5,7 +5,8 @@
 import { appsOn, type McpApp, type McpAppId, type Surface } from "./apps.ts";
 import type { AssistantKind, PlatformHooks, PublicStatus } from "./hooks.ts";
 import type { Grant, Scope, OAuthStore, SignupDraftFields } from "./store.ts";
-import { outputLeaks } from "./leaks.ts";
+import { grantStillTheirs } from "./decisions.ts";
+import { gateUpdates } from "./update-gate.ts";
 
 export const TOOL_NAMES = ["app_info", "start_signup", "check_status", "submit_profile", "get_updates", "prepare_signup"] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -128,7 +129,9 @@ export type ToolOutcome =
   | { kind: "ok"; data: Record<string, unknown> | Record<string, unknown>[] | { apps: unknown[] } }
   | { kind: "error"; message: string }
   /** The grant no longer matches the person who owns the phone: answer 401 like an invalid token. */
-  | { kind: "invalid_grant" };
+  | { kind: "invalid_grant" }
+  /** The grant used up its profiles for the day: answer 429. */
+  | { kind: "rate_limited" };
 
 const NOT_AVAILABLE = "That app is not available here.";
 
@@ -239,16 +242,11 @@ export interface CallContext {
   now?: number;
   /** Which assistant the OAuth client is (by its redirect hosts): chatgpt, claude, grok, or web. */
   assistant?: AssistantKind;
+  /** Count one profile or draft that reaches the app against the grant's daily quota. True: the quota is used up. */
+  profileQuota?: () => Promise<boolean>;
 }
 
-/**
- * Whether a grant still belongs to the number's person. A different person now means a new owner
- * after staff review. A grant made while the number had no person never follows a person created
- * later (who may be someone else): it is dead, and the person connects again (audit: null-person grant).
- */
-export function grantStillTheirs(atConsent: string | null, now: string | null): boolean {
-  return atConsent === null ? now === null : now === atConsent;
-}
+export { grantStillTheirs };
 
 export async function callTool(name: ToolName, args: unknown, c: CallContext): Promise<ToolOutcome> {
   const enumIds = appsOn(c.apps, c.surface).map(a => a.id);
@@ -285,6 +283,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
         if (!grantStillTheirs(g.personId, person)) return { kind: "invalid_grant" };
         const status = person === null ? "not_joined" : await c.hooks.status(person, g.app);
         if (status !== "not_joined" && status !== "invited") return { kind: "error", message: "Use your existing profile; this form is for joining." };
+        if (await c.profileQuota?.()) return { kind: "rate_limited" };
         const at = requestedAt + Math.ceil(performance.now() - started);
         const saved = await store.putSignupDraft({ grantId: g.id, app: g.app, phoneKey: g.phoneKey, fields: chk.draft!, expiresAt: Math.min(requestedAt + 10 * 60_000, g.expiresAt), consumedAt: null }, at);
         return saved ? { kind: "ok", data: { prepared: true, app: g.app, url: `${c.apps[g.app].links.join}?via=agent`, next_step: "Open Join to review or edit your name and home city. Your age and text consent are still yours to enter." } }
@@ -310,6 +309,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       const status: PublicStatus = now === null ? "not_joined" : await c.hooks.status(now, g.app);
       // Only a joined, live member: the profile never creates a member and never reaches a stopped or held one.
       if (now === null || (status !== "active" && status !== "onboarding")) return { kind: "ok", data: { app: a.id, submitted: false, status, next_step: NEXT[status](a) } };
+      if (await c.profileQuota?.()) return { kind: "rate_limited" };
       const r = await c.hooks.submitProfile(now, g.app, g.phoneKey, chk.about!);
       if (r !== "accepted") return { kind: "ok", data: { app: a.id, submitted: false, status: "not_joined", next_step: NEXT.not_joined(a) } };
       return { kind: "ok", data: { app: a.id, submitted: true, next_step: `${a.name} has it. It may text the person a short question or two.` } };
@@ -323,7 +323,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       if (!c.hooks.updates) return { kind: "error", message: "Updates are not available here yet." };
       // Someone else's reference, an unknown one or an expired one reads as "nothing new", like an empty inbox.
       // The output leak gate: a summary with a phone, email, internal id or timestamp is withheld (leaks.ts).
-      const updates = now === null ? [] : (await c.hooks.updates(now, g.app, c.assistant ?? "web", chk.token)).filter(u => outputLeaks(u.summary).length === 0);
+      const updates = now === null ? [] : gateUpdates(await c.hooks.updates(now, g.app, c.assistant ?? "web", chk.token));
       return { kind: "ok", data: { app: a.id, updates, next_step: updates.length ? "Tell the person briefly. They answer by replying to the text." : `Nothing new from ${a.name}.` } };
     }
   }

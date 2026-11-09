@@ -5,6 +5,8 @@
 // predicates on ObsStore, never its own copy.
 import { useSyncExternalStore } from "react";
 import { APP_IDS } from "../../core/src/types.ts";
+import { boroughOk, membersOk, passes, rangeOk, visible, type FilterRow, type FilterView } from "./logic/filters.ts";
+import { admits, appendNew, clientRoles, deltaMove, initialSync, owns, revealMerge, revealReread, step, unrevealStep } from "./logic/sync.ts";
 import { NEIGHBORHOOD, type Borough } from "@thenetwork/network/geo"; // geo only: the package root pulls server code into the browser bundle
 import type { ConsoleApp } from "../src/apps.ts";
 import type {
@@ -95,14 +97,23 @@ const NYC_TZ = "America/New_York";
 const hms = new Intl.DateTimeFormat("en-US", { timeZone: NYC_TZ, hour: "numeric", minute: "numeric", second: "numeric", hourCycle: "h23" });
 /** Start of the NYC calendar day that contains t. */
 export function nycDayStart(t: number): number {
-  const p = Object.fromEntries(hms.formatToParts(t).map(x => [x.type, x.value]));
-  return t - ((Number(p.hour) % 24) * 3600 + Number(p.minute) * 60 + Number(p.second)) * 1000 - (t % 1000);
+  const wall = (at: number) => {
+    const p = Object.fromEntries(hms.formatToParts(at).map(x => [x.type, x.value]));
+    return ((Number(p.hour) % 24) * 3600 + Number(p.minute) * 60 + Number(p.second)) * 1000;
+  };
+  const guess = t - wall(t) - (t % 1000);
+  // A daylight-saving day is 23 or 25 hours long: the guess is an hour off midnight, on either side.
+  const off = wall(guess);
+  return guess - (off > 12 * HOUR ? off - DAY : off);
 }
 export const sameFocus = (a: Focus, b: Focus) => a === b || (!!a && !!b && a.kind === b.kind && a.id === b.id);
 export const focusKey = (f: Focus) => (f ? `${f.kind}:${f.id}` : "");
 export const isMemberActive = (m: ObsMember) => m.joined && m.state !== "opted_out" && m.state !== "paused" && m.state !== "not_joined";
 /** Where an opportunity came from: shadow and player first, then the consent network's origin, then the source. */
 export const originOf = (o: ObsOpportunity) => (o.source === "shadow" || o.source === "player" ? o.source : o.origin ?? o.source);
+/** The member filters that this member passes. */
+const memberTags = (m: ObsMember) => [isMemberActive(m) && "active", m.trust === "watch" && "watch", m.trust === "hold" && "hold", m.minor && "minor", !m.joined && "not_joined"].filter((t): t is string => !!t);
+const ALL_FILTERS: FilterKey[] = ["range", "borough", "members", "origin", "stateGroup"];
 
 function readJSON<T>(key: string): Partial<T> | undefined {
   try { const s = localStorage.getItem(key); return s ? JSON.parse(s) as Partial<T> : undefined; } catch { return undefined; }
@@ -166,7 +177,7 @@ export interface DecideOpts { reason?: ReviewReason; note?: string; explanations
 /** Time on one review item counts at most this long (a card left open is not review work). */
 const REVIEW_SECONDS_CAP = 30 * 60;
 /** Review codes for an action that was refused before anything was recorded (the item still waits). */
-const REFUSED = new Set(["in_flight", "not_in_review", "note_required", "participant_minor", "participant_declined", "matching_paused", "nothing_to_edit", "not_a_participant", "edit_leak", "cannot_swap", "unknown_decision", "unknown_reason", "forbidden", ""]);
+const REFUSED = new Set(["in_flight", "not_in_review", "mode_changed", "note_required", "participant_minor", "participant_declined", "matching_paused", "nothing_to_edit", "not_a_participant", "edit_leak", "cannot_swap", "unknown_decision", "unknown_reason", "forbidden", ""]);
 /**
  * Reads #token= once (the server prints the page URL with the token in the fragment, which the browser
  * never sends to a server or in a Referer), then removes it from the address bar and the history entry;
@@ -177,7 +188,7 @@ function initialToken(): string {
   try {
     const u = new URL(location.href);
     const h = new URLSearchParams(u.hash.slice(1));
-    t = h.get("token") ?? u.searchParams.get("token");
+    t = h.get("token") || u.searchParams.get("token");
     if (t) {
       try { sessionStorage.setItem(TOKEN_KEY, t); } catch { /* keep it in memory only */ }
       u.searchParams.delete("token"); h.delete("token");
@@ -192,8 +203,16 @@ function initialToken(): string {
 // ---------------------------------------------------------------- store
 class ObsStore {
   mode: Mode = "game";
+  /** Load, delta and app-switch state. Every change goes through step() in logic/sync.ts. */
+  private sync = initialSync(parseApp());
   /** The app every panel shows (the switcher; ?app= on every request). */
-  app: string = parseApp();
+  get app(): string { return this.sync.app; }
+  /** The data of the old app leaves at once: a failed load must not keep it under the new app's name. */
+  set app(app: string) {
+    const had = this.sync.dataApp !== "";
+    this.sync = step(this.sync, { kind: "switch", app });
+    if (had && this.sync.dataApp === "") this.clearData();
+  }
   /** One app, every app's health, or the cross-app person view. */
   page: Page = parsePage();
   env?: EnvInfo;
@@ -212,9 +231,11 @@ class ObsStore {
   me?: Me;
   /** This viewer's active PII reveals (wall-clock expiry). */
   reveals: RevealGrant[] = [];
+  /** The count of POST and DELETE /api/reveal answers. A GET answer sent before the newest one is old. */
+  private revealGen = 0;
   /** When each review card was opened (wall clock): the decision sends the seconds since. */
   private reviewOpened = new Map<string, number>();
-  version = 0;
+  get version(): number { return this.sync.version; }
   connected = false;
   loading = true;
   /** The API answered 401: the UI shows the token prompt. */
@@ -225,10 +246,9 @@ class ObsStore {
   private filtersMode: Mode | null = null;
   /**
    * Deltas that arrive while a full state is loading. A delta generated after the state was read must
-   * not be lost under it (an item would stay "in review" here after the server moved it on); those at
-   * or after the state's version are applied once it lands.
+   * not be lost under it (an item would stay "in review" here after the server moved it on); they go
+   * through the same step once the state lands.
    */
-  private loadingState = false;
   private buffered: ObsDelta[] = [];
   /** Review decisions sent and not answered yet, by opportunity (a second press is not sent). */
   private deciding = new Set<string>();
@@ -281,18 +301,24 @@ class ObsStore {
   /** Every request names the app (the server checks the role for it). */
   private withApp(path: string) { return /[?&]app=/.test(path) ? path : `${path}${path.includes("?") ? "&" : "?"}app=${encodeURIComponent(this.app)}`; }
   private async api(path: string, init: RequestInit = {}): Promise<Response> {
-    const headers = new Headers(init.headers);
-    if (this.token) headers.set("authorization", `Bearer ${this.token}`);
+    const headers = new Headers(init.headers), sent = this.token;
+    if (sent) headers.set("authorization", `Bearer ${sent}`);
     // The mode this page shows: the server refuses a change meant for the other mode (409 mode_changed).
     headers.set("x-observatory-mode", this.mode);
     const r = await fetch(this.withApp(path), { ...init, headers });
     if (r.status === 401) {
-      if (!this.authNeeded) { this.authEpoch++; this.authNeeded = true; this.notify(); }
+      // A late 401 for a token that was replaced says nothing about the token in use.
+      if (!this.authNeeded && sent === this.token) { this.authEpoch++; this.authNeeded = true; this.notify(); }
       throw new AuthError("token required");
     }
     return r;
   }
-  getJSON<T>(path: string): Promise<T> { return this.api(path).then(r => r.json() as Promise<T>); }
+  async getJSON<T>(path: string): Promise<T> {
+    const r = await this.api(path);
+    if (r.ok) return r.json() as Promise<T>;
+    const j = await r.json().catch(() => ({})) as { error?: string };
+    throw new Error(j.error ?? `HTTP ${r.status}`);
+  }
   /** GET or POST that keeps the status: a 403 is shown as "your role cannot…", not as a crash. */
   async fetch<T>(path: string, body?: unknown): Promise<Fetched<T>> {
     try {
@@ -315,46 +341,66 @@ class ObsStore {
     this.load();
   }
 
+  /** A new load owns the buffer from here on. Older loads are stale: they change nothing. */
+  private beginLoad() {
+    this.sync = step(this.sync, { kind: "begin" });
+    this.buffered = [];
+    return this.sync.gen;
+  }
+
   async load() {
+    let gen = this.beginLoad();
     this.loading = true; this.notify();
-    this.loadingState = true; this.buffered = [];
     try {
       const [mode, me] = await Promise.all([this.getJSON<{ mode: Mode }>("/api/mode"), this.fetch<Me>("/api/me")]);
-      // An older server has no /api/me: it has one admin token.
-      if(JSON.stringify([this.me?.id,this.me?.grants,this.me?.roles])!==JSON.stringify([me.data?.id,me.data?.grants,me.data?.roles]))this.authEpoch++;
-      this.me = me.data ?? { id: "token", roles: ["admin"], grants: [{ role: "admin", app: "*" }], via: "token" };
+      if (!owns(this.sync, gen)) return;
+      if (!me.data) throw me.status === 401 ? new AuthError(me.error) : new Error(me.error);
+      if(JSON.stringify([this.me?.id,this.me?.grants,this.me?.roles])!==JSON.stringify([me.data.id,me.data.grants,me.data.roles]))this.authEpoch++;
+      this.me = me.data;
       this.mode = mode.mode;
       // No role for this app: the first app this person holds one for. None (cross_app_safety only): the person view.
       const apps = this.me.apps ?? APP_ORDER;
       if (!apps.includes(this.app)) {
-        if (apps[0]) { this.app = apps[0]; this.replaceHash(); this.connect(); }
-        else { this.loading = false; this.notify(); return; }
+        if (apps[0]) { this.app = apps[0]; this.replaceHash(); this.connect(); gen = this.beginLoad(); }
+        else { this.sync = step(this.sync, { kind: "fail", gen }); this.loading = false; this.notify(); return; }
       }
+      const app = this.app;
       const state = await this.getJSON<ObsState>("/api/state");
+      if (!admits(this.sync, gen, app)) return;
+      if (!Number.isInteger(state.version)) throw new Error("bad state version");
       this.loadReveals();
       if (this.filtersMode !== this.mode) { this.filtersMode = this.mode; this.ui = { ...this.ui, filters: loadFilters(this.mode) }; }
       this.applyFull(state);
-      const later = this.buffered.filter(d => d.version >= state.version);
-      this.loadingState = false;
+      this.sync = step(this.sync, { kind: "land", gen, app, version: state.version });
+      // A state at version V already holds delta V (SD-505): deltaMove makes a held delta V "meta" only.
+      const later = this.buffered;
+      this.buffered = [];
       for (const d of later) this.applyDelta(d);
     } catch (e) {
+      if (!owns(this.sync, gen)) return;
+      this.sync = step(this.sync, { kind: "fail", gen });
       if (!(e instanceof AuthError)) this.toast(`Could not load: ${(e as Error).message}`, "bad");
     }
-    this.loadingState = false; this.buffered = [];
-    this.loading = false;
+    if (owns(this.sync, gen)) this.loading = false;
     this.notify();
   }
 
   private applyFull(s: ObsState) {
+    const members = new Map(s.members.map(m => [m.id, m])), edges = new Map(s.edges.map(e => [e.id, e])), opps = new Map(s.opportunities.map(o => [o.id, o]));
     this.env = s.env; this.clock = s.clock; this.stats = s.stats; this.runs = s.engineRuns; this.game = s.game; this.truth = s.truth; this.network = s.network;
     this.requests = s.requests ?? [];
-    this.members = new Map(s.members.map(m => [m.id, m]));
-    this.edges = new Map(s.edges.map(e => [e.id, e]));
-    this.opps = new Map(s.opportunities.map(o => [o.id, o]));
-    this.feed = s.feed; this.version = s.version; this.pulses = [];
+    this.members = members; this.edges = edges; this.opps = opps;
+    this.feed = s.feed.filter(x => Number.isInteger(x.seq)); this.pulses = [];
     if (!this.focusExists(this.ui.focus)) { this.ui = { ...this.ui, focus: null }; this.focusHistory = []; }
     this.focusHistory = this.focusHistory.filter(f => this.focusExists(f));
     this.ui = { ...this.ui, picks: this.ui.picks.filter(id => this.members.has(id)) };
+    this.graphTick++;
+  }
+
+  /** Empties every panel that shows the data of one app. */
+  private clearData() {
+    this.members = new Map(); this.edges = new Map(); this.opps = new Map(); this.feed = []; this.pulses = [];
+    this.stats = undefined; this.runs = []; this.game = undefined; this.truth = undefined; this.network = undefined; this.requests = []; this.reveals = [];
     this.graphTick++;
   }
 
@@ -366,14 +412,22 @@ class ObsStore {
   }
 
   private applyDelta(d: ObsDelta) {
-    if (this.loadingState && !d.reset) { this.buffered.push(d); return; }
-    if (d.reset) { this.load(); return; }
-    // A version was skipped (a delta was dropped or arrived under a full load): read the full state again.
-    if (d.version > this.version + 1) { this.load(); return; }
+    if (!d.reset && !Number.isInteger(d.version)) return;
+    const move = deltaMove(this.sync, d.version, !!d.reset);
+    if (move === "buffer") { this.buffered.push(d); return; }
+    // A reset, or a version was skipped (a delta was dropped or arrived under a full load): read the full state again.
+    if (move === "reload") { this.load(); return; }
+    if (move === "drop") return;
     this.clock = d.clock;
-    if (d.env) this.env = d.env;
     if (d.game) this.game = d.game;
     if (d.network) this.network = d.network;
+    if (move === "data") this.applyData(d);
+    this.sync = step(this.sync, { kind: "delta", version: d.version, reset: false });
+    this.notify();
+  }
+
+  private applyData(d: ObsDelta) {
+    if (d.env) this.env = d.env;
     if (d.stats) this.stats = d.stats;
     if (d.engineRuns) this.runs = d.engineRuns;
     if (d.requests) this.requests = d.requests;
@@ -383,13 +437,12 @@ class ObsStore {
     for (const o of d.opportunities ?? []) this.opps.set(o.id, o);
     for (const id of d.removedOpportunities ?? []) this.opps.delete(id);
     if (d.feed?.length) {
-      this.feed = [...this.feed, ...d.feed].slice(-400);
-      this.pulses.push(...d.feed);
+      const merged = appendNew(this.feed, d.feed.filter(x => Number.isInteger(x.seq)));
+      this.pulses.push(...merged.slice(this.feed.length));
+      this.feed = merged.slice(-400);
       if (this.pulses.length > 200) this.pulses = this.pulses.slice(-200);
     }
     if (graph) this.graphTick++;
-    this.version = d.version;
-    this.notify();
   }
 
   /**
@@ -399,10 +452,11 @@ class ObsStore {
   async connect() {
     const gen = ++this.wsGen;
     this.ws?.close();
+    if (this.connected) { this.connected = false; this.notify(); }
     const t = await this.fetch<{ ticket: string }>("/api/ws-ticket", {});
     if (gen !== this.wsGen) return;
     if (!t.data) {
-      if (t.status !== 401 && t.status !== 403) setTimeout(() => { if (gen === this.wsGen && !this.authNeeded) this.connect(); }, 3000);
+      if (t.status !== 401 && t.status !== 403) setTimeout(() => { if (gen === this.wsGen && !this.authNeeded) { this.connect(); this.load(); } }, 3000);
       return;
     }
     const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -461,7 +515,8 @@ class ObsStore {
   held(queue: HeldQueue) { return this.fetch<{ ok: boolean; items?: HeldText[]; code?: string; error?: string }>(`/api/held?queue=${queue}`); }
   async heldPhoto(id:string,reason:string):Promise<{blob?:Blob;error?:string}>{
     try{
-      const r=await this.api(`/api/held/${encodeURIComponent(id)}/photo`,{headers:{"x-network-reason":reason}});
+      // A header value is a byte string: the reason goes percent-encoded (UTF-8), and the server decodes it.
+      const r=await this.api(`/api/held/${encodeURIComponent(id)}/photo`,{headers:{"x-network-reason":encodeURIComponent(reason)}});
       if(!r.ok)return {error:"The selected photo could not load. Try again or reject it."};
       const blob=await r.blob();
       return ["image/jpeg","image/png","image/webp"].includes(blob.type)&&blob.size>0?{blob}:{error:"The selected photo could not be verified. You can still reject it."};
@@ -507,7 +562,6 @@ class ObsStore {
     if (changed) {
       this.ui = { ...this.ui, picks: [], focus: null };
       this.focusHistory = [];
-      this.opps = new Map(); this.members = new Map(); this.edges = new Map(); this.feed = []; this.version = 0;
       this.connect();
       this.load();
     }
@@ -526,32 +580,55 @@ class ObsStore {
   // -------------------------------------------------------------- roles and PII reveal
   /** The caller holds one of these roles; admin passes every check (server rule). False until /api/me answers. */
   can(...roles: StaffRole[]): boolean {
-    const g = this.me?.grants?.filter(x => (x.app === "*" || x.app === this.app) && x.role !== "cross_app_safety" && !(x.role === "engineer" && this.mode === "real")).map(x => x.role) ?? this.me?.roles;
-    return !!g && (g.includes("admin") || roles.some(x => g.includes(x)));
+    if (!this.me) return false;
+    const g = clientRoles(this.me.grants ?? (this.me.roles ?? []).map(role => ({ role, app: "*" })), this.app, this.mode === "real");
+    return g.includes("admin") || roles.some(x => g.includes(x));
   }
   /** The roles held for the current app (the top bar). */
   rolesHere(): string[] {
     return [...new Set(this.me?.grants?.filter(x => x.app === "*" || x.app === this.app).map(x => x.role) ?? this.me?.roles ?? [])];
   }
   isAdmin() { return this.can(); }
+  /** The caller holds one of these roles, or admin, on every app ("*"): the service's cross-app safety rule. */
+  canEverywhere(...roles: StaffRole[]): boolean {
+    const g = this.me?.grants ?? this.me?.roles.map(role => ({ role, app: "*" })) ?? [];
+    return g.some(x => x.app === "*" && (x.role === "admin" || roles.includes(x.role)));
+  }
   /** Game controls (play, step, propose, take over, god): the simulation lab is for reviewers and safety staff. */
   canSim() { return this.can("reviewer", "safety", "engineer"); }
   realOnly() { return !!(this.me?.realOnly || this.env?.realOnly); }
   async loadReveals() {
+    const app = this.app, gen = this.revealGen;
     const r = await this.fetch<RevealGrant[]>("/api/reveal");
-    this.reveals = r.data ?? [];
+    if (app !== this.app) return;
+    // A failed answer, or an answer older than a reveal or end answer, keeps the current list (B10).
+    // An old answer that came starts a new read: the list of the server can have grants of other members.
+    const ok = Array.isArray(r.data);
+    if (revealReread(this.revealGen, gen, ok)) { this.loadReveals(); return; }
+    if (!revealMerge(this.revealGen, gen, ok)) return;
+    this.reveals = r.data as RevealGrant[];
     this.notify();
   }
   revealFor(memberId: string): RevealGrant | undefined { return this.reveals.find(g => g.memberId === memberId && g.until > Date.now()); }
-  /** End a reveal before its time (audited). */
+  /** End a reveal before its time (audited). The grant leaves the screen only when the server has none (200 or 404). */
   async unreveal(memberId: string): Promise<void> {
-    try { await this.api(`/api/reveal?memberId=${encodeURIComponent(memberId)}`, { method: "DELETE" }); } catch { /* the 401 prompt shows */ }
+    let r: Response | undefined;
+    try { r = await this.api(`/api/reveal?memberId=${encodeURIComponent(memberId)}`, { method: "DELETE" }); }
+    catch (e) { if (!(e instanceof AuthError)) this.toast((e as Error).message, "bad"); }
+    this.revealGen++;
+    if (unrevealStep({ server: true, badge: true }, r?.status ?? 0).badge) {
+      // The server may still serve it: the badge stays, and the error shows (SD-247).
+      if (r) this.toast(((await r.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${r.status}`, "bad");
+      return;
+    }
     this.reveals = this.reveals.filter(g => g.memberId !== memberId);
     this.notify();
   }
   async reveal(memberId: string, reason: string, minutes: number): Promise<boolean> {
     const r = await this.fetch<RevealGrant & { ok: boolean }>("/api/reveal", { memberId, reason, minutes });
-    if (!r.data) { this.toast(r.error, "bad"); return false; }
+    this.revealGen++;
+    // No grant in the answer: the server can still have made it (a lost answer). Read the list again.
+    if (!r.data) { this.toast(r.error, "bad"); this.loadReveals(); return false; }
     this.reveals = [...this.reveals.filter(g => g.memberId !== memberId), r.data];
     this.toast(`Revealed for ${minutes} min · logged`, "info");
     return true;
@@ -669,47 +746,29 @@ class ObsStore {
     const now = this.now(), r = this.ui.filters.range;
     return r === "today" ? nycDayStart(now) : r === "7d" ? now - 7 * DAY : r === "30d" ? now - 30 * DAY : -Infinity;
   }
-  inRange(t: number) { return t >= this.rangeStart(); }
+  inRange(t: number) { return rangeOk(t, false, this.filterView()); }
   rangeLabel() { return RANGES.find(r => r[0] === this.ui.filters.range)?.[1] ?? ""; }
-  inBorough(m: ObsMember) { const b = this.ui.filters.borough; return b === "all" || this.borough(m.area) === b; }
-  matchMemberFilter(m: ObsMember) {
-    switch (this.ui.filters.members) {
-      case "active": return isMemberActive(m);
-      case "watch": return m.trust === "watch";
-      case "hold": return m.trust === "hold";
-      case "minor": return m.minor;
-      case "not_joined": return !m.joined;
-      default: return true;
-    }
-  }
+  inBorough(m: ObsMember) { const b = this.borough(m.area); return boroughOk(b ? [b] : [], this.ui.filters.borough); }
+  matchMemberFilter(m: ObsMember) { return membersOk(memberTags(m), this.ui.filters.members); }
   matchMember(m: ObsMember) { return this.inBorough(m) && this.matchMemberFilter(m); }
+  private filterView(): FilterView { const f = this.ui.filters; return { allTime: f.range === "all", since: this.rangeStart(), borough: f.borough, members: f.members, origin: f.origin, stateGroup: f.stateGroup }; }
+  /** One row for logic/filters.ts. Members resolve only when a member filter is on. */
+  private row(t: number, timeless: boolean, ids: string[], origin: string | undefined, group: string): FilterRow {
+    const f = this.ui.filters;
+    const ms = f.borough !== "all" || f.members !== "all" ? ids.map(id => this.members.get(id)).filter((m): m is ObsMember => !!m) : [];
+    return { t, timeless, boroughs: ms.flatMap(m => this.borough(m.area) ?? []), tags: ms.flatMap(memberTags), origin, group };
+  }
+  private oppRow(o: ObsOpportunity) { return this.row(o.updatedAt, OPEN.has(o.state), o.participants, originOf(o), stateGroupOf(o.state)); }
   /** Global filters on an opportunity. `skip` turns off the filters that do not apply to a panel. */
   matchOpp(o: ObsOpportunity, skip: Partial<Record<FilterKey, boolean>> = {}) {
-    const f = this.ui.filters;
-    if (!skip.range && f.range !== "all" && !OPEN.has(o.state) && !this.inRange(o.updatedAt)) return false;
-    if (!skip.origin && f.origin !== "all" && originOf(o) !== f.origin) return false;
-    if (!skip.stateGroup && f.stateGroup !== "all" && stateGroupOf(o.state) !== f.stateGroup) return false;
-    if ((!skip.borough && f.borough !== "all") || (!skip.members && f.members !== "all")) {
-      const ms = o.participants.map(id => this.members.get(id)).filter((m): m is ObsMember => !!m);
-      if (!skip.borough && f.borough !== "all" && !ms.some(m => this.inBorough(m))) return false;
-      if (!skip.members && f.members !== "all" && !ms.some(m => this.matchMemberFilter(m))) return false;
-    }
-    return true;
+    return passes(ALL_FILTERS.filter(k => !skip[k]), this.oppRow(o), this.filterView());
   }
+  /** The filters of the Feed tab, or of the Safety tab while it is open. Only these two tabs show feed items. */
   matchFeed(x: ObsFeedItem) {
-    const f = this.ui.filters;
-    if (!this.inRange(x.t)) return false;
-    if (f.borough !== "all" || f.members !== "all") {
-      const ms = (x.members ?? []).map(id => this.members.get(id)).filter((m): m is ObsMember => !!m);
-      if (f.borough !== "all" && !ms.some(m => this.inBorough(m))) return false;
-      if (f.members !== "all" && !ms.some(m => this.matchMemberFilter(m))) return false;
-    }
-    if (f.origin !== "all") {
-      const o = x.opportunityId ? this.opps.get(x.opportunityId) : undefined;
-      if (!o || originOf(o) !== f.origin) return false;
-    }
-    return true;
+    const o = x.opportunityId ? this.opps.get(x.opportunityId) : undefined;
+    return visible(this.ui.drawer === "safety" ? "safety" : "feed", this.row(x.t, false, x.members ?? [], o && originOf(o), ""), this.filterView());
   }
+  private matchReview(o: ObsOpportunity) { return visible("review", this.oppRow(o), this.filterView()); }
 
   // -------------------------------------------------------------- focus predicates
   focusOpp(o: ObsOpportunity) {
@@ -764,13 +823,13 @@ class ObsStore {
   reviewPending(): Opp[] {
     const oppFocus = this.ui.focus?.kind === "opportunity";
     return [...this.opps.values()]
-      .filter(o => o.state === "IN_REVIEW" && this.matchOpp(o, { range: true, stateGroup: true }) && (oppFocus || this.focusOpp(o)))
+      .filter(o => o.state === "IN_REVIEW" && this.matchReview(o) && (oppFocus || this.focusOpp(o)))
       .sort((a, b) => (a.review?.deadline ?? Infinity) - (b.review?.deadline ?? Infinity));
   }
-  /** Review decisions (approve, reject, expired) in the range, newest first. */
+  /** Review decisions (approve, reject, expired), newest first (filters: borough, members, origin). */
   reviewDecided(): Opp[] {
     return [...this.opps.values()]
-      .filter(o => o.review?.decision && this.inRange(o.review.decidedAt ?? o.updatedAt) && this.matchOpp(o, { range: true, stateGroup: true }) && this.focusOpp(o))
+      .filter(o => o.review?.decision && this.matchReview(o) && this.focusOpp(o))
       .sort((a, b) => (b.review?.decidedAt ?? b.updatedAt) - (a.review?.decidedAt ?? a.updatedAt));
   }
   /** Game: the tab shows when a person reviews. Real: when items exist. */

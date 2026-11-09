@@ -30,6 +30,7 @@ export type ScenarioActionSpec =
   | { at: At; do: "go_silent"; persona: string }
   | { at: At; do: "force_flake"; persona: string; how?: "notice" | "no_show" }
   | { at: At; do: "say"; persona: string; text: string }
+  | { at: At; do: "block"; persona: string; other: string }
   | { at: At; do: "opt_out"; persona: string }
   | { at: At; do: "propose"; kind: OpportunityKind; participants: string[]; objective: string; city: City; explanation?: string; alternates?: string[] };
 
@@ -158,7 +159,8 @@ export function scenarioWorldOptions(s: Scenario, o: ScenarioRunOptions): WorldO
 
 function getPath(obj: unknown, path: string): number {
   const v = path.split(".").reduce<any>((o, k) => (o == null ? undefined : o[k]), obj);
-  return typeof v === "number" ? v : v == null ? 0 : Number(v);
+  // A rule never violated has no byRule entry (0). Any other missing path is a typo: NaN fails every comparison.
+  return typeof v === "number" ? v : v == null ? (path.startsWith("invariants.byRule.") ? 0 : NaN) : Number(v);
 }
 
 /** Grade a finished run against expectations, using only the final run log and metrics. */

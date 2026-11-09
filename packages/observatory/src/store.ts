@@ -86,6 +86,17 @@ export class Store {
     return true;
   }
 
+  /**
+   * Make the edges exactly `list` (a source that reads them all again). A removed edge has no delta
+   * field: the next delta tells clients to read the full state again.
+   */
+  setEdges(list: ObsEdge[]) {
+    const next = new Map(list.map(e => [e.id, e]));
+    for (const id of this.edges.keys()) if (!next.has(id)) { this.edges.delete(id); this.dirtyEdges.delete(id); this.edgesRemoved = true; }
+    for (const [id, e] of next) if (JSON.stringify(this.edges.get(id)) !== JSON.stringify(e)) { this.edges.set(id, e); this.dirtyEdges.add(id); }
+  }
+  private edgesRemoved = false;
+
   upsertOpp(o: ObsOpportunity) { this.opps.set(o.id, o); this.dirtyOpps.add(o.id); this.removedOpps.delete(o.id); }
   removeOpp(id: string) { if (this.opps.delete(id)) { this.dirtyOpps.delete(id); this.removedOpps.add(id); } }
   touchOpp(id: string) { if (this.opps.has(id)) this.dirtyOpps.add(id); }
@@ -153,7 +164,7 @@ export class Store {
   }
 
   hasChanges() {
-    return this.dirtyMembers.size + this.dirtyEdges.size + this.dirtyOpps.size + this.removedOpps.size + this.newFeed.length > 0 || this.runsDirty || this.envDirty || this.requestsDirty || this.healthDirty;
+    return this.dirtyMembers.size + this.dirtyEdges.size + this.dirtyOpps.size + this.removedOpps.size + this.newFeed.length > 0 || this.edgesRemoved || this.runsDirty || this.envDirty || this.requestsDirty || this.healthDirty;
   }
 
   /** Everything that changed since the last call (and bump the version). */
@@ -162,6 +173,7 @@ export class Store {
     if (changed) this.version++;
     const d: ObsDelta = { version: this.version, clock: this.clock, game };
     if (this.envDirty) d.env = this.env;
+    if (this.edgesRemoved) d.reset = true;
     if (this.dirtyMembers.size) d.members = [...this.dirtyMembers].map(id => this.members.get(id)!).filter(Boolean);
     if (this.dirtyEdges.size) d.edges = [...this.dirtyEdges].map(id => this.edges.get(id)!).filter(Boolean);
     if (this.dirtyOpps.size) d.opportunities = [...this.dirtyOpps].map(id => this.opps.get(id)!).filter(Boolean).map(o => withAge(o, this.clock.now));
@@ -171,7 +183,7 @@ export class Store {
     if (this.requestsDirty) d.requests = this.requests;
     if (changed) d.stats = this.stats();
     this.dirtyMembers.clear(); this.dirtyEdges.clear(); this.dirtyOpps.clear(); this.removedOpps.clear(); this.newFeed = [];
-    this.runsDirty = false; this.envDirty = false; this.requestsDirty = false; this.healthDirty = false;
+    this.edgesRemoved = false; this.runsDirty = false; this.envDirty = false; this.requestsDirty = false; this.healthDirty = false;
     return d;
   }
 }
