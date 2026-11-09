@@ -12,6 +12,9 @@ describe("reports classification and post-date checkInReport", () => {
       "threatened me with physical violence",
       "he attacked me on the walk",
       "there was a dangerous weapon",
+      "he shoved me outside",
+      "he beat me up in the alley",
+      "he physically beat me",
     ];
 
     for (const phrase of unsafePhrases) {
@@ -22,14 +25,16 @@ describe("reports classification and post-date checkInReport", () => {
     }
   });
 
-  test("classifies named subjects and noun targets in minor reports", () => {
+  test("classifies explicit person subjects and noun targets in minor reports", () => {
     const minorPhrases = [
       "that girl was only 15",
       "the guy was 16",
       "this person is 14",
       "she was 16yo",
       "he was 15 yo",
-      "Alice was 16",
+      "my date was 16 years old",
+      "underage member",
+      "a minor joined",
     ];
 
     for (const phrase of minorPhrases) {
@@ -40,8 +45,30 @@ describe("reports classification and post-date checkInReport", () => {
     }
   });
 
-  test("negative lookaheads in minor do not falsely flag durations, distances, or ages relative to user", () => {
-    const falsePositives = [
+  test("does not falsely flag benign figurative idioms or non-violent text as unsafe", () => {
+    const benignIdioms = [
+      "she beat me at chess",
+      "he beat me at ping pong",
+      "it hit me later that we want different things",
+      "he hit me up the next day",
+      "she struck me as kind",
+      "she struck me as very smart",
+    ];
+
+    for (const phrase of benignIdioms) {
+      expect(reportKindOf(phrase)).not.toBe("unsafe");
+      expect(checkInReport(phrase)).toBeUndefined();
+    }
+  });
+
+  test("does not falsely flag dates, groups, ratings, or weather as minor reports", () => {
+    const benignConversations = [
+      "there were 6 of us at the table",
+      "we were 4 people",
+      "dinner was 10/10",
+      "it was 9 when we left",
+      "ran into 2 old friends",
+      "March was 12 degrees",
       "he was 15 minutes late",
       "she was 10 mins late",
       "waited 15 hours",
@@ -49,7 +76,7 @@ describe("reports classification and post-date checkInReport", () => {
       "he was 5 years in the army",
     ];
 
-    for (const phrase of falsePositives) {
+    for (const phrase of benignConversations) {
       expect(reportKindOf(phrase)).not.toBe("minor");
       expect(checkInReport(phrase)).toBeUndefined();
     }
@@ -72,6 +99,19 @@ describe("reports classification and post-date checkInReport", () => {
     }
   });
 
+  test("does not falsely flag benign payment methods as scam reports", () => {
+    const benignPayments = [
+      "we split dinner on apple pay",
+      "paid with apple pay",
+      "split the tab via apple pay",
+    ];
+
+    for (const phrase of benignPayments) {
+      expect(reportKindOf(phrase)).not.toBe("scam");
+      expect(checkInReport(phrase)).toBeUndefined();
+    }
+  });
+
   test("classifies no-show variations in checkInReport without requiring explicit report keyword", () => {
     const noShowPhrases = [
       "never showed up at the cafe",
@@ -86,6 +126,18 @@ describe("reports classification and post-date checkInReport", () => {
       const kind = reportKindOf(phrase);
       expect(kind).toBe("no_show");
       expect(checkInReport(phrase)).toBe("no_show");
+    }
+  });
+
+  test("does not falsely flag third-party transit delays as no-show", () => {
+    const transitDelays = [
+      "my train didn't arrive until 8",
+      "the bus didn't arrive on time",
+    ];
+
+    for (const phrase of transitDelays) {
+      expect(reportKindOf(phrase)).not.toBe("no_show");
+      expect(checkInReport(phrase)).toBeUndefined();
     }
   });
 
