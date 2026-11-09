@@ -1,4 +1,4 @@
-# Complete member history in Observatory
+# Complete member and opportunity histories in Observatory
 
 Date: 2026-11-10 (Asia/Tokyo).
 Base: `a0ed7bc6495d9e524afc3d500738212a28dc7bc2`, current main.
@@ -10,13 +10,15 @@ Runtime: Windows, Bun 1.4.2, PostgreSQL 16.15.
 This is a reproduced defect under the approved Slop scope and CONTRIBUTING 3.1.
 PRD 28.5 requires the console to show a member's full experience.
 `docs/admin-console.md` 3.4 requires every inbound and outbound message, in order, with the intervening system actions.
+Section 3.5 requires the opportunity panel's full event history.
 
 RealSource sorted messages oldest first, then stopped at 2,000.
-Its timeline also stopped at 5,000 matching event rows.
-New records silently disappeared from the member detail and timeline once either limit was reached.
+Its member timeline also stopped at 5,000 matching event rows.
+Opportunity detail independently stopped at 2,000 events, hiding later actions from that panel.
+New records silently disappeared from these detail views after the applicable limit.
 The endpoints offered no cursor or continuation link.
 
-Remove the limits from both message queries and the timeline event query.
+Remove the limits from both message queries, the member timeline event query, and the opportunity event query.
 Keep the existing sort, member and app filters, event subject checks, read-only connection, and 20-second database statement timeout.
 Inbound bodies remain absent from the SQL result until reveal.
 The existing API continues to return arrays of messages and timeline entries.
@@ -28,8 +30,9 @@ Alternatives considered:
 3. Add cursor pagination across API and UI. That is a larger interface change than this bounded defect needs.
 
 There is no UI markup, style, copy, database schema, matching, send, or model change.
-Responses now grow with the member's history. Very large histories can require substantial memory or exceed the existing statement timeout.
-This measurement checks up to 2,407 messages and 5,037 events per member, not production-scale load.
+Responses now grow with the member's or opportunity's history. Very large histories can require substantial memory or exceed the existing statement timeout.
+This measurement checks up to 2,407 messages and 5,037 events per member, plus 2,407 events per opportunity.
+It is not a production-scale load benchmark.
 
 ## Paired PostgreSQL and HTTP measurement
 
@@ -72,26 +75,55 @@ Sample size: six fixed histories, two endpoints, three reveal phases, plus the c
 Seed: N/A; deterministic SQL fixtures, with reverse insertion order and tied timestamps.
 This is an exact data-completeness comparison, not a sampled quality estimate. No confidence interval is applicable.
 
+## Paired opportunity-history measurement
+
+A second real PostgreSQL and HTTP fixture covers six opportunities with 0, 1, 1,999, 2,000, 2,001, and 2,407 events.
+Each has inbound and outbound messages and one adult participant.
+Events are inserted in reverse order, with tied timestamps.
+Decoy rows share the opportunity identifier in another app, share it with a different object type, or name another opportunity.
+
+| Stored events | Before | After |
+|---:|---:|---:|
+| 0 | 0 | 0 |
+| 1 | 1 | 1 |
+| 1,999 | 1,999 | 1,999 |
+| 2,000 | 2,000 | 2,000 |
+| 2,001 | 2,000 | 2,001 |
+| 2,407 | 2,000 | 2,407 |
+
+Each opportunity is read before, during, and after a member reveal. The table applies to all three phases.
+Six responses improve; 15 controls remain exactly identical. The two affected histories regain 408 distinct events.
+The comparator checks every event's timestamp, type, subject, order, and all previously returned event fields.
+All other opportunity fields, member records, and messages remain identical, without normalization.
+The opportunity endpoint's existing behavior keeps inbound bodies hidden throughout these per-member reveal changes.
+Unauthenticated access stays 401; missing and wrong-app opportunities stay 404. All decoy events remain excluded.
+There are 21 GET requests and 12 successful reveal/revoke requests per revision.
+
+Combined with the member fixture, the fresh measurements contain 75 GET requests and 24 reveal/revoke requests per revision.
+Eighteen responses improve, 57 controls remain unchanged, and 408 messages plus 446 events are restored.
+Counts of restored rows exclude repeated reads of the same history.
+
 ## Regression and required validation
 
-One new integration case uses real PostgreSQL and the actual HTTP server.
-It stores 2,001 messages, 5,001 events, another member, and another app.
-It checks completeness, chronological order, event subjects, body hiding, reveal, and revocation.
+One integration case uses real PostgreSQL and the actual HTTP server.
+It stores 2,001 messages, 5,001 member events, and 2,001 events for that member's opportunity.
+It checks all three endpoints, chronological order, event subjects, body hiding, reveal, revocation, another member, and another app.
+Decoys also verify that opportunity events must have the correct object type and identifier.
+The existing case was expanded; this PR still adds only one integration case.
 
 ```text
 bun test --conditions eliza-source packages/observatory/test/member-history.integration.test.ts
-Base code: 0 pass, 1 fail; 1 assertion; 3.90 seconds.
-Expected [2001, 2001, 5001]; received [2000, 2000, 5000].
-Fixed code: 1 pass, 0 fail; 24 assertions; 3.31 seconds.
+Previous PR head ce63fa059568cc575bd504d00f10c1a37e1d34d2: 0 pass, 1 fail; 1 assertion; case 3232.72 ms.
+Expected [2001, 2001, 7002, 2001]; received [2001, 2001, 7002, 2000].
+Fixed: 1 pass, 0 fail; 36 assertions; case 3219.29 ms.
 ```
 
-Fresh affected-block validation used the same command on base and candidate:
+The four counts are member messages, timeline messages, timeline events, and opportunity events.
+The previous PR head already fixed the member endpoints; this reproduction isolates its remaining opportunity truncation.
+Both paired measurement programs also ran afresh on original main and the final candidate.
 
-```text
-bun run sim --only audit,ops --json <result.json>
-Base: 30/30 blocking gates, 1 tracked gate passed; 28.3 seconds.
-Candidate: 30/30 blocking gates, 1 tracked gate passed; 27.5 seconds.
-```
+Fresh affected-block runs used `bun run sim --only audit,ops` on original main and the final candidate.
+Both passed 30/30 blocking gates and one tracked gate. Base: 29.3s; candidate: 29.2s.
 
 All 31 gate records match after excluding gate elapsed time and the backup restore duration in its display name.
 No threshold, classification, result, or other detail changes. PostgreSQL gates ran without skips.
@@ -102,10 +134,10 @@ Fresh validation on the final code:
 
 - Frozen install: 50 installs checked across 44 packages, unchanged.
 - Typecheck: all four configurations passed.
-- Integration, including security: 676 pass, 8 skip, 6 known failures; 13,765 assertions.
-- The new regression passed inside the official integration command in 2352.26 ms.
+- Integration, including security: 676 pass, 8 skip, 6 known failures; 13,777 assertions.
+- The new regression passed inside the official integration command in 2356.53 ms.
 - End-to-end: 42 pass, 1 skip, 0 fail; 654 assertions.
-- Integration: 690 tests across 69 files, 438.11s. End-to-end: 43 tests across 3 files, 34.37s.
+- Integration: 690 tests across 69 files, 456.81s. End-to-end: 43 tests across 3 files, 38.05s.
 
 Integration skips (including the two distinct unnamed cases):
 
@@ -127,13 +159,11 @@ one missing `/bin/bash`, one SIGTERM exit 143 versus 0, and four site-build path
 The validator compares all six failure names and their causes with the saved clean-base result.
 A fully green integration suite is not claimed.
 
-## Attempts, safety and limits
+## Safety and limits
 
-The first fixture attempt reused a member ID across apps. PostgreSQL correctly rejected the duplicate primary key.
-The corrected fixture uses globally unique member IDs, matching the schema. No product change addressed that fixture mistake.
-The first comparison included audit wall times and failed on those timestamps.
-The final comparator applies the narrow normalizations described above to the same captured responses.
-There was one production change: removing the three history limits.
+Fixture member IDs are globally unique, matching the database schema.
+The member comparator normalizes only the documented audit wall times. The opportunity comparator needs no normalization.
+The production change removes four history query limits.
 
 Only synthetic data and local PostgreSQL were used. No live sends or deploy flags were enabled.
 The database was stopped after validation, with no client connections remaining.
@@ -157,7 +187,9 @@ The assistant's exact model ID was not exposed; the attribution helper's support
 6. Save the comparator below as `../member-history-compare.ts`.
 7. From the fixed checkout, run `bun run --conditions eliza-source ../member-history-compare.ts ../before.json ../after.json`.
 8. Expect 12 improved responses, 42 unchanged responses, 408 restored messages, and 38 restored events.
-9. Run the regression command above. Expect one passing case with 24 assertions.
+9. Save and run `opportunity-history-measure.ts` from each checkout with separate output paths.
+10. Compare those files with `opportunity-history-compare.ts` from the fixed checkout. Expect six improved responses, 15 unchanged responses, and 408 restored events.
+11. Run the regression command above. Expect one passing case with 36 assertions.
 
 Use disposable local test data. Leave live-send and deployment flags unset.
 The programs create and drop their own process-specific test databases through the repository helper.
@@ -312,6 +344,114 @@ assert.deepEqual([summary.improvedResponses, summary.unchangedResponses, summary
 console.log(JSON.stringify(summary, null, 2));
 ```
 
+### opportunity-history-measure.ts
+
+```ts
+import { SQL } from "bun";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve, sep } from "node:path";
+const root = process.cwd();
+const { testDb, dropTestDb } = await import(join(root, "packages/observatory/test/pg.ts"));
+const { createServer } = await import(join(root, "packages/observatory/src/server.ts"));
+const url = await testDb(), sql = new SQL(url);
+const token = "synthetic-opportunity-history-admin".padEnd(40, "x");
+const dir = await mkdtemp(join(tmpdir(), "obs-opportunity-history-"));
+const start = new Date("2026-01-01T12:00:00.000Z"), counts = [0, 1, 1999, 2000, 2001, 2407];
+let obs: Awaited<ReturnType<typeof createServer>> | undefined;
+const result: any = { cases: [], controls: [] };
+try {
+  for (let k = 0; k < counts.length; k++) {
+    const id = `opp-history-${k}`, member = `opp-member-${k}`;
+    await sql`insert into network.members (app_id, id, name, home_city, age, joined_at)
+      values ('ntwrk', ${member}, 'Synthetic Member', 'nyc', 30, ${start})`;
+    await sql`insert into network.opportunities (app_id, id, kind, state, city, objective, created_at, updated_at)
+      values ('ntwrk', ${id}, 'pair', 'PROPOSED', 'nyc', 'Synthetic history', ${start}, ${start})`;
+    await sql`insert into network.participations (app_id, opportunity_id, member_id, status) values ('ntwrk', ${id}, ${member}, 'proposed')`;
+    await sql`insert into network.messages (app_id, id, member_id, direction, body, ts, opportunity_id) values
+      ('ntwrk', ${id} || '-in', ${member}, 'inbound', 'Synthetic private reply', ${start}, ${id}),
+      ('ntwrk', ${id} || '-out', ${member}, 'outbound', 'Synthetic outgoing message', ${start}, ${id})`;
+    await sql`insert into network.events (app_id, at, actor_type, actor_id, type, object_type, object_id, payload)
+      select 'ntwrk', ${start}::timestamptz + (i / 2) * interval '1 second', 'agent', null, 'probe_sent', 'opportunity', ${id},
+        jsonb_build_object('memberId', ${member}::text) from generate_series(1, ${counts[k]}::int) i order by i desc`;
+    // These share the identifier or app but are not events for the requested opportunity.
+    await sql`insert into network.events (app_id, at, actor_type, actor_id, type, object_type, object_id) values
+      ('ntwrk', ${start}, 'agent', null, 'checkin_sent', 'member', ${id}),
+      ('ntwrk', ${start}, 'agent', null, 'probe_sent', 'opportunity', ${id} || '-other'),
+      ('slop', ${start}, 'agent', null, 'probe_sent', 'opportunity', ${id})`;
+  }
+  obs = await createServer({ port: 0, development: false, mode: "real", token,
+    staffRolesUrl: false, peopleUrl: false, audit: { dir: join(dir, "audit") }, lab: { dir: join(dir, "lab") },
+    real: { url, service: false, pollMs: 3_600_000, pushMs: 3_600_000 } });
+  const req = async (path: string, method = "GET", body?: object, auth = true) => {
+    const r = await fetch(new URL(path, obs!.server.url), { method,
+      headers: { ...(auth ? { Authorization: `Bearer ${token}` } : {}), "Content-Type": "application/json" },
+      ...(body ? { body: JSON.stringify(body) } : {}) });
+    return { status: r.status, body: await r.json() };
+  };
+  for (let k = 0; k < counts.length; k++) {
+    const id = `opp-history-${k}`, member = `opp-member-${k}`;
+    const hidden = await req(`/api/opportunity/${id}`);
+    const grant = await req("/api/reveal", "POST", { memberId: member, reason: "Synthetic opportunity history verification" });
+    if (grant.status !== 200) throw new Error(JSON.stringify(grant));
+    const revealed = await req(`/api/opportunity/${id}`);
+    const revoke = await req(`/api/reveal?memberId=${member}`, "DELETE");
+    if (revoke.status !== 200) throw new Error(JSON.stringify(revoke));
+    const revoked = await req(`/api/opportunity/${id}`);
+    for (const r of [hidden, revealed, revoked]) if (r.status !== 200) throw new Error(JSON.stringify(r));
+    result.cases.push({ id, member, expected: counts[k], hidden, revealed, revoked });
+    console.log(JSON.stringify({ id, expected: counts[k], counts: [hidden, revealed, revoked].map(r => r.body.events.length) }));
+  }
+  result.controls.push(await req("/api/opportunity/opp-history-5", "GET", undefined, false));
+  result.controls.push(await req("/api/opportunity/missing"));
+  result.controls.push(await req("/api/opportunity/opp-history-5?app=slop"));
+  await Bun.write(process.argv[2]!, JSON.stringify(result));
+} finally {
+  await obs?.stop(); await sql.close(); await dropTestDb();
+  const target = resolve(dir), parent = resolve(tmpdir());
+  if (!target.startsWith(parent + sep) || !target.slice(parent.length + 1).startsWith("obs-opportunity-history-")) throw new Error("Unsafe cleanup path");
+  await rm(target, { recursive: true, force: true });
+}
+```
+
+### opportunity-history-compare.ts
+
+```ts
+import assert from "node:assert/strict";
+const before = await Bun.file(process.argv[2]!).json(), after = await Bun.file(process.argv[3]!).json();
+const { HIDDEN_MESSAGE } = await import(`${process.cwd().replaceAll("\\", "/")}/packages/observatory/src/sources/real.ts`);
+let improved = 0, unchanged = 0, restoredEvents = 0;
+const cases = [];
+assert.equal(before.cases.length, 6); assert.equal(after.cases.length, 6);
+for (let k = 0; k < after.cases.length; k++) {
+  const b = before.cases[k], a = after.cases[k];
+  assert.deepEqual([a.id, a.member, a.expected], [b.id, b.member, b.expected]);
+  restoredEvents += a.expected - b.hidden.body.events.length;
+  for (const phase of ["hidden", "revealed", "revoked"]) {
+    const bv = b[phase], av = a[phase];
+    assert.equal(av.status, 200); assert.equal(bv.status, 200);
+    const be = bv.body.events, ae = av.body.events;
+    assert.equal(be.length, Math.min(2000, a.expected));
+    assert.equal(ae.length, a.expected);
+    assert.deepEqual(ae.slice(0, be.length), be);
+    assert.deepEqual({ ...av.body, events: [] }, { ...bv.body, events: [] });
+    assert(ae.every((e: any, i: number) => e.opportunityId === a.id && e.memberId === a.member && e.type === "probe_sent"
+      && e.t === Date.parse("2026-01-01T12:00:00Z") + Math.floor((i + 1) / 2) * 1000));
+    assert.deepEqual(av.body.messages.map((m: any) => [m.id, m.body, m.hiddenLength]), [
+      [`${a.id}-in`, HIDDEN_MESSAGE, "Synthetic private reply".length], [`${a.id}-out`, "Synthetic outgoing message", undefined],
+    ]);
+    if (ae.length === be.length) { assert.deepEqual(av, bv); unchanged++; } else improved++;
+  }
+  assert.deepEqual(a.hidden, a.revealed); assert.deepEqual(a.hidden, a.revoked);
+  cases.push({ id: a.id, before: b.hidden.body.events.length, after: a.hidden.body.events.length });
+}
+assert.deepEqual(after.controls, before.controls);
+assert.deepEqual(after.controls.map((r: any) => r.status), [401, 404, 404]);
+unchanged += after.controls.length;
+assert.deepEqual([improved, unchanged, restoredEvents], [6, 15, 408]);
+console.log(JSON.stringify({ cases, improvedResponses: improved, unchangedResponses: unchanged, restoredEvents }, null, 2));
+```
+
 ### member-history-gates-compare.ts
 
 ```ts
@@ -331,7 +471,9 @@ console.log(JSON.stringify({ gates: 31, blocking: 30, tracked: 1, failed: 0, unc
 
 Only aggregate hashes are published; the capture files remain local.
 
-- member-history-before.json: `4ba8edcae01903e89d2336abc57cba7f45efcf1307f19106b1bd0eeb4751942e`
-- member-history-after.json: `597ceb7af89bd3a25d95d3575547b6f4865f221df8ed525fb40e8668f061ec8b`
-- member-history-gates-before.json: `5f89fc70a656b4ddea3f7c46b5b7e5df358ad23e6fffd0066d942acd04307f0a`
-- member-history-gates-after.json: `698b6833a05230af5bfdbe9558671c6e2b5474299231d175c2529359f2ec1f89`
+- detail-member-before.json: `4f6b82c6a018e1dd7f3978cc59091e3a1d183f530233d4f73f87e15f03b61a61`
+- detail-member-after.json: `dd7c0cc00b3341d79f07c3c232247ff9e258f2448cdac2393ceebc40deed0dc2`
+- opportunity-history-before.json: `e0420334d35b7946d7955ac1b41e645044e31abb14404480821eb2dc1be92a99`
+- opportunity-history-after.json: `4923f1a9147ef97d71440db18168fb45376beda52fd9cfcef67137336fa94786`
+- detail-history-gates-before.json: `d4e36efbf7b7f6ea397a73f04ded99cc3b7b1ac7b110ab2bb584319fa2cf7c1e`
+- detail-history-gates-after.json: `0a347ff47bcc308d78edffd431314b8a26c8a80eec563c82476c1e8ea0582c3e`

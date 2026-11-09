@@ -703,7 +703,7 @@ export class RealSource implements DataSource {
       : await sql`select id, member_id, ts, direction, case when direction = 'inbound' then null else body end as body, length(body)::int as body_len, status, type, opportunity_id, proactive, system
                   from network.messages where app_id = ${this.app} and opportunity_id = ${id} order by ts, id`;
     const events = !sql ? [] : await sql`select id, at, actor_type, actor_id, type, object_type, object_id, payload from network.events
-      where app_id = ${this.app} and object_type = 'opportunity' and object_id = ${id} order by at, id limit 2000`;
+      where app_id = ${this.app} and object_type = 'opportunity' and object_id = ${id} order by at, id`;
     const name = (x: string) => this.store.member(x)?.name ?? x;
     return {
       opportunity: o, members: o.participants.map(x => this.store.member(x)!).filter(Boolean),
