@@ -51,6 +51,7 @@ const DAYS3 = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
  */
 export function statedWindows(tags: readonly string[], now: number, tz = NY): plans.StatedWindows | undefined {
   const lp = localParts(now, tz);
+  const until = now + 7 * DAY;
   const windows: { start: number; end: number }[] = [];
   for (let k = 0; k <= 7; k++) {
     const d = new Date(Date.UTC(lp.year, lp.month - 1, lp.day + k));
@@ -61,10 +62,13 @@ export function statedWindows(tags: readonly string[], now: number, tz = NY): pl
       if (!h || dd !== day) continue;
       const start = fromLocal(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), h[0], tz);
       const end = fromLocal(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), h[1], tz);
-      if (end > now) windows.push({ start: Math.max(start, now), end });
+      // The loop walks 8 calendar days so a part that has already passed today still gets next
+      // week's same-weekday window, but a window must not begin after the stated horizon (`until`):
+      // that would double a same-weekday check-in into this week AND next week.
+      if (end > now && start < until) windows.push({ start: Math.max(start, now), end });
     }
   }
-  return windows.length ? { windows: windows.sort((a, b) => a.start - b.start), at: now, until: now + 7 * DAY } : undefined;
+  return windows.length ? { windows: windows.sort((a, b) => a.start - b.start), at: now, until } : undefined;
 }
 
 /** Activities a member named in a check-in ("into live music"): interest tags -> plan activity ids. */
