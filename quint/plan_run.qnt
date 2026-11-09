@@ -342,6 +342,8 @@ module plan_run {
       val wasAlternate = minor and o.alternates.contains(m)
       val o1 = { ...o, alternates: o.alternates.exclude(Set(m)), excused: o.excused.union(Set(m)) }
       if (wasAlternate and not(o1.participants.contains(m)) and o1.stage != "scheduled") closeF(e, o1, "minors policy")
+      // A minor who was asked and then replaced is still on the roster: the open plan closes (formal-main dropMember).
+      else if (minor and o1.contacted.contains(m) and not(o1.participants.contains(m)) and o1.stage != "scheduled") closeF(e, o1, "minors policy")
       else if (not(o1.participants.contains(m))) o1
       else if (minor and o1.stage != "scheduled") closeF(e, o1, "minors policy")
       else if (o1.stage == "review") closeF(e, o1, "dropped")

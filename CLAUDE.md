@@ -92,7 +92,7 @@ A change to code must add or update both levels in the same PR. Use the same inv
 1. Find the models: the Quint column of the file's row in [docs/formal-coverage.md](docs/formal-coverage.md). `bun run quint:drift` lists every model whose model file or mapped code changed since its last comparison.
 2. Read the model and the code side by side. Compare each state and status value, each transition and its guard, each write, each ordering, retry, lease and cap, each invariant, and each code location comment (`oq:272`). Drift is any place where they disagree. An abstraction that the model header documents (a scaled constant, an oracle, a merged step) is not drift.
 3. If the code is right, fix the model and run `bun run quint:check quint/<model>.qnt`. If the code is wrong, fix the code with a case that fails before the fix. Never change a model only to make it agree with a defect.
-4. Record the comparison: `bun run quint:drift --stamp quint/<model>.qnt`. Add `--drift "<text>"` for a known drift that this PR does not fix, and say it in the PR. A stamp is a claim that you did the comparison. Do not stamp a model you did not compare.
+4. Record the comparison: `bun run quint:drift --stamp quint/<model>.qnt`. Add `--drift "<text>"` for a known drift that this PR does not fix (it replaces the model's list), and say it in the PR. A stamp without `--drift` keeps the known drift; `--clear-drift` empties it when the drift is fixed. A stamp is a claim that you did the comparison. Do not stamp a model you did not compare.
 
 [quint/drift.json](quint/drift.json) keeps a hash of each model and of each file that the ledger maps to it, at the last comparison. The formal block of `bun run sim` (and CI) fails for a model when one of those files changed after its stamp. CI also runs `bun run quint:check`.
 
@@ -127,6 +127,7 @@ bun run sim --with-capital   # adds the network-capital block (32 paired seeds; 
 bun run typecheck
 bun run plugins/build.ts --check
 bun run quint:check          # the Quint state-machine models in quint/ (quint/README.md); --verify adds Apalache
+bun run quint:drift          # the Quint models whose code changed since their last comparison; --stamp quint/<model>.qnt records one
 bun run test:integration     # integration suite incl. the security files (real Postgres on :54339 via dev-pg; docs/tests-policy.md)
 bun run test:e2e             # e2e: the full service and platform through HTTP (tests/e2e; needs Postgres)
 bun run formal               # the LemmaScript proofs and their structure gates (needs Dafny; docs/formal-verification.md)

@@ -2765,6 +2765,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       // Anyone dropped (minor signal, opt-out, hold) leaves every open alternate list.
       o.alternates = o.alternates.filter(x => x !== id);
       if (wasAlternate && !o.participants.includes(id) && o.stage !== "scheduled") { this.close(o, reason); continue; }
+      // A minor who was asked about it and then replaced (a no or silence before the minor signal) is still
+      // on its roster: close it while it is open, as for an alternate.
+      if (minor && o.contacted.has(id) && !o.participants.includes(id) && o.stage !== "scheduled") { this.close(o, reason); continue; }
       if (!o.participants.includes(id)) continue;
       if (minor && o.stage !== "scheduled") this.close(o, reason);
       else if (o.stage === "review") this.close(o, reason);

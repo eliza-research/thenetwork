@@ -360,6 +360,8 @@ module opportunity {
         val wasAlternate = minorReason and x.alts.contains(m)
         val a1 = putO(acc, o, { ...x, alts: x.alts.exclude(Set(m)) })
         if (wasAlternate and not(x.parts.contains(m)) and x.stage != "scheduled") close(a1, o, reason, env)
+        // A minor who was asked and then replaced is still on the roster: the open item closes (formal-main dropMember).
+        else if (minorReason and x.contacted.contains(m) and not(x.parts.contains(m)) and x.stage != "scheduled") close(a1, o, reason, env)
         else if (not(x.parts.contains(m))) a1
         else if (minorReason and x.stage != "scheduled") close(a1, o, reason, env)
         else if (x.stage == "review") close(a1, o, reason, env)
