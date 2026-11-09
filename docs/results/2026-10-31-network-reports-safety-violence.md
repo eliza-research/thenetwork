@@ -42,11 +42,11 @@ When a victim reported physical violence, confinement, or stalking during post-d
 ## Fix
 
 1. `packages/network/src/reports.ts`:
-   - Expanded `KINDS["unsafe"]` to recognize uncontracted detainment (`(?:wouldn'?t|would not|didn'?t|did not|refused to) let me (?:go|leave|out)`), physical battery (`(?:hit|punched|attacked|choked|strangled|slapped|shoved|pushed|cornered|trapped|locked) me`), weapons (`(?:had|pulled|threatened me with) a (?:weapon|knife|gun)`), stalking (`stalk(?:ed|ing)? me`, `a stalker`), and extreme distress (`terrified`, `terrifying`).
+   - Expanded `KINDS["unsafe"]` to recognize uncontracted detainment (`(?:wouldn'?t|would not|didn'?t|did not|refused to) let me (?:go|leave|out)`), physical battery anchored to person subjects (`(?:(?:he|she|they|the (?:guy|girl|dude|person|date|man|woman)|(?:that|this) (?:guy|girl|dude|person|date|man|woman)|my date)\s+(?:hit\s+me(?!\s+up\b)|struck\s+me(?!\s+as\b)|punched\s+me|attacked\s+me|choked\s+me|strangled\s+me|slapped\s+me|shoved\s+me|cornered\s+me|trapped\s+me|locked\s+me|pushed\s+me(?!\s+(?:to|out of|into trying)\b)))`), weapons (`(?:had|pulled|threatened me with) a (?:weapon|knife|gun)`), stalking (`stalk(?:ed|ing)? me`, `a stalker`), and extreme distress (`terrified`). Excludes benign idioms (`"it hit me later..."`, `"she pushed me out of my comfort zone"`, `"watched a terrifying movie"`).
    - Expanded `KINDS["harassment"]` to recognize uncontracted persistence (`(?:wouldn'?t|would not|refused to) stop`), unsolicited images (`unsolicited (?:pics?|photos?|pictures?|nudes?)`, `dick pics?`), and unwanted touch (`(?:unwanted|inappropriate) (?:touch(?:ed|ing)?|physical contact)`).
    - Expanded `KINDS["scam"]` to recognize cash demands (`(?:asked|demanded)(?: me)?(?: for)? (?:money|cash)`), borrowing pitches (`asked to borrow money`, `borrow money`, `lend money`), wire transfers (`wire (?:me|money|funds)`), and PayPal (`paypal`).
    - Expanded `KINDS["lying"]` to recognize uncontracted discrepancies (`(?:didn'?t|did not|doesn'?t|does not) look like (?:their|his|her) (?:photos?|pics?|pictures?)`).
-   - Expanded `KINDS["no_show"]` to recognize uncontracted arrival/absence phrases (`(?:didn'?t|did not) (?:show|come|turn up|arrive)`, `never (?:showed|came|turned up|arrived)`, `stood (?:me|us) up`).
+   - Expanded `KINDS["no_show"]` to recognize uncontracted absence phrases (`(?:didn'?t|did not) (?:show|come|turn up)`, `never (?:showed|came|turned up)`, `stood (?:me|us) up`), and person-anchored arrival negations (`(?:he|she|they|the (?:guy|girl|dude|person|date)|my date|partner)\s+(?:never|didn'?t|did not)\s+arriv(e|ed)`), preventing false positives on transit or food deliveries (`"our food did not arrive on time"`).
 
 2. `scripts/sim/safety.ts`:
    - Added assertions to the `check-in after a date (slop live path)` blocking gate covering detainment, physical violence, weapons, stalking, cash demands, paypal, unsolicited photos, uncontracted photo discrepancies, and uncontracted absence.
@@ -63,7 +63,7 @@ bun run typecheck
 ```
 
 Results:
-- `bun test packages/network/test/reports-safety-violence.test.ts`: 10 pass, 0 fail, 68 assertions (13ms).
+- `bun test packages/network/test/reports-safety-violence.test.ts`: 12 pass, 0 fail, 75 assertions (15ms).
 - `bun run sim --only safety`: 11/11 blocking gates pass (4.4s).
 - `bun run typecheck`: exit 0.
 

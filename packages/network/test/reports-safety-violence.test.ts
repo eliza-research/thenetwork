@@ -101,6 +101,19 @@ describe("safety report classification with uncontracted modals, violence, and d
       expect(checkInReport("nice dinner, we talked about work")).toBeUndefined();
       expect(checkInReport("we had a good coffee")).toBeUndefined();
     });
+
+    test("does not misclassify idioms involving hit me, pushed me, or terrifying as unsafe", () => {
+      expect(checkInReport("it hit me later that we want different things")).toBeUndefined();
+      expect(checkInReport("she pushed me out of my comfort zone")).toBeUndefined();
+      expect(checkInReport("he pushed me to try the spicy ramen")).toBeUndefined();
+      expect(checkInReport("we watched a terrifying horror movie")).toBeUndefined();
+      expect(checkInReport("the rollercoaster was terrifying but fun")).toBeUndefined();
+    });
+
+    test("does not misclassify delayed food or transit as member no-show", () => {
+      expect(checkInReport("our food did not arrive on time")).toBeUndefined();
+      expect(checkInReport("my train didn't arrive until 8")).toBeUndefined();
+    });
   });
 
   describe("urgency classification", () => {
