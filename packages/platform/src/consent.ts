@@ -83,8 +83,18 @@ export function leaveTarget(text: string, apps: Record<AppId, Pick<AppInfo, "id"
   // "leave slop", and the same with stop, quit, cancel, unsubscribe (from) or exit: that app only.
   const m = /^(?:please )?(?:leave|quit|exit|stop|cancel|unsubscribe(?: from| me from)?) (.+)$/.exec(t);
   if (!m) return undefined;
-  const x = m[1]!.replace(/^the /, "").replace(/ please$/, "");
-  return Object.values(apps).find(a => x === a.id || x === a.domain || x === `www.${a.domain}` || x === a.name.toLowerCase().replace(/^the /, ""))?.id;
+  const raw = m[1]!;
+  const definite = raw.startsWith("the ");
+  const x = raw.replace(/^the /, "").replace(/ please$/, "");
+  const exact = Object.values(apps).find(a => x === a.id || x === a.domain || x === `www.${a.domain}` || x === a.name.toLowerCase().replace(/^the /, ""));
+  if (exact) return exact.id;
+  // A person says a domain the way they speak it: "leave slop date" and "leave ntwrk party" leave that
+  // one app, as "leave slop.date" does. Compare letters and digits only, and never after "leave the":
+  // "leave the slop date" is about a date, so it stays a chat message and leaves nothing.
+  if (definite) return undefined;
+  const letters = (s: string) => s.replace(/[^\p{L}\p{N}]/gu, "");
+  const key = letters(x);
+  return Object.values(apps).find(a => letters(a.domain) === key || letters(a.name.toLowerCase()) === key)?.id;
 }
 
 /** The consent event and the reply for a keyword received on an app's line. HELP writes no event. */

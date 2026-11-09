@@ -138,10 +138,12 @@ export async function evalsBlock(b: Block): Promise<void> {
   b.gate(`platform opt-out (n ${optOut.length}, en + es): every opt-out line is a STOP, no other line is`,
     optOut.length >= 80 && optOut.filter(c => c.lang === "es" && c.label === "stop").length >= 15 && wrong.length === 0, wrong.slice(0, 5).join("; "));
   await b.run("platform: leave <app> is that app only; a sentence about stopping is not an opt-out", () => {
-    for (const [t, app] of [["stop slop", "slop"], ["quit slop", "slop"], ["Stop slop.date", "slop"], ["unsubscribe from peon", "peon"], ["cancel friends.help", "friends"], ["exit peon.biz", "peon"], ["leave the network", "ntwrk"]] as const) {
+    for (const [t, app] of [["stop slop", "slop"], ["quit slop", "slop"], ["Stop slop.date", "slop"], ["unsubscribe from peon", "peon"], ["cancel friends.help", "friends"], ["exit peon.biz", "peon"], ["leave the network", "ntwrk"],
+      // A person says a domain the way they speak it: the same app, still that app only.
+      ["leave slop date", "slop"], ["leave peon biz", "peon"], ["leave friends help", "friends"], ["leave ntwrk party", "ntwrk"], ["unsubscribe from slop date", "slop"], ["stop friends help", "friends"]] as const) {
       expect([t, detectKeyword(t) ?? null, leaveTarget(t) ?? null]).toEqual([t, null, app]);
     }
-    for (const t of ["cancel the date", "stop by at 7", "quit my job", "I have to leave early", "leave slop alone lol"]) expect([t, leaveTarget(t) ?? null]).toEqual([t, null]);
+    for (const t of ["cancel the date", "stop by at 7", "quit my job", "I have to leave early", "leave slop alone lol", "leave the slop date", "leave my slop date", "leave the party", "quit the gym"]) expect([t, leaveTarget(t) ?? null]).toEqual([t, null]);
     expect(optOutPhrase(`${"I had a long day at work and the train was late again. ".repeat(3)}stop texting me`)).toBe(false);
   });
 

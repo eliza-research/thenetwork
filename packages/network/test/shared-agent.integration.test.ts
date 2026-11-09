@@ -100,6 +100,29 @@ test("canonical membership STOP is collected atomically and cannot drain to a pr
   server.stop(true);await service.close();await start();expect((await post(input)).status).toBe(409);expect(escaped).toBe(before);
 },60_000);
 
+test("a spoken app name in a leave request leaves that one app, never every app",async()=>{
+  // "slop.date" is spoken as "slop date": the request must still be a leave of slop only, and it must
+  // never fall through as chat (which left the person subscribed) or as a STOP of every app.
+  const phone="+12125550151";
+  const call=async(path:string,body:unknown,cookie?:string)=>fetch(new URL(path,server.url),{method:"POST",headers:{host:"localhost:5102","content-type":"application/json",...(cookie?{cookie}:{})},body:JSON.stringify(body)});
+  expect((await call("/api/auth/otp/start",{phone})).status).toBe(200);
+  const login=await call("/api/auth/otp/verify",{phone,code});expect(login.status).toBe(200);
+  const cookie=login.headers.get("set-cookie")!.split(";")[0]!;
+  expect((await call("/api/join",{firstName:"Ada",age:31,consent:{sms:true,wording:APPS.slop.consent.text}},cookie)).status).toBe(200);
+  const r=await post(turn("leave-spoken-app",phone,"leave slop date","slop"));
+  expect(r.status).toBe(200);
+  const body=await r.json() as any;
+  expect(body.outcome).toBe("handled");
+  expect(body.consent).toMatchObject({state:"opted_out",scope:"app",app:"slop"});
+  expect(await service.accounts.optedIn("slop",phone)).toBe(false);
+  // One app's leave writes no consent for every app.
+  expect((await sql`select id from platform.consent_events where e164=${phone} and app_id is null`).length).toBe(0);
+  // The reply is the one-app leave copy, not a chat answer and not the STOP of every app.
+  expect(body.replies.length).toBe(1);
+  expect(body.replies[0]).toContain("You've left slop and");
+  expect(body.replies[0]).toContain("Other apps you use with this number are not affected");
+},60_000);
+
 test("a normal signed join reaches open context, and STOP revokes replay without rerunning the turn",async()=>{
   const phone="+12125550141", before=escaped;
   const first=await post(turn("friends-join-start",phone,"friends.help","friends"));expect(first.status).toBe(200);
