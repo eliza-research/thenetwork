@@ -17,9 +17,9 @@ of the model (commit ad67275, before the fixes); they stay as the record of what
 | Check | Bounds | Result |
 |---|---|---|
 | `quint typecheck` | - | ok |
-| `quint test` | 28 run tests, seed 0x5eed | 28 passing |
+| `quint test` | 33 run tests, seed 0x5eed (28 before section 0.6) | 33 passing |
 | `safety` (simulation) | seed 0x5eed, 40 steps, 8000 samples | no violation |
-| 6 witnesses | same bounds | all reachable |
+| 7 witnesses (6 before section 0.6) | same bounds | all reachable |
 | `quint verify --invariant safety` (Apalache) | `--max-steps 3` (the file's `verify-steps`) | no violation (about 60 s) |
 | `quint verify --invariant safety` (Apalache) | `--max-steps 4` (run by hand) | no violation (277 s) |
 
@@ -98,6 +98,55 @@ process stops after the sweep commit and before storeStatuses, the message keeps
 (`q4SweepLostTest`). Fix direction: include `collected` and `send_unknown` in the repair's message statuses.
 
 Both need a code fix with an integration test that fails before it; that is outside this modeling step.
+
+Q-outbound_queue-3 is fixed since 2026-11-09 (section 0.6). Q-outbound_queue-4 is still open.
+
+### 0.6 Review fix: `noClaimAfterStop` reads the consent ledger (2026-11-09)
+
+A review found that `noClaimAfterStop` restated the admission guard: the ghost and the guard both read one
+boolean `env.optedOut`, so a wrong reading of consent could not be seen. Changes:
+
+- `env.ledger` holds the consent events of the recipient's number (`platform.consent_events`): scope "all"
+  (STOP, START on the shared line), "app" (leave, START on the app's line, a join) or "other" (another app),
+  state opted_out or opted_in, up to 3 events. The action `consentEvent(scope, state)` adds one; `stop` is
+  `consentEvent("all", "opted_out")`.
+- The gate and the admission transaction read the code's guard `codeOptedOut`: `lastEvents` and
+  `resolveConsent` (`packages/platform/src/consent.ts:39-56`), as `consentRefused` runs them.
+- The ghost "afterStop" reads the rule `stoppedByRule`, written over the whole ledger: an opt-out that covers the
+  app and that no later opt-in answers (an app opt-in answers every earlier opt-out; a STOP-wide opt-in answers
+  only STOP-wide opt-outs).
+- Run tests: `consentGuardMatchesRuleTest` (the guard and the rule agree on all 259 ledgers of up to 3 events),
+  `leaveDuringDispatchTest`. Witness: `witness_leaveRefuses`.
+
+Mutations (temporary, on a copy; seed 0x5eed, 40 steps, 8000 samples):
+
+| Mutation | Result |
+|---|---|
+| the admission recheck only for member rows (the Q-outbound_queue-1 defect) | `q1NonMemberStopTest` and `leaveDuringDispatchTest` fail in `quint:check`. The simulation found it with the first weights (a consent event in half the draws); with the final weights (a quarter) it did not in 3 seeds. |
+| `codeOptedOut` ignores the STOP-wide event when the app has none | `noClaimAfterStop` violated in simulation (a STOP, then a claim); `consentGuardMatchesRuleTest` fails. The old model could not express this mutation. |
+
+With the code's input the rule holds: no code defect in the consent path.
+
+The consent events changed the random walk. With the same seed the simulator then found two traces that were
+in the state space before (no opt-out is in either trace, so the earlier passes were sampling luck):
+
+1. **Q-outbound_queue-3 with a release (fixed).** A drain parks r1 and has not stored its changes; staff release
+   r1; the release's delivery sends it (message "accepted"); then the first drain stores "parked_leak_review".
+   `mirrorNotSentMeansNotOut` failed: the message says parked for a text Cloud took, and the SD-336 repair does
+   not read it (not a waiting status). So section 0.4 understated Q-outbound_queue-3: a text can go out.
+   Fix: `NetworkRuntime.storeStatuses` writes the queue row's status read in the same statement
+   (`coalesce((select status from platform.outbound ...), change)`); every writer stores after its own queue
+   commit, so the last write has the newest row. Test: `packages/network/test/cloud-outbound.integration.test.ts`
+   "a drain's late status store never makes a released, sent reply look parked" (failed before the fix: received
+   "parked_leak_review"). Model: `flush` writes the row's status; run tests `q3StaleStoreTest` (now fixed) and
+   `q3ReleaseSentTest`; both fail with the old `flush`. `mirrorSettles` stays out of `safety` for Q-outbound_queue-4.
+2. **Q-outbound_queue-5 (open, not fixed).** `unansweredAtMost` fails in two shapes: the gateway sends a collected
+   reply of an earlier turn after the person wrote again and a queue reply went out
+   (`q5LateTurnReplyTest`); and a text with an unknown acceptance does not count in the line conversation, so the
+   next text to the same address passes the cap gate (`q5UnknownNotCountedTest`). The rule does not say whether a
+   late answer counts as unanswered, or whether an unknown acceptance holds a streak slot; this needs a maintainer
+   decision. `unansweredAtMost` is now a named value outside `safety` with these two run tests (it was in `safety`
+   only because the walk did not reach these traces).
 
 ## 1. What the model contains (first state, commit ad67275)
 

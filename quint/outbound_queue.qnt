@@ -106,7 +106,8 @@ module outbound_queue {
   }
   type Conv = { exists: bool, unanswered: int, reUsed: bool, lastIn: int, lastOut: int }
   type Env = {
-    now: int, mode: str, live: bool, optedOut: bool, held: bool, closed: bool, erased: bool,
+    now: int, mode: str, live: bool, held: bool, closed: bool, erased: bool,
+    ledger: List[Consent], // platform.consent_events of the recipient's number, oldest first (svc consentRefused reads it)
     lineSafety: str, lineHolder: str, inSeq: int, turn: str, engagePending: bool,
     trueUnans: int, reengSent: bool, crashes: int,
     twoNets: bool,        // a second network of the app (slop:sf next to slop:nyc) has its own runtime and queue
@@ -117,6 +118,10 @@ module outbound_queue {
     lastSweep: int        // the time of the last sweep of collected replies
   }
   type Hook = { phase: str, row: str, st: str, readStatus: str }
+  // One row of platform.consent_events for the recipient's number. scope: "all" (app null: STOP, START on the
+  // shared line), "app" (this queue's app: leave, START on its line, a new join) or "other" (another app on the line).
+  // The list order is the order of `at` (the turn_consent model covers how `at` is chosen, fix 3e472ee).
+  type Consent = { scope: str, state: str }
   type View = { held: bool, closed: bool, ver: int }
 
   // ------------------------------------------------------------------ state
@@ -170,12 +175,39 @@ module outbound_queue {
       lastIn: c.lastIn,
       lastOut: if (c.exists and c.lastOut > now) c.lastOut else now }
 
+  // ------------------------------------------------------------------ consent (the code and the rule)
+  pure val MAX_CONSENT = 3
+  // platform/src/consent.ts lastEvents: the last event of one scope ("ties go to the later entry"); index -1: none.
+  pure def lastOf(ledger: List[Consent], scope: str): int =
+    ledger.indices().fold(-1, (acc, i) => if (ledger[i].scope == scope and i > acc) i else acc)
+  // The code's input and guard: svc consentRefused = resolveConsent(lastConsent(e164, app)) == "opted_out"
+  // (platform/src/consent.ts:39-45), as the queue's optedOut hook calls it (rt optedOut, oq:437 and oq:552).
+  pure def codeOptedOut(ledger: List[Consent]): bool =
+    val a = lastOf(ledger, "app")
+    val g = lastOf(ledger, "all")
+    if (a < 0) g >= 0 and ledger[g].state == "opted_out"
+    else if (g < 0 or ledger[g].state == "opted_in") ledger[a].state == "opted_out"
+    else not(ledger[a].state == "opted_in" and a > g)
+  // The rule, written over the whole ledger and not from the guard (AGENTS platform decision 7 and PRD 40.3: STOP
+  // stops every app, "leave <app>" stops that app; START opts in again): the person is stopped for this app when an
+  // opt-out that covers it (scope all or app) has no later opt-in that answers it. An opt-in for this app answers
+  // every earlier opt-out that covers the app (START on its line, a new join); a STOP-wide opt-in answers only
+  // STOP-wide opt-outs (a global START does not undo a leave of this app). Another app's events cover nothing here.
+  pure def stoppedByRule(ledger: List[Consent]): bool =
+    ledger.indices().exists(i => and {
+      ledger[i].state == "opted_out", ledger[i].scope != "other",
+      not(ledger.indices().exists(j => and {
+        j > i, ledger[j].state == "opted_in",
+        ledger[j].scope == "app" or (ledger[j].scope == "all" and ledger[i].scope == "all"),
+      })),
+    })
+
   // ------------------------------------------------------------------ init
   action initWith(mode: str, live: bool, twoNets: bool): bool = all {
     rows' = ROWS.mapBy(_ => NO_ROW),
     work' = WORKERS.mapBy(_ => IDLE),
     ghost' = ROWS.mapBy(_ => NO_GHOST),
-    env' = { now: 0, mode: mode, live: live, optedOut: false, held: false, closed: false, erased: false,
+    env' = { now: 0, mode: mode, live: live, ledger: List(), held: false, closed: false, erased: false,
       lineSafety: "none", lineHolder: "", inSeq: 0, turn: "none", engagePending: false, trueUnans: 0,
       reengSent: false, crashes: 0, twoNets: twoNets, engSeq: 0, ver: 0, turnAcct: true, lastSweep: 0 },
     conv' = { exists: false, unanswered: 0, reUsed: false, lastIn: -1, lastOut: -1 },
@@ -351,7 +383,7 @@ module outbound_queue {
       else if (hasItem and staleErr) "dispatch_error"
       else if (stale) "expired"
       else if (not(env.live)) "refused_not_approved"
-      else if (not(compliance) and env.optedOut) "refused_opted_out"
+      else if (not(compliance) and codeOptedOut(env.ledger)) "refused_opted_out"
       else if (not(compliance) and not(recipientOk)) "suppressed_recipient"
       else if (row.kind == "reply" and replyLate) "suppressed_reply"
       else if (agent and quiet) "deferred"
@@ -444,13 +476,14 @@ module outbound_queue {
       if (dbErr) "dispatch_error"
       else if (views.get(w).ver != env.ver) "stale_view"
       else if (row.member and env.erased) "dropped_forgotten"
-      else if (not(compliance) and env.optedOut) "refused_opted_out"
+      else if (not(compliance) and codeOptedOut(env.ledger)) "refused_opted_out"
       else if (row.status == wk.readStatus and not(row.lease) and row.hasBody) "admitted"
       else if (row.status != wk.readStatus or row.lease) "busy"
       else "dropped_forgotten"
-    // Ghost: what the claim admitted against the database at this instant.
+    // Ghost: what the claim admitted against the database at this instant. "afterStop" is the rule over the
+    // ledger (stoppedByRule), not the guard above (codeOptedOut).
     val bad = Set(
-      if (not(compliance) and env.optedOut) "afterStop" else "",
+      if (not(compliance) and stoppedByRule(env.ledger)) "afterStop" else "",
       if (row.member and agent and env.held) "whileHeld" else "",
       if (row.member and agent and env.closed) "whenClosed" else "",
       if (row.doubt) "inDoubt" else "",
@@ -569,7 +602,9 @@ module outbound_queue {
   // (SD-336 fix efb98a0: a drain that stopped after the queue commit lost its changes in memory).
   action flush(w: str): bool = {
     val wk = work.get(w)
-    val stored = wk.pend.foldl(mirror, (m, c) => if (env.erased or m.get(c._1) == "none") m else m.set(c._1, c._2))
+    // storeStatuses writes the queue row's status at the time of the write, not the drain's change (Q-outbound_queue-3
+    // fix: the update reads platform.outbound in the same statement).
+    val stored = wk.pend.foldl(mirror, (m, c) => if (env.erased or m.get(c._1) == "none") m else m.set(c._1, rows.get(c._1).status))
     val repaired = stored.keys().mapBy(r => {
       val st = rows.get(r).status
       if (WAITING_MSG.contains(stored.get(r)) and not(WAITING.contains(st)) and st != "none") st else stored.get(r)
@@ -693,12 +728,14 @@ module outbound_queue {
     }
   }
 
-  // STOP recorded in the consent ledger (another turn, another replica).
-  action stop: bool = all {
-    not(env.optedOut),
-    env' = { ...env, optedOut: true },
+  // A consent event committed in the ledger (another turn, another replica, the web): STOP, START, leave, a join.
+  action consentEvent(scope: str, state: str): bool = all {
+    env.ledger.length() < MAX_CONSENT,
+    env' = { ...env, ledger: env.ledger.append({ scope: scope, state: state }) },
     rows' = rows, work' = work, ghost' = ghost, conv' = conv, views' = views, slots' = slots, admitted' = admitted, mirror' = mirror, hooks' = hooks,
   }
+  // STOP on the shared line (scope all).
+  action stop: bool = consentEvent("all", "opted_out")
 
   // A trust hold or pause (staff, the Network) commits on worker w's replica: the unit loads the newest state, saves
   // a new version, and w's view is fresh; others are not.
@@ -843,7 +880,8 @@ module outbound_queue {
     turnFinish(b3),
     gatewaySend(r),
     gatewayReceipt(r, outcome, b1),
-    stop,
+    // A consent event comes in a quarter of the draws (weights only), as the one STOP did before the ledger.
+    all { b1 and b3, nondet cs = oneOf(Set("all", "app", "other")) consentEvent(cs, if (b2) "opted_out" else "opted_in") },
     all { b1 and b2 and b3, holdToggle(w) },
     all { b1 and b2 and b3, closeItem(w) },
     refresh(w),
@@ -896,6 +934,10 @@ module outbound_queue {
 
   // I1 / AGENTS "Keep every safety guard ... STOP": a non-compliance row is claimed only while the person has
   // not opted out (oq:14-16 "a STOP that arrives while a message waits wins").
+  // The ghost reads the rule (stoppedByRule over the whole ledger); the admission reads the code's guard
+  // (codeOptedOut: lastEvents and resolveConsent). So the invariant fails when the guard misses a case: with the
+  // recheck only for member rows (the Q-outbound_queue-1 defect) or without the STOP-wide event, it fails
+  // (findings file section 0.6).
   // Failed before fix 1f86525: Q-outbound_queue-1 (admission rechecked consent only for member rows).
   val noClaimAfterStop = ROWS.forall(r => not(ghost.get(r).bad.contains("afterStop")))
   // I1 / oq:119 "The recipient at send time: paused, blocked, held"; oq:14 "each reads the database".
@@ -986,6 +1028,15 @@ module outbound_queue {
   // oq:18-19 "at most 3 unanswered messages per conversation, then one re-engagement" (scaled to 1). Counts every
   // non-compliance text the person got since their last message, queue or collected.
   // Failed before fix cdd106f: SD-148 (collectedReceipt did not count in line_conversations).
+  // NOT IN `safety` (Q-outbound_queue-5, open, not fixed: needs a maintainer decision). The simulator found two
+  // traces after the consent ledger changed the random walk; neither has an opt-out in it, so both were in the
+  // state space before and the earlier passes were sampling luck:
+  //  - q5LateTurnReplyTest: the gateway sends a collected reply of an earlier turn after the person wrote again,
+  //    and a queue reply of the newer turn also went out (collected replies pass no queue gate).
+  //  - q5UnknownNotCountedTest: a text whose acceptance is unknown (unknown_acceptance) does not count in the line
+  //    conversation (countSend runs only at acceptance), so the next text to the same address passes the cap gate.
+  // What counts as "unanswered" for a late answer, and whether an unknown acceptance must hold a streak slot, is
+  // not written down; the model keeps the strict count.
   val unansweredAtMost = env.trueUnans <= MAX_UNANSWERED + (if (env.reengSent) 1 else 0)
   // oq:2 "One queue object serves one app"; runtime.ts:1-5: a network's checks are for its own members.
   // Failed before fix 5a6cf8e: SD-132 (the drain selected by app and line; memberOf missed, network.ts:4848).
@@ -995,12 +1046,10 @@ module outbound_queue {
   // next one copies it: sd336CrashLosesStatusTest).
   // Failed before fixes eb5a589, efb98a0, 255a42d: SD-136 (direct() dropped the changes), SD-336 (a crash before
   // storeStatuses was never repaired), SD-334.
-  // NOT IN `safety`: two new defects that this model found on the fixed code still make it fail (findings file,
-  // Q-outbound_queue-3 and Q-outbound_queue-4; no code fix in this step):
-  //  - Q-outbound_queue-3: storeStatuses writes a drain's change with no condition. A status written straight to
-  //    network.messages after the queue commit and before that store (a staff leak-review decision, svc
-  //    /queue/leak-review; a Blooio delivery receipt) is overwritten by the drain's older status
-  //    (q3StaleStoreTest).
+  // NOT IN `safety`: one new defect that this model found on the fixed code still makes it fail (findings file):
+  //  - Q-outbound_queue-3 (fixed): storeStatuses wrote a drain's change with no condition, so a staff leak-review
+  //    decision or a receipt that came after the queue commit was overwritten. It now writes the queue row's status
+  //    (q3StaleStoreTest, q3ReleaseSentTest; packages/network/test/cloud-outbound.integration.test.ts).
   //  - Q-outbound_queue-4: the SD-336 repair copies only to messages in a waiting status. A collected reply that
   //    the sweep ends failed_unknown keeps the message status "collected" when the process stops before
   //    storeStatuses (q4SweepLostTest).
@@ -1028,7 +1077,7 @@ module outbound_queue {
     noClaimAfterStop, noClaimWhileHeld, noClaimWhenClosed, leakGate, unknownNeverResends,
     notSentMeansNotOut, mirrorNotSentMeansNotOut, capAtMost, slotOnlyForLiveRow, noStatusRegressLive,
     complianceAlwaysGoes, nonMemberBodyClearedAtEnd, guardFailedReachesStaff, collectedResolvable, noHistoryReceiptRecorded,
-    heldOnlyWhileUnanswered, unansweredAtMost, ownNetworkDecides, mirrorNotStuckWaiting, sentAtOnlyIfOut,
+    heldOnlyWhileUnanswered, ownNetworkDecides, mirrorNotStuckWaiting, sentAtOnlyIfOut,
   }
 
   // ------------------------------------------------------------------ run tests (concrete traces)
@@ -1118,6 +1167,33 @@ module outbound_queue {
       .then(applyDecision("w1", false))
       .expect(rows.get("r1").status == "refused_opted_out" and not(rows.get("r1").hasBody)
         and not(admitted.contains("r1")) and noClaimAfterStop and safety)
+
+  // The guard and the rule agree on every ledger of up to MAX_CONSENT events (each scope, each state): the code
+  // refuses exactly when the rule says the person is stopped. A per-app leave, then a STOP-wide START: still stopped
+  // for this app; a STOP-wide STOP, then START on this app's line: not stopped; another app's leave: not stopped.
+  pure val CONSENT_EVENTS = tuples(Set("all", "app", "other"), Set("opted_out", "opted_in")).map(t => { scope: t._1, state: t._2 })
+  pure val LEDGERS: Set[List[Consent]] = Set(List())
+    .union(CONSENT_EVENTS.map(e => List(e)))
+    .union(tuples(CONSENT_EVENTS, CONSENT_EVENTS).map(t => List(t._1, t._2)))
+    .union(tuples(CONSENT_EVENTS, CONSENT_EVENTS, CONSENT_EVENTS).map(t => List(t._1, t._2, t._3)))
+  run consentGuardMatchesRuleTest =
+    initWith("cloud", true, false)
+      .expect(LEDGERS.forall(l => codeOptedOut(l) == stoppedByRule(l)) and LEDGERS.size() == 259
+        and codeOptedOut(List({ scope: "app", state: "opted_out" }, { scope: "all", state: "opted_in" }))
+        and not(codeOptedOut(List({ scope: "all", state: "opted_out" }, { scope: "app", state: "opted_in" })))
+        and not(codeOptedOut(List({ scope: "other", state: "opted_out" }))))
+
+  // A leave of this app (not a STOP) while a direct text to a non-member is in dispatch: the admission refuses it.
+  run leaveDuringDispatchTest =
+    initWith("cloud", true, false)
+      .then(turnStart(true)).then(engaged)
+      .then(enqueue("r1", "reply", false, "nyc", false))
+      .then(drainStart("w1", "nyc", false)).then(sweepCollected("w1")).then(lockLine("w1"))
+      .then(decide("w1", "r1", false, false))
+      .expect(work.get("w1").dec == "send")
+      .then(consentEvent("app", "opted_out"))
+      .then(applyDecision("w1", false))
+      .expect(rows.get("r1").status == "refused_opted_out" and not(admitted.contains("r1")) and noClaimAfterStop and safety)
 
   // Q-outbound_queue-2 (fix 1e3585b; "when the commit of a send Cloud took fails, the row waits for the receipt
   // lookup; it never ends unsent and keeps its person-cap slot"). Cloud accepts, the accept transaction throws: the row
@@ -1416,15 +1492,59 @@ module outbound_queue {
       .then(staffDrop("r1"))
       .expect(mirror.get("r1") == "dropped_leak_review")
       .then(flush("w1"))
-      .expect(rows.get("r1").status == "dropped_leak_review" and mirror.get("r1") == "parked_leak_review"
-        and not(mirrorSettles) and safety)
+      .expect(rows.get("r1").status == "dropped_leak_review" and mirror.get("r1") == "dropped_leak_review"
+        and mirrorSettles and safety)
+
+  // Q-outbound_queue-3 with a release (found by the simulator after the consent ledger changed the random walk; no
+  // consent event is in the trace): a drain parks r1; staff release it; another drain sends it; then the first
+  // drain stores its change. Before the fix the message said parked_leak_review for a text Cloud took
+  // (mirrorNotSentMeansNotOut failed). Now the store writes the row's status.
+  run q3ReleaseSentTest =
+    initWith("cloud", true, false)
+      .then(turnStart(true)).then(engaged)
+      .then(enqueue("r1", "reply", true, "nyc", true))
       .then(drainStart("w1", "nyc", false)).then(sweepCollected("w1")).then(lockLine("w1"))
-      .then(unlockLine("w1")).then(flush("w1"))
-      .expect(mirror.get("r1") == "parked_leak_review" and not(mirrorSettles))
+      .then(decide("w1", "r1", false, false)).then(applyDecision("w1", false)).then(unlockLine("w1"))
+      .expect(rows.get("r1").status == "parked_leak_review" and work.get("w1").phase == "flush")
+      .then(staffRelease("r1"))
+      .then(drainStart("w2", "nyc", false)).then(sweepCollected("w2")).then(lockLine("w2"))
+      .then(decide("w2", "r1", false, false)).then(applyDecision("w2", false))
+      .then(providerCall("w2", "ok")).then(respond("w2", false)).then(unlockLine("w2")).then(flush("w2"))
+      .expect(admitted.contains("r1") and mirror.get("r1") == "accepted")
+      .then(flush("w1"))
+      .expect(mirror.get("r1") == "accepted" and mirrorNotSentMeansNotOut and safety)
 
   // Q-outbound_queue-4 (new, not fixed): the sweep ends a collected reply failed_unknown and the process stops before
   // storeStatuses. The message stays "collected"; the SD-336 repair reads only waiting statuses, so the next drain
   // does not copy it.
+  // Q-outbound_queue-5 (open): turn 1 collects a reply and is handled; the gateway has not sent it when the person
+  // writes again (turn 2); the queue sends a reply in turn 2; then the gateway sends turn 1's reply.
+  run q5LateTurnReplyTest =
+    initWith("cloud", true, false)
+      .then(turnStart(true)).then(engaged).then(collect("r2", "reply", false)).then(turnFinish(true))
+      .then(turnStart(true)).then(engaged)
+      .then(enqueue("r3", "reply", false, "nyc", false))
+      .then(drainStart("w1", "nyc", false)).then(sweepCollected("w1")).then(lockLine("w1"))
+      .then(decide("w1", "r3", false, false)).then(applyDecision("w1", false))
+      .then(providerCall("w1", "ok")).then(respond("w1", false)).then(unlockLine("w1")).then(flush("w1"))
+      .then(turnFinish(true)).then(gatewaySend("r2"))
+      .expect(env.trueUnans == 2 and not(unansweredAtMost) and safety)
+
+  // Q-outbound_queue-5 (open): r2 is claimed; the person writes; Cloud's answer to r2 is lost (unknown_acceptance,
+  // not counted); a second text to the same address passes the cap gate and goes out.
+  run q5UnknownNotCountedTest =
+    initWith("cloud", true, false)
+      .then(enqueue("r2", "transactional", false, "nyc", false))
+      .then(drainStart("w1", "nyc", false)).then(sweepCollected("w1")).then(lockLine("w1"))
+      .then(decide("w1", "r2", false, false)).then(applyDecision("w1", false))
+      .then(turnStart(true))
+      .then(providerCall("w1", "lost")).then(respond("w1", false)).then(unlockLine("w1")).then(flush("w1"))
+      .expect(rows.get("r2").status == "unknown_acceptance" and admitted.contains("r2"))
+      .then(enqueue("r1", "transactional", false, "nyc", false))
+      .then(drainStart("w2", "nyc", false)).then(sweepCollected("w2")).then(lockLine("w2"))
+      .then(decide("w2", "r1", false, false)).then(applyDecision("w2", false)).then(providerCall("w2", "ok"))
+      .expect(env.trueUnans == 2 and not(unansweredAtMost) and safety)
+
   run q4SweepLostTest =
     initWith("cloud", true, false)
       .then(turnStart(true)).then(collect("r1", "reply", false)).then(turnFinish(false))
@@ -1440,6 +1560,9 @@ module outbound_queue {
   val witness_proactiveAccepted = not(ROWS.exists(r => rows.get(r).kind == "proactive" and rows.get(r).status == "accepted"))
   val witness_deferredThenSent = not(ROWS.exists(r => ghost.get(r).wasDeferred and rows.get(r).status == "accepted"))
   val witness_parkedReleased = not(ROWS.exists(r => ghost.get(r).wasParked and rows.get(r).leakReleased))
+  // A leave of this app (no STOP-wide opt-out in the ledger) refuses a row: the consent input is more than one STOP.
+  val witness_leaveRefuses = not(ROWS.exists(r => rows.get(r).status == "refused_opted_out")
+    and not(env.ledger.indices().exists(i => env.ledger[i].scope == "all" and env.ledger[i].state == "opted_out")))
   val witness_collectedSent = not(ROWS.exists(r => rows.get(r).status == "sent" and rows.get(r).sentAt))
   val witness_stopRefuses = not(ROWS.exists(r => rows.get(r).status == "refused_opted_out"))
   val witness_unknownLookedUp = not(ROWS.exists(r => rows.get(r).status == "accepted" and rows.get(r).doubt))
