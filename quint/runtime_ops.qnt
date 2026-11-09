@@ -52,8 +52,12 @@ module runtime_ops {
   pure val MAX_RETRIES = 2
   pure val MAX_REGROWS = 2
   pure val MAX_SIG = 3
-  /** The tokens the wrangler guard model gives after "deploy". */
-  pure val WR_TOKENS = Set("--dry-run", "--no-dry-run", "--dry-run=false", "--help", "--no-help", "--help=false", "true", "false")
+  /**
+   * The tokens of a wrangler command in the guard model (any order, three tokens): the deploy command, a read-only
+   * command, the switches the guard reads, their values, a value flag (--config) and a flag on neither list.
+   */
+  pure val WR_TOKENS = Set("deploy", "whoami", "--dry-run", "--dry-run=true", "--no-dry-run", "--dry-run=false",
+    "--help", "--no-help", "--help=false", "true", "false", "--config", "--new-flag")
   /** "late" is bias_late (ops.ts evaluate, SD-233). */
   pure val ALERT_KEYS = Set("sig", "tick", "bias", "late", "read")
 
@@ -127,7 +131,7 @@ module runtime_ops {
   type Llm = { e: int, retries: int, regrows: int, attempts: int, done: str }
 
   /** M-149. */
-  type Wr = { args: List[str], ran: bool, allowed: bool, deploys: bool }
+  type Wr = { args: List[str], ran: bool, allowed: bool, deploys: bool, unk: bool }
 
   /** M-147. */
   type Cf = { target: str, enabled: bool, buildIdOk: bool, containerRunning: bool, cronSinceInactive: bool }
@@ -185,38 +189,74 @@ module runtime_ops {
     or { not(a.sent), and { c.bump, c.count > a.lastSentCount }, now - a.lastSentAt >= REPEAT }
 
   /**
-   * wrangler.sh decide() after the SD-168 fix (0706658): one token. The last value of a switch wins for
-   * --help as for --dry-run, and a "true" or "false" word right after --dry-run or --help is its value.
-   * Every token in WR_TOKENS matches an explicit case arm, so both modes ("switch", "value") read them the same.
+   * wrangler.sh decide() after the SD-168 fix (0706658), token by token as the script reads them (wrangler.sh:57-101):
+   * a word after a value flag is skipped; a flag on neither list skips the next word in mode "value" only; the last
+   * value of --dry-run / --help wins, and a "true" or "false" word right after one of them is its value; every other
+   * word is a command word. The command is read-only when the first word is empty, "whoami" (one of the read-only
+   * commands), "deploy" with dry_run=1, or when help=1. The guard runs only when both modes say read-only.
    */
-  type D = { dry: bool, help: bool, last: str, words: List[str] }
+  type D = { dry: bool, help: bool, last: str, skip: bool, words: List[str] }
+  /** The tokens that do not start with "-" (Quint strings have no prefix test, so the model lists them). */
+  pure val WR_WORDS = Set("deploy", "whoami", "true", "false")
+  pure def isFlag(a: str): bool = not(WR_WORDS.contains(a))
+  /** wrangler.sh value_flag (one of the list) and switch_flag (one of the list); every other "-" token is unknown. */
+  pure val WR_VALUE_FLAGS = Set("--config")
+  pure val WR_SWITCH_FLAGS = Set("--dry-run", "--help")
   pure def decideStep(mode: str, d: D, a: str): D =
-    if (d.last != "" and (a == "true" or a == "false"))
+    if (d.skip) { ...d, skip: false }
+    else if (d.last != "" and (a == "true" or a == "false"))
       (if (d.last == "dry") { ...d, dry: a == "true", last: "" } else { ...d, help: a == "true", last: "" })
     else if (a == "--dry-run") { ...d, dry: true, last: "dry" }
+    else if (a == "--dry-run=true") { ...d, dry: true, last: "" }
     else if (a == "--no-dry-run" or a == "--dry-run=false") { ...d, dry: false, last: "" }
     else if (a == "--help") { ...d, help: true, last: "help" }
     else if (a == "--no-help" or a == "--help=false") { ...d, help: false, last: "" }
+    else if (isFlag(a)) {
+      if (WR_VALUE_FLAGS.contains(a)) { ...d, skip: true, last: "" }
+      else if (WR_SWITCH_FLAGS.contains(a)) { ...d, last: "" }
+      else { ...d, skip: mode == "value", last: "" }
+    }
     else { ...d, words: d.words.append(a), last: "" }
   pure def decide(mode: str, args: List[str]): bool =
-    val d = args.foldl({ dry: false, help: false, last: "", words: List() }, (acc, a) => decideStep(mode, acc, a))
-    or { d.words.length() == 0, and { d.words[0] == "deploy", d.dry }, d.help }
+    val d = args.foldl({ dry: false, help: false, last: "", skip: false, words: List() }, (acc, a) => decideStep(mode, acc, a))
+    or {
+      d.words.length() == 0,
+      and { d.words.length() > 0, d.words[0] == "whoami" },
+      and { d.words.length() > 0, d.words[0] == "deploy", d.dry },
+      d.help,
+    }
+  /** wrangler.sh:100-101: the command runs without NTWRK_ALLOW_DEPLOY only when both modes say read-only. */
+  pure def guardAllows(args: List[str]): bool = decide("switch", args) and decide("value", args)
   /**
-   * What wrangler (yargs) does: the last value of a switch wins; "--no-x" and "--x=false" set it false; a
-   * "true" or "false" word right after a boolean switch is its value; any other word is a positional. Assumption, not run.
+   * The oracle: what wrangler (yargs-parser) runs. Written from wrangler's declared options, not from the guard:
+   * "dry-run" and "help" are booleans (an explicit "true" / "false" next word is their value; "--no-x" and
+   * "--x=false" set false; the last value wins), "config" is a string option (it takes the next word unless that
+   * word is a flag). A flag wrangler does not declare is the uncertain case: yargs may read it as a switch or let
+   * it take the next word. `unkTakesValue` chooses; the guard must be sound for both readings. The first positional
+   * is the command. Assumption, not run (wrangler is not called by the model or its checks).
    */
-  type Y = { dry: bool, help: bool, last: str }
-  pure def yargsStep(y: Y, a: str): Y =
-    if (y.last != "" and (a == "true" or a == "false"))
-      (if (y.last == "dry") { ...y, dry: a == "true", last: "" } else { ...y, help: a == "true", last: "" })
-    else if (a == "--dry-run") { ...y, dry: true, last: "dry" }
-    else if (a == "--no-dry-run" or a == "--dry-run=false") { ...y, dry: false, last: "" }
-    else if (a == "--help") { ...y, help: true, last: "help" }
-    else if (a == "--no-help" or a == "--help=false") { ...y, help: false, last: "" }
-    else { ...y, last: "" }
-  pure def wranglerDeploys(args: List[str]): bool =
-    val y = args.foldl({ dry: false, help: false, last: "" }, (acc, a) => yargsStep(acc, a))
-    and { args[0] == "deploy", not(y.dry), not(y.help) }
+  type Y = { dry: bool, help: bool, pending: str, pos: List[str] }
+  pure def yargsStep(unkTakesValue: bool, y: Y, a: str): Y =
+    // A pending option takes this word as its value when it can.
+    if (y.pending == "dry" and (a == "true" or a == "false")) { ...y, dry: a == "true", pending: "" }
+    else if (y.pending == "help" and (a == "true" or a == "false")) { ...y, help: a == "true", pending: "" }
+    else if (y.pending == "value" and not(isFlag(a))) { ...y, pending: "" }
+    else {
+      val y0 = { ...y, pending: "" }
+      if (not(isFlag(a))) { ...y0, pos: y0.pos.append(a) }
+      else if (a == "--dry-run" or a == "--dry-run=true") { ...y0, dry: true, pending: if (a == "--dry-run") "dry" else "" }
+      else if (a == "--no-dry-run" or a == "--dry-run=false") { ...y0, dry: false }
+      else if (a == "--help") { ...y0, help: true, pending: "help" }
+      else if (a == "--no-help" or a == "--help=false") { ...y0, help: false }
+      else if (a == "--config") { ...y0, pending: "value" }
+      else { ...y0, pending: if (unkTakesValue) "value" else "" }
+    }
+  pure def wranglerDeploys(unkTakesValue: bool, args: List[str]): bool =
+    val y = args.foldl({ dry: false, help: false, pending: "", pos: List() }, (acc, a) => yargsStep(unkTakesValue, acc, a))
+    and { y.pos.length() > 0, y.pos[0] == "deploy", not(y.dry), not(y.help) }
+  /** Every 3-token command over WR_TOKENS, for the exhaustive check (wrangler.sh takes any order of words and flags). */
+  pure val WR_COMMANDS: Set[List[str]] =
+    tuples(WR_TOKENS, WR_TOKENS, WR_TOKENS).map(t => List(t._1, t._2, t._3))
 
   /** deploy/cloudflare/worker.ts:70: every request goes to the public port. The staff port (backend.ts:14-15) has no route. */
   pure def staffRouteExists(target: str): bool = target == "railway"
@@ -241,7 +281,7 @@ module runtime_ops {
     pr: { phase: "running", stuck: "none", sigtermAt: -1, graceAt: -1, clean: false },
     bt: { roleExists: handMade, member: false, connect: handMade, step: "start", checkPassedIncomplete: false, ledger: false, applied: 0 },
     ll: { e: 0, retries: 0, regrows: 0, attempts: 0, done: "" },
-    wr: { args: args, ran: false, allowed: false, deploys: false },
+    wr: { args: args, ran: false, allowed: false, deploys: false, unk: false },
     cf: { target: "railway", enabled: false, buildIdOk: false, containerRunning: false, cronSinceInactive: false },
   }
 
@@ -249,10 +289,11 @@ module runtime_ops {
     nondet tickSet = oneOf(Set("backend", "serve"))
     nondet channel = oneOf(Set("eliza_cloud", "blooio"))
     nondet two = oneOf(Set(true, false))
+    nondet a0 = oneOf(WR_TOKENS)
     nondet a1 = oneOf(WR_TOKENS)
     nondet a2 = oneOf(WR_TOKENS)
     nondet handMade = oneOf(Set(true, false))
-    initWith(tickSet, channel, two, List("deploy", a1, a2), handMade)
+    initWith(tickSet, channel, two, List(a0, a1, a2), handMade)
   }
 
   // ------------------------------------------------------------------ time
@@ -536,11 +577,15 @@ module runtime_ops {
 
   // ------------------------------------------------------------------ M-149 wrangler guard
 
-  /** wrangler.sh:100-116: run only when both decide modes say read-only (no NTWRK_ALLOW_DEPLOY). */
-  action runWrangler: bool = all {
+  /**
+   * wrangler.sh:100-116: run only when both decide modes say read-only (no NTWRK_ALLOW_DEPLOY). unkTakesValue: how
+   * wrangler reads a flag it does not declare (the oracle's open choice).
+   */
+  action runWrangler(unkTakesValue: bool): bool = all {
     not(s.wr.ran),
-    val allowed = decide("switch", s.wr.args) and decide("value", s.wr.args)
-    s' = { ...s, wr: { ...s.wr, ran: true, allowed: allowed, deploys: allowed and wranglerDeploys(s.wr.args) } },
+    val allowed = guardAllows(s.wr.args)
+    s' = { ...s, wr: { ...s.wr, ran: true, allowed: allowed, unk: unkTakesValue,
+                      deploys: allowed and wranglerDeploys(unkTakesValue, s.wr.args) } },
   }
 
   // ------------------------------------------------------------------ M-147 Cloudflare cutover
@@ -592,7 +637,7 @@ module runtime_ops {
     sigterm, serversStopped, drained, graceFires, sigkill,
     migrate, ensureLoginStart, bootCreate, loginCheck, bootCrash,
     nondet outcome = oneOf(Set("ok", "empty", "retryable", "fatal")) llmAttempt(outcome),
-    runWrangler,
+    nondet unk = oneOf(Set(true, false)) runWrangler(unk),
     cfActivate,
     nondet b = oneOf(Set(true, false)) cfDeactivate(b),
     cfCron,
@@ -681,7 +726,13 @@ module runtime_ops {
   /** llm.ts:189-193 and AGENTS.md LLMs: retries at most LLM_MAX_RETRIES, plus one fallback and two regrows. */
   val llmAttemptBound = s.ll.attempts <= EPS + MAX_RETRIES + MAX_REGROWS
 
-  /** AGENTS.md Environment: wrangler.sh "refuses deploy (except --dry-run) ... unless NTWRK_ALLOW_DEPLOY=1". SD-168. */
+  /**
+   * AGENTS.md Environment: wrangler.sh "refuses deploy (except --dry-run) ... unless NTWRK_ALLOW_DEPLOY=1". SD-168.
+   * The guard (decide in both modes, as the script reads the tokens) is checked against the yargs oracle, which is
+   * written from wrangler's declared options and leaves the reading of an undeclared flag open. The check can fail:
+   * with one mode only, "--new-flag whoami deploy" passes the guard and wrangler (undeclared flag takes a value)
+   * deploys; without the "true"/"false" value rule, "deploy --help false" passes and deploys (findings file 2.1).
+   */
   val guardSound = not(s.wr.deploys)
 
   /**
@@ -832,17 +883,34 @@ module runtime_ops {
 
   /** SD-168 fixed: "deploy --help --no-help" and "deploy --help false" are refused by the guard. */
   run helpFlagTest = initWith("backend", "blooio", false, List("deploy", "--help", "--no-help"), false)
-    .then(runWrangler)
+    .then(runWrangler(true))
     .expect(guardSound and not(s.wr.allowed))
   run helpFalseTest = initWith("backend", "blooio", false, List("deploy", "--help", "false"), false)
-    .then(runWrangler)
+    .then(runWrangler(true))
     .expect(guardSound and not(s.wr.allowed))
   run dryRunTest = initWith("backend", "blooio", false, List("deploy", "--dry-run", "--help=false"), false)
-    .then(runWrangler)
+    .then(runWrangler(true))
     .expect(guardSound and s.wr.allowed)
   run dryRunTrueTest = initWith("backend", "blooio", false, List("deploy", "--dry-run", "true"), false)
-    .then(runWrangler)
+    .then(runWrangler(true))
     .expect(guardSound and s.wr.allowed)
+  /**
+   * The dual-mode path (wrangler.sh:34-36): "--new-flag whoami deploy" reads "whoami" as the command in mode
+   * "switch" and "deploy" in mode "value". The guard refuses it; wrangler would deploy if the flag takes a value.
+   */
+  run unknownFlagTest = initWith("backend", "blooio", false, List("--new-flag", "whoami", "deploy"), false)
+    .then(runWrangler(true))
+    .expect(guardSound and not(s.wr.allowed) and decide("switch", s.wr.args) and not(decide("value", s.wr.args))
+            and wranglerDeploys(true, s.wr.args) and not(wranglerDeploys(false, s.wr.args)))
+  /** A value flag: "--config deploy whoami" is "whoami" for the guard and for wrangler (it runs). */
+  run valueFlagTest = initWith("backend", "blooio", false, List("--config", "deploy", "whoami"), false)
+    .then(runWrangler(false))
+    .expect(guardSound and s.wr.allowed and not(wranglerDeploys(true, s.wr.args)))
+  /** Every 3-token command over WR_TOKENS and both readings of the undeclared flag: the guard never lets a deploy run. */
+  run guardExhaustiveTest = initProd
+    .expect(WR_COMMANDS.forall(c => Set(true, false).forall(u => not(guardAllows(c) and wranglerDeploys(u, c))))
+            and WR_COMMANDS.exists(c => guardAllows(c) and c[0] == "deploy")
+            and WR_COMMANDS.exists(c => wranglerDeploys(true, c) and not(guardAllows(c))))
 
   /** SD-159 (open, no Workers runtime to test the fix): rollback without BUILD_ID: the cron cannot stop the container. */
   run cfNoBuildIdTest = initProd

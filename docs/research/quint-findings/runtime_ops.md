@@ -35,7 +35,10 @@ Facts checked outside Quint:
   handler that never answers printed `still waiting after 3 s` (script in the session scratchpad, not
   in the repo). The model's `serversStopped` is therefore disabled while an HTTP request is stuck.
 - `wrangler` (yargs) reads `--no-help` and `--help=false` as `help=false`, and the last value wins.
-  This is an assumption of the model (`yargsStep`); wrangler was not run.
+  This is an assumption of the model (`yargsStep`); wrangler was not run. An undeclared flag may be a
+  switch or take the next word: the model leaves that open (section 8).
+- The model's guard (`guardAllows`) gives the same answer as `scripts/wrangler.sh` for each of the 2197
+  three-token commands over `WR_TOKENS` (section 8).
 - A Cloudflare deploy creates new Durable Object instances, so the `NetworkBackend` constructor
   runs again with the new `env` before `stop()`. This is an assumption of the model (`cfCron`).
 
@@ -184,6 +187,36 @@ All invariants in `safety`: `noLostWrite`, `restoreRolesNotOnSource`, `oppIdsOwn
 ## 7. New defects
 
 None.
+
+## 8. Review fix: `guardSound` (2026-11-09)
+
+A review found `guardSound` vacuous: the yargs oracle (`yargsStep`) was a copy of the guard (`decideStep`), and the
+dual-mode path (a flag on neither list is read as a switch in mode "switch" and as taking a value in mode "value",
+`wrangler.sh:34-36`) was not in the model. Changes:
+
+- `decideStep(mode, ...)` follows `wrangler.sh decide()` token by token: value flags skip the next word, a flag on
+  neither list skips it only in mode "value", `--dry-run=true`, and the read-only command `whoami`.
+- The oracle `wranglerDeploys(unkTakesValue, args)` is written from wrangler's declared options: booleans
+  `dry-run` and `help`, the string option `config`, and an undeclared flag whose reading is open
+  (`unkTakesValue`, a nondet choice of `runWrangler`). The command is the first positional.
+- `WR_TOKENS` has 13 tokens, and `init` takes any three in any order (the deploy word no longer comes first).
+- New run tests: `unknownFlagTest`, `valueFlagTest`, `guardExhaustiveTest` (every one of the 2197 commands and
+  both readings: the guard never lets a deploy run; some deploy commands pass as dry runs; some commands that
+  deploy are refused).
+
+Conformance with the script: the set of commands `guardAllows` accepts (from the Quint REPL) was compared with the
+exit code of `scripts/wrangler.sh` for all 2197 commands (bunx replaced by a stub that prints "ran", no network):
+0 differences, 1406 allowed. The script and its stub were in the session scratchpad, not in the repo.
+
+Mutations (temporary, on a copy of the file; seed 0x5eed, 30 steps, 50000 samples):
+
+| Mutation | Result | Trace |
+|---|---|---|
+| `guardAllows` = `decide("switch")` only | `guardSound` violated | `--new-flag whoami deploy`: mode "switch" reads `whoami`; wrangler (the flag takes a value) deploys |
+| no "true"/"false" value rule in `decideStep` (the SD-168 regression) | `guardSound` violated; `helpFalseTest` and `guardExhaustiveTest` fail | `--help false deploy` |
+| the old model with `decide("switch")` only | no violation | the old oracle copied the guard, so it could not see it |
+
+`bun run quint:check quint/runtime_ops.qnt`: typecheck, run tests, `safety` and every witness pass.
 
 ## Appendix: the first-wave counterexamples (before the fixes)
 
