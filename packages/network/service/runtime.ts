@@ -718,8 +718,14 @@ export class NetworkRuntime {
   async storeStatuses(ds: Delivery[], only?: Set<string>) {
     const rows = ds.filter(d => d.status !== this.adapter.storedStatus && (!only || only.has(d.id)));
     if (!rows.length) return;
+    // A message of the persisted queue takes its queue row's status as it is at this write, not the status in the
+    // change: a drain stores its changes after its queue commits, and in between a staff leak decision, a delivery
+    // receipt or another drain (the release's own send) can move the row on. The writer of each of those stores
+    // after its own commit, so the last write reads the newest row (Q-outbound_queue-3). A message with no queue
+    // row (dry run, the direct adapter) takes the change's status.
     await this.scoped(async tx => {
-      for (const d of rows) await tx`update network.messages set status = ${d.status} where app_id = ${this.app.id} and id = ${d.id} and direction = 'outbound'`;
+      for (const d of rows) await tx`update network.messages set status = coalesce((select o.status from platform.outbound o where o.id = ${d.id} and o.app_id = ${this.app.id}), ${d.status})
+        where app_id = ${this.app.id} and id = ${d.id} and direction = 'outbound'`;
     });
   }
 

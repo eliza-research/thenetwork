@@ -247,3 +247,26 @@ test("signed-turn replies pass the queue's leak guard (a failing one is parked f
   const [drift]=await sql`select status,notification_recorded_at from network.messages where id='drift-1'`;
   expect(drift.status).toBe("accepted");expect(drift.notification_recorded_at).not.toBeNull();
 },60_000);
+
+// Q-outbound_queue-3 (docs/research/quint-findings/outbound_queue.md): a drain parks a reply and has not stored its
+// status changes yet; staff release the reply and the release's delivery sends it (network.messages "accepted"). Then
+// the first drain stores its change "parked_leak_review". The message must keep the queue row's status: the text went out.
+test("a drain's late status store never makes a released, sent reply look parked",async()=>{
+  known=true;
+  const rt=service.runtimes.get("friends:nyc")!;
+  // Cy (33), who joined in the test before: an adult member, so a release may send.
+  const [{member_id:memberId}]=await sql`select m.member_id from platform.memberships m join platform.phone_identities p on p.person_id=m.person_id
+    where p.e164=${phone2} and m.app_id='friends' and m.state='active'`;
+  await rt.unitOfWork(()=>{rt.system(memberId,"late-store-reply","Your code is CANARY_TEST_78_y","reply");});
+  expect((await sql`select status from platform.outbound where id='late-store-reply'`)[0].status).toBe("parked_leak_review");
+  // The drain's change, as drain() returned it before storeStatuses ran.
+  const drainChange={id:"late-store-reply",app:"friends",memberId,status:"parked_leak_review"};
+  const staffCall=(path:string,b:object)=>service.fetch(new Request(`http://127.0.0.1${path}`,{method:"POST",headers:{authorization:"Bearer saf-tok","content-type":"application/json"},body:JSON.stringify(b)}));
+  const before=dispatches;
+  expect(await (await staffCall("/queue/leak-review/late-store-reply?app=friends",{decision:"release",reason:"staff checked the text"})).json()).toEqual({ok:true});
+  expect(dispatches).toBe(before+1);
+  expect((await sql`select status from platform.outbound where id='late-store-reply'`)[0].status).toBe("accepted");
+  expect((await sql`select status from network.messages where id='late-store-reply'`)[0].status).toBe("accepted");
+  await rt.storeStatuses([drainChange]);
+  expect((await sql`select status from network.messages where id='late-store-reply'`)[0].status).toBe("accepted");
+},60_000);
