@@ -269,10 +269,16 @@ if (import.meta.main) {
     plans: { type: "string", default: "on" }, "sim-plans": { type: "string" }, capital: { type: "boolean", default: false },
     paraphrase: { type: "boolean", default: false },
   } });
+  const knownArms = ["push_baseline", "push_v2", "consent"] as const;
+  const arms = (a.only === undefined ? [...knownArms] : a.only.split(",")) as (typeof knownArms)[number][];
+  const unknown = arms.filter(arm => !knownArms.includes(arm));
+  if (unknown.length) {
+    console.error(`unknown arm: ${unknown.map(arm => JSON.stringify(arm)).join(", ")}; known: ${knownArms.join(", ")}`);
+    process.exit(2);
+  }
   if (a["primed-met"]) PRIMED_MODEL.met = Number(a["primed-met"]);
   if (a["primed-partial"]) PRIMED_MODEL.partial = Number(a["primed-partial"]);
   if (a["primed-identity"]) PRIMED_MODEL.identity = Number(a["primed-identity"]);
-  const arms = (a.only ? a.only.split(",") : ["push_baseline", "push_v2", "consent"]) as ("push_baseline" | "push_v2" | "consent")[];
   const out: ArmResult[] = [];
   for (const arm of arms) {
     const t0 = performance.now();
