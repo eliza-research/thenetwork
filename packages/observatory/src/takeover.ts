@@ -9,7 +9,8 @@ import type { PlayerPrompt } from "./types.ts";
 
 interface Pending { prompt: PlayerPrompt; ctx: PersonaContext; msg: SimMessage; resolve: (r: AgentReply) => void }
 
-const CANT_MAKE_IT = /can'?t make it|have to bail|can'?t come|cancel/i;
+// A negated "cancel" must not override the reply reader; a separate cancellation still can.
+const CANT_MAKE_IT = /can'?t make it|have to bail|can'?t come|(?<!\b(?:don['\u2018\u2019\u02bc]?t|do not|not|never)\s+(?:(?:ever|please|just)\s+)?)cancel/i;
 const NO_REPLY_NEEDED = new Set(["info", "confirmation", "cancellation", "system", "concierge"]);
 
 export class TakeoverAgent implements PersonaAgent {
