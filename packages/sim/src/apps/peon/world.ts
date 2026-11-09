@@ -32,6 +32,7 @@ import { auditCompanies, type AuditFlag } from "./audit.ts";
 import { PeonOracle, n01, u01 } from "./oracle.ts";
 import { generatePeonPopulation, type Candidate, type Job, type PeonGenOptions, type PeonPopulation } from "./persona.ts";
 import { PEON_WORLD_START, buildPeonSnapshot, proposalShell, type PeonNetworkState, type PeonSnapshot } from "./snapshot.ts";
+import { simulationWeeks } from "../weeks.ts";
 
 /** Roles a candidate is shown per week: peon's attention budget (domain research B4: about 3). */
 export const CAND_CAP = 3;
@@ -132,7 +133,7 @@ export interface PeonRunOptions extends Omit<PeonGenOptions, "seed"> {
 }
 
 export function createPeonWorld(o: Omit<PeonRunOptions, "matcher">): PeonWorld {
-  const weeks = o.weeks ?? 8;
+  const weeks = simulationWeeks(o.weeks, 8);
   const pop = o.pop ?? generatePeonPopulation({ ...o, seed: o.seed });
   const oracle = new PeonOracle(pop, o.seed);
   const state: PeonNetworkState = {

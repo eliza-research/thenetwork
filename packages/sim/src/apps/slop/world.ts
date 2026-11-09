@@ -22,6 +22,7 @@ import { visibleProfiles, type VisibleProfile } from "./visible.ts";
 import type { BodyTypeModel } from "./bodyType.ts";
 import { probePhotoRefs } from "@thenetwork/engine/src/packs/slop/plan.ts";
 import { emptyRelayStats, relayExchange, relayRole, simPhotoConsent, simPhotoIds, type RelaySimStats } from "./relay.ts";
+import { simulationWeeks } from "../weeks.ts";
 
 /** One date proposal from a matcher. `options`: slot indices into SLOTS (2-3). */
 export interface SlopProposal {
@@ -96,7 +97,7 @@ export const slotTime = (week: number, slot: number) =>
   SLOP_WORLD_START + (week * 7 + SLOT_DAY[SLOTS[slot]!]) * DAY + SLOT_HOUR[SLOTS[slot]!.endsWith("day") ? "day" : "eve"]! * HOUR;
 
 export function createSlopWorld(o: Omit<SlopRunOptions, "matcher">): SlopWorld {
-  const weeks = o.weeks ?? 4;
+  const weeks = simulationWeeks(o.weeks, 4);
   const personas = o.personas ?? generateSlopPersonas({ ...o, seed: o.seed, weeks });
   const oracle = new SlopOracle(personas, o.seed, o.bodyTypes);
   return {
