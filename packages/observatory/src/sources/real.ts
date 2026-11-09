@@ -829,9 +829,9 @@ export class RealSource implements DataSource {
     const re = searchPattern(q);
     const like = `%${q.trim().replace(/[\\%_]/g, x => `\\${x}`)}%`;
     const [msgs, events] = await Promise.all([
-      sql`select member_id, ts, body, type, opportunity_id from network.messages where app_id = ${this.app} and direction = 'outbound' and not system and body ilike ${like} order by ts desc limit ${limit}`,
+      sql`select member_id, ts, body, type, opportunity_id from network.messages where app_id = ${this.app} and direction = 'outbound' and not system and body ilike ${like} order by ts desc`,
       // Feedback events hold what a member wrote: never searched.
-      sql`select id, at, actor_type, actor_id, type, object_type, object_id, payload from network.events where app_id = ${this.app} and type <> 'feedback_given' order by at desc, id desc limit 5000`,
+      sql`select id, at, actor_type, actor_id, type, object_type, object_id, payload from network.events where app_id = ${this.app} and type <> 'feedback_given' order by at desc, id desc`,
     ]);
     const name = (x: string) => this.store.member(x)?.name ?? x;
     const hits: SearchHit[] = [];
@@ -843,7 +843,6 @@ export class RealSource implements DataSource {
       hits.push({ memberId: r.member_id, memberName: name(r.member_id), t: ms(r.ts) ?? 0, kind: "message", snippet: snippet(text, re), ...(r.type ? { type: r.type } : {}), ...(r.opportunity_id ? { opportunityId: r.opportunity_id } : {}) });
     }
     for (const e of events as any[]) {
-      if (hits.length >= limit * 2) break;
       const d = describe(e as EventRow, name);
       if (!d.memberId || !this.store.members.has(d.memberId) || !(re.test(d.text) || re.test(d.type))) continue;
       hits.push({ memberId: d.memberId, memberName: name(d.memberId), t: d.t, kind: "event", snippet: d.text, type: d.type, ...(d.opportunityId ? { opportunityId: d.opportunityId } : {}) });
