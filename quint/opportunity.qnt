@@ -1,5 +1,5 @@
 // -*- mode: Bluespec; -*-
-// quint-check: max-steps=40 max-samples=8000 verify-steps=6
+// quint-check: max-steps=250 max-samples=8000 verify-steps=3
 //
 // The opportunity machines of the ConsentNetwork (docs/research/2026-11-07-state-machines.md section 6.6):
 // opportunity-lifecycle, opp-participant-status, review-item, awaiting-slot, yes-hold,
@@ -22,11 +22,25 @@
 // a bare counter-offer is "unclear", SD-041); the evals/ corpora test the readers themselves.
 //
 // Ghost state (not in the code): what the member really meant (accepted, withdrawn, saidNo, cancelAsked),
-// what really reached them (msgs[].q from the queue), and who was told what (revealSent, wasTold,
+// what really reached them (probeQ and revealQ: the queue outcome), and who was told what (revealSent, wasTold,
 // cancelHeard, released, noticeRefused).
 //
 // Defects that this model reproduces are named on the invariant that shows them (SD-NNN, register in
 // docs/research/2026-11-07-state-machines.md section 5). Findings: docs/research/quint-findings/opportunity.md.
+//
+// The model is kept small for Apalache (findings section 7):
+//  - A unit runs its own light part in one action. The large helpers it calls (close, replaceOrClose,
+//    advanceProbes and the reveal, handleDrop, the dropMember step for one opportunity, the tick's parts) are
+//    jobs on a stack (`s.jobs`) that the job actions run one at a time, in the order of the calls in the code.
+//    No other unit runs until the stack is empty (`idle`), so a unit is still atomic as in the code (one unit
+//    under the store lock), and each helper is in the transition relation once. The invariants and the
+//    witnesses are read only when the stack is empty. The jobs of a unit use the unit's oracles (`s.jobEnv`).
+//  - The tick delivers its deferred sends one job at a time, in any order (the code goes in insertion order;
+//    any order includes it).
+//  - Messages are not kept one by one. The only messages that an invariant reads are the probe and the reveal
+//    (at most one of each per opportunity and member), so each opportunity keeps their queue state
+//    (`probeQ`, `revealQ`). `s.collected` counts the collected messages. A member keeps the times of the first
+//    two unanswered invites only (`ask1`, `ask2`): the two-unanswered rule reads no more.
 module opportunity {
 
   // ---------------------------------------------------------------- constants
@@ -60,7 +74,6 @@ module opportunity {
   // ---------------------------------------------------------------- types
   type Aw = { kind: str, opp: str, at: int, clarified: bool }
   type Review = { decision: str, deadline: int, decidedAt: int, invalidated: bool }
-  type Msg = { kind: str, opp: str, to: str, at: int, q: str }
   type Def = { kind: str, opp: str, to: str }
   type Env = { openW: Set[str], budget: bool, lead: int }
   type OppSt = {
@@ -77,20 +90,29 @@ module opportunity {
     revealSent: Set[str], wasTold: Set[str], silent: Set[str], expiredSilent: Set[str],
     released: Set[str], cancelHeard: Set[str], droppedBy: Set[str], noShowCount: str -> int,
     noShowCounted: Set[str], noticeRefused: Set[str],
-    everTerminal: bool
+    everTerminal: bool,
+    // The queue state of the probe and of the reveal to each member: "" (none), pending, held, delivered, refused.
+    probeQ: str -> str, revealQ: str -> str
   }
   type MemSt = {
-    optedOut: bool, minor: bool, forgotten: bool, aw: Aw, outbound: int, asks: List[int],
+    optedOut: bool, minor: bool, forgotten: bool, aw: Aw, outbound: int,
+    // The times of the first two proactive invites since the member's last text (-1: none).
+    ask1: int, ask2: int,
     onlyWhenAsked: bool, noShows: int
   }
   type Req = { outcome: str, toldNone: bool }
   type Last = { act: str, o: str, m: str, x: str, dt: int }
+  // A job: the rest of the current unit (see the header). kind: close, replace, probes, reveal, drop, dm,
+  // forgetRest, deliver, refresh, adv, exp, expire. why: the close reason or the dropMember reason.
+  type Job = { kind: str, o: str, m: str, why: str, ack: bool }
   type S = {
     now: int, opps: str -> OppSt, mem: str -> MemSt, req: Req,
-    deferred: Set[Def], msgs: Set[Msg], last: Last
+    deferred: Set[Def], collected: int, last: Last,
+    jobs: List[Job], jobEnv: Env, toDeliver: Set[Def]
   }
 
   pure def L(act: str, o: str, m: str, x: str): Last = { act: act, o: o, m: m, x: x, dt: 0 }
+  pure def J(kind: str, o: str, m: str, why: str): Job = { kind: kind, o: o, m: m, why: why, ack: false }
   pure val NO_AW: Aw = { kind: "none", opp: "", at: 0, clarified: false }
 
   pure def zeroMap(v: int): str -> int = MEMBERS.mapBy(_ => v)
@@ -109,11 +131,11 @@ module opportunity {
     revealSent: Set(), wasTold: Set(), silent: Set(), expiredSilent: Set(),
     released: Set(), cancelHeard: Set(), droppedBy: Set(), noShowCount: zeroMap(0),
     noShowCounted: Set(), noticeRefused: Set(),
-    everTerminal: false
+    everTerminal: false, probeQ: strMap(""), revealQ: strMap("")
   }
 
   pure val MEM0: MemSt = {
-    optedOut: false, minor: false, forgotten: false, aw: NO_AW, outbound: 0, asks: List(),
+    optedOut: false, minor: false, forgotten: false, aw: NO_AW, outbound: 0, ask1: -1, ask2: -1,
     onlyWhenAsked: false, noShows: 0
   }
 
@@ -123,7 +145,8 @@ module opportunity {
               "o2" -> template(Set("a", "c"), Set("b"), "a", "")),
     mem: MEMBERS.mapBy(_ => MEM0),
     req: { outcome: "", toldNone: false },
-    deferred: Set(), msgs: Set(), last: L("init", "", "", "")
+    deferred: Set(), collected: 0, last: L("init", "", "", ""),
+    jobs: List(), jobEnv: { openW: Set(), budget: true, lead: 8 }, toDeliver: Set()
   }
 
   // ---------------------------------------------------------------- small helpers
@@ -134,6 +157,8 @@ module opportunity {
   pure def stat(s: S, o: str, m: str): str = op(s, o).status.get(m)
   pure def setStat(s: S, o: str, m: str, v: str): S = putO(s, o, { ...op(s, o), status: op(s, o).status.set(m, v) })
   pure def partsOrdered(s: S, o: str): List[str] = ORDER.select(p => op(s, o).parts.contains(p))
+  /** Put jobs on top of the stack: they run first, in list order (a call in the code). */
+  pure def push(s: S, js: List[Job]): S = { ...s, jobs: js.concat(s.jobs) }
   pure def clearAwFor(s: S, m: str, o: str): S =
     if (mm(s, m).aw.opp == o and mm(s, m).aw.kind != "none") putM(s, m, { ...mm(s, m), aw: NO_AW }) else s
 
@@ -164,8 +189,12 @@ module opportunity {
   // The message is collected for the outbound queue in the same unit (runtime.ts: ctx.send only collects).
   pure def collect(s: S, m: str, kind: str, o: str, proactive: bool): S = {
     val x = mm(s, m)
-    val x2 = { ...x, outbound: x.outbound + 1, asks: if (proactive) x.asks.append(s.now) else x.asks }
-    { ...putM(s, m, x2), msgs: s.msgs.union(Set({ kind: kind, opp: o, to: m, at: s.now, q: "pending" })) }
+    val a1 = if (proactive and x.ask1 < 0) s.now else x.ask1
+    val a2 = if (proactive and x.ask1 >= 0 and x.ask2 < 0) s.now else x.ask2
+    val s1 = { ...putM(s, m, { ...x, outbound: x.outbound + 1, ask1: a1, ask2: a2 }), collected: s.collected + 1 }
+    if (kind == "probe") putO(s1, o, { ...op(s1, o), probeQ: op(s1, o).probeQ.set(m, "pending") })
+    else if (kind == "reveal") putO(s1, o, { ...op(s1, o), revealQ: op(s1, o).revealQ.set(m, "pending") })
+    else s1
   }
 
   pure def pushDef(s: S, kind: str, o: str, m: str): S = { ...s, deferred: s.deferred.union(Set({ kind: kind, opp: o, to: m })) }
@@ -212,7 +241,7 @@ module opportunity {
     else putM(s, m, { ...mm(s, m), aw: aw })
   }
 
-  // ---------------------------------------------------------------- close (N:2526-2561)
+  // ---------------------------------------------------------------- close (N:2526-2561), a job
   pure def close(s: S, o: str, reason: str, env: Env): S = {
     val x = op(s, o)
     if (TERMINAL.contains(x.stage) or x.stage == "absent") s
@@ -267,14 +296,14 @@ module opportunity {
     }
   }
 
-  // ---------------------------------------------------------------- replaceOrClose (N:2368)
+  // ---------------------------------------------------------------- replaceOrClose (N:2368), a job
   // With one alternate the replacement cannot reveal at once: the alternate starts "queued".
   // SD-048 (N:2408-2410): the member who is out loses a slot that points at this opportunity.
-  pure def replaceOrClose(s0: S, o: str, out: str, env: Env): S = {
+  pure def replaceOrClose(s0: S, o: str, out: str): S = {
     val s = if (op(s0, o).stage == "probing") clearAwFor(s0, out, o) else s0
     val x = op(s, o)
     if (x.stage != "probing") s
-    else if (x.requester == out) close(s, o, "requester unavailable", env)
+    else if (x.requester == out) push(s, [J("close", o, "", "requester unavailable")])
     else {
       val stay = x.parts.exclude(Set(out))
       val cands = ORDER.select(a => x.alts.contains(a) and eligible(s, a, o))
@@ -284,11 +313,11 @@ module opportunity {
                               first: if (x.first == out) alt else x.first,
                               status: x.status.set(out, "out").set(alt, "queued") })
         advanceTurns(s1, o)
-      } else close(putO(s, o, { ...x, alts: Set() }), o, "no one available", env)
+      } else push(putO(s, o, { ...x, alts: Set() }), [J("close", o, "", "no one available")])
     }
   }
 
-  // ---------------------------------------------------------------- handleDrop (N:2502)
+  // ---------------------------------------------------------------- handleDrop (N:2502), a job
   pure def handleDrop(s: S, m: str, o: str, ack: bool, env: Env): S = {
     val x0 = op(s, o)
     val s1 = putO(s, o, { ...x0, status: x0.status.set(m, "dropped"), droppedBy: x0.droppedBy.union(Set(m)) })
@@ -310,6 +339,7 @@ module opportunity {
       else s5
     }
   }
+  pure def dropJob(o: str, m: str, ack: bool): Job = { ...J("drop", o, m, ""), ack: ack }
 
   // ---------------------------------------------------------------- reveal (N:2411)
   pure def onSentReveal(s: S, o: str, m: str): S = {
@@ -319,12 +349,15 @@ module opportunity {
                   revealSent: x.revealSent.union(Set(m)), wasTold: x.wasTold.union(Set(m)) })
   }
 
-  pure def sendReveal(s: S, o: str, p: str, env: Env): S = {
-    val r = sendGate(s, p, "reveal", "logistics", true, false, env)
-    if (r == "sent") onSentReveal(collect(s, p, "reveal", o, false), o, p)
-    else if (r == "deferred") pushDef(s, "reveal", o, p)
-    else handleDrop(s, p, o, false, env) // the reveal hook's onRefused (N:4087)
-  }
+  /** The reveal to one participant (a job): the reveal fold's step in reveal() (N:2425). */
+  pure def sendReveal(s: S, o: str, p: str, env: Env): S =
+    if (op(s, o).stage != "scheduled" or stat(s, o, p) != "yes") s
+    else {
+      val r = sendGate(s, p, "reveal", "logistics", true, false, env)
+      if (r == "sent") onSentReveal(collect(s, p, "reveal", o, false), o, p)
+      else if (r == "deferred") pushDef(s, "reveal", o, p)
+      else push(s, [dropJob(o, p, false)]) // the reveal hook's onRefused (N:4087)
+    }
 
   pure def reveal(s: S, o: str, env: Env): S = {
     // Send-time re-check (N:2415-2424): reachable, about the others, and room on the Blooio streak.
@@ -332,49 +365,54 @@ module opportunity {
       val x = mm(s, p)
       x.forgotten or x.optedOut or x.minor or x.outbound > 2
     })
-    if (bad.length() > 0) replaceOrClose(setStat(s, o, bad[0], "unavailable"), o, bad[0], env)
+    if (bad.length() > 0) push(setStat(s, o, bad[0], "unavailable"), [J("replace", o, bad[0], "")])
     else {
       val x = op(s, o)
       val s1 = putO(s, o, { ...x, stage: "scheduled", meetingAt: s.now + env.lead,
                             status: x.status.keys().mapBy(k => if (x.parts.contains(k)) "yes" else x.status.get(k)) })
       val s2 = if (x.requester != "") { ...s1, req: { ...s1.req, outcome: "booked" } } else s1
-      partsOrdered(s2, o).foldl(s2, (acc, p) =>
-        if (op(acc, o).stage != "scheduled" or stat(acc, o, p) != "yes") acc else sendReveal(acc, o, p, env))
+      push(s2, partsOrdered(s2, o).foldl(List(), (l, p) => l.append(J("reveal", o, p, ""))))
     }
   }
 
-  pure def maybeReveal(s: S, o: str, env: Env): S =
+  /** advanceProbes (N:2129), a job: the turn order, then the reveal once every participant said yes. */
+  pure def advanceProbes(s0: S, o: str, env: Env): S = {
+    val s = advanceTurns(s0, o)
     if (op(s, o).stage == "probing" and op(s, o).parts.forall(p => stat(s, o, p) == "available")) reveal(s, o, env) else s
-
-  pure def advanceProbes(s: S, o: str, env: Env): S = maybeReveal(advanceTurns(s, o), o, env)
+  }
 
   // ---------------------------------------------------------------- dropMember (N:2564), the hub
-  pure def dropMember(s: S, m: str, reason: str, env: Env): S = {
+  // dropMember runs one job for each opportunity, in the code's order.
+  pure def dropMember(s: S, m: str, reason: str): S = push(s, [J("dm", "o1", m, reason), J("dm", "o2", m, reason)])
+
+  /** The step of dropMember for one opportunity (a job). */
+  pure def dropMemberIn(acc: S, o: str, m: str, reason: str): S = {
     val minorReason = reason == "minors policy"
-    OPP_ORDER.foldl(s, (acc, o) => {
-      val x = op(acc, o)
-      if (not(OPEN.contains(x.stage))) acc
-      else {
-        val wasAlternate = minorReason and x.alts.contains(m)
-        val a1 = putO(acc, o, { ...x, alts: x.alts.exclude(Set(m)) })
-        if (wasAlternate and not(x.parts.contains(m)) and x.stage != "scheduled") close(a1, o, reason, env)
-        else if (not(x.parts.contains(m))) a1
-        else if (minorReason and x.stage != "scheduled") close(a1, o, reason, env)
-        else if (x.stage == "review") close(a1, o, reason, env)
-        else if (x.stage == "probing") replaceOrClose(setStat(a1, o, m, "unavailable"), o, m, env)
-        // SD-047 (N:2633): only a member who is going ("yes") leaves a booked meeting.
-        else if (stat(a1, o, m) == "yes") handleDrop(a1, m, o, false, env)
-        else a1
-      }
-    })
+    val x = op(acc, o)
+    if (not(OPEN.contains(x.stage))) acc
+    else {
+      val wasAlternate = minorReason and x.alts.contains(m)
+      val a1 = putO(acc, o, { ...x, alts: x.alts.exclude(Set(m)) })
+      if (wasAlternate and not(x.parts.contains(m)) and x.stage != "scheduled") push(a1, [J("close", o, "", reason)])
+      else if (not(x.parts.contains(m))) a1
+      else if (minorReason and x.stage != "scheduled") push(a1, [J("close", o, "", reason)])
+      else if (x.stage == "review") push(a1, [J("close", o, "", reason)])
+      else if (x.stage == "probing") push(setStat(a1, o, m, "unavailable"), [J("replace", o, m, "")])
+      // SD-047 (N:2633): only a member who is going ("yes") leaves a booked meeting.
+      else if (stat(a1, o, m) == "yes") push(a1, [dropJob(o, m, false)])
+      else a1
+    }
   }
 
   // heardFrom (N:639): any inbound resets the pause rules. The queue releases messages held for an answer
   // (outbound-queue.ts:636-643).
+  pure def unhold(q: str): str = if (q == "held") "pending" else q
   pure def heardFrom(s: S, m: str): S = {
     val x = mm(s, m)
-    val s1 = putM(s, m, { ...x, asks: List(), outbound: 0, onlyWhenAsked: false })
-    { ...s1, msgs: s1.msgs.map(g => if (g.to == m and g.q == "held") { ...g, q: "pending" } else g) }
+    val s1 = putM(s, m, { ...x, ask1: -1, ask2: -1, outbound: 0, onlyWhenAsked: false })
+    OPP_ORDER.foldl(s1, (acc, o) => putO(acc, o, { ...op(acc, o),
+      probeQ: op(acc, o).probeQ.set(m, unhold(op(acc, o).probeQ.get(m))),
+      revealQ: op(acc, o).revealQ.set(m, unhold(op(acc, o).revealQ.get(m))) }))
   }
 
   // ---------------------------------------------------------------- readers (oracles, fixed per intent)
@@ -410,10 +448,10 @@ module opportunity {
           val s1 = putO(s, o, { ...x1, timeRetry: x1.timeRetry.union(Set(m)), status: x1.status.set(m, "probing"), sentAt: x1.sentAt.set(m, s.now) })
           val s2 = collect(s1, m, "times", o, false)
           putM(s2, m, { ...mm(s2, m), aw: { kind: "probe", opp: o, at: s2.now, clarified: false } })
-        } else advanceProbes(collect(putO(s, o, x1), m, "reply", o, false), o, env)
+        } else push(collect(putO(s, o, x1), m, "reply", o, false), [J("probes", o, "", "")])
       } else {
         val s1 = putO(s, o, { ...x, status: x.status.set(m, "unavailable"), saidNo: x.saidNo.union(Set(m)) })
-        advanceProbes(replaceOrClose(collect(s1, m, "reply", o, false), o, m, env), o, env)
+        push(collect(s1, m, "reply", o, false), [J("replace", o, m, ""), J("probes", o, "", "")])
       }
     }
   }
@@ -464,7 +502,7 @@ module opportunity {
       } else if (clarifyNow) {
         collect(putM(s, m, { ...mm(s, m), aw: { ...aw, clarified: true } }), m, "reply", aw.opp, false)
       } else if (aw.kind == "booked" and op(s, aw.opp).stage == "scheduled" and stat(s, aw.opp, m) == "yes" and (intent == "cancel" or yn == "no")) {
-        handleDrop(putM(s, m, { ...mm(s, m), aw: NO_AW }), m, aw.opp, true, env)
+        push(putM(s, m, { ...mm(s, m), aw: NO_AW }), [dropJob(aw.opp, m, true)])
       } else if (aw.kind == "booked" and (yn == "yes" or intent == "ack")) {
         val s1 = putM(s, m, { ...mm(s, m), aw: NO_AW })
         collect(if (op(s1, aw.opp).stage == "scheduled") confirmPlan(s1, aw.opp, m, false) else s1, m, "reply", aw.opp, false)
@@ -474,7 +512,7 @@ module opportunity {
         // SD-075 and SD-076 (N:807-812): with no slot, "no" or a cancel takes back a yes to a probe that is
         // not booked yet.
         val held = OPP_ORDER.select(o => op(s, o).stage == "probing" and op(s, o).contacted.contains(m) and stat(s, o, m) == "available")
-        if (intent == "cancel" and sched.length() > 0) handleDrop(s, m, sched[0], true, env)
+        if (intent == "cancel" and sched.length() > 0) push(s, [dropJob(sched[0], m, true)])
         else if (aw.kind == "none" and (intent == "cancel" or yn == "no") and held.length() > 0)
           onProbeAnswer(s, m, held[0], false, false, intent, env)
         else {
@@ -497,36 +535,40 @@ module opportunity {
     else true
   }
 
-  pure def deliverDeferred(s: S, env: Env): S = {
-    val waiting = s.deferred
-    waiting.fold({ ...s, deferred: Set() }, (acc, d) => {
-      if (mm(acc, d.to).forgotten) acc
-      else if (not(defValid(acc, d))) acc            // N:3274: dropped, no onRefused
-      else if (not(env.openW.contains(d.to))) pushDef(acc, d.kind, d.opp, d.to)
+  /**
+   * deliverDeferred (N:3270-3290) for one deferred send `d` (a job). The tick took the deferred sends out of
+   * `deferred` into `toDeliver`; a send that must wait again goes back into `deferred`. The next deliver job
+   * runs after the drop that a refused reveal starts, as in the code's loop.
+   */
+  pure def deliverOne(acc0: S, d: Def, env: Env): S = {
+    val acc1 = { ...acc0, toDeliver: acc0.toDeliver.exclude(Set(d)) }
+    val acc = if (acc1.toDeliver != Set()) push(acc1, [J("deliver", "", "", "")]) else acc1
+    if (mm(acc, d.to).forgotten) acc
+    else if (not(defValid(acc, d))) acc            // N:3274: dropped, no onRefused
+    else if (not(env.openW.contains(d.to))) pushDef(acc, d.kind, d.opp, d.to)
+    else {
+      val about = d.kind == "reveal" or d.kind == "feedback"
+      if (not(about)) sendNotice(acc, d.to, d.kind, d.opp, env)
       else {
-        val about = d.kind == "reveal" or d.kind == "feedback"
-        if (not(about)) sendNotice(acc, d.to, d.kind, d.opp, env)
-        else {
-          val r = sendGate(acc, d.to, d.kind, "logistics", about, false, env)
-          if (r == "sent") {
-            val a1 = collect(acc, d.to, d.kind, d.opp, false)
-            if (d.kind == "reveal") onSentReveal(a1, d.opp, d.to)
-            else expectSlot(a1, d.to, { kind: "feedback", opp: d.opp, at: a1.now, clarified: false })
-          }
-          else if (r == "deferred") pushDef(acc, d.kind, d.opp, d.to)
-          else if (d.kind == "reveal" and op(acc, d.opp).stage == "scheduled" and stat(acc, d.opp, d.to) == "yes") handleDrop(acc, d.to, d.opp, false, env)
-          else acc
+        val r = sendGate(acc, d.to, d.kind, "logistics", about, false, env)
+        if (r == "sent") {
+          val a1 = collect(acc, d.to, d.kind, d.opp, false)
+          if (d.kind == "reveal") onSentReveal(a1, d.opp, d.to)
+          else expectSlot(a1, d.to, { kind: "feedback", opp: d.opp, at: a1.now, clarified: false })
         }
+        else if (r == "deferred") pushDef(acc, d.kind, d.opp, d.to)
+        else if (d.kind == "reveal" and op(acc, d.opp).stage == "scheduled" and stat(acc, d.opp, d.to) == "yes") push(acc, [dropJob(d.opp, d.to, false)])
+        else acc
       }
-    })
+    }
   }
 
   // refreshUnanswered (N:3323): two initial invites unanswered for 72 h move the member to only-when-I-ask.
+  // The second oldest invite is 72 hours old, so two invites are (UNANSWERED_LIMIT = 2).
   pure def refreshUnanswered(s: S): S =
     MEMBERS.fold(s, (acc, m) => {
       val x = mm(acc, m)
-      val n = x.asks.select(t => acc.now - t >= UNANSWERED_AFTER).length()
-      if (n >= UNANSWERED_LIMIT and not(x.onlyWhenAsked)) putM(acc, m, { ...x, onlyWhenAsked: true }) else acc
+      if (x.ask2 >= 0 and acc.now - x.ask2 >= UNANSWERED_AFTER and not(x.onlyWhenAsked)) putM(acc, m, { ...x, onlyWhenAsked: true }) else acc
     })
 
   pure def finalize(s: S, o: str): S = {
@@ -546,28 +588,31 @@ module opportunity {
     else s1
   }
 
+  /** advance's probe silence for one participant (a job): the step of the loop over the participants. */
+  pure def expireProbe(acc: S, o: str, p: str): S = {
+    val y = op(acc, o)
+    if (y.stage != "probing" or y.status.get(p) != "probing") acc
+    else {
+      val due = if (y.contacted.contains(p)) y.sentAt.get(p) + PROBE_TTL else y.turnAt.get(p) + PROBE_WAIT
+      if (acc.now < due) acc
+      // N:3430-3433: they said yes and were offered other times: no answer keeps the yes. The slot that
+      // points at this item ends first (SD-076).
+      else if (y.timeRetry.contains(p)) setStat(clearAwFor(acc, p, o), o, p, "available")
+      else {
+        val a1 = if (y.contacted.contains(p)) putO(acc, o, { ...y, expiredSilent: y.expiredSilent.union(Set(p)) }) else acc
+        push(setStat(clearAwFor(a1, p, o), o, p, "unavailable"), [J("replace", o, p, "")])
+      }
+    }
+  }
+
+  /** advance (N:3378) for one opportunity (a job). The probing loop is one job for each participant, then advanceProbes. */
   pure def advance(s: S, o: str, env: Env): S = {
     val x = op(s, o)
     if (x.stage == "review" and s.now >= x.review.deadline) {
       // Missed its SLA: expires instead of being sent late (PRD 32.8).
-      close(putO(s, o, { ...x, review: { ...x.review, decision: "expired", decidedAt: s.now } }), o, "review expired", env)
+      push(putO(s, o, { ...x, review: { ...x.review, decision: "expired", decidedAt: s.now } }), [J("close", o, "", "review expired")])
     } else if (x.stage == "probing") {
-      val s1 = partsOrdered(s, o).foldl(s, (acc, p) => {
-        val y = op(acc, o)
-        if (y.stage != "probing" or y.status.get(p) != "probing") acc
-        else {
-          val due = if (y.contacted.contains(p)) y.sentAt.get(p) + PROBE_TTL else y.turnAt.get(p) + PROBE_WAIT
-          if (acc.now < due) acc
-          // N:3430-3433: they said yes and were offered other times: no answer keeps the yes. The slot that
-          // points at this item ends first (SD-076).
-          else if (y.timeRetry.contains(p)) setStat(clearAwFor(acc, p, o), o, p, "available")
-          else {
-            val a1 = if (y.contacted.contains(p)) putO(acc, o, { ...y, expiredSilent: y.expiredSilent.union(Set(p)) }) else acc
-            replaceOrClose(setStat(clearAwFor(a1, p, o), o, p, "unavailable"), o, p, env)
-          }
-        }
-      })
-      advanceProbes(s1, o, env)
+      push(s, partsOrdered(s, o).foldl(List(), (l, p) => l.append(J("exp", o, p, ""))).append(J("probes", o, "", "")))
     } else if (x.stage == "scheduled") {
       // Silence for 48 hours after the booked plan reached them (or the start) confirms it (N:3389-3393).
       val s1 = ORDER.foldl(s, (acc, p) => {
@@ -617,11 +662,16 @@ module opportunity {
 
   action init = s' = S0
 
+  // The stack of jobs is empty: no unit is running (see the header).
+  pure def idleIn(x: S): bool = x.jobs.length() == 0
+  val idle: bool = idleIn(s)
+
   // newOpp + submit (N:2047, 2096): every opportunity goes to review first. The engine and the request
   // search propose only eligible members (eligible, busy).
   action submit(o: str): bool = {
     val x = op(s, o)
     all {
+      idle,
       x.stage == "absent",
       x.parts.forall(p => eligible(s, p, o)),
       x.requester == "" or s.req.outcome == "" or s.req.outcome == "none",
@@ -643,22 +693,25 @@ module opportunity {
   action approve(o: str, env: Env): bool = {
     val x = op(s, o)
     all {
+      idle,
       reviewOpen(s, o),
       x.parts.forall(p => not(mm(s, p).minor) and not(mm(s, p).forgotten)), // reviewBlock refuses otherwise
       val s1 = putO(s, o, { ...x, review: { ...x.review, decision: "approve", decidedAt: s.now } })
       val bad = x.parts.exists(p => not(eligible(s1, p, o)))
-      val s2 = if (bad) close(putO(s1, o, { ...op(s1, o), review: { ...op(s1, o).review, invalidated: true } }), o, "invalidated", env)
-               else advanceProbes(putO(s1, o, { ...op(s1, o), stage: "probing",
-                       status: x.status.keys().mapBy(k => if (x.parts.contains(k)) "queued" else "out") }), o, env)
-      s' = { ...s2, last: L("approve", o, "", "") },
+      val s2 = if (bad) push(putO(s1, o, { ...op(s1, o), review: { ...op(s1, o).review, invalidated: true } }), [J("close", o, "", "invalidated")])
+               else push(putO(s1, o, { ...op(s1, o), stage: "probing",
+                       status: x.status.keys().mapBy(k => if (x.parts.contains(k)) "queued" else "out") }), [J("probes", o, "", "")])
+      s' = { ...s2, last: L("approve", o, "", ""), jobEnv: env },
     }
   }
 
   action reject(o: str, env: Env): bool = {
     val x = op(s, o)
     all {
+      idle,
       reviewOpen(s, o),
-      s' = { ...close(putO(s, o, { ...x, review: { ...x.review, decision: "reject", decidedAt: s.now } }), o, "rejected in review", env), last: L("reject", o, "", "") },
+      s' = { ...push(putO(s, o, { ...x, review: { ...x.review, decision: "reject", decidedAt: s.now } }), [J("close", o, "", "rejected in review")]),
+             last: L("reject", o, "", ""), jobEnv: env },
     }
   }
 
@@ -668,6 +721,7 @@ module opportunity {
   action probeSend(o: str, m: str, env: Env): bool = {
     val x = op(s, o)
     all {
+      idle,
       x.stage == "probing", x.parts.contains(m), x.status.get(m) == "probing", not(x.contacted.contains(m)),
       env.openW.contains(m), not(probeOwed(s, m, o)),
       val invite = x.requester != m
@@ -677,8 +731,8 @@ module opportunity {
                  val y = op(s1, o)
                  putM(putO(s1, o, { ...y, contacted: y.contacted.union(Set(m)), sentAt: y.sentAt.set(m, s1.now) }), m,
                       { ...mm(s1, m), aw: { kind: "probe", opp: o, at: s1.now, clarified: false } })
-               } else advanceProbes(replaceOrClose(setStat(s, o, m, "unavailable"), o, m, env), o, env)
-      s' = { ...s2, last: L("probeSend", o, m, r) },
+               } else push(setStat(s, o, m, "unavailable"), [J("replace", o, m, ""), J("probes", o, "", "")])
+      s' = { ...s2, last: L("probeSend", o, m, r), jobEnv: env },
     }
   }
 
@@ -686,6 +740,7 @@ module opportunity {
   action answer(m: str, intent: str, env: Env): bool = {
     val x = mm(s, m)
     all {
+      idle,
       not(x.forgotten), not(x.optedOut),
       // A post-meeting answer ("it was great", "he never showed") comes only from a member who had a meeting.
       Set("fb_good", "fb_other_noshow", "fb_self_noshow").contains(intent)
@@ -701,19 +756,21 @@ module opportunity {
         else if (y.stage == "scheduled" and y.status.get(m) == "yes") putO(acc, o, { ...y, cancelAsked: y.cancelAsked.union(Set(m)) })
         else acc
       })
-      s' = { ...route(s2, m, intent, before, env), last: L("answer", "", m, intent) },
+      s' = { ...route(s2, m, intent, before, env), last: L("answer", "", m, intent), jobEnv: env },
     }
   }
 
   // STOP (N:675): heardFrom first (N:615), then dropMember.
   action stop(m: str, env: Env): bool = all {
+    idle,
     not(mm(s, m).forgotten), not(mm(s, m).optedOut),
     val s1 = heardFrom(s, m)
-    s' = { ...dropMember(putM(s1, m, { ...mm(s1, m), optedOut: true }), m, "opted out", env), last: L("stop", "", m, "") },
+    s' = { ...dropMember(putM(s1, m, { ...mm(s1, m), optedOut: true }), m, "opted out"), last: L("stop", "", m, ""), jobEnv: env },
   }
 
   // START (N:676).
   action start(m: str): bool = all {
+    idle,
     not(mm(s, m).forgotten), mm(s, m).optedOut,
     val s1 = heardFrom(s, m)
     s' = { ...collect(putM(s1, m, { ...mm(s1, m), optedOut: false }), m, "reply", "", false), last: L("start", "", m, "") },
@@ -721,17 +778,23 @@ module opportunity {
 
   // A minor signal or a record age under 18 (N:717-722, syncMember N:4430): minor, then dropMember.
   action becomeMinor(m: str, env: Env): bool = all {
+    idle,
     not(mm(s, m).forgotten), not(mm(s, m).minor),
-    s' = { ...dropMember(putM(s, m, { ...mm(s, m), minor: true }), m, "minors policy", env), last: L("minor", "", m, "") },
+    s' = { ...dropMember(putM(s, m, { ...mm(s, m), minor: true }), m, "minors policy"), last: L("minor", "", m, ""), jobEnv: env },
   }
 
   // Leave the app or delete (service forget -> Network.forget, N:913): declined, requests gone, dropMember,
-  // then every opportunity that names the member is deleted.
+  // then every opportunity that names the member is deleted (forgetRest, a job after dropMember's jobs).
   action forget(m: str, env: Env): bool = all {
+    idle,
     not(mm(s, m).forgotten),
     val s1 = putM(s, m, { ...mm(s, m), forgotten: true })
     val s2 = if (m == "a") { ...s1, req: { outcome: "", toldNone: false } } else s1
-    val s3 = dropMember(s2, m, "declined", env)
+    s' = { ...dropMember(push(s2, [J("forgetRest", "", m, "")]), m, "declined"), last: L("forget", "", m, ""), jobEnv: env },
+  }
+
+  /** The rest of forget after dropMember (a job). */
+  pure def forgetRest(s3: S, m: str): S = {
     val s4 = OPP_ORDER.foldl(s3, (acc, o) => {
       val y = op(acc, o)
       if (y.stage != "absent" and (y.parts.contains(m) or y.requester == m)) putO(acc, o, { ...y, stage: "gone", everTerminal: true })
@@ -743,8 +806,7 @@ module opportunity {
       val aw = mm(acc, p).aw
       if (p == m or (aw.kind != "none" and aw.opp != "" and op(acc, aw.opp).stage == "gone")) putM(acc, p, { ...mm(acc, p), aw: NO_AW }) else acc
     })
-    val s6 = { ...s5, deferred: s5.deferred.filter(d => d.to != m and not((d.kind == "reveal" or d.kind == "feedback") and op(s5, d.opp).parts.contains(m))) }
-    s' = { ...s6, last: L("forget", "", m, "") },
+    { ...s5, deferred: s5.deferred.filter(d => d.to != m and not((d.kind == "reveal" or d.kind == "feedback") and op(s5, d.opp).parts.contains(m))) }
   }
 
   // SD-146 (not reproduced): the meeting time is one of the first member's time options, which leave out
@@ -763,29 +825,66 @@ module opportunity {
   // The clock moves between two ticks: units read clock.now(), and withTickLock skips a tick while another
   // holder has the lock (runtime.ts). Review expiry runs only in a tick (N:3397).
   action elapse(dt: int): bool = all {
+    idle,
     s.deferred.forall(d => not(untilMeeting(s, d)) or s.now + dt + 1 < op(s, d.opp).meetingAt),
     s' = { ...s, now: s.now + dt, last: { act: "elapse", o: "", m: "", x: "", dt: dt } },
   }
 
-  // The service tick under the lock (N:3315).
+  // The service tick under the lock (N:3315): deliverDeferred, refreshUnanswered, advance for each
+  // opportunity, then the slots that ended. Each part is a job.
   action tick(dt: int, env: Env): bool = all {
+    idle,
     deferredInTime(s, dt, env),
-    val s1 = deliverDeferred({ ...s, now: s.now + dt }, env)
-    val s2 = refreshUnanswered(s1)
-    val s3 = OPP_ORDER.foldl(s2, (acc, o) => advance(acc, o, env))
-    s' = { ...expireSlots(s3), last: { act: "tick", o: "", m: "", x: "", dt: dt } },
+    val s1 = { ...s, now: s.now + dt, toDeliver: s.deferred, deferred: Set() }
+    s' = { ...push(s1, [J("deliver", "", "", ""), J("refresh", "", "", ""), J("adv", "o1", "", ""), J("adv", "o2", "", ""), J("expire", "", "", "")]),
+           last: { act: "tick", o: "", m: "", x: "", dt: dt }, jobEnv: env },
   }
 
-  // The outbound queue (packages/blooio/src/outbound-queue.ts) decides each collected message later:
-  // sent, held for an answer (the line's unanswered cap, :398-401) or refused.
-  action queueDecide(g: Msg, q: str): bool = all {
-    s.msgs.contains(g), g.q == "pending",
-    s' = { ...s, msgs: s.msgs.exclude(Set(g)).union(Set({ ...g, q: q })), last: L("queue", g.kind, g.to, q) },
+  // The outbound queue (packages/blooio/src/outbound-queue.ts) decides a collected probe or reveal later:
+  // sent, held for an answer (the line's unanswered cap, :398-401) or refused. The other messages are read by
+  // no invariant.
+  action queueDecide(kind: str, o: str, m: str, q: str): bool = {
+    val x = op(s, o)
+    all {
+      idle,
+      (if (kind == "probe") x.probeQ.get(m) else x.revealQ.get(m)) == "pending",
+      val y = if (kind == "probe") { ...x, probeQ: x.probeQ.set(m, q) } else { ...x, revealQ: x.revealQ.set(m, q) }
+      s' = { ...putO(s, o, y), last: L("queue", kind, m, q) },
+    }
+  }
+
+  // ---------------------------------------------------------------- the jobs
+  // Each job action takes the job on top of the stack and runs it with the unit's oracles.
+  def job: Job = s.jobs.head()
+  def popped: S = { ...s, jobs: s.jobs.tail() }
+  def jobIs(kind: str): bool = s.jobs.length() > 0 and s.jobs.head().kind == kind
+
+  action runClose = all { jobIs("close"), s' = close(popped, job.o, job.why, s.jobEnv) }
+  action runReplace = all { jobIs("replace"), s' = replaceOrClose(popped, job.o, job.m) }
+  action runProbes = all { jobIs("probes"), s' = advanceProbes(popped, job.o, s.jobEnv) }
+  action runReveal = all { jobIs("reveal"), s' = sendReveal(popped, job.o, job.m, s.jobEnv) }
+  action runDrop = all { jobIs("drop"), s' = handleDrop(popped, job.m, job.o, job.ack, s.jobEnv) }
+  action runDm = all { jobIs("dm"), s' = dropMemberIn(popped, job.o, job.m, job.why) }
+  action runForgetRest = all { jobIs("forgetRest"), s' = forgetRest(popped, job.m) }
+  action runDeliver = all {
+    jobIs("deliver"),
+    if (s.toDeliver == Set()) s' = popped
+    else { nondet d = s.toDeliver.oneOf() s' = deliverOne(popped, d, s.jobEnv) },
+  }
+  action runRefresh = all { jobIs("refresh"), s' = refreshUnanswered(popped) }
+  action runAdv = all { jobIs("adv"), s' = advance(popped, job.o, s.jobEnv) }
+  action runExp = all { jobIs("exp"), s' = expireProbe(popped, job.o, job.m) }
+  action runExpire = all { jobIs("expire"), s' = expireSlots(popped) }
+
+  action runJob = any {
+    runClose, runReplace, runProbes, runReveal, runDrop, runDm, runForgetRest, runDeliver, runRefresh, runAdv,
+    runExp, runExpire,
   }
 
   // The scheduler. Destructive actions (reject, STOP, a minor signal, a leave, a clock jump with no tick)
   // take a roll so that the random simulation also reaches the long consent path; every behaviour stays
-  // reachable. The send window is often open for everyone, and the intro budget is rarely spent.
+  // reachable. The send window is often open for everyone, and the intro budget is rarely spent. While a
+  // unit runs, only its jobs are enabled.
   action step = {
     nondet roll = oneOf(0.to(9))
     nondet wide = oneOf(Set(true, false))
@@ -796,20 +895,24 @@ module opportunity {
     nondet m = oneOf(MEMBERS)
     nondet intent = oneOf(INTENTS)
     nondet dt = oneOf(Set(1, 6, 13, 27, 49))
+    nondet kind = oneOf(Set("probe", "reveal"))
+    nondet q = oneOf(Set("delivered", "held", "refused"))
+    nondet yesFirst = oneOf(Set(true, false))
     any {
+      runJob,
       submit(o),
       approve(o, env),
       all { roll == 0, reject(o, env) },
       probeSend(o, m, env),
-      answer(m, intent, env),
-      answer(m, "yes", env),
+      // Half of the answers are a plain "yes", so that random traces reach the reveal.
+      answer(m, if (yesFirst) "yes" else intent, env),
       all { roll == 1, stop(m, env) },
       start(m),
       all { roll == 2, becomeMinor(m, env) },
       all { roll == 3, forget(m, env) },
       tick(dt, env),
       all { roll == 4, elapse(dt) },
-      all { s.msgs != Set(), nondet g = oneOf(s.msgs) nondet q = oneOf(Set("delivered", "held", "refused")) queueDecide(g, q) },
+      queueDecide(kind, o, m, q),
     }
   }
 
@@ -881,9 +984,13 @@ module opportunity {
 
   // Request comment (N:388): "booked": a meeting is set. SD-139, fixed in 6e500fa: when another member calls
   // the meeting off, the request waits again. When the requester calls it off, the request stays "booked";
-  // that is no stuck request, as a new ask opens a new request (openRequest skips "booked", N:1598).
+  // that is no stuck request, as a new ask opens a new request (openRequest skips "booked", N:1598). The same
+  // holds after the meeting time (done; "fulfilled" needs the requester there): the meeting was set. When the
+  // partner then leaves the app, forget deletes the done item (N:961) and clears the request's oppId (N:977);
+  // the meeting was still set (feedbackSent stays on the deleted item in the model).
   val requestNotStuck = s.req.outcome == "booked" implies
-    (Set("scheduled", "done").contains(op(s, "o1").stage) or op(s, "o1").droppedBy.contains("a"))
+    (Set("scheduled", "done").contains(op(s, "o1").stage) or op(s, "o1").droppedBy.contains("a")
+      or (op(s, "o1").stage == "gone" and op(s, "o1").feedbackSent))
 
   // PRD F11 and the drop notice: when a booked plan is off, the others who were told hear it is off.
   // SD-248, fixed in c29646e: the drop notice carries the meeting time and is sent after a leave or delete.
@@ -920,7 +1027,8 @@ module opportunity {
     (x.stage == "scheduled" and s.now >= x.meetingAt) implies x.parts.forall(p => x.status.get(p) == "yes" implies x.bookedTold.contains(p))
   })
 
-  val safety = and {
+  // The invariants hold between two units (`idle`); inside a unit, jobs are still to run.
+  val safety = idle implies and {
     reviewGate, decidedBeforeDeadline, namesAfterAllYes, counterIsNotYes, slotOwnerAlive, noLostAnswer,
     minorNever, stopWins, terminalStable, requestNotStuck, cancelReachesTold, partialAcceptReleased,
     noShowOnce, bookedMembersTold,
@@ -934,13 +1042,11 @@ module opportunity {
   // with SD-030, SD-095 and SD-257 that needs a founder or maintainer decision). Code comment N:4083: silence
   // for 48 hours confirms a booked plan only after "the booked plan reached them"; the queue can hold or
   // refuse the reveal (outbound-queue.ts:398-401), and silence still confirms.
-  val confirmedImpliesDelivered = OPPS.forall(o => op(s, o).silent.forall(m =>
-    s.msgs.exists(g => g.kind == "reveal" and g.opp == o and g.to == m and g.q == "delivered")))
+  val confirmedImpliesDelivered = OPPS.forall(o => op(s, o).silent.forall(m => op(s, o).revealQ.get(m) == "delivered"))
 
   // SD-030 (skipped: same root cause and decision as SD-006). PRD F28 and outreach.ts:23: silence counts only
   // for an invite the member got; a probe that the queue refused or held still expires as their silence.
-  val silenceOnlyAfterDelivery = OPPS.forall(o => op(s, o).expiredSilent.forall(m =>
-    s.msgs.exists(g => g.kind == "probe" and g.opp == o and g.to == m and g.q == "delivered")))
+  val silenceOnlyAfterDelivery = OPPS.forall(o => op(s, o).expiredSilent.forall(m => op(s, o).probeQ.get(m) == "delivered"))
 
   // SD-140 (skipped: the fix was reverted; with declinedBy filled in, two sim gates failed on defects that
   // were already there: the proactive timing of unsolicited info sends and the minors-in-plans gate for a
@@ -970,229 +1076,247 @@ module opportunity {
     aw.kind == "booked" implies op(s, aw.opp).stage == "scheduled"
   })
 
-  val knownOpen = and {
+  val knownOpen = idle implies and {
     confirmedImpliesDelivered, silenceOnlyAfterDelivery, declineRecorded, bookedNoHonored, noticeNeverRefused,
     bookedSlotAlive,
   }
 
   // ================================================================ witnesses (must be reachable)
-  val witness_revealed = OPPS.forall(o => op(s, o).revealSent == Set())
-  val witness_feedbackAnswered = OPPS.forall(o => not(op(s, o).stage == "done" and op(s, o).feedbackFrom != Set()))
-  val witness_rejectNoContact = OPPS.forall(o => not(op(s, o).review.decision == "reject" and op(s, o).stage == "closed" and op(s, o).contacted == Set()))
-  val witness_confirmedBySilence = OPPS.forall(o => op(s, o).silent == Set())
-  val witness_requestFulfilled = s.req.outcome != "fulfilled"
+  // Each is read between two units only (`not(idle) or ...`).
+  val witness_revealed = not(idle) or OPPS.forall(o => op(s, o).revealSent == Set())
+  val witness_feedbackAnswered = not(idle) or OPPS.forall(o => not(op(s, o).stage == "done" and op(s, o).feedbackFrom != Set()))
+  val witness_rejectNoContact = not(idle) or OPPS.forall(o => not(op(s, o).review.decision == "reject" and op(s, o).stage == "closed" and op(s, o).contacted == Set()))
+  val witness_confirmedBySilence = not(idle) or OPPS.forall(o => op(s, o).silent == Set())
+  val witness_requestFulfilled = not(idle) or s.req.outcome != "fulfilled"
   // A yes taken back before the reveal (SD-075, SD-076) and a release after a partial yes (SD-263).
-  val witness_yesTakenBack = OPPS.forall(o => not(op(s, o).withdrawn.exists(p => op(s, o).saidNo.contains(p))))
-  val witness_partialReleased = OPPS.forall(o => not(op(s, o).released.exists(p => p != op(s, o).requester)))
+  val witness_yesTakenBack = not(idle) or OPPS.forall(o => not(op(s, o).withdrawn.exists(p => op(s, o).saidNo.contains(p))))
+  val witness_partialReleased = not(idle) or OPPS.forall(o => not(op(s, o).released.exists(p => p != op(s, o).requester)))
 
   // ================================================================ run tests (traces from the code)
   pure val ALL_OPEN: Env = { openW: MEMBERS, budget: true, lead: 30 }
 
+  // A run test step is a unit and then its jobs: `settle` runs one job, or does nothing between two units.
+  // The longest unit here (a tick) has fewer than 16 jobs.
+  action settle = any { all { idle, s' = s }, runJob }
+  action settled = settle.then(settle).then(settle).then(settle).then(settle).then(settle).then(settle).then(settle)
+    .then(settle).then(settle).then(settle).then(settle).then(settle).then(settle).then(settle).then(settle)
+
   // Approve, both yes, reveal, the meeting, feedback (docs/network.md 4; the mini.ts happy path).
   run happyPathTest =
     init
-      .then(submit("o1"))
-      .then(approve("o1", ALL_OPEN))
-      .then(probeSend("o1", "a", ALL_OPEN))
-      .then(answer("a", "yes", ALL_OPEN))
-      .then(probeSend("o1", "b", ALL_OPEN))
-      .then(answer("b", "yes", ALL_OPEN))
+      .then(submit("o1")).then(settled)
+      .then(approve("o1", ALL_OPEN)).then(settled)
+      .then(probeSend("o1", "a", ALL_OPEN)).then(settled)
+      .then(answer("a", "yes", ALL_OPEN)).then(settled)
+      .then(probeSend("o1", "b", ALL_OPEN)).then(settled)
+      .then(answer("b", "yes", ALL_OPEN)).then(settled)
       .expect(op(s, "o1").stage == "scheduled" and op(s, "o1").revealSent == Set("a", "b") and s.req.outcome == "booked" and safety)
-      .then(tick(31, ALL_OPEN))
-      .then(tick(6, ALL_OPEN))
+      .then(tick(31, ALL_OPEN)).then(settled)
+      .then(tick(6, ALL_OPEN)).then(settled)
       .expect(op(s, "o1").stage == "done" and mm(s, "a").aw.kind == "feedback")
-      .then(answer("a", "fb_good", ALL_OPEN))
-      .then(answer("b", "fb_good", ALL_OPEN))
-      .then(tick(1, ALL_OPEN))
+      .then(answer("a", "fb_good", ALL_OPEN)).then(settled)
+      .then(answer("b", "fb_good", ALL_OPEN)).then(settled)
+      .then(tick(1, ALL_OPEN)).then(settled)
       .expect(op(s, "o1").finalized and s.req.outcome == "fulfilled" and safety)
 
   // A reject closes the item and nobody is contacted (decide, reject).
   run rejectTest =
-    init.then(submit("o2")).then(reject("o2", ALL_OPEN))
-      .expect(op(s, "o2").stage == "closed" and op(s, "o2").contacted == Set() and s.msgs == Set() and safety)
+    init.then(submit("o2")).then(settled).then(reject("o2", ALL_OPEN)).then(settled)
+      .expect(op(s, "o2").stage == "closed" and op(s, "o2").contacted == Set() and s.collected == 0 and safety)
 
   // SD-009 (c06f633, opportunity-review-deadline.test.ts): the clock passes the deadline and no tick runs.
   // No decision is applied (reviewBlock "review_expired"); the next tick expires the item and nobody is contacted.
   run lateApprovalTest =
-    init.then(submit("o2")).then(elapse(13))
+    init.then(submit("o2")).then(settled).then(elapse(13)).then(settled)
       .expect(not(reviewOpen(s, "o2")) and op(s, "o2").stage == "review")
-      .then(tick(1, ALL_OPEN))
+      .then(tick(1, ALL_OPEN)).then(settled)
       .expect(op(s, "o2").stage == "closed" and op(s, "o2").review.decision == "expired" and op(s, "o2").contacted == Set()
-              and s.msgs == Set() and safety)
+              and s.collected == 0 and safety)
 
   // SD-041 (113a369, opportunity-counter-offer.test.ts): "how about next week instead?" is unclear: one
   // clarification, the probe stays open, silence expires it, and the request item closes. No names go out.
   run counterOfferTest =
-    init.then(submit("o2")).then(approve("o2", ALL_OPEN)).then(probeSend("o2", "a", ALL_OPEN))
-      .then(answer("a", "counter", ALL_OPEN))
+    init.then(submit("o2")).then(settled).then(approve("o2", ALL_OPEN)).then(settled).then(probeSend("o2", "a", ALL_OPEN)).then(settled)
+      .then(answer("a", "counter", ALL_OPEN)).then(settled)
       .expect(stat(s, "o2", "a") == "probing" and mm(s, "a").aw.kind == "probe" and mm(s, "a").aw.clarified and safety)
-      .then(tick(27, ALL_OPEN))
+      .then(tick(27, ALL_OPEN)).then(settled)
       .expect(op(s, "o2").parts == Set("b", "c") and stat(s, "o2", "a") == "out" and op(s, "o2").revealSent == Set()
               and counterIsNotYes and safety)
 
   // SD-075 (791ff6a, opportunity-withdraw-yes.test.ts): a yes, then "actually no, sorry" with no slot: the
   // yes is taken back; b replaces a; b and c say yes; the names go to b and c only.
   run withdrawnYesTest =
-    init.then(submit("o2")).then(approve("o2", ALL_OPEN)).then(probeSend("o2", "a", ALL_OPEN))
-      .then(answer("a", "yes", ALL_OPEN))
-      .then(answer("a", "no", ALL_OPEN))
+    init.then(submit("o2")).then(settled).then(approve("o2", ALL_OPEN)).then(settled).then(probeSend("o2", "a", ALL_OPEN)).then(settled)
+      .then(answer("a", "yes", ALL_OPEN)).then(settled)
+      .then(answer("a", "no", ALL_OPEN)).then(settled)
       .expect(op(s, "o2").parts == Set("b", "c") and op(s, "o2").saidNo == Set("a") and safety)
-      .then(probeSend("o2", "b", ALL_OPEN)).then(answer("b", "yes", ALL_OPEN))
-      .then(probeSend("o2", "c", ALL_OPEN)).then(answer("c", "yes", ALL_OPEN))
+      .then(probeSend("o2", "b", ALL_OPEN)).then(settled).then(answer("b", "yes", ALL_OPEN)).then(settled)
+      .then(probeSend("o2", "c", ALL_OPEN)).then(settled).then(answer("c", "yes", ALL_OPEN)).then(settled)
       .expect(op(s, "o2").stage == "scheduled" and op(s, "o2").revealSent == Set("b", "c") and namesAfterAllYes and safety)
 
   // SD-075 with "I need to cancel" on the request item: the requester takes the yes back; the item closes.
   run cancelYesTest =
-    init.then(submit("o1")).then(approve("o1", ALL_OPEN)).then(probeSend("o1", "a", ALL_OPEN))
-      .then(answer("a", "yes", ALL_OPEN))
-      .then(answer("a", "cancel", ALL_OPEN))
+    init.then(submit("o1")).then(settled).then(approve("o1", ALL_OPEN)).then(settled).then(probeSend("o1", "a", ALL_OPEN)).then(settled)
+      .then(answer("a", "yes", ALL_OPEN)).then(settled)
+      .then(answer("a", "cancel", ALL_OPEN)).then(settled)
       .expect(op(s, "o1").stage == "closed" and op(s, "o1").revealSent == Set() and s.req.outcome == "none" and safety)
 
   // SD-048 (73d1e2b, opportunity-replaced-prober.test.ts): b is probing, b sends STOP, c replaces b, b
   // sends START: b has no slot left for the item.
   run replacedProberTest =
-    init.then(submit("o1")).then(approve("o1", ALL_OPEN)).then(probeSend("o1", "a", ALL_OPEN))
-      .then(answer("a", "yes", ALL_OPEN))
-      .then(probeSend("o1", "b", ALL_OPEN))
-      .then(stop("b", ALL_OPEN))
-      .then(start("b"))
+    init.then(submit("o1")).then(settled).then(approve("o1", ALL_OPEN)).then(settled).then(probeSend("o1", "a", ALL_OPEN)).then(settled)
+      .then(answer("a", "yes", ALL_OPEN)).then(settled)
+      .then(probeSend("o1", "b", ALL_OPEN)).then(settled)
+      .then(stop("b", ALL_OPEN)).then(settled)
+      .then(start("b")).then(settled)
       .expect(op(s, "o1").parts == Set("a", "c") and mm(s, "b").aw.kind == "none" and slotOwnerAlive and safety)
 
   // The common prefix: o1 is booked for a and b (lead 30 unless given).
   action bookO1(lead: int): bool =
-    init.then(submit("o1")).then(approve("o1", ALL_OPEN)).then(probeSend("o1", "a", ALL_OPEN))
-      .then(answer("a", "yes", ALL_OPEN))
-      .then(probeSend("o1", "b", ALL_OPEN))
-      .then(answer("b", "yes", { ...ALL_OPEN, lead: lead }))
+    init.then(submit("o1")).then(settled).then(approve("o1", ALL_OPEN)).then(settled).then(probeSend("o1", "a", ALL_OPEN)).then(settled)
+      .then(answer("a", "yes", ALL_OPEN)).then(settled)
+      .then(probeSend("o1", "b", ALL_OPEN)).then(settled)
+      .then(answer("b", "yes", { ...ALL_OPEN, lead: lead })).then(settled)
 
   // SD-139 (6e500fa, opportunity-booked-request.test.ts): b cancels the booked request: the request waits
   // again. The residual second part: a keeps the "booked" slot of the closed plan (bookedSlotAlive, knownOpen).
   run requestStuckTest =
-    bookO1(30).then(answer("b", "cancel", ALL_OPEN))
+    bookO1(30).then(answer("b", "cancel", ALL_OPEN)).then(settled)
       .expect(op(s, "o1").stage == "closed" and s.req.outcome == "none" and requestNotStuck and safety
               and mm(s, "a").aw.kind == "booked" and not(bookedSlotAlive))
 
   // The requester calls the booked meeting off: the request stays "booked" (they called it off; a new ask
   // opens a new request), and b hears it is off.
   run requesterCancelsTest =
-    bookO1(30).then(answer("a", "cancel", ALL_OPEN))
+    bookO1(30).then(answer("a", "cancel", ALL_OPEN)).then(settled)
       .expect(op(s, "o1").stage == "closed" and s.req.outcome == "booked" and op(s, "o1").cancelHeard == Set("b") and safety)
 
   // SD-006 (skipped): the reveal to b is collected, the queue holds it (b's line streak), 48 hours of silence confirm it.
   run silentConfirmTest =
     bookO1(72)
-      .then(queueDecide({ kind: "reveal", opp: "o1", to: "b", at: 0, q: "pending" }, "held"))
-      .then(tick(49, ALL_OPEN))
+      .then(queueDecide("reveal", "o1", "b", "held")).then(settled)
+      .then(tick(49, ALL_OPEN)).then(settled)
       .expect(op(s, "o1").silent.contains("b") and not(confirmedImpliesDelivered) and safety)
+
+  // requestNotStuck (model error fixed): the meeting takes place, a says "I couldn't make it", so the request
+  // is not fulfilled and stays "booked". Then b leaves the app: forget deletes the done item. The meeting was
+  // set; a new ask from a opens a new request.
+  run requestAfterLeaveTest =
+    bookO1(30).then(tick(31, ALL_OPEN)).then(settled).then(tick(6, ALL_OPEN)).then(settled)
+      .then(answer("a", "fb_self_noshow", ALL_OPEN)).then(settled)
+      .then(tick(96, ALL_OPEN)).then(settled)
+      .expect(op(s, "o1").finalized and s.req.outcome == "booked")
+      .then(forget("b", ALL_OPEN)).then(settled)
+      .expect(op(s, "o1").stage == "gone" and s.req.outcome == "booked" and requestNotStuck and safety)
 
   // SD-249 (skipped): both get the reminder (3 messages since their last text); a cancels; the drop notice
   // to b is refused by the streak rule and nothing retries it. b still believes the plan is on.
   run cancelRefusedTest =
-    bookO1(30).then(tick(10, ALL_OPEN))
+    bookO1(30).then(tick(10, ALL_OPEN)).then(settled)
       .expect(mm(s, "b").outbound == 3)
-      .then(answer("a", "cancel", ALL_OPEN))
+      .then(answer("a", "cancel", ALL_OPEN)).then(settled)
       .expect(op(s, "o1").stage == "closed" and not(op(s, "o1").cancelHeard.contains("b"))
               and op(s, "o1").noticeRefused == Set("b") and not(noticeNeverRefused) and safety)
 
   // SD-248 (c29646e, opportunity-forget-cancellation.test.ts): b is in quiet hours; a leaves the app; the
   // drop notice to b is deferred and the opportunity is deleted; the notice still goes in the morning.
   run leaveInQuietHoursTest =
-    bookO1(30).then(forget("a", { ...ALL_OPEN, openW: Set("a", "c") }))
+    bookO1(30).then(forget("a", { ...ALL_OPEN, openW: Set("a", "c") })).then(settled)
       .expect(op(s, "o1").stage == "gone" and s.deferred == Set({ kind: "drop_notice", opp: "o1", to: "b" }) and safety)
-      .then(tick(6, ALL_OPEN))
+      .then(tick(6, ALL_OPEN)).then(settled)
       .expect(s.deferred == Set() and op(s, "o1").cancelHeard.contains("b") and safety)
 
   // SD-328 (25b54f1, opportunity-no-show-once.test.ts): a says b never showed; finalize at +4 days counts
   // b's no-show; b's late "I couldn't make it" does not count it again.
   run noShowTwiceTest =
-    bookO1(30).then(tick(31, ALL_OPEN)).then(tick(6, ALL_OPEN))
-      .then(answer("a", "fb_other_noshow", ALL_OPEN))
-      .then(tick(96, ALL_OPEN))
+    bookO1(30).then(tick(31, ALL_OPEN)).then(settled).then(tick(6, ALL_OPEN)).then(settled)
+      .then(answer("a", "fb_other_noshow", ALL_OPEN)).then(settled)
+      .then(tick(96, ALL_OPEN)).then(settled)
       .expect(op(s, "o1").finalized and op(s, "o1").noShowCount.get("b") == 1 and op(s, "o1").noShowCounted == Set("b"))
-      .then(answer("b", "fb_self_noshow", ALL_OPEN))
+      .then(answer("b", "fb_self_noshow", ALL_OPEN)).then(settled)
       .expect(op(s, "o1").noShowCount.get("b") == 1 and op(s, "o1").feedbackFrom.contains("b") and noShowOnce and safety)
 
   // SD-259 (skipped): the booked slot ends after 48 hours; a plain "no, sorry" to the booked plan is then ignored.
   run lateNoTest =
-    bookO1(72).then(tick(49, ALL_OPEN))
+    bookO1(72).then(tick(49, ALL_OPEN)).then(settled)
       .expect(mm(s, "a").aw.kind == "none")
-      .then(answer("a", "no", ALL_OPEN))
+      .then(answer("a", "no", ALL_OPEN)).then(settled)
       .expect(op(s, "o1").stage == "scheduled" and stat(s, "o1", "a") == "yes" and not(bookedNoHonored) and safety)
 
   // SD-077 (6d8d2d3, opportunity-feedback-slot.test.ts): after the o1 meeting, a has the feedback slot; the
   // o2 probe to a waits; "it was great!" answers the feedback; then the probe goes out.
   run feedbackAsYesTest =
-    bookO1(30).then(tick(31, ALL_OPEN)).then(tick(6, ALL_OPEN))
+    bookO1(30).then(tick(31, ALL_OPEN)).then(settled).then(tick(6, ALL_OPEN)).then(settled)
       .expect(mm(s, "a").aw.kind == "feedback")
       // "ok" is not an answer to "How did it go?": the slot stays, and the streak resets.
-      .then(answer("a", "ack", ALL_OPEN))
-      .then(submit("o2")).then(approve("o2", ALL_OPEN))
+      .then(answer("a", "ack", ALL_OPEN)).then(settled)
+      .then(submit("o2")).then(settled).then(approve("o2", ALL_OPEN)).then(settled)
       .expect(stat(s, "o2", "a") == "probing" and probeOwed(s, "a", "o2"))
-      .then(answer("a", "fb_good", ALL_OPEN))
+      .then(answer("a", "fb_good", ALL_OPEN)).then(settled)
       .expect(op(s, "o1").feedbackFrom.contains("a") and stat(s, "o2", "a") == "probing" and not(op(s, "o2").contacted.contains("a")))
-      .then(probeSend("o2", "a", ALL_OPEN))
+      .then(probeSend("o2", "a", ALL_OPEN)).then(settled)
       .expect(mm(s, "a").aw == { kind: "probe", opp: "o2", at: s.now, clarified: false } and counterIsNotYes and safety)
 
   // SD-043 (74602b1, opportunity-awaiting-slot.test.ts): a job post read-back holds the slot of a pending
   // probe; "no" drops the post and the slot goes back to the probe; the next "yes" answers the probe.
   run postingTakesSlotTest =
-    init.then(submit("o1")).then(approve("o1", ALL_OPEN)).then(probeSend("o1", "a", ALL_OPEN))
-      .then(answer("a", "job_post", ALL_OPEN))
+    init.then(submit("o1")).then(settled).then(approve("o1", ALL_OPEN)).then(settled).then(probeSend("o1", "a", ALL_OPEN)).then(settled)
+      .then(answer("a", "job_post", ALL_OPEN)).then(settled)
       .expect(mm(s, "a").aw.kind == "posting" and noLostAnswer)
-      .then(answer("a", "no", ALL_OPEN))
+      .then(answer("a", "no", ALL_OPEN)).then(settled)
       .expect(mm(s, "a").aw.kind == "probe" and mm(s, "a").aw.opp == "o1" and stat(s, "o1", "a") == "probing")
-      .then(answer("a", "yes", ALL_OPEN))
+      .then(answer("a", "yes", ALL_OPEN)).then(settled)
       .expect(stat(s, "o1", "a") == "available" and safety)
 
   // SD-030 (skipped): the queue refuses the probe; 26 hours later it expires as a's silence.
   run refusedProbeSilenceTest =
-    init.then(submit("o1")).then(approve("o1", ALL_OPEN)).then(probeSend("o1", "a", ALL_OPEN))
-      .then(queueDecide({ kind: "probe", opp: "o1", to: "a", at: 0, q: "pending" }, "refused"))
-      .then(tick(27, ALL_OPEN))
+    init.then(submit("o1")).then(settled).then(approve("o1", ALL_OPEN)).then(settled).then(probeSend("o1", "a", ALL_OPEN)).then(settled)
+      .then(queueDecide("probe", "o1", "a", "refused")).then(settled)
+      .then(tick(27, ALL_OPEN)).then(settled)
       .expect(op(s, "o1").expiredSilent.contains("a") and not(silenceOnlyAfterDelivery) and safety)
 
   // SD-263 (791f698, opportunity-partial-yes.test.ts) and SD-140 (skipped): o2, a says yes, c says no, no
   // alternate is free: the item closes; a is released; the interaction is still recorded as "expired".
   run partnerNoTest =
-    init.then(stop("b", ALL_OPEN)).then(submit("o2")).then(approve("o2", ALL_OPEN)).then(probeSend("o2", "a", ALL_OPEN))
-      .then(answer("a", "yes", ALL_OPEN))
-      .then(probeSend("o2", "c", ALL_OPEN))
-      .then(answer("c", "no", ALL_OPEN))
+    init.then(stop("b", ALL_OPEN)).then(settled).then(submit("o2")).then(settled).then(approve("o2", ALL_OPEN)).then(settled).then(probeSend("o2", "a", ALL_OPEN)).then(settled)
+      .then(answer("a", "yes", ALL_OPEN)).then(settled)
+      .then(probeSend("o2", "c", ALL_OPEN)).then(settled)
+      .then(answer("c", "no", ALL_OPEN)).then(settled)
       .expect(op(s, "o2").stage == "closed" and op(s, "o2").released == Set("a") and partialAcceptReleased
               and op(s, "o2").outcomeRec == "expired" and not(declineRecorded) and safety)
 
   // SD-263 in quiet hours: the release waits for a's window and goes at the next tick.
   run partnerNoQuietTest =
-    init.then(stop("b", ALL_OPEN)).then(submit("o2")).then(approve("o2", ALL_OPEN)).then(probeSend("o2", "a", ALL_OPEN))
-      .then(answer("a", "yes", ALL_OPEN))
-      .then(probeSend("o2", "c", ALL_OPEN))
-      .then(answer("c", "no", { ...ALL_OPEN, openW: Set("c") }))
+    init.then(stop("b", ALL_OPEN)).then(settled).then(submit("o2")).then(settled).then(approve("o2", ALL_OPEN)).then(settled).then(probeSend("o2", "a", ALL_OPEN)).then(settled)
+      .then(answer("a", "yes", ALL_OPEN)).then(settled)
+      .then(probeSend("o2", "c", ALL_OPEN)).then(settled)
+      .then(answer("c", "no", { ...ALL_OPEN, openW: Set("c") })).then(settled)
       .expect(s.deferred == Set({ kind: "release", opp: "o2", to: "a" }) and safety)
-      .then(tick(6, ALL_OPEN))
+      .then(tick(6, ALL_OPEN)).then(settled)
       .expect(op(s, "o2").released == Set("a") and s.deferred == Set() and safety)
 
   // SD-146 (not reproduced): b is in quiet hours at the reveal (meeting 8 hours ahead); the deferred reveal
   // waits; the last tick before the meeting is in b's window, so b is told before the meeting.
   run deferredRevealTest =
-    init.then(submit("o1")).then(approve("o1", ALL_OPEN)).then(probeSend("o1", "a", ALL_OPEN))
-      .then(answer("a", "yes", ALL_OPEN))
-      .then(probeSend("o1", "b", ALL_OPEN))
-      .then(answer("b", "yes", { openW: Set("a"), budget: true, lead: 8 }))
+    init.then(submit("o1")).then(settled).then(approve("o1", ALL_OPEN)).then(settled).then(probeSend("o1", "a", ALL_OPEN)).then(settled)
+      .then(answer("a", "yes", ALL_OPEN)).then(settled)
+      .then(probeSend("o1", "b", ALL_OPEN)).then(settled)
+      .then(answer("b", "yes", { openW: Set("a"), budget: true, lead: 8 })).then(settled)
       .expect(s.deferred == Set({ kind: "reveal", opp: "o1", to: "b" }))
-      .then(tick(6, { openW: Set("a"), budget: true, lead: 8 }))
+      .then(tick(6, { openW: Set("a"), budget: true, lead: 8 })).then(settled)
       .expect(s.deferred == Set({ kind: "reveal", opp: "o1", to: "b" }) and not(deferredInTime(s, 1, { openW: Set("a"), budget: true, lead: 8 })))
-      .then(tick(1, ALL_OPEN))
+      .then(tick(1, ALL_OPEN)).then(settled)
       .expect(s.deferred == Set() and op(s, "o1").bookedTold == Set("a", "b"))
-      .then(tick(1, ALL_OPEN))
+      .then(tick(1, ALL_OPEN)).then(settled)
       .expect(op(s, "o1").stage == "scheduled" and bookedMembersTold and safety)
 
   // SD-076 (791ff6a, opportunity-withdraw-yes.test.ts): "yes, but none of those times", silence for 26
   // hours keeps the yes and ends the slot; then "no thanks" takes the yes back and the request item closes.
   run noAfterRetryTest =
-    init.then(submit("o1")).then(approve("o1", ALL_OPEN)).then(probeSend("o1", "a", ALL_OPEN))
-      .then(answer("a", "yes_other_times", ALL_OPEN))
-      .then(tick(27, ALL_OPEN))
+    init.then(submit("o1")).then(settled).then(approve("o1", ALL_OPEN)).then(settled).then(probeSend("o1", "a", ALL_OPEN)).then(settled)
+      .then(answer("a", "yes_other_times", ALL_OPEN)).then(settled)
+      .then(tick(27, ALL_OPEN)).then(settled)
       .expect(stat(s, "o1", "a") == "available" and mm(s, "a").aw.kind == "none" and slotOwnerAlive)
-      .then(answer("a", "no", ALL_OPEN))
+      .then(answer("a", "no", ALL_OPEN)).then(settled)
       .expect(op(s, "o1").stage == "closed" and op(s, "o1").revealSent == Set() and safety)
 }

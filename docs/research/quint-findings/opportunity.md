@@ -13,6 +13,11 @@ traces are short forms of the simulator output and of the run tests.
 replays the fixed trace. The defects that were skipped still fail: their invariants are in `knownOpen`
 (not in `safety`), and each has a run test that shows the trace on the current code.
 
+`bun run quint:check --verify quint/opportunity.qnt` passes: Apalache finds no violation of `safety` in 3
+steps from the initial state (section 7). To make this possible, a unit's large helpers are now jobs on a stack
+(section 2), and the state has no set of messages. Deeper simulation (section 4) found one model error in
+`requestNotStuck` (section 8).
+
 ## 2. What the model covers
 
 - Machines: `opportunity-lifecycle`, `opp-participant-status`, `review-item`, `awaiting-slot`, `yes-hold`,
@@ -20,15 +25,29 @@ replays the fixed trace. The defects that were skipped still fail: their invaria
   `outreach-attention` (the two-unanswered pause and the Blooio streak) and the tick. `reply-reader` is an oracle.
 - Bounds: 3 members (`a`, `b`, `c`), 2 pair opportunities. `o1` is a member request of `a` with `b`
   (alternate `c`). `o2` is an engine intro of `a` with `c` (alternate `b`). Time is in hours.
-- One action is one unit under the store lock: `submit`, `approve` and `reject` (staff), `probeSend`
+- One unit under the store lock: `submit`, `approve` and `reject` (staff), `probeSend`
   (the probe at a moment the send window is open and the member owes no other answer), `answer(m, intent)`
   (an inbound text), `stop`, `start`, `becomeMinor`, `forget` (leave or delete), `tick`, `elapse` (the clock
-  moves with no tick) and `queueDecide` (the outbound queue sends, holds or refuses a collected message).
+  moves with no tick) and `queueDecide` (the outbound queue sends, holds or refuses a collected probe or
+  reveal).
+- Jobs. A unit action does the light part of the unit. The large helpers that it calls are jobs on a stack
+  (`s.jobs`): `close`, `replaceOrClose` (`replace`), `advanceProbes` (`probes`), the reveal to one participant
+  (`reveal`), `handleDrop` (`drop`), the dropMember step for one opportunity (`dm`), the rest of `forget`
+  (`forgetRest`), and the parts of the tick: one deferred send (`deliver`), `refreshUnanswered` (`refresh`),
+  `advance` for one opportunity (`adv`), the probe silence of one participant (`exp`) and `expireSlots`
+  (`expire`). A helper pushes the jobs it calls on top of the stack, in the order of the calls in the code, so
+  the jobs run in the code's order. The units are enabled only when the stack is empty (`idle`); while it is not
+  empty, only the job actions are. So a unit is still atomic, as in the code. Each job uses the unit's oracles
+  (`s.jobEnv`). The invariants and witnesses are read only when `idle` is true. The tick's deferred sends are
+  delivered one job at a time in any order; the code goes in insertion order, which is one of them.
 - Oracles: the send window and quiet hours, the intro budget, the meeting lead time, the queue outcome,
   and the readers (fixed maps from what the member means to what the code reads).
 - Ghost state: what the member meant (`accepted`, `withdrawn`, `saidNo`, `cancelAsked`), what reached them
-  (`msgs[].q`), who was told what (`revealSent`, `wasTold`, `cancelHeard`, `released`) and which notices
-  `send()` refused (`noticeRefused`).
+  (`probeQ`, `revealQ`: the queue state of the probe and of the reveal, at most one of each per opportunity
+  and member), who was told what (`revealSent`, `wasTold`, `cancelHeard`, `released`) and which notices
+  `send()` refused (`noticeRefused`). The model keeps no other message: no invariant reads one. `s.collected`
+  counts the collected messages. A member keeps the times of the first two proactive invites since their last
+  text (`ask1`, `ask2`), which is all that the two-unanswered rule reads.
 - Not modelled: plans and plan runs (`plan_run.qnt`), job seats and the hiring manager, groups of 3 or
   more, blocks and reports, the engine run, repeat asks and standing-request retries, the matching switch,
   MCP profiles.
@@ -62,11 +81,12 @@ Two more model changes:
 
 ## 4. Check output
 
-`bun run quint:check quint/opportunity.qnt` (bounds `max-steps=40 max-samples=8000`, seed `0x5eed`):
+`bun run quint:check --verify quint/opportunity.qnt` (bounds `max-steps=250 max-samples=8000 verify-steps=3`,
+seed `0x5eed`). `max-steps` went from 40 to 250 because each job is a step now: a tick is up to about 10 steps.
 
 ```
 ok   quint/opportunity.qnt typecheck
-ok   quint/opportunity.qnt test                         (21 run tests)
+ok   quint/opportunity.qnt test                         (22 run tests)
 ok   quint/opportunity.qnt safety
 ok   quint/opportunity.qnt witness_revealed (must be reachable)
 ok   quint/opportunity.qnt witness_feedbackAnswered (must be reachable)
@@ -75,10 +95,10 @@ ok   quint/opportunity.qnt witness_confirmedBySilence (must be reachable)
 ok   quint/opportunity.qnt witness_requestFulfilled (must be reachable)
 ok   quint/opportunity.qnt witness_yesTakenBack (must be reachable)
 ok   quint/opportunity.qnt witness_partialReleased (must be reachable)
+ok   quint/opportunity.qnt verify safety
 ```
 
-`safety` also has no violation with `--max-steps 50 --max-samples 15000` at seeds `0x1`, `0x2`, `0x3` and
-`0x4` (60000 traces).
+`safety` also has no violation at seeds `0x1`, `0x2` and `0x3` (8000 traces of 250 steps each).
 
 `safety` is: `reviewGate`, `decidedBeforeDeadline`, `namesAfterAllYes`, `counterIsNotYes`, `slotOwnerAlive`,
 `noLostAnswer`, `minorNever`, `stopWins`, `terminalStable`, `requestNotStuck`, `cancelReachesTold`,
@@ -103,9 +123,10 @@ the invariant's comment:
 - `partialAcceptReleased` exempts a close for reason `minors policy`: the SD-263 fix sends no release on
   that close by design (no message about an item with a minor).
 - `requestNotStuck` exempts a request whose requester called the booked meeting off: the request stays
-  `booked`, and a new ask opens a new request (`openRequest` skips `booked` requests, N:1597).
+  `booked`, and a new ask opens a new request (`openRequest` skips `booked` requests, N:1597). It also accepts
+  a done item that `forget` deleted (section 8).
 
-`--verify` (Apalache, `verify-steps=6`): see section 7.
+`--verify` (Apalache, `verify-steps=3`): see section 7.
 
 ## 5. Defects: final status
 
@@ -195,18 +216,45 @@ integration test. This was the "second part" of SD-139 in the first version of t
 
 ## 7. Bounded model checking
 
-`bun run quint:check --verify quint/opportunity.qnt` fails on this machine: the shared Apalache server
-(4 GB heap) runs out of heap while it reads the model. The flattened model is about 22 MB of JSON
-(`quint compile --target json`), because every action folds over maps and inlines the helpers.
-A second try used a private Apalache 0.62.4 server with a 12 GB heap
-(`quint verify --invariant safety --max-steps 1 --server-endpoint localhost:8869`). It read the model,
-checked the 14 invariants in the initial state, and then ran out of heap on the third transition of step 1
-(after about 11 minutes). So bounded model checking does not finish for this model, even at 1 step, and
-the `--verify` check fails. The checks in section 4 use the random simulator and the run tests only. To
-make `--verify` possible, the model must be split into smaller models (for example the review gate, the
-probe and yes-hold, and the booked attendance), each with fewer folds.
+`bun run quint:check --verify quint/opportunity.qnt` passes (Apalache 0.62.4, the default server with a 4 GB
+heap): no violation of `safety` in 3 steps from the initial state.
+
+Before this update, Apalache did not finish one step. The shared server (4 GB heap) ran out of heap while it
+read the model. A private server with a 12 GB heap checked the 14 invariants in the initial state and then ran
+out of heap on the third transition of step 1, after about 11 minutes. Each unit inlined all its helpers:
+`tick` folded `deliverDeferred` (with `handleDrop`) and two `advance` calls (with `replaceOrClose`, `close`,
+`advanceProbes` and the reveal), and `answer` inlined `onProbeAnswer` twice with all of these.
+
+The changes (section 2): the job stack, so that each helper is once in the transition relation; the queue state
+of the probe and of the reveal instead of the set of messages; two invite times instead of a list. The run tests
+replay the same traces with the same results (with the jobs of each unit run after it: `settled`).
+
+Measured on this machine (load average 40 to 90 from other sessions; wall clock):
+
+| Run | Result | Time |
+|---|---|---|
+| model before this update, `--max-steps 1`, 12 GB heap | out of heap in step 1 | about 11 min |
+| `quint verify --max-steps 2` | no violation | 1 min 43 s |
+| `quint verify --max-steps 3` (the model's `verify-steps`) | no violation | 5 min 24 s |
+| `quint verify --max-steps 4` | step 4 not done after 4 min | stopped |
+
+What 3 steps reach: `submit`, then `approve` (its first job, `advanceProbes`, sets the turn) or `reject` (its
+`close` job), or a tick or an `elapse` past the review deadline (SD-009: no decision after the deadline, and the
+tick's `close` job expires the item). With the job stack, one unit is several steps, so a probe answer and the
+reveal are deeper than 3 steps. They are covered by the random simulation (8000 traces of 250 steps at four
+seeds) and by the 22 run tests. A start state deeper in the lifecycle (as in `plan_run.qnt`) made Apalache much
+slower there: the start state is then a choice between states, and every later step carries that choice.
 
 ## 8. Model errors found and fixed during the work
+
+- This update: `requestNotStuck` was false in the model before this update too, at more than 40 steps (the
+  random simulation finds it at 60 steps). Trace (`requestAfterLeaveTest`): o1 is booked for a and b, the
+  meeting time passes, a says "I couldn't make it", so finalize does not fulfil the request and it stays
+  `booked` (allowed: the item is `done`). Then b leaves the app: `forget` deletes the done item (N:961) and
+  clears the request's `oppId` (N:977). The invariant read this as a stuck request. It is not: the meeting was
+  set, and a new ask from a opens a new request, as for the exempt case in section 4. This is the same state as
+  `done`, so the invariant now also accepts a deleted item whose meeting time passed (`feedbackSent`). No code
+  change.
 
 - First version: `forget` left the slot and the member state of the forgotten member; a post-meeting
   answer was allowed from a member with no meeting; `partialAcceptReleased` asked for a release to a minor.

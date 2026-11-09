@@ -929,6 +929,7 @@ The ids are stable from this file on. Rows were deduplicated by hand from 610 re
 - **Liveness and reachability witnesses.** Witness: quorum 3 books; `solo_event` fallback closes with notice. Liveness: `probing` ends by the deadline. Expected failures: SD-008, SD-078, SD-204, SD-205, SD-046, SD-211, SD-264.
 - **Tie to the code.** Engine side `packages/engine/src/plans.ts` and Network side `network.ts:2940-3140` are separate actions, so the seam shows. Bounds: 5 members, quorum 2 or 3. Reuse `packages/network/test/block-target-plan.test.ts` shapes in an integration case.
 - **Defects in scope (16).** SD-008, SD-046, SD-078, SD-144, SD-204, SD-205, SD-211, SD-264, SD-268, SD-331, SD-423, SD-424, SD-425, SD-444, SD-479, SD-480.
+- **Split (2026-11-09).** `crew-offer-and-crew` is its own model, `quint/plan_crew.qnt` (SD-144, SD-444), so that Apalache can check both models (`docs/research/quint-findings/plan_run.md` section 6).
 
 ### 6.8 `quint/relay.qnt` (P0)
 
