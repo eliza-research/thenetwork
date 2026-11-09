@@ -8,6 +8,7 @@
 // With --review human nobody reviews, so every queued opportunity expires unsent (a check of the gate).
 import { parseArgs } from "node:util";
 import { DAY } from "@thenetwork/core";
+import { observedMemberWeeks } from "./health.ts";
 import { scoreboard } from "./scoring.ts";
 import { GameSource } from "./sources/game.ts";
 
@@ -30,6 +31,7 @@ const count = <T>(xs: T[], f: (x: T) => string | undefined) => xs.reduce<Record<
 const opps = s.opportunities.filter(o => o.source !== "shadow");
 const r3 = (x: number) => Math.round(x * 1000) / 1000;
 const unsafe = opps.filter(o => o.oracle?.unsafe);
+const memberWeeks = observedMemberWeeks(s.members, s.clock.start, s.clock.now);
 const report = {
   world: { seed: Number(a.seed), days, engine: a.engine, network: a.network, members: s.members.length, wallMs: Math.round(performance.now() - t0) },
   review: s.network?.review,
@@ -45,7 +47,7 @@ const report = {
     showRate: r3(s.stats.attended / Math.max(1, s.stats.attended + s.stats.noShows + s.stats.cancelledWithNotice)),
     meanEnjoyment: r3(s.stats.enjoymentSum / Math.max(1, s.stats.enjoymentN)),
     membersWhoMet: s.members.filter(m => m.counters.meetings > 0).length,
-    proactivePerMemberPerWeek: r3(s.stats.proactive / Math.max(1, s.stats.joined) / (days / 7)),
+    proactivePerMemberPerWeek: memberWeeks ? r3(s.stats.proactive / memberWeeks) : 0,
     optOuts: s.stats.optOuts, blocks: s.stats.blocks, safetyFlags: s.stats.adversarialAttempts, invariantViolations: s.stats.invariantViolations,
   },
   engineRunsByDay: s.engineRuns.map(r => ({ day: Math.floor((r.at - s.clock.start) / DAY) + 1, city: r.city, candidates: r.funnel.generated, eligible: r.funnel.eligible, budgetSkips: r.funnel.budgetSkips, proposals: r.proposals, gini: r3(r.fairness.gini), zeroExposure: r3(r.fairness.zeroExposureShare) })),
