@@ -269,6 +269,11 @@ if (import.meta.main) {
     plans: { type: "string", default: "on" }, "sim-plans": { type: "string" }, capital: { type: "boolean", default: false },
     paraphrase: { type: "boolean", default: false },
   } });
+  const seed = Number(a.seed);
+  if (a.seed?.trim() === "" || !Number.isFinite(seed)) {
+    console.error("--seed must be a finite number");
+    process.exit(2);
+  }
   if (a["primed-met"]) PRIMED_MODEL.met = Number(a["primed-met"]);
   if (a["primed-partial"]) PRIMED_MODEL.partial = Number(a["primed-partial"]);
   if (a["primed-identity"]) PRIMED_MODEL.identity = Number(a["primed-identity"]);
@@ -278,7 +283,7 @@ if (import.meta.main) {
     const t0 = performance.now();
     const network: NetworkOptions = { ...(a["max-new"] ? { maxNewPerDay: Number(a["max-new"]) } : {}), ...(a.plans === "off" ? { plans: false } : {}) };
     const r = await runArm(arm, {
-      days: Number(a.days), seed: Number(a.seed), liveAsks: a["live-asks"], timeAware: a["time-aware"], network, capital: a.capital, paraphrase: a.paraphrase,
+      days: Number(a.days), seed, liveAsks: a["live-asks"], timeAware: a["time-aware"], network, capital: a.capital, paraphrase: a.paraphrase,
       ...(a["sim-plans"] ? { simPlans: a["sim-plans"] === "on" } : {}),
     });
     out.push(r);
