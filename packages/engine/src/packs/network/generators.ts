@@ -328,12 +328,19 @@ export function helpRequest(ctx: GenCtx): Candidate[] {
     const ma = w.get(a)!;
     for (const intent of ma.intents) {
       if (intent.category !== "help") continue;
-      if (memberReason(w, a, { category: "help", role: "seeker", format: "one_to_one", timeSensitive: false, ownIntentCreatedAt: intent.createdAt })) continue;
       const text = intentText(intent);
       const m = text.match(/\b([1-3])\s*(people|helpers|hands|persons)\b/i) ?? text.match(/\b(one|two|three)\s*(people|helpers|hands)\b/i);
       const words: Record<string, number> = { one: 1, two: 2, three: 3 };
       let need = m ? (Number(m[1]) || words[m[1]!.toLowerCase()] || 1) : 1;
       const home = isHomeEntry(w.cfg, text);
+      if (need > 1) {
+        if (memberReason(w, a, { category: "help", role: "seeker", format: "small_group", timeSensitive: false, ownIntentCreatedAt: intent.createdAt })) continue;
+      } else if (!home) {
+        if (memberReason(w, a, { category: "help", role: "seeker", format: "one_to_one", timeSensitive: false, ownIntentCreatedAt: intent.createdAt })) continue;
+      } else {
+        if (memberReason(w, a, { category: "help", role: "seeker", format: "one_to_one", timeSensitive: false, ownIntentCreatedAt: intent.createdAt })
+            && memberReason(w, a, { category: "help", role: "seeker", format: "small_group", timeSensitive: false, ownIntentCreatedAt: intent.createdAt })) continue;
+      }
       const pool = eligibleMembers(ctx, "help", "helper", need > 1 ? "small_group" : "one_to_one", false, new Set([a])).filter(id => w.canMeet([a, id]));
       const got = retrieveForIntent(ctx, intent, pool, "caps", w.cfg.retrieval.minSim);
       if (!got.length) { ctx.unmatchedIntents.add(intent.id); continue; }
@@ -345,27 +352,53 @@ export function helpRequest(ctx: GenCtx): Candidate[] {
         return { ...r, s, acquainted };
       }).filter(r => !pairReason(w, a, r.id, "help"))
         .sort((p, q) => (q.s - p.s) || (p.id < q.id ? -1 : 1));
-      if (home && need === 1 && !ranked[0]?.acquainted) need = 2;
+      // If entering a home and no acquainted helper is available, at least 2 helpers are required by F14.
+      if (home && need === 1 && !ranked.some(r => r.acquainted)) need = 2;
       if (ranked.length < need) { ctx.unmatchedIntents.add(intent.id); continue; }
       // Up to three helper-set variants so one busy helper does not sink the whole request.
       const seenSets = new Set<string>();
+      let emitted = 0;
       for (let v = 0; v < 3; v++) {
+        const slice = ranked.slice(v);
+        if (!slice.length) break;
+        const firstHelper = slice[0]!;
+        // F14: help that enters a home needs 2+ helpers or helpers who already met the requester.
+        const targetNeed = (home && need === 1 && !firstHelper.acquainted) ? 2 : need;
+        const targetFormat: Format = targetNeed > 1 ? "small_group" : "one_to_one";
+        if (memberReason(w, a, { category: "help", role: "seeker", format: targetFormat, timeSensitive: false, ownIntentCreatedAt: intent.createdAt })) continue;
+
         const helpers: typeof ranked = [];
-        for (const r of ranked.slice(v)) {
-          if (helpers.length >= need) break;
+        for (const r of slice) {
+          if (helpers.length >= targetNeed) break;
           if (helpers.some(h => pairReason(w, h.id, r.id, "help"))) continue;
+          if (!w.canMeet([a, ...helpers.map(h => h.id), r.id])) continue;
+          if (targetNeed > 1 && memberReason(w, r.id, { category: "help", role: "helper", format: "small_group", timeSensitive: false })) continue;
           helpers.push(r);
         }
-        if (helpers.length < need) break;
+        if (helpers.length < targetNeed) continue;
+        if (home && helpers.length < 2 && !helpers.every(h => h.acquainted)) continue;
+
         const setKey = helpers.map(h => h.id).sort().join(",");
         if (seenSets.has(setKey)) continue;
         seenSets.add(setKey);
         const ids = [a, ...helpers.map(h => h.id)];
-        // Alternates must be able to join this group: no pair rule with any participant (engine-pipeline-9).
-        const alternates = ranked.filter(r => !ids.includes(r.id) && helpers.every(h => !pairReason(w, h.id, r.id, "help"))).slice(0, 3).map(r => r.id);
+        const format: Format = helpers.length > 1 ? "small_group" : "one_to_one";
+
+        // Alternates must be able to join this group: no pair rule with any participant or each other (engine-pipeline-9).
+        const alternates: MemberId[] = [];
+        for (const r of ranked.filter(r => !ids.includes(r.id) && helpers.every(h => !pairReason(w, h.id, r.id, "help")))) {
+          if (alternates.length >= 3) break;
+          const canReplace = helpers.length <= 1
+            ? w.canMeet([a, r.id])
+            : helpers.some(h => w.canMeet([a, ...helpers.filter(x => x.id !== h.id).map(x => x.id), r.id]));
+          if (!canReplace) continue;
+          if (format === "small_group" && memberReason(w, r.id, { category: "help", role: "helper", format: "small_group", timeSensitive: false })) continue;
+          if (home && helpers.length === 1 && !r.acquainted) continue;
+          if (alternates.every(alt => !pairReason(w, alt, r.id, "help"))) alternates.push(r.id);
+        }
         out.push(makeCandidate({
           kind: "help", generator: "help_request", category: "help",
-          participants: ids, roles: Object.fromEntries([[a, "seeker"], ...helpers.map(h => [h.id, "helper"])]), format: need > 1 ? "small_group" : "one_to_one",
+          participants: ids, roles: Object.fromEntries([[a, "seeker"], ...helpers.map(h => [h.id, "helper"])]), format,
           objective: `Help with: ${label(helpers[0]!.facet) ?? "a bounded task"}`, anchor: { type: "intent", id: intent.id },
           preferredCity: ma.m.homeCity, channels: new Set(helpers.flatMap(h => [...h.channels])),
           evidence: Object.fromEntries([[a, []], ...helpers.map(h => [h.id, [h.facet?.id].filter(Boolean)])]),
@@ -373,7 +406,9 @@ export function helpRequest(ctx: GenCtx): Candidate[] {
           benefit: Object.fromEntries([[a, 0.9], ...helpers.map(h => [h.id, benefitForProvider(w.get(h.id)!, ma, h.facet)])]),
           alternates, safetyClass: home ? "medium" : "low", riskText: text,
         }));
+        emitted++;
       }
+      if (emitted === 0) ctx.unmatchedIntents.add(intent.id);
     }
   }
   return out;
