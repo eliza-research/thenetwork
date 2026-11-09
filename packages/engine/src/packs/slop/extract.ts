@@ -161,6 +161,8 @@ const NOT_NOW = /(?:\blike|\bas if|\bas though|\bpretend(?:ing)?|\bwhen|\bif|\bi
 const AGE_END = "(?=\\s*(?:$|[,!?:)\\/&]|but\\b|so\\b|lol\\b|lmao\\b|haha\\b|btw\\b|tho\\b|here\\b|turning\\b|actually\\b|tbh\\b|y\\/?o\\b|yrs?\\b(?!\\s+(?:in|into|sober|clean))|years?(?:\\s+old)?\\b(?!\\s+(?:in|into|sober|clean|ago|of))|f\\b|m\\b|nb\\b|female\\b|male\\b|woman\\b|man\\b|guy\\b|girl\\b|gal\\b|dude\\b|looking\\b|lookin\\b|lf\\b|from\\b|in\\b|living\\b|w\\/|with\\b|straight\\b|gay\\b|bi\\b|queer\\b|single\\b|trans\\b|nonbinary\\b|\\(|-(?!\\s*\\d)))";
 /** A bare "and", "now" or "too" ends an age only at 13 or older. Under 13 it is not an age end. */
 const LOOSE_END = "(?=\\s+(?:and|now|too)\\b)";
+/** "and I/we/my ..." is a new clause, so the number before it is the age at every age. "and 0" is not. */
+const AND_CLAUSE = "(?=\\s+and(?:\\s+also)?\\s+(?:i(?:'m|\\s+am)?|im|we|my)\\b)";
 const atLeast13 = (n: number) => (n >= 13 && n < 100 ? n : NaN);
 /** "and a half", ".5" and "1/2" are part of the age. A measure after them is not ("12.5 minutes"). */
 const HALF = "(?:\\s+and\\s+(?:a|one)\\s+half\\b|\\s*\\.5(?!\\d)|\\s+1\\/2\\b)";
@@ -171,6 +173,9 @@ const AGE_RULES: { rx: RegExp; age: (m: RegExpExecArray) => number; strict: bool
   { rx: new RegExp(`\\b${ME}\\s+(?:only |just |literally |barely |like |about )?(\\d{1,2})(?!\\d|')${HALF}${NOT_MEASURE}`), age: m => Number(m[1]), strict: true },
   { rx: new RegExp(`\\bi (?:just )?turned\\s+(\\d{1,2})${HALF}${NOT_MEASURE}`), age: m => Number(m[1]), strict: true },
   { rx: new RegExp(`\\b${ME}\\s+(?:only |just )?(${NUM_WORD_RX})\\s+and\\s+(?:a|one)\\s+half\\b`), age: m => wordNum(m[1]!), strict: true },
+  { rx: new RegExp(`\\b${ME}\\s+(?:only |just |literally |barely |like |about )?(\\d{1,2})(?!\\d|')${AND_CLAUSE}`), age: m => Number(m[1]), strict: true },
+  { rx: new RegExp(`\\bi (?:just )?turned\\s+(\\d{1,2})${AND_CLAUSE}`), age: m => Number(m[1]), strict: true },
+  { rx: new RegExp(`\\b${ME}\\s+(?:only |just )?(${NUM_WORD_RX})${AND_CLAUSE}`), age: m => wordNum(m[1]!), strict: true },
   { rx: new RegExp(`\\b${ME}\\s+(?:only |just |literally |barely |like |about )?(\\d{1,2})(?!\\d|')(?!\\s*(?:-|to)\\s*\\d)${LOOSE_END}`), age: m => atLeast13(Number(m[1])), strict: true },
   { rx: new RegExp(`\\bi (?:just )?turned\\s+(\\d{1,2})\\b${LOOSE_END}`), age: m => atLeast13(Number(m[1])), strict: true },
   { rx: new RegExp(`\\b${ME}\\s+(?:only |just )?(${NUM_WORD_RX})\\b${LOOSE_END}`), age: m => atLeast13(wordNum(m[1]!)), strict: true },

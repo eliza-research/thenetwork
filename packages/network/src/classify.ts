@@ -208,6 +208,10 @@ const AGE_RX: AgeRule[] = [
   // measure after it is not an age ("I'm 12.5 minutes away").
   { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(\\d{1,2})(?:\\s+and\\s+(?:a|one)\\s+half\\b|\\s*\\.5(?!\\d)|\\s+1\\/2\\b)(?!\\s*(?:minutes?|mins?|hours?|hrs?|miles?|blocks?|percent|%|feet|ft\\b))`), age: m => Number(m[1]), explicit: true },
   { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(${NUM_WORD})\\s+and\\s+(?:a|one)\\s+half\\b`), age: m => AGE_WORDS[m[1]!]!, explicit: true },
+  // "I'm 12 and I like games": "and" starts a new clause, so the age stands under 13.
+  // "I'm 3 and 0" does not: the next word is a number, not a new clause.
+  { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(\\d{1,2})(?!\\.\\d)(?=\\s+and(?:\\s+also)?\\s+(?:i(?:'m|\\s+am)?|im|we|my)\\b)`), age: m => Number(m[1]), explicit: true },
+  { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(${NUM_WORD})(?=\\s+and(?:\\s+also)?\\s+(?:i(?:'m|\\s+am)?|im|we|my)\\b)`), age: m => AGE_WORDS[m[1]!]!, explicit: true },
   // "I'm 15", "I'm only 15", "I just turned 12!", "I'm fifteen". A digit after a decimal is not this age.
   { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(\\d{1,2})(?!\\.\\d)${AGE_END}`), age: m => Number(m[1]) },
   { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(\\d{1,2})(?!\\.\\d)${AGE_END_LOOSE}`), age: m => atLeast13(Number(m[1])) },

@@ -92,6 +92,16 @@ export async function evalsBlock(b: Block): Promise<void> {
     expect(statedAge("I'm 12.5 minutes away")).toBeUndefined();
     expect(classify("I'm 12.5 minutes away").minorSignal).toBe(false);
     expect(statedAge("I'm 3 and 0 this season")).toBeUndefined();
+    expect(statedAge("I'm 12 and 0 this season")).toBeUndefined();
+    expect(statedAge("I'm 8 now")).toBeUndefined();
+    expect(statedAge("I'm 12 and I like games")).toBe(12);
+    expect(agesStated("I'm 12 and I like games").explicit).toBe(12);
+    expect(statedAge("i'm twelve and i like games")).toBe(12);
+    expect(statedAge("I'm 11 and we live in queens")).toBe(11);
+    expect(statedAge("I'm 15 now")).toBe(15);
+    expect(statedAge("I'm 15 too")).toBe(15);
+    expect(statedAge("I'm 38 and divorced")).toBe(38);
+    expect(statedAge("I'm 38 and I like games")).toBe(38);
   });
   const thirdParty = teen.filter(l => l.other !== undefined && (otherAgeStated(l.text) ?? null) !== (l.other ?? null)).map(l => l.text);
   b.gate("third-party ages are read exactly", thirdParty.length === 0, thirdParty.slice(0, 5).join(" | "));

@@ -72,3 +72,9 @@
 {"text":"im 8 now","minor":false}
 {"text":"I'm 4 and a half","minor":true,"declined":true,"age":4}
 {"text":"I'm 12.5 minutes away","minor":false}
+{"text":"I'm 12 and I like games","minor":true,"declined":true,"age":12}
+{"text":"i'm twelve and i like games","minor":true,"declined":true,"age":12}
+{"text":"I'm 11 and we live in queens","minor":true,"declined":true,"age":11}
+{"text":"I'm 15 and I like games","minor":true,"age":15}
+{"text":"I'm 12 and 0 this season","minor":false}
+{"text":"I'm 38 and I like games","minor":false,"age":38}
