@@ -23,7 +23,8 @@
     "platform:dev": "bun run scripts/platform-dev.ts",
     "start:backend": "bun run deploy/backend/server.ts",
     "sites:build": "bun run sites/sites.ts",
-    "quint:check": "bun run scripts/quint-check.ts"
+    "quint:check": "bun run scripts/quint-check.ts",
+    "quint:drift": "bun run scripts/quint-drift.ts"
   },
   "devDependencies": {
     "@cloudflare/containers": "0.3.7",

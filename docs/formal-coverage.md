@@ -1,6 +1,6 @@
 # Formal coverage of the whole app
 
-This file is the ledger for the modeling rule in AGENTS.md ("Formal modeling") and PRD 34.7. It lists every source file of the app (478 files on claude/formal-integration). For each file it gives the Quint model of its flow, the LemmaScript core of its decisions, and a verdict. Tests, e2e files and `proofs/` are not in the list.
+This file is the ledger for the modeling rule in AGENTS.md ("Formal modeling") and PRD 34.7. It lists every source file of the app (479 files). For each file it gives the Quint model of its flow, the LemmaScript core of its decisions, and a verdict. Tests, e2e files and `proofs/` are not in the list.
 
 ## Where the models are
 
@@ -21,11 +21,11 @@ How the ledger was made: six agents read every file and the models on the three 
 | Verdict | Files |
 |---|---|
 | covered | 214 |
-| na | 264 |
+| na | 265 |
 | gap-quint | 0 |
 | gap-lemma | 0 |
 | gap-both | 0 |
-| total | 478 |
+| total | 479 |
 
 | File | Role | Quint | LemmaScript | Verdict | Reason |
 |---|---|---|---|---|---|
@@ -458,6 +458,7 @@ How the ledger was made: six agents read every file and the models on the three 
 | scripts/inspect-network-backend.py | devtool | none | none | na | Read-only Python inspection tool that sends GET requests only. |
 | scripts/platform-dev.ts | devtool | none | none | na | Local dev launcher that refuses production and keeps sends dry-run; it does not run in production. |
 | scripts/quint-check.ts | devtool | none | none | na | Check runner or sim block; it runs the models and gates and has no production decision. |
+| scripts/quint-drift.ts | devtool | none | none | na | Drift check runner: it hashes the models and their mapped files and has no production decision. |
 | scripts/relay-clef-lib.ts | devtool | none | none | na | Corpus loader and base relay context for the relay eval; production relay decisions are in engine relayCore. |
 | scripts/relay-eval.ts | devtool | none | none | na | Operator CLI that reports relay classifier results; it does not run in production. |
 | scripts/require-pg.ts | devtool | none | none | na | Dev tool that checks that the local Postgres is there before tests. |

@@ -88,6 +88,11 @@ export async function formalBlock(b: Block): Promise<void> {
     expect([...new Set(named.filter(m => !models.has(m)))]).toEqual([]);
   });
 
+  await b.run("every Quint model was compared with its code after the code last changed (quint/drift.json)", async () => {
+    const { staleModels } = await import("../quint-drift.ts");
+    expect(Object.entries(staleModels()).map(([m, f]) => `${m}: ${f.join(", ")} (compare the model with the code, then bun run quint:drift --stamp quint/${m}.qnt)`)).toEqual([]);
+  });
+
   const dafny = Bun.which("dafny");
   if (!dafny || !existsSync(LSC)) {
     b.gate("proofs ran", process.env.REQUIRE_DAFNY !== "1", `skipped: ${dafny ? "lsc" : "dafny"} not found`, process.env.REQUIRE_DAFNY === "1");
