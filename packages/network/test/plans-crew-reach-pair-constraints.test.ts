@@ -138,4 +138,83 @@ describe("plans, crews, and organizing reach pair constraints", () => {
     const check = (mini.net as any).approvalCheck(opp);
     expect(check).toBe("pair_history");
   });
+
+  test("withReach filters alternates conflicting with newly added reach members and excludes alternates from candidates", async () => {
+    const specs = [
+      { id: "host", name: "Host Person", age: 35, area: "Williamsburg", interests: ["climbing"] },
+      { id: "p1", name: "Partner One", age: 32, area: "Williamsburg", interests: ["climbing"] },
+      { id: "c1", name: "Candidate One", age: 30, area: "Williamsburg", interests: ["climbing"] },
+      { id: "alt_conflict", name: "Alt Conflict", age: 29, area: "Williamsburg", interests: ["climbing"] },
+      { id: "alt_clean", name: "Alt Clean", age: 28, area: "Williamsburg", interests: ["climbing"] },
+    ];
+    const mockCapital = {
+      organizingReach: (_host: string, _now: number) => ({
+        max: 3,
+        reservedForLowExposure: 1,
+      }),
+    };
+
+    const mini = new Mini(specs, { review: "human", plans: true, matchingEnabled: true, capital: mockCapital as any });
+    for (const s of specs) await mini.onboard(s.id);
+
+    // alt_conflict has avoid edge with c1
+    const st = mini.net.exportState();
+    st.avoid.push("alt_conflict|c1");
+    mini.net.importState(st);
+
+    const now = mini.clock.now();
+    const basePlan = {
+      id: "plan_test_reach",
+      city: "nyc" as const,
+      activityId: "bouldering",
+      place: { name: "Test Venue", area: "Williamsburg" },
+      window: { start: now + 2 * DAY, end: now + 2 * DAY + 2 * HOUR },
+      invited: ["host", "p1"],
+      alternates: ["alt_conflict", "alt_clean"],
+      hostId: "host",
+      partner: false,
+      size: { min: 3, target: 2, max: 4 },
+      quorum: 2,
+      probeDeadline: now + DAY,
+      score: 0.8,
+      u: {},
+      familiar: {},
+      createdAt: now,
+      category: "social" as const,
+    };
+
+    const expanded = (mini.net as any).withReach(basePlan, now);
+    expect(expanded.invited).toContain("c1");
+    // alt_conflict must be filtered out of alternates because c1 was added to invited
+    expect(expanded.alternates).not.toContain("alt_conflict");
+    expect(expanded.alternates).toContain("alt_clean");
+  });
+
+  test("snapshot avoid edges are enforced in approvalCheck and avoided helper", async () => {
+    const specs = [
+      { id: "x1", name: "Member X1", age: 25, area: "Williamsburg", interests: ["coffee"] },
+      { id: "x2", name: "Member X2", age: 26, area: "Williamsburg", interests: ["coffee"] },
+    ];
+    const mini = new Mini(specs, { review: "human" });
+    await mini.onboard("x1", "x2");
+
+    // Add avoid edge into snapshot cache instead of in-memory avoid set
+    const snap = (mini.net as any).snapshotCached();
+    snap.edges.push({ from: "x1", to: "x2", type: "avoid" });
+
+    // In-memory avoid set is empty
+    expect((mini.net as any).avoid.has("x1|x2")).toBe(false);
+    // But avoided helper detects snapshot avoid edge
+    expect((mini.net as any).avoided("x1", "x2")).toBe(true);
+
+    const opp = (mini.net as any).newOpp({
+      origin: "planner", kind: "intro", category: "social",
+      objective: "coffee", detail: "coffee meetup",
+      participants: ["x1", "x2"], alternates: [], primed: [],
+      explanations: {}, score: 0.7, generator: "plan", tags: ["coffee"],
+    });
+
+    const check = (mini.net as any).approvalCheck(opp);
+    expect(check).toBe("pair_history");
+  });
 });
