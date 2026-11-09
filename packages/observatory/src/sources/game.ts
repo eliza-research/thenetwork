@@ -450,7 +450,10 @@ export class GameSource implements DataSource {
     this.missions = evaluateMissions(this.store.opps.values(), {
       now, start: this.start, scores,
       community: id => this.store.member(id)?.community,
-      newcomer: id => { const j = this.profiles.get(id)?.datasetJoinedAt; return j !== undefined ? this.start - j <= NEWCOMER_DAYS * DAY : (this.personas.get(id)?.joinDay ?? 0) > 0; },
+      newcomer: (id, at) => {
+        const joinedAt = this.profiles.get(id)?.datasetJoinedAt ?? this.store.member(id)?.joinedAt;
+        return joinedAt !== undefined && at >= joinedAt && at - joinedAt <= NEWCOMER_DAYS * DAY;
+      },
     }, this.missions);
     return {
       sparksLeft: Math.max(0, this.opts.sparksPerDay - (this.sparksUsed.get(this.dayIndex()) ?? 0)), sparksPerDay: this.opts.sparksPerDay,
