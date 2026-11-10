@@ -197,6 +197,7 @@ function resolveWeek(rc: RunCtx, week: number, out: MatcherOutput, askedNow: Set
     f.filterViolation = !oracle.statedMutual(a, b, week);
     if (!canBeMatched(a.stated.claimedAge) || !canBeMatched(b.stated.claimedAge)) { f.declaredMinor = true; return; }
     if (state.paused.has(a.id) || state.paused.has(b.id)) return;
+    if (state.safetyHolds.some(h => h.from <= state.now && (h.to === undefined || h.to > state.now) && (h.memberId === a.id || h.memberId === b.id))) return;
     const interaction: InteractionRecord = { id: key, kind: "intro", category: "romance", participants: [a.id, b.id], at: state.now, outcome: "pending" };
     const done = (outcome: InteractionRecord["outcome"], extra: Partial<InteractionRecord> = {}) => state.interactions.push({ ...interaction, outcome, ...extra });
     // Photo in the probe: the engine's rule (adults both sides, consent, an opaque id), as on the live path.
