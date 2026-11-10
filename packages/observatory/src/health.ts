@@ -95,6 +95,8 @@ export interface ScoreInput {
 }
 
 const HELD = new Set(["COMPLETED", "FEEDBACK_COLLECTED"]);
+// A read receipt advances a delivered message; it does not remove that delivery.
+const DELIVERED = new Set(["delivered", "read"]);
 const AGREED = new Set(["MUTUALLY_ACCEPTED", "QUORUM_MET", "SCHEDULED", "COMPLETED", "FEEDBACK_COLLECTED", "ABANDONED"]);
 const ANSWER_WINDOW = 72 * HOUR;
 const FIRST_VALUE_DAYS = 14;
@@ -135,7 +137,7 @@ export function scorecard(x: ScoreInput): ScoreMetric[] {
     const inbound = ms.filter(m => m.direction === "inbound").map(m => m.ts);
     const stop = x.optOutAt.get(id);
     for (const m of ms) {
-      if (m.direction !== "outbound" || !m.proactive || m.status !== "delivered") continue;
+      if (m.direction !== "outbound" || !m.proactive || !DELIVERED.has(m.status)) continue;
       if (x.now - m.ts < ANSWER_WINDOW && !inbound.some(t => t > m.ts)) continue; // still inside its window
       proactive++;
       const answered = inbound.some(t => t > m.ts && t - m.ts <= ANSWER_WINDOW);
@@ -173,7 +175,7 @@ export function scorecard(x: ScoreInput): ScoreMetric[] {
   const clean = decided.filter(o => o.review!.decision === "approve" && !(o.review!.edits?.length)).length;
 
   const weeks = Math.max((x.now - x.start) / (7 * DAY), 1 / 7);
-  const delivered = x.messages.filter(m => m.direction === "outbound" && m.proactive && m.status === "delivered").length;
+  const delivered = x.messages.filter(m => m.direction === "outbound" && m.proactive && DELIVERED.has(m.status)).length;
   const optedOut = joined.filter(m => m.state === "opted_out").length;
 
   return [
