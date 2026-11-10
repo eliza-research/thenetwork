@@ -19,7 +19,8 @@ import type { MatcherContext, SlopMatcher, SlopProposal, SlopWorld } from "./wor
 
 /** Pairs the Network must not propose again: already met, blocked, or either on a safety hold. */
 export function visibleExclusions(ctx: MatcherContext): { pairBlocked: (a: MemberId, b: MemberId) => boolean; held: Set<MemberId> } {
-  const held = new Set(ctx.snapshot.safetyHolds.map(h => h.memberId));
+  const { now, safetyHolds } = ctx.snapshot;
+  const held = new Set(safetyHolds.filter(h => h.from <= now && (h.to === undefined || h.to > now)).map(h => h.memberId));
   const pairs = new Set<string>();
   const k = (a: MemberId, b: MemberId) => (a < b ? `${a}|${b}` : `${b}|${a}`);
   for (const e of ctx.snapshot.edges) if (e.type === "met" || e.type === "blocked") pairs.add(k(e.from, e.to));
@@ -104,7 +105,7 @@ export function oracleOptimalMatcher(w: SlopWorld, opts: { draws?: number } = {}
     name: "oracle-optimal",
     propose(ctx) {
       const ex = visibleExclusions(ctx);
-      const pool = w.personas.filter(p => isSafe(p) && !ctx.profiles.get(p.id)?.paused);
+      const pool = w.personas.filter(p => isSafe(p) && !ctx.profiles.get(p.id)?.paused && !ex.held.has(p.id));
       const asked = new Set(ctx.snapshot.inboundAsks.filter(x => ctx.snapshot.now - x.at < 7 * 86_400_000).map(x => x.memberId));
       const edges: { a: MemberId; b: MemberId; w: number; prop: SlopProposal }[] = [];
       for (let i = 0; i < pool.length; i++) for (let j = i + 1; j < pool.length; j++) {
