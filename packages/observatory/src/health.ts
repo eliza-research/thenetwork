@@ -251,8 +251,8 @@ export interface SafetyInput {
 export { URGENT_REPORTS };
 
 /**
- * Post-date reports from the Network's safety cases, when no report store answers (game mode, or real
- * mode without the service): each report_received event whose reporter and subject were both in an
+ * Post-date reports from the Network's safety cases, in real mode without the service:
+ * each report_received event whose reporter and subject were both in an
  * opportunity that reached a meeting time (they had a date). The kind comes from the case's other
  * events (harassment, money scam), else "other".
  */
