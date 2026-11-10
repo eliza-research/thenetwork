@@ -413,8 +413,14 @@ export class AlertDispatcher {
         if (due) { notices.push({ key: a.key, level: a.level, count: a.count, text: a.text, state: "firing" }); firing.push(s); }
       }
       const resolved: AlertState[] = [];
+      const unreadNetworks = new Set(current.filter(a => a.key.startsWith("ops_read:")).map(a => a.key.slice("ops_read:".length)));
       for (const s of states.values()) {
         if (!s.open || seen.has(s.key)) continue;
+        // A failed read cannot prove that an alert ended. Keep its last observed state;
+        // readable networks, the shared line and the ledger can still resolve independently.
+        if (unreadNetworks.has(s.key.slice(s.key.indexOf(":") + 1))
+          || (seen.has("line_read") && (s.key === "line_safety" || s.key.startsWith("leak_review:")))
+          || (seen.has("cost_read") && s.key.startsWith("budget:"))) continue;
         // Never posted (it started and ended between rate-limited rounds): close it quietly.
         if (s.lastSentAt === undefined) { s.open = false; continue; }
         resolved.push(s);
