@@ -52,7 +52,7 @@ export interface RealOptions {
 
 /** The booked plan's opt-out window (the Network's OPT_OUT_HOURS, which it does not export; game mode reads it from SimMeta.booked). */
 const BOOKED_OPT_OUT_HOURS = 48;
-const SAID_YES = ["accepted", "countered", "confirmed", "attended", "no_show", "cancelled_with_notice"];
+const SAID_YES = ["accepted", "confirmed", "attended", "no_show", "cancelled_with_notice"];
 const HELD = ["COMPLETED", "FEEDBACK_COLLECTED"];
 const ms = (d: Date | string | null | undefined) => (d ? new Date(d).getTime() : undefined);
 export const HIDDEN_MESSAGE = "[member message hidden]";
