@@ -147,8 +147,11 @@ export class Projector {
         const prev = o.status[r.memberId];
         if (prev === st) return;
         o.status[r.memberId] = st;
-        if (st === "accepted" || st === "countered") { c.accepts++; const k = this.counters(r.memberId); if (k) k.accepted++; }
-        if (st === "declined") { c.declines++; if (prev === "accepted" || prev === "countered" || prev === "confirmed") c.accepts--; }
+        if (st === "accepted") { c.accepts++; const k = this.counters(r.memberId); if (k) k.accepted++; }
+        if (st === "countered" && (prev === "accepted" || prev === "confirmed")) {
+          c.accepts--; const k = this.counters(r.memberId); if (k) k.accepted--;
+        }
+        if (st === "declined") { c.declines++; if (prev === "accepted" || prev === "confirmed") c.accepts--; }
         if (st === "accepted" || st === "declined") {
           s.pushFeed({ t: r.t, kind: st === "accepted" ? "accept" : "decline", text: `${this.name(r.memberId)} ${st === "accepted" ? "said yes to" : "passed on"} ${o.participants.length > 2 ? "a group" : "meeting " + this.names(o.participants.filter(x => x !== r.memberId))}`, members: [r.memberId], opportunityId: o.id, severity: st === "accepted" ? "good" : undefined });
         }
@@ -165,7 +168,7 @@ export class Projector {
         for (const id of r.participants) {
           // A booked plan (attention v1.2) is booked before anyone is told: a member who had not said yes in
           // words is in by default (silence = in), so they count as a yes here.
-          if (o.status[id] !== "accepted" && o.status[id] !== "countered" && o.status[id] !== "cancelled_with_notice") { c.accepts++; const k = this.counters(id); if (k) k.accepted++; }
+          if (o.status[id] !== "accepted" && o.status[id] !== "cancelled_with_notice") { c.accepts++; const k = this.counters(id); if (k) k.accepted++; }
           if (o.status[id] !== "cancelled_with_notice") o.status[id] = "confirmed";
         }
         for (const [id, st] of Object.entries(o.status)) if (st === "pending" || st === "invited" || st === "ignored") o.status[id] = "dropped";
@@ -509,7 +512,7 @@ export class Projector {
   private recomputeConsent(o: ObsOpportunity, r: RunRecord) {
     if (o.state === "SCHEDULED" || isTerminal(o.state)) return;
     const sts = o.participants.map(id => o.status[id]);
-    const yes = o.participants.filter(id => o.status[id] === "accepted" || o.status[id] === "countered");
+    const yes = o.participants.filter(id => o.status[id] === "accepted");
     const group = o.participants.length > 2;
     if (!group && sts.includes("declined")) { this.setState(o, "DECLINED", "declined"); return; }
     const quorum = group ? Math.max(3, Math.ceil(o.participants.length * 0.66)) : 2;
@@ -521,6 +524,7 @@ export class Projector {
           this.store.addEdge({ from: yes[i]!, to: yes[j]!, type: "introduced", strength: 0.3, createdAt: r.t, origin: "learned" });
       }
     } else if (yes.length) this.setState(o, "PARTIALLY_ACCEPTED");
+    else if (["PARTIALLY_ACCEPTED", "MUTUALLY_ACCEPTED", "QUORUM_MET"].includes(o.state)) this.setState(o, "INVITING");
   }
 
   /** PRD 32.13 edge learning from a held meeting. */

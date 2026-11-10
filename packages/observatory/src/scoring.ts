@@ -5,7 +5,7 @@ import { isTerminal } from "./projector.ts";
 import type { Mission, ObsOpportunity, ParticipantStatus, ScoreLine } from "./types.ts";
 
 export const POINTS = { accept: 10, decline: -2, noShow: -15, unsafe: -150, meetingScale: 100, peek: -25 } as const;
-const SAID_YES: ReadonlySet<ParticipantStatus> = new Set(["accepted", "countered", "confirmed", "attended", "no_show", "cancelled_with_notice"]);
+const SAID_YES: ReadonlySet<ParticipantStatus> = new Set(["accepted", "confirmed", "attended", "no_show", "cancelled_with_notice"]);
 const HELD = new Set(["COMPLETED", "FEEDBACK_COLLECTED"]);
 
 export const isHeld = (o: ObsOpportunity) => HELD.has(o.state);
