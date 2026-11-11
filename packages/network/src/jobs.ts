@@ -53,6 +53,7 @@ export interface PostingRef { id: string; seat: MemberId; title: string; active:
 export const MAX_OPENINGS = 50;
 const slug = (s: string) => s.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 48);
 const WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, a: 1, an: 1 };
+const validOpenings = (n: number) => Number.isInteger(n) && n >= 1 && n <= MAX_OPENINGS;
 const SENIORITY: [RegExp, number][] = [[/\b(intern|entry[- ]level|junior|jr)\b/i, 1], [/\b(mid[- ]level|mid)\b/i, 2], [/\b(senior|sr)\b/i, 3], [/\b(staff|lead)\b/i, 4], [/\bprincipal\b/i, 5]];
 const BOROUGHS = ["manhattan", "brooklyn", "queens", "bronx", "staten island"];
 const AREAS = [...BOROUGHS, ...NEIGHBORHOODS.map(n => n.name.toLowerCase())].sort((a, b) => b.length - a.length);
@@ -70,8 +71,9 @@ export function parsePosting(body: string): PostingDraft {
     const raw = title[1]!.trim().replace(/\s+(?:role|position|job)$/i, "");
     if (!/^(?:a|an|the|job|post|posting|new|for|my|our)$/i.test(raw) && raw.length >= 2) d.title = raw.toLowerCase();
   }
-  const open = /\b(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:open(?:ing)?s?|roles?|seats?|positions?|hires?|people|spots?)\b/i.exec(t) ?? /\bx\s?(\d{1,2})\b/i.exec(t);
-  if (open) { const n = WORDS[open[1]!.toLowerCase()] ?? Number(open[1]); if (Number.isInteger(n) && n >= 1 && n <= MAX_OPENINGS) d.openings = n; }
+  const open = /(?<![\w.+/-])([+-]?\d+(?:[.,/-]\d+)*(?:e[+-]?\d+)?|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:open(?:ing)?s?|roles?|seats?|positions?|hires?|people|spots?)\b/i.exec(t) ?? /\bx\s?([+-]?\d+(?:[.,/-]\d+)*(?:e[+-]?\d+)?)(?![\w+/-]|[.,]\d)/i.exec(t);
+  // Keep an invalid stated count in the draft so it needs correction, rather than defaulting to one.
+  if (open) { const n = WORDS[open[1]!.toLowerCase()] ?? Number(open[1]); d.openings = Number.isFinite(n) ? n : 0; }
   const pay = /\$?\s*(\d{2,3})(?:,000|k)?\s*(?:-|–|to)\s*\$?\s*(\d{2,3})(?:,000)?\s*k\b/i.exec(t) ?? /\$\s*(\d{2,3})(?:,000|k)\s*(?:-|–|to)\s*\$?\s*(\d{2,3})(?:,000|k)?/i.exec(t);
   if (pay) { const a = Number(pay[1]), b = Number(pay[2]); if (a >= 10 && b >= a && b <= 999) { d.payMin = a; d.payMax = b; } }
   if (/\bremote\b/i.test(t)) d.mode = "remote"; else if (/\bhybrid\b/i.test(t)) d.mode = "hybrid"; else if (/\b(on-?site|in[- ]office|in person)\b/i.test(t)) d.mode = "onsite";
@@ -90,10 +92,10 @@ export function parsePosting(body: string): PostingDraft {
   return d;
 }
 
-/** The fields still missing before a draft can be read back (a title and a pay range). */
-export function missing(d: PostingDraft): ("title" | "pay")[] {
+/** Fields still needed before read-back; an omitted count defaults to one, an invalid count needs correction. */
+export function missing(d: PostingDraft): ("title" | "pay" | "openings")[] {
   if (d.close) return [];
-  return [...(d.title ? [] : ["title" as const]), ...(d.payMin !== undefined && d.payMax !== undefined ? [] : ["pay" as const])];
+  return [...(d.title ? [] : ["title" as const]), ...(d.payMin !== undefined && d.payMax !== undefined ? [] : ["pay" as const]), ...(d.openings !== undefined && !validOpenings(d.openings) ? ["openings" as const] : [])];
 }
 
 const human = (s: string) => s.replace(/_/g, " ");
@@ -111,6 +113,7 @@ export const POSTING_COPY = {
   dropped: "OK, I didn't post anything.",
   askTitle: "What's the job title?",
   askPay: "What's the pay range for the role (for example $90k-$120k)? We only show jobs with a posted pay range.",
+  askOpenings: `How many openings are there? Please give a whole number from 1 to ${MAX_OPENINGS}.`,
   saved: (title: string) => `Posted: ${title}. A person on our team reviews every match before anyone hears about it, and you see a short summary of each candidate who says yes. ${NEVER_ASKS}`,
   updated: (title: string) => `Updated: ${title}.`,
   closed: (title: string) => `Closed: ${title}. No new candidates will be sent for it.`,
@@ -164,6 +167,10 @@ export function readPostingText(body: string, ctx: { draft?: PostingDraft; posti
     return { draft: { close: true, id: pick[0]!.id, title: pick[0]!.title }, text: POSTING_COPY.readBackClose(pick[0]!.title), ready: true };
   }
   const read = parsePosting(body);
+  // A direct answer to the count question need not repeat "openings".
+  if (ctx.draft?.openings !== undefined && !validOpenings(ctx.draft.openings) && !Object.keys(read).length
+    && /^(?:[+-]?\d+(?:[.,/-]\d+)*(?:e[+-]?\d+)?|one|two|three|four|five|six|seven|eight|nine|ten)$/i.test(body.trim()))
+    read.openings = parsePosting(`${body.trim()} openings`).openings;
   const base: PostingDraft = command && !/^\s*update\b/i.test(body) ? { id: ctx.newId } : { ...(ctx.draft ?? {}) };
   if (command && /^\s*update\b/i.test(body)) {
     // "Update my data analyst post: 3 openings": the named (or only) active post, its stored fields kept by the caller.
@@ -178,7 +185,7 @@ export function readPostingText(body: string, ctx: { draft?: PostingDraft; posti
   for (const [k, v] of Object.entries(read)) if (v !== undefined) (merged as Record<string, unknown>)[k] = v;
   if (!command && !Object.keys(read).length) return undefined;
   const need = missing(merged);
-  if (need.length) return { draft: merged, text: need[0] === "title" ? POSTING_COPY.askTitle : POSTING_COPY.askPay, ready: false };
+  if (need.length) return { draft: merged, text: need[0] === "title" ? POSTING_COPY.askTitle : need[0] === "pay" ? POSTING_COPY.askPay : POSTING_COPY.askOpenings, ready: false };
   return { draft: merged, text: POSTING_COPY.readBack(merged), ready: true };
 }
 
@@ -201,7 +208,7 @@ export function postingFromDraft(d: PostingDraft, managerId: MemberId, now: numb
 export function postingProblem(p: JobPosting): string | undefined {
   if (!/^[A-Za-z0-9_.-]{1,80}$/.test(p.id)) return "invalid_id";
   if (!p.title.trim() || p.title.length > 80) return "invalid_title";
-  if (!Number.isInteger(p.openings) || p.openings < 1 || p.openings > MAX_OPENINGS) return "invalid_openings";
+  if (!validOpenings(p.openings)) return "invalid_openings";
   if (!Number.isFinite(p.payMin) || !Number.isFinite(p.payMax) || p.payMin < 10 || p.payMax < p.payMin || p.payMax > 999) return "pay_range_required";
   if (!["onsite", "hybrid", "remote"].includes(p.mode)) return "invalid_mode";
   if (p.must.length > 12 || p.nice.length > 12 || p.must.some(m => !m.skill || !Number.isInteger(m.level) || m.level < 0 || m.level > 5)) return "invalid_skills";
