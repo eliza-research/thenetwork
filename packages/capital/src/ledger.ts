@@ -13,6 +13,7 @@
 import { DAY, HOUR } from "../../core/src/clock.ts";
 import { isMinor } from "../../core/src/policy.ts";
 import { resolveCapital, type CapitalConfig, type CapitalConfigInput } from "./config.ts";
+import { catMultOf, creditAmount } from "./credit.ts";
 import type { CapitalEvent, EarnCategory, EntryCategory, LedgerEntry, LoseCategory, MemberId, PlanOrigin, Verification, Viewer } from "./types.ts";
 import { CapitalEventRejected, validateCapitalEvent } from "./validate.ts";
 import type { CapitalStore } from "./store.ts";
@@ -170,7 +171,7 @@ export class CapitalLedger {
         // Value only counts toward the vouch when an eligible adult member other than the voucher
         // provided it: a voucher cannot manufacture their invitee's value. Nor can the voucher's
         // close circle: providers tied to the voucher by member-controlled credits (help, needs,
-        // member-started plans) inside the pair window do not count.
+        // member-started plans) inside their pair window do not count.
         const ties = this.tiesOf(m.vouchedBy, ev.t);
         const others = uniq(ev.with.filter(w => w !== m.vouchedBy && w !== ev.member && !ties.has(w) && this.isEligible(w)));
         // The invitee's own say-so is not proof (capital-1): a sybil can say "it was great" about
@@ -338,10 +339,13 @@ export class CapitalLedger {
 
   // ---------------------------------------------------------------------------------------------- rules
 
-  /** Members tied to `member` by member-controlled credits (either direction) inside the pair window. */
+  /**
+   * Members tied to `member` by member-controlled credits (either direction) inside the pair window
+   * of those credits (controlledPairWindowDays), the window in which they decay as a pair.
+   */
   private tiesOf(member: MemberId, t: number): Set<MemberId> {
     const ties = new Set<MemberId>();
-    const from = t - this.cfg.antiGaming.pairWindowDays * DAY;
+    const from = t - this.cfg.antiGaming.controlledPairWindowDays * DAY;
     for (let i = this.log.length - 1; i >= 0; i--) {
       const e = this.log[i]!;
       if (e.t < from) break;
@@ -404,9 +408,8 @@ export class CapitalLedger {
     const decays = counterparts.map(cp => ag.pairDecay ** (seenWith.get(cp) ?? 0));
     const pairMult = !decays.length ? 1 : controlled ? Math.min(...decays) : decays.reduce((s, x) => s + x, 0) / decays.length;
     // Per category and period.
-    const catMult = 1 / (1 + nCat / ag.categorySoftN[cat]);
-    const room = Math.max(0, ag.periodCap - inPeriod);
-    const amount = round(Math.min(base * pairMult * catMult, room));
+    const catMult = catMultOf(nCat, ag.categorySoftN[cat]);
+    const amount = round(creditAmount(base, pairMult, catMult, ag.periodCap, inPeriod));
     return this.write(member, cat, 1, amount, base, base > 0 ? amount / base : 0, ev, { counterparts, confirmedBy, outcome, ...extra }, out);
   }
 

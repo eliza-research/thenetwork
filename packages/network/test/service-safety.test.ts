@@ -174,14 +174,17 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const before = directs.length;
     expect(await text(s, clock, ben, "peon")).toBe("held");
     expect(directs.length).toBe(before);
-    await web.login("peon", ben);
-    expect((await web.join("peon", 32, "Ben")).body).toMatchObject({ ok: false, error: "review" });
+    // On the web the banned number gets no session (SD-013, founder decision 3): the start answers as for any
+    // number and sends no code, and the code check fails, so the join has no session.
+    web.forget("peon");
+    clock.advance(31_000);
+    const sent = otp.sent, code = otp.codes.get(ben);
+    expect((await web.json("peon", "POST", "/api/auth/otp/start", { phone: ben })).status).toBe(200);
+    expect(otp.sent).toBe(sent);
+    expect(otp.codes.get(ben)).toBe(code);
+    expect((await web.json("peon", "POST", "/api/auth/otp/verify", { phone: ben, code: code ?? "000000" })).status).toBe(400);
+    expect((await web.join("peon", 32, "Ben")).status).toBe(401);
     expect(await memberOf("peon", ben)).toBeUndefined();
-    // Delete everything does not lift a ban: the same number still cannot join.
-    clock.advance(MINUTE);
-    expect((await web.json("peon", "POST", "/api/me/delete", { scope: "all" })).status).toBe(200);
-    await web.login("peon", ben);
-    expect((await web.join("peon", 32, "Ben")).body).toMatchObject({ ok: false, error: "review" });
     expect((await sql`select count(*)::int as n from platform.bans`)[0].n).toBe(1);
 
     // Audit: requested before result, for the hold and the ban.
@@ -306,11 +309,13 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     // Founder decision 9: no ID check, a stated adult age is enough.
     expect((await upload()).status).toBe(200);
     expect(readdirSync(dir)).toHaveLength(1);
-    // A failed age check recorded by staff (safety only) refuses further photos.
+    // A failed age check recorded by staff (safety only) deletes the photos and refuses further photos.
     expect((await staff(s, "rev-tok", "POST", `/apps/slop/members/${a}/verify`, { check: "age", result: "fail", note: "staff review" })).status).toBe(403);
     expect(await (await staff(s, "saf-tok", "POST", `/apps/slop/members/${a}/verify`, { check: "age", result: "fail", note: "staff review" })).json()).toEqual({ ok: true });
+    expect(readdirSync(dir)).toHaveLength(0);
     expect(await (await upload()).json()).toEqual({ ok: false, error: "not_verified" });
     expect(await (await staff(s, "saf-tok", "POST", `/apps/slop/members/${a}/verify`, { check: "age", result: "pass", note: "staff review" })).json()).toEqual({ ok: true });
+    expect((await upload()).status).toBe(200);
     // A 16-year-old member (13+ may join slop): verified or not, never photos.
     web.forget("slop");
     await web.login("slop", kid);

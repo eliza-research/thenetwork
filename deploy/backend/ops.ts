@@ -20,7 +20,10 @@ import type { SQL } from "bun";
 import { URGENT_REPORTS } from "../../packages/network/src/reports.ts";
 import { SIM_AUTO_REVIEWER } from "../../packages/network/src/network.ts";
 import { budgetLines, costBudgetsFromEnv, dayOf, type BudgetLine, type CostApp, type CostBudgets, type CostLedger } from "../../packages/network/service/cost.ts";
+import { BIAS_EVERY_MS, BIAS_MIN_N, biasBlind } from "../../packages/network/service/bias.ts";
+import type { BiasReport } from "../../packages/engine/src/packs/slop/biasMonitor.ts";
 import type { AppId } from "../../packages/platform/src/apps.ts";
+import { PHOTO_APPS } from "../../packages/platform/src/photos.ts";
 
 const MIN = 60_000, HOUR = 60 * MIN, DAY = 24 * HOUR;
 /** The start of the UTC day of a time (the cost ledger's day). */
@@ -115,6 +118,10 @@ export interface NetworkMetrics {
   safetySignalsWaiting?: number;
   /** Groups under 0.8x in bias monitor reports written in the last 24 h (service.ts afterTick; weekly). */
   biasAlerts24h?: number;
+  /** The newest bias monitor report of the last 24 h could compare no group (biasBlind): no alert is not a pass. */
+  biasBlind24h?: boolean;
+  /** Since the newest bias monitor report (null: none yet). Undefined: the network's app has no bias monitor (not a photo app). */
+  biasReportAgoMs?: number | null;
   /**
    * Shadow precision of the last 7 days (PRD 32.8 precision gate, 34.6 shadow mode): review items a person
    * decided (approve or reject; the simulated reviewer left out) and those approved without an edit.
@@ -165,7 +172,7 @@ export interface NetworkProbe {
    * Rows since a time: outbound statuses, event counts (type and action), report rows from the stored
    * state, and the SMS fallbacks of the UTC day that starts at `dayStart` and of the day before (the cost accruals).
    */
-  since(t: number, dayStart: number): Promise<{ statuses: Record<string, number>; events: { type: string; action: string | null; n: number }[]; reports: { kind: string }[]; sms: { today: number; yesterday: number }; safetySignals?: number; biasAlerts?: number; precision7d?: { decided: number; clean: number } }>;
+  since(t: number, dayStart: number): Promise<{ statuses: Record<string, number>; events: { type: string; action: string | null; n: number }[]; reports: { kind: string }[]; sms: { today: number; yesterday: number }; safetySignals?: number; biasAlerts?: number; biasBlind?: boolean; biasLastAt?: number | null; precision7d?: { decided: number; clean: number } }>;
 }
 
 /** Below this many person decisions in 7 days the precision is not alerted on (too few to read). */
@@ -176,7 +183,7 @@ export const PRECISION_TARGET = 0.8;
 /** Final outcomes of a send that reached (or tried to reach) the provider. */
 const FAILED = /^(failed|parked_error|undeliverable)/;
 const REFUSED = /^(refused|suppressed|blocked|parked|dropped|expired)/;
-const WAITING = new Set(["queued", "pending", "sending", "deferred_quiet_hours", "held_awaiting_reply", "retry_scheduled"]);
+const WAITING = new Set(["queued", "pending", "sending", "deferred_quiet_hours", "held_awaiting_reply", "retry_scheduled", "unknown_acceptance"]);
 
 export function sendOutcomes(statuses: Record<string, number>): NetworkMetrics["sends24h"] {
   const out = { attempted: 0, failed: 0, refused: 0, dryRun: 0, smsFallback: 0 };
@@ -198,7 +205,8 @@ export async function collectNetwork(p: NetworkProbe, now: number): Promise<Netw
   };
   try {
     const [h, s] = await Promise.all([p.health(), p.since(now - DAY, utcDayStart(now))]);
-    const last = Math.max(h.lastTick.stored ?? -Infinity, h.lastTick.savedAt ?? -Infinity);
+    // Only the stored tick: every unit of work refreshes savedAt, so it hides a stalled tick (SD-368).
+    const last = h.lastTick.stored ?? -Infinity;
     const ev = (type: string, action?: string) => s.events.filter(e => e.type === type && (action === undefined || e.action === action)).reduce((x, e) => x + e.n, 0);
     return {
       ...empty,
@@ -213,6 +221,8 @@ export async function collectNetwork(p: NetworkProbe, now: number): Promise<Netw
       smsByDay: s.sms,
       safetySignalsWaiting: s.safetySignals ?? 0,
       biasAlerts24h: s.biasAlerts ?? 0,
+      biasBlind24h: s.biasBlind ?? false,
+      ...(s.biasLastAt !== undefined ? { biasReportAgoMs: s.biasLastAt === null ? null : Math.max(0, now - s.biasLastAt) } : {}),
       ...(s.precision7d ? { precision7d: s.precision7d } : {}),
     };
   } catch (e) {
@@ -243,14 +253,19 @@ export function runtimeProbe(rt: {
       // Counts only: a signal's evidence and a report's groups never leave the database here.
       const [sig] = (await tx`select count(*)::int as n from network.facets where app_id = ${rt.app.id} and status = 'proposed'
         and tags && ${tx.array(["signal:safety_concern"], "TEXT")}`) as { n: number }[];
-      const [bias] = (await tx`select coalesce(sum(alerts), 0)::int as n from network.bias_reports where app_id = ${rt.app.id} and network_id = ${rt.id} and at > ${at}`) as { n: number }[];
+      const [bias] = (await tx`select coalesce(sum(alerts) filter (where at > ${at}), 0)::int as n, max(at) as last
+        from network.bias_reports where app_id = ${rt.app.id} and network_id = ${rt.id}`) as { n: number; last: Date | null }[];
+      const [newest] = (await tx`select report from network.bias_reports where app_id = ${rt.app.id} and network_id = ${rt.id} and at > ${at}
+        order by at desc limit 1`) as { report: BiasReport }[];
+      const biasLastAt = PHOTO_APPS.includes(rt.app.id as AppId) ? (bias?.last ? new Date(bias.last).getTime() : null) : undefined;
       // Shadow precision: person decisions of the last 7 days (an edit before approving is not "without edits").
       const [prec] = (await tx`select count(*)::int as decided,
           count(*) filter (where decision = 'approve' and coalesce(jsonb_array_length(case when jsonb_typeof(edits) = 'array' then edits end), 0) = 0)::int as clean
         from network.review_items where app_id = ${rt.app.id} and decision in ('approve', 'reject') and decided_at > ${new Date(t - 6 * DAY)}
           and reviewer is not null and reviewer <> ${SIM_AUTO_REVIEWER}`) as { decided: number; clean: number }[];
       return { statuses, events, reports, sms: { today: sms?.today ?? 0, yesterday: sms?.yesterday ?? 0 }, safetySignals: sig?.n ?? 0, biasAlerts: bias?.n ?? 0,
-        precision7d: { decided: prec?.decided ?? 0, clean: prec?.clean ?? 0 } };
+        biasBlind: newest ? biasBlind(newest.report) : false,
+        ...(biasLastAt !== undefined ? { biasLastAt } : {}), precision7d: { decided: prec?.decided ?? 0, clean: prec?.clean ?? 0 } };
     }),
   };
 }
@@ -286,6 +301,12 @@ export function evaluate(m: Pick<OpsMetrics, "networks" | "cost"> & { uptimeMs?:
     if (f.reports > 0) out.push({ key: `safety_report:${id}`, level: f.urgentReports > 0 ? "bad" : "warn", count: f.reports, bump: true, text: `${id}: ${f.reports} report(s) in 24 h (${f.urgentReports} urgent)` });
     if (n.safetySignalsWaiting) out.push({ key: `safety_signal:${id}`, level: "bad", count: n.safetySignalsWaiting, bump: true, text: `${id}: ${n.safetySignalsWaiting} agent safety signal(s) wait for staff review (console: Safety, or GET /signals)` });
     if (n.biasAlerts24h) out.push({ key: `bias_report:${id}`, level: "warn", count: n.biasAlerts24h, bump: true, text: `${id}: the weekly bias monitor found ${n.biasAlerts24h} group outcome(s) under 0.8x (console: Metrics, bias monitor)` });
+    if (n.biasBlind24h) out.push({ key: `bias_blind:${id}`, level: "warn", count: 1, text: `${id}: the weekly bias monitor could not compare groups (fewer than 2 groups of ${BIAS_MIN_N} or more adults, or no outcomes yet), so no alert is not a pass (console: Metrics, bias monitor)` });
+    // The monitor runs once a week (BIAS_EVERY_MS) in afterTick, which can fail on every tick while the ticks still run.
+    const biasLate = BIAS_EVERY_MS + DAY;
+    if (n.biasReportAgoMs !== undefined && (n.biasReportAgoMs === null ? (m.uptimeMs ?? Infinity) > biasLate : n.biasReportAgoMs > biasLate)) {
+      out.push({ key: `bias_late:${id}`, level: "warn", count: n.biasReportAgoMs === null ? 0 : Math.floor(n.biasReportAgoMs / DAY), text: n.biasReportAgoMs === null ? `${id}: the weekly bias monitor has stored no report yet` : `${id}: the newest weekly bias monitor report is ${Math.floor(n.biasReportAgoMs / DAY)} days old (expected every 7 days; look for "[tick] after-tick work failed" in the log)` });
+    }
     const p = n.precision7d;
     if (p && p.decided >= PRECISION_MIN_DECIDED && p.clean / p.decided < PRECISION_TARGET) {
       const pct = Math.round((100 * p.clean) / p.decided);
@@ -319,6 +340,8 @@ export function evaluate(m: Pick<OpsMetrics, "networks" | "cost"> & { uptimeMs?:
 export interface AlertState {
   key: string; level: AlertLevel; count: number; text: string; open: boolean; firstAt: number; lastAt: number;
   lastSentAt?: number; lastSentLevel?: AlertLevel; lastSentCount?: number;
+  /** The last failed post that carried this alert (the webhook did not take it). */
+  lastFailedAt?: number;
 }
 export interface AlertTx {
   load(): Promise<AlertState[]>;
@@ -356,14 +379,17 @@ export class PgAlertStore implements AlertStore {
         load: async () => ((await tx`select * from network.ops_alerts`) as any[]).map(r => ({
           key: r.key, level: r.level, count: r.count, text: r.text, open: r.open, firstAt: ms(r.first_at)!, lastAt: ms(r.last_at)!,
           lastSentAt: ms(r.last_sent_at), lastSentLevel: r.last_sent_level ?? undefined, lastSentCount: r.last_sent_count ?? undefined,
+          lastFailedAt: ms(r.last_failed_at),
         })),
         save: async ss => {
           for (const s of ss) {
-            await tx`insert into network.ops_alerts (key, level, count, text, open, first_at, last_at, last_sent_at, last_sent_level, last_sent_count)
+            await tx`insert into network.ops_alerts (key, level, count, text, open, first_at, last_at, last_sent_at, last_sent_level, last_sent_count, last_failed_at)
               values (${s.key}, ${s.level}, ${s.count}, ${s.text.slice(0, 500)}, ${s.open}, ${new Date(s.firstAt)}, ${new Date(s.lastAt)},
-                ${s.lastSentAt === undefined ? null : new Date(s.lastSentAt)}, ${s.lastSentLevel ?? null}, ${s.lastSentCount ?? null})
+                ${s.lastSentAt === undefined ? null : new Date(s.lastSentAt)}, ${s.lastSentLevel ?? null}, ${s.lastSentCount ?? null},
+                ${s.lastFailedAt === undefined ? null : new Date(s.lastFailedAt)})
               on conflict (key) do update set level = excluded.level, count = excluded.count, text = excluded.text, open = excluded.open, first_at = excluded.first_at,
-                last_at = excluded.last_at, last_sent_at = excluded.last_sent_at, last_sent_level = excluded.last_sent_level, last_sent_count = excluded.last_sent_count`;
+                last_at = excluded.last_at, last_sent_at = excluded.last_sent_at, last_sent_level = excluded.last_sent_level, last_sent_count = excluded.last_sent_count,
+                last_failed_at = excluded.last_failed_at`;
           }
         },
         postsSince: async t => Number(((await tx`select count(*)::int as n from network.ops_alert_posts where at > ${new Date(t)}`) as any[])[0]?.n ?? 0),
@@ -377,6 +403,23 @@ export interface Notice { key: string; level: AlertLevel; count: number; text: s
 export interface DispatchResult { notices: Notice[]; posted: boolean; ok: boolean; held: number; open: { key: string; level: AlertLevel; count: number }[]; postsLastHour: number }
 
 const RANK: Record<AlertLevel, number> = { warn: 1, bad: 2 };
+
+/**
+ * The alert keys that a failed read in this round leaves unknown (ops_read:<network>, line_read,
+ * cost_read): their condition was not read, so it did not end. They stay open until a read succeeds.
+ */
+function unread(current: Alert[]): (key: string) => boolean {
+  const networks = new Set<string>();
+  let line = false, cost = false;
+  for (const a of current) {
+    if (a.key.startsWith("ops_read:")) networks.add(a.key.slice("ops_read:".length));
+    else if (a.key === "line_read") line = true;
+    else if (a.key === "cost_read") cost = true;
+  }
+  return key => networks.has(key.slice(key.indexOf(":") + 1))
+    || (line && (key === "line_safety" || key.startsWith("leak_review:")))
+    || (cost && key.startsWith("budget:"));
+}
 
 export class AlertDispatcher {
   constructor(private o: {
@@ -405,6 +448,8 @@ export class AlertDispatcher {
         const s: AlertState = prev?.open
           ? { ...prev, level: a.level, count: a.count, text: a.text, lastAt: now }
           : { key: a.key, level: a.level, count: a.count, text: a.text, open: true, firstAt: now, lastAt: now };
+        // A count that fell (staff cleared items) lowers the bump baseline, so the next rise is posted (SD-161).
+        if (s.lastSentCount !== undefined && a.count < s.lastSentCount) s.lastSentCount = a.count;
         const due = s.lastSentAt === undefined
           || RANK[a.level] > RANK[s.lastSentLevel ?? "warn"]
           || (!!a.bump && a.count > (s.lastSentCount ?? 0))
@@ -413,10 +458,12 @@ export class AlertDispatcher {
         if (due) { notices.push({ key: a.key, level: a.level, count: a.count, text: a.text, state: "firing" }); firing.push(s); }
       }
       const resolved: AlertState[] = [];
+      const unknown = unread(current);
       for (const s of states.values()) {
-        if (!s.open || seen.has(s.key)) continue;
-        // Never posted (it started and ended between rate-limited rounds): close it quietly.
-        if (s.lastSentAt === undefined) { s.open = false; continue; }
+        if (!s.open || seen.has(s.key) || unknown(s.key)) continue;
+        // Never posted and no post of it failed (it started and ended between rate-limited rounds): close it quietly.
+        // A post of it that failed means nobody heard of it: its end is posted (SD-235).
+        if (s.lastSentAt === undefined && s.lastFailedAt === undefined) { s.open = false; continue; }
         resolved.push(s);
         notices.push({ key: s.key, level: s.level, count: s.count, text: s.text, state: "resolved" });
       }
@@ -432,7 +479,7 @@ export class AlertDispatcher {
           if (ok) {
             for (const s of firing) { s.lastSentAt = now; s.lastSentLevel = s.level; s.lastSentCount = s.count; }
             for (const s of resolved) s.open = false;
-          }
+          } else for (const s of firing) s.lastFailedAt = now;
         }
       }
       await tx.save([...states.values()]);
@@ -538,7 +585,8 @@ export function createOps(d: OpsDeps) {
         if (r.posted && !r.ok) d.log.error("alert webhook failed", { notices: r.notices.length });
         if (r.held) d.log.warn("alerts held by the rate limit", { held: r.held, maxPerHour: c.maxPostsPerHour });
       }
-      if (c.heartbeatUrl) await ping(c.heartbeatUrl).then(ok => { if (!ok) d.log.warn("heartbeat ping failed"); }, e => d.log.warn("heartbeat ping failed", { error: (e as Error).message }));
+      // A round whose alert post failed is not a good round: the heartbeat goes quiet, so the uptime service alerts (SD-360).
+      if (c.heartbeatUrl && !(r?.posted && !r.ok)) await ping(c.heartbeatUrl).then(ok => { if (!ok) d.log.warn("heartbeat ping failed"); }, e => d.log.warn("heartbeat ping failed", { error: (e as Error).message }));
       return r;
     },
   };

@@ -375,9 +375,41 @@ export const DEFAULT_ATTENTION: AttentionConfig = {
   },
 };
 
+// ------------------------------------------------------------------------------------------------
+// Preconditions of the proved cores (LemmaScript `requires`, docs/formal-verification.md). A proof
+// says nothing outside its `requires`, so a config that breaks one is refused where it is resolved
+// (resolveConfig, resolveAttention, resolvePlans, validatePack) and where the World is built. Each
+// test is written so that NaN fails it too.
+
+const capOk = (c: { limit: number; periodDays: number }) => c.limit >= 0 && c.periodDays > 0;
+
+/** EngineConfig: netValueOf (norm > 0), debtStep (floor 0 <= 2 x cap), acceptanceEstimate (strength > 0, prior in [0, 1]). */
+export function engineConfigErrors(cfg: EngineConfig): string[] {
+  const W = cfg.weights, A = cfg.acceptance, errs: string[] = [];
+  if (!(W.fit + W.mutualBenefit + W.warmPath + W.novelty + W.timingFit > 0)) errs.push("weights: fit + mutualBenefit + warmPath + novelty + timingFit must be > 0 (netValueOf norm)");
+  if (!(cfg.selection.exposureDebtCap >= 0)) errs.push("selection.exposureDebtCap must be >= 0 (debtStep)");
+  if (!(A.strength > 0) || !(A.prior >= 0 && A.prior <= 1)) errs.push("acceptance: strength > 0 and prior within [0, 1] (acceptanceEstimate)");
+  return errs;
+}
+/** AttentionConfig: capValue needs every state cap and the minors cap with limit >= 0 and periodDays > 0. */
+export function attentionConfigErrors(cfg: AttentionConfig): string[] {
+  const errs: string[] = [];
+  for (const s of Object.keys(cfg.caps) as ParticipationState[]) if (!capOk(cfg.caps[s])) errs.push(`caps.${s}: limit >= 0 and periodDays > 0 (capValue)`);
+  if (!capOk(cfg.minors.cap)) errs.push("minors.cap: limit >= 0 and periodDays > 0 (capValue)");
+  return errs;
+}
+/** PlansConfig: stricterCap needs allowance periodDays > 0; the allowance becomes a state cap, so capValue also needs limit >= 0. */
+export function plansConfigErrors(cfg: PlansConfig): string[] {
+  return capOk(cfg.allowance) ? [] : ["allowance: limit >= 0 and periodDays > 0 (stricterCap, capValue)"];
+}
+export function assertNoConfigErrors(errs: string[]): void {
+  if (errs.length) throw new Error(`config breaks a proved precondition: ${errs.join("; ")}`);
+}
+
 export type AttentionConfigInput = DeepPartial<AttentionConfig>;
 export function resolveAttention(input: AttentionConfigInput = {}): AttentionConfig {
   const cfg = merge(DEFAULT_ATTENTION, input);
+  assertNoConfigErrors(attentionConfigErrors(cfg));
   for (const s of Object.keys(cfg.caps) as ParticipationState[]) {
     if (cfg.breakIns[s].limit > cfg.caps[s].limit) throw new Error(`attention.breakIns.${s} must be within the cap (D4)`);
     if (cfg.maxItems[s] > 3) throw new Error("attention.maxItems is at most 3 (D1)");
@@ -415,6 +447,7 @@ export function resolveConfig(input: EngineConfigInput = {}): EngineConfig {
     throw new Error(`exploration.rate must be within [0, maxShare=${cfg.exploration.maxShare}]`);
   if (cfg.group.minSize < 3 || cfg.group.maxSize > 6 || cfg.group.minSize > cfg.group.maxSize)
     throw new Error("group size must be within 3..6 (Section 33.4)");
+  assertNoConfigErrors(engineConfigErrors(cfg));
   return cfg;
 }
 
@@ -519,6 +552,7 @@ export function resolvePlans(input: PlansConfigInput = {}): PlansConfig {
   if (cfg.size.partner !== 2) throw new Error("plans.size.partner is 2 (D15)");
   if (cfg.crews.minPlans < 1 || cfg.crews.minPlans > 2) throw new Error("plans.crews.minPlans is 1 or 2");
   if (cfg.quorum.group < cfg.size.min || cfg.quorum.group > cfg.size.max) throw new Error("plans.quorum.group must be within the group size");
+  assertNoConfigErrors(plansConfigErrors(cfg));
   return cfg;
 }
 export function plansConfigHash(cfg: PlansConfig): string {

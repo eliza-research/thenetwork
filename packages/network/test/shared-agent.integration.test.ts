@@ -138,7 +138,7 @@ test("a committed collection followed by a fault stays unresolved and is never a
   } finally { service.inbound=original; }
   await service.tick();expect(handled).toBe(2);
   const [row]=await sql`select status,replies,response,sender,event from platform.inbound where id='msg:blooio:fault-after-effects'`;
-  expect(row.status).toBe("unresolved");expect(row.replies.length).toBeGreaterThan(0);expect(row.response).toBeNull();expect(row.sender).toBeNull();expect(row.event).toBeNull();
+  expect(row.status).toBe("unresolved");expect(row.replies).toEqual([]);expect(row.response).toBeNull();expect(row.sender).toBeNull();expect(row.event).toBeNull();
   // The unresolved turn holds this sender's ordinary messages back (at most 10 minutes); STOP, START and
   // HELP are never held back (inbox.ts), so the person can always get help or stop.
   clock.advance(MINUTE);expect((await post(turn("after-fault",input.from,"hello again"))).status).toBe(409);
@@ -204,7 +204,7 @@ test("completed signed payload expiry retains a tombstone and leaves unresolved 
   const [expired]=await sql`select status,request_hash,response,replies,receipt,sender_hash from platform.inbound where id='msg:blooio:payload-expiry'`;
   expect(expired.status).toBe("unresolved");expect(expired.request_hash).toBeDefined();expect(expired.response).toBeNull();expect(expired.replies).toEqual([]);expect(expired.receipt).toBeNull();expect(expired.sender_hash).toBeNull();
   const [interrupted]=await sql`select status,replies from platform.inbound where id='msg:blooio:fault-after-effects'`;
-  expect(interrupted.status).toBe("unresolved");expect(interrupted.replies.length).toBeGreaterThan(0);
+  expect(interrupted.status).toBe("unresolved");expect(interrupted.replies).toEqual([]);
 },60_000);
 
 test("full canonical deletion scrubs signed context, replies and receipts without crossing people",async()=>{

@@ -4,7 +4,8 @@
 // attention and plans invariants on the consent arms; and the shared conformance rules for networkPack.
 import { readdirSync } from "node:fs";
 import { DAY, HOUR, MINUTE, type MemberId } from "../../packages/core/src/index.ts";
-import { DEFAULT_ATTENTION } from "../../packages/engine/src/index.ts";
+import { DEFAULT_ATTENTION, runEngine } from "../../packages/engine/src/index.ts";
+import { randomWorld } from "../../packages/engine/src/testkit.ts";
 import { networkPack } from "../../packages/engine/src/packs/network/index.ts";
 import type { RunRecord } from "../../packages/core/src/index.ts";
 import { computeMetrics } from "../../packages/sim/src/judge/metrics.ts";
@@ -51,6 +52,18 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
     expect(m.safety.minorContacts).toBe(0);
     expect(m.privacy.canaryLeaks).toBe(0);
     expect(m.errors).toBe(0);
+  });
+
+  await b.run("judge: an unknown age that resolves adult (age_resolved minor:false) clears the minor flag; minor:true keeps it", () => {
+    // network.ts logs age_resolved as { memberId, minor } with no age; the judge used to read the absent age as a minor.
+    const t = Date.UTC(2026, 9, 5);
+    const persona = (id: string) => ({ t, type: "persona", persona: { id, name: `${id} Q`, archetype: "regular", homeCity: "nyc", joinDay: 0, trueAge: 30, claimedAge: 30, quietHours: [22, 8], romanceOptIn: true } });
+    const log = (dt: number, kind: string, detail: Record<string, unknown>) => ({ t: t + dt, type: "network_log", kind, detail });
+    const records = (minor: boolean) => [persona("p1"), persona("p2"), log(1, "age_unknown", { memberId: "p1" }), log(2, "age_resolved", { memberId: "p1", minor }),
+      log(3, "review_decision", { oppId: "o1", decision: "approve", reviewer: "r" }), log(4, "probe_started", { oppId: "o1", proposal: { id: "o1", participants: ["p1", "p2"], alternates: [] } }),
+      log(5, "probe_sent", { oppId: "o1", memberId: "p1" })] as unknown as RunRecord[];
+    expect(computeMetrics(records(false), { requireReview: true }).safety.minorContacts).toBe(0);
+    expect(computeMetrics(records(true), { requireReview: true }).safety.minorContacts).toBe(2);
   });
 
   await b.run("minors: no minor is ever an alternate (a possible backfill)", () => {
@@ -103,7 +116,9 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
     const started = outbound(R).filter(m => !inboundAt.has(`${m.msg.memberId}|${m.msg.ts}`) && !m.msg.meta?.safety);
     expect(started.length).toBeGreaterThan(200);
     expect(started.filter(m => !allowedAt(m.msg.ts, quiet.get(m.msg.memberId)!)).map(m => `${m.msg.meta?.type} ${m.msg.memberId} ${new Date(m.msg.ts).toISOString()}`)).toEqual([]);
-    const invites = outbound(R).filter(m => m.msg.meta?.proactive && m.msg.status === "delivered");
+    // Initial invites only: the outreach controller marks other unsolicited sends proactive too (meta.unsolicited),
+    // and an info or cancellation note keeps its logistics timing (after quiet hours, not the send slot).
+    const invites = outbound(R).filter(m => m.msg.meta?.proactive && !m.msg.meta?.unsolicited && m.msg.status === "delivered");
     expect(invites.length).toBeGreaterThan(50);
     const hour = (t: number) => Number(new Intl.DateTimeFormat("en-US", { timeZone: NY, hourCycle: "h23", hour: "2-digit" }).format(t));
     expect(invites.filter(m => hour(m.msg.ts) < 9)).toEqual([]);
@@ -183,7 +198,9 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
   });
 
   await b.run("trust: no honest member is flagged; bad actors who acted are restricted", () => {
-    for (const r of logs(R, "abuse")) expect([r.detail.memberId, !!run.personas.get(String(r.detail.memberId))?.hidden.adversarial]).toEqual([r.detail.memberId, true]);
+    // Friends invited during the run are not in run.personas: read the world's list after the run.
+    const everyone = new Map(run.w.personaList().map(p => [p.id, p]));
+    for (const r of logs(R, "abuse")) expect([r.detail.memberId, !!everyone.get(String(r.detail.memberId))?.hidden.adversarial]).toEqual([r.detail.memberId, true]);
     const acted = new Set(R.filter(r => r.type === "adversarial_attempt" && ["spammer", "scammer", "harasser", "prompt_injector"].includes(r.kind)).map(r => (r as { memberId: string }).memberId));
     for (const id of acted) expect([id, run.net.trust.level(id)]).not.toEqual([id, "ok"]);
   });
@@ -315,4 +332,23 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
 
   // ---- conformance rules for networkPack (engine level) ---------------------------------------------------
   await conformance(b, networkPack, { seeds: o.quick ? [1, 2] : [1, 2, 3, 4] });
+
+  // SD-422: exploration picks over maxShare were dropped after the greedy pass, but the city capacity,
+  // budgets and pairs they took were not given back. With the city cap binding and the exploration
+  // rate at maxShare, each city gets as many proposals as with exploration off (pinned seeds 1-4).
+  await b.run("engine selection: a dropped exploration pick keeps no capacity (city cap 6, rate = maxShare = 0.15, seeds 1-4)", async () => {
+    const perCity = async (seed: number, rate: number) => {
+      const r = await runEngine(randomWorld({ members: 90, seed, minorShare: 0.15 }), { seed, exploration: { rate, maxShare: 0.15 }, selection: { maxProposalsPerCity: 6 } }, { pack: networkPack });
+      const by: Record<string, number> = {};
+      for (const p of r.proposals) by[p.city] = (by[p.city] ?? 0) + 1;
+      return { by, explored: r.proposals.filter(p => p.exploration).length };
+    };
+    let explored = 0;
+    for (const seed of [1, 2, 3, 4]) {
+      const on = await perCity(seed, 0.15);
+      explored += on.explored;
+      expect({ seed, by: on.by }).toEqual({ seed, by: (await perCity(seed, 0)).by });
+    }
+    expect(explored).toBeGreaterThan(0);
+  });
 }

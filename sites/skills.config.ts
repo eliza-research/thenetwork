@@ -36,7 +36,7 @@ export function skillsConfig(env: Record<string, string | undefined> = process.e
   const staging = stagingSiteOrigins(env);
   if (Object.keys(staging).length) {
     const backend = env.BACKEND_ORIGIN ? new URL(origin(env.BACKEND_ORIGIN, "BACKEND_ORIGIN")) : undefined;
-    if (!backend || backend.origin === DEFAULT_BACKEND_ORIGIN || Object.values(staging).includes(backend.origin) || backend.hostname.endsWith(".") || backend.pathname !== "/" || backend.search || backend.hash || backend.username || backend.password) {
+    if (!backend || backend.origin === DEFAULT_BACKEND_ORIGIN || Object.values(staging).includes(backend.origin) || Object.values(APPS).some(a => a.domain === backend.hostname) || backend.hostname.endsWith(".") || backend.pathname !== "/" || backend.search || backend.hash || backend.username || backend.password) {
       throw new Error("staging sites need an explicit isolated BACKEND_ORIGIN");
     }
   }

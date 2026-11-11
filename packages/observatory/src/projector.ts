@@ -164,8 +164,9 @@ export class Projector {
         o.meetingAt = r.at;
         for (const id of r.participants) {
           // A booked plan (attention v1.2) is booked before anyone is told: a member who had not said yes in
-          // words is in by default (silence = in), so they count as a yes here.
-          if (o.status[id] !== "accepted" && o.status[id] !== "countered" && o.status[id] !== "cancelled_with_notice") { c.accepts++; const k = this.counters(id); if (k) k.accepted++; }
+          // words is in by default (silence = in), so they count as a yes here. A meeting reported again (a late
+          // joiner) finds the others already confirmed: they are not counted twice.
+          if (!["accepted", "countered", "confirmed", "cancelled_with_notice"].includes(o.status[id] ?? "")) { c.accepts++; const k = this.counters(id); if (k) k.accepted++; }
           if (o.status[id] !== "cancelled_with_notice") o.status[id] = "confirmed";
         }
         for (const [id, st] of Object.entries(o.status)) if (st === "pending" || st === "invited" || st === "ignored") o.status[id] = "dropped";
@@ -195,7 +196,8 @@ export class Projector {
           for (const id of showed) { c.enjoymentSum += r.attendance[id]!.enjoyment; c.enjoymentN++; }
           this.learnEdges(showed, r.attendance, r.t);
         }
-        if (o) { this.setState(o, held ? "COMPLETED" : "ABANDONED", held ? undefined : "not enough people showed"); this.changed(o, r); }
+        // A plan the Network closed stays closed: the world can still hold its meeting.
+        if (o && !isTerminal(o.state)) { this.setState(o, held ? "COMPLETED" : "ABANDONED", held ? undefined : "not enough people showed"); this.changed(o, r); }
         const mean = held ? showed.reduce((a, id) => a + r.attendance[id]!.enjoyment, 0) / showed.length : 0;
         const ids = Object.keys(r.attendance);
         s.pushFeed({
@@ -248,7 +250,7 @@ export class Projector {
           this.setState(o, "SKIPPED", String(r.detail.reason ?? "skipped"));
           this.changed(o, r);
           if (o.source === "player") s.pushFeed({ t: r.t, kind: "skip", text: `Your intro for ${this.names(o.participants)} was not sent: ${o.reason}`, members: o.participants, opportunityId: o.id, severity: "warn" });
-        } else if (r.kind === "opportunity_closed" && !isTerminal(o.state) && o.state !== "SCHEDULED") {
+        } else if (r.kind === "opportunity_closed" && !isTerminal(o.state)) {
           const reason = String(r.detail.reason ?? "closed");
           this.setState(o, reason === "declined" ? "DECLINED" : reason === "expired" ? "EXPIRED" : "CANCELLED", reason);
           if (reason === "expired") for (const [id, st] of Object.entries(o.status)) if (st === "invited" || st === "ignored") o.status[id] = "expired";

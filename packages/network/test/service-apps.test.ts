@@ -48,7 +48,7 @@ function service(clock: SimClock, more: Partial<ServiceOptions> = {}) {
   const s = new NetworkService({
     url: URL_, clock, instance: "apps", log: () => {}, env: { PLATFORM_ENV: "dev" },
     networks: [{ id: "ntwrk:nyc" }, { id: `${FR}:nyc` }, { id: "slop:nyc", matchingEnabled: false }],
-    tokens: `admin:adm-tok,reviewer:rev-tok,reviewer@${FR}:fr-tok`, webhookSecret: SECRET, webhookSecrets: { [FR]: APP_SECRET, slop: APP_SECRET },
+    tokens: `admin:adm-tok,reviewer:rev-tok,reviewer@${FR}:fr-tok`, webhookSecret: SECRET, webhookSecrets: { [FR]: APP_SECRET, slop: APP_SECRET, ntwrk: APP_SECRET },
     network: { seed: 1 }, publicApi: { otp, minStartMs: 0, minVerifyMs: 0 },
     adapter: (_net, rt) => {
       const a = new DryRunAdapter(() => {});
@@ -156,8 +156,16 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(await count(sql`select count(*)::int as n from network.messages where member_id = ${tm.id}`)).toBe(0);
     expect((await sql`select state from platform.memberships where member_id = ${tm.id}`)[0].state).toBe("removed");
     expect((await sql`select p.lowest_age from platform.people p join platform.phone_identities ph on ph.person_id = p.id where ph.e164 = ${teen}`)[0].lowest_age).toBe(12);
-    expect(await text(s, clock, teen, "slop")).toBe("join_asked");
+    // The age floor declines a text without an age at once (SD-315), and an older age later (NET-35).
+    expect(await text(s, clock, teen, "slop")).toBe("under_age");
     expect(await text(s, clock, teen, "Lee 25")).toBe("under_age");
+
+    // An age under 13 sent to an invite-only app's own line declines the person on every app (Quint join_age under13StoresNothing).
+    const ivy = newPhone();
+    expect(await text(s, clock, ivy, "Ivy 30", { app: FR })).toBe("joined");
+    const im = (await memberOf(FR, ivy))!;
+    expect(await text(s, clock, ivy, "Ivy 12", { app: "ntwrk" })).toBe("invite_only");
+    expect((await sql`select state from platform.memberships where member_id = ${im.id}`)[0].state).toBe("removed");
 
     // The shared line, no keyword, a stranger: they join The Network (founder decision 2). Nothing is stored before the age check.
     const ann = newPhone();
@@ -365,7 +373,8 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     const kid = newPhone();
     expect(await text(s, clock, kid, "hi", { app: FR })).toBe("join_asked");
     expect(await text(s, clock, kid, "Kid, 12", { app: FR })).toBe("under_age");
-    expect(await text(s, clock, kid, "hi", { app: FR })).toBe("join_asked");
+    // The age floor declines a text without an age at once (SD-315).
+    expect(await text(s, clock, kid, "hi", { app: FR })).toBe("under_age");
     expect(await text(s, clock, kid, "Kid, 19", { app: FR })).toBe("under_age");
     expect(await count(sql`select count(*)::int as n from platform.phone_identities where e164 = ${kid}`)).toBe(0);
     expect(await count(sql`select count(*)::int as n from platform.age_floor where lowest_age = 12`)).toBe(1);

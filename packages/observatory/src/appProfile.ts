@@ -47,10 +47,23 @@ function adultOf(d: MemberDetail): boolean {
 }
 const ageVerifiedOf = (d: MemberDetail) => tagsOf(d.facets).includes("verify:age:pass");
 
-/** May staff see this member's photos (slop)? "ok", or why not. */
+/**
+ * The last age check staff recorded failed: the newest facet with a verify:age tag has verify:age:fail
+ * (as the Network service's verifiedAdult reads it, service.ts).
+ */
+function ageCheckFailed(d: MemberDetail): boolean {
+  const checks = d.facets.filter(f => !isScoreFacet(f) && f.tags.some(t => t.startsWith("verify:age:")));
+  const last = checks.sort((a, b) => (b.validFrom ?? -Infinity) - (a.validFrom ?? -Infinity) || (a.id < b.id ? 1 : -1))[0];
+  return !!last?.tags.includes("verify:age:fail");
+}
+
+/**
+ * May staff see this member's photos (slop)? "ok", or why not. Founder decision 9: no ID check, a stated
+ * age of 18+ is enough; only a failed age check refuses an adult.
+ */
 export function photosAllowed(d: MemberDetail): "ok" | "never_minor" | "needs_verification" {
   if (!adultOf(d)) return "never_minor";
-  return ageVerifiedOf(d) ? "ok" : "needs_verification";
+  return ageCheckFailed(d) ? "needs_verification" : "ok";
 }
 
 export function slopPrefs(facets: Facet[]): SlopPrefs {

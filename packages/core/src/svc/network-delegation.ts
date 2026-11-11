@@ -29,7 +29,8 @@ export function parseNetworkTarget(value: unknown): NetworkLoginTarget | undefin
   return Object.entries(target).every(([key, v]) => x[key] === v) ? target : undefined;
 }
 const uuid = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(v);
-export function parseNetworkDelegation(value: unknown, expected: NetworkLoginTarget, now: number): NetworkDelegation | undefined {
+/** `skewMs`: how far the issuer's clock may be ahead of `now` (the reader's clock) for issuedAt only. */
+export function parseNetworkDelegation(value: unknown, expected: NetworkLoginTarget, now: number, skewMs = 0): NetworkDelegation | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const x = value as Record<string, unknown>;
   if (Object.keys(x).sort().join() !== "agentId,app,audience,callback,e164,expiresAt,issuedAt,organizationId,origin,realm,resource,stewardUserId,userId,version"
@@ -37,7 +38,7 @@ export function parseNetworkDelegation(value: unknown, expected: NetworkLoginTar
     || !uuid(x.userId) || !uuid(x.organizationId) || typeof x.stewardUserId !== "string" || !x.stewardUserId.trim() || x.stewardUserId.length > 256
     || typeof x.e164 !== "string" || !/^\+[1-9]\d{6,14}$/u.test(x.e164) || typeof x.agentId !== "string" || !/^personal:[0-9a-f-]{36}$/iu.test(x.agentId)
     || !Number.isSafeInteger(now) || !Number.isSafeInteger(x.issuedAt) || !Number.isSafeInteger(x.expiresAt)
-    || (x.issuedAt as number) <= 0 || (x.issuedAt as number)*1000 > now || (x.expiresAt as number) <= now
+    || (x.issuedAt as number) <= 0 || (x.issuedAt as number)*1000 > now + skewMs || (x.expiresAt as number) <= now
     || (x.expiresAt as number) > (x.issuedAt as number)*1000 + 3600_000) return undefined;
   return value as NetworkDelegation;
 }

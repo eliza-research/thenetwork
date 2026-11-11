@@ -5,6 +5,7 @@
 import type { EngineConfigInput } from "../../engine/src/config.ts";
 import { DAY } from "../../core/src/clock.ts";
 import { DEFAULT_CAPITAL, type CapitalConfig } from "./config.ts";
+import { capacity, reachOf, tierOf } from "./credit.ts";
 import type { LedgerEntry } from "./types.ts";
 
 export type EffortTier = 0 | 1 | 2 | 3;
@@ -49,9 +50,31 @@ export const EFFORT_TABLE: Record<EffortTier, Omit<EffortOverlay, "tier">> = {
 
 export const balanceOf = (entries: readonly LedgerEntry[], at = Infinity) => entries.reduce((s, e) => (e.t <= at ? s + e.amount : s), 0);
 
+/**
+ * Reversal conservation of one ledger, as a run-time check (the capital block): every `reverses` names
+ * one entry of the same member, the amounts are equal and opposite, and no entry is reversed twice.
+ * Returns what is wrong, empty when the ledger is well formed.
+ */
+export function ledgerProblems(entries: readonly LedgerEntry[]): string[] {
+  const byId = new Map(entries.map(e => [e.id, e]));
+  const reversed = new Set<string>();
+  const bad: string[] = [];
+  for (const e of entries) {
+    const id = e.provenance.reverses;
+    if (!id || e.category !== "clawback") continue;
+    const orig = byId.get(id);
+    if (!orig) bad.push(`${e.id} reverses a missing entry ${id}`);
+    else if (orig.member !== e.member) bad.push(`${e.id} reverses an entry of another member`);
+    else if (e.amount !== -orig.amount) bad.push(`${e.id} does not cancel ${id}: ${e.amount} and ${orig.amount}`);
+    if (reversed.has(id)) bad.push(`${id} is reversed twice`);
+    reversed.add(id);
+  }
+  return bad;
+}
+
 export function effortTier(balance: number, cfg: CapitalConfig = DEFAULT_CAPITAL): EffortTier {
   const [a, b, c] = cfg.levers.effortThresholds;
-  return balance >= c ? 3 : balance >= b ? 2 : balance >= a ? 1 : 0;
+  return tierOf(balance, a, b, c) as EffortTier;
 }
 
 export function effortOverlay(entries: readonly LedgerEntry[], at: number, cfg: CapitalConfig = DEFAULT_CAPITAL): EffortOverlay {
@@ -74,7 +97,7 @@ export function vouchCapacity(entries: readonly LedgerEntry[], at: number, cfg: 
   const reversed = new Set(entries.filter(e => e.provenance.reverses && e.t <= at).map(e => e.provenance.reverses!));
   const good = entries.filter(e => e.category === "vouch" && e.t <= at && !reversed.has(e.id)).length;
   const lost = entries.filter(e => e.category === "vouch_stake" && e.t <= at).length;
-  return Math.max(0, Math.min(v.max, v.base + Math.min(v.maxBonus, good * v.perGood) - lost * v.perLost));
+  return capacity(v, good, lost);
 }
 
 export interface OrganizingReach {
@@ -94,6 +117,5 @@ export function organizingReach(entries: readonly LedgerEntry[], at: number, cfg
   if (recentPenalty(entries, at, r.abuseLockDays)) return { max: r.afterAbuse, reservedForLowExposure: 0 };
   const reversed = new Set(entries.filter(e => e.provenance.reverses && e.t <= at).map(e => e.provenance.reverses!));
   const sessions = entries.filter(e => e.category === "organizing" && e.t <= at && !reversed.has(e.id)).length;
-  const max = Math.min(r.max, r.base + Math.floor(sessions / r.perSessions) * r.step);
-  return { max, reservedForLowExposure: Math.max(0, max - r.base) };
+  return reachOf(r, sessions);
 }

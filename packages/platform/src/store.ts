@@ -5,6 +5,7 @@ import type { City } from "../../core/src/types.ts";
 import type { AppId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
 import { lastEvents } from "./consent.ts";
+import { challengeClaimable, hitPasses } from "./decisions.ts";
 
 export type PhoneMethod = "otp_sms" | "otp_whatsapp" | "inbound_message" | "staff";
 export type MembershipState = "invited" | "onboarding" | "active" | "paused" | "restricted" | "removed";
@@ -63,12 +64,18 @@ export interface PhoneChange {
   oldHash?: string | null; newHash?: string | null;
 }
 /** What movePhone moves: the person's phone from one number to another, and everything keyed to the number. */
-export interface PhoneMove { personId: string; changeId: string; oldE164: string; newE164: string; oldHash: string; newHash: string; at: number }
-export type PhoneMoveResult = "ok" | "number_in_use" | "no_phone";
+export interface PhoneMove {
+  personId: string; changeId: string; oldE164: string; newE164: string; oldHash: string; newHash: string; at: number;
+  /** The keys of the one-time Eliza notice row (platform.eliza_notices) of the old and the new number (Accounts.noticeHash). */
+  oldNoticeHash: string; newNoticeHash: string;
+}
+export type PhoneMoveResult = "ok" | "number_in_use" | "no_phone" | "banned";
 
 /** A rate-limit rule for hit(): a hit over `limit` in the window, or within `minGapMs` of the last counted hit, is refused and not counted. */
 export interface HitRule { limit?: number; minGapMs?: number }
 export interface HitResult { count: number; prevAt: number | null; ok: boolean }
+/** One bucket of hitAll(). */
+export interface Hit { bucket: string; windowMs: number; rule?: HitRule }
 
 export interface PeopleStore {
   findPhone(e164: string): Promise<PhoneIdentity | undefined>;
@@ -81,7 +88,7 @@ export interface PeopleStore {
    */
   createPerson(p: { id: string; e164: string; method: PhoneMethod; at: number; lowestAge: number | null; phoneHash?: string }): Promise<Person>;
   touchPhone(e164: string, at: number): Promise<void>;
-  /** Put a number on hold for staff review (or clear the hold with null). */
+  /** Put a number on hold for staff review, or clear the hold with null (the number is then also seen at `at`). */
   setPhoneHold(e164: string, hold: PhoneHold | null, at: number): Promise<void>;
   heldPhones(): Promise<PhoneIdentity[]>;
   /** The lowest age ever stated for a keyed phone hash (no app, no person; kept after a delete of everything). */
@@ -98,9 +105,19 @@ export interface PeopleStore {
   memberships(personId: string): Promise<Membership[]>;
   getMembership(personId: string, app: AppId): Promise<Membership | undefined>;
   putMembership(m: Membership): Promise<void>;
+  /**
+   * Change one membership only while its state is one of `from` (a ban, a leave or a STOP written since the
+   * caller read it is never undone): a new state, and profile fields merged in. True when it changed.
+   */
+  updateMembership(personId: string, app: AppId, from: MembershipState[], patch: { state?: MembershipState; profile?: Record<string, unknown> }): Promise<boolean>;
 
-  /** Append an event. False when an event with the same (e164, ref) is already there (a retried message). */
-  addConsent(e: ConsentEvent): Promise<boolean>;
+  /**
+   * Append an event. False when an event with the same (e164, ref) is already there (a retried message).
+   * `personId`: the person the number belonged to when the message came in. When that person's number
+   * changed before this write (movePhone copied the ledger without this event), the event is also written
+   * on the person's current number.
+   */
+  addConsent(e: ConsentEvent, personId?: string): Promise<boolean>;
   /** The last event for (e164, app) and the last for (e164, every app). */
   lastConsent(e164: string, app: AppId): Promise<ConsentLast>;
   /** The events for this app only (export). */
@@ -135,8 +152,19 @@ export interface PeopleStore {
   putSession(s: Session): Promise<void>;
   getSession(tokenHash: string): Promise<Session | undefined>;
   revokeSession(tokenHash: string, at: number): Promise<void>;
-  /** Sessions of a verified phone that had no person get the person after a join. */
-  attachPerson(e164: string, personId: string): Promise<void>;
+  /**
+   * Rotate in one step: end `from` at `graceAt` and store `next` with the person that `from` has now.
+   * Nothing happens (undefined) when `from` is no longer live at `at`: a join's bindSessions may have
+   * ended it after the caller read it (Quint auth_edge, SD-054). Two rotations in the grace time both succeed.
+   */
+  rotateSession(from: string, next: Session, graceAt: number, at: number): Promise<Session | undefined>;
+  /**
+   * The number has a person now. Of its sessions with no person, `keep` (the web join's own session)
+   * gets the person, and every other one ends at `at`: it may belong to an earlier holder of the number.
+   */
+  bindSessions(e164: string, personId: string, keep: string | null, at: number): Promise<void>;
+  /** Delete the sessions of a number that has no person (an under-13 join: nothing stays with the number). */
+  forgetPersonlessSessions(e164: string): Promise<void>;
 
   /**
    * Count one hit in a fixed window, atomically. With a rule, a hit that would pass the limit or come
@@ -144,6 +172,11 @@ export interface PeopleStore {
    * Returns the count with this hit (or the count so far when refused) and the last counted hit before it.
    */
   hit(bucket: string, windowMs: number, at: number, rule?: HitRule): Promise<HitResult>;
+  /**
+   * hit() for several buckets as one request, atomically: the buckets are checked in order, and the
+   * hit is counted in all of them or in none. The results stop at the first refused bucket.
+   */
+  hitAll(hits: Hit[], at: number): Promise<HitResult[]>;
 
   /** Run fn while holding a lock on `key` (one holder per key across processes on Postgres). */
   withLock<T>(key: string, fn: () => Promise<T>): Promise<T>;
@@ -158,10 +191,13 @@ export interface PeopleStore {
 
   /** Leave one app: the membership is set to removed and its name and profile are cleared; grants that involve the app are revoked. */
   forgetMembership(personId: string, app: AppId, at: number): Promise<void>;
-  /** Delete everything for a person and phone; keep a tombstone (people.deleted_at and its phone hash), the blocks and the suppression hash. */
-  deleteAll(personId: string | null, e164: string, phoneHash: string, at: number): Promise<void>;
-  /** Unlink a tombstone from its phone hash, so a new owner of the number is never revived as this person. */
-  detachPhoneHash(personId: string): Promise<void>;
+  /**
+   * Delete everything for a person and phone; keep a tombstone (people.deleted_at and its phone hash), the blocks and the suppression hash.
+   * newOwner (staff decided a held number has a new owner): in the same step, the tombstone loses its phone hash (it is never
+   * revived for the new owner) and the number keeps no suppression and no age floor. The consent events after the old
+   * owner's last message (phone last_seen_at) are the new holder's, such as a STOP: they stay.
+   */
+  deleteAll(personId: string | null, e164: string, phoneHash: string, at: number, newOwner?: boolean): Promise<void>;
 
   /** Store a number change the person started (a newer one replaces any change still waiting). */
   putPhoneChange(c: PhoneChange): Promise<void>;
@@ -189,7 +225,7 @@ export class MemoryPeopleStore implements PeopleStore {
   readonly ageFloors = new Map<string, { age: number; at: number }>();
   readonly challenges = new Map<string, OtpChallenge>();
   readonly sessions = new Map<string, Session>();
-  readonly limits = new Map<string, { windowStart: number; count: number; lastAt: number }>();
+  readonly limits = new Map<string, { windowStart: number; count: number; lastAt: number; keepUntil: number | null }>();
   readonly pending = new Map<string, PendingText>();
   readonly personHash = new Map<string, string>(); // person id -> keyed phone hash
   readonly phoneChanges = new Map<string, PhoneChange>();
@@ -218,7 +254,7 @@ export class MemoryPeopleStore implements PeopleStore {
     return person;
   }
   async touchPhone(e164: string, at: number) { const ph = this.phones.get(e164); if (ph) ph.lastSeenAt = at; }
-  async setPhoneHold(e164: string, hold: PhoneHold | null) { const ph = this.phones.get(e164); if (ph) ph.hold = hold; }
+  async setPhoneHold(e164: string, hold: PhoneHold | null, at?: number) { const ph = this.phones.get(e164); if (ph) { ph.hold = hold; if (hold === null && at !== undefined) ph.lastSeenAt = at; } }
   async heldPhones() { return [...this.phones.values()].filter(p => p.hold !== null).map(p => ({ ...p })); }
   async ageFloor(phoneHash: string) { return this.ageFloors.get(phoneHash)?.age; }
   private readonly ageLocks = new Map<string, Promise<unknown>>();
@@ -249,14 +285,23 @@ export class MemoryPeopleStore implements PeopleStore {
 
   async memberships(personId: string) { return [...this.members.values()].filter(m => m.personId === personId).map(m => ({ ...m })); }
   async getMembership(personId: string, app: AppId) { const m = this.members.get(`${app}:${personId}`); return m && { ...m }; }
+  async updateMembership(personId: string, app: AppId, from: MembershipState[], patch: { state?: MembershipState; profile?: Record<string, unknown> }) {
+    const m = this.members.get(`${app}:${personId}`);
+    if (!m || !from.includes(m.state)) return false;
+    Object.assign(m, { state: patch.state ?? m.state, profile: { ...m.profile, ...patch.profile } });
+    return true;
+  }
   async putMembership(m: Membership) {
     for (const x of this.members.values()) if (x.memberId === m.memberId && (x.app !== m.app || x.personId !== m.personId)) throw new Error("member id in use");
     this.members.set(`${m.app}:${m.personId}`, { ...m, profile: { ...m.profile } });
   }
 
-  async addConsent(e: ConsentEvent) {
+  async addConsent(e: ConsentEvent, personId?: string) {
     if (e.ref && this.consent.some(x => x.e164 === e.e164 && x.ref === e.ref)) return false;
     this.consent.push({ ...e });
+    if (personId && this.phones.get(e.e164)?.personId !== personId) {
+      for (const ph of this.phones.values()) if (ph.personId === personId) this.consent.push({ ...e, e164: ph.e164 });
+    }
     return true;
   }
   async lastConsent(e164: string, app: AppId) { return lastEvents(this.consent, e164, app); }
@@ -269,7 +314,12 @@ export class MemoryPeopleStore implements PeopleStore {
   async isBlocked(a: string, b: string) { return this.blocks.has(`${a}:${b}`) || this.blocks.has(`${b}:${a}`); }
 
   readonly bans: Ban[] = [];
-  async ban(b: Ban) { if (!this.bans.some(x => x.id === b.id)) this.bans.push({ ...b }); }
+  async ban(b: Ban) {
+    if (!this.bans.some(x => x.id === b.id)) this.bans.push({ ...b });
+    // The person's number changed after the caller read it: the ban covers the number they have now too.
+    const now = b.personId ? this.personHash.get(b.personId) : undefined;
+    if (b.phoneHash !== null && now && now !== b.phoneHash && !this.bans.some(x => x.id === `${b.id}:moved`)) this.bans.push({ ...b, id: `${b.id}:moved`, phoneHash: now });
+  }
   async isBanned(phoneHash: string, personId?: string | null) {
     return this.bans.some(b => (b.phoneHash !== null && b.phoneHash === phoneHash) || (b.scope === "person" && !!personId && b.personId === personId));
   }
@@ -288,7 +338,7 @@ export class MemoryPeopleStore implements PeopleStore {
   }
   async claimAttempt(id: string, max: number, at: number) {
     const c = this.challenges.get(id);
-    if (!c || c.consumedAt !== null || c.expiresAt <= at || c.attempts >= max) return false;
+    if (!c || !challengeClaimable(c.consumedAt, c.expiresAt, c.attempts, max, at)) return false;
     c.attempts++;
     return true;
   }
@@ -302,18 +352,42 @@ export class MemoryPeopleStore implements PeopleStore {
   async putSession(s: Session) { this.sessions.set(s.tokenHash, { ...s }); }
   async getSession(tokenHash: string) { const s = this.sessions.get(tokenHash); return s && { ...s }; }
   async revokeSession(tokenHash: string, at: number) { const s = this.sessions.get(tokenHash); if (s) s.revokedAt = s.revokedAt === null ? at : Math.min(s.revokedAt, at); }
-  async attachPerson(e164: string, personId: string) { for (const s of this.sessions.values()) if (s.e164 === e164 && s.personId === null) s.personId = personId; }
+  async rotateSession(from: string, next: Session, graceAt: number, at: number) {
+    const s = this.sessions.get(from);
+    if (!s || (s.revokedAt !== null && s.revokedAt <= at)) return undefined;
+    s.revokedAt = s.revokedAt === null ? graceAt : Math.min(s.revokedAt, graceAt);
+    const row = { ...next, personId: s.personId };
+    this.sessions.set(row.tokenHash, row);
+    return { ...row };
+  }
+  async bindSessions(e164: string, personId: string, keep: string | null, at: number) {
+    for (const s of this.sessions.values()) if (s.e164 === e164 && s.personId === null) {
+      if (s.tokenHash === keep) s.personId = personId;
+      else s.revokedAt = s.revokedAt === null ? at : Math.min(s.revokedAt, at);
+    }
+  }
+
+  async forgetPersonlessSessions(e164: string) {
+    for (const [k, s] of this.sessions) if (s.e164 === e164 && s.personId === null) this.sessions.delete(k);
+  }
 
   async hit(bucket: string, windowMs: number, at: number, rule: HitRule = {}) {
-    const windowStart = at - (at % windowMs);
-    const cur = this.limits.get(bucket);
-    const prevAt = cur?.lastAt ?? null;
-    const count = cur && cur.windowStart === windowStart ? cur.count : 0;
-    if ((rule.limit !== undefined && count >= rule.limit) || (rule.minGapMs !== undefined && prevAt !== null && at - prevAt < rule.minGapMs)) {
-      return { count: count + 1, prevAt, ok: false };
+    return (await this.hitAll([{ bucket, windowMs, rule }], at))[0]!;
+  }
+  async hitAll(hits: Hit[], at: number) {
+    const results: HitResult[] = [];
+    for (const { bucket, windowMs, rule = {} } of hits) {
+      const cur = this.limits.get(bucket);
+      const prevAt = cur?.lastAt ?? null;
+      const count = cur && cur.windowStart === at - (at % windowMs) ? cur.count : 0;
+      const ok = hitPasses(count, prevAt, at, rule.limit, rule.minGapMs);
+      results.push({ count: count + 1, prevAt, ok });
+      if (!ok) return results;
     }
-    this.limits.set(bucket, { windowStart, count: count + 1, lastAt: at });
-    return { count: count + 1, prevAt, ok: true };
+    for (const [i, { bucket, windowMs, rule = {} }] of hits.entries()) {
+      this.limits.set(bucket, { windowStart: at - (at % windowMs), count: results[i]!.count, lastAt: at, keepUntil: rule.minGapMs !== undefined ? at + rule.minGapMs : null });
+    }
+    return results;
   }
 
   async withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
@@ -338,7 +412,7 @@ export class MemoryPeopleStore implements PeopleStore {
     let n = 0;
     for (const [k, c] of this.challenges) if (c.expiresAt < before) { this.challenges.delete(k); n++; }
     for (const [k, s] of this.sessions) if (s.expiresAt < before || (s.revokedAt !== null && s.revokedAt < before)) { this.sessions.delete(k); n++; }
-    for (const [k, l] of this.limits) if (l.lastAt < before) { this.limits.delete(k); n++; }
+    for (const [k, l] of this.limits) if (l.lastAt < before && (l.keepUntil === null || l.keepUntil < before)) { this.limits.delete(k); n++; }
     for (const [k, p] of this.pending) if (p.at < before) { this.pending.delete(k); n++; }
     for (const [k, c] of this.phoneChanges) if (c.confirmedAt === null && c.requestedAt < before) { this.phoneChanges.delete(k); n++; }
     return n;
@@ -356,11 +430,13 @@ export class MemoryPeopleStore implements PeopleStore {
   async movePhone(m: PhoneMove): Promise<PhoneMoveResult> {
     const old = this.phones.get(m.oldE164);
     if (!old || old.personId !== m.personId) return "no_phone";
+    if (await this.isBanned(m.oldHash, m.personId)) return "banned";
     if (this.phones.has(m.newE164)) return "number_in_use";
     this.phones.delete(m.oldE164);
     this.phones.set(m.newE164, { e164: m.newE164, personId: m.personId, verifiedAt: m.at, method: "otp_sms", lastSeenAt: m.at, hold: null });
     for (const e of this.consent) if (e.e164 === m.oldE164) e.e164 = m.newE164;
     this.personHash.set(m.personId, m.newHash);
+    this.suppression.delete(m.newHash);
     const floor = this.ageFloors.get(m.oldHash);
     if (floor) { this.ageFloors.delete(m.oldHash); await this.noteAgeFloor(m.newHash, floor.age, floor.at); }
     for (const [k, s] of this.sessions) if (s.e164 === m.oldE164) this.sessions.delete(k);
@@ -377,9 +453,14 @@ export class MemoryPeopleStore implements PeopleStore {
     for (const g of this.grants.values()) if (g.personId === personId && (g.fromApp === app || g.toApp === app) && g.revokedAt === null) g.revokedAt = at;
   }
 
-  async detachPhoneHash(personId: string) { this.personHash.delete(personId); }
-  async deleteAll(personId: string | null, e164: string, phoneHash: string, at: number) {
-    await this.suppress(phoneHash, "deleted", at);
+  async deleteAll(personId: string | null, e164: string, phoneHash: string, at: number, newOwner = false) {
+    // A new owner keeps the consent events after the old owner's last message (theirs).
+    const keepAfter = newOwner ? this.phones.get(e164)?.lastSeenAt ?? null : null;
+    // The person's number now: a number change that ran after the caller read `e164` moved the person, and that number goes too.
+    const moved = personId && !newOwner ? [...this.phones.values()].find(ph => ph.personId === personId && ph.e164 !== e164) : undefined;
+    const movedHash = moved && personId ? this.personHash.get(personId) : undefined;
+    if (moved && movedHash) await this.deleteAll(null, moved.e164, movedHash, at);
+    if (!newOwner) await this.suppress(phoneHash, "deleted", at);
     if (personId) {
       for (const [k, m] of this.members) if (m.personId === personId) this.members.delete(k);
       for (const [k, g] of this.grants) if (g.personId === personId) this.grants.delete(k);
@@ -389,10 +470,15 @@ export class MemoryPeopleStore implements PeopleStore {
       if (p) Object.assign(p, { lowestAge: null, deletedAt: at });
     }
     this.phones.delete(e164);
-    for (let i = this.consent.length - 1; i >= 0; i--) if (this.consent[i]!.e164 === e164) this.consent.splice(i, 1);
+    for (let i = this.consent.length - 1; i >= 0; i--) if (this.consent[i]!.e164 === e164 && (keepAfter === null || this.consent[i]!.at <= keepAfter)) this.consent.splice(i, 1);
     for (const [k, c] of this.challenges) if (c.e164 === e164) this.challenges.delete(k);
     for (const [k, s] of this.sessions) if (s.e164 === e164 || (personId && s.personId === personId)) this.sessions.delete(k);
     for (const [k, p] of this.pending) if (p.phoneHash === phoneHash) this.pending.delete(k);
     if (personId) for (const [k, c] of this.phoneChanges) if (c.personId === personId) this.phoneChanges.delete(k);
+    if (newOwner) {
+      if (personId) this.personHash.delete(personId);
+      this.suppression.delete(phoneHash);
+      this.ageFloors.delete(phoneHash);
+    }
   }
 }

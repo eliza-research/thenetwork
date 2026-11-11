@@ -3,6 +3,7 @@
 // Every string from a client (its name, its redirect host) is escaped and labelled as the client's claim.
 import type { McpApp } from "./apps.ts";
 import type { Grant, Scope } from "./store.ts";
+import { formAction, formOrigin, safeRetryPath } from "./html-core.ts";
 import { esc } from "./util.ts";
 
 // Same marks as the four homepage headers.
@@ -14,7 +15,7 @@ export function page(app: McpApp, title: string, body: string, o: PageOpts = {})
   const ts = o.turnstileSiteKey ? " https://challenges.cloudflare.com" : "";
   const csp = [
     "default-src 'none'", "style-src 'unsafe-inline'", "img-src 'self' data:", `script-src${ts || " 'none'"}`, `frame-src${ts || " 'none'"}`,
-    `connect-src 'self'${ts}`, `form-action 'self'${(o.formTargets ?? []).map(t => ` ${t}`).join("")}`, "base-uri 'none'", "frame-ancestors 'none'",
+    `connect-src 'self'${ts}`, formAction(o.formTargets ?? []), "base-uri 'none'", "frame-ancestors 'none'",
   ].join("; ");
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -52,10 +53,10 @@ ${o.turnstileSiteKey ? `<div class="cf-turnstile" data-sitekey="${esc(o.turnstil
 <button type="submit">Text me a code</button>
 </form>
 <form method="post" action="/oauth/authorize/cancel">${hidden(rid)}<button class="secondary" name="decision" value="deny">Cancel</button></form>
-`, { turnstileSiteKey: o.turnstileSiteKey, status: o.error ? 400 : 200 });
+`, { turnstileSiteKey: o.turnstileSiteKey, formTargets: [formOrigin(redirectHost)], status: o.error ? 400 : 200 });
 }
 
-export function codePage(app: McpApp, rid: string, last4: string, o: { error?: string } = {}) {
+export function codePage(app: McpApp, rid: string, last4: string, o: { error?: string; redirectHost?: string } = {}) {
   return page(app, "Enter your code", `<h1>Enter your code</h1>
 <p>Sent to ••• ${esc(last4)}.</p>
 ${err(o.error)}
@@ -64,7 +65,7 @@ ${err(o.error)}
 <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" maxlength="10" required>
 <button type="submit">Continue</button>
 </form>
-<form method="post" action="/oauth/authorize/cancel">${hidden(rid)}<button class="secondary" name="decision" value="deny">Cancel</button></form>`, { status: o.error ? 400 : 200 });
+<form method="post" action="/oauth/authorize/cancel">${hidden(rid)}<button class="secondary" name="decision" value="deny">Cancel</button></form>`, { formTargets: o.redirectHost ? [formOrigin(o.redirectHost)] : [], status: o.error ? 400 : 200 });
 }
 
 const SCOPE_TEXT: Record<Scope, string> = {
@@ -86,7 +87,7 @@ ${o.unavailable ? '<p>We can’t check your connection right now. Wait a moment,
 }
 
 export function messagePage(app: McpApp, title: string, text: string, status = 400, retryPath?:string) {
-  const retry=retryPath?.startsWith("/")&&!retryPath.startsWith("//")?`<a href="${esc(retryPath)}">Try again</a>`:"";
+  const retry=retryPath!==undefined&&safeRetryPath(retryPath)?`<a href="${esc(retryPath)}">Try again</a>`:"";
   return page(app, title, `<h1>${esc(title)}</h1><p>${esc(text)}</p>${retry}`, { status });
 }
 

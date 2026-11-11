@@ -96,6 +96,12 @@ export type AuditKind =
 /** One audit row. Never a token, a code, a secret or a phone number. */
 export interface AuditRow { at: number; kind: AuditKind; clientId: string | null; grantId: string | null; app: McpAppId | null; detail: string | null }
 
+/** What a code exchange stores with the code's use: the access and refresh tokens and the success audit row. */
+export interface Mint { pair: readonly [Token, Token]; audit: AuditRow }
+
+/** What an approval stores with its use: the grant, its authorization code and the audit rows. */
+export interface Issue { grant: Grant; code: AuthCode; audit: AuditRow[] }
+
 /** Approved editable Join fields only. No phone, age, consent or dating preferences. */
 export interface SignupDraftFields { firstName: string; homeCity?: "nyc" | "sf" }
 export interface SignupDraft { grantId: string; app: McpAppId; phoneKey: string; fields: SignupDraftFields; expiresAt: number; consumedAt: number | null }
@@ -115,7 +121,14 @@ export interface OAuthStore {
   updateAuthRequest(id: string, patch: Partial<Pick<AuthRequest, "e164" | "personId" | "step">>): Promise<void>;
   /** Atomically consume one unexpired, phone-verified client approval. */
   takeConsentRequest(id: string, at: number): Promise<AuthRequest | undefined>;
-  deleteAuthRequest(id: string): Promise<void>;
+  /**
+   * Consume the approval (as takeConsentRequest) and store what `issue` returns (the grant, its code and
+   * the audit rows) in the same transaction: a failed insert leaves the approval for a retry and stores no
+   * grant. `issue` returns undefined to consume the approval and store nothing.
+   */
+  approveConsent<I extends Issue>(id: string, at: number, issue: (r: AuthRequest) => I | undefined): Promise<{ request: AuthRequest; issued?: I } | undefined>;
+  /** Delete a sign-in request. True when this call deleted it (false: it was already taken or deleted). */
+  deleteAuthRequest(id: string): Promise<boolean>;
 
   putGrant(g: Grant): Promise<void>;
   getGrant(id: string): Promise<Grant | undefined>;
@@ -127,15 +140,20 @@ export interface OAuthStore {
   putCode(c: AuthCode): Promise<void>;
   /** Read without consuming; transient authority outages must leave a code retryable. */
   getCode(hash: string): Promise<AuthCode | undefined>;
-  /** Mark the code used and return it as it was before (usedAt shows an earlier use: a replay). */
-  takeCode(hash: string, at: number): Promise<AuthCode | undefined>;
+  /**
+   * Mark the code used and return it as it was before (usedAt shows an earlier use: a replay). On the
+   * first use, store what `mint` returns (both tokens and the audit row) in the same transaction: a
+   * failed insert leaves the code unused. `mint` returns undefined to use the code and store nothing.
+   */
+  redeemCode<M extends Mint>(hash: string, at: number, mint: (c: AuthCode) => M | undefined): Promise<{ code: AuthCode; minted?: M } | undefined>;
 
   putToken(t: Token): Promise<void>;
   getToken(hash: string): Promise<Token | undefined>;
   revokeToken(hash: string, at: number): Promise<void>;
   /** Atomically rotate a live refresh token, persist its pair and success audit.
-   * False on replay/revocation (one winner under a race); errors leave everything unchanged. */
-  rotateRefresh(hash: string, at: number, pair: readonly [Token, Token], audit: AuditRow): Promise<boolean>;
+   * "replay": the token was already rotated or revoked (one winner under a race). "stale": the grant is
+   * gone, revoked or expired, or the pair outlives it; nothing was rotated. Errors leave everything unchanged. */
+  rotateRefresh(hash: string, at: number, pair: readonly [Token, Token], audit: AuditRow): Promise<"rotated" | "replay" | "stale">;
 
   audit(row: AuditRow): Promise<void>;
   auditRows(limit?: number): Promise<AuditRow[]>;
@@ -204,7 +222,17 @@ export class MemoryOAuthStore implements OAuthStore {
     this.requests.delete(id);
     return structuredClone(r);
   }
-  async deleteAuthRequest(id: string) { this.requests.delete(id); }
+  async approveConsent<I extends Issue>(id: string, at: number, issue: (r: AuthRequest) => I | undefined) {
+    const request = await this.takeConsentRequest(id, at);
+    if (!request) return undefined;
+    const issued = issue(request);
+    if (!issued) return { request };
+    await this.putGrant(issued.grant);
+    await this.putCode(issued.code);
+    for (const a of issued.audit) this.rows.push({ ...a });
+    return { request, issued };
+  }
+  async deleteAuthRequest(id: string) { return this.requests.delete(id); }
 
   async putGrant(g: Grant) {
     if(g.id.startsWith("grant_cloud_") && (!g.cloudAuthority || g.cloudAuthority.version!==1))throw new Error("Cloud grant authority required");
@@ -226,25 +254,32 @@ export class MemoryOAuthStore implements OAuthStore {
 
   async putCode(c: AuthCode) { this.codes.set(c.hash, structuredClone(c)); }
   async getCode(hash: string) { return copy(this.codes.get(hash)); }
-  async takeCode(hash: string, at: number) {
+  async redeemCode<M extends Mint>(hash: string, at: number, mint: (c: AuthCode) => M | undefined) {
     const c = this.codes.get(hash);
     if (!c) return undefined;
     const before = structuredClone(c);
-    if (c.usedAt === null) c.usedAt = at;
-    return before;
+    if (c.usedAt !== null) return { code: before };
+    c.usedAt = at;
+    const minted = mint(before);
+    if (!minted) return { code: before };
+    for (const token of minted.pair) this.tokens.set(token.hash, structuredClone(token));
+    this.rows.push({ ...minted.audit });
+    return { code: before, minted };
   }
 
   async putToken(t: Token) { this.tokens.set(t.hash, structuredClone(t)); }
   async getToken(hash: string) { return copy(this.tokens.get(hash)); }
   async revokeToken(hash: string, at: number) { const t = this.tokens.get(hash); if (t && t.revokedAt === null) t.revokedAt = at; }
   async rotateRefresh(hash: string, at: number, pair: readonly [Token, Token], audit: AuditRow) {
+    const g = this.grants.get(pair[0].grantId);
+    if (!g || g.revokedAt !== null || g.expiresAt <= at || pair.some(t => t.expiresAt > g.expiresAt)) return "stale" as const;
     const t = this.tokens.get(hash);
-    if (!t || t.kind !== "refresh" || t.rotatedAt !== null || t.revokedAt !== null) return false;
+    if (!t || t.kind !== "refresh" || t.rotatedAt !== null || t.revokedAt !== null) return "replay" as const;
     const prepared = structuredClone({ pair, audit });
     t.rotatedAt = at;
     for (const token of prepared.pair) this.tokens.set(token.hash, token);
     this.rows.push(prepared.audit);
-    return true;
+    return "rotated" as const;
   }
 
   async audit(row: AuditRow) { this.rows.push({ ...row }); }
@@ -264,7 +299,7 @@ export class MemoryOAuthStore implements OAuthStore {
     for (const [k, t] of this.tokens) if (t.expiresAt <= at) this.tokens.delete(k);
     for (const [k, w] of this.windows) if (w.start + w.windowMs <= at) this.windows.delete(k);
     for (const [k, g] of this.grants) if (Math.min(g.revokedAt ?? Infinity, g.expiresAt) <= at - GRANT_KEEP_MS) this.dropGrant(k);
-    const used = new Set([...this.grants.values()].map(g => g.clientId));
+    const used = new Set([...this.grants.values()].map(g => g.clientId).concat(this.rows.filter(r => r.kind === "consent_granted").map(r => r.clientId!)));
     for (const [k, c] of this.clients) if (!used.has(k) && c.createdAt <= at - CLIENT_UNUSED_MS) this.clients.delete(k);
   }
 

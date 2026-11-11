@@ -14,6 +14,7 @@ import type { Selected, SelectionResult } from "../../policy.ts";
 import type { Scored } from "../../scoring.ts";
 import type { Candidate } from "../../types.ts";
 import { pairKey, type World } from "../../world.ts";
+import { greedyPick } from "../decisions.ts";
 import type { SlopPackOptions } from "./options.ts";
 import { slopProfiles } from "./profile.ts";
 import { appearanceGap } from "./score.ts";
@@ -73,7 +74,10 @@ export function slopAssign(o: SlopPackOptions, w: World, scored: readonly Scored
   for (const [, l] of ranked) for (const e of l.sort((p, q) => (q.v - p.v) || (p.other < q.other ? -1 : 1)).slice(0, 5)) demand.set(e.other, (demand.get(e.other) ?? 0) + 1);
   runStats.set(w, { degree, demand, maxDemand: Math.max(0, ...demand.values()), floorLift: ratingFloorLift(o, w, degree.keys()) });
 
-  const usable = (id: MemberId) => !ctx.exclude?.has(id) && !w.get(id)!.inOpenOpportunity;
+  // Interruption budget (ME-002): proposals in the budget period. Asks are not counted here: a missing
+  // hard field already holds the member back (needs_answer), and the Network sends one open question at a time.
+  const budgetLeft = (id: MemberId) => { const mi = w.get(id)!; return w.cfg.budgets[mi.m.state].limit - mi.recentProactive; };
+  const usable = (id: MemberId) => !w.get(id)!.inOpenOpportunity && budgetLeft(id) > 0;
   const edges: Edge[] = [];
   for (const x of pairs) {
     const [a, b] = x.c.participants as [MemberId, MemberId];
@@ -100,7 +104,7 @@ export function slopAssign(o: SlopPackOptions, w: World, scored: readonly Scored
   const rounds = Math.max(1, C.perMemberPerTick, C.backupMaxDegree > 0 ? 2 : 1);
   for (let round = 1; round <= rounds; round++) {
     const backupOnly = round > C.perMemberPerTick;
-    const avail = edges.filter(e => !used.has(pairKey(e.a, e.b)) && (count.get(e.a) ?? 0) < round && (count.get(e.b) ?? 0) < round
+    const avail = edges.filter(e => !used.has(pairKey(e.a, e.b)) && (count.get(e.a) ?? 0) < Math.min(round, budgetLeft(e.a)) && (count.get(e.b) ?? 0) < Math.min(round, budgetLeft(e.b))
       && (!backupOnly || Math.min(degree.get(e.a) ?? 0, degree.get(e.b) ?? 0) <= C.backupMaxDegree));
     const chosen = o.assignment === "stable" ? stableRound(avail) : greedyRound(avail);
     for (const e of chosen) {
@@ -114,14 +118,7 @@ export function slopAssign(o: SlopPackOptions, w: World, scored: readonly Scored
 
 /** Greedy: highest adjusted value first, each member at most once this round. */
 function greedyRound(edges: readonly Edge[]): Edge[] {
-  const taken = new Set<MemberId>();
-  const out: Edge[] = [];
-  for (const e of edges) {
-    if (taken.has(e.a) || taken.has(e.b)) continue;
-    taken.add(e.a); taken.add(e.b);
-    out.push(e);
-  }
-  return out;
+  return greedyPick(edges).map(i => edges[i]!);
 }
 
 /**

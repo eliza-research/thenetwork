@@ -6,8 +6,10 @@
 // server has written the audit row for it. A private app (slop, dating; PRD 40.3) is left out of the
 // summary: no membership row, its holds show only as "restricted" and its blocks without the app.
 // Its panel opens like any other, with a typed reason (that answer says whether there is a membership).
+// The decisions are in privacy-core.ts (proved). This file reads the rows and builds the summary.
 import { SQL } from "bun";
 import { APP_IDS, isAppId, isPrivateApp, PRIVATE_APPS, type AppId } from "./apps.ts";
+import { blockOrigin, holdLines, membershipShown, type MembershipRow } from "./privacy-core.ts";
 import type { PersonAppPanel, PersonSummary } from "./types.ts";
 
 const ms = (d: Date | string | null | undefined) => (d ? new Date(d).getTime() : undefined);
@@ -58,18 +60,16 @@ export class PeopleView {
     const p = (people as any[])[0];
     if (!p) return undefined;
     const ms_ = (memberships as any[]).filter(m => isAppId(m.app_id)).sort((a, b) => APP_IDS.indexOf(a.app_id) - APP_IDS.indexOf(b.app_id));
-    const holds: PersonSummary["holds"] = [];
-    const restricted = () => { if (!holds.some(h => h.app === "*")) holds.push({ app: "*", level: "restricted" }); };
-    const list = ms_.flatMap(m => {
-      const hold = states.get(m.app_id)?.trust.get(m.member_id) === "hold";
-      // A private app: no row; a hold or restriction there shows as "restricted" on an app not named.
-      if (isPrivateApp(m.app_id)) { if (hold || m.state === "restricted") restricted(); return []; }
-      if (hold) holds.push({ app: m.app_id, level: "hold" });
-      if (m.state === "restricted") holds.push({ app: m.app_id, level: "restricted" });
-      if (m.review === "recycled_number") holds.push({ app: m.app_id, level: "recycled_number" });
-      return [{ app: m.app_id as string, state: m.state as string, joinedAt: ms(m.joined_at), leftAt: ms(m.left_at), ...(m.review ? { review: m.review } : {}), hold }];
-    });
-    const origin = (a: string) => (isPrivateApp(a) ? "*" : a);
+    const rows: MembershipRow[] = ms_.map(m => ({
+      app: m.app_id, hidden: isPrivateApp(m.app_id), hold: states.get(m.app_id)?.trust.get(m.member_id) === "hold",
+      restricted: m.state === "restricted", recycled: m.review === "recycled_number",
+    }));
+    // A private app: no row; a hold or restriction there shows as "restricted" on an app not named.
+    const holds: PersonSummary["holds"] = holdLines(rows).map(h => ({ app: h.app, level: h.level }));
+    const list = ms_.flatMap((m, i) => (membershipShown(rows[i]!)
+      ? [{ app: m.app_id as string, state: m.state as string, joinedAt: ms(m.joined_at), leftAt: ms(m.left_at), ...(m.review ? { review: m.review } : {}), hold: rows[i]!.hold }]
+      : []));
+    const origin = (a: string) => blockOrigin(a, isPrivateApp(a));
     return {
       personId: p.id, lowestAge: p.lowest_age ?? null, createdAt: ms(p.created_at) ?? 0, ...(p.deleted_at ? { deletedAt: ms(p.deleted_at) } : {}),
       memberships: list, holds,

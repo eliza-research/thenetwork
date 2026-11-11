@@ -6,6 +6,7 @@ import type { Facet, MemberId, ScoreComponents } from "@thenetwork/core";
 import { DAY, HOUR } from "@thenetwork/core";
 import type { Candidate, JudgeVerdict } from "./types.ts";
 import { complementarity } from "./complementarity.ts";
+import { harmonic, netValueOf } from "./scoreCore.ts";
 import { pairKey, provenanceWeight, type World } from "./world.ts";
 
 export interface Scored {
@@ -19,12 +20,8 @@ export interface Scored {
 
 const clamp = (x: number, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, Number.isFinite(x) ? x : lo));
 
-/** Harmonic mean: punishes lopsided matches (reciprocal recommendation, RECON). */
-export function harmonic(xs: number[]): number {
-  if (!xs.length) return 0;
-  if (xs.some(x => x <= 0)) return 0;
-  return xs.length / xs.reduce((s, x) => s + 1 / x, 0);
-}
+/** Harmonic mean (proved in scoreCore.ts). */
+export { harmonic };
 
 /**
  * Mutual benefit: pairs use the harmonic mean of each side's benefit; groups use
@@ -179,7 +176,7 @@ export function netValue(w: World, k: ScoreComponents): number {
   const pos = W.fit * k.fit + W.mutualBenefit * k.mutualBenefit + W.warmPath * k.warmPath + W.novelty * k.novelty + W.timingFit * k.timingFit;
   const neg = W.activationCost * k.activationCost + W.interruptionCost * k.interruptionCost + W.load * k.load + W.repetition * k.repetition + W.socialRisk * k.socialRisk;
   const norm = W.fit + W.mutualBenefit + W.warmPath + W.novelty + W.timingFit;
-  return ((pos - neg) / norm) * k.confidence;
+  return netValueOf(pos, neg, norm, k.confidence);
 }
 
 /** Floors and dealbreakers (any violation => ineligible, never compensated by other terms). */

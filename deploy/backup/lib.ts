@@ -23,8 +23,11 @@ export interface Manifest {
   pgDump: string;
   rowCounts: Record<string, number>;
   files: { dump: string; roles?: string };
-  /** The source server (host and port, never a login): a restore refuses this database on this server and never runs roles.sql here. */
-  source?: { host: string; port: string };
+  /**
+   * The source server (host and port, never a login): a restore refuses this database on this server and never runs roles.sql here.
+   * `systemId` (pg_control_system) names the cluster whatever host name reaches it.
+   */
+  source?: { host: string; port: string; systemId?: string };
   /** Set when the uploaded files are encrypted: each file is stored as `<name>.enc`. */
   encryption?: { alg: "aes-256-gcm"; kdf: "hkdf-sha256"; keyId: string };
 }

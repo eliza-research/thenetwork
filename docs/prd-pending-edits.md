@@ -16,4 +16,10 @@ These edits record founder decisions from October 9 and 11. They do not claim a 
 
 ## Pending
 
-None from the six-item list. Add later decisions here only when they have not yet reached the canonical document.
+**Formal modeling requirement (proposed 2026-11-07; made a requirement on the owner's request on 2026-11-09; add to Section 34 as 34.7).** Copy Section 34.7 of `docs/prd-snapshot.md` into the Google Doc as written. In short:
+
+> Quint and LemmaScript are required everywhere. All code in the app is modeled at two levels. High level: each flow is a Quint model of its states, transitions and invariants, across the browser and the server. Low level: each function that takes a step in a flow has LemmaScript contracts that Dafny proves, and the shipping code calls that function. A change to code updates both levels. Code that LemmaScript cannot express (the DOM, React components, `await`, SQL, regex tables, crypto) moves its decisions into an import-free core, and the rest stays a thin shell. No state drift: a change to code compares each Quint model of that code with the code, fixes the model or the code where they disagree, and records the comparison in quint/drift.json; the formal block fails for a model whose code changed after its last comparison. Integration tests, end-to-end tests and `bun run sim` stay the validation layer for what the models do not cover.
+
+The rule is met for every source file (docs/formal-coverage.md) and checked by the formal block of `bun run sim`. Delete this item after the Google Doc has the text.
+
+Nothing else from the six-item list. Add later decisions here only when they have not yet reached the canonical document.

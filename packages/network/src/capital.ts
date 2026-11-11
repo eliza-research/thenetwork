@@ -45,16 +45,16 @@ export function ledgerReader(ledger: CapitalLedger, cfg?: CapitalConfigInput): C
 /**
  * Wire a ledger to a Network: `onLedger` records every event, `capital` reads the levers. Events
  * the ledger cannot take (out of time order after a restart) are counted, never thrown into the
- * Network's send path.
+ * Network's send path. `onLedger` returns false for such an event, so that the caller does not store it.
  */
 export function capitalWiring(ledger = new CapitalLedger(), o: { reader?: boolean } = {}) {
   const counts: Record<string, number> = {};
   let rejected = 0;
   const rejects: { id: string; reason: string }[] = [];
-  const onLedger = (e: CapitalEvent) => {
+  const onLedger = (e: CapitalEvent): boolean => {
     counts[e.type] = (counts[e.type] ?? 0) + 1;
     // A rejected event is kept with its id and reason (capital-3): the harness fails on any.
-    try { ledger.record(e); } catch (err) { rejected++; rejects.push({ id: e.id, reason: err instanceof Error ? err.message.slice(0, 120) : "rejected" }); }
+    try { ledger.record(e); return true; } catch (err) { rejected++; rejects.push({ id: e.id, reason: err instanceof Error ? err.message.slice(0, 120) : "rejected" }); return false; }
   };
   return { ledger, onLedger, counts, rejected: () => rejected, rejects: () => [...rejects], ...(o.reader === false ? {} : { capital: ledgerReader(ledger) }) };
 }

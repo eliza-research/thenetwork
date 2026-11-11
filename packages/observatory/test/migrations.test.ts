@@ -9,10 +9,19 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { SQL } from "bun";
+import { migrations, numberedFiles } from "../db/migrate.ts";
 import { dropTestDb, pgAvailable, testDb } from "./pg.ts";
 
 const T = 120_000;
 const P = { a: crypto.randomUUID(), b: crypto.randomUUID(), c: crypto.randomUUID() };
+
+describe("the migration runner", () => {
+  test("a .sql file it would skip is refused, and the real folder has none", () => {
+    expect(() => numberedFiles(["0042_good.sql", "0043-fix.sql"])).toThrow("0043-fix.sql");
+    expect(numberedFiles(["0043_b.sql", "0042_a.sql", "README.md"])).toEqual(["0042_a.sql", "0043_b.sql"]);
+    expect(migrations().length).toBeGreaterThan(30);
+  });
+});
 
 describe.skipIf(!pgAvailable)("console roles (migration 0010)", () => {
   let url: string;

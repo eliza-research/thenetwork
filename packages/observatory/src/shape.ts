@@ -3,22 +3,21 @@
 // caller whose only role for the app is analyst, members carry no name, age, minor flag, trust level
 // or occupation, opportunity texts written for a member are dropped, and feed lines lose the names in
 // them. The oracle's verdict on an opportunity (hidden truth, game mode) is stripped for everyone
-// until the opportunity is resolved, unless this staff member has the truth lens on.
+// until the opportunity is resolved, unless this staff member has the truth lens on. The decisions are
+// in privacy-core.ts (proved). This file reads the objects and builds the output.
 import type { ObsDelta, ObsFeedItem, ObsMember, ObsOpportunity, ObsState, StaffRole } from "./types.ts";
+import { classOf, memberFieldUse, oppFieldUse, oracleShown, truthShown, type ViewClass } from "./privacy-core.ts";
 
 /** "full": staff who may open members (admin, reviewer, safety; engineer in simulated worlds). "counts": analysts. */
-export type ViewClass = "full" | "counts";
+export type { ViewClass };
 
 /** The view for the roles a caller holds for one app (rolesFor() in staff.ts). */
 export const viewClass = (roles: ReadonlySet<StaffRole>): ViewClass =>
-  roles.has("admin") || roles.has("reviewer") || roles.has("safety") || roles.has("engineer") ? "full" : "counts";
-
-/** Opportunities whose outcome is known: the oracle's verdict is no longer a spoiler. */
-const RESOLVED = new Set(["COMPLETED", "FEEDBACK_COLLECTED", "ABANDONED"]);
+  classOf({ admin: roles.has("admin"), reviewer: roles.has("reviewer"), safety: roles.has("safety"), engineer: roles.has("engineer") });
 
 /** The oracle only when resolved or unsafe (a safety strike already shows it), or with the truth lens. */
 export function stripOracle(o: ObsOpportunity, truth: boolean): ObsOpportunity {
-  if (!o.oracle || truth || RESOLVED.has(o.state) || o.oracle.unsafe) return o;
+  if (!o.oracle || oracleShown({ lens: truth, state: o.state, unsafe: !!o.oracle.unsafe })) return o;
   const { oracle: _, ...rest } = o;
   return rest;
 }
@@ -26,15 +25,28 @@ export function stripOracle(o: ObsOpportunity, truth: boolean): ObsOpportunity {
 /** A stable label that is not a name: "Member 3f9a". */
 export const anonName = (id: string) => `Member ${id.replace(/^.*[:-]/, "").slice(-4) || id.slice(-4)}`;
 
+/** The fields of `o` that `use` keeps, in their order. A masked field keeps its place with `mask[key]`. */
+function shapeFields<T extends object>(o: T, use: (key: string) => "keep" | "drop" | "mask", mask: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  // An own data property, as the spread made it (also for a key such as "__proto__").
+  const put = (k: string, v: unknown) => { Object.defineProperty(out, k, { value: v, enumerable: true, writable: true, configurable: true }); };
+  for (const [k, v] of Object.entries(o)) {
+    const u = use(k);
+    if (u === "keep") put(k, v);
+    else if (u === "mask") put(k, mask[k]);
+  }
+  // A masked field is always there, as the spread `{ ...rest, key: value }` made it before.
+  for (const k of Object.keys(mask)) put(k, mask[k]);
+  return out;
+}
+
 export function countsMember(m: ObsMember): ObsMember {
-  const { age: _a, minor: _m, ageUnknown: _u, trust: _t, occupation: _o, controlled: _c, ...rest } = m;
   // `minor` is required by the type; the analyst view has no age facts at all.
-  return { ...rest, name: anonName(m.id) } as ObsMember;
+  return shapeFields(m, k => memberFieldUse("counts", k), { name: anonName(m.id) }) as unknown as ObsMember;
 }
 
 export function countsOpp(o: ObsOpportunity): ObsOpportunity {
-  const { feedback: _f, ...rest } = o;
-  return { ...rest, explanations: {}, objective: "" };
+  return shapeFields(o, k => oppFieldUse("counts", k), { explanations: {}, objective: "" }) as unknown as ObsOpportunity;
 }
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -60,10 +72,10 @@ function countsFeed(items: ObsFeedItem[], names: RegExp | undefined): ObsFeedIte
 /** /api/state for one caller. */
 export function shapeState(s: ObsState, cls: ViewClass, truth: boolean): ObsState {
   const out: ObsState = { ...s, opportunities: s.opportunities.map(o => stripOracle(o, truth)) };
-  if (!truth) delete out.truth;
+  if (!truthShown(cls, truth)) delete out.truth;
+  // The full class keeps every field (memberFieldUse and oppFieldUse in privacy-core.ts).
   if (cls === "full") return out;
   const names = namePattern(s.members);
-  delete out.truth;
   return {
     ...out, members: s.members.map(countsMember), opportunities: out.opportunities.map(countsOpp),
     feed: countsFeed(s.feed, names), ...(s.game ? { game: { ...s.game, prompts: [] } } : {}),

@@ -23,9 +23,9 @@ name: deploy-sites
 on:
   push:
     branches: [main]
-    paths: ["sites/**", "deploy/router.ts", "deploy/smoke.ts", "packages/platform/src/proxy.ts", "packages/platform/src/apps.ts", ".github/workflows/deploy-sites.yml"]
+    paths: ["sites/**", "deploy/router.ts", "deploy/pages-worker.ts", "deploy/smoke.ts", "packages/platform/src/proxy.ts", "packages/platform/src/body.ts", "packages/platform/src/apps.ts", ".github/workflows/deploy-sites.yml"]
   pull_request:
-    paths: ["sites/**", "deploy/router.ts", "deploy/smoke.ts", "packages/platform/src/proxy.ts", "packages/platform/src/apps.ts", ".github/workflows/deploy-sites.yml"]
+    paths: ["sites/**", "deploy/router.ts", "deploy/pages-worker.ts", "deploy/smoke.ts", "packages/platform/src/proxy.ts", "packages/platform/src/body.ts", "packages/platform/src/apps.ts", ".github/workflows/deploy-sites.yml"]
   workflow_dispatch:
     inputs:
       pages_operation:

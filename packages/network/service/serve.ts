@@ -87,6 +87,11 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
       cookieName: id => (dev ? `sid_${id}` : "__Host-sid"), secureCookie: !dev,
       // submit_profile: the person's own profile, from their own agent, to their own member (decision 10).
       submitProfile: (personId, app, e164, text) => (isAppId(app) ? svc.submitProfile(personId, app, e164, text) : Promise.resolve("not_member" as const)),
+      // A staff or trust hold lives in the Network's state, not in platform.memberships.
+      memberHeld: async (app, memberId) => {
+        const rt = await svc.runtimeOfMember(app, memberId);
+        return rt ? rt.readState(n => n.trust.level(memberId) === "hold") : false;
+      },
       // get_updates and the inbox's surface signals (packages/notify; entry-flows doc 5).
       ...(svc.notify ? {
         updates: (personId, app, assistant, token) => (isAppId(app) ? svc.updatesFor(personId, app, assistant, token) : Promise.resolve([])),
@@ -97,9 +102,13 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
     // The token's hostname must be one of that site's hosts (as on the platform API), never another site.
     turnstile: siteKey && env.TURNSTILE_SECRET_KEY ? { siteKey, verify: (t, ip, app) => new CloudflareTurnstile(env.TURNSTILE_SECRET_KEY!).verify(t, ip, dev ? undefined : app ? siteHosts(app, env) : []) } : undefined,
   });
+  // Expired sign-in requests (they hold a number), codes and tokens go without waiting for OAuth traffic.
+  svc.onTick(() => mcp.sweep());
   svc.onForget(async ctx => {
     // Leaving an app (or deleting everything) also deletes the grants: no row keeps the phone next to the app.
-    if (isMcpAppId(ctx.app.id)) await mcp.revokeAllFor(ctx.e164, ctx.app.id, { forget: true });
+    // No app: every app's grants, also of an app the person never joined.
+    if (!ctx.app) await mcp.revokeAllFor(ctx.e164, undefined, { forget: true });
+    else if (isMcpAppId(ctx.app.id)) await mcp.revokeAllFor(ctx.e164, ctx.app.id, { forget: true });
   });
   return mcp;
 }

@@ -125,7 +125,7 @@ for(const failure of ['timeout','5xx','malformed','malformed-identity'] as const
 for(const expires of ['code','grant'] as const)test(`expiry during awaited code take denies minting for expired ${expires}`,async()=>{
  const f=await fixture(),cb=await cloudCallback(f);expect(cb.status).toBe(303);expect((await f.request(cb.headers.get('location')!)).status).toBe(200);const pending=[...f.store.requests.values()][0]!;
  const consent=await f.request('/oauth/authorize/consent',{method:'POST',headers:{origin:f.origin,'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({rid:pending.id,decision:'approve'})});expect(consent.status).toBe(303);const code=new URL(consent.headers.get('location')!).searchParams.get('code')!;
- const take=f.store.takeCode.bind(f.store);f.store.takeCode=async(hash,at)=>{const consumed=await take(hash,at);await Promise.resolve();f.advance(expires==='code'?6*60000:3600000);return consumed};
+ const redeem=f.store.redeemCode.bind(f.store);f.store.redeemCode=(hash,at,mint)=>redeem(hash,at,consumed=>{f.advance(expires==='code'?6*60000:3600000);return mint(consumed)});
  const response=await f.request('/oauth/token',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'authorization_code',code,client_id:f.client.client_id,redirect_uri:f.client.redirect_uris[0],code_verifier:f.verifier,resource:f.resource})});
  expect(response.status).toBe(400);expect((await response.json() as any).error).toBe('invalid_grant');expect(f.store.tokens.size).toBe(0);expect([...f.store.codes.values()][0]?.usedAt).not.toBeNull();expect([...f.store.grants.values()][0]?.revokedAt).toBeNull();expect(f.getOtp()).toBe(0);
 });

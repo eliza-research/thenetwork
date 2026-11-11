@@ -1,17 +1,25 @@
-import type { ProfileSuggestions, SuggestionOwner, SuggestionReviewBatch, SuggestionDecision } from "./profile-suggestions.ts";
+import type { ProfileSuggestions, SuggestionOwner, SuggestionReviewBatch, SuggestionDecision, SuggestionReviewClaim } from "./profile-suggestions.ts";
 
 export type { SuggestionReviewBatch } from "./profile-suggestions.ts";
+import { currentBatch as currentBatchCore, MAX_SUGGESTION_TEXT } from "./profile-core.ts";
 
+const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** The regular expressions and Number.isSafeInteger stay here; profile-core.ts decides from their results. */
 function currentBatch(batch: SuggestionReviewBatch, owner: SuggestionOwner, now: number): boolean {
-  return batch.status === "pending" && batch.personId === owner.personId && batch.app === owner.app && batch.chatId === owner.chatId
-    && Number.isSafeInteger(now) && Number.isSafeInteger(batch.expiresAt) && now < batch.expiresAt
-    && /^[A-Za-z0-9_-]{1,64}$/.test(batch.id) && Number.isSafeInteger(batch.revision) && batch.revision > 0
-    && batch.suggestions.length > 0 && batch.suggestions.length <= 10
-    && new Set(batch.suggestions.map(s => s.id)).size === batch.suggestions.length
-    && batch.suggestions.every(s => /^[A-Za-z0-9_-]{1,64}$/.test(s.id) && s.value.trim().length > 0 && s.value.length <= 400
-      && !/[\r\n\u0000-\u001f\u007f]/.test(s.value) && Number.isSafeInteger(s.observedAt) && s.observedAt <= now
-      && ["gmail", "google_calendar"].includes(s.source)
-      && ["interest", "goal", "availability_pattern"].includes(s.kind));
+  return currentBatchCore({
+    status: batch.status, personId: batch.personId, app: batch.app, chatId: batch.chatId,
+    idOk: SAFE_ID.test(batch.id),
+    numbersSafe: Number.isSafeInteger(now) && Number.isSafeInteger(batch.expiresAt) && Number.isSafeInteger(batch.revision),
+    expiresAt: batch.expiresAt, revision: batch.revision,
+    distinctIds: new Set(batch.suggestions.map(s => s.id)).size,
+    suggestions: batch.suggestions.map(s => ({
+      idOk: SAFE_ID.test(s.id),
+      valueOk: s.value.trim().length > 0 && s.value.length <= MAX_SUGGESTION_TEXT && !/[\r\n\u0000-\u001f\u007f]/.test(s.value),
+      // A Calendar event start can be in the future (the store accepts it); a Gmail time cannot (profile-core.ts).
+      observedSafe: Number.isSafeInteger(s.observedAt), observedAt: s.observedAt, source: s.source, kind: s.kind,
+    })),
+  }, { personId: owner.personId, app: owner.app, chatId: owner.chatId }, now);
 }
 
 export function renderSuggestionReview(batch: SuggestionReviewBatch, owner: SuggestionOwner, now: number): string | null {
@@ -48,10 +56,11 @@ export function parseSuggestionReview(text: string, batch: SuggestionReviewBatch
 }
 
 /** Only this store-backed entry verifies the full user/org binding and applies decisions. */
-export async function reviewSuggestionMessage(store: Pick<ProfileSuggestions, "getPendingBatch" | "decide">, owner: SuggestionOwner, batchId: string, text: string, now: number) {
+export async function reviewSuggestionMessage(store: Pick<ProfileSuggestions, "getPendingBatch" | "decide">, owner: SuggestionOwner, batchId: string, text: string, now: number,
+  claim?: SuggestionReviewClaim) {
   const batch = await store.getPendingBatch(owner, batchId, now);
   if (!batch) return null;
   const input = parseSuggestionReview(text, batch, owner, now);
   if (!input) return null;
-  return store.decide(owner, input, now);
+  return claim ? store.decide(owner, input, now, claim) : store.decide(owner, input, now);
 }

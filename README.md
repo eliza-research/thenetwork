@@ -60,12 +60,19 @@ cp .env.example .env                                  # never commit .env
 bun install --frozen-lockfile
 bun run packages/observatory/db/dev-pg.ts up          # dev Postgres on localhost:54339
 bun run sim                                           # every simulation, offline, no LLM; exits 1 on a blocking gate
+bun run formal                                        # LemmaScript proofs, the coverage ledger and the Quint drift gate (needs Dafny; docs/formal-verification.md)
+bun run quint:check                                   # the Quint models in quint/
+bun run quint:drift                                   # the Quint models to compare with the code again
 bun run typecheck
 bun run test:integration                              # real Postgres and HTTP; includes the security suite
 bun run test:e2e                                      # tests/e2e
 ```
 
 There are no unit or smoke tests ([docs/tests-policy.md](docs/tests-policy.md)). Runs with real LLM calls and the matching-algorithm measurements are in [CONTRIBUTING.md](CONTRIBUTING.md) section 7. [AGENTS.md](AGENTS.md) has every other command.
+
+## Formal modeling
+
+Quint and LemmaScript are required everywhere, to keep the logic correct and the state honest. All code in the app must be modeled at two levels: Quint at the high level (flows, states and invariants) and LemmaScript at the low level (proved contracts on the functions that the shipping code calls). A change to code updates both. The rule applies to all code: every source file has a row in [docs/formal-coverage.md](docs/formal-coverage.md), no row is a gap, and `bun run formal` fails otherwise. Every change also compares the Quint models of the changed code with the code, so that the models do not drift from the state machines they describe: `bun run quint:drift` lists the models to compare, `--stamp` records a comparison, and the formal block fails for a model whose code changed after its last stamp. [CONTRIBUTING.md](CONTRIBUTING.md) section 14 has the rule.
 
 ## The Eliza seam
 

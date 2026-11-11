@@ -12,7 +12,8 @@
 //    decline deletes data, so it needs the offline explicit form.
 import { maskPii, tryChatJson, type ChatMessage, type LLM } from "@thenetwork/core";
 import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
-import type { ConsentWhy, TimeOption } from "./classify.ts";
+import type { ConsentWhy, ProbeReply, TimeOption } from "./classify.ts";
+import { llmReading } from "./transitions.ts";
 import { NEIGHBORHOODS } from "./geo.ts";
 
 /** What the LLM read from one message (validated). */
@@ -128,13 +129,10 @@ export function llmUnderstand(llm: LLM, o: { maxTokens?: number; attempts?: numb
  * The answer to a probe: the offline reading, with the LLM's yes taken only where the rules found no
  * signal at all ("none"). A refusal, a conditional, a hedge or a mixed reply is never turned into a yes.
  */
-export function mergeConsent(
-  offline: { answer: "yes" | "no" | "unclear"; keys: string[]; why: ConsentWhy },
-  u: Understood | undefined, options: readonly TimeOption[],
-): { answer: "yes" | "no" | "unclear"; keys: string[]; why: ConsentWhy | "llm" } {
-  if (!u?.consent || offline.answer !== "unclear" || offline.why !== "none") return offline;
-  if (u.consent === "no") return { answer: "no", keys: [], why: "llm" };
-  if (u.consent !== "yes") return offline;
-  const keys = u.times?.length ? u.times : options.map(x => x.key);
+export function mergeConsent(offline: ProbeReply, u: Understood | undefined, options: readonly TimeOption[]): Omit<ProbeReply, "why"> & { why: ConsentWhy | "llm" } {
+  const merged = llmReading(offline.answer, offline.why, u?.consent === "yes" || u?.consent === "no" ? u.consent : "other");
+  if (merged === offline.answer) return offline;
+  if (merged === "no") return { answer: "no", keys: [], why: "llm" };
+  const keys = u!.times?.length ? u!.times : options.map(x => x.key);
   return { answer: "yes", keys, why: "llm" };
 }

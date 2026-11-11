@@ -8,6 +8,7 @@ import { DAY, type Edge, type EdgeType, type Facet, type Intent, type Member, ty
 
 import type { SetStateRequest } from "../../core/src/svc/contract.ts";
 import { peonSeats } from "@thenetwork/engine";
+import { effectiveState, windowActive } from "./decisions.ts";
 
 /** Static SQL-only purpose fence for automated inputs; never interpolate a caller-provided identifier. */
 export function automatedFacetPredicate(sql: SQL, memberJoin = false) {
@@ -27,9 +28,10 @@ export function effectiveParticipation(row: {participation_state: ParticipationS
     && validDate(value.from) && validDate(value.until) && (value.note === null || typeof value.note === "string")
     && (value.from === null || value.until === null || Date.parse(value.from as string)<Date.parse(value.until as string));
   const window = valid ? value as unknown as Pick<SetStateRequest,"state"|"from"|"until"|"note"> : null;
-  const active = !row.opted_out && !!window && (window.from === null || Date.parse(window.from)<=now) && (window.until === null || Date.parse(window.until)>now);
-  const scheduled = window?.state === "open" ? "normal" : window?.state === "paused" ? "paused" : "quiet";
-  return {state:row.opted_out?"paused":active?scheduled:row.participation_state,window,active};
+  const optedOut = !!row.opted_out;
+  const active = windowActive({optedOut, hasWindow: !!window, hasFrom: !!window && window.from !== null, fromMs: window?.from ? Date.parse(window.from) : 0,
+    hasUntil: !!window && window.until !== null, untilMs: window?.until ? Date.parse(window.until) : 0, now});
+  return {state: effectiveState(optedOut, active, window?.state ?? "open", row.participation_state), window, active};
 }
 
 const CORE_EDGES = new Set<EdgeType>(["invited_by", "vouched_for", "knows", "met", "introduced", "helped", "hosted", "enjoyed", "would_interact_again", "group_only", "avoid", "blocked"]);
@@ -82,7 +84,9 @@ export interface SnapshotScope { app: string; city?: string; homeCities?: readon
 export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope = { app: "ntwrk" }): Promise<WorldSnapshot> {
   const app = scope.app;
   const [members, facets, intents, presence, edges, recent, parts, personBlocks] = await Promise.all([
-    sql`select m.*, a.age as matching_age from network.members m
+    sql`select m.*, a.age as matching_age,
+        (select h.held_by from platform.person_holds h where h.person_id = m.person_id and h.app_id in (m.app_id, '*') order by h.at, h.app_id limit 1) as safety_hold
+      from network.members m
       left join platform.matching_ages a on a.app_id = m.app_id and a.member_id = m.id
       where m.app_id = ${app} and m.account_status not in ('invited', 'removed') order by m.id`,
     // Acceptance authorizes private intake, not matching or downstream automated use. Privacy scope is independent.
@@ -110,11 +114,12 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
     now,
     // The account status rides along (the Network reads it): a paused or restricted account is never matched and gets no
     // proactive message; replies to its own messages, compliance texts and safety notices still go (founder, 2026-10-11).
-    members: (members as any[]).filter(r => keep(r.id)).map((r): Member & { accountStatus: string } => ({
+    // A safety hold on the person (platform.person_holds, SD-021/SD-022) rides along too: the Network holds the member.
+    members: (members as any[]).filter(r => keep(r.id)).map((r): Member & { accountStatus: string; safetyHold?: string } => ({
       id: r.id, name: r.name, homeCity: r.home_city, state: effectiveParticipation(r,now).state, prefs: r.prefs, accountStatus: r.account_status,
       // A missing age stays missing (undefined), never 0: 0 is a valid age under 13, and the Network
       // would decline the member and delete their data. Missing means unknown: treated as a minor and asked (network.md 6.3).
-      ...(r.invited_by ? { invitedBy: r.invited_by } : {}), joinedAt: ms(r.joined_at) ?? 0, age: r.matching_age ?? (undefined as unknown as number), unansweredProactive: r.unanswered_proactive,
+      ...(r.invited_by ? { invitedBy: r.invited_by } : {}), ...(r.safety_hold ? { safetyHold: r.safety_hold } : {}), joinedAt: ms(r.joined_at) ?? 0, age: r.matching_age ?? (undefined as unknown as number), unansweredProactive: r.unanswered_proactive,
     })),
     facets: (facets as any[]).filter(r => keep(r.member_id)).map(facetOf), intents: (intents as any[]).filter(r => keep(r.member_id)).map(intentOf),
     presence: (presence as any[]).filter(r => keep(r.member_id)).map(presenceOf),

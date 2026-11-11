@@ -140,7 +140,7 @@ describe("backup and restore drill", () => {
     const prefix = "postgres/production/20261009T071500Z";
     try {
       const r = await backup({ url: src, outDir: join(dir, "bk") });
-      expect(r.manifest.source).toEqual({ host: "localhost", port: String(DEV_PG_PORT) });
+      expect(r.manifest.source).toEqual({ host: "localhost", port: String(DEV_PG_PORT), systemId: expect.stringMatching(/^\d+$/) });
       const keys = await upload(r.dir, r.manifest, prefix, b.env, backupKey(KEY));
       expect(keys.map(k => k.slice(prefix.length + 1))).toEqual(["db.dump.enc", ...(r.manifest.files.roles ? ["roles.sql.enc"] : []), "manifest.json"]);
       // What the bucket holds: no plain dump, no member name, no probe object left behind.

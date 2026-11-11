@@ -112,12 +112,16 @@ export async function profileSuggestionEndpoint(d: SuggestionEndpointDeps, req: 
       return batch && reviewText ? json({ kind: "preview", batch, reviewText })
         : json({ kind: "denied", reviewText: "I couldn’t collect those suggestions. Nothing new was saved." }, 403);
     }
+    // An exact retry of an applied decide or delete (same signed request) gets the stored result again.
+    const claim = { turnId: `msg:${channel}:${messageId}`, requestSha256: createHash("sha256").update(raw).digest("hex") };
+    const prior = action === "decide" || action === "delete" ? await store.priorReview(owner, action, batchId, claim, d.now()) : undefined;
     if (action === "delete") {
       if (b.text !== `delete ${batchId}`) return json({ error: "invalid_command" }, 400);
-      return await store.deleteBatch(owner, batchId) ? json({ kind: "deleted", reviewText: "Deleted these suggestions and their linked saved facts." }) : json({ kind: "denied", reviewText: "I couldn’t apply that review. Ask to see your current suggestions." }, 403);
+      return (prior === undefined ? await store.deleteBatch(owner, batchId, claim) : prior?.kind === "deleted") ? json({ kind: "deleted", reviewText: "Deleted these suggestions and their linked saved facts." }) : json({ kind: "denied", reviewText: "I couldn’t apply that review. Ask to see your current suggestions." }, 403);
     }
     if (action === "decide") {
-      const result = await reviewSuggestionMessage(store, owner, batchId, b.text as string, d.now());
+      const result = prior === undefined ? await reviewSuggestionMessage(store, owner, batchId, b.text as string, d.now(), claim)
+        : prior?.kind === "deleted" ? null : prior;
       if (!result || result.kind === "denied") return json({ kind: "denied", reviewText: "I couldn’t apply that review. Ask to see your current suggestions." }, 403);
       if (result.kind === "saved") return json({ ...result, reviewText: `${result.accepted.length} saved; ${result.rejected.length} rejected.` });
       return json({ ...result, reviewText: renderSuggestionReview(result.batch, owner, d.now()) });

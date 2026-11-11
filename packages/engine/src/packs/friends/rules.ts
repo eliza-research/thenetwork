@@ -13,6 +13,7 @@
 //   transit            geo.pairReason: two homes too far apart for any venue to fit both tolerances
 import type { CandidateRule, MemberRule, PairRule } from "../../pack.ts";
 import { NETWORK_MEMBER_RULES, NETWORK_PAIR_RULES } from "../network/rules.ts";
+import { groupSizeOk } from "../decisions.ts";
 import { friendsInfo } from "./info.ts";
 import type { World } from "../../world.ts";
 import type { MemberId } from "@thenetwork/core";
@@ -63,9 +64,7 @@ export const FRIENDS_CANDIDATE_PRE_RULES: readonly CandidateRule[] = [
   { id: "romance_excluded", check: (_w, c) => (c.category === "romance" ? "romance_excluded" : null) },
   {
     id: "group_size", check: (_w, c) => {
-      if (c.kind === "group" && (c.participants.length < 3 || c.participants.length > 6)) return "group_size";
-      if ((c.kind === "intro" || c.kind === "second_encounter") && c.participants.length !== 2) return "group_size";
-      return null;
+      return groupSizeOk(c.kind, c.participants.length) ? null : "group_size";
     },
   },
 ];

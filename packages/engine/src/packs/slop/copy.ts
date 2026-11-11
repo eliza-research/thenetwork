@@ -16,6 +16,7 @@ export const SLOP_ASK_QUESTIONS: Record<string, string> = {
   slop_age_range: "What age range feels right for the people I suggest?",
   slop_distance: "How far would you go for a first date? Just your city, or within 2, 5, 10, 25, 50 or 100 miles of your zip?",
   slop_basics: "Quick one so I don't waste your evenings: anything that's a dealbreaker for you (smoking, kids, faith, politics), and what are you looking for right now, casual or something longer?",
+  slop_location: "What's your zip code or neighborhood? It's only used to work out rough distances.",
   slop_zip: "I don't recognize that zip code yet. What's a nearby zip, or which neighborhood are you in? It's only used to work out rough distances.",
   slop_widen: "Not many people match your distance right now. Would you consider people up to 25 miles away?",
   slop_type: "And what's your type? Describe the kind of person you click with, and how your friends would describe you.",
@@ -44,21 +45,7 @@ export const slopBookedText = (other: string, when: string, where: string): stri
 export const slopCheckInText = (other: string): string =>
   `How did your date with ${other} go? If anything felt wrong (they were rude, didn't show, or weren't who they said), tell me and I'll pass it to our safety team. If you ever feel unsafe, call 911 first.`;
 
-/** The sentence added when the probe carries the other person's photo. It names no one and describes nothing. */
-export const SLOP_PROBE_PHOTO_LINE = "I've attached a photo they chose to share; their name and number stay private until you both say yes.";
-
-/**
- * The probe as sent: the core probe text (already through the leak gate) plus, when `photos` is not
- * empty, the photo line before the question, and the photo ids to attach (opaque ids the platform
- * resolves; at most one). With an empty list the text is unchanged.
- */
-export function slopProbeMessage(probe: { text: string }, photos: readonly { id: string }[] = []): { text: string; photos: string[] } {
-  const ids = photos.slice(0, 1).map(p => p.id);
-  if (!ids.length) return { text: probe.text, photos: [] };
-  const at = probe.text.indexOf(" Want me to check");
-  const text = at >= 0 ? `${probe.text.slice(0, at)} ${SLOP_PROBE_PHOTO_LINE}${probe.text.slice(at)}` : `${probe.text} ${SLOP_PROBE_PHOTO_LINE}`;
-  return { text, photos: ids };
-}
+export { SLOP_PROBE_PHOTO_LINE, slopProbeMessage } from "../decisions.ts";
 
 /** Age band for a probe or a reveal ("late 20s"), never the exact age. */
 export function ageBand(age: number): string {

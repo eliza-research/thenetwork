@@ -26,10 +26,10 @@ import type {
 	ProfileReviewWithdrawalProof,
 } from "../../core/src/svc/profile-review-withdrawal.ts";
 
-const suite =
-	process.env.NETWORK_RETRY_RECONCILIATION_TEST === "1"
-		? describe
-		: describe.skip;
+// The suite runs in every integration run. Without NETWORK_RETRY_POSTGRES_URL it makes its own empty
+// database on the dev Postgres (127.0.0.1:54339) and removes it, and its synthetic login, at the end.
+const cluster = `postgres://${process.env.USER ?? "postgres"}@127.0.0.1:54339`;
+let owned: string | undefined;
 const now = Date.UTC(2026, 9, 21, 12),
 	cutoff = now - 1000;
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -217,10 +217,16 @@ async function snapshot() {
 	return row.snapshot as string;
 }
 
-suite("isolated PostgreSQL completed cleanup reconciliation", () => {
+describe("isolated PostgreSQL completed cleanup reconciliation", () => {
 	beforeAll(async () => {
-		const raw = process.env.NETWORK_RETRY_POSTGRES_URL;
-		if (!raw) throw Error("Explicit isolated retry PostgreSQL URL required");
+		let raw = process.env.NETWORK_RETRY_POSTGRES_URL;
+		if (!raw) {
+			owned = `network_retry_${randomUUID().replaceAll("-", "")}`;
+			const root = new SQL({ url: `${cluster}/postgres`, max: 1 });
+			await root.unsafe(`create database ${owned}`);
+			await root.close();
+			raw = `${cluster}/${owned}`;
+		}
 		const parsed = new URL(raw);
 		if (
 			!["postgres:", "postgresql:"].includes(parsed.protocol) ||
@@ -272,6 +278,12 @@ suite("isolated PostgreSQL completed cleanup reconciliation", () => {
 				failed,
 				"Retry fixture connections did not close",
 			);
+		if (owned) {
+			const root = new SQL({ url: `${cluster}/postgres`, max: 1 });
+			await root.unsafe(`drop database ${owned}`);
+			await root.unsafe(`drop role if exists ${role}`);
+			await root.close();
+		}
 	});
 
 	test("V2 exact retry returns the original counts after profile removal and newer batches without any mutation", async () => {
