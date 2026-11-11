@@ -38,11 +38,11 @@ export interface NotifyStore {
   getDelivery(deliveryId: string): Promise<DeliveryRecord | undefined>;
   /** Send times of cap-counting deliveries to a person at or after `since`. */
   capSendsSince(personId: string, since: number): Promise<number[]>;
-  /** Close a pending delivery as acted (on `on`), if it is still pending. Returns its target. */
+  /** Atomically close a pending delivery and count its acted outcome on `on`. Returns whether it changed. */
   actOnDelivery(deliveryId: string, on: Surface, at: number): Promise<boolean>;
   /** Pending deliveries of a person (no outcome yet). */
   pendingDeliveries(personId: string): Promise<DeliveryRecord[]>;
-  /** Close deliveries sent before `before` with no outcome as ignored. Returns how many. */
+  /** Atomically close pending deliveries sent before `before` and count ignored outcomes on their targets. Returns changed deliveries. */
   expireDeliveries(before: number, at: number): Promise<DeliveryRecord[]>;
 
   /** False when the token already exists (the caller draws another). */
@@ -127,11 +127,12 @@ export class MemoryNotifyStore implements NotifyStore {
     return [...this.deliveries.values()].filter(d => d.personId === personId && d.countsTowardCap && d.sentAt >= since).map(d => d.sentAt).sort((a, b) => a - b);
   }
 
-  async actOnDelivery(id: string, _on: Surface, at: number) {
+  async actOnDelivery(id: string, on: Surface, at: number) {
     const d = this.deliveries.get(id);
     if (!d || d.outcome) return false;
     d.outcome = "acted";
     d.outcomeAt = at;
+    await this.recordOutcome(d.personId, on, "acted", at);
     return true;
   }
 
@@ -145,6 +146,7 @@ export class MemoryNotifyStore implements NotifyStore {
       if (d.outcome || d.sentAt >= before) continue;
       d.outcome = "ignored";
       d.outcomeAt = at;
+      await this.recordOutcome(d.personId, d.target, "ignored", at);
       out.push({ ...d });
     }
     return out;

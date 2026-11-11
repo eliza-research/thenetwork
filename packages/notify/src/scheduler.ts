@@ -214,8 +214,8 @@ export class Notifier {
     return items.some(i => i.seenAt === undefined);
   }
 
-  private async acted(deliveryId: string | undefined, on: Surface, personId: string, now: number) {
-    if (deliveryId && (await this.store.actOnDelivery(deliveryId, on, now))) await this.store.recordOutcome(personId, on, "acted", now);
+  private async acted(deliveryId: string | undefined, on: Surface, now: number) {
+    if (deliveryId) await this.store.actOnDelivery(deliveryId, on, now);
   }
 
   /** Resolve a token for its owner. null for unknown, expired or foreign tokens (shown as "no update"). */
@@ -224,7 +224,7 @@ export class Notifier {
     if (!t || t.personId !== callerPersonId || t.expiresAt <= now) return null;
     await this.store.markTokenRedeemed(t.token, surface, now);
     const items = await this.store.getItems(t.itemIds);
-    await this.acted(items.find(i => i.deliveryId)?.deliveryId, surface, callerPersonId, now);
+    await this.acted(items.find(i => i.deliveryId)?.deliveryId, surface, now);
     return items;
   }
 
@@ -265,7 +265,7 @@ export class Notifier {
   /** The member wrote in the thread: every pending delivery counts as acted on the channel. */
   async threadReply(personId: string, channel: Channel, now: number) {
     await this.store.touch(personId, channel, now);
-    for (const d of await this.store.pendingDeliveries(personId)) await this.acted(d.deliveryId, channel, personId, now);
+    for (const d of await this.store.pendingDeliveries(personId)) await this.acted(d.deliveryId, channel, now);
   }
 
   /** Grant or key issued (true) or revoked (false) for an assistant. */
@@ -275,7 +275,6 @@ export class Notifier {
 
   /** Close deliveries whose outcome window passed with no action; run with dispatch. */
   async sweep(now: number) {
-    for (const d of await this.store.expireDeliveries(now - this.cfg.outcomeWindowMs, now))
-      await this.store.recordOutcome(d.personId, d.target, "ignored", now);
+    await this.store.expireDeliveries(now - this.cfg.outcomeWindowMs, now);
   }
 }
