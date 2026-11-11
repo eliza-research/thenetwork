@@ -53,3 +53,27 @@ slot is returned) and passes with the fix.
   missing-Postgres reason.
 - Full `bun run sim` (all blocks) was not run, per the machine-load rule;
   only the changed network block was run.
+
+## Review fix (2026-11-11)
+
+allisonbit requested changes (2026-10-30): the strict bound is right for
+availability windows, but the horizon call sites pass the window as "start no
+later than the horizon", so the strict bound drops a template slot straddling
+the horizon boundary and the pooled-meetings gate falls to 139.
+
+Remedy: at the four horizon sites — `planProposals`
+(`packages/engine/src/plans.ts`), `timeOptions` and the table builder
+(`packages/engine/src/packs/friends/planner.ts`), and `checkInWindows`
+(`packages/sim/src/plans.ts`) — pass `candidateSlots` a copy of the window
+extended by one slot (`att.availability.slotHours * HOUR`, 2h by default).
+Only the argument handed to `candidateSlots` is extended: in `planProposals`
+the `window` object itself is untouched, so the event bound
+(`e.start > window.end`) keeps its old meaning. The availability call sites
+(`stubNetwork.ts`, `network.ts`, `attention.ts`) are unchanged.
+
+Validation after the fix:
+
+- `bun run sim --only network`: 64/64 blocking gates pass, 0 tracked off
+  target, 377.4s. `consent vs push: meetings (pooled) > 140` is back at 144.
+- The PR's own candidateSlots gate still passes 3/3.
+- `bun run typecheck`: pass, exit 0.

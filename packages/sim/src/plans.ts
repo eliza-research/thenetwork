@@ -16,6 +16,7 @@
 import { DAY, HOUR, type City, type MemberId } from "@thenetwork/core";
 import { ACTIVITIES, activityById, type ActivityType } from "../../engine/src/packs/network/activities.ts";
 import { candidateSlots, type TimeSlot } from "../../engine/src/attention.ts";
+import { DEFAULT_ATTENTION } from "../../engine/src/config.ts";
 import { PAIR_CHEMISTRY_SD, type Oracle } from "./oracle.ts";
 import type { Persona } from "./persona.ts";
 import { Rng, clamp01, hash32 } from "@thenetwork/core";
@@ -161,7 +162,10 @@ export const optsInToCheckIn = (seed: number | string, p: Persona, m: CaptureMod
  * / 19:00, from 24 hours ahead) it is truly free for with p = recall, plus busy ones with p = falsePositive.
  */
 export function checkInWindows(p: Persona, now: number, city: City, seed: number | string, free: (t: number) => boolean, m: CaptureModel = DEFAULT_CAPTURE): TimeSlot[] {
-  const slots = candidateSlots(CITY_TZ[city], now, { window: { start: now, end: now + 7 * DAY } });
+  // The window end is a 7-day horizon ("start no later than"), not availability: extend it by
+  // one slot so a template slot straddling the horizon is kept. candidateSlots defaults to
+  // DEFAULT_ATTENTION when no config is passed, so the extension uses its slotHours.
+  const slots = candidateSlots(CITY_TZ[city], now, { window: { start: now, end: now + 7 * DAY + DEFAULT_ATTENTION.availability.slotHours * HOUR } });
   return slots.filter(s => new Rng(hash32(seed, "checkin-ans", p.id, s.start)).next() < (free(s.start) ? m.recall : m.falsePositive));
 }
 

@@ -279,7 +279,10 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
   type When = { slot: TimeSlot; event?: NetworkEvent; acts: ActivityType[] };
   const whens: When[] = [];
   const window = { start: now + pcfg.minLeadHours * HOUR, end: now + pcfg.horizonDays * DAY };
-  for (const slot of candidateSlots(tz, now, { window }, att)) {
+  // The window end is a horizon here ("start no later than"), not availability: extend only the
+  // copy handed to candidateSlots by one slot, so a template slot straddling the horizon is kept.
+  // The `window` object itself is reused below to bound events, so its end must not move.
+  for (const slot of candidateSlots(tz, now, { window: { ...window, end: window.end + att.availability.slotHours * HOUR } }, att)) {
     const dp = daypartOf(slot.start, tz, att);
     whens.push({ slot, acts: ACTIVITIES.filter(a => (a.dayparts as string[]).includes(dp)) });
   }

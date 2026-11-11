@@ -226,7 +226,9 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
 
   const timeOptions = (p: FriendsPlan, venue: Venue | undefined): TimeSlot[] => {
     const a = activityById.get(p.activityId)!;
-    const cands = candidateSlots(tz, now, { window: { start: now + pcfg.minLeadHours * HOUR, end: now + pcfg.horizonDays * DAY } }, att)
+    // The window end is a horizon ("start no later than"), not availability: extend it by one
+    // slot so a template slot straddling the horizon is kept.
+    const cands = candidateSlots(tz, now, { window: { start: now + pcfg.minLeadHours * HOUR, end: now + pcfg.horizonDays * DAY + att.availability.slotHours * HOUR } }, att)
       .filter(s => (a.dayparts as string[]).includes(daypartOf(s.start, tz, att)) && (!venue || venueOpen(venue, s, a.durationMin, tz, att)));
     const day = (t: number) => { const lp = localParts(t, tz); return `${lp.month}-${lp.day}`; };
     const scored = cands.map(s => ({ s, e: p.invited.reduce((sum, id) => sum + (inp.evidence.get(id) ? planFreeProb(inp.evidence.get(id)!, s, now, pcfg, att).p : 0.3), 0) }))
@@ -320,7 +322,9 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
   // Activity-first table builder (multi-slot pools), scored by the shared planner's least misery.
   const compat = makeCompat(w, "social");
   const familiar = (a: MemberId, b: MemberId) => w.isWarm(a, b);
-  const slotsAll = candidateSlots(tz, now, { window: { start: now + pcfg.minLeadHours * HOUR, end: now + pcfg.horizonDays * DAY } }, att);
+  // The window end is a horizon ("start no later than"), not availability: extend it by one
+  // slot so a template slot straddling the horizon is kept.
+  const slotsAll = candidateSlots(tz, now, { window: { start: now + pcfg.minLeadHours * HOUR, end: now + pcfg.horizonDays * DAY + att.availability.slotHours * HOUR } }, att);
   const dayKey = (t: number) => { const lp = localParts(t, tz); return `${lp.month}-${lp.day}`; };
   const tables = (members: MemberId[], cfg: PlansConfig, universal = false, minInvite = pol.tableMinInvite) => {
     const pool = members.filter(id => !busy.has(id) && !used.has(id) && inp.evidence.has(id) && eligible(id) && now - (inp.lastPlannedAt?.get(id) ?? -Infinity) >= cfg.memberCooldownDays * DAY);
