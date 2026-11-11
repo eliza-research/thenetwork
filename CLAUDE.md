@@ -65,14 +65,36 @@ CONTRIBUTING.md is the full text. In one line each:
 - Evidence or nothing: numbers before and after, same command and seeds, and a run with real LLM calls (CONTRIBUTING.md section 7.2). Mocked LLM output is not proof.
 - Test the changed flow in several agent clients and report client, version, provider and model for each (CONTRIBUTING.md section 8). Install other clients and drive them with computer use when they have no command line.
 - Simplify first: extend or merge what exists; remove dead code.
+- Keep the proofs passing. LemmaScript proves the safety decisions: a change to a proved function updates its spec and proof, and new decision logic goes in a proved core that production calls ([docs/formal-verification.md](docs/formal-verification.md)).
 - Validate with `bun run sim`, `bun run test:integration` and `bun run test:e2e`. A bug fix adds a sim gate, a scenario, a corpus row or an integration or e2e case that fails before the fix. No unit tests and no smoke tests ([docs/tests-policy.md](docs/tests-policy.md)).
 - Defend the design: give two other implementations.
+- Model the code: Quint at the high level, LemmaScript at the low level, required for all code. Compare the Quint models with the code you change and stamp them, so that no state drift stays (see below).
 - Fill in the PR evidence checklist (CONTRIBUTING.md section 12.2).
 - Write in ASD-STE100 Simplified Technical English (CONTRIBUTING.md section 13).
 
 **Security suite** (`bun run security`, also part of `bun run test:integration`; the same list is in docs/tests-policy.md): `packages/platform/test/db.test.ts`, `packages/platform/test/api-security.test.ts`, `packages/platform/test/proxy.test.ts`, `packages/platform/test/cloud-auth.pg.test.ts`, `packages/platform/test/notify-retention.pg.test.ts`, `packages/mcp/test/oauth.test.ts`, `packages/mcp/test/pg.test.ts`, `deploy/backend/backend.test.ts`, `deploy/router.test.ts`, `packages/network/test/shared-agent.integration.test.ts`, `packages/observatory/test/staff.test.ts`.
 
 **Postgres in the simulations.** The safety, ops, pipeline and audit blocks use the dev Postgres (:54339) when it is there and record a tracked "skipped" gate when it is not. CI's sim job has a Postgres service and `REQUIRE_PG=1`, and it fails on any such skip. The migration runner (`packages/observatory/db/migrate.ts`) refuses two numbered migrations with the same NNNN prefix: take the next free number.
+
+## Formal modeling requirement (2026-11-07; required, 2026-11-09)
+
+Quint and LemmaScript are required everywhere. They keep the logic correct and the state machines honest. All code in the app must be modeled at two levels:
+
+- **High level, Quint.** Each flow is a Quint model: its states, its transitions and its invariants, across the browser and the server.
+- **Low level, LemmaScript.** Each function that takes a step in a flow has `//@ ` contracts that `lsc` and Dafny prove, and the shipping code calls that function.
+
+A change to code must add or update both levels in the same PR. Use the same invariant name at both levels. When code cannot be expressed in LemmaScript (the DOM, React components, `await`, SQL, regex tables, crypto), move its decisions into an import-free core that LemmaScript can prove, and keep the rest as a thin shell that calls the core and does not recompute the decision. Say in the PR what stays outside the model and which test covers it.
+
+**The rule applies to all code, existing and new.** Every source file has a row in [docs/formal-coverage.md](docs/formal-coverage.md) with its Quint model and its LemmaScript core, or the reason it needs neither (types, data, copy, the simulator harness, dev tools). No row may be a gap. `bun run formal` (the formal block of `bun run sim`) fails when a source file has no row, when a row is a gap, when a row names a Quint model that is not in `quint/`, or when a proved file is not in LemmaScript-files.txt. `bun run quint:check` runs every model. A PR that adds a file adds its row; a PR that changes a flow or a decision updates its model and its core. This rule does not mean that a flow is verified. Do not write "verified" about a flow unless every seam of the flow calls the proved function. [quint/FRONTEND.md](quint/FRONTEND.md) and [quint/README.md](quint/README.md) list the models; [docs/formal-verification.md](docs/formal-verification.md) lists what the proofs do not cover.
+
+**Compare the Quint models with the code (no state drift).** A Quint model is only true while it says what the code does. Every agent that changes code must compare each Quint model of that code with the code itself, before it opens the PR:
+
+1. Find the models: the Quint column of the file's row in [docs/formal-coverage.md](docs/formal-coverage.md). `bun run quint:drift` lists every model whose model file or mapped code changed since its last comparison.
+2. Read the model and the code side by side. Compare each state and status value, each transition and its guard, each write, each ordering, retry, lease and cap, each invariant, and each code location comment (`oq:272`). Drift is any place where they disagree. An abstraction that the model header documents (a scaled constant, an oracle, a merged step) is not drift.
+3. If the code is right, fix the model and run `bun run quint:check quint/<model>.qnt`. If the code is wrong, fix the code with a case that fails before the fix. Never change a model only to make it agree with a defect.
+4. Record the comparison: `bun run quint:drift --stamp quint/<model>.qnt`. Add `--drift "<text>"` for a known drift that this PR does not fix (it replaces the model's list), and say it in the PR. A stamp without `--drift` keeps the known drift; `--clear-drift` empties it when the drift is fixed. A stamp is a claim that you did the comparison. Do not stamp a model you did not compare.
+
+[quint/drift.json](quint/drift.json) keeps a hash of each model and of each file that the ledger maps to it, at the last comparison. The formal block of `bun run sim` (and CI) fails for a model when one of those files changed after its stamp. CI also runs `bun run quint:check`.
 
 ## Code invariants
 
@@ -98,15 +120,17 @@ Do not break these. `bun run sim` checks them in every simulated run.
 
 ```bash
 bun install
-bun run sim                  # the validation layer: evals, onboard, network, slop, relay, peon, friends, clef, safety, ops, pipeline, audit (pinned seeds; exits 1 on a blocking gate)
+bun run sim                  # the validation layer: formal, evals, onboard, network, slop, relay, peon, friends, clef, safety, ops, pipeline, audit (pinned seeds; exits 1 on a blocking gate)
 bun run sim --only network   # one block (the names above, or capital); repeatable
 bun run sim --quick          # fewer seeds, shorter runs; quality gates become tracked
 bun run sim --with-capital   # adds the network-capital block (32 paired seeds; nightly)
 bun run typecheck
 bun run plugins/build.ts --check
 bun run quint:check          # the Quint state-machine models in quint/ (quint/README.md); --verify adds Apalache
+bun run quint:drift          # the Quint models whose code changed since their last comparison; --stamp quint/<model>.qnt records one
 bun run test:integration     # integration suite incl. the security files (real Postgres on :54339 via dev-pg; docs/tests-policy.md)
 bun run test:e2e             # e2e: the full service and platform through HTTP (tests/e2e; needs Postgres)
+bun run formal               # the LemmaScript proofs and their structure gates (needs Dafny; docs/formal-verification.md)
 bun run security             # the security subset of the integration suite (11 files; list below)
 bun run clef <fit|calibrate|features|audit|synth>   # P2 Clef weight fitting (docs/results/2026-10-09-clef-fitting.md); only `features --live` calls Workers AI
 bun run relay-eval [rules|fit] [--live]   # the relay classifier report; only --live calls Workers AI

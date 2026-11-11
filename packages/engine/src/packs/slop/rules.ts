@@ -9,6 +9,7 @@
 import { DAY } from "@thenetwork/core";
 import type { CandidateRule, MemberRule, PairRule } from "../../pack.ts";
 import { pairKey, type World } from "../../world.ts";
+import { agesMutual, mutualSeek, reprobeReason, reviewReason } from "../decisions.ts";
 import { limitMiles } from "./geo.ts";
 import type { SlopPackOptions } from "./options.ts";
 import { slopProfiles, type SlopProfile } from "./profile.ts";
@@ -44,24 +45,7 @@ export function needsBasics(p: SlopProfile): boolean {
   return !p.goal || (!p.dealbreakers.length && p.values.politics === undefined);
 }
 
-/** Why a member is held for review (safety cue or the Network's own records), or null. */
-export function reviewReason(p: SlopProfile, o: SlopPackOptions): string | null {
-  // Human review: a confirmed hold stays; a cleared one (a false positive) lifts the cue / check hold.
-  if (p.review === "confirmed") return "review_confirmed";
-  const cleared = p.review === "cleared";
-  if (!cleared && p.verification.some(t => t.endsWith(":fail"))) return "verification_failed";
-  if (o.verification.required && !(p.verification.includes("verify:liveness:pass") && p.verification.includes("verify:age:pass"))) return "unverified";
-  if (!cleared && o.safetyGate && p.safety.some(t => o.safetyCues.includes(t))) return "safety_review";
-  const T = o.trust;
-  if (T.enabled) {
-    const h = p.history;
-    if (T.negativeFrom > 0 && h.negativeFrom >= T.negativeFrom) return "trust_review";
-    if (T.blockedBy > 0 && h.blockedBy >= T.blockedBy) return "trust_review";
-    if (T.noShows > 0 && h.noShows >= T.noShows && h.noShows > h.dates) return "trust_review";
-    if (T.eagerYes > 0 && h.yes >= T.eagerYes && h.no === 0 && h.silent === 0) return "trust_review";
-  }
-  return null;
-}
+export { reviewReason };
 
 export function slopMemberRules(o: SlopPackOptions): MemberRule[] {
   return [
@@ -92,13 +76,7 @@ export function slopPairRules(o: SlopPackOptions): PairRule[] {
     // out, met). An anonymous probe that ended before the reveal may be retried after a cooldown.
     {
       id: "already_introduced", check: (w, a, b) => {
-        if (w.edgeHas(a, b, "met")) return "already_introduced";
-        for (const r of w.pairInteractions.get(pairKey(a, b)) ?? []) {
-          const preReveal = r.outcome === "declined" || r.outcome === "expired";
-          if (!preReveal || o.reprobeAfterDays <= 0) return "already_introduced";
-          if (w.now - r.at < o.reprobeAfterDays * DAY) return "reprobe_cooldown";
-        }
-        return null;
+        return reprobeReason(w.pairInteractions.get(pairKey(a, b)) ?? [], w.now, o.reprobeAfterDays * DAY, w.edgeHas(a, b, "met"));
       },
     },
     { id: "unknown_member", check: (_w, _a, _b, _lane, ma, mb) => (!ma || !mb ? "unknown_member" : null) },
@@ -106,8 +84,7 @@ export function slopPairRules(o: SlopPackOptions): PairRule[] {
       // Mutual gender / orientation inclusion: each is in the other's seeking set.
       id: "orientation_mismatch", check: (w, a, b) => {
         const P = prof(w), pa = P.get(a)!, pb = P.get(b)!;
-        if (!pa.is || !pb.is) return "orientation_mismatch";
-        return pa.seeks.includes(pb.is) && pb.seeks.includes(pa.is) ? null : "orientation_mismatch";
+        return mutualSeek(pa.is, pa.seeks, pb.is, pb.seeks) ? null : "orientation_mismatch";
       },
     },
     {
@@ -116,7 +93,7 @@ export function slopPairRules(o: SlopPackOptions): PairRule[] {
         const P = prof(w), pa = P.get(a)!, pb = P.get(b)!;
         const ra = ageRangeOf(pa, o), rb = ageRangeOf(pb, o);
         if (!ra || !rb) return "age_range_unknown";
-        return pb.age >= ra[0] && pb.age <= ra[1] && pa.age >= rb[0] && pa.age <= rb[1] ? null : "age_range";
+        return agesMutual(pa.age, ra[0], ra[1], pb.age, rb[0], rb[1]) ? null : "age_range";
       },
     },
     {

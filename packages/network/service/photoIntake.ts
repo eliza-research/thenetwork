@@ -22,6 +22,7 @@ import { readCapped } from "../../platform/src/body.ts";
 import { PHOTO_CONSENT, PHOTO_MAX_BYTES, type PhotoRefusal, type PhotoService } from "../../platform/src/photos.ts";
 import type { PeopleStore } from "../../platform/src/store.ts";
 import { DAY } from "@thenetwork/core";
+import { photoIntakeStep } from "./decisions.ts";
 
 /** The app that takes photos by text. */
 export const PHOTO_APP: AppId = "slop";
@@ -79,14 +80,15 @@ export class PhotoIntake {
   /** Attachments on a message from `e164` (ref: the inbound message id, for reply keys). */
   async photosIn(e164: string, mediaUrls: readonly string[], ref: string): Promise<PhotoIntakeOutcome> {
     const who = await this.member(e164);
-    if (!who) { this.d.log?.("[photos] a photo by text from someone with no slop membership: dropped, not fetched"); return { outcome: "not_member" }; }
-    const refused = await this.d.photos.mayTake(who.person.id, PHOTO_APP);
-    if (refused) {
+    const refused = who ? await this.d.photos.mayTake(who.person.id, PHOTO_APP) : undefined;
+    const step = photoIntakeStep(!!who, !!refused, who?.m.profile.photoConsent === PHOTO_CONSENT.version);
+    if (step === "drop") { this.d.log?.("[photos] a photo by text from someone with no slop membership: dropped, not fetched"); return { outcome: "not_member" }; }
+    if (step === "refuse") {
       this.d.log?.(`[photos] a photo by text refused (${refused}): dropped, not fetched, not stored`);
       if (refused === "adults_only" || refused === "not_verified") await this.once(e164, "photo_not_adult", PHOTO_TEXT.notAdult, ref);
-      return { outcome: "discarded", reason: refused };
+      return { outcome: "discarded", reason: refused! };
     }
-    if (who.m.profile.photoConsent !== PHOTO_CONSENT.version) {
+    if (step === "ask") {
       await this.d.people.putPending({ phoneHash: this.d.phoneKey(e164), kind: "photo_consent", app: PHOTO_APP, name: null, age: null, at: this.d.now() });
       return { outcome: (await this.once(e164, "photo_consent_ask", PHOTO_TEXT.ask, ref)) ? "asked" : "ask_skipped" };
     }
@@ -96,7 +98,7 @@ export class PhotoIntake {
       const bytes = await this.d.fetchMedia(url, PHOTO_MAX_BYTES).catch(e => { this.d.log?.(`[photos] attachment fetch failed: ${(e as Error).message}`); return undefined; });
       if (bytes === "too_large") { no.push("too_large"); continue; }
       if (!bytes) { no.push("not_found"); continue; }
-      const r = await this.d.photos.upload(who.person.id, PHOTO_APP, bytes, PHOTO_CONSENT.version);
+      const r = await this.d.photos.upload(who!.person.id, PHOTO_APP, bytes, PHOTO_CONSENT.version);
       if (r.ok) stored++; else no.push(r.reason);
     }
     const text = stored ? PHOTO_TEXT.stored(stored) : no.includes("too_many") ? PHOTO_TEXT.tooMany : PHOTO_TEXT.badPhoto;

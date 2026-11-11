@@ -7,8 +7,9 @@ import type { Category } from "@thenetwork/core";
 import { NEIGHBORHOODS } from "@thenetwork/network/geo";
 import type { EnvInfo, SearchHit } from "../src/types.ts";
 import { AppPage, AppSwitcher } from "./apps.tsx";
-import { Drawer, filterApplies, TAB_LABEL } from "./drawer.tsx";
+import { Drawer, filterApplies, shownTab, TAB_LABEL } from "./drawer.tsx";
 import { EDGE_STYLE, GraphView, OPP_COLOR } from "./graph.ts";
+import { canPropose, readCancel, readLand, readNew, readStart } from "./logic/views.ts";
 import { MapView } from "./map.ts";
 import { Inspector } from "./panels.tsx";
 import {
@@ -165,21 +166,27 @@ function Search() {
   const s = useStore();
   const q = s.ui.query.trim();
   const [conv, setConv] = useState<{ q: string; hits?: SearchHit[]; error?: string } | null>(null);
-  useEffect(() => { if (conv && conv.q !== q) setConv(null); }, [q]);
+  const reads = useRef(readNew());
+  const closeConv = () => { reads.current = readCancel(reads.current); setConv(null); };
+  useEffect(() => { if (conv && conv.q !== q) closeConv(); }, [q]);
   const canConv = s.can("safety") && q.length >= 2;
   const hits = conv ? [] : searchHits(s.ui.query);
-  const done = () => { store.setUI({ query: "" }); setConv(null); (document.getElementById("obs-search") as HTMLInputElement | null)?.blur(); };
+  const done = () => { store.setUI({ query: "" }); closeConv(); (document.getElementById("obs-search") as HTMLInputElement | null)?.blur(); };
   const pickHit = (h: Hit) => { h.go(); done(); };
   // Each search is an audited read: one at a time, and an answer for a query that is gone is dropped.
   const inFlight = useRef<string | null>(null);
   const runConv = async () => {
+    // SD-471: the query in flight is not sent again; an answer for a query that is gone does not land (readCancel).
     if (!canConv || inFlight.current === q) return;
     inFlight.current = q;
+    reads.current = readStart(reads.current);
+    const ticket = reads.current.last;
     setConv({ q });
     const r = await store.search(q);
     if (inFlight.current === q) inFlight.current = null;
-    if (store.ui.query.trim() !== q) return;
-    setConv({ q, hits: r.data, error: r.data ? undefined : r.error });
+    const land = readLand(reads.current, ticket);
+    reads.current = land.gate;
+    if (land.show && store.ui.query.trim() === q) setConv({ q, hits: r.data, error: r.data ? undefined : r.error });
   };
   const openHit = (h: SearchHit) => {
     if (h.opportunityId && store.opps.has(h.opportunityId)) store.focus({ kind: "opportunity", id: h.opportunityId });
@@ -204,7 +211,7 @@ function Search() {
         <div className="search-pop">
           {conv ? (
             <>
-              <div className="search-head muted small">Conversations · “{conv.q}”{conv.hits ? ` · ${conv.hits.length}` : ""} <button className="link small" onClick={() => setConv(null)}>back</button></div>
+              <div className="search-head muted small">Conversations · “{conv.q}”{conv.hits ? ` · ${conv.hits.length}` : ""} <button className="link small" onClick={closeConv}>back</button></div>
               {conv.error && <div className="pad bad small">{conv.error}</div>}
               {!conv.hits && !conv.error && <div className="pad muted small">Searching…</div>}
               {conv.hits?.length === 0 && <div className="pad muted small">No matches.</div>}
@@ -275,7 +282,7 @@ function FilterBar() {
   const s = useStore();
   const f = s.ui.filters;
   const game = !!s.env?.capabilities.canIntervene;
-  const tab = s.ui.drawer;
+  const tab = shownTab(s);
   const dim = (k: FilterKey) => (s.ui.drawerOpen && !filterApplies(tab, k) ? { className: "fb-item na", title: `Does not apply to ${TAB_LABEL[tab]}` } : { className: "fb-item" });
   const origins = ["engine", "request", "plans", "second_encounter", "newcomer_welcome", game ? "player" : "shadow"];
   return (
@@ -416,6 +423,8 @@ function ProposeTray() {
   const group = picks.length > 2;
   const g = s.game;
   const minor = picks.some(id => s.members.get(id)?.minor);
+  const known = new Map(picks.flatMap(id => { const m = s.members.get(id); return m ? [[id, m.minor] as [string, boolean]] : []; }));
+  const ready = canPropose(picks, known, !!g, Number.isFinite(g?.sparksLeft) ? g!.sparksLeft : 0, !!g?.over);
   const submit = async () => {
     const r = await store.control({ type: "propose", participants: picks, category, objective, why });
     if (r.ok) { store.toast(`Proposed. It ${(r.data as { dispatch?: string } | undefined)?.dispatch ?? "goes out soon"}.`, "good"); store.setUI({ picks: [] }); setPeek(null); setWhy(""); setObjective(""); }
@@ -439,7 +448,7 @@ function ProposeTray() {
           <select className="input" value={category} onChange={e => setCategory(e.target.value as Category)} aria-label="Category">{CATEGORIES.map(c => <option key={c}>{c}</option>)}</select>
           <input className="input grow" placeholder={group ? "Plan" : "Intro for"} value={objective} onChange={e => setObjective(e.target.value)} />
           <input className="input grow" placeholder="Why (shown to them)" value={why} onChange={e => setWhy(e.target.value)} />
-          <button className="btn primary" disabled={!g || g.sparksLeft <= 0 || g.over || minor} title={minor ? "Members under 18 are never introduced" : undefined} onClick={submit}>Propose {group ? "group" : "intro"} · {g?.sparksLeft ?? 0} sparks</button>
+          <button className="btn primary" disabled={!ready} title={minor ? "Members under 18 are never introduced" : undefined} onClick={submit}>Propose {group ? "group" : "intro"} · {g?.sparksLeft ?? 0} sparks</button>
           <button className="btn" onClick={async () => { const r = await store.control({ type: "peek", participants: picks }); if (r.ok) setPeek({ ...r.data as Peek, picks: picks.join(",") }); }} title="Ask the oracle (−25 points)">Peek −25</button>
           <button className="btn ghost" onClick={() => { store.setUI({ picks: [] }); setPeek(null); }}>Clear</button>
         </div>

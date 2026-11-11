@@ -442,6 +442,8 @@ async function llmMergeGate(b: Block): Promise<void> {
     if (!same(kept.seeks?.value, ["man"]) || kept.gender?.value !== "woman") throw new Error("overrode a confident rules value");
     const teen = await run("sophomore year lol", { selfAge: { value: 15, quote: "sophomore year" } });
     if (!teen.minor || teen.declined) throw new Error("an LLM age must mark a minor and never decline");
+    const child = await run("my bday was last week", { selfAge: { value: 12, quote: "my bday" } });
+    if (!child.minor || child.declined) throw new Error("an LLM age under 13 must mark a minor and never decline");
     if ((await run("im 30 lol", { selfAge: { value: 45, quote: "im 30" } })).age?.value !== 30) throw new Error("an LLM age raised the age");
   });
 }

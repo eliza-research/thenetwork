@@ -4,84 +4,69 @@
 // pairs: duplicate_participant, underage, blocked; configurations: duplicate_participant, then these
 // pre-rules, then minors / via / member / pair, then these post-rules, then the geo overlap).
 import { DAY } from "@thenetwork/core";
-import { isHomeEntry, riskTerms } from "../../filters.ts";
+import { isHomeEntry, isMinorAge, riskTerms } from "../../filters.ts";
 import type { CandidateRule, MemberRule, PairRule } from "../../pack.ts";
 import { CONTRIBUTOR_ROLES } from "../../types.ts";
 import { pairKey, type MemberIndex } from "../../world.ts";
+import {
+  askedRecently, categoryCooldownReason, categoryQuotaReason, contributionBudgetReason, interruptionBudgetReason,
+  negativeFeedbackReason, onlyWhenAskedReason, pairCooldownReason, reliabilityHoldoutReason, romanceAdmits,
+  romancePairReason, type RomanceSide,
+} from "./rulesCore.ts";
 
 export const NETWORK_MEMBER_RULES: readonly MemberRule[] = [
   { id: "state_receiving_contributor", check: (_w, _id, mi, c) => (mi.m.state === "receiving" && CONTRIBUTOR_ROLES.has(c.role) ? "state_receiving_contributor" : null) },
   { id: "category_opt_out", check: (_w, _id, mi, c) => (!mi.m.prefs.categoriesOptIn.includes(c.category) ? "category_opt_out" : null) },
   { id: "romance_opt_out", check: (_w, _id, mi, c) => (c.category === "romance" && !mi.m.prefs.romanceOptIn ? "romance_opt_out" : null) },
   {
-    id: "only_when_asked", check: (w, _id, mi, c) => {
-      const askedRecently = c.ownIntentCreatedAt !== undefined && w.now - c.ownIntentCreatedAt <= w.cfg.askedRecencyDays * DAY;
-      return (mi.m.prefs.onlyWhenAsked || mi.m.unansweredProactive >= 2) && !askedRecently ? "only_when_asked" : null;
-    },
+    id: "only_when_asked", check: (w, _id, mi, c) =>
+      onlyWhenAskedReason(mi.m.prefs.onlyWhenAsked, mi.m.unansweredProactive, askedRecently(w.now, c.ownIntentCreatedAt, w.cfg.askedRecencyDays * DAY)),
   },
   {
-    id: "interruption_budget", check: (w, _id, mi, c) => {
-      const budget = w.cfg.budgets[mi.m.state];
-      return mi.recentProactive + (c.extraProactive ?? 0) >= budget.limit ? "interruption_budget" : null;
-    },
+    id: "interruption_budget", check: (w, _id, mi, c) => interruptionBudgetReason(mi.recentProactive, c.extraProactive ?? 0, w.cfg.budgets[mi.m.state].limit),
   },
-  { id: "contribution_budget", check: (w, _id, mi, c) => (CONTRIBUTOR_ROLES.has(c.role) && mi.recentContribution + (c.extraContribution ?? 0) >= w.cfg.contribution.limit ? "contribution_budget" : null) },
+  { id: "contribution_budget", check: (w, _id, mi, c) => contributionBudgetReason(CONTRIBUTOR_ROLES.has(c.role), mi.recentContribution, c.extraContribution ?? 0, w.cfg.contribution.limit) },
   {
-    id: "category_quota", check: (w, id, mi, c) => {
-      const quota = w.quotas[id]?.[c.category];
-      return quota !== undefined && (mi.categoryCount30.get(c.category) ?? 0) >= quota ? "category_quota" : null;
-    },
+    id: "category_quota", check: (w, id, mi, c) => categoryQuotaReason(w.quotas[id]?.[c.category], mi.categoryCount30.get(c.category) ?? 0),
   },
   {
-    id: "category_cooldown", check: (w, id, _mi, c) => {
-      const declinedAt = w.memberCategoryDeclines.get(id)?.get(c.category);
-      return declinedAt !== undefined && w.now - declinedAt < w.cfg.cooldowns.categoryDeclineDays * DAY ? "category_cooldown" : null;
-    },
+    id: "category_cooldown", check: (w, id, _mi, c) =>
+      categoryCooldownReason(w.now, w.memberCategoryDeclines.get(id)?.get(c.category), w.cfg.cooldowns.categoryDeclineDays * DAY),
   },
   {
     id: "reliability_holdout", check: (w, id, _mi, c) => {
       const rel = w.reliability[id];
-      return rel && rel.noShows >= 2 && rel.completedSinceLastNoShow === 0 && (c.format !== "one_to_one" || c.timeSensitive) ? "reliability_holdout" : null;
+      return rel ? reliabilityHoldoutReason(rel.noShows, rel.completedSinceLastNoShow, c.format === "one_to_one", c.timeSensitive) : null;
     },
   },
 ];
 
-/** Romance: each side's stated orientation / age range admits the other (unchanged from filters.ts). */
+/** Romance, one direction: the seeker's stated orientation / age range admits the other (rulesCore.romanceAdmits). */
 export function romanceCompatible(seeker: MemberIndex, other: MemberIndex): boolean {
-  const r = seeker.romance;
-  if (!r) return true; // opted in with no stated constraints
-  if (other.m.age < r.ageMin || other.m.age > r.ageMax) return false;
-  if (r.seeks.length && !r.seeks.some(s => other.romance?.is.includes(s))) return false;
-  return true;
+  return romanceAdmits(seeker.romance, other.m.age, other.romance?.is ?? []);
 }
+
+/** The facts of one side of a romance pair. `minor` uses the same policy as the core pair prefix. */
+const romanceSide = (mi: MemberIndex): RomanceSide =>
+  ({ optIn: mi.m.prefs.romanceOptIn, minor: isMinorAge(mi.m.age), age: mi.m.age, prefs: mi.romance, is: mi.romance?.is ?? [] });
 
 export const NETWORK_PAIR_RULES: readonly PairRule[] = [
   {
-    id: "negative_feedback_cooldown", check: (w, a, b) => {
-      const neg = w.negativeFeedback.get(pairKey(a, b));
-      return neg !== undefined && w.now - neg < w.cfg.cooldowns.negativeFeedbackDays * DAY ? "negative_feedback_cooldown" : null;
-    },
+    id: "negative_feedback_cooldown", check: (w, a, b) =>
+      negativeFeedbackReason(w.now, w.negativeFeedback.get(pairKey(a, b)), w.cfg.cooldowns.negativeFeedbackDays * DAY),
   },
   {
-    id: "pair_cooldown", check: (w, a, b) => {
-      for (const r of w.pairInteractions.get(pairKey(a, b)) ?? []) {
-        if ((r.outcome === "declined" || r.outcome === "expired" || r.outcome === "cancelled") && w.now - r.at < w.cfg.cooldowns.pairDeclinedDays * DAY) return "pair_cooldown";
-      }
-      return null;
-    },
+    id: "pair_cooldown", check: (w, a, b) =>
+      pairCooldownReason(w.pairInteractions.get(pairKey(a, b)) ?? [], w.now, w.cfg.cooldowns.pairDeclinedDays * DAY),
   },
   { id: "active_duplicate", check: (w, a, b) => (w.activePairs.has(pairKey(a, b)) ? "active_duplicate" : null) },
   { id: "unknown_member", check: (_w, _a, _b, _lane, ma, mb) => (!ma || !mb ? "unknown_member" : null) },
   {
-    id: "romance_incompatible", check: (w, _a, _b, lane, ma, mb) => {
-      if (lane !== "romance") return null;
-      if (!ma.m.prefs.romanceOptIn || !mb.m.prefs.romanceOptIn) return "romance_incompatible";
-      // config.romance.requireStatedPrefs holds for EVERY romance configuration (event pairs,
-      // groups, second encounters...), not only the romance-intro generator (engine-pipeline-15).
-      if (w.cfg.romance.requireStatedPrefs && (!ma.romance?.seeks.length || !mb.romance?.seeks.length)) return "romance_incompatible";
-      if (!romanceCompatible(ma, mb) || !romanceCompatible(mb, ma)) return "romance_incompatible";
-      return null;
-    },
+    // config.romance.requireStatedPrefs holds for EVERY romance configuration (event pairs,
+    // groups, second encounters...), not only the romance-intro generator (engine-pipeline-15).
+    // A minor never reaches this rule (the core pair prefix says "underage" first); the core also refuses one.
+    id: "romance_incompatible", check: (w, _a, _b, lane, ma, mb) =>
+      romancePairReason(lane, w.cfg.romance.requireStatedPrefs, romanceSide(ma), romanceSide(mb)),
   },
   { id: "dealbreaker", check: (_w, _a, _b, _lane, ma, mb) => (ma.dealbreakers.some(d => mb.tags.has(d)) || mb.dealbreakers.some(d => ma.tags.has(d)) ? "dealbreaker" : null) },
 ];

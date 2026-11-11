@@ -64,7 +64,7 @@ module staff_console {
     // network-matching-gate (apps.ts:21; real.ts:864; health.ts:334; service.ts:1809-1817).
     mg: { registry: str -> bool, stored: str -> bool, engineRan: str -> bool },
     // matching-switch-confirm (admin.tsx:378-392).
-    cf: { armed: bool, armedApp: str, dataApp: str, sent: bool, sentApp: str, sentArmedFor: str, sentDataOf: str },
+    cf: { armed: bool, armedApp: str, target: bool, dataApp: str, sent: bool, sentApp: str, sentArmedFor: str, sentDataOf: str },
     // auth-prompt (web/store.ts:283-316).
     cl: { epoch: int, inflight: Set[int], authNeeded: bool, valid: Set[int] },
     // held photo preview (server.ts:640-655, 676-683; network service.ts:2306-2307).
@@ -94,7 +94,7 @@ module staff_console {
   pure val TICKET_TICKS = 1   // 30 s (WS_TICKET_MS)
   pure val PREVIEW_TICKS = 5  // 5 minutes (server.ts:647 and network service.ts:2306)
   pure val CLOSED_STATES = Set("CANCELLED", "SKIPPED", "DECLINED", "EXPIRED")
-  pure val TERMINAL = Set("COMPLETED", "FEEDBACK_COLLECTED", "DECLINED", "EXPIRED", "CANCELLED", "SKIPPED", "ABANDONED")
+  pure val TERMINAL = Set("COMPLETED", "FEEDBACK_COLLECTED", "DECLINED", "EXPIRED", "CANCELLED", "SKIPPED", "ABANDONED", "QUORUM_FAILED")
 
   // ------------------------------------------------------------------ helpers (staff.ts:181-200)
   pure def rolesFor(g: Set[Grant], st: str, app: str): Set[str] =
@@ -135,7 +135,7 @@ module staff_console {
       // Migration 0011 sets platform.networks.matching_enabled true for peon:nyc (observatory.md D35); a
       // deployment may differ, so the peon row is an input.
       mg: { registry: Map("slop" -> true, "peon" -> peonRegistry), stored: Map("slop" -> false, "peon" -> false), engineRan: Map("slop" -> false, "peon" -> false) },
-      cf: { armed: false, armedApp: "slop", dataApp: "slop", sent: false, sentApp: "", sentArmedFor: "", sentDataOf: "" },
+      cf: { armed: false, armedApp: "slop", target: false, dataApp: "slop", sent: false, sentApp: "", sentArmedFor: "", sentDataOf: "" },
       cl: { epoch: 0, inflight: Set(), authNeeded: false, valid: Set(0) },
       pv: { skew: skew, tokenUntil: 0, state: "none", refusedAt: 0, loadedBy: "", releasedBy: "" },
       pj: { stage: "none", proj: "none", term: "none" },
@@ -214,20 +214,24 @@ module staff_console {
     },
   }
 
-  // "End" (panels.tsx:542; web/store.ts:555-563): the server DELETE (server.ts:595-602) needs a role for the app
-  // and safety, and a network error never reaches it. The client drops its grant only on 200 or 404, that is
-  // when the server has no grant after the call (SD-247 fix e662d5f).
-  action unreveal(st: str, app: str, reached: bool): bool = {
+  // "End" (panels.tsx:542; web/store.ts:555-563): the server DELETE (server.ts DELETE /api/reveal) needs a role
+  // for the app and safety, and a network error never reaches it. The server deletes the grant first, then
+  // writes the reveal_revoke row; with the audit sink down it answers 503 after the delete. The client drops
+  // its grant only on 200 or 404, that is when the server has no grant after the call (SD-247 fix e662d5f),
+  // so on a 503 the badge stays while the server holds no grant (safe side).
+  action unrevealWith(st: str, app: str, reached: bool, auditUp: bool): bool = {
     val m = MEMBER_OF.get(app)
     val serverDeletes = reached and rolesFor(s.grantsCopy, st, app).size() > 0 and allowedR(s.grantsCopy, st, Set("safety"), app)
+    val clientDrops = serverDeletes and auditUp
     all {
       s.clientReveals.exists(r => r.st == st and r.app == app and r.m == m),
       s' = { ...s,
-        clientReveals: if (serverDeletes) s.clientReveals.filter(r => not(r.st == st and r.app == app and r.m == m)) else s.clientReveals,
+        clientReveals: if (clientDrops) s.clientReveals.filter(r => not(r.st == st and r.app == app and r.m == m)) else s.clientReveals,
         reveals: if (serverDeletes) s.reveals.filter(r => not(r.st == st and r.app == app and r.m == m)) else s.reveals,
       },
     }
   }
+  action unreveal(st: str, app: str, reached: bool): bool = unrevealWith(st, app, reached, true)
 
   // ------------------------------------------------------------------ ws-ticket and ws-socket
   action issueTicket(st: str, app: str): bool = all {
@@ -431,16 +435,20 @@ module staff_console {
   pure def overviewMatching(mg: { registry: str -> bool, stored: str -> bool, engineRan: str -> bool }, app: str): str =
     if (mg.stored.get(app)) "on" else if (not(CONSOLE_ALLOWS.get(app))) "locked" else "off"
 
-  // Config "Turn on/off" (admin.tsx AppConfig): first click arms; second click sends `on: !c.matchingEnabled`
-  // from the panel's data to the app shown now. The button shows only with data. The console refuses on for a
-  // locked app (real.ts:898).
+  // Config "Turn on/off" (admin.tsx AppConfig, press): logic/review.ts flip decides. The first click arms and
+  // stores the target `!c.matchingEnabled` read from the panel's data. The second click sends that target to
+  // the app shown now, or sends nothing when the data already shows it (another admin made the change; slice
+  // report bug 11, quint/review_desk.qnt). The button shows only with data. The console refuses on for a
+  // locked app (real.ts matching_locked).
   action pressSwitch(st: str): bool = all {
     allowedR(s.grantsCopy, st, Set(), s.cs.shownApp),
     s.cf.dataApp != "none",
-    if (not(s.cf.armed)) s' = { ...s, cf: { ...s.cf, armed: true, armedApp: s.cs.shownApp } }
+    val current = s.mg.stored.get(s.cf.dataApp)
+    if (not(s.cf.armed)) s' = { ...s, cf: { ...s.cf, armed: true, armedApp: s.cs.shownApp, target: not(current) } }
+    else if (s.cf.target == current) s' = { ...s, cf: { ...s.cf, armed: false } }
     else {
       val app = s.cs.shownApp
-      val on = not(s.mg.stored.get(s.cf.dataApp))
+      val on = s.cf.target
       val consoleRefuses = on and not(CONSOLE_ALLOWS.get(app))
       s' = { ...s,
         mg: if (consoleRefuses) s.mg else serviceSwitch(s.mg, app, on),
@@ -562,7 +570,8 @@ module staff_console {
     nondet st = STAFF.oneOf()
     nondet app = APPS.oneOf()
     nondet reached = Set(true, false).oneOf()
-    unreveal(st, app, reached),
+    nondet up = Set(true, false).oneOf()
+    unrevealWith(st, app, reached, up),
     nondet st = STAFF.oneOf()
     nondet app = APPS.oneOf()
     issueTicket(st, app),
@@ -853,6 +862,13 @@ module staff_console {
       .then(unreveal("S1", "slop", true))
       .expect(s.reveals.size() == 0 and s.clientReveals.size() == 0)
 
+  // "End" with the audit sink down: the server deleted the grant, then answered 503; the badge stays.
+  run endRevealAuditDownTest =
+    init0
+      .then(revealPost("S1", "slop", true))
+      .then(unrevealWith("S1", "slop", true, false))
+      .expect(s.reveals.size() == 0 and s.clientReveals.size() == 1 and inv_revealShownTruly)
+
   // A reveal needs its audit row: with the audit sink down nothing is granted (server.ts:589-591).
   run revealNeedsAuditTest =
     init0
@@ -1040,6 +1056,15 @@ module staff_console {
       .then(configPoll)
       .then(pressSwitch("S2"))
       .expect(s.cf.armed and s.cf.armedApp == "peon" and not(s.cf.sent) and inv_confirmMatchesApp)
+
+  // Bug 11 (flip): S2 arms "turn on" for slop, another admin turns slop on, the panel reads it again; the
+  // confirm click sends nothing.
+  run switchAlreadyFlippedTest =
+    init0
+      .then(pressSwitch("S2"))
+      .then(directServiceSwitch("slop", true))
+      .then(pressSwitch("S2"))
+      .expect(not(s.cf.armed) and not(s.cf.sent) and s.mg.stored.get("slop"))
 
   // SD-470 (fixed, 0f9fc3d): a request with token 0 is in flight, token 0 stops working, a new token is set; the
   // late 401 does not open the prompt.

@@ -12,6 +12,7 @@ import { DAY, HOUR } from "../../core/src/clock.ts";
 import type { AppId, AppInfo } from "./apps.ts";
 import { devShortcutsAllowed, type Env } from "./env.ts";
 import { otpConfigProblems } from "./otp-config.ts";
+import { OTP_REFUSED_GLOBAL, otpCodeShape, otpExpiry, otpMayAttempt, otpRetryAfterMs } from "./otp-core.ts";
 import { keyedHash, maskPhone, safeEqual } from "./phone.ts";
 import type { PeopleStore } from "./store.ts";
 
@@ -162,13 +163,15 @@ export class OtpService {
   }
   private now() { return (this.opts.now ?? Date.now)(); }
 
-  /** Rate-limit, then send. A provider error is logged and not shown (the response stays the same). */
-  async start(app: AppInfo, e164: string, ip: string): Promise<OtpStart> {
+  /**
+   * Rate-limit, then send. A provider error is logged and not shown (the response stays the same).
+   * `send` false (a banned number): the limits count and the answer is the same, and no code goes out.
+   */
+  async start(app: AppInfo, e164: string, ip: string, send = true): Promise<OtpStart> {
     const at = this.now(), L = this.limits;
-    const hourLeft = HOUR - (at % HOUR);
-    const limited = (retryAfterMs = hourLeft): OtpStart => ({ ok: false, error: "rate_limited", retryAfterMs });
     const phoneKey = keyedHash(this.opts.hashKey, e164);
-    // All limits as one request: a refusal by any of them counts in none (the header rule).
+    // All limits as one request, in the order of otp-core.ts OTP_REFUSED_*: a refusal by any of them
+    // counts in none (the header rule). The first one that refuses names the retry-after.
     const results = await this.store.hitAll([
       // The client IP (the socket address, or the IP a trusted site router signed: proxy.ts).
       { bucket: `otp:ip:${keyedHash(this.opts.hashKey, ipBucket(ip))}`, windowMs: HOUR, rule: { limit: L.perIpPerHour } },
@@ -178,18 +181,17 @@ export class OtpService {
       { bucket: "otp:global", windowMs: HOUR, rule: { limit: L.globalPerHour } },
     ], at);
     const refused = results.findIndex(r => !r.ok);
-    if (refused === 1) {
-      const prevAt = results[1]!.prevAt;
-      return limited(prevAt !== null && at - prevAt < L.minGapMs ? L.minGapMs - (at - prevAt) : hourLeft);
+    if (refused !== -1) {
+      if (refused === OTP_REFUSED_GLOBAL) this.opts.log?.(`[otp] ALERT: the global budget of ${L.globalPerHour} codes an hour is used up; sends are refused until the hour ends`);
+      const prevAt = results[refused]!.prevAt;
+      return { ok: false, error: "rate_limited", retryAfterMs: otpRetryAfterMs(refused, at, prevAt !== null, prevAt ?? 0, { hourMs: HOUR, dayMs: DAY, minGapMs: L.minGapMs }) };
     }
-    if (refused === 2) return limited(DAY - (at % DAY));
-    if (refused === 3) this.opts.log?.(`[otp] ALERT: the global budget of ${L.globalPerHour} codes an hour is used up; sends are refused until the hour ends`);
-    if (refused !== -1) return limited();
+    if (!send) return { ok: true };
     try {
       const { code, ref, chatId } = await this.provider.send(e164, app);
       await this.store.putChallenge({
         app: app.id, e164, provider: this.provider.name, providerRef: ref ?? null, providerChatId: chatId ?? null, codeHash: code ? keyedHash(this.opts.hashKey, `${app.id}:${e164}:${code}`) : null,
-        attempts: 0, createdAt: at, expiresAt: at + L.ttlMs, consumedAt: null,
+        attempts: 0, createdAt: at, expiresAt: otpExpiry(at, L.ttlMs), consumedAt: null,
       });
     } catch (e) {
       this.opts.log?.(`[otp] send failed for ${app.id}: ${(e as Error).message}`);
@@ -199,13 +201,15 @@ export class OtpService {
 
   /** True once for the right code on the newest live challenge. Wrong, expired, used-up and unknown all give false. */
   async verify(app: AppId, e164: string, code: string, ip = "unknown"): Promise<boolean> {
-    if (!/^\d{4,10}$/.test(code)) return false;
+    if (!otpCodeShape(code)) return false;
     const at = this.now(), L = this.limits;
     // Guessing across apps and challenges: a ceiling on code checks per number and per IP.
     if (!(await this.store.hit(`otp:verify:ip:${keyedHash(this.opts.hashKey, ipBucket(ip))}`, HOUR, at, { limit: L.verifyPerIpPerHour })).ok) return false;
     if (!(await this.store.hit(`otp:verify:phone:${keyedHash(this.opts.hashKey, e164)}`, HOUR, at, { limit: L.verifyPerPhonePerHour })).ok) return false;
     const c = await this.store.latestChallenge(app, e164);
     if (!c || c.provider !== this.provider.name) return false;
+    // The proved rule (otp-core.ts) on the challenge as read. claimAttempt checks it again on the row.
+    if (!otpMayAttempt({ attempts: c.attempts, expiresAt: c.expiresAt, consumed: c.consumedAt !== null }, L.maxAttempts, at)) return false;
     if (!(await this.store.claimAttempt(c.id, this.limits.maxAttempts, at))) return false;
     let ok: boolean;
     if (c.codeHash) ok = safeEqual(c.codeHash, keyedHash(this.opts.hashKey, `${app}:${e164}:${code}`));

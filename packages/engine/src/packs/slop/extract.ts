@@ -15,7 +15,8 @@
 //    `declined` and clears everything (core policy: nothing is stored).
 //  - No race, ethnicity, health or immigration field exists here; such words are never stored.
 import type { City, Facet, LLM, ChatMessage } from "@thenetwork/core";
-import { canBeMatched, maskPii, MIN_MEMBER_AGE, tryChatJson } from "@thenetwork/core";
+import { ADULT_AGE, canBeMatched, maskPii, MIN_MEMBER_AGE, tryChatJson } from "@thenetwork/core";
+import { lowerAge, matchableOf, minorOf } from "../decisions.ts";
 import { INTERESTS } from "../network/vocabulary.ts";
 import type { Gender, Goal, Slot } from "./profile.ts";
 import { SLOTS } from "./profile.ts";
@@ -809,7 +810,7 @@ export function mergeReading(p0: SlopOnboarding, r: Reading, text: string): Slop
   const p: SlopOnboarding = structuredClone(p0);
   const turn = p.turns++;
   const before = JSON.stringify(stripMeta(p0));
-  if (r.age && (!p.age || r.age.value < p.age.value)) p.age = field(r.age, turn, text);
+  if (r.age && lowerAge(p.age?.value, r.age.value)) p.age = field(r.age, turn, text);
   if (r.minor) p.minor = true;
   if (r.age && r.age.value < MIN_MEMBER_AGE && r.ageStrict) p.declined = true;
   if (r.gender) p.gender = field(r.gender, turn, text);
@@ -845,7 +846,7 @@ const stripMeta = (p: SlopOnboarding) => ({ age: p.age?.value, seeks: p.seeks?.v
 
 /** Derived values, the minor and decline rules, and matchability. */
 export function finalize(p: SlopOnboarding, changed = false): SlopOnboarding {
-  if (p.age && p.age.value < 18) p.minor = true;
+  p.minor = minorOf(p.minor, p.age?.value, ADULT_AGE);
   if (p.declined) return { ...emptyOnboarding(), turns: p.turns, minor: true, declined: true, age: p.age, askCounts: p.askCounts };
   // Seeking from a stated label, only where the label settles it (never bi, pan or queer).
   if (!p.seeks && !p.gender && p.orientation?.value === "lesbian") p.seeks = { value: ["woman"], confidence: 0.7, evidence: p.orientation.evidence, source: p.orientation.source };
@@ -862,7 +863,7 @@ export function finalize(p: SlopOnboarding, changed = false): SlopOnboarding {
     p.seeks = { value: [p.gender.value === "woman" ? "man" : "woman"], confidence: 0.6, evidence: p.gender.evidence, source: "rules" };
   }
   if (changed) p.confirmed = false;
-  p.matchable = !p.minor && !p.declined && canBeMatched(p.age?.value) && hardFilled(p) === HARD_FIELDS.length && p.confirmed;
+  p.matchable = matchableOf(p.minor, p.declined, canBeMatched(p.age?.value), hardFilled(p), HARD_FIELDS.length, p.confirmed);
   return p;
 }
 
@@ -1067,7 +1068,7 @@ function mergeLlm(p0: SlopOnboarding, r: SlopLlmReading, text: string, missing: 
   for (const k of missing) {
     const x = r[k];
     if (!x) continue;
-    if (k === "selfAge") { const a = x.value as number; if (a < 18 && a >= MIN_MEMBER_AGE && (!p.age || a < p.age.value)) { p.age = mk(a, x.quote); p.minor = true; } continue; }
+    if (k === "selfAge") { const a = x.value as number; if (a < ADULT_AGE && lowerAge(p.age?.value, a)) { p.age = mk(a, x.quote); p.minor = true; } continue; }
     if (k === "gender") p.gender = mk(x.value as Gender, x.quote);
     if (k === "seeks") p.seeks = mk([...new Set(x.value as Gender[])].sort(), x.quote);
     if (k === "ageRange") p.ageRange = mk(x.value as [number, number], x.quote);

@@ -7,6 +7,7 @@ The validation layer is now:
 | Layer | Command | What it is |
 |---|---|---|
 | Simulations | `bun run sim` | Every simulation block with its gates on pinned seeds (offline, no LLM). The safety, ops, pipeline and audit blocks also use the dev Postgres; CI's sim job has one and fails when they skip. |
+| Proofs | `bun run formal` | LemmaScript proofs of the safety decisions (docs/formal-verification.md). Also the first block of `bun run sim`. A proof is not a unit test: it covers all inputs, and it does not replace an integration case for a bug fix. |
 | Integration | `bun run test:integration` | Tests against real Postgres, real HTTP servers, several packages together or the full service. Includes the security suite (`bun run security` runs that subset alone). |
 | E2E | `bun run test:e2e` | `tests/e2e`: the platform and notify driven from the outside through the running service. |
 

@@ -4,6 +4,7 @@
 // the server checks it again.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { AuditEntry, BiasReportView, HeldQueue, HeldText, ConfigInfo, DiffNum, EngineRunSummary, LabArm, LabRun, ObsRequest, ObsSafetyCase, RunDiff, SafetyAction, SafetyInfo, SafetyReport, ScoreMetric } from "../src/types.ts";
+import { flip, reportOffer, type Pending } from "./logic/review.ts";
 import { store, useStore } from "./store.ts";
 import { Badge, Countdown, dur, humanize, Kpi, MemberLink, num, OppLink, pct, Section, stamp } from "./ui.tsx";
 
@@ -41,7 +42,7 @@ export function BiasMonitor() {
 }
 function AppBiasMonitor() {
   const s = useStore();
-  const r = useFetch<{ ok: boolean; reports?: BiasReportView[]; error?: string }>(() => store.bias(), `${s.mode}`, 60_000);
+  const r = useFetch<{ ok: boolean; reports?: BiasReportView[]; error?: string }>(() => store.bias(), `${s.mode}|${s.app}`, 60_000);
   if (!r.data?.reports) return <Err status={r.status} error={r.status === 404 ? "The bias monitor runs on real data only (bun run sim measures it in simulation)." : r.error ?? r.data?.error} />;
   const last = r.data.reports[0];
   if (!last) return <div className="muted small">No report yet: the Network service writes one a week for each network that takes photos.</div>;
@@ -75,7 +76,7 @@ export function SafetyCases() {
 }
 function AppSafetyCases() {
   const s = useStore();
-  const r = useFetch<SafetyInfo>(() => store.safety(), `${s.mode}|${s.network?.trust.hold}|${s.network?.trust.watch}|${s.stats?.blocks}`, 10_000);
+  const r = useFetch<SafetyInfo>(() => store.safety(), `${s.mode}|${s.app}|${s.network?.trust.hold}|${s.network?.trust.watch}|${s.stats?.blocks}`, 10_000);
   const [show, setShow] = useState<"open" | "all">("open");
   const info = r.data;
   if (!info) return <Err {...r} />;
@@ -259,8 +260,11 @@ function ReportRow({ r, canBan, canAct, onDone }: { r: SafetyReport; canBan: boo
     if (res.data?.ok) { store.toast(done, "good"); setNote(""); onDone(); } else store.toast(res.data?.error ?? res.error ?? "refused", "bad");
   };
   const n = note.trim(), ok = n.length >= 5 && !busy;
+  // The service bans only for safety@* or admin@* (service.ts ban: needs_safety_everywhere, SD-468): reportOffer takes it.
+  const everywhere = store.canEverywhere("safety");
+  const offer = reportOffer(r.status, canBan, store.can("safety"), everywhere, r.kind === "minor", canAct);
   // The service holds and clears on every app of the person only for safety@* or admin@* (service.ts hold, clearMinor).
-  const scope = store.canEverywhere("safety") ? "every app" : "this app";
+  const scope = everywhere ? "every app" : "this app";
   return (
     <div className={`case ${open ? "open" : ""}`}>
       <button type="button" className="case-head" onClick={() => setOpen(!open)}>
@@ -274,19 +278,18 @@ function ReportRow({ r, canBan, canAct, onDone }: { r: SafetyReport; canBan: boo
       {open && (
         <div className="case-body">
           <div className="small">Reported <MemberLink id={r.subjectId} /> · by <MemberLink id={r.reporterId} />{r.opportunityId && <> · after {s.opps.has(r.opportunityId) ? <OppLink o={s.opps.get(r.opportunityId)!} /> : r.opportunityId}</>}</div>
-          {canBan && store.can("safety") && r.status === "open" && (
+          {(offer.hold || offer.ban || offer.dismiss) && (
             <div className="review-actions">
               <input className="input grow" placeholder="Decision note (logged, at least 5 characters)" value={note} onChange={e => setNote(e.target.value)} />
-              <button className="btn" disabled={!ok} title={`Hold the person on ${scope} until a review`} onClick={() => act({ action: "hold", memberId: r.subjectId, note: n, reportId: r.id }, `Person held on ${scope}`)}>Hold</button>
-              {/* The service bans only for safety@* or admin@* (service.ts ban: needs_safety_everywhere). */}
-              {store.canEverywhere("safety") && <>
+              {offer.hold && <button className="btn" disabled={!ok} title={`Hold the person on ${scope} until a review`} onClick={() => act({ action: "hold", memberId: r.subjectId, note: n, reportId: r.id }, `Person held on ${scope}`)}>Hold</button>}
+              {offer.ban && <>
                 <button className="btn" disabled={!ok} title="This phone number can never join again" onClick={() => act({ action: "ban", memberId: r.subjectId, by: "phone", note: n, reportId: r.id }, "Banned by phone")}>Ban phone</button>
                 <button className="btn" disabled={!ok} title="Every phone of this person, on every app" onClick={() => act({ action: "ban", memberId: r.subjectId, by: "person", note: n, reportId: r.id }, "Banned by person")}>Ban person</button>
               </>}
-              <button className="btn ghost" disabled={!ok} onClick={() => act({ action: "dismiss", reportId: r.id, note: n }, "Report dismissed")}>Dismiss</button>
+              {offer.dismiss && <button className="btn ghost" disabled={!ok} onClick={() => act({ action: "dismiss", reportId: r.id, note: n }, "Report dismissed")}>Dismiss</button>}
             </div>
           )}
-          {r.kind === "minor" && canAct && store.can("safety") && r.status === "open" && (
+          {offer.clear && (
             <div className="review-actions">
               {!canBan && <input className="input grow" placeholder="Why the record says adult (logged, at least 5 characters)" value={note} onChange={e => setNote(e.target.value)} />}
               <button className="btn" disabled={!ok} title={`Only after the person's record says 18 or over. Clears the minor signal on ${scope} and dismisses this person's minor reports. Refused while any age says under 18.`}
@@ -302,12 +305,14 @@ function ReportRow({ r, canBan, canAct, onDone }: { r: SafetyReport; canBan: boo
 // ---------------------------------------------------------------- requests (gap 13)
 type ReqSeg = "all" | "open" | "fulfilled" | "none" | "answered";
 const OUTCOME_TONE: Record<ObsRequest["outcome"], string> = { probing: "info", open: "warn", fulfilled: "good", booked: "good", none: "neutral", answered: "good" };
+/** The segment of each outcome. A typed record: a new outcome cannot fall out of every segment. */
+const OUTCOME_SEG: Record<ObsRequest["outcome"], Exclude<ReqSeg, "all">> = { probing: "open", open: "open", fulfilled: "fulfilled", booked: "fulfilled", none: "none", answered: "answered" };
 /** Member requests: what was asked for (never the member's words), the outcome, tries and age. */
 export function Requests() {
   const s = useStore();
   const [seg, setSeg] = useState<ReqSeg>("open");
   const f = s.ui.focus;
-  const isOpen = (r: ObsRequest) => r.outcome === "probing" || r.outcome === "open";
+  const isOpen = (r: ObsRequest) => OUTCOME_SEG[r.outcome] === "open";
   const scoped = s.requests.filter(r => {
     const m = s.members.get(r.memberId);
     if (m && !s.matchMember(m)) return false;
@@ -317,11 +322,11 @@ export function Requests() {
     if (f?.kind === "neighborhood" && m?.area !== f.id) return false;
     return true;
   });
-  const rows = scoped.filter(r => seg === "all" || (seg === "open" ? isOpen(r) : r.outcome === seg));
+  const rows = scoped.filter(r => seg === "all" || OUTCOME_SEG[r.outcome] === seg);
   const byCat = new Map<string, { open: number; fulfilled: number; total: number }>();
   for (const r of scoped) {
     const c = byCat.get(r.category) ?? { open: 0, fulfilled: 0, total: 0 };
-    c.total++; if (isOpen(r)) c.open++; if (r.outcome === "fulfilled") c.fulfilled++;
+    c.total++; if (isOpen(r)) c.open++; if (OUTCOME_SEG[r.outcome] === "fulfilled") c.fulfilled++;
     byCat.set(r.category, c);
   }
   const segs: [ReqSeg, string][] = [["open", "Open"], ["fulfilled", "Fulfilled"], ["none", "None"], ["answered", "Answered"], ["all", "All"]];
@@ -408,18 +413,20 @@ export function Config() {
 }
 function AppConfig() {
   const s = useStore();
-  const r = useFetch<ConfigInfo>(() => store.config(), `${s.mode}|${s.network?.matchingEnabled}|${s.network?.review.mode}`);
-  const [confirm, setConfirm] = useState(false);
-  useEffect(() => { if (!confirm) return; const h = setTimeout(() => setConfirm(false), 4000); return () => clearTimeout(h); }, [confirm]);
+  const r = useFetch<ConfigInfo>(() => store.config(), `${s.mode}|${s.app}|${s.network?.matchingEnabled}|${s.network?.review.mode}`);
+  const [pending, setPending] = useState<Pending>({ active: false, target: false });
+  useEffect(() => { if (!pending.active) return; const h = setTimeout(() => setPending({ active: false, target: false }), 4000); return () => clearTimeout(h); }, [pending.active]);
   const c = r.data;
-  if (!c) return <Err {...r} />;
+  // The audit table reads the app at mount, beside the config read, not after it: same position in both trees, so it stays mounted.
+  if (!c) return <div className="config"><Err {...r} />{s.isAdmin() && <AuditLog />}</div>;
   const locked = !!s.env?.matchingLocked && !c.matchingEnabled;
   const canSwitch = c.canChange && s.isAdmin() && !locked;
-  const flip = async () => {
-    if (!confirm) { setConfirm(true); return; }
-    setConfirm(false);
-    const x = await store.control({ type: "matching", on: !c.matchingEnabled });
-    if (x.ok) { store.toast(`Proactive matching ${c.matchingEnabled ? "off" : "on"}`, c.matchingEnabled ? "info" : "good"); r.reload(); }
+  const press = async () => {
+    const step = flip(pending, c.matchingEnabled);
+    setPending(step.pending);
+    if (!step.send) return;
+    const x = await store.control({ type: "matching", on: step.on });
+    if (x.ok) { store.toast(`Proactive matching ${step.on ? "on" : "off"}`, step.on ? "good" : "info"); r.reload(); }
   };
   return (
     <div className="config">
@@ -428,7 +435,7 @@ function AppConfig() {
           <div className="review-actions">
             <Badge tone={c.matchingEnabled ? "good" : "warn"}>{c.matchingEnabled ? "on" : "off"}</Badge>
             {canSwitch
-              ? <button className={confirm ? "btn active" : "btn"} onClick={flip}>{confirm ? `Confirm: turn ${c.matchingEnabled ? "off" : "on"}` : `Turn ${c.matchingEnabled ? "off" : "on"}`}</button>
+              ? <button className={pending.active ? "btn active" : "btn"} onClick={press}>{pending.active ? `Confirm: turn ${pending.target ? "on" : "off"}` : `Turn ${c.matchingEnabled ? "off" : "on"}`}</button>
               : <span className="muted small">{locked ? "Off until the app's pack ships" : c.canChange ? "Admin only" : "Read-only here"}</span>}
             <span className="muted small">Review: {c.reviewMode ?? "–"}</span>
           </div>
@@ -456,10 +463,11 @@ function AppConfig() {
 
 /** Every staff read and action (admin only). Each load is itself logged. */
 function AuditLog() {
+  const s = useStore();
   const [actor, setActor] = useState("");
   const [target, setTarget] = useState("");
   const [q, setQ] = useState({ actor: "", target: "" });
-  const r = useFetch<{ sink: string; entries: AuditEntry[] }>(() => store.audit({ limit: 200, actor: q.actor || undefined, targetId: q.target || undefined }), `${q.actor}|${q.target}`);
+  const r = useFetch<{ sink: string; entries: AuditEntry[] }>(() => store.audit({ limit: 200, actor: q.actor || undefined, targetId: q.target || undefined }), `${s.mode}|${s.app}|${q.actor}|${q.target}`);
   return (
     <Section title={`Audit log${r.data ? ` · ${r.data.sink}` : ""}`} right={
       <form className="review-actions" onSubmit={e => { e.preventDefault(); if (q.actor === actor.trim() && q.target === target.trim()) r.reload(); else setQ({ actor: actor.trim(), target: target.trim() }); }}>

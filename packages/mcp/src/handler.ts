@@ -13,6 +13,7 @@ import { defaultApps, defaultHostMap, type McpApp, type McpAppId, type Surface }
 import type { AssistantKind, PlatformHooks } from "./hooks.ts";
 import { codePage, consentPage, consentsPage, messagePage, phonePage } from "./pages.ts";
 import { MemoryOAuthStore, type AuthCode, type AuthRequest, type ClientAuthMethod, type Grant, type OAuthClient, type OAuthStore, type Scope, SCOPES, type Token } from "./store.ts";
+import { codeVerdict, grantVerdict, resolveRedirect, scopesWithin, takenVerdict, toolAllowed } from "./decisions.ts";
 import { callTool, INSTRUCTIONS, TOOL_NAMES, TOOL_SCOPE, type ToolName, toolDefs } from "./tools.ts";
 import { cookieValue, isLoopbackHost, json, pkceS256, randomId, randomToken, readForm, readJson, safeEqual, sha256hex, validChallenge, validVerifier } from "./util.ts";
 
@@ -347,7 +348,8 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       try { dec = Buffer.from(auth.slice(6), "base64").toString("utf8"); } catch { return fail(); }
       const i = dec.indexOf(":");
       if (i < 0) return fail();
-      const [bid, bsec] = [decodeURIComponent(dec.slice(0, i)), decodeURIComponent(dec.slice(i + 1))];
+      let bid: string, bsec: string;
+      try { [bid, bsec] = [decodeURIComponent(dec.slice(0, i)), decodeURIComponent(dec.slice(i + 1))]; } catch { return fail(); }
       if (id && id !== bid) return fail();
       if (secret) return fail(); // one method per request
       id = bid; secret = bsec; basic = true;
@@ -378,9 +380,8 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     // An unknown client or a redirect URI it did not register: show an error, never redirect (open redirector).
     if (!client || client.app !== c.app.id) return messagePage(c.app, "This link does not work", "The assistant is not registered on this site. Go back to the assistant and try again.");
     if (openAiUnavailable(c, client)) return messagePage(c.app, "Not available", "This assistant connection is not available on this site.", 403);
-    const asked = q.get("redirect_uri");
-    const redirectUri = asked ?? (client.redirectUris.length === 1 ? client.redirectUris[0]! : null);
-    if (!redirectUri || !client.redirectUris.includes(redirectUri)) return messagePage(c.app, "This link does not work", "The assistant asked to return to an address it did not register.");
+    const redirectUri = resolveRedirect(q.get("redirect_uri"), client.redirectUris);
+    if (!redirectUri) return messagePage(c.app, "This link does not work", "The assistant asked to return to an address it did not register.");
     const state = q.get("state");
     // A malformed request is an error page here, never a redirect (RFC 9700 4.11.2): open registration
     // would otherwise let anyone bounce a person from this site to any https page with no click.
@@ -397,7 +398,9 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (customSlopClient(c, client) && resource !== resourceFor(c.issuer, "full")) return fail("invalid_target", "this connection must use the /mcp endpoint");
     if (client.surface === "openai" && resource !== resourceFor(c.issuer, "openai")) return fail("invalid_target", "this client must use the /mcp/openai endpoint");
     // login_hint, phone or any other person data in the URL is never read: the person types it on our page.
-    const browser = randomToken();
+    // A second tab in this browser shares the first tab's token: the cookie holds one value, so a new one would end the first tab.
+    const held = cookieValue(c.req.headers.get("cookie"), browserCookie(c.app));
+    const browser = held && /^[A-Za-z0-9_-]{32,128}$/.test(held) ? held : randomToken();
     const r = {
       id: randomId(), browserHash: sha256hex(browser), clientId: client.id, app: c.app.id, redirectUri, state,
       codeChallenge: challengeIn, scopes, resource, e164: null, personId: null, step: "phone" as const, createdAt: now(), expiresAt: now() + ttl.requestMs,
@@ -486,13 +489,13 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
         return phonePage(c.app, r.id, client.name, redirectHost, { error: text, turnstileSiteKey: o.turnstile?.siteKey });
       }
       await store.updateAuthRequest(r.id, { e164, step: "code" });
-      return codePage(c.app, r.id, e164.slice(-4));
+      return codePage(c.app, r.id, e164.slice(-4), { redirectHost });
     }
 
     if (step === "code") {
       if (r.step !== "code" || !r.e164) return messagePage(c.app, "This page has expired", "Go back to the assistant and connect again.");
       const code = (form.get("code") ?? "").replace(/\s/g, "");
-      if (!(await o.platform.verifyOtp(c.app.id, r.e164, code, c.ip))) return codePage(c.app, r.id, r.e164.slice(-4), { error: "That code did not work. Check the newest text and try again." });
+      if (!(await o.platform.verifyOtp(c.app.id, r.e164, code, c.ip))) return codePage(c.app, r.id, r.e164.slice(-4), { error: "That code did not work. Check the newest text and try again.", redirectHost });
       const who = await o.platform.login(r.e164);
       if (who === "held" || !(await customSlopEligible(c, client, who.personId, o.platform.phoneKey(r.e164)))) {
         await store.deleteAuthRequest(r.id);
@@ -574,6 +577,23 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     return { tokens, response: { access_token: access, token_type: "Bearer", expires_in: Math.floor(Math.min(ttl.accessMs, grant.expiresAt - at) / 1000), refresh_token: refresh, scope: scopes.join(" ") } };
   }
 
+  /** A ban ends every grant of the person or number, however old: the grant is revoked at the first use after it. */
+  async function endIfBanned(grant: Grant, at: number): Promise<boolean> {
+    const banned = (await o.platform.banned?.(grant.phoneKey, grant.personId)) ?? false;
+    if (banned) await revokeGrant(grant.id, at);
+    return banned;
+  }
+
+  /** The grant behind a token request. The Cloud check may be slow: expiry is read again after it. */
+  async function grantForTokens(c: Ctx, client: OAuthClient, grant: Grant | undefined, at: number, tokenExpiresAt: number) {
+    const live = !!grant && grant.revokedAt === null && grant.expiresAt > at;
+    const banned = live && await endIfBanned(grant, at);
+    const eligible = live && !banned && await customSlopEligible(c, client, grant.personId, grant.phoneKey);
+    const cloud = eligible ? await cloudGrantCurrent(grant) : "invalid";
+    const t = now();
+    return grantVerdict({ live, banned, eligible, cloud, tokenLive: tokenExpiresAt > t, grantUnexpired: !!grant && grant.expiresAt > t });
+  }
+
   async function token(c: Ctx): Promise<Response> {
     if (c.req.method !== "POST") return json(405, { error: "method_not_allowed" }, { allow: "POST" });
     if (await limited(`token:ip:${sha256hex(ipBucket(c.ip))}`, lim.tokenPerIpMinute, 60_000)) return tooMany(60);
@@ -589,41 +609,40 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (grantType === "authorization_code") {
       const code = form.get("code") ?? "";
       const ac = code ? await store.getCode(sha256hex(code)) : undefined;
-      if (!ac || ac.clientId !== client.id) return bad("invalid_grant");
-      if (ac.usedAt !== null) {
+      if (!ac) return bad("invalid_grant");
+      const verifier = form.get("code_verifier"), res = form.get("resource");
+      const replayed = async (when: number) => {
         // OAuth 2.1 4.1.3: a second use of a code revokes what the first use issued.
-        await revokeGrant(ac.grantId, at);
-        await store.audit({ at, kind: "code_replay", clientId: client.id, grantId: ac.grantId, app: c.app.id, detail: "grant revoked" });
+        await revokeGrant(ac.grantId, when);
+        await store.audit({ at: when, kind: "code_replay", clientId: client.id, grantId: ac.grantId, app: c.app.id, detail: "grant revoked" });
         return bad("invalid_grant");
+      };
+      switch (codeVerdict({
+        sameClient: ac.clientId === client.id, used: ac.usedAt !== null, expired: ac.expiresAt <= at, redirectOk: form.get("redirect_uri") === ac.redirectUri,
+        verifierOk: validVerifier(verifier) && safeEqual(pkceS256(verifier), ac.codeChallenge), resourceOk: !res || canonicalResource(res, c.issuer) === ac.resource,
+      })) {
+        case "invalid": return bad("invalid_grant");
+        case "replay": return replayed(at);
+        case "expired": return bad("invalid_grant", "The code expired.");
+        case "bad_redirect": return bad("invalid_grant", "redirect_uri does not match.");
+        case "bad_verifier": return bad("invalid_grant", "code_verifier does not match.");
+        case "bad_target": return bad("invalid_target");
+        case "go": break;
       }
-      if (ac.expiresAt <= at) return bad("invalid_grant", "The code expired.");
-      if (form.get("redirect_uri") !== ac.redirectUri) return bad("invalid_grant", "redirect_uri does not match.");
-      const verifier = form.get("code_verifier");
-      if (!validVerifier(verifier) || !safeEqual(pkceS256(verifier), ac.codeChallenge)) return bad("invalid_grant", "code_verifier does not match.");
-      const res = form.get("resource");
-      if (res && canonicalResource(res, c.issuer) !== ac.resource) return bad("invalid_target");
       const grant = await store.getGrant(ac.grantId);
-      if (!grant || grant.revokedAt !== null || grant.expiresAt <= at) return bad("invalid_grant");
-      if (!(await customSlopEligible(c, client, grant.personId, grant.phoneKey))) return bad("invalid_grant");
-      const cloudStatus=await cloudGrantCurrent(grant);
-      if(ac.expiresAt<=now())return bad("invalid_grant");
-      if(cloudStatus==="unavailable")return temporarilyUnavailable();
-      if(cloudStatus!=="valid")return bad("invalid_grant");
-      // The Cloud check may be slow: recheck expiry and atomically consume only after it succeeds.
-      if(ac.expiresAt<=now() || grant.expiresAt<=now())return bad("invalid_grant");
+      // The Cloud check may be slow: the check reads expiry again, and only then is the code used.
+      const checked = await grantForTokens(c, client, grant, at, ac.expiresAt);
+      if (checked === "unavailable") return temporarilyUnavailable();
+      if (checked !== "go" || !grant) return bad("invalid_grant");
       // The code's use and the tokens are one transaction: a failed mint leaves the code unused for the retry.
-      const redeemed=await store.redeemCode(ac.hash,now(),consumed=>{
-        if(consumed.expiresAt<=now() || grant.expiresAt<=now())return undefined;
+      const redeemed = await store.redeemCode(ac.hash, now(), consumed => {
+        if (takenVerdict(true, false, consumed.expiresAt > now() && grant.expiresAt > now()) !== "issue") return undefined;
         const pair = tokenPair(client, grant, ac.scopes, ac.resource);
         return { pair: pair.tokens, response: pair.response, audit: { at, kind: "token_issued" as const, clientId: client.id, grantId: grant.id, app: c.app.id, detail: ac.scopes.join(" ") } };
       });
-      if(!redeemed)return bad("invalid_grant");
-      if(redeemed.code.usedAt!==null){
-        await revokeGrant(ac.grantId,now());
-        await store.audit({at:now(),kind:"code_replay",clientId:client.id,grantId:ac.grantId,app:c.app.id,detail:"grant revoked"});
-        return bad("invalid_grant");
-      }
-      if(!redeemed.minted)return bad("invalid_grant");
+      const taken = takenVerdict(!!redeemed, !!redeemed && redeemed.code.usedAt !== null, !!redeemed?.minted);
+      if (taken === "replay") return replayed(now());
+      if (taken !== "issue" || !redeemed?.minted) return bad("invalid_grant");
       return json(200, redeemed.minted.response);
     }
 
@@ -632,14 +651,11 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       const t = raw ? await store.getToken(sha256hex(raw)) : undefined;
       if (!t || t.kind !== "refresh" || t.clientId !== client.id || t.revokedAt !== null || t.expiresAt <= at) return bad("invalid_grant");
       const grant = await store.getGrant(t.grantId);
-      if (!grant || grant.revokedAt !== null || grant.expiresAt <= at) return bad("invalid_grant");
-      if (!(await customSlopEligible(c, client, grant.personId, grant.phoneKey))) return bad("invalid_grant");
-      const cloudStatus=await cloudGrantCurrent(grant);
-      if(t.expiresAt<=now())return bad("invalid_grant");
-      if(cloudStatus==="unavailable")return temporarilyUnavailable();
-      if(cloudStatus!=="valid")return bad("invalid_grant");
+      const checked = await grantForTokens(c, client, grant, at, t.expiresAt);
+      if (checked === "unavailable") return temporarilyUnavailable();
+      if (checked !== "go" || !grant) return bad("invalid_grant");
       const asked = form.get("scope") === null ? t.scopes : parseScopes(form.get("scope"));
-      if (!asked || !asked.every(s => t.scopes.includes(s))) return bad("invalid_scope");
+      if (!asked || !scopesWithin(asked, t.scopes)) return bad("invalid_scope");
       const res = form.get("resource");
       if (res && canonicalResource(res, c.issuer) !== t.resource) return bad("invalid_target");
       const refreshedAt=now();
@@ -749,6 +765,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!t || t.kind !== "access" || t.revokedAt !== null || t.expiresAt <= at || t.resource !== resource || t.app !== c.app.id) return "invalid";
     const [grant, client] = await Promise.all([store.getGrant(t.grantId), store.getClient(t.clientId)]);
     if (!grant || grant.revokedAt !== null || grant.expiresAt <= at || !client) return "invalid";
+    if (await endIfBanned(grant, at)) return "invalid";
     const cloudStatus=await cloudGrantCurrent(grant);
     if(t.expiresAt<=now())return "invalid";
     if(cloudStatus!=="valid")return cloudStatus;
@@ -858,15 +875,15 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
         const tool = name as ToolName;
         if (onboardingOnly && tool === "get_updates") return result({ content: [{ type: "text", text: "This connection supports onboarding only." }], isError: true });
         const need = TOOL_SCOPE[tool];
-        if (need) {
+        if (!toolAllowed(need, auth ? auth.token.scopes : null)) {
           const scopeChallenge = challenge(resource, auth ? { error: "insufficient_scope", error_description: `This tool needs ${need}` } : {});
-          if (!auth || !auth.token.scopes.includes(need)) {
-            // ChatGPT reads the challenge from the tool result; other clients get the HTTP status (MCP authorization, step-up).
-            if (surface === "openai") return result({ content: [{ type: "text", text: "The person must sign in on the site and allow access first." }], isError: true, _meta: { "mcp/www_authenticate": [scopeChallenge] } });
-            return auth
-              ? out(403, rpcError(id, -31403, "Insufficient scope"), { "www-authenticate": scopeChallenge })
-              : out(401, rpcError(id, -31401, "Sign-in required"), { "www-authenticate": scopeChallenge });
-          }
+          // ChatGPT reads the challenge from the tool result; other clients get the HTTP status (MCP authorization, step-up).
+          if (surface === "openai") return result({ content: [{ type: "text", text: "The person must sign in on the site and allow access first." }], isError: true, _meta: { "mcp/www_authenticate": [scopeChallenge] } });
+          return auth
+            ? out(403, rpcError(id, -31403, "Insufficient scope"), { "www-authenticate": scopeChallenge })
+            : out(401, rpcError(id, -31401, "Sign-in required"), { "www-authenticate": scopeChallenge });
+        }
+        if (need && auth) {
           if (await limited(`status:grant:${auth.grant.id}`, lim.statusPerGrantMinute, 60_000)) return out(429, rpcError(id, -31029, "Too many requests"), { "retry-after": "60" });
         }
         // A profile is a few messages a day at most (each one reaches the member's own app as a text).

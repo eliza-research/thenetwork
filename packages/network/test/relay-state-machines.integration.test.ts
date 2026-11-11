@@ -83,6 +83,8 @@ test("relay-swap: a withdrawal stops a number share that waits for quiet hours t
   expect((await relay("withdraw-ari","actually don't send my number")).body).toMatchObject({decision:"none"});
   toNyHour(10);await service.runtimeFor("friends")!.tick();await service.runtimeFor("friends")!.deliver();
   expect(sent.filter(x=>x.text.includes(a))).toEqual([]);
+  // The swap goes both ways or not at all: Sam's number does not go to Ari, who took the swap back.
+  expect(sent.filter(x=>x.to===a&&x.text.includes(b))).toEqual([]);
   // The share reached final dispatch and was refused there, not merely left waiting.
   const [share]=await sql`select o.status from platform.outbound o join network.relay_records r on o.id='relay:'||r.item_id
     where r.kind='contact_share' and r.from_member=${ariId}`;
@@ -216,6 +218,8 @@ test("relay-swap: a deferred number share that the morning send refuses does not
   const before=sent.length;
   toNyHour(10);await service.runtimeFor("friends")!.tick();await service.runtimeFor("friends")!.deliver();
   expect(sent.slice(before).some(x=>x.to===a&&x.text.includes(b))).toBe(false);
+  // The waiting pair goes or stops together (swapFlush): Ari's number does not go to Sam one way.
+  expect(sent.slice(before).some(x=>x.to===b&&x.text.includes(a))).toBe(false);
   clock.advance(MINUTE);expect((await post(TURN_PATH,turn(a,"share-deferred-start","START"))).status).toBe(200);
   const log=await service.runtimeFor("friends")!.readState(n=>n.relayLog());
   expect(log.filter(r=>r.opportunityId==="share-deferred"&&r.from===samId&&r.contactShared)).toEqual([]);

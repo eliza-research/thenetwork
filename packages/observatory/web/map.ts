@@ -9,6 +9,7 @@ import { memberPoint, NEIGHBORHOOD, VENUES } from "@thenetwork/network/geo"; // 
 import type { ObsMember } from "../src/types.ts";
 import { EDGE_STYLE, memberColor, OPP_COLOR } from "./graph.ts";
 import { memberTooltipText, textNode } from "./safe.ts";
+import { markersAfter } from "./logic/sync.ts";
 import { focusKey, OPEN, store } from "./store.ts";
 
 const NYC: L.LatLngExpression = [40.73, -73.95];
@@ -104,10 +105,14 @@ export class MapView {
       if (!f && pts.length > 1) this.map.flyToBounds(L.latLngBounds(pts), { padding: [40, 40], maxZoom: 14, duration: 0.6 });
     }
     // Members (create once, restyle each update). The borough filter hides; the members filter and the focus dim.
-    for (const m of store.members.values()) {
-      let mk = this.members.get(m.id);
-      const shown = store.inBorough(m) || !!bright?.has(m.id); // the focus and the picks stay visible outside the borough
-      if (!shown) { if (mk) { mk.remove(); this.members.delete(m.id); } continue; }
+    const shown = [...store.members.values()].filter(m => store.inBorough(m) || !!bright?.has(m.id)).map(m => m.id); // the focus and the picks stay visible outside the borough
+    const have = [...this.members.keys()];
+    const after = markersAfter(have, shown, new Set(shown), new Set(have));
+    const keep = new Set(after);
+    for (const id of have) if (!keep.has(id)) { this.members.get(id)!.remove(); this.members.delete(id); } // a marker of another app or mode goes too
+    for (const id of after) {
+      const m = store.members.get(id)!;
+      let mk = this.members.get(id);
       if (!mk) {
         mk = L.circleMarker(this.point(m), { renderer: this.renderer, radius: 4 });
         mk.on("click", e => { if ((e.originalEvent as MouseEvent).shiftKey) store.togglePick(m.id); else store.focus({ kind: "member", id: m.id }); });
@@ -143,7 +148,7 @@ export class MapView {
       }
     }
     // Opportunities and meetings: rebuilt when they, the filters or the focus change.
-    const oppVersion = `${store.version}|${ui.showOpps}|${JSON.stringify(ui.filters)}|${focusKey(f)}|${Math.floor(store.now() / 3_600_000)}`;
+    const oppVersion = `${store.app}|${store.mode}|${store.version}|${ui.showOpps}|${JSON.stringify(ui.filters)}|${focusKey(f)}|${Math.floor(store.now() / 3_600_000)}`;
     if (oppVersion !== this.oppVersion) {
       this.oppVersion = oppVersion;
       this.oppLayer.clearLayers(); this.meetLayer.clearLayers();

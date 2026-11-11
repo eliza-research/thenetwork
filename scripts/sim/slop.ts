@@ -45,7 +45,7 @@ import { buildSlopSnapshot, RATER_DEFAULTS, SLOP_WORLD_START, type SlopNetworkSt
 import { BASELINES } from "../../packages/sim/src/apps/slop/baselines.ts";
 import { slopMetrics } from "../../packages/sim/src/apps/slop/metrics.ts";
 import { runSlopWorld, runSlopWorldAsync } from "../../packages/sim/src/apps/slop/world.ts";
-import { mergeRelayStats } from "../../packages/sim/src/apps/slop/relay.ts";
+import { contactShaped, mergeRelayStats } from "../../packages/sim/src/apps/slop/relay.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
 
@@ -117,6 +117,11 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
   b.gate("relay world: 0 relays to or from a minor (declared, or after an age slip); every slip blocked", rs.minorRelays === 0 && cls("minor_signal").stopped === cls("minor_signal").n, `${rs.minorRelays} relays, slips ${cls("minor_signal").stopped}/${cls("minor_signal").n}`);
   b.gate("relay world: contact shares only with explicit consent (0 without; every bad-consent item blocked)", rs.contactWithoutConsent === 0 && cls("contact_share").n > 0 && cls("bad_consent").stopped === cls("bad_consent").n, `${cls("contact_share").n - cls("contact_share").stopped} shared with consent, ${cls("bad_consent").stopped}/${cls("bad_consent").n} bad-consent blocked`);
   b.gate("relay world: relay log rows carry no message body or contact value", rs.logBodies === 0, String(rs.logBodies));
+  // The contact-leak counter above must not be the relay's own guard (a guard miss would then count as 0).
+  await b.run("relay world judge: the contact-leak counter catches contacts the relay guard passes (spelled number, split digits, email in words)", () => {
+    for (const t of ["two one two five five five, then zero one four seven", "two12 five55 o147", "I'm sam r at gmail"]) expect([t, contactShaped(t)]).toEqual([t, true]);
+    for (const t of ["Can we push it to 7:30 instead of 7?", "Running about 10 minutes late, sorry!", "I'll be the one in the green jacket."]) expect([t, contactShaped(t)]).toEqual([t, false]);
+  });
   const ph = pack.extra.reduce((s, e) => s + (e.photos?.withPhoto ?? 0), 0), noPh = pack.extra.reduce((s, e) => s + (e.photos?.withoutPhoto ?? 0), 0);
   await b.run(`no photo is shown between members: 0 probes carry a photo (${ph} with, ${noPh} without)`, () => expect(ph).toBe(0));
   // Founder decision 9: no ID check, and production writes no verify:* fact (packages/network/service/packs.ts). The pinned world
@@ -306,6 +311,17 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
     for (const p of (await runEngine({ ...input, facets: forged }, cfg(5), { pack: slopPack })).proposals) for (const t of Object.values(p.explanations)) { expect(appearanceLeak(t)).toBeNull(); expect(t).not.toMatch(/looks|attractive|athletic|top 10/i); }
   });
 
+  await b.run("conformance slop: a romance item needs an adult with the lane in a stated opt-in list; a missing list is no consent", () => {
+    const gate = slopPack.attention!.itemGate!, item = { category: "romance" } as Parameters<typeof gate>[1];
+    const view = (v: object) => v as Parameters<typeof gate>[0];
+    expect(gate(view({ age: 30, categoriesOptIn: ["romance"] }), item)).toBeNull();
+    expect(gate(view({ age: 30 }), item)).toBe("romance_not_allowed");
+    expect(gate(view({ age: 30, categoriesOptIn: [] }), item)).toBe("romance_not_allowed");
+    expect(gate(view({ age: 17, categoriesOptIn: ["romance"] }), item)).toBe("romance_not_allowed");
+    expect(gate(view({ categoriesOptIn: ["romance"] }), item)).toBe("romance_not_allowed");
+    expect(appearanceLeak("they are plus_size")).not.toBeNull();
+  });
+
   await b.run("conformance slop: adults only; minors are never rated, never get a body-type preference, never shown in a photo", () => {
     let minors = 0;
     for (const p of res.world.personas) if (!canBeMatched(p.stated.claimedAge)) {
@@ -336,7 +352,7 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
       const { w, scored, ctx, result } = seen!;
       // The edge set stableRound saw: eligible two-person candidates, both members usable, at or
       // above minValue. The first pair for a key wins, as it does when the pack builds its edges.
-      const usable = (id: MemberId) => !ctx.exclude?.has(id) && !w.get(id)!.inOpenOpportunity;
+      const usable = (id: MemberId) => !w.get(id)!.inOpenOpportunity;
       const edges = new Map<string, { a: MemberId; b: MemberId; ownA: number; ownB: number }>();
       for (const x of scored) {
         if (!x.eligible || x.c.participants.length !== 2 || x.c.exploration) continue;

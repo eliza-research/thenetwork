@@ -5,6 +5,7 @@ import type { City } from "../../core/src/types.ts";
 import type { AppId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
 import { lastEvents } from "./consent.ts";
+import { challengeClaimable, hitPasses } from "./decisions.ts";
 
 export type PhoneMethod = "otp_sms" | "otp_whatsapp" | "inbound_message" | "staff";
 export type MembershipState = "invited" | "onboarding" | "active" | "paused" | "restricted" | "removed";
@@ -151,6 +152,12 @@ export interface PeopleStore {
   putSession(s: Session): Promise<void>;
   getSession(tokenHash: string): Promise<Session | undefined>;
   revokeSession(tokenHash: string, at: number): Promise<void>;
+  /**
+   * Rotate in one step: end `from` at `graceAt` and store `next` with the person that `from` has now.
+   * Nothing happens (undefined) when `from` is no longer live at `at`: a join's bindSessions may have
+   * ended it after the caller read it (Quint auth_edge, SD-054). Two rotations in the grace time both succeed.
+   */
+  rotateSession(from: string, next: Session, graceAt: number, at: number): Promise<Session | undefined>;
   /**
    * The number has a person now. Of its sessions with no person, `keep` (the web join's own session)
    * gets the person, and every other one ends at `at`: it may belong to an earlier holder of the number.
@@ -331,7 +338,7 @@ export class MemoryPeopleStore implements PeopleStore {
   }
   async claimAttempt(id: string, max: number, at: number) {
     const c = this.challenges.get(id);
-    if (!c || c.consumedAt !== null || c.expiresAt <= at || c.attempts >= max) return false;
+    if (!c || !challengeClaimable(c.consumedAt, c.expiresAt, c.attempts, max, at)) return false;
     c.attempts++;
     return true;
   }
@@ -345,6 +352,14 @@ export class MemoryPeopleStore implements PeopleStore {
   async putSession(s: Session) { this.sessions.set(s.tokenHash, { ...s }); }
   async getSession(tokenHash: string) { const s = this.sessions.get(tokenHash); return s && { ...s }; }
   async revokeSession(tokenHash: string, at: number) { const s = this.sessions.get(tokenHash); if (s) s.revokedAt = s.revokedAt === null ? at : Math.min(s.revokedAt, at); }
+  async rotateSession(from: string, next: Session, graceAt: number, at: number) {
+    const s = this.sessions.get(from);
+    if (!s || (s.revokedAt !== null && s.revokedAt <= at)) return undefined;
+    s.revokedAt = s.revokedAt === null ? graceAt : Math.min(s.revokedAt, graceAt);
+    const row = { ...next, personId: s.personId };
+    this.sessions.set(row.tokenHash, row);
+    return { ...row };
+  }
   async bindSessions(e164: string, personId: string, keep: string | null, at: number) {
     for (const s of this.sessions.values()) if (s.e164 === e164 && s.personId === null) {
       if (s.tokenHash === keep) s.personId = personId;
@@ -365,7 +380,7 @@ export class MemoryPeopleStore implements PeopleStore {
       const cur = this.limits.get(bucket);
       const prevAt = cur?.lastAt ?? null;
       const count = cur && cur.windowStart === at - (at % windowMs) ? cur.count : 0;
-      const ok = !((rule.limit !== undefined && count >= rule.limit) || (rule.minGapMs !== undefined && prevAt !== null && at - prevAt < rule.minGapMs));
+      const ok = hitPasses(count, prevAt, at, rule.limit, rule.minGapMs);
       results.push({ count: count + 1, prevAt, ok });
       if (!ok) return results;
     }

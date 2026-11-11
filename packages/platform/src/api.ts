@@ -18,6 +18,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:
 import { type AccountHooks, Accounts, type HomeInput, type MemberHookContext, parseHome, parseJoin, publicMembership, type Who } from "./accounts.ts";
 import { APPS, type AppId, type AppInfo, appForHost, DEFAULT_HOST_MAP, DEV_HOST_MAP, isAppId, publicAppInfo, siteHosts, stagingSiteOrigins } from "./apps.ts";
 import { devShortcutsAllowed, type Env } from "./env.ts";
+import { cookieNameEnd, isCloudReturnPath } from "./routing-core.ts";
 import { type OtpProvider, OtpService, type OtpLimits } from "./otp.ts";
 import { maskPhone, normalizePhone } from "./phone.ts";
 import { readCappedText } from "./body.ts";
@@ -117,8 +118,8 @@ export const REAUTH_CHANGE_MESSAGE = "For your safety, log in again with a new c
 export function parseCookies(header: string | null): Map<string, string> {
   const out = new Map<string, string>();
   for (const part of (header ?? "").split(";")) {
-    const i = part.indexOf("=");
-    if (i <= 0) continue;
+    const i = cookieNameEnd(part);
+    if (i < 0) continue;
     const k = part.slice(0, i).trim(), raw = part.slice(i + 1).trim();
     try { out.set(k, decodeURIComponent(raw)); } catch { /* not ours, or broken: ignore it */ }
   }
@@ -245,8 +246,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   };
   // Secure (and the __Host- prefix) outside dev, like the session cookie. Cloud auth runs only in dev today;
   // this keeps the cookies safe if the gate is ever widened.
-  const oauthReturnPath = (path: unknown): path is string => typeof path === "string" && path.length === "/oauth/cloud-return?rid=".length+22 && /^\/oauth\/cloud-return\?rid=[A-Za-z0-9_-]{22}$/.test(path);
-  const cloudReturnPath = (path: unknown) => path === "/join" || oauthReturnPath(path);
+  // routing-core.ts: a return path is "/join" or the OAuth return, always a same-origin relative path.
+  const cloudReturnPath = (path: unknown): path is string => typeof path === "string" && isCloudReturnPath(path);
   const startCloudHandoff = async (app: AppId, returnPath: string) => {
     const cloud=cloudFor(app);if(!cloud || !cloudReturnPath(returnPath))return;
     const state=randomBytes(32).toString("hex"),verifier=randomBytes(32).toString("hex");
@@ -374,7 +375,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       const origin = req.headers.get("origin");
       if (origin) {
         let originHost: string | undefined;
-        try { originHost = new URL(origin).host; } catch { /* not a URL */ }
+        // A site is https; plain http is a loopback dev host only.
+        try { const u = new URL(origin); if (u.protocol === "https:" || (dev && u.protocol === "http:" && ["localhost", "127.0.0.1"].includes(u.hostname))) originHost = u.host; } catch { /* not a URL */ }
         if (appForHost(originHost, hostMap) !== appId) return json(403, { ok: false, error: "origin" });
       }
     }
@@ -468,9 +470,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           if (!phoneOtpOnlyApps.has(appId) && o.turnstile && !(await o.turnstile.verify(typeof b.turnstileToken === "string" ? b.turnstileToken : undefined, ip, dev ? undefined : siteHosts(appId, env)))) {
             return json(400, { ok: false, error: "turnstile" });
           }
-          // A banned number gets the same answer as any other, and no code is sent (as MCP startOtp: no sign-in).
-          if (await accounts.banned(e164)) return json(200, { ok: true });
-          const r = await otp.start(app, e164, ip);
+          // A banned number: the same answer and the same limits as any number, and no code goes out.
+          const r = await otp.start(app, e164, ip, !(await accounts.banned(e164)));
           if (!r.ok) return json(429, { ok: false, error: "rate_limited" }, { "retry-after": String(Math.ceil(r.retryAfterMs / 1000)) });
           return json(200, { ok: true });
         } finally {
@@ -506,6 +507,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
 
       case "GET /api/me":
         return withSession(async who => {
+          // A session from before a ban reads nothing (like a review: the answer never says why).
+          if (await accounts.banned(who.e164)) return json(403, { ok: false, error: "review", message: REVIEW_MESSAGE });
           const c = await accounts.canJoin(app, who);
           const live = c.reason === "member" && c.membership && c.person ? c.membership : undefined;
           const participation = live && o.participation ? await o.participation({ app, personId: live.personId, memberId: live.memberId, e164: who.e164 }) : null;
@@ -579,7 +582,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         });
 
       case "GET /api/me/export":
-        return withSession(async who => (await accounts.held(who.e164))
+        return withSession(async who => (await accounts.held(who.e164) || await accounts.banned(who.e164))
           ? json(403, { ok: false, error: "review", message: REVIEW_MESSAGE })
           : json(200, await accounts.exportApp(app, who), { "content-disposition": `attachment; filename="${appId}-export.json"` }));
 

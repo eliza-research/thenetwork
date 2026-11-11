@@ -162,6 +162,15 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
     expect(c.joined.length).toBe(0);
   });
 
+  test("an under-13 age on an invite-only exit declines the person on every app (Quint join_age under13StoresNothing)", async () => {
+    const c = make(store), phone = newPhone();
+    await join(c, "friends", await login(c, "friends", phone), 31, "Ben");
+    const person = await c.api.accounts.personFor(phone);
+    expect((await join(c, "ntwrk", await login(c, "ntwrk", phone), 12)).body.error).toBe("invite_only");
+    // The stated 12 is the person's age now: no membership stays live, as after any under-13 decline.
+    expect((await store.memberships(person!.id)).filter(m => m.state !== "removed")).toEqual([]);
+  });
+
   test("age is person-level: 15 on ntwrk (invited), then 25 on slop joins as 15 (a minor: never matched)", async () => {
     const c = make(store), phone = newPhone();
     const before = await login(c, "ntwrk", phone);

@@ -1,3 +1,4 @@
+import { proofWindowOk } from "./proof-window.js";
 /** Owner intake withdrawal is distinct from provider OAuth revocation. */
 export const PROFILE_REVIEW_WITHDRAWAL_PATH = "/internal/profile-suggestions/withdrawal";
 export const PROFILE_REVIEW_WITHDRAWAL_PROOF_PATH = "/api/internal/network/profile-review-withdrawal";
@@ -14,6 +15,8 @@ export interface ProfileReviewWithdrawalProof extends ProfileReviewWithdrawalReq
   channel: "blooio" | "twilio"; messageId: string; commandSha256: string;
 }
 const keys = ["version", "operation", "app", "personId", "memberId", "connectionId", "withdrawalId", "requestNonce"];
+/** Type first: String(["slop"]) is "slop", so a text-form test accepts arrays. */
+const oneOf = (v: unknown, list: readonly string[]): v is string => typeof v === "string" && list.includes(v);
 const uuid = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(v);
 const id = (v: unknown): v is string => typeof v === "string" && /^[A-Za-z0-9_:.-]{1,128}$/u.test(v);
 const digest = (v: unknown): v is string => typeof v === "string" && /^[a-f0-9]{64}$/u.test(v);
@@ -21,7 +24,7 @@ export function parseProfileReviewWithdrawalRequest(value: unknown): ProfileRevi
   if (!value || typeof value !== "object" || Array.isArray(value)) return;
   const v = value as Record<string, unknown>;
   if (Object.keys(v).length !== keys.length || Object.keys(v).some(k => !keys.includes(k)) || v.version !== 2
-    || !["withdraw", "delete", "readback"].includes(String(v.operation)) || !["ntwrk", "slop", "friends", "peon"].includes(String(v.app))
+    || !oneOf(v.operation, ["withdraw", "delete", "readback"]) || !oneOf(v.app, ["ntwrk", "slop", "friends", "peon"])
     || !uuid(v.personId) || !id(v.memberId) || !uuid(v.connectionId) || !uuid(v.withdrawalId) || !uuid(v.requestNonce)) return;
   return value as ProfileReviewWithdrawalRequest;
 }
@@ -43,9 +46,8 @@ export function parseProfileReviewWithdrawalProof(value: unknown, request: Profi
     || !uuid(v.userId) || !uuid(v.organizationId) || typeof v.chatId !== "string" || !v.chatId.startsWith("personal:") || !uuid(v.chatId.slice(9))
     || !Number.isSafeInteger(now) || !Number.isSafeInteger(v.cutoffAt) || !Number.isSafeInteger(v.issuedAt) || !Number.isSafeInteger(v.expiresAt)
     || (v.cutoffAt as number) < 0 || (v.cutoffAt as number) > (v.issuedAt as number)
-    || (v.issuedAt as number) > now || (v.expiresAt as number) <= now || (v.expiresAt as number) <= (v.issuedAt as number)
-    || (v.expiresAt as number) - (v.issuedAt as number) > 30_000
-    || !["blooio", "twilio"].includes(String(v.channel))
+    || !proofWindowOk(v.issuedAt as number, v.expiresAt as number, now, 30_000)
+    || !oneOf(v.channel, ["blooio", "twilio"])
     || typeof v.messageId !== "string" || !/^[A-Za-z0-9_:.-]{1,200}$/u.test(v.messageId) || !digest(v.commandSha256)) return;
   return value as ProfileReviewWithdrawalProof;
 }

@@ -19,9 +19,9 @@ const REVIEWER = "rev@example.org";
 describe.skipIf(!pgAvailable)("real mode: staff actions through the Network service", () => {
   let url: string;
   let svc: NetworkService;
-  let clock: SimClock;
   let http: ReturnType<typeof Bun.serve>;
   let real: RealSource;
+  let clock: SimClock;
   const seen: { path: string; staff: string | null; body: unknown }[] = [];
   beforeAll(async () => {
     url = await testDb();
@@ -101,7 +101,7 @@ describe.skipIf(!pgAvailable)("real mode: staff actions through the Network serv
 
   test("health: the service's state is in the alerts strip; a service that does not answer is a bad alert and actions refuse", async () => {
     const keys = () => (real.state().stats.alerts ?? []).map(a => `${a.level}:${a.key}`);
-    // The console reads the last tick against the wall clock: the service ticks now.
+    // The console measures the service's last tick against the wall clock: the service moves to it.
     clock.set(Date.now());
     await svc.tick();
     await real.control({ type: "refresh" });

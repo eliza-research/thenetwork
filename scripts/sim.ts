@@ -38,12 +38,14 @@
 //   onboard   slop.date onboarding: evals/slop-onboarding corpus gates (rules only) and the persona onboarding sim (seeds 13-14)
 //   clef      P2 Clef weight fitting: synthetic labels from the slop world's hidden appearance (seed 1, 2,000 labels
 //             per dimension); ranking recovery, weights file round trip, extraction, bias audit, labelling page
+//   formal    LemmaScript proofs: lsc check on every entry of LemmaScript-files.txt (needs Dafny; tracked as skipped without it, REQUIRE_DAFNY=1 fails)
 //   capital   network capital: 32 paired seeds, 90 days (--with-capital or --only capital)
 import { auditBlock } from "./sim/audit.ts";
 import { capitalBlock } from "./sim/capital.ts";
 import { clefBlock } from "./sim/clef.ts";
 import { evalsBlock } from "./sim/evals.ts";
 import { friendsBlock } from "./sim/friends.ts";
+import { formalBlock } from "./sim/formal.ts";
 import { judgeBlock } from "./sim/judge.ts";
 import { Block, type Gate } from "./sim/gate.ts";
 import { onboardBlock } from "./sim/onboard.ts";
@@ -79,8 +81,9 @@ const BLOCKS: Record<string, (b: Block, o: Opts) => Promise<void>> = {
   worlds: b => worldsBlock(b),
   clef: b => clefBlock(b),
   capital: capitalBlock,
+  formal: b => formalBlock(b),
 };
-const DEFAULT = ["evals", "onboard", "network", "slop", "relay", "peon", "peon-seats", "friends", "clef", "safety", "ops", "pipeline", "audit", "judge", "persona", "stub", "worlds"];
+const DEFAULT = ["formal", "evals", "onboard", "network", "slop", "relay", "peon", "peon-seats", "friends", "clef", "safety", "ops", "pipeline", "audit", "judge", "persona", "stub", "worlds"];
 
 const argv = process.argv.slice(2);
 const values = (k: string) => argv.flatMap((x, i) => (x === `--${k}` ? (argv[i + 1] ?? "").split(",") : x.startsWith(`--${k}=`) ? x.slice(k.length + 3).split(",") : [])).filter(Boolean);

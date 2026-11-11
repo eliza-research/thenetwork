@@ -7,6 +7,7 @@ import { parseProfileReviewDisconnectProof, parseProfileReviewDisconnectRequest,
   type ProfileReviewDisconnectRequest, type ProfileReviewDisconnectProof } from "../../core/src/svc/profile-review-disconnect.ts";
 import { fold, isSensitiveTerm, type AppId } from "@thenetwork/core";
 import { resolveConsent } from "../../platform/src/consent.ts";
+import { cleanupAction, reviewPath } from "./decisions.ts";
 
 /** These values come from authenticated server context, never an assistant's arguments. */
 export interface SuggestionOwner { userId: string; organizationId: string; personId: string; app: AppId; chatId: string }
@@ -288,7 +289,8 @@ export class ProfileSuggestions {
       if (input.decisions.some(d => d.action === "accept") && !(await this.member(tx, owner))?.eligible) return { kind: "denied" };
       this.checkAuthority(b);
       // An edit or scope change is always a new preview, never an implicit acceptance.
-      if (input.decisions.some(d => d.editedValue !== undefined || (d.scope !== undefined && d.scope !== rows.find((r: any) => r.id === d.suggestionId).privacy_scope))) {
+      const anyEdit = input.decisions.some(d => d.editedValue !== undefined), anyScope = input.decisions.some(d => d.scope !== undefined && d.scope !== rows.find((r: any) => r.id === d.suggestionId).privacy_scope);
+      if (reviewPath(anyEdit, anyScope) === "preview") {
         for (const d of input.decisions) if (d.action === "accept") await tx`update platform.profile_suggestions
           set value=coalesce(${d.editedValue?.trim() ?? null},value),privacy_scope=coalesce(${d.scope ?? null},privacy_scope),
             tags=case when ${d.editedValue !== undefined} then '{}'::text[] else tags end where id=${d.suggestionId}`;
@@ -347,7 +349,7 @@ export class ProfileSuggestions {
       for (const b of batches) {
         const rows = await tx`select * from platform.profile_suggestions where batch_id=${b.id} and connection_id=${connectionId} for update`;
         for (const s of rows) {
-          if (s.status === "accepted" && b.retain_on_disconnect) continue;
+          if (cleanupAction("disconnect", s.status, b.retain_on_disconnect) === "keep") continue;
           if (s.fact_id) await tx`delete from network.facets where id=${s.fact_id} and app_id=${owner.app}`;
           await tx`update platform.profile_suggestions set status='withdrawn',value=null,tags='{}',fact_id=null where id=${s.id}`;
         }
@@ -396,10 +398,10 @@ export class ProfileSuggestions {
             where app_id=${owner.app} and batch_id=${batch.id} and connection_id=${request.connectionId} order by id for update`;
           let changed = false;
           for (const row of rows) {
-            if (request.operation === "readback") continue;
-            if (request.operation === "disconnect" && row.status === "accepted" && batch.retain_on_disconnect) continue;
+            const action = cleanupAction(request.operation, row.status, batch.retain_on_disconnect);
+            if (action === "keep") continue;
             if (row.fact_id) await tx`delete from network.facets where id=${row.fact_id} and app_id=${owner.app} and member_id=${member.id}`;
-            if (request.operation === "delete") await tx`delete from platform.profile_suggestions where id=${row.id} and app_id=${owner.app} and batch_id=${batch.id}`;
+            if (action === "delete") await tx`delete from platform.profile_suggestions where id=${row.id} and app_id=${owner.app} and batch_id=${batch.id}`;
             else await tx`update platform.profile_suggestions set status='withdrawn',value=null,tags='{}',fact_id=null
               where id=${row.id} and app_id=${owner.app} and batch_id=${batch.id}`;
             changed = true;
@@ -487,8 +489,9 @@ export class ProfileSuggestions {
             and batch_id=${batch.id} and connection_id=${request.connectionId} order by id for update`;
           let changed = false;
           for (const row of rows) {
-            if (request.operation === 'readback' || (request.operation === 'withdraw' && row.status !== 'proposed')) continue;
-            if (request.operation === 'delete') {
+            const action = cleanupAction(request.operation, row.status, false);
+            if (action === 'keep') continue;
+            if (action === 'delete') {
               if (row.fact_id) await tx`delete from network.facets where app_id=${owner.app} and member_id=${member.id} and id=${row.fact_id}`;
               await tx`delete from platform.profile_suggestions where id=${row.id} and app_id=${owner.app} and batch_id=${batch.id}`;
             } else {

@@ -7,8 +7,9 @@
 // journey-parent-turn, learning-context-proof, cloud-proof-chain, review-proofs, connector-profile-journey.
 // Source reports: docs/research/state-machines/gap-connector-journey.md, platform-consent.md section 7.
 //
-// State of the code: branch wave2/profile_learning after the fixes for SD-170, SD-175, SD-240, SD-455,
-// SD-458, SD-462, SD-463, SD-464 and Q-profile_learning-1 (docs/research/quint-findings/profile_learning.md).
+// State of the code: the fixes for SD-170, SD-175, SD-240, SD-455, SD-458, SD-462, SD-463, SD-464 and
+// Q-profile_learning-1 are in (docs/research/quint-findings/profile_learning.md). Line numbers below were
+// compared with the code on claude/formal-main.
 // The invariants of the defects that are still open (SD-112, SD-172, SD-242, SD-376) are kept out of
 // `safety`; each one is a named value with the defect id and the reason.
 //
@@ -22,7 +23,10 @@
 //   PF = packages/network/service/profile-review-factory.ts
 //   SV = packages/network/service/service.ts
 //   AC = packages/platform/src/accounts.ts, PG = packages/platform/src/pg-store.ts
-//   0039, 0040 = packages/observatory/db/migrations/0039_profile_suggestions.sql, 0040_...receipts.sql
+//   RT = packages/network/service/runtime.ts (forget)
+//   0039, 0040, 0052 = packages/observatory/db/migrations/0039_profile_suggestions.sql, 0040_...receipts.sql,
+//   0052_profile_learning.sql
+//   ProfileSuggestions.disconnect (PS:343-359) has no caller in production code; it is not modeled.
 //
 // Scope and abstraction.
 // - One person, one app, one chat. Two batches (one collect turn each), two items per batch, two Google
@@ -36,6 +40,11 @@
 // - Oracles: Cloud owner proof (always true for the real owner), Cloud source proof (true iff the
 //   connection is active and Cloud holds learning consent), Cloud consent writes, Google revocation.
 // - The gateway is a nondeterministic retrier: a reply can be lost and the same request sent again.
+// - One review turn carries one command (EP:84 the request text must equal the stored turn body; the
+//   delete text is "delete <batch>"). The store keys its result on that turn (PS:271, PS:332), so a turn
+//   applies at most one decide or delete: `cmdUsed`.
+// - Delete everything (AC:484-496) runs the runtime forget of each live membership (RT:588-625) and then
+//   the store delete (PG:355-397). The model merges them into one step, deleteAll.
 // - Upstream assumptions (not in this repository): Cloud issues the revoked proof only for a revoked
 //   connection; Cloud records the withdrawal event after the member's withdrawal turn.
 
@@ -95,6 +104,7 @@ module profile_learning {
   // Turns and proofs.
   var turnAt: int -> int               // arrival (Network clock) of the collect turn for batch b, -1 if none
   var cmdAt: int                       // arrival of the last review command turn, -1 if none
+  var cmdUsed: bool                    // that turn already applied its decide or delete (PS:271, PS:332)
   var consentProofs: Set[int]          // batches with a signed learning-consent-context proof (LC)
   // Store.
   var batch: int -> Batch
@@ -107,7 +117,7 @@ module profile_learning {
   var wTurnAt: int                     // V2: arrival of the member's withdrawal turn, -1 if none
   var wConn: int
   var wCutoff: int                     // V2: Cloud event time (proof.cutoffAt), -1 if none
-  var v2Receipts: Set[str]             // inbound.action_receipts["profile-withdrawal-v2:<id>"], by op
+  var v2Receipts: Set[str]             // inbound.action_receipts["profile-withdrawal-v2:<id>"]: the op of the one receipt
   var lastReq: Req                     // the last decide or delete request, for gateway retry
   // Ghost state (observations of the history; the code does not hold these).
   var created: int -> int              // inserts per batch id
@@ -129,14 +139,14 @@ module profile_learning {
   var replayed: bool
 
   // ------------------------------------------------------------------ derived predicates
-  // owned() finds a row (PS:82-90): the membership is not removed, the person is not deleted, and the
+  // owned() finds a row (PS:83-91): the membership is not removed, the person is not deleted, and the
   // member row still joins the person (forget sets person_id null).
   val ownedExists = (membership == "active" or membership == "paused") and not(forgotten)
   // PS member().eligible: the projection, and the canonical consent ledger (fix of SD-175: a STOP or a
   // leave consent event makes the member ineligible before the projection changes).
   val eligible = membership == "active" and not(projOut) and not(ledgerStop) and not(minor) and not(banned)
     and not(held) and not(forgotten)
-  // activeMembership at turn time (SV:2089-2091, AC:319-328): the ledger, ban, hold, state. 13+ passes.
+  // activeMembership at turn time (SV:2372-2390, AC:329-338): the ledger, ban, hold, state. 13+ passes.
   val turnOpen = membership == "active" and not(ledgerStop) and not(banned) and not(held) and not(forgotten)
   // The person/member row locks are held by the in-flight collect.
   val locked = col.active
@@ -156,7 +166,7 @@ module profile_learning {
     ledgerStop' = false, projOut' = false, banned' = false, held' = false, minor' = false,
     membership' = "active", forgotten' = false, leaveStage' = "none", sealed' = false,
     learningConsent' = false, conn' = CONNS.mapBy(c => "active"), revokedAt' = CONNS.mapBy(c => -1),
-    turnAt' = BATCHES.mapBy(b => -1), cmdAt' = -1, consentProofs' = Set(),
+    turnAt' = BATCHES.mapBy(b => -1), cmdAt' = -1, cmdUsed' = false, consentProofs' = Set(),
     batch' = BATCHES.mapBy(b => NOBATCH), row' = ITEMS.mapBy(i => NOITEM), facts' = Set(),
     collectReceipt' = Set(), col' = NOCOL, plan' = ITEMS.mapBy(i => { conn: 1, cal: false, obs: 0 }),
     v1Receipts' = Map(), wTurnAt' = -1, wConn' = 1, wCutoff' = -1, v2Receipts' = Set(), lastReq' = NOREQ,
@@ -173,7 +183,7 @@ module profile_learning {
   action keepMember = all { ledgerStop' = ledgerStop, projOut' = projOut, banned' = banned, held' = held,
     minor' = minor, membership' = membership, forgotten' = forgotten, leaveStage' = leaveStage, sealed' = sealed }
   action keepCloud = all { learningConsent' = learningConsent, conn' = conn, revokedAt' = revokedAt }
-  action keepTurns = all { turnAt' = turnAt, cmdAt' = cmdAt, consentProofs' = consentProofs,
+  action keepTurns = all { turnAt' = turnAt, cmdAt' = cmdAt, cmdUsed' = cmdUsed, consentProofs' = consentProofs,
     wTurnAt' = wTurnAt, wConn' = wConn, wCutoff' = wCutoff }
   action keepStore = all { batch' = batch, row' = row, facts' = facts, collectReceipt' = collectReceipt,
     col' = col, plan' = plan, v1Receipts' = v1Receipts, v2Receipts' = v2Receipts, lastReq' = lastReq }
@@ -194,15 +204,15 @@ module profile_learning {
   action tickC = all { nowC < MAXT, nowC + 1 - nowN <= SKEW, nowC' = nowC + 1, nowN' = nowN,
     reviewEnabled' = reviewEnabled, keepMember, keepCloud, keepTurns, keepStore, keepGhost }
 
-  // ------------------------------------------------------------------ member turns (SV:2089-2091)
+  // ------------------------------------------------------------------ member turns (SV:2372-2390)
   // "collect <uuid> <scope>" as an open turn. One batch id per turn.
   action memberCollectCmd(b: int): bool = all {
     turnOpen, turnAt.get(b) == -1, turnAt' = turnAt.set(b, nowN),
-    cmdAt' = cmdAt, consentProofs' = consentProofs, wTurnAt' = wTurnAt, wConn' = wConn, wCutoff' = wCutoff,
+    cmdAt' = cmdAt, cmdUsed' = cmdUsed, consentProofs' = consentProofs, wTurnAt' = wTurnAt, wConn' = wConn, wCutoff' = wCutoff,
     keepClock, keepMember, keepCloud, keepStore, keepGhost }
   // "preview|accept|edit|reject|delete <uuid>..." as an open turn.
   action memberReviewCmd = all {
-    turnOpen, cmdAt' = nowN,
+    turnOpen, cmdAt' = nowN, cmdUsed' = false,
     turnAt' = turnAt, consentProofs' = consentProofs, wTurnAt' = wTurnAt, wConn' = wConn, wCutoff' = wCutoff,
     keepClock, keepMember, keepCloud, keepStore, keepGhost }
 
@@ -216,7 +226,7 @@ module profile_learning {
     eligible, not(ledgerStop),
     consentProofs' = consentProofs.union(Set(b)), learningConsent' = true,
     consentProofWhileStopped' = (consentProofWhileStopped or ledgerStop),
-    turnAt' = turnAt, cmdAt' = cmdAt, wTurnAt' = wTurnAt, wConn' = wConn, wCutoff' = wCutoff,
+    turnAt' = turnAt, cmdAt' = cmdAt, cmdUsed' = cmdUsed, wTurnAt' = wTurnAt, wConn' = wConn, wCutoff' = wCutoff,
     conn' = conn, revokedAt' = revokedAt,
     created' = created, beforeRevoke' = beforeRevoke, v1Done' = v1Done,
     wBefore' = wBefore, v2Done' = v2Done, addedAfterStop' = addedAfterStop, addedBannedOrHeld' = addedBannedOrHeld,
@@ -229,8 +239,8 @@ module profile_learning {
     keepClock, keepMember, keepTurns, keepStore, keepGhost }
 
   // ------------------------------------------------------------------ collect (EP:72-113, PS.propose)
-  // T2 begins: owned() locks person, member, membership (PS:136, PS:78-90), owner proof, eligible,
-  // stored turn under `for update of i` (PS:142-149). created_at is the `now` captured before the lock (EP:109).
+  // T2 begins: owned() locks person, member, membership (PS:86, PS:95-104), owner proof, eligible,
+  // stored turn under `for update of i` (PS:196-205). created_at is the `now` captured before the lock (EP:109).
   action collectBegin(b: int): bool = all {
     reviewEnabled, not(col.active),
     turnAt.get(b) >= 0, nowN - turnAt.get(b) < PARENT, not(sealed),
@@ -239,7 +249,7 @@ module profile_learning {
     nondet c2 = CONNS.oneOf()
     nondet cal1 = Set(true, false).oneOf()
     nondet cal2 = Set(true, false).oneOf()
-    // PS:127-128: observed inside the window; Gmail never in the future; a Calendar start may be.
+    // PS:182-183: observed inside the window; Gmail never in the future; a Calendar start may be.
     nondet fut1 = Set(true, false).oneOf()
     nondet fut2 = Set(true, false).oneOf()
     nondet ttl = Set(2, 4).oneOf()
@@ -283,14 +293,14 @@ module profile_learning {
             created' = created, addedAfterStop' = addedAfterStop, addedBannedOrHeld' = addedBannedOrHeld,
             addedMinor' = addedMinor, saidNothingSaved' = saidNothingSaved, replayed' = replayed }
     else if (b.in(collectReceipt))
-      // PS:162-175: replay returns the stored preview only if the batch is intact; never inserts.
+      // PS:221-235: replay returns the stored preview only if the batch is intact; never inserts.
       all { col' = NOCOL, batch' = batch, row' = row, facts' = facts, collectReceipt' = collectReceipt,
             created' = created, addedAfterStop' = addedAfterStop, addedBannedOrHeld' = addedBannedOrHeld,
             addedMinor' = addedMinor, saidNothingSaved' = saidNothingSaved, replayed' = true }
     else
       val newItems = itemsOf(b).mapBy(i => { status: "proposed", conn: plan.get(i).conn, cal: plan.get(i).cal,
                                              obs: plan.get(i).obs, hasValue: true, fact: false, terminalAt: -1 })
-      // RV currentBatch fails only for a future Gmail row; the store never makes one (PS:127-128).
+      // RV currentBatch fails only for a future Gmail row; the store never makes one (PS:182-183).
       val anyFuture = itemsOf(b).exists(i => plan.get(i).obs > nowN and not(plan.get(i).cal))
       all {
         col' = NOCOL,
@@ -324,7 +334,7 @@ module profile_learning {
     projOut' = projOut, banned' = banned, held' = held, minor' = minor, membership' = membership,
     forgotten' = forgotten, leaveStage' = leaveStage, sealed' = sealed,
     keepClock, keepCloud, keepTurns, keepStore, keepGhost }
-  // stopped() (SV:801-813) writes the membership and member rows: it waits on `for update of n, m`.
+  // stopped() (SV:893-906) writes the membership and member rows: it waits on `for update of n, m`.
   action stopProjection = all { ledgerStop, not(projOut), not(locked), ownedExists,
     projOut' = true, membership' = if (membership == "active") "paused" else membership,
     ledgerStop' = ledgerStop, banned' = banned, held' = held, minor' = minor,
@@ -335,12 +345,14 @@ module profile_learning {
     ledgerStop' = false, projOut' = false, membership' = "active",
     banned' = banned, held' = held, minor' = minor, forgotten' = forgotten, leaveStage' = leaveStage, sealed' = sealed,
     keepClock, keepCloud, keepTurns, keepStore, keepGhost }
-  // A ban is a plain insert into platform.bans (PG:170): no person or member lock.
+  // A ban inserts into platform.bans (PG:189-200). A ban that names the person first reads the person row
+  // `for share` (it waits for a running collect); a ban by phone only takes no lock. The action has no lock
+  // guard, so it covers both.
   action ban = all { not(banned), banned' = true,
     ledgerStop' = ledgerStop, projOut' = projOut, held' = held, minor' = minor, membership' = membership,
     forgotten' = forgotten, leaveStage' = leaveStage, sealed' = sealed,
     keepClock, keepCloud, keepTurns, keepStore, keepGhost }
-  // A hold is an update of platform.phone_identities (PG:78): not locked by owned().
+  // A hold is an update of platform.phone_identities (PG:77-78): not locked by owned().
   action hold = all { not(held), held' = true,
     ledgerStop' = ledgerStop, projOut' = projOut, banned' = banned, minor' = minor, membership' = membership,
     forgotten' = forgotten, leaveStage' = leaveStage, sealed' = sealed,
@@ -353,27 +365,28 @@ module profile_learning {
 
   // ------------------------------------------------------------------ review (EP decide/delete, RV, PS)
   // reviewSuggestionMessage: getPendingBatch + parse (T1), then decide (T2). The token revision comes
-  // from T1; a stale token is a nondeterministic choice. Source proof per accept or edit (PS:220-222).
+  // from T1; a stale token is a nondeterministic choice. Source proof per accept or edit (PS:285-287).
   // An accept reads member() again after the Cloud calls (fix of Q-profile_learning-1); one action here,
   // so `eligible` is read at the commit. A committed decide stores its result on the review turn
   // (fix of SD-458): "saved" for accept or reject, "preview" with the new revision for an edit.
   action decide(b: int, i: int, act: str, stale: bool, lost: bool): bool = all {
-    reviewEnabled, cmdFresh, not(locked), ownedExists, batchOf(i) == b,
+    reviewEnabled, cmdFresh, not(cmdUsed), not(locked), ownedExists, batchOf(i) == b,
     batch.get(b).exists,
     val bt = batch.get(b)
     val rev = if (stale) bt.rev - 1 else bt.rev
     if (nowN >= bt.expiresAt)
-      // view() / PS:208-210: expire pending rows, deny. The expiry write commits.
+      // view() / PS:273-276: expire pending rows, deny. The expiry write commits.
       all {
         row' = ITEMS.mapBy(j => if (batchOf(j) == b and row.get(j).status == "proposed")
                                    row.get(j).with("status", "expired").with("hasValue", false).with("terminalAt", nowN)
                                  else row.get(j)),
-        batch' = batch, facts' = facts, lastReq' = lastReq,
+        batch' = batch, facts' = facts, lastReq' = lastReq, cmdUsed' = cmdUsed,
         acceptedAfterExpiry' = acceptedAfterExpiry, everAccepted' = everAccepted,
         addedAfterStop' = addedAfterStop, addedBannedOrHeld' = addedBannedOrHeld, addedMinor' = addedMinor,
       }
     else all {
-      // RV:51-57: no render means no decision (SD-240); the revision must match (PS:212).
+      cmdUsed' = true,
+      // RV:40-45, RV:59-66: no render means no decision (SD-240); the revision must match (PS:277).
       renderable(b), rev == bt.rev, row.get(i).status == "proposed",
       if (act == "accept") all {
         eligible, sourceProof(row.get(i).conn),
@@ -387,7 +400,7 @@ module profile_learning {
         addedBannedOrHeld' = (addedBannedOrHeld or banned or held),
         addedMinor' = (addedMinor or minor),
       } else if (act == "edit") all {
-        // An edit or scope change is a new preview (PS:226-233).
+        // An edit or scope change is a new preview (PS:291-302).
         eligible, sourceProof(row.get(i).conn),
         row' = row, facts' = facts,
         batch' = batch.set(b, bt.with("rev", bt.rev + 1)),
@@ -395,7 +408,7 @@ module profile_learning {
         acceptedAfterExpiry' = acceptedAfterExpiry, everAccepted' = everAccepted,
         addedAfterStop' = addedAfterStop, addedBannedOrHeld' = addedBannedOrHeld, addedMinor' = addedMinor,
       } else all {
-        // reject needs ownership only (PS:246).
+        // reject needs ownership only (PS:313-315).
         row' = row.set(i, row.get(i).with("status", "rejected").with("hasValue", false).with("terminalAt", nowN)),
         facts' = facts,
         batch' = batch.set(b, bt.with("rev", bt.rev + 1)),
@@ -409,13 +422,15 @@ module profile_learning {
     saidNothingSaved' = saidNothingSaved, touchedAfterCutoff' = touchedAfterCutoff,
     retryDeniedAfterCommit' = retryDeniedAfterCommit, v2DeniedBySkew' = v2DeniedBySkew,
     consentProofWhileStopped' = consentProofWhileStopped, everDeleted' = everDeleted, replayed' = replayed,
-    keepClock, keepMember, keepCloud, keepTurns }
+    turnAt' = turnAt, cmdAt' = cmdAt, consentProofs' = consentProofs, wTurnAt' = wTurnAt, wConn' = wConn, wCutoff' = wCutoff,
+    keepClock, keepMember, keepCloud }
 
   // "delete <uuid>" (PS deleteBatch): the batch row goes; the 0039 trigger deletes linked facts; rows cascade.
   // The result "deleted" is stored on the review turn (fix of SD-458).
   action deleteBatch(b: int, lost: bool): bool = all {
-    reviewEnabled, cmdFresh, not(locked), ownedExists, batch.get(b).exists,
+    reviewEnabled, cmdFresh, not(cmdUsed), not(locked), ownedExists, batch.get(b).exists,
     all {
+      cmdUsed' = true,
       batch' = batch.set(b, NOBATCH),
       row' = ITEMS.mapBy(i => if (batchOf(i) == b) NOITEM.with("status", "gone") else row.get(i)),
       facts' = facts.exclude(itemsOf(b)),
@@ -429,7 +444,8 @@ module profile_learning {
     touchedAfterCutoff' = touchedAfterCutoff, retryDeniedAfterCommit' = retryDeniedAfterCommit,
     v2DeniedBySkew' = v2DeniedBySkew, consentProofWhileStopped' = consentProofWhileStopped,
     everAccepted' = everAccepted, replayed' = replayed,
-    keepClock, keepMember, keepCloud, keepTurns }
+    turnAt' = turnAt, cmdAt' = cmdAt, consentProofs' = consentProofs, wTurnAt' = wTurnAt, wConn' = wConn, wCutoff' = wCutoff,
+    keepClock, keepMember, keepCloud }
 
   // The gateway sends the same signed request again after a lost reply. EP calls PS priorReview first
   // (fix of SD-458): owned() must find the member; the stored "saved" or "deleted" result comes back as it
@@ -456,7 +472,7 @@ module profile_learning {
     replayed' = replayed,
     keepClock, keepMember, keepCloud, keepTurns }
 
-  // expirePending tick (PS:449-459, SV:570): proposed rows of expired batches lose their text.
+  // expirePending tick (PS:523-533, SV:599): proposed rows of expired batches lose their text.
   // Rows are not deleted and the batch stays (SD-376).
   // `for update skip locked` on batch rows: it never waits on the person lock of a running collect.
   action expireTick = all {
@@ -468,7 +484,7 @@ module profile_learning {
     v1Receipts' = v1Receipts, v2Receipts' = v2Receipts, lastReq' = lastReq,
     keepClock, keepMember, keepCloud, keepTurns, keepGhost }
 
-  // ------------------------------------------------------------------ Google revocation and V1 (DE, PS:287-361)
+  // ------------------------------------------------------------------ Google revocation and V1 (DE, PS:362-434)
   action revoke(c: int): bool = all {
     conn.get(c) == "active",
     conn' = conn.set(c, "revoked"), revokedAt' = revokedAt.set(c, nowC), learningConsent' = learningConsent,
@@ -486,11 +502,11 @@ module profile_learning {
     keepClock, keepMember, keepTurns, keepStore, keepGhost }
 
   // One V1 transaction. The proof says connectionState "revoked" with revokedAt on the Cloud clock.
-  // Batches are selected by created_at (Network clock) <= revokedAt (Cloud clock) (PS:319-322).
+  // Batches are selected by created_at (Network clock) <= revokedAt (Cloud clock) (PS:392-395).
   action v1(c: int, op: str, nonce: int): bool = all {
     reviewEnabled, conn.get(c) == "revoked", revokedAt.get(c) >= 0, not(locked), ownedExists,
     if (v1Receipts.keys().contains(nonce))
-      // Replay: same identity returns stored counts; any other identity is null (PS:304-317). No mutation.
+      // Replay: same identity returns stored counts; any other identity is null (PS:377-391). No mutation.
       all { batch' = batch, row' = row, facts' = facts, v1Receipts' = v1Receipts,
             v1Done' = v1Done, touchedAfterCutoff' = touchedAfterCutoff }
     else
@@ -521,17 +537,17 @@ module profile_learning {
     replayed' = replayed,
     keepClock, keepMember, keepCloud, keepTurns }
 
-  // ------------------------------------------------------------------ owner withdrawal V2 (WE, PS:364-446)
+  // ------------------------------------------------------------------ owner withdrawal V2 (WE, PS:437-520)
   // "stop learning from <connection>" as an open turn (arrived_at on the Network clock).
   action withdrawCmd(c: int): bool = all {
     turnOpen, wTurnAt == -1, wTurnAt' = nowN, wConn' = c,
-    turnAt' = turnAt, cmdAt' = cmdAt, consentProofs' = consentProofs, wCutoff' = wCutoff,
+    turnAt' = turnAt, cmdAt' = cmdAt, cmdUsed' = cmdUsed, consentProofs' = consentProofs, wCutoff' = wCutoff,
     keepClock, keepMember, keepCloud, keepStore, keepGhost }
   // Cloud records its canonical withdrawal event after the turn (upstream assumption); cutoffAt is Cloud time.
   action cloudWithdrawEvent = all {
     wTurnAt >= 0, wCutoff == -1, wCutoff' = nowC, learningConsent' = false,
     wBefore' = BATCHES.filter(b => batch.get(b).exists),
-    turnAt' = turnAt, cmdAt' = cmdAt, consentProofs' = consentProofs, wTurnAt' = wTurnAt, wConn' = wConn,
+    turnAt' = turnAt, cmdAt' = cmdAt, cmdUsed' = cmdUsed, consentProofs' = consentProofs, wTurnAt' = wTurnAt, wConn' = wConn,
     conn' = conn, revokedAt' = revokedAt,
     created' = created, beforeRevoke' = beforeRevoke, v1Done' = v1Done, v2Done' = v2Done,
     addedAfterStop' = addedAfterStop, addedBannedOrHeld' = addedBannedOrHeld, addedMinor' = addedMinor,
@@ -544,10 +560,13 @@ module profile_learning {
   action v2(op: str): bool = all {
     reviewEnabled, wCutoff >= 0, not(sealed), not(locked), ownedExists,
     if (wTurnAt > wCutoff)
-      // PS:386: arrived_at > cutoffAt returns null; every retry sees the same two values.
+      // PS:459: arrived_at > cutoffAt returns null; every retry sees the same two values.
       all { batch' = batch, row' = row, facts' = facts, v2Receipts' = v2Receipts, v2Done' = v2Done,
             touchedAfterCutoff' = touchedAfterCutoff, v2DeniedBySkew' = true }
-    else if (v2Receipts.contains(op))
+    // PS:468-479: the receipt key is the withdrawal id, and its identity holds the operation and the
+    // request hash. After one withdraw or delete of this withdrawal, every other request returns the
+    // stored counts or null: no second mutation, also not with the other operation.
+    else if (v2Receipts != Set())
       all { batch' = batch, row' = row, facts' = facts, v2Receipts' = v2Receipts, v2Done' = v2Done,
             touchedAfterCutoff' = touchedAfterCutoff, v2DeniedBySkew' = v2DeniedBySkew }
     else
@@ -577,7 +596,7 @@ module profile_learning {
     keepClock, keepMember, keepCloud, keepTurns }
 
   // ------------------------------------------------------------------ leave and delete everything
-  // AC.leave (AC:420-429): consent event, then onForget (runtime forget: facets and, since the fix of
+  // AC.leave (AC:472-481): consent event, then onForget (runtime forget: facets and, since the fix of
   // SD-463, profile suggestion batches deleted, person_id null, turns sealed), then forgetMembership
   // (state removed; the 0039 trigger deletes what is left). Three separate transactions; a crash can stop
   // the run between them, but the batches are already gone after the forget.
@@ -590,24 +609,26 @@ module profile_learning {
   action leaveForget = all { leaveStage == "consent", not(locked),
     leaveStage' = "forgot", forgotten' = true, sealed' = true,
     facts' = Set(),
-    // runtime.ts forget: delete from platform.profile_suggestion_batches (rows cascade).
+    // RT:611 forget: delete from platform.profile_suggestion_batches (rows cascade). RT:592-595 resets the
+    // member's inbound turns (action_receipts '{}'): the collect and V2 receipts go.
     batch' = BATCHES.mapBy(b => NOBATCH),
     row' = ITEMS.mapBy(i => if (row.get(i).status == "none") NOITEM else NOITEM.with("status", "gone")),
     ledgerStop' = ledgerStop, projOut' = projOut, banned' = banned, held' = held, minor' = minor, membership' = membership,
-    collectReceipt' = collectReceipt, col' = col, plan' = plan,
-    v1Receipts' = v1Receipts, v2Receipts' = v2Receipts, lastReq' = lastReq,
+    collectReceipt' = Set(), col' = col, plan' = plan,
+    v1Receipts' = v1Receipts, v2Receipts' = Set(), lastReq' = lastReq,
     keepClock, keepCloud, keepTurns, keepGhost }
   action leaveMembership = all { leaveStage == "forgot", not(locked),
     leaveStage' = "done", membership' = "removed",
+    // 0052 trigger on state 'removed': the batches and the V1 connection cleanup receipts go.
     batch' = BATCHES.mapBy(b => NOBATCH),
     row' = ITEMS.mapBy(i => if (row.get(i).status == "none") NOITEM else NOITEM.with("status", "gone")),
     facts' = Set(),
     ledgerStop' = ledgerStop, projOut' = projOut, banned' = banned, held' = held, minor' = minor,
     forgotten' = forgotten, sealed' = sealed,
     collectReceipt' = collectReceipt, col' = col, plan' = plan,
-    v1Receipts' = v1Receipts, v2Receipts' = v2Receipts, lastReq' = lastReq,
+    v1Receipts' = Map(), v2Receipts' = v2Receipts, lastReq' = lastReq,
     keepClock, keepCloud, keepTurns, keepGhost }
-  // Delete everything (PG:304-325): one transaction under the person lock. Memberships are deleted, turns
+  // Delete everything (PG:355-397): one transaction under the person lock. Memberships are deleted, turns
   // sealed. The membership delete trigger (0052, fix of SD-170) removes the batches and the V1 connection
   // cleanup receipts of the person and app.
   action deleteAll = all { not(locked), membership != "deleted",
@@ -616,8 +637,9 @@ module profile_learning {
     row' = ITEMS.mapBy(i => if (row.get(i).status == "none") NOITEM else NOITEM.with("status", "gone")),
     facts' = Set(),
     ledgerStop' = ledgerStop, projOut' = projOut, banned' = banned, held' = held, minor' = minor,
-    collectReceipt' = collectReceipt, col' = col, plan' = plan,
-    v1Receipts' = Map(), v2Receipts' = v2Receipts, lastReq' = lastReq,
+    // PG:369-371 resets the person's inbound turns (action_receipts '{}'): the collect and V2 receipts go.
+    collectReceipt' = Set(), col' = col, plan' = plan,
+    v1Receipts' = Map(), v2Receipts' = Set(), lastReq' = lastReq,
     keepClock, keepCloud, keepTurns, keepGhost }
 
   // ------------------------------------------------------------------ step
@@ -666,15 +688,15 @@ module profile_learning {
     else any { time, time, journey, journey, journey, journey, journey, journey, disturb, disturb, terminal }
 
   // ------------------------------------------------------------------ invariants
-  // INV-1. SQL check 0039:39: a proposed row has text; every other row has none.
+  // INV-1. SQL check 0039:38: a proposed row has text; every other row has none.
   val inv_textOnlyWhenProposed = ITEMS.forall(i =>
     (row.get(i).status == "proposed") == row.get(i).hasValue)
 
-  // INV-2. AF-1 (gap-connector-journey 7.2), PS:65 "only accepted values enter the canonical facet table":
+  // INV-2. AF-1 (gap-connector-journey 7.2), PS:70 "only accepted values enter the canonical facet table":
   // a source fact exists only for an accepted row.
   val inv_factOnlyFromAccept = facts.forall(i => row.get(i).status == "accepted")
 
-  // INV-3. collection-claim, PS:158-159 "replay cannot recreate erased private suggestions":
+  // INV-3. collection-claim, PS:217-218 "replay cannot recreate erased private suggestions":
   // one batch per collect turn, at most one insert per batch id.
   val inv_oneBatchPerTurn = BATCHES.forall(b => created.get(b) <= 1)
 
@@ -690,7 +712,7 @@ module profile_learning {
   // (J-14). (SD-175, fixed)
   val inv_noAddAfterStop = not(addedAfterStop)
 
-  // INV-7. noEffectAfterExpiry: RV copy "Pending review expires <t>", PS:208: no accept after expiry.
+  // INV-7. noEffectAfterExpiry: RV copy "Pending review expires <t>", PS:273: no accept after expiry.
   val inv_noAcceptAfterExpiry = not(acceptedAfterExpiry)
 
   // INV-8. EP:113 reply "Nothing new was saved" must be true (J-10). (SD-240, fixed)
@@ -703,7 +725,7 @@ module profile_learning {
   // decision on the clock authority).
   val inv_cutoffRespected = not(touchedAfterCutoff)
 
-  // INV-10. retainFalseGone: RV:23 copy "If Google is disconnected: remove these accepted facts" and DE:22
+  // INV-10. retainFalseGone: RV:31 copy "If Google is disconnected: remove these accepted facts" and DE:22
   // "disconnect honors retention": after V1 disconnect, no retain=false fact from a batch that existed at
   // the revocation stays (J-4). OPEN, not in `safety`: SD-172 (skipped, same reason as INV-9).
   val inv_retainFalseGone = v1Done.forall(x => x._2 != "disconnect" or ITEMS.forall(i =>
@@ -727,13 +749,14 @@ module profile_learning {
   // it needs the same founder or upstream decision.
   val inv_v2NotDeniedBySkew = not(v2DeniedBySkew)
 
-  // INV-13. 0039:59 comment "The existing app leave/delete path cannot retain these new private records"
+  // INV-13. 0039:60 comment "The existing app leave/delete path cannot retain these new private records"
   // (J-6): once the member is forgotten, no batch stays. (SD-463, fixed)
   val inv_leaveErases = forgotten implies BATCHES.forall(b => not(batch.get(b).exists))
 
-  // INV-14. AC:431 comment "Delete everything: ... keep a tombstone and the suppression hash" and PRD
+  // INV-14. AC:483 comment "Delete everything: ... keep a tombstone and the suppression hash" and PRD
   // section 30 member deletion: Cloud identity rows (user, org, chat, connection) do not stay. (SD-170, fixed)
-  val inv_deleteAllErasesIdentity = membership == "deleted" implies v1Receipts.keys() == Set()
+  // The 0052 trigger also removes them on a leave (state 'removed').
+  val inv_deleteAllErasesIdentity = (membership == "deleted" or membership == "removed") implies v1Receipts.keys() == Set()
 
   // INV-15. AGENTS.md "/internal/turn ... respond within 8 s" and PRD 40.3: the STOP projection does not
   // wait on a Cloud round trip under the person/member locks (PS owned, PS propose source checks).
@@ -817,7 +840,7 @@ module profile_learning {
       .expect(batch.get(1).exists and row.get(1).status == "proposed" and saidNothingSaved == Set())
       .then(memberReviewCmd).then(decide(1, 1, "accept", false, false))
       .expect(facts == Set(1) and batch.get(1).rev == 2)
-      .then(deleteBatch(1, false))
+      .then(memberReviewCmd).then(deleteBatch(1, false))
       .expect(not(batch.get(1).exists) and facts == Set() and safety)
 
   // A second collect with the same turn is a replay and inserts nothing.
@@ -915,8 +938,17 @@ module profile_learning {
       .then(memberReviewCmd)
       .then(decide(1, 1, "edit", false, true)).then(retryLast)
       .expect(inv_retryKeepsResult and batch.get(1).rev == 2)
-      .then(deleteBatch(1, true)).then(retryLast)
+      .then(memberReviewCmd).then(deleteBatch(1, true)).then(retryLast)
       .expect(inv_retryKeepsResult and not(batch.get(1).exists) and safety)
+
+  // One review turn applies one command (PS:271, PS:332): a delete on the turn of the accept is refused.
+  run oneCommandPerTurnTest =
+    initWith(true)
+      .then(memberCollectCmd(1)).then(consentContext(1))
+      .then(collectFixed(1, 1, false, false)).then(collectSourceCall).then(collectSourceCall).then(collectCommit)
+      .then(memberReviewCmd).then(decide(1, 1, "accept", false, false))
+      .then(deleteBatch(1, false))
+      .fail()
 
   // SD-463 (fixed): leave stops after onForget: no batch stays.
   run leaveCrashTest =

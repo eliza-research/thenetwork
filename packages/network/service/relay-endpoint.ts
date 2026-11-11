@@ -45,6 +45,7 @@ import type { CostLedger } from "./cost.ts";
 import { isProduction } from "../../platform/src/env.ts";
 
 import { routeEnvelopeAllowed, type NetworkRoutePolicy } from "./route-authority.ts";
+import { relayDelivered, relayWire } from "./decisions.ts";
 
 export { RELAY_PATH };
 /** A relay request is small: Cloud caps the text at 2000 characters. */
@@ -116,8 +117,8 @@ interface StoredRelay { decision: RelaySendResponse["decision"]; notice: string;
 
 /** The desk's outcome on the Cloud wire. */
 function stored(outcome: RelayOutcome): StoredRelay {
-  if (outcome.decision === "sent") return { decision: "pass", notice: outcome.reason, outboundId: `relay:${outcome.itemId}` };
-  return { decision: outcome.decision === "held" ? "hold" : "block", notice: outcome.reason };
+  const decision = relayWire(outcome.decision);
+  return { decision, notice: outcome.reason, ...(decision === "pass" ? { outboundId: `relay:${outcome.itemId}` } : {}) };
 }
 
 /**
@@ -130,8 +131,7 @@ async function answer(sql: SQL, app: AppId, s: StoredRelay, replayed: boolean): 
     await tx`select set_config('app.app_id',${app},true)`;
     return tx`select status,provider_message_ids,history_recorded from platform.outbound where app_id=${app} and id=${s.outboundId!}`;
   });
-  const delivered = !!row && ["accepted", "sent", "delivered", "read"].includes(row.status) && row.history_recorded === true
-    && Array.isArray(row.provider_message_ids) && row.provider_message_ids.length > 0;
+  const delivered = relayDelivered(s.decision, !!row, row?.status, row?.history_recorded === true, Array.isArray(row?.provider_message_ids) ? row.provider_message_ids.length : 0);
   return { decision: "pass", senderNotice: delivered ? NOTICE.sent : s.notice && s.notice !== NOTICE.sent ? s.notice : NOTICE.unconfirmed, delivered, replayed };
 }
 

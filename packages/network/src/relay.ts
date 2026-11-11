@@ -30,6 +30,7 @@ import {
   type RelayClassifierHook, type RelayContext, type RelayItem, type RelayOpportunity, type RelayParty, type RelayRecord, type RelayResult, type RelayThreadMessage,
 } from "../../engine/src/relay.ts";
 import { appearanceLeak } from "../../engine/src/packs/slop/appearance.ts";
+import { heldAfter, keepsHeldText, swapPlan, type SendVerdict } from "./transitions.ts";
 
 const HOUR = 3_600_000, DAY = 24 * HOUR;
 /**
@@ -82,7 +83,12 @@ export interface RelayHost {
   /** The relay blocked what `id` wrote (SEVERE_FAMILIES): a staff case event for them, with the reason families only. */
   severeBlock(id: MemberId, families: string[]): void;
   /** Send `body` to `to` through the Network's send path. `key` is the outbound id. "sent", "deferred" or "refused". */
-  send(to: MemberId, body: string, o: { from: MemberId; matchId: string; key: string; contact?: string; photoIds?: string[]; approvedPhotos?: ApprovedRelayPhoto[]; noDefer?: boolean }): "sent" | "deferred" | "refused";
+  send(to: MemberId, body: string, o: { from: MemberId; matchId: string; key: string; contact?: string; photoIds?: string[]; approvedPhotos?: ApprovedRelayPhoto[]; noDefer?: boolean; swapPartner?: string }): "sent" | "deferred" | "refused";
+  /**
+   * What `send` would do with this now: deliver it, make it wait (quiet hours) or refuse it. No side
+   * effects. The number swap asks it for both shares before the first goes.
+   */
+  canSend?(to: MemberId, body: string, o: { from: MemberId; matchId: string; contact?: string }): SendVerdict;
 }
 
 /** A held item waiting for staff. `text` only while held (dropped on release or reject). */
@@ -235,7 +241,7 @@ export class RelayDesk {
   }
 
   /** Log the decision, deliver a pass, queue a hold; the answer for the sender. */
-  private apply(res: RelayResult, match: RelayMatch, item: RelayItem, o: RelayCallOptions, contact?: string): RelayOutcome {
+  private apply(res: RelayResult, match: RelayMatch, item: RelayItem, o: RelayCallOptions, contact?: string, swapPartner?: string): RelayOutcome {
     this.log(res.record);
     const fam = (r: string) => r.split(":")[0]!;
     if (res.decision === "block") {
@@ -254,7 +260,7 @@ export class RelayDesk {
       });
       return { itemId: item.id, decision: "held", reason: res.senderNotice };
     }
-    const sent = this.deliver(res, match, item, o, contact);
+    const sent = this.deliver(res, match, item, o, contact, swapPartner);
     if (sent === "refused") { this.undelivered(res.record); return { itemId: item.id, decision: "refused", reason: NOTICE.undelivered }; }
     return { itemId: item.id, decision: "sent", reason: sent === "deferred" ? NOTICE.late : res.senderNotice };
   }
@@ -276,8 +282,8 @@ export class RelayDesk {
     return n;
   }
 
-  private deliver(res: RelayResult, match: RelayMatch, item: RelayItem, o: RelayCallOptions, contact?: string): "sent" | "deferred" | "refused" {
-    const sent = this.host.send(item.to, res.rendered, { from: item.from, matchId: match.id, key: `relay:${item.id}`, ...(contact ? { contact } : {}), ...(res.photos?.length ? { photoIds: res.photos, approvedPhotos: o.photos?.approved } : {}) });
+  private deliver(res: RelayResult, match: RelayMatch, item: RelayItem, o: RelayCallOptions, contact?: string, swapPartner?: string): "sent" | "deferred" | "refused" {
+    const sent = this.host.send(item.to, res.rendered, { from: item.from, matchId: match.id, key: `relay:${item.id}`, ...(contact ? { contact } : {}), ...(swapPartner ? { swapPartner } : {}), ...(res.photos?.length ? { photoIds: res.photos, approvedPhotos: o.photos?.approved } : {}) });
     if (sent === "refused") return sent;
     const t = this.openThread(match);
     const msg = threadMessage(res);
@@ -308,23 +314,31 @@ export class RelayDesk {
     }
     // Both asked. Each share runs through the engine with its own consent (the other member's was given at
     // their own request, within the consent TTL; never backdated). Both go out only when both pass and the
-    // first one was delivered, so nobody's number goes one way.
+    // send path would take both the same way, so nobody's number goes one way: both now, or both wait
+    // (quiet hours) as a pair that the Network sends or refuses together (network.ts tick, swapFlush).
+    // One share now and one that waits is none: the waiting one can be refused later.
     const theirValue = o.contactOf?.(to);
     if (!theirValue) return { itemId: ask.itemId, decision: "refused", reason: "I can't swap numbers right now." };
     this.s.swaps = this.s.swaps.filter(x => x !== theirs);
     const theirItem = this.share(theirs.itemId, to, ask.from, now, theirValue, theirs.at), myItem = this.share(ask.itemId, ask.from, to, now, mineValue);
     const theirRes = await this.decide(theirItem, match, o), myRes = await this.decide(myItem, match, o);
-    if (theirRes.decision === "pass" && myRes.decision === "pass") {
-      const first = this.apply(theirRes, match, theirItem, o, theirValue);
+    const bothPass = theirRes.decision === "pass" && myRes.decision === "pass";
+    const canSend = (rx: MemberId, from: MemberId, res: RelayResult, contact: string): SendVerdict => !bothPass ? "refused" : this.host.canSend?.(rx, res.rendered, { from, matchId: match.id, contact }) ?? "sent";
+    const shares = swapPlan(theirRes.decision === "pass", myRes.decision === "pass", canSend(ask.from, to, theirRes, theirValue), canSend(to, ask.from, myRes, mineValue));
+    if (shares === 2) {
+      // Each share names the other: a pair that waits is sent or refused together.
+      const first = this.apply(theirRes, match, theirItem, o, theirValue, `relay:${myItem.id}`);
       if (first.decision !== "sent") {
         // The first share was refused at send time: the second never goes, and neither record says a number was shared.
         this.undelivered(myRes.record);
         return { itemId: ask.itemId, decision: "refused", reason: "I can't swap numbers right now." };
       }
-      return this.apply(myRes, match, myItem, o, mineValue);
+      return this.apply(myRes, match, myItem, o, mineValue, `relay:${theirItem.id}`);
     }
     if (theirRes.decision !== "pass") this.apply(theirRes, match, theirItem, o);
     if (myRes.decision !== "pass") return this.apply(myRes, match, myItem, o);
+    // Neither number went: neither record says one was shared.
+    if (bothPass) this.undelivered(theirRes.record);
     this.undelivered(myRes.record);
     return { itemId: ask.itemId, decision: "refused", reason: "I can't swap numbers right now." };
   }
@@ -388,7 +402,7 @@ export class RelayDesk {
   release(itemId: string, actor: string, o: RelayCallOptions = {}): { ok: true; delivered: boolean } | { ok: false; reason: string } {
     const h = this.s.held.find(x => x.itemId === itemId && x.status === "held");
     if (!h) return { ok: false, reason: "not_held" };
-    const decided = () => { h.status = "released"; h.decidedBy = actor; h.decidedAt = this.host.now(); delete h.text; };
+    const decided = () => { h.status = heldAfter(h.status, "release"); h.decidedBy = actor; h.decidedAt = this.host.now(); if (!keepsHeldText(h.status)) delete h.text; };
     const match = this.host.matchesOf(h.from).find(m => m.id === h.matchId);
     const item: RelayItem | undefined = h.kind === "photo"
       ? { id: h.itemId, kind: "photo", from: h.from, to: h.to, at: h.at, photoIds: h.photoIds ?? [], ...(h.text ? { text: h.text } : {}), consent: { kind: "photo", by: h.from, itemId: h.itemId, at: h.at, photoIds: h.photoIds ?? [] } }
@@ -410,7 +424,7 @@ export class RelayDesk {
   reject(itemId: string, actor: string): { ok: true } | { ok: false; reason: string } {
     const h = this.s.held.find(x => x.itemId === itemId && x.status === "held");
     if (!h) return { ok: false, reason: "not_held" };
-    h.status = "rejected"; h.decidedBy = actor; h.decidedAt = this.host.now(); delete h.text;
+    h.status = heldAfter(h.status, "reject"); h.decidedBy = actor; h.decidedAt = this.host.now(); if (!keepsHeldText(h.status)) delete h.text;
     const r = this.s.log.find(x => x.itemId === itemId);
     if (r) this.log({ ...r, reasons: [...new Set([...r.reasons, "staff:rejected"])].sort() });
     return { ok: true };
@@ -437,7 +451,7 @@ export class RelayDesk {
 
   /** Forget a member (delete, under-13 decline): their held texts and pending swaps go; the log keeps ids only. */
   forget(id: MemberId) {
-    for (const h of this.s.held) if ((h.from === id || h.to === id) && h.status === "held") { h.status = "rejected"; h.decidedBy = "system:forget"; h.decidedAt = this.host.now(); delete h.text; }
+    for (const h of this.s.held) if ((h.from === id || h.to === id) && h.status === "held") { h.status = heldAfter(h.status, "reject"); h.decidedBy = "system:forget"; h.decidedAt = this.host.now(); if (!keepsHeldText(h.status)) delete h.text; }
     this.s.swaps = this.s.swaps.filter(x => x.from !== id && x.to !== id);
     for (const t of this.s.threads) if (t.members.includes(id)) t.messages = [];
   }

@@ -25,6 +25,7 @@ import { requirePlatformEnv, type Env, type PlatformEnv } from "../../packages/p
 import { isProxyHeader, PROXY_HEADERS, signedPath, signProxyHeaders, verifyProxyHeaders } from "../../packages/platform/src/proxy.ts";
 import { timingSafeEqual } from "node:crypto";
 import { opsConfigFromEnv, type OpsConfig } from "./ops.ts";
+import { publicRoute } from "./route.ts";
 import { networkRoutePolicy } from "../../packages/network/service/route-authority.ts";
 import { RELAY_MAX_BODY_BYTES, RELAY_PATH } from "../../packages/network/service/relay-endpoint.ts";
 import { SUGGESTION_PATH } from "../../packages/network/service/profile-suggestion-endpoint.ts";
@@ -360,37 +361,47 @@ export function createBackend(d: BackendDeps) {
     let app: AppId | undefined;
     let res: Response;
     try {
-      if (path === "/healthz") {
-        if (draining) res = json(503, { ok: false, status: "draining", build: c.build });
-        else if (!(await d.ping().catch(() => false))) res = json(503, { ok: false, status: "database", build: c.build });
-        // A hung tick loop is down for the uptime monitor too (the ops alerts run inside the same process).
-        else res = lateTicks().length ? json(503, { ok: false, status: "tick_late", build: c.build }) : json(200, { ok: true, build: c.build, env: c.env });
-      } else if (path === "/ops/metrics") {
-        // Counts and network ids only. Without OPS_METRICS_TOKEN the route does not exist; a wrong token is 401.
-        const token = c.ops.metricsToken;
-        if (!token || !d.ops) res = json(404, { ok: false, error: "not_found" });
-        else if (!bearerIs(req, token)) res = json(401, { ok: false, error: "unauthorized" });
-        else if (req.method !== "GET") res = json(405, { ok: false, error: "method_not_allowed" });
-        else res = json(200, await track(d.ops.metrics()));
-      } else if (draining) {
-        res = json(503, { ok: false, error: "shutting_down" });
-      } else if (path === "/api" || path.startsWith("/api/")) {
-        const n = await normalizeEdge(req, c.proxySecret, c.hostMap, (d.now ?? Date.now)(), c.proxySecretPrevious);
-        app = n.app;
-        // Deployed, only a request a site router signed may name a site (audit: a direct request with
-        // Host: slop.date was served as slop.date, and every such request shared one socket IP).
-        res = c.deployed && !n.edge ? json(421, { ok: false, error: "edge_required" }) : await track(svc.publicFetch(n.req, server));
-      } else if (path === "/webhooks/blooio" || path.startsWith("/webhooks/blooio/") || INTERNAL_PATHS.has(path)) {
-        // A declared body over the cap is refused before the service reads or verifies it (the service caps the read too).
-        res = INTERNAL_PATHS.has(path) && Number(req.headers.get("content-length") ?? "0") > internalCap(path) ? json(413, { ok: false, error: "payload_too_large" }) : await track(svc.fetch(req));
-      } else if (MCP_PATH.test(path)) {
-        // The MCP server sees the same normalized request as the public API: Host is the site's host only via a verified edge.
-        const n = await normalizeEdge(req, c.proxySecret, c.hostMap, (d.now ?? Date.now)(), c.proxySecretPrevious);
-        app = n.app;
-        res = c.deployed && !n.edge ? json(421, { ok: false, error: "edge_required" }) : (d.mcp && (await track(d.mcp(n.req)))) || json(404, { ok: false, error: "mcp_not_enabled" });
-      } else {
-        // The staff API never answers on the public port.
-        res = json(404, { ok: false, error: "not_found" });
+      switch (publicRoute(path, draining, INTERNAL_PATHS.has(path), MCP_PATH.test(path))) {
+        case "healthz":
+          if (draining) res = json(503, { ok: false, status: "draining", build: c.build });
+          else if (!(await d.ping().catch(() => false))) res = json(503, { ok: false, status: "database", build: c.build });
+          // A hung tick loop is down for the uptime monitor too (the ops alerts run inside the same process).
+          else res = lateTicks().length ? json(503, { ok: false, status: "tick_late", build: c.build }) : json(200, { ok: true, build: c.build, env: c.env });
+          break;
+        case "metrics": {
+          // Counts and network ids only. Without OPS_METRICS_TOKEN the route does not exist; a wrong token is 401.
+          const token = c.ops.metricsToken;
+          if (!token || !d.ops) res = json(404, { ok: false, error: "not_found" });
+          else if (!bearerIs(req, token)) res = json(401, { ok: false, error: "unauthorized" });
+          else if (req.method !== "GET") res = json(405, { ok: false, error: "method_not_allowed" });
+          else res = json(200, await track(d.ops.metrics()));
+          break;
+        }
+        case "draining":
+          res = json(503, { ok: false, error: "shutting_down" });
+          break;
+        case "api": {
+          const n = await normalizeEdge(req, c.proxySecret, c.hostMap, (d.now ?? Date.now)(), c.proxySecretPrevious);
+          app = n.app;
+          // Deployed, only a request a site router signed may name a site (audit: a direct request with
+          // Host: slop.date was served as slop.date, and every such request shared one socket IP).
+          res = c.deployed && !n.edge ? json(421, { ok: false, error: "edge_required" }) : await track(svc.publicFetch(n.req, server));
+          break;
+        }
+        case "service":
+          // A declared body over the cap is refused before the service reads or verifies it (the service caps the read too).
+          res = INTERNAL_PATHS.has(path) && Number(req.headers.get("content-length") ?? "0") > internalCap(path) ? json(413, { ok: false, error: "payload_too_large" }) : await track(svc.fetch(req));
+          break;
+        case "mcp": {
+          // The MCP server sees the same normalized request as the public API: Host is the site's host only via a verified edge.
+          const n = await normalizeEdge(req, c.proxySecret, c.hostMap, (d.now ?? Date.now)(), c.proxySecretPrevious);
+          app = n.app;
+          res = c.deployed && !n.edge ? json(421, { ok: false, error: "edge_required" }) : (d.mcp && (await track(d.mcp(n.req)))) || json(404, { ok: false, error: "mcp_not_enabled" });
+          break;
+        }
+        case "not_found":
+          res = json(404, { ok: false, error: "not_found" });
+          break;
       }
     } catch (e) {
       log.error("request failed", { route: routeLabel(path), error: (e as Error).message });

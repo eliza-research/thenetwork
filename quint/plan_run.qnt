@@ -5,13 +5,16 @@
 // M-046 plan-fallback). The crew offer and sessions (M-124) are in quint/plan_crew.qnt: the two machines share
 // no state, and Apalache can check each model alone but not the two together.
 //
-// Code: packages/engine/src/plans.ts (startPlanRun, recordPlanAnswer, checkPlanDeadline, planFallback)
-// and packages/network/src/network.ts (submitPlan 2945, beginPlan 2964,
-// planLane 2976, planProbe 2990, planDeadline 3032, planAnswer 3039, planAct 3051, bookPlan 3076, planReveal 3122,
-// planJoin 3137, planFallback 3151, planOut 3183, handleDrop 2525, close 2550, dropMember 2588,
-// checkRecipient 4265, bookedNear 2893,
-// onPlanProbeAnswer 2351, applyBlock 1423, the reveal and plan_probe send hooks 4125-4150, intro reveal 2425).
-// The model follows the code at the commit that adds this note (branch wave2/plan_run).
+// Code: packages/engine/src/plans.ts (startPlanRun 537, recordPlanAnswer 560, checkPlanDeadline 582,
+// planFallback 627; planStep and smallerKind in engine/src/planCore.ts) and packages/network/src/network.ts
+// at the merge of formal-main (submitPlan 3154, beginPlan 3169, planLane 3181, planProbe 3195,
+// planDeadline 3237, planAnswer 3244, planAct 3257, bookPlan 3282, planReveal 3328, planJoin 3343,
+// planFallback 3357, planOut 3389, handleDrop 2680, close 2710, dropMember 2756, checkRecipient 4530,
+// bookedNear 3094, planSeatOk 3113, onPlanProbeAnswer 2499, applyBlock 1491, callOffPair 1532, the reveal and
+// plan_probe send hooks 4388-4413, intro reveal 2578; quorumMet in network/src/transitions.ts:186).
+// The model follows the code at the commit that adds this note (branch wave2/plan_run). The other
+// "network.ts:<line>" references in this file are lines at that commit (now about 150-260 lines lower);
+// the function names above are the anchors. A reference marked "formal-main" is a current line.
 //
 // The ConsentNetwork is in memory and has no await between the calls of one handler, so one inbound message,
 // one tick or one actor event is one action. The send window, the one-a-day rule and the allowance only
@@ -373,11 +376,17 @@ module plan_run {
       val wasAlternate = minor and o.alternates.contains(m)
       val o1 = { ...o, alternates: o.alternates.exclude(Set(m)), excused: o.excused.union(Set(m)) }
       if (wasAlternate and not(o1.participants.contains(m)) and o1.stage != "scheduled") done(closeF(e, o1, "minors policy"))
+      // A minor who was asked and then replaced is still on the roster: the open plan closes (formal-main
+      // network.ts:2768-2770).
+      else if (minor and o1.contacted.contains(m) and not(o1.participants.contains(m)) and o1.stage != "scheduled") done(closeF(e, o1, "minors policy"))
       else if (not(o1.participants.contains(m))) done(o1)
       else if (minor and o1.stage != "scheduled") done(closeF(e, o1, "minors policy"))
       else if (o1.stage == "review") done(closeF(e, o1, "dropped"))
       else if (o1.stage == "probing") planOut(e, o1, m)
-      else done(handleDrop(e, o1, m))
+      // Only a member who is going leaves a booked plan (formal-main network.ts:2777): one who said no, is out or
+      // still pending for a late join is not in it.
+      else if (o1.status.get(m) == "yes") done(handleDrop(e, o1, m))
+      else done(o1)
     }
 
   /**
@@ -672,7 +681,9 @@ module plan_run {
   action block(m: str, x: str): bool = all {
     idle, m != x, not(blocks.contains((m, x))),
     val e = { ...env0, blocks: blocks.union(Set((m, x))) }
-    val both = isOpen(plan) and plan.participants.contains(m) and plan.participants.contains(x)
+    // callOffPair (formal-main network.ts:1532-1545) skips an opportunity where either one is already out of it.
+    def out(id: str): bool = Set("no", "unavailable", "dropped").contains(plan.status.get(id))
+    val both = isOpen(plan) and plan.participants.contains(m) and plan.participants.contains(x) and not(out(m)) and not(out(x))
     val o1 = { ...plan, excused: plan.excused.union(Set(m, x)) }
     val o2 = if (both and plan.stage == "scheduled")
       tellAll(e, o1, plan.participants.filter(id => id != m and plan.status.get(id) == "yes" and plan.bookedTold.contains(id)), "declinedQuiet")

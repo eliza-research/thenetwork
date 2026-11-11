@@ -36,7 +36,7 @@ test("a delta at the version of the loaded state does not add its feed lines aga
   let s:any,saved:any;
   try{
     const {store}=await import("../web/store.ts");
-    s=store;saved=Object.fromEntries(["mode","app","me","feed","version"].map(k=>[k,s[k]]));
+    s=store;saved=Object.fromEntries(["mode","app","me","feed","sync"].map(k=>[k,s[k]]));
     await store.connect();
     for(let i=0;i<100&&!store.connected;i++)await Bun.sleep(10);
     expect(store.connected).toBe(true);

@@ -328,8 +328,10 @@ module opportunity {
     // onRefused (SD-249, skipped); it carries the meeting time (SD-248).
     val s4 = still.foldl(s3, (acc, p) =>
       if (not(op(acc, o).bookedTold.contains(p))) acc else sendNotice(acc, p, "drop_notice", o, env))
-    // A pair: keep is false, so the opportunity closes on handleDrop's own path (not close()).
-    val keep = op(s4, o).parts.size() > 2 and still.length() >= 2
+    // network.ts:2693: a group stays on only with 3 or more still going ("two who are left said yes to a
+    // group, not to a meeting of two"). A pair: keep is false, so the opportunity closes on handleDrop's own
+    // path (not close()).
+    val keep = still.length() >= 3
     if (keep) s4
     else {
       val s5 = putO(s4, o, { ...op(s4, o), closedFrom: op(s4, o).stage, closedReason: "participant dropped", stage: "closed", everTerminal: true })
@@ -394,6 +396,8 @@ module opportunity {
       val wasAlternate = minorReason and x.alts.contains(m)
       val a1 = putO(acc, o, { ...x, alts: x.alts.exclude(Set(m)) })
       if (wasAlternate and not(x.parts.contains(m)) and x.stage != "scheduled") push(a1, [J("close", o, "", reason)])
+      // A minor who was asked and then replaced is still on the roster: the open item closes (network.ts:2768-2770).
+      else if (minorReason and x.contacted.contains(m) and not(x.parts.contains(m)) and x.stage != "scheduled") push(a1, [J("close", o, "", reason)])
       else if (not(x.parts.contains(m))) a1
       else if (minorReason and x.stage != "scheduled") push(a1, [J("close", o, "", reason)])
       else if (x.stage == "review") push(a1, [J("close", o, "", reason)])
@@ -908,7 +912,10 @@ module opportunity {
       answer(m, if (yesFirst) "yes" else intent, env),
       all { roll == 1, stop(m, env) },
       start(m),
-      all { roll == 2, becomeMinor(m, env) },
+      // A minor signal in half as many draws as the other life events (weights only: the reachable states do not
+      // change). Since a minor who was asked and then replaced closes the item (network.ts:2768-2770), a minor signal
+      // in one roll of 10 closes the member request before it is held in almost every trace (witness_requestFulfilled).
+      all { roll == 2, wide, becomeMinor(m, env) },
       all { roll == 3, forget(m, env) },
       tick(dt, env),
       all { roll == 4, elapse(dt) },

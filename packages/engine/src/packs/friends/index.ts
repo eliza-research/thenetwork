@@ -13,6 +13,7 @@ import { cityBucketGeo } from "../../geo.ts";
 import type { AppPack, EligibilityPolicy, GeneratorSpec, GeoModel } from "../../pack.ts";
 import { mutualBenefit } from "../../scoring.ts";
 import { CONTRIBUTOR_ROLES, type Role } from "../../types.ts";
+import { beyondTolerance } from "../decisions.ts";
 import { ACTIVITIES } from "../network/activities.ts";
 import { DEFAULT_ENJOY_BY_CATEGORY, DEFAULT_ENJOY_KNOTS } from "../network/calibrator.ts";
 import { networkConstraints } from "../network/ontology.ts";
@@ -45,7 +46,7 @@ export const friendsGeo: GeoModel = {
     const info = friendsInfo(w);
     const ia = info.get(a), ib = info.get(b);
     if (!ia?.home || !ib?.home) return null;
-    return transitMinutes(ia.home, ib.home) > ia.tolerance + ib.tolerance ? "beyond_transit_tolerance" : null;
+    return beyondTolerance(transitMinutes(ia.home, ib.home), ia.tolerance, ib.tolerance) ? "beyond_transit_tolerance" : null;
   },
   displayDistance: km => displayMinutes(Math.round(8 + 2.2 * km)),
 };

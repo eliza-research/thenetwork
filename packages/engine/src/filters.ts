@@ -3,6 +3,7 @@
 import type { Category, MemberId } from "@thenetwork/core";
 import { ADULT_AGE as CORE_ADULT_AGE, canBeMatched, DAY, HOUR } from "@thenetwork/core";
 import type { EngineConfig } from "./config.ts";
+import { memberCore, pairCore } from "./filterCore.ts";
 import type { Candidate } from "./types.ts";
 import { pairKey, type World } from "./world.ts";
 
@@ -56,9 +57,8 @@ export function memberReason(w: World, id: MemberId, c: MemberCheck, forgive?: R
   if (!mi) return "unknown_member";
   const m = mi.m;
   // Core prefix (cannot be overridden or reordered by a pack): minors / age floor, holds, pause.
-  if (isMinorAge(m.age) || !(m.age >= cfg.ageMin) || !(m.age >= w.pack.eligibility.minMatchAge)) return "underage";
-  if (w.holds.has(id)) return "safety_hold";
-  if (m.state === "paused") return "state_paused";
+  const core = memberCore(!isMinorAge(m.age), m.age, cfg.ageMin, w.pack.eligibility.minMatchAge, w.holds.has(id), m.state);
+  if (core) return core;
   // Pack rules in order (networkPack: packs/network/rules.ts, the pre-refactor order).
   for (const r of w.pack.eligibility.memberRules) {
     const reason = r.check(w, id, mi, c);
@@ -69,10 +69,9 @@ export function memberReason(w: World, id: MemberId, c: MemberCheck, forgive?: R
 
 /** Pair-level hard constraints. Completed / positive history never blocks (ME-005). */
 export function pairReason(w: World, a: MemberId, b: MemberId, category: Category): FilterReason | null {
-  if (a === b) return "duplicate_participant";
-  if (isMinor(w, a) || isMinor(w, b)) return "underage"; // minors are never paired with anyone
-  // Core prefix: blocks win (either direction).
-  if (w.blocked.has(pairKey(a, b))) return "blocked";
+  // Core prefix: minors are never paired with anyone; blocks win (either direction).
+  const core = pairCore(a, b, isMinor(w, a), isMinor(w, b), w.blocked.has(pairKey(a, b)));
+  if (core) return core;
   const ma = w.get(a), mb = w.get(b);
   // Pack rules always get two known members (engine-pipeline-16): an unknown id ends here.
   if (!ma || !mb) return "unknown_member";
@@ -233,9 +232,8 @@ export function sendTimeReason(w: World, id: MemberId, others: MemberId[] = [], 
   const mi = w.get(id);
   if (!mi) return "unknown_member";
   // The effective match age (config ageMin and the pack's floor), not only the 18 policy floor.
-  if (isMinorAge(mi.m.age) || !(mi.m.age >= w.cfg.ageMin) || !(mi.m.age >= w.pack.eligibility.minMatchAge)) return "underage";
-  if (w.holds.has(id)) return "safety_hold";
-  if (mi.m.state === "paused") return "state_paused";
+  const core = memberCore(!isMinorAge(mi.m.age), mi.m.age, w.cfg.ageMin, w.pack.eligibility.minMatchAge, w.holds.has(id), mi.m.state);
+  if (core) return core;
   if (optedOut?.(id)) return "opted_out";
   // With the lane: a lane opt-in withdrawn after the proposal (engine-pipeline-10), romance included.
   if (lane !== undefined) {

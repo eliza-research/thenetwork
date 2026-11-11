@@ -60,26 +60,28 @@ decide() {
   local words=() dry_run=0 remote=0 help=0 skip_next=0 last="" a
   for a in "$@"; do
     if [ "$skip_next" = 1 ]; then skip_next=0; continue; fi
-    # yargs reads a "true" or "false" word after a boolean switch as its value: "--help false" is not help.
+    # yargs reads a "true" or "false" word after a bare boolean switch as its value: "--help false" is not help.
     if [ -n "$last" ] && { [ "$a" = true ] || [ "$a" = false ]; }; then
       local v=0; [ "$a" = true ] && v=1
       case "$last" in dry_run) dry_run=$v ;; remote) remote=$v ;; help) help=$v ;; esac
       last=""; continue
     fi
     last=""
-    case "$a" in
+    # yargs also reads camel case and --no- forms: "--dryRun=false" and "--no-dryRun" turn the switch off.
+    local flag=""
+    case "$a" in -*) flag="$(printf '%s' "${a%%=*}" | tr -d '_-' | tr '[:upper:]' '[:lower:]')" ;; esac
+    case "$flag" in
       # wrangler (yargs) takes the LAST value of a switch: "--dry-run --no-dry-run" is a real deploy.
-      --dry-run) dry_run=1; last=dry_run ;;
-      --dry-run=true) dry_run=1 ;;
-      --no-dry-run|--dry-run=*) dry_run=0 ;;
+      dryrun) case "$a" in --dry-run) dry_run=1; last=dry_run ;; --dry-run=true) dry_run=1 ;; *) dry_run=0 ;; esac; continue ;;
+      nodryrun) dry_run=0; continue ;;
       # "dev --remote" runs on Cloudflare (it uploads to the account): not read-only.
-      --remote|-r) remote=1; last=remote ;;
-      --remote=true) remote=1 ;;
-      --no-remote|--remote=*) remote=0 ;;
+      remote|r) case "$a" in *=false) remote=0 ;; *=*) remote=1 ;; *) remote=1; last=remote ;; esac; continue ;;
+      noremote|nor) remote=0; continue ;;
       # The same for help: "deploy --help --no-help" is a real deploy.
-      --help|-h) help=1; last=help ;;
-      --help=true|-h=true) help=1 ;;
-      --no-help|--no-h|--help=*|-h=*) help=0 ;;
+      help|h) case "$a" in --help|-h) help=1; last=help ;; --help=true|-h=true) help=1 ;; *) help=0 ;; esac; continue ;;
+      nohelp|noh) help=0; continue ;;
+    esac
+    case "$a" in
       --*=*) ;;
       -*)
         if value_flag "$a"; then skip_next=1

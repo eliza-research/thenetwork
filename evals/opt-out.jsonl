@@ -102,13 +102,35 @@
 {"text": "stop slop", "label": "not_stop", "lang": "en"}
 {"text": "quit peon", "label": "not_stop", "lang": "en"}
 {"text": "remove me from the group chat with Ana?", "label": "not_stop", "lang": "en"}
+{"text": "STOP NOW", "label": "stop", "lang": "en"}
+{"text": "stop now", "label": "stop", "lang": "en"}
+{"text": "stop it", "label": "stop", "lang": "en"}
+{"text": "Stop it!", "label": "stop", "lang": "en"}
+{"text": "stop pls", "label": "stop", "lang": "en"}
+{"text": "stop plz", "label": "stop", "lang": "en"}
+{"text": "please stop it", "label": "stop", "lang": "en"}
+{"text": "stop it please", "label": "stop", "lang": "en"}
+{"text": "just stop", "label": "stop", "lang": "en"}
+{"text": "stop now please", "label": "stop", "lang": "en"}
+{"text": "stop already", "label": "stop", "lang": "en"}
+{"text": "stop right now", "label": "stop", "lang": "en"}
+{"text": "stop thanks", "label": "stop", "lang": "en"}
+{"text": "STOPP NOW", "label": "stop", "lang": "en"}
+{"text": "stop it you're making me laugh", "label": "not_stop", "lang": "en"}
+{"text": "haha stop it", "label": "not_stop", "lang": "en"}
+{"text": "stop now or after dinner?", "label": "not_stop", "lang": "en"}
+{"text": "can't stop now", "label": "not_stop", "lang": "en"}
+{"text": "don't stop now", "label": "not_stop", "lang": "en"}
+{"text": "did he stop it", "label": "not_stop", "lang": "en"}
+{"text": "should i stop it here", "label": "not_stop", "lang": "en"}
+{"text": "stop it from happening again", "label": "not_stop", "lang": "en"}
+{"text": "stop now is the best bus to take", "label": "not_stop", "lang": "en"}
+{"text": "the next stop now", "label": "not_stop", "lang": "en"}
+{"text": "bus stop pls send the address", "label": "not_stop", "lang": "en"}
 {"text": "STOP STOP", "label": "stop", "lang": "en"}
 {"text": "stop stop stop", "label": "stop", "lang": "en"}
-{"text": "stop it", "label": "stop", "lang": "en"}
 {"text": "STOP IT", "label": "stop", "lang": "en"}
-{"text": "stop now", "label": "stop", "lang": "en"}
 {"text": "Stop. Now.", "label": "stop", "lang": "en"}
-{"text": "stop already", "label": "stop", "lang": "en"}
 {"text": "stop this", "label": "stop", "lang": "en"}
 {"text": "stop everything", "label": "stop", "lang": "en"}
 {"text": "I said stop", "label": "stop", "lang": "en"}

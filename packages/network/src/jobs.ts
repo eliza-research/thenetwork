@@ -21,6 +21,7 @@ import type { EngineInput } from "@thenetwork/engine";
 import { JOB_INTENT, T, type PeonMode } from "@thenetwork/engine/src/packs/peon/schema.ts";
 import { NEVER_ASKS } from "@thenetwork/engine/src/packs/peon/copy.ts";
 import { NEIGHBORHOODS } from "./geo.ts";
+import { payRangeOk, postingAction } from "./transitions.ts";
 
 export interface JobPosting {
   id: string; managerId: MemberId; title: string;
@@ -74,7 +75,7 @@ export function parsePosting(body: string): PostingDraft {
   const open = /\b(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:open(?:ing)?s?|roles?|seats?|positions?|hires?|people|spots?)\b/i.exec(t) ?? /\bx\s?(\d{1,2})\b/i.exec(t);
   if (open) { const n = WORDS[open[1]!.toLowerCase()] ?? Number(open[1]); if (Number.isInteger(n) && n >= 1 && n <= MAX_OPENINGS) d.openings = n; }
   const pay = /\$?\s*(\d{2,3})(?:,000|k)?\s*(?:-|–|to)\s*\$?\s*(\d{2,3})(?:,000)?\s*k\b/i.exec(t) ?? /\$\s*(\d{2,3})(?:,000|k)\s*(?:-|–|to)\s*\$?\s*(\d{2,3})(?:,000|k)?/i.exec(t);
-  if (pay) { const a = Number(pay[1]), b = Number(pay[2]); if (a >= 10 && b >= a && b <= 999) { d.payMin = a; d.payMax = b; } }
+  if (pay) { const a = Number(pay[1]), b = Number(pay[2]); if (payRangeOk(a, b)) { d.payMin = a; d.payMax = b; } }
   if (/\bremote\b/i.test(t)) d.mode = "remote"; else if (/\bhybrid\b/i.test(t)) d.mode = "hybrid"; else if (/\b(on-?site|in[- ]office|in person)\b/i.test(t)) d.mode = "onsite";
   const lower = ` ${t.toLowerCase().replace(/[^a-z0-9' -]+/g, " ")} `;
   const area = AREAS.find(a => lower.includes(` ${a} `));
@@ -186,11 +187,11 @@ export function readPostingText(body: string, ctx: { draft?: PostingDraft; posti
 
 /** The posting a confirmed draft saves (an update keeps what the draft does not change). A closed post is final: undefined. */
 export function postingFromDraft(d: PostingDraft, managerId: MemberId, now: number, prev?: JobPosting): JobPosting | undefined {
-  if (!d.id || (prev && prev.status !== "active")) return undefined;
-  if (d.close) return prev ? { ...prev, status: "closed", closedReason: d.filled ? "filled" : "closed", updatedAt: now } : undefined;
   const title = d.title ?? prev?.title;
   const payMin = d.payMin ?? prev?.payMin, payMax = d.payMax ?? prev?.payMax;
-  if (!title || payMin === undefined || payMax === undefined) return undefined;
+  const action = postingAction(!!d.id, !!d.close, !!prev, !prev || prev.status === "active", !!title, payMin !== undefined && payMax !== undefined);
+  if (action === "close") return { ...prev!, status: "closed", closedReason: d.filled ? "filled" : "closed", updatedAt: now };
+  if (action !== "save" || !d.id || !title || payMin === undefined || payMax === undefined) return undefined;
   return {
     id: d.id, managerId, title, family: d.family ?? prev?.family ?? slug(title), ...(d.seniority ?? prev?.seniority ? { seniority: d.seniority ?? prev?.seniority } : {}),
     openings: d.openings ?? prev?.openings ?? 1, payMin, payMax, mode: d.mode ?? prev?.mode ?? "onsite", ...(d.area ?? prev?.area ? { area: d.area ?? prev?.area } : {}),
@@ -204,7 +205,7 @@ export function postingProblem(p: JobPosting): string | undefined {
   if (!/^[A-Za-z0-9_.-]{1,80}$/.test(p.id)) return "invalid_id";
   if (!p.title.trim() || p.title.length > 80) return "invalid_title";
   if (!Number.isInteger(p.openings) || p.openings < 1 || p.openings > MAX_OPENINGS) return "invalid_openings";
-  if (!Number.isFinite(p.payMin) || !Number.isFinite(p.payMax) || p.payMin < 10 || p.payMax < p.payMin || p.payMax > 999) return "pay_range_required";
+  if (!Number.isFinite(p.payMin) || !Number.isFinite(p.payMax) || !payRangeOk(p.payMin, p.payMax)) return "pay_range_required";
   if (!["onsite", "hybrid", "remote"].includes(p.mode)) return "invalid_mode";
   if (p.must.length > 12 || p.nice.length > 12 || p.must.some(m => !m.skill || !Number.isInteger(m.level) || m.level < 0 || m.level > 5)
     || new Set(p.must.map(m => m.skill)).size < p.must.length || new Set(p.nice).size < p.nice.length) return "invalid_skills";

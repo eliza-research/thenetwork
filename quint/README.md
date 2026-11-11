@@ -16,6 +16,24 @@ bun run quint:check --verify           # also bounded model checking with Apalac
 CI runs `bun run quint:check` in the `offline` job. CI does not run `--verify`. Run it locally before you
 change a model.
 
+## Drift
+
+A model is only useful while it says what the code does. Each PR that changes code compares the models of
+that code with the code, fixes the model (if the code is right) or the code (if the code is wrong, with a
+case that fails before the fix), and records the comparison:
+
+```bash
+bun run quint:drift                                  # the models whose model file or mapped code changed since their last comparison
+bun run quint:drift --stamp quint/relay.qnt          # record a comparison of one model
+bun run quint:drift --stamp quint/relay.qnt --drift "text"   # record the known drift that this PR does not fix (replaces the list)
+bun run quint:drift --stamp quint/relay.qnt --clear-drift     # the known drift is fixed
+```
+
+`docs/formal-coverage.md` maps each source file to its models. `drift.json` keeps a hash of each model and of
+each mapped file at the last comparison. The formal block of `bun run sim` fails for a model when one of
+those files changed after its stamp. Do not stamp a model that you did not compare. AGENTS.md ("Formal
+modeling requirement") has the full procedure.
+
 ## Rules for each model
 
 1. One file for each module. The module name is the file name without `.qnt`. A model does not import

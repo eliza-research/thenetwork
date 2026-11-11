@@ -2,6 +2,16 @@
 // Everything random in the simulators flows through an Rng derived from the run seed so every run
 // is replayable (PRD 34.3); the engine's runs are reproducible from seed + inputs (ME-004).
 
+/** The index for a draw `u` in [0, 1) over `len` items. */
+function indexOf01(u: number, len: number): number {
+  //@ verify
+  //@ type u real
+  //@ requires len > 0
+  //@ requires 0.0 <= u && u < 1.0
+  //@ ensures 0 <= \result && \result < len
+  return Math.floor(u * len);
+}
+
 /** 32-bit FNV-1a hash of any number of string/number parts. */
 export function hash32(...parts: (string | number)[]): number {
   let h = 0x811c9dc5;
@@ -40,7 +50,7 @@ export class Rng {
   range(min: number, max: number): number { return min + this.next() * (max - min); }
   pick<T>(arr: readonly T[]): T {
     if (!arr.length) throw new Error("pick from empty array");
-    return arr[Math.floor(this.next() * arr.length)]!;
+    return arr[indexOf01(this.next(), arr.length)]!;
   }
   /** Pick k distinct items (order randomized). */
   sample<T>(arr: readonly T[], k: number): T[] {
@@ -98,7 +108,7 @@ export class EngineRng {
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   }
-  int(n: number): number { return Math.floor(this.next() * n); }
+  int(n: number): number { return indexOf01(this.next(), n); }
   range(lo: number, hi: number): number { return lo + this.next() * (hi - lo); }
   chance(p: number): boolean { return this.next() < p; }
   pick<T>(arr: readonly T[]): T {

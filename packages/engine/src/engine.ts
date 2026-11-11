@@ -6,13 +6,14 @@ import type { LLM, MemberId, WorldSnapshot } from "@thenetwork/core";
 import { configHash, ENGINE_VERSION, resolveConfig, type EngineConfigInput } from "./config.ts";
 import { localEmbed, type EmbedFn } from "./embed.ts";
 import { explain, privateVocabulary } from "./explain.ts";
-import { candidateReason, involvesMinor, memberReason } from "./filters.ts";
+import { eligibleAfterJudge } from "./filterCore.ts";
+import { candidateReason, memberReason } from "./filters.ts";
 import type { GenCtx } from "./genkit.ts";
 import { JudgeCache, judgeCandidates, runCachedPass } from "./judge.ts";
 import { checkMemberFacing, redactPrivate } from "./judgeCommon.ts";
 import { deepReviewOne, gateMemberFacing, hardGate, type DeepVerdict } from "./judgeDeep.ts";
 import { screenDecision, screenOne, type ScreenVerdict } from "./judgeScreen.ts";
-import { blockingPairs, fairnessMetrics, planAsks, selectProposals, updateExposureDebt } from "./policy.ts";
+import { blockingPairs, fairnessMetrics, guardSelection, planAsks, selectProposals, updateExposureDebt } from "./policy.ts";
 import { EngineRng as Rng } from "@thenetwork/core";
 import { sha256, stableStringify } from "./hash.ts";
 import { scoreCandidate, type Scored } from "./scoring.ts";
@@ -188,7 +189,7 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
       const v = verdicts.get(s.c.key);
       if (!v) return s;
       const r = scoreCandidate(w, s.c, v);
-      return s.eligible || !r.eligible ? r : { ...r, eligible: false, reason: s.reason ?? "below_threshold" };
+      return eligibleAfterJudge(s.eligible, r.eligible) === r.eligible ? r : { ...r, eligible: false, reason: s.reason ?? "below_threshold" };
     });
     t = lap("judge", t);
     if (cfg.judge.deep.enabled && cfg.judge.deep.topK > 0 && J.deep) {
@@ -233,12 +234,12 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   for (const [k, v] of Object.entries(input.exposureDebt ?? {})) priorDebt[w.canonical(k)] = (priorDebt[w.canonical(k)] ?? 0) + v;
   const askPlan = planAsks(w, input);
   f.asks = askPlan.asks.length;
-  f.askFirst = askPlan.exclude.size;
-  const selection = selectProposals(w, scored, rng.fork("select"), priorDebt, { exclude: askPlan.exclude, extraProactive: askPlan.extraProactive });
-  // Minors policy, last line of defence: hard filters already drop these, so this never fires
-  // in a correct build. If it ever does, the configuration is withheld (fail closed), not sent.
-  const selected = selection.selected.filter(x => !involvesMinor(w, x.s.c));
-  if (selected.length !== selection.selected.length) f.rejectedAfterSelection = { underage: selection.selected.length - selected.length };
+  const selection = selectProposals(w, scored, rng.fork("select"), priorDebt, { extraProactive: askPlan.extraProactive });
+  // Last line of defence on any selector's output (selectionGuard.ts): minors in any role, member
+  // budgets, city caps, repeated pairs. The core greedy pass checks these first, so this never fires
+  // for it. If it does fire, the configuration is withheld (fail closed), not sent.
+  const { selected, rejected } = guardSelection(w, selection, askPlan);
+  if (rejected) f.rejectedAfterSelection = rejected;
   const budgetSkips = selection.budgetSkips;
   f.budgetSkips = budgetSkips;
   f.selected = selected.length;

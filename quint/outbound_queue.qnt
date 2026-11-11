@@ -20,14 +20,14 @@
 //  - Time is an integer; one unit is 5 minutes. LEASE = 5 min, REPLY_WINDOW = 1 h, UNKNOWN_TTL = 6 h,
 //    TTL_PROACTIVE = 24 h, TTL_ANY = 3 days, as in the code. The person cap (3 a day) and the unanswered cap
 //    (3) are scaled to 1, and maxAttempts (6) to 2, so that 3 rows can reach them.
-//  - Workers are replicas (or one replica's runtimes). A drain is: recover (oq:272), reconcileUnknown
-//    (oq:581, no line lock), then the line lock (oq:255) and one dispatch per due row. One dispatch is two
-//    steps: `decide` reads every gate at once (gates 0-10, oq:364-435) and takes the cap slot; `applyDecision`
-//    writes the wait or end, or runs the admission transaction (oq:467-501). Time does not advance between
+//  - Workers are replicas (or one replica's runtimes). A drain is: recover (oq:277), reconcileUnknown
+//    (oq:676, no line lock), then the line lock (oq:260) and one dispatch per due row. One dispatch is two
+//    steps: `decide` reads every gate at once (gates 0-10: oq:426-482 reads the facts, gate.ts preCapGate/finalGate decide) and takes the cap slot; `applyDecision`
+//    writes the wait or end, or runs the admission transaction (oq:527-563). Time does not advance between
 //    the two steps (they are milliseconds apart in the code).
 //  - The leak guard, the quiet-hours clock, the stale hook's errors, Cloud and the gateway are oracles:
 //    the actions take their answers as parameters and `step` chooses them nondeterministically.
-//  - The recipient policy and the stale hook read the runtime's in-memory Network (ch:180-186). Each worker
+//  - The recipient policy and the stale hook read the runtime's in-memory Network (ch:185-191). Each worker
 //    has its own view and the version of the stored state it last loaded or saved (PgStore.seen, the row's
 //    xmin); `refresh` copies the database into it (a unit of work on that replica). A runtime drain starts only
 //    when its view is current (rt drainQueue, stateCurrent), and the admission transaction leaves a row as it is
@@ -57,7 +57,7 @@ module outbound_queue {
   pure val MAX_CRASHES = 1
   pure val MAX_TURNS = 2
 
-  // Statuses (oq:188-195).
+  // Statuses (oq:191-198).
   pure val WAITING = Set("pending", "retry_scheduled", "deferred_quiet_hours", "held_awaiting_reply", "sending", "unknown_acceptance")
   pure val DUE = Set("pending", "retry_scheduled", "deferred_quiet_hours")
   pure val IN_FLIGHT = Set("accepted", "sent")
@@ -73,11 +73,11 @@ module outbound_queue {
   pure def rank(st: str): int =
     if (st == "accepted") 1 else if (st == "sent") 2 else if (st == "delivered") 3 else if (st == "read") 4
     else if (WAITING.contains(st) or st == "none" or st == "collected" or st == "send_unknown") 0 else 5
-  // PROVIDER_RANK (oq:193): rows that did not go out have none.
+  // PROVIDER_RANK (oq:196): rows that did not go out have none.
   pure def providerRank(st: str): int =
     if (st == "accepted") 1 else if (st == "sent") 2 else if (st == "delivered") 3 else if (st == "read") 4 else -1
 
-  pure def isAgent(kind: str): bool = kind != "reply" and kind != "compliance"   // oq:49-51
+  pure def isAgent(kind: str): bool = kind != "reply" and kind != "compliance"   // gate.ts:14-17 isAgentInitiated
 
   // ------------------------------------------------------------------ types
   type Row = {
@@ -85,7 +85,7 @@ module outbound_queue {
     lease: bool, leaseUntil: int, nextAt: int, personCap: bool, hasBody: bool,
     leakBad: bool,        // what the leak guard says about this text (oracle, fixed per text)
     leakReleased: bool,   // leak_released_by (migration 0032)
-    guardFailed: bool,    // a collected reply that failed the leak guard and went to the queue (rt:473-477)
+    guardFailed: bool,    // a collected reply that failed the leak guard and went to the queue (rt:538-543)
     sentAt: bool, cause: str, turnLive: bool, lastWait: str,
     doubt: bool,          // in_doubt under a receipt provider: no definite answer since the last provider call
     acctFree: bool        // a collected reply of a turn the service gave no Cloud account (accountEligible false)
@@ -147,14 +147,14 @@ module outbound_queue {
     heldSeq: 0, deliveryFailed: false, wasDeferred: false, wasParked: false, lost: false, resent: false }
 
   // ------------------------------------------------------------------ helpers on rows
-  // end() (oq:337-347): no status guard; a non-member row loses its text and address unless parked for leak review.
+  // end() (oq:374-388) as the gates call it: no status guard (the send error paths pass `from`, see respond); a non-member row loses its text and address unless parked for leak review.
   pure def endRow(row: Row, st: str, cause: str): Row =
     { ...row, status: st, lease: false, cause: cause,
       hasBody: if (not(row.member) and st != "parked_leak_review") false else row.hasBody }
-  // wait() (oq:350-353): no status guard.
+  // wait() (oq:390-396) as the gates call it: no status guard.
   pure def waitRow(row: Row, st: str, at: int, why: str): Row =
     { ...row, status: st, nextAt: at, lease: false, lastWait: why }
-  // The cap slot goes back when the end status is NOT_SENT (oq:345).
+  // The cap slot goes back when the end status is NOT_SENT (oq:387).
   pure def releaseSlot(s: Set[str], r: str, row: Row, st: str): Set[str] =
     if (row.personCap and NOT_SENT.contains(st)) s.exclude(Set(r)) else s
   pure def bump(g: str -> Ghost, r: str, st: str): str -> Ghost =
@@ -162,7 +162,7 @@ module outbound_queue {
   pure def push(w: Work, r: str, member: bool, st: str): List[(str, str)] =
     if (member) w.pend.append((r, st)) else w.pend
 
-  // acceptReceipt's commit (oq:543-568): only a row still sending or unknown_acceptance with its text.
+  // acceptReceipt's commit (oq:620-659): only a row still sending or unknown_acceptance with its text.
   pure def acceptOk(row: Row): bool = (row.status == "sending" or row.status == "unknown_acceptance") and row.hasBody
   // The accept commit. A receipt owner (Cloud) sends no delivery receipts: a row to a non-member ends at acceptance
   // and keeps no address and no text (SD-091 fix 0a787a8).
@@ -224,12 +224,12 @@ module outbound_queue {
   }
 
   // ------------------------------------------------------------------ enqueue (in the unit's save transaction)
-  // oq:223-251 via ch:215-231, rt:555-559. A refused enqueue (live flags off, ch:217-221) writes no row.
-  // network.messages gets "queued" for a member row (rt:483-486).
+  // oq:226-256 via ch:219-240, rt:638-640. A refused enqueue (live flags off, ch:221-225) writes no row.
+  // network.messages gets "queued" for a member row (rt:548-556).
   action enqueue(r: str, kind: str, member: bool, net: str, leakBad: bool): bool = all {
     rows.get(r).status == "none",
     env.live,
-    not(member) implies kind != "proactive",          // a direct text is never proactive (ch:85)
+    not(member) implies kind != "proactive",          // a direct text is never proactive (ch:88 DirectKind)
     member implies not(env.erased),
     rows' = rows.set(r, { ...NO_ROW, status: "pending", kind: kind, member: member, net: net, created: env.now,
       nextAt: env.now, hasBody: true, leakBad: leakBad }),
@@ -238,8 +238,8 @@ module outbound_queue {
   }
 
   // ------------------------------------------------------------------ drain: recover and reconcileUnknown (no line lock)
-  // drain() (oq:295-318): recover() first. A sending row whose lease ran out goes to unknown_acceptance under a
-  // receipt provider (Cloud), else to retry_scheduled (oq:284-291). The runtime's drainQueue starts only when the
+  // drain() (oq:287-336): recover() first. A sending row whose lease ran out goes to unknown_acceptance under a
+  // receipt provider (Cloud), else to retry_scheduled (oq:277-285). The runtime's drainQueue starts only when the
   // stored Network state is the one this replica loaded (stateCurrent, SD-020 fix); direct() drains at once.
   action drainStart(w: str, net: str, direct: bool): bool = {
     val recovered = ROWS.filter(r => rows.get(r).status == "sending" and rows.get(r).leaseUntil < env.now)
@@ -326,7 +326,7 @@ module outbound_queue {
         env' = env, views' = views, slots' = slots, admitted' = admitted, mirror' = mirror, hooks' = hooks,
       }
     } else if (wk.resp == "notfound") {
-      // Never admitted: back to the queue with the same key, guarded on unknown_acceptance (oq:598-603).
+      // Never admitted: back to the queue with the same key, guarded on unknown_acceptance (oq:702-706).
       val moved = row.status == "unknown_acceptance"
       all {
         wk.phase == "looked",
@@ -335,7 +335,7 @@ module outbound_queue {
         ghost' = ghost, conv' = conv, env' = env, views' = views, slots' = slots, admitted' = admitted, mirror' = mirror, hooks' = hooks,
       }
     } else all {
-      // Ambiguous: the row stays held; its status is mirrored (oq:604-605).
+      // Ambiguous: the row stays held; its status is mirrored (oq:708-709).
       wk.phase == "looked",
       work' = work.set(w, { ...wk, phase: "reconcile", pend: push(wk, r, row.member, "unknown_acceptance") }),
       rows' = rows, ghost' = ghost, conv' = conv, env' = env, views' = views, slots' = slots, admitted' = admitted, mirror' = mirror, hooks' = hooks,
@@ -343,13 +343,27 @@ module outbound_queue {
   }
 
   // ------------------------------------------------------------------ drain: the line lock and dispatch
-  action lockLine(w: str): bool = all {
-    work.get(w).phase == "reconcile",
-    work.get(w).swept,
-    env.lineHolder == "",
-    work' = work.setBy(w, x => { ...x, phase: "locked", seen: Set() }),
-    env' = { ...env, lineHolder: w },
-    rows' = rows, ghost' = ghost, conv' = conv, views' = views, slots' = slots, admitted' = admitted, mirror' = mirror, hooks' = hooks,
+  // tooOld (oq:365-368): older than the TTL, or a proactive row older than its own TTL.
+  pure def tooOldAt(row: Row, now: int): bool =
+    now - row.created > TTL_ANY or (row.kind == "proactive" and now - row.created > TTL_PROACTIVE)
+
+  // The line lock (oq:260-273), then expireHeld (oq:353-363): a held row past its time ends expired with end()
+  // (no status guard), since it is not due and dispatch never reads it.
+  action lockLine(w: str): bool = {
+    val wk = work.get(w)
+    val old = ROWS.filter(r => rows.get(r).status == "held_awaiting_reply" and tooOldAt(rows.get(r), env.now))
+    all {
+      wk.phase == "reconcile",
+      wk.swept,
+      env.lineHolder == "",
+      rows' = rows.keys().mapBy(r => if (old.contains(r)) endRow(rows.get(r), "expired", "held") else rows.get(r)),
+      slots' = slots.filter(r => not(old.contains(r) and rows.get(r).personCap)),
+      ghost' = rows.keys().mapBy(r => if (old.contains(r)) bump(ghost, r, "expired").get(r) else ghost.get(r)),
+      work' = work.set(w, { ...wk, phase: "locked", seen: Set(),
+        pend: ROWS.fold(wk.pend, (l, r) => if (old.contains(r) and rows.get(r).member) l.append((r, "expired")) else l) }),
+      env' = { ...env, lineHolder: w },
+      conv' = conv, views' = views, admitted' = admitted, mirror' = mirror, hooks' = hooks,
+    }
   }
 
   // dispatch gates 0-10, read at one instant. The cap slot is taken here (gate 9, its own transaction,
@@ -363,10 +377,10 @@ module outbound_queue {
     val compliance = row.kind == "compliance"
     val age = env.now - row.created
     val tooOld = age > TTL_ANY or (row.kind == "proactive" and age > TTL_PROACTIVE)
-    // stale (ch:180-181): an item row whose opportunity the worker's in-memory Network has as closed.
+    // stale (ch:185-187): an item row whose opportunity the worker's in-memory Network has as closed.
     val hasItem = row.member and agent
     val stale = hasItem and view.closed
-    // recipient (ch:185-186): a non-member direct text passes; a member row asks the in-memory policy.
+    // recipient (ch:190-191): a non-member direct text passes; a member row asks the in-memory policy.
     // A row of another network of the app: memberOf misses, unknown_recipient (network.ts:4848).
     val recipientOk = if (not(row.member)) true else not(agent and view.held)
     val replyLate = row.kind == "reply" and (conv.lastIn < 0 or env.now - conv.lastIn > REPLY_WINDOW)
@@ -408,7 +422,7 @@ module outbound_queue {
     }
   }
 
-  // The worker's row ends (end(), oq:337-347) or waits (wait(), oq:350-353); the change joins the drain's list.
+  // The worker's row ends (end(), oq:374-388) or waits (wait(), oq:390-396); the change joins the drain's list.
   action endAct(w: str, st: str, cause: str): bool = {
     val wk = work.get(w)
     val r = wk.row
@@ -427,15 +441,21 @@ module outbound_queue {
     if (env.engSeq != seq) waitAct(w, "pending", env.now, why, doubt, seq)
     else waitAct(w, "held_awaiting_reply", env.now, why, doubt, seq)
   // drain()'s catch (SD-117 fix 2d901dd, SD-299 fix 8495b7a): attempts + 1; the row waits with a backoff, and is
-  // parked for a person only when the attempts are used up.
+  // parked for a person only when the attempts are used up. Every write is guarded on the status that dispatch read
+  // or a status the send owns (oq drain: from = [row.status, ...OWNED], fix 8ca695b): a row that left them while the
+  // dispatch ran (erasure, a receipt lookup) is not written, and the drain records no change for it.
   action dispatchErr(w: str): bool = {
     val wk = work.get(w)
     val r = wk.row
     val row = rows.get(r)
     val tries = row.attempts + 1
     val row1 = { ...row, attempts: tries }
+    val guardOk = row.status == wk.readStatus or row.status == "sending" or row.status == "unknown_acceptance"
     all {
-      if (tries >= MAX_ATTEMPTS) all {
+      if (not(guardOk)) all {
+        work' = work.set(w, { ...wk, phase: "locked" }),
+        rows' = rows, slots' = slots, ghost' = ghost,
+      } else if (tries >= MAX_ATTEMPTS) all {
         rows' = rows.set(r, endRow(row1, "parked_error", "dispatch_error")),
         slots' = releaseSlot(slots, r, row, "parked_error"),
         ghost' = bump(ghost, r, "parked_error"),
@@ -514,7 +534,7 @@ module outbound_queue {
         slots' = slots, conv' = conv, env' = env, views' = views, admitted' = admitted, mirror' = mirror, hooks' = hooks,
       }
       else if (adm == "busy") all {
-        // Another worker claimed or ended it: report its status, write nothing (oq:497-502).
+        // Another worker claimed or ended it: report its status, write nothing (oq:558-561).
         work' = work.set(w, { ...wk, phase: "locked", pend: push(wk, r, row.member, row.status) }),
         rows' = rows, ghost' = ghost, slots' = slots, conv' = conv, env' = env, views' = views, admitted' = admitted, mirror' = mirror, hooks' = hooks,
       }
@@ -522,7 +542,7 @@ module outbound_queue {
     }
   }
 
-  // The provider call (oq:506; Cloud: cc:24-68). Cloud is idempotent on the id: an admitted id is replayed.
+  // The provider call (oq:583; Cloud: cc:25-68). Cloud is idempotent on the id: an admitted id is replayed.
   // Outcomes: ok (admitted, answer seen), lost (admitted, answer lost: unknown), netfail (not admitted, unknown),
   // rejected (refused before dispatch: retryable), optout (Cloud's fence: blocked), invalid (failed),
   // await (Blooio conversation limit), failedReceipt (Blooio answers with status failed).
@@ -548,15 +568,24 @@ module outbound_queue {
   // The answer is written. dbErr: the accept transaction throws. send() now awaits acceptReceipt and maps the error
   // to failure "unknown" (Q-outbound_queue-2 fix 1e3585b): the row waits as unknown_acceptance and keeps its cap slot;
   // the receipt lookup (or the TTL) resolves it.
+  // Every write after a failed call is guarded on the statuses the send owns (oq send: OWNED = sending,
+  // unknown_acceptance; fix 8ca695b): while the call ran, recover() and a receipt lookup may have recorded the
+  // acceptance, or erasure ended the row. Such a row keeps its recorded outcome, and the drain records no change.
   action respond(w: str, dbErr: bool): bool = {
     val wk = work.get(w)
     val r = wk.row
     val row = rows.get(r)
     val retryable = wk.resp == "rejected"
+    val owned = row.status == "sending" or row.status == "unknown_acceptance"
+    val failure = (wk.resp == "ok" and dbErr) or (wk.resp != "ok" and wk.resp != "failedReceipt")
     all {
       wk.phase == "responded",
       wk.resp == "ok" or not(dbErr),
-      if (wk.resp == "ok" and dbErr) waitAct(w, "unknown_acceptance", env.now, "unknown", env.mode == "cloud", wk.readSeq)
+      if (failure and not(owned)) all {
+        work' = work.set(w, { ...wk, phase: "locked" }),
+        rows' = rows, ghost' = ghost, slots' = slots, conv' = conv, env' = env, views' = views, admitted' = admitted, mirror' = mirror, hooks' = hooks,
+      }
+      else if (wk.resp == "ok" and dbErr) waitAct(w, "unknown_acceptance", env.now, "unknown", env.mode == "cloud", wk.readSeq)
       else if (retryable) {
         if (row.attempts >= MAX_ATTEMPTS) endAct(w, "failed", "provider") else waitAct(w, "retry_scheduled", env.now + 1, "retry", false, env.engSeq)
       }
@@ -628,7 +657,7 @@ module outbound_queue {
     rows' = rows, conv' = conv, views' = views, slots' = slots, admitted' = admitted, mirror' = mirror, hooks' = hooks,
   }
 
-  // ------------------------------------------------------------------ the notify projection (rt:621-647)
+  // ------------------------------------------------------------------ the notify projection (rt:718-745)
   // Repairs the message status of a row the provider took, once (notification_recorded_at).
   action project(r: str): bool = {
     val row = rows.get(r)
@@ -642,8 +671,8 @@ module outbound_queue {
   }
 
   // ------------------------------------------------------------------ the person and the Network
-  // A signed turn starts (svc:2051-2088). In a signed turn `engaged` runs only after inbound() returns
-  // (svc:1027, svc:2088); the Network's unit (and its drain) runs inside inbound().
+  // A signed turn starts (svc:2264-2386). In a signed turn `engaged` runs only after inbound() returns
+  // (svc:1178, svc:2378); the Network's unit (and its drain) runs inside inbound().
   // acct: the turn is account-eligible (svc accountEligible: policy allowed, a known age that can join).
   action turnStart(acct: bool): bool = all {
     env.turn != "open",
@@ -652,7 +681,7 @@ module outbound_queue {
     rows' = rows, work' = work, ghost' = ghost, conv' = conv, views' = views, slots' = slots, admitted' = admitted, mirror' = mirror, hooks' = hooks,
   }
 
-  // queue.inbound (oq:638-645): the streak resets and held rows of the address go back to pending.
+  // queue.inbound (oq:748-755): the streak resets and held rows of the address go back to pending.
   action engaged: bool = all {
     env.engagePending,
     conv' = { ...conv, exists: true, unanswered: 0, reUsed: false, lastIn: env.now },
@@ -664,11 +693,15 @@ module outbound_queue {
 
   // A reply in a signed turn: the queue's leak guard runs first; a pass is collected (Cloud sends it), a fail goes
   // into the queue parked for staff at once (SD-101 fix ca25f43: no send-time gate may end it first).
+  // collectGate (rt writeUnit, oq-free): a non-compliance reply to an opted-out number is refused at collection: it is
+  // stored in network.messages as refused and gets no queue row. Here that reply is not collected.
   action collect(r: str, kind: str, leakBad: bool): bool = all {
     env.turn == "open",
     rows.get(r).status == "none",
     not(env.erased),
     kind == "reply" or kind == "compliance",
+    // numberFacts consent (svc:785) is resolveConsent(lastConsent(e164, app)), the same guard as the admission.
+    kind == "compliance" or not(codeOptedOut(env.ledger)),
     rows' = rows.set(r, if (leakBad)
         { ...NO_ROW, status: "parked_leak_review", kind: kind, member: true, net: "nyc", created: env.now, nextAt: env.now,
           hasBody: true, leakBad: true, guardFailed: true, cause: "leak" }
@@ -680,8 +713,8 @@ module outbound_queue {
     work' = work, env' = env, conv' = conv, views' = views, slots' = slots, admitted' = admitted, hooks' = hooks,
   }
 
-  // The turn ends: handled (the gateway gets the replies) or unresolved (a throw: svc:2058; the gateway never
-  // gets them, and every later receipt answers turn_unavailable, svc:2011).
+  // The turn ends: handled (the gateway gets the replies) or unresolved (a throw: svc:2360; the gateway never
+  // gets them, and every later receipt answers turn_unavailable, svc:2313).
   action turnFinish(handled: bool): bool = all {
     env.turn == "open",
     env' = { ...env, turn: if (handled) "handled" else "unresolved" },
@@ -753,14 +786,14 @@ module outbound_queue {
     views' = views.set(w, { held: env.held, closed: true, ver: env.ver + 1 }),
     rows' = rows, work' = work, ghost' = ghost, conv' = conv, slots' = slots, admitted' = admitted, mirror' = mirror, hooks' = hooks,
   }
-  // A unit of work on worker w's replica loads the newest state (rt:356-363).
+  // A unit of work on worker w's replica loads the newest state (rt:358-363).
   action refresh(w: str): bool = all {
     work.get(w).phase == "idle",
     views' = views.set(w, { held: env.held, closed: env.closed, ver: env.ver }),
     rows' = rows, work' = work, ghost' = ghost, env' = env, conv' = conv, slots' = slots, admitted' = admitted, mirror' = mirror, hooks' = hooks,
   }
 
-  // The member is forgotten (leave, delete all): rt:521-551. Waiting rows end dropped_forgotten, text and address
+  // The member is forgotten (leave, delete all): rt:615-635. Waiting rows end dropped_forgotten, text and address
   // go, the messages are deleted. No cap slot is released.
   action erase: bool = all {
     not(env.erased),
@@ -774,14 +807,14 @@ module outbound_queue {
     work' = work, conv' = conv, views' = views, slots' = slots, admitted' = admitted, hooks' = hooks,
   }
 
-  // Blooio's safety state of the line (safety.* webhooks, blooio mode only: svc:1016-1018, oq:648-652).
+  // Blooio's safety state of the line (safety.* webhooks, blooio mode only: svc:1166-1169, oq:758-762).
   action setSafety(a: str): bool = all {
     env.mode == "blooio",
     env' = { ...env, lineSafety: a },
     rows' = rows, work' = work, ghost' = ghost, conv' = conv, views' = views, slots' = slots, admitted' = admitted, mirror' = mirror, hooks' = hooks,
   }
 
-  // Staff decide a parked text (oq:720-731, svc:2336-2342). Release: back to pending, the leak guard does not
+  // Staff decide a parked text (oq:838-850, svc:2619-2650). Release: back to pending, the leak guard does not
   // park it again. Drop: end dropped_leak_review.
   action staffRelease(r: str): bool = {
     val row = rows.get(r)
@@ -940,11 +973,11 @@ module outbound_queue {
   // (findings file section 0.6).
   // Failed before fix 1f86525: Q-outbound_queue-1 (admission rechecked consent only for member rows).
   val noClaimAfterStop = ROWS.forall(r => not(ghost.get(r).bad.contains("afterStop")))
-  // I1 / oq:119 "The recipient at send time: paused, blocked, held"; oq:14 "each reads the database".
+  // I1 / oq:113 "The recipient at send time: paused, blocked, held"; oq:14 "each reads the database".
   // Failed before fix 6cc9d1b: SD-020 (the recipient gate reads the replica's in-memory Network; the claim now
   // needs the stored state version to be the one the replica read).
   val noClaimWhileHeld = ROWS.forall(r => not(ghost.get(r).bad.contains("whileHeld")))
-  // oq:15 "too old or about a closed item (expired)" and oq:111 "Every hook fails closed when it throws".
+  // oq:15 "too old or about a closed item (expired)" and oq:105 "Every hook fails closed when it throws".
   // Failed before fixes 6cc9d1b and 8495b7a: SD-020 (stale in-memory view) and SD-299 (the stale hook failed open).
   val noClaimWhenClosed = ROWS.forall(r => not(ghost.get(r).bad.contains("whenClosed")))
   // AGENTS "Every outbound message must go through the leak check": what the provider took passed the guard,
@@ -956,7 +989,7 @@ module outbound_queue {
   // resolved by receipt lookup only, never by a second send.
   // Holds in every run.
   val unknownNeverResends = ROWS.forall(r => not(ghost.get(r).bad.contains("inDoubt")))
-  // oq:194 "Statuses that did not go out": a NOT_SENT row was not taken by the provider (or its delivery failed).
+  // oq:197 "Statuses that did not go out": a NOT_SENT row was not taken by the provider (or its delivery failed).
   // Erasure ends an in-flight row of a forgotten member without a send check; those rows are left out. So are rows that
   // recover() put back to retry_scheduled in webhook mode (no receipt provider, so no lookup exists): the queue
   // marks them in_doubt and cannot know whether the stopped call went out; a later gate may end them unsent.
@@ -968,8 +1001,14 @@ module outbound_queue {
     (NOT_SENT.contains(row.status) and not(memberGone(row, env.erased)) and not(ghost.get(r).resent)) implies
       (not(admitted.contains(r)) or ghost.get(r).deliveryFailed)
   })
-  // ch:46 "A message's delivery status now": a NOT_SENT message status is not stored for a text that went out.
+  // ch:49 "A message's delivery status now": a NOT_SENT message status is not stored for a text that went out.
   // Failed before fixes 255a42d and 1e3585b: SD-334 (a lost race reported dropped_forgotten) and Q-outbound_queue-2.
+  // NOT IN `safety`: Q-outbound_queue-3 (open, below) also breaks it. A drain parks a text; staff release it
+  // (svc /queue/leak-review: network.messages "pending"); the drain's storeStatuses then writes its older
+  // "parked_leak_review"; a later drain sends the released text. Until that drain's own store runs (or for ever, when
+  // it stops before the store: the SD-336 repair reads only waiting statuses), the message shows a NOT_SENT status for
+  // a text that went out. The simulator finds it at sample seed 0x94d19f (max-steps 40), on the model before and after
+  // the 8ca695b changes; the fixed seed 0x5eed did not reach it before.
   val mirrorNotSentMeansNotOut = ROWS.forall(r =>
     NOT_SENT.contains(mirror.get(r)) implies (not(admitted.contains(r)) or ghost.get(r).deliveryFailed))
   // PRD 40.3 / AGENTS item 7: at most CAP proactive texts to the person a day, counting every text the provider
@@ -1004,7 +1043,7 @@ module outbound_queue {
       (WAITING.contains(row.status) or row.status == "parked_leak_review" or row.status == "none"
         or (env.mode == "blooio" and IN_FLIGHT.contains(row.status)))
   })
-  // rt:470-472: a collected reply that fails the guard "goes into the queue ..., where the same guard parks it for
+  // rt:526-543: a collected reply that fails the guard "goes into the queue ..., where the same guard parks it for
   // staff". Staff see it before any other end (they release it or drop it).
   // Failed before fix ca25f43: SD-101 (the row was pending; the unit drains before engaged and gate 4 ended it).
   val guardFailedReachesStaff = ROWS.forall(r => rows.get(r).guardFailed implies
@@ -1041,7 +1080,7 @@ module outbound_queue {
   // oq:2 "One queue object serves one app"; runtime.ts:1-5: a network's checks are for its own members.
   // Failed before fix 5a6cf8e: SD-132 (the drain selected by app and line; memberOf missed, network.ts:4848).
   val ownNetworkDecides = ROWS.forall(r => not(ghost.get(r).foreign))
-  // ch:46 and rt drainQueue: once nobody holds unsaved changes, a settled row's message status equals the queue's,
+  // ch:49 and rt drainQueue (rt:694-708): once nobody holds unsaved changes, a settled row's message status equals the queue's,
   // or the notify projection can still repair it, or a crash lost the change and no runtime drain ran since (the
   // next one copies it: sd336CrashLosesStatusTest).
   // Failed before fixes eb5a589, efb98a0, 255a42d: SD-136 (direct() dropped the changes), SD-336 (a crash before
@@ -1069,13 +1108,13 @@ module outbound_queue {
     val repairable = PROVIDER.contains(row.status) and row.sentAt and row.hasBody and not(ghost.get(r).projected)
     (row.member and not(env.erased) and settled and WAITING_MSG.contains(mirror.get(r))) implies (repairable or ghost.get(r).lost)
   })
-  // Caps and thread history count sent_at (oq:413-417, oq:457-458): sent_at only for a text the provider took.
+  // Caps and thread history count sent_at (oq:444-448, oq:530-533): sent_at only for a text the provider took.
   // Failed before fix aba939e: SD-337 (a send receipt with status failed wrote sent_at).
   val sentAtOnlyIfOut = ROWS.forall(r => rows.get(r).sentAt implies admitted.contains(r))
 
   val safety = and {
     noClaimAfterStop, noClaimWhileHeld, noClaimWhenClosed, leakGate, unknownNeverResends,
-    notSentMeansNotOut, mirrorNotSentMeansNotOut, capAtMost, slotOnlyForLiveRow, noStatusRegressLive,
+    notSentMeansNotOut, capAtMost, slotOnlyForLiveRow, noStatusRegressLive,
     complianceAlwaysGoes, nonMemberBodyClearedAtEnd, guardFailedReachesStaff, collectedResolvable, noHistoryReceiptRecorded,
     heldOnlyWhileUnanswered, ownNetworkDecides, mirrorNotStuckWaiting, sentAtOnlyIfOut,
   }
@@ -1555,6 +1594,38 @@ module outbound_queue {
       .then(drainStart("w2", "nyc", false)).then(sweepCollected("w2")).then(lockLine("w2"))
       .then(unlockLine("w2")).then(flush("w2"))
       .expect(mirror.get("r1") == "collected" and not(mirrorSettles))
+
+  // Fix 8ca695b ("keep a recorded row outcome when a send fails after it"): the deliver answer is lost and the lease
+  // runs out; another replica recovers the row and its receipt lookup records the acceptance. The first worker's late
+  // write of unknown_acceptance is guarded on OWNED and leaves accepted.
+  run ownedGuardKeepsAcceptanceTest =
+    initWith("cloud", true, false)
+      .then(enqueue("r1", "transactional", true, "nyc", false))
+      .then(drainStart("w1", "nyc", false)).then(sweepCollected("w1")).then(lockLine("w1"))
+      .then(decide("w1", "r1", false, false)).then(applyDecision("w1", false))
+      .then(providerCall("w1", "lost"))
+      .then(tick(12))
+      .then(drainStart("w2", "nyc", false)).then(sweepCollected("w2"))
+      .then(lookupCall("w2", "r1", "ok")).then(lookupApply("w2"))
+      .expect(rows.get("r1").status == "accepted")
+      .then(respond("w1", false))
+      .expect(rows.get("r1").status == "accepted" and noStatusRegress and safety)
+
+  // expireHeld (oq:353-363): a held proactive row past its TTL ends expired when the next drain takes the line lock.
+  run expireHeldTest =
+    initWith("cloud", true, false)
+      .then(turnStart(true)).then(engaged)
+      .then(enqueue("r1", "transactional", true, "nyc", false))
+      .then(drainStart("w1", "nyc", false)).then(sweepCollected("w1")).then(lockLine("w1"))
+      .then(decide("w1", "r1", false, false)).then(applyDecision("w1", false))
+      .then(providerCall("w1", "ok")).then(respond("w1", false))
+      .then(enqueue("r2", "proactive", true, "nyc", false))
+      .then(decide("w1", "r2", false, false)).then(applyDecision("w1", false))
+      .expect(rows.get("r2").status == "held_awaiting_reply")
+      .then(unlockLine("w1")).then(flush("w1"))
+      .then(tick(72)).then(tick(72)).then(tick(72)).then(tick(72)).then(tick(1))
+      .then(drainStart("w1", "nyc", false)).then(sweepCollected("w1")).then(lockLine("w1"))
+      .expect(rows.get("r2").status == "expired" and not(slots.contains("r2")) and safety)
 
   // ------------------------------------------------------------------ witnesses (each must be violated)
   val witness_proactiveAccepted = not(ROWS.exists(r => rows.get(r).kind == "proactive" and rows.get(r).status == "accepted"))

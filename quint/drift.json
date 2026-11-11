@@ -1,0 +1,483 @@
+{
+  "auth_edge": {
+    "files": {
+      "quint/auth_edge.qnt": "bb046135d527cf22",
+      "deploy/backend/backend.ts": "3e4805838b46d2c6",
+      "deploy/backend/route.ts": "ca93654baf126ac1",
+      "deploy/pages-worker.ts": "935d6b8312cac717",
+      "deploy/router.ts": "57fdd2e5b3ef5af0",
+      "packages/core/src/svc/network-delegation.ts": "2d42891ae1c4e8f9",
+      "packages/core/src/svc/svc-auth.ts": "80c561af25581926",
+      "packages/network/service/relay-endpoint.ts": "771ecf46326b4efa",
+      "packages/network/service/service.ts": "505c06c2b3c646fd",
+      "packages/platform/src/accounts.ts": "7956f87aef9a58e8",
+      "packages/platform/src/api.ts": "1d96d66eba6bf53e",
+      "packages/platform/src/cloud-delegation.ts": "9028cf2fde879fd3",
+      "packages/platform/src/decisions.ts": "e9672454adfd5bb9",
+      "packages/platform/src/otp.ts": "d93f8d5c0d3e8d21",
+      "packages/platform/src/pg-store.ts": "f9a75cb1f5a92737",
+      "packages/platform/src/proxy.ts": "b601ce7a933ccdac",
+      "packages/platform/src/sessions.ts": "a49cf58609e917e7"
+    }
+  },
+  "backup_restore": {
+    "files": {
+      "quint/backup_restore.qnt": "999be13e085dbf42",
+      "deploy/backup/refusal.ts": "c980873cacd1ddbb",
+      "deploy/backup/restore.ts": "f37960601900cee3"
+    },
+    "drift": [
+      "deploy/backup/restore.ts:53 (sameServer || manifest.source.systemId === id) versus model rolesNeverOnSourceServer (outside safety). A manifest with source but no systemId (made before backup.ts recorded it) falls back to host strings. With --roles through the proxy host, ..."
+    ]
+  },
+  "boot_config": {
+    "files": {
+      "quint/boot_config.qnt": "ca13b10a82113d78",
+      "packages/platform/src/env.ts": "72ac7a99f90fcf0a"
+    }
+  },
+  "candidate_pool": {
+    "files": {
+      "quint/candidate_pool.qnt": "5738caf09c158b89",
+      "packages/engine/src/complementarity.ts": "3d944daef017ece1",
+      "packages/engine/src/geo.ts": "8dbca0480fade04a",
+      "packages/engine/src/group.ts": "01e6b913ae3f89fb",
+      "packages/engine/src/packs/friends/planner.ts": "6cbfb44fc278ace7",
+      "packages/engine/src/packs/friends/rules.ts": "42755e35bed0d919",
+      "packages/engine/src/retrieval.ts": "26b5d7d439b89b55"
+    }
+  },
+  "chatjson_loop": {
+    "files": {
+      "quint/chatjson_loop.qnt": "0a29898711feaa72",
+      "packages/core/src/chatJson.ts": "2a880f7416d4300d"
+    }
+  },
+  "console_privacy": {
+    "files": {
+      "quint/console_privacy.qnt": "b5f63bcc2d9e56c6",
+      "packages/observatory/src/people.ts": "3357df140d59c9fd",
+      "packages/observatory/src/shape.ts": "6e3748f57cb529d2",
+      "packages/observatory/web/apps.tsx": "7fa6db3a6d15efb9"
+    }
+  },
+  "console_views": {
+    "files": {
+      "quint/console_views.qnt": "9517b2f05263246e",
+      "packages/observatory/web/apps.tsx": "7fa6db3a6d15efb9",
+      "packages/observatory/web/drawer.tsx": "6d2aba987e7e0e19",
+      "packages/observatory/web/logic/views.ts": "17eb8c2b9156873b",
+      "packages/observatory/web/main.tsx": "c333a21c1052f0aa",
+      "packages/observatory/web/panels.tsx": "4a42542e37017cbd",
+      "packages/observatory/web/ui.tsx": "2228f5ff7326d9cc"
+    }
+  },
+  "engine_rules": {
+    "files": {
+      "quint/engine_rules.qnt": "3acbc798afa2a6a2",
+      "packages/engine/src/packs/network/rules.ts": "d5886fcc2411b861",
+      "packages/engine/src/packs/slop/geo.ts": "5760715c83038f8e"
+    }
+  },
+  "identity_sagas": {
+    "files": {
+      "quint/identity_sagas.qnt": "f55b366c3f913c2b",
+      "packages/blooio/src/outbound-queue.ts": "7b74f62fe712ce23",
+      "packages/network/service/photoIntake.ts": "6c5b0d9ed944eb87",
+      "packages/network/service/runtime.ts": "16511c01a49960c6",
+      "packages/network/service/service.ts": "505c06c2b3c646fd",
+      "packages/observatory/db/migrations/0044_identity_sagas.sql": "4eb75923467a199c",
+      "packages/platform/src/accounts.ts": "7956f87aef9a58e8",
+      "packages/platform/src/decisions.ts": "e9672454adfd5bb9",
+      "packages/platform/src/pg-store.ts": "f9a75cb1f5a92737"
+    },
+    "drift": [
+      "The model predates the SD-089 fix: the code runs the forget unit, then photos, then the OAuth listeners, and a failed listener stops the leave; the under-13 decline runs forgetPhone (all OAuth grants revoked). A model update failed safety on a stopped leave plus a ban; see docs/results/2026-11-09-quint-drift.md."
+    ]
+  },
+  "join_age": {
+    "files": {
+      "quint/join_age.qnt": "c7f9cfbf112970ea",
+      "packages/core/src/policy.ts": "17e8d76bc94abeac",
+      "packages/network/service/decisions.ts": "d158775265cdc970",
+      "packages/network/service/inbox.ts": "a414e202e2147db9",
+      "packages/network/service/runtime.ts": "16511c01a49960c6",
+      "packages/network/service/service.ts": "505c06c2b3c646fd",
+      "packages/network/src/network.ts": "9cf96a90a923b9ae",
+      "packages/observatory/db/migrations/0043_join_age.sql": "aba276b04cbf6f53",
+      "packages/platform/src/accounts.ts": "7956f87aef9a58e8",
+      "packages/platform/src/age.ts": "607d13a34fff3b57",
+      "packages/platform/src/apps.ts": "4c73fa1345636819",
+      "packages/platform/src/decisions.ts": "e9672454adfd5bb9",
+      "packages/platform/src/pg-store.ts": "f9a75cb1f5a92737"
+    },
+    "drift": [
+      "The header's S:/A:/PS:/N:/R: line references are pinned to ad67275 and no longer match the current code (for example the text join is now service.ts:1613-1716, joinLocked accounts.ts:360-421, statedAge service.ts:1492-1513). This is documented in the header, but it is stale ...",
+      "webCheck invite branch writes nothing; the code now records the age and runs declineUnderAge on the invite_only exit (fixed 2026-11-09). Model the write and the decline."
+    ]
+  },
+  "join_flow": {
+    "files": {
+      "quint/join_flow.qnt": "ca72b802df4bd16d",
+      "packages/core/src/phone-core.ts": "3a8383db7544150e",
+      "packages/platform/src/api.ts": "1d96d66eba6bf53e",
+      "sites/shared/auth.ts": "b73bb99f2c4e16b2",
+      "sites/shared/join-core.ts": "540b273643cb94aa",
+      "sites/shared/join.ts": "acab7566148cf5a9",
+      "sites/shared/prefill.ts": "822c6c2083c566cd"
+    }
+  },
+  "matching_engine": {
+    "files": {
+      "quint/matching_engine.qnt": "cba4d48526d2294c",
+      "packages/engine/src/attention.ts": "b0b06e5b4a75b9ce",
+      "packages/engine/src/attentionCore.ts": "7fc5adef8d7305da",
+      "packages/engine/src/engine.ts": "19ef2c98fe54cb42",
+      "packages/engine/src/filterCore.ts": "ac401ac233c0d5b3",
+      "packages/engine/src/filters.ts": "a7ef40d4c30046ed",
+      "packages/engine/src/judge.ts": "420701ae4bf3b863",
+      "packages/engine/src/judgeCommon.ts": "d8ca3bad452b4f9f",
+      "packages/engine/src/judgeDeep.ts": "f7812dba626f728e",
+      "packages/engine/src/judgeScreen.ts": "19d966ed394d440b",
+      "packages/engine/src/packs/decisions.ts": "5a02bb8add85a656",
+      "packages/engine/src/packs/peon/profile.ts": "f4294ab0b4b3c45f",
+      "packages/engine/src/packs/peon/rules.ts": "92042e42a73bf4ad",
+      "packages/engine/src/packs/peon/seats.ts": "12c4a6b6aefdc751",
+      "packages/engine/src/packs/slop/assign.ts": "8634a253c9280218",
+      "packages/engine/src/packs/slop/extract.ts": "4e05c95cb9344676",
+      "packages/engine/src/packs/slop/index.ts": "7d7f377255677a14",
+      "packages/engine/src/packs/slop/judge.ts": "89fe7a0fde0b173f",
+      "packages/engine/src/packs/slop/onboard.ts": "959ec5cea677f169",
+      "packages/engine/src/packs/slop/plan.ts": "6cec13c54af73f85",
+      "packages/engine/src/packs/slop/profile.ts": "6b3fe3dfb1680d8a",
+      "packages/engine/src/packs/slop/rules.ts": "8a629aed87370954",
+      "packages/engine/src/pairKey.ts": "f0bf2a4624589197",
+      "packages/engine/src/plans.ts": "1829772e65750ae5",
+      "packages/engine/src/policy.ts": "388498dc92e2b55b",
+      "packages/engine/src/scoreCore.ts": "9bb2e2ff61f11032",
+      "packages/engine/src/scoring.ts": "e77b080c47d09da5",
+      "packages/engine/src/selectionGuard.ts": "0cd9e5c58b53895d",
+      "packages/engine/src/world.ts": "f412ff60055a76ab",
+      "packages/network/service/packs.ts": "0da955c66538cdb1",
+      "packages/network/service/postings.ts": "5f991358d5c74520",
+      "packages/network/src/jobs.ts": "66530ddc6c95b164",
+      "packages/network/src/network.ts": "9cf96a90a923b9ae",
+      "packages/network/src/outreach.ts": "c19d5b21deeee7a0"
+    },
+    "drift": [
+      "matching_engine.qnt:250-253 nextMsg vs onboard.ts:144 nextQuestion (firstQuestion with p.askCounts and MAX_ASKS_PER_QUESTION) and service/packs.ts:144: the code caps every onboarding question (not only the read-back) at 2 asks, and skips the question that was just answered ...",
+      "matching_engine.qnt:284 memberSays late-read condition (o2 != o) vs network.ts:1168-1179 lateAnswer: the code reads a late text only when it adds a new tag or changes the loop's next reason. A change that only removes a tag (for example a late 'smoking is fine') is not read ...",
+      "Soft onboarding questions (slop_interests, slop_activities, slop_free) and the slop_zip / slop_seeks / slop_gender split (onboard.ts:125-139) are not in nextMsg. The header documents the hard-field abstraction but not these questions. This goes with the first item."
+    ]
+  },
+  "notify_capital": {
+    "files": {
+      "quint/notify_capital.qnt": "92632bb1770a827e",
+      "deploy/backend/backend.ts": "3e4805838b46d2c6",
+      "packages/capital/src/credit.ts": "39e9f16206881ddd",
+      "packages/capital/src/ledger.ts": "b225d727f0aef1b2",
+      "packages/capital/src/levers.ts": "72ab77d87bcac52b",
+      "packages/capital/src/validate.ts": "72cf8a714d90b91a",
+      "packages/network/service/channel.ts": "5ae7f611a791394b",
+      "packages/network/src/capital.ts": "f2285e3945ccde5d",
+      "packages/notify/src/decide.ts": "161360ddd22b45d6",
+      "packages/notify/src/pg-store.ts": "a8df19112536f70f",
+      "packages/notify/src/scheduler.ts": "328c750c0c21d2b6",
+      "packages/notify/src/surface.ts": "f3ec85c4eaf20cb7",
+      "packages/observatory/db/migrations/0057_notify_capital_state_machines.sql": "5867ec5c188e1682"
+    }
+  },
+  "oauth_mcp": {
+    "files": {
+      "quint/oauth_mcp.qnt": "952b93d5a71f1879",
+      "packages/core/src/guard.ts": "fbc5efb1674f78b8",
+      "packages/mcp/db/oauth.sql": "aa810b49708edc28",
+      "packages/mcp/src/decisions.ts": "d25111b8ae3df379",
+      "packages/mcp/src/handler.ts": "f0f071dc65021c3a",
+      "packages/mcp/src/hooks.ts": "ef0e17f42a46edca",
+      "packages/mcp/src/leaks.ts": "f0723121a37c275b",
+      "packages/mcp/src/pg-store.ts": "3d5ae97a25216e1c",
+      "packages/mcp/src/tools.ts": "2de246ab4276f9a0",
+      "packages/mcp/src/update-gate.ts": "75f2d404e00e79ee",
+      "packages/mcp/src/util.ts": "5cd4b5c46f23858d",
+      "packages/network/service/serve.ts": "04a9062d44511529",
+      "packages/platform/src/pg-store.ts": "f9a75cb1f5a92737"
+    },
+    "drift": [
+      "handler.ts:581-585 endIfBanned revokes a banned person's grant at its first use without an oauth.audit row. This breaks everyRevocationAudited, which comes from README section 3: one audit row for each revocation. The model keeps the ban as a read-only check.",
+      "packages/platform/src/pg-store.ts:452-457 movePhone now revokes the old number's Cloud grants (the SD-108 fix) without an audit row and without linked(false). The model's movePhone still aborts (cloudMoveTest, numberChangeWorks), so it is stale, but modelling the new code ...",
+      "quotaCountsAccepted, which is in safety, is reachable as a violation. prepare_signup counts in the same per-grant profile bucket as submit_profile (tools.ts:286 and 312, handler.ts:891), so a grant that prepared a draft is refused after fewer than 5 accepted profiles. README ..."
+    ]
+  },
+  "observatory_sync": {
+    "files": {
+      "quint/observatory_sync.qnt": "4033cc391ba281a8",
+      "packages/network/src/store.ts": "3dcfdfbcab02d8c4",
+      "packages/observatory/src/server.ts": "c9b4fe22953ae5ce",
+      "packages/observatory/web/admin.tsx": "36ce0223a61c98fd",
+      "packages/observatory/web/drawer.tsx": "6d2aba987e7e0e19",
+      "packages/observatory/web/logic/filters.ts": "13d86eec0dd81f3d",
+      "packages/observatory/web/logic/sync.ts": "c718b7ac3f658ece",
+      "packages/observatory/web/map.ts": "6e6a0a6efef4f0b8",
+      "packages/observatory/web/store.ts": "db4b10f1bbb587f5"
+    }
+  },
+  "opportunity": {
+    "files": {
+      "quint/opportunity.qnt": "eb860e903e40d973",
+      "packages/blooio/src/outbound-queue.ts": "7b74f62fe712ce23",
+      "packages/core/src/replies.ts": "5d98b5e3dc4a8722",
+      "packages/core/src/reply-decision.ts": "bd353a0bed5c9d30",
+      "packages/engine/src/attention.ts": "b0b06e5b4a75b9ce",
+      "packages/engine/src/attentionCore.ts": "7fc5adef8d7305da",
+      "packages/engine/src/world.ts": "f412ff60055a76ab",
+      "packages/network/service/runtime.ts": "16511c01a49960c6",
+      "packages/network/src/classify.ts": "3332fc4b69bc3efa",
+      "packages/network/src/jobs.ts": "66530ddc6c95b164",
+      "packages/network/src/network.ts": "9cf96a90a923b9ae",
+      "packages/network/src/outreach.ts": "c19d5b21deeee7a0",
+      "packages/network/src/transitions.ts": "4f6a2fd0ab78a39a"
+    },
+    "drift": [
+      "offerOtherTimes path missing. A probe reply with otherTimes (a counter or 'neither') gets new times once (network.ts:811, 2485-2496). This adds timeRetry without primed, keeps status probing and resets sentAt. Silence then expires it (3646 needs primed). The model reads a ...",
+      "Same-day review SLA missing. The code sets the deadline to now + (o.sameDay ? 1 : reviewSlaHours) h (network.ts:2151, 2176). The model always uses REVIEW_SLA 12. The model is stale.",
+      "Reroll review decision missing. decide() reroll (network.ts:2128-2156) swaps a candidate and resets the review deadline, or closes the item as 'rerolled in review'. The model has only approve and reject.",
+      "probe() branches missing. The code has the ask-open hold (askOpen), the away-from-NYC refusal (inNyc, then replaceOrClose) and commonTimeGone, which closes the item as 'no common time' (network.ts:2290-2299). reveal() can also close on no meeting time and leave out a member ...",
+      "Stale code locations. The N:<line> references point to commit 25b54f1/ad67275, as the header says. Most are now 25-300 lines lower (for example PROBE_TTL is at network.ts:468, not N:440, and reviewBlock is at 2058, not N:1975). This is comment-only. It is documented as ..."
+    ]
+  },
+  "outbound_queue": {
+    "files": {
+      "quint/outbound_queue.qnt": "ae1eae55fbe06fa0",
+      "packages/blooio/src/blooio/client.ts": "f6c5a5c2ccec36c8",
+      "packages/blooio/src/gate.ts": "16152b12ba3516c3",
+      "packages/blooio/src/outbound-queue.ts": "7b74f62fe712ce23",
+      "packages/blooio/src/quiet-hours.ts": "78832998a5b33c5c",
+      "packages/blooio/src/quiet-window.ts": "faf0bf99bc523883",
+      "packages/core/src/guard.ts": "fbc5efb1674f78b8",
+      "packages/network/service/channel.ts": "5ae7f611a791394b",
+      "packages/network/service/cloud-channel.ts": "6aefc0a117084352",
+      "packages/network/service/decisions.ts": "d158775265cdc970",
+      "packages/network/service/runtime.ts": "16511c01a49960c6",
+      "packages/network/service/service.ts": "505c06c2b3c646fd",
+      "packages/network/src/network.ts": "9cf96a90a923b9ae",
+      "packages/network/src/store.ts": "3dcfdfbcab02d8c4",
+      "packages/observatory/db/migrations/0045_outbound_queue_network.sql": "e4c725d923540fd2"
+    },
+    "drift": [
+      "gate.ts:10 MessageKind 'safety' (a hold notice: no quiet hours, no unanswered streak, no line caps; it may go to a held member) is not in the model's KINDS. To add it, decide, the whileHeld ghost and unansweredAtMost (safety notices count in line_conversations.unanswered) ...",
+      "outbound-queue.ts:540-552 admission branches are not modelled: a proactive row to a non-active member gives suppressed_ineligible; the Cloud membership and phone binding check gives dropped_forgotten; checks.admit (relay, approved photos) gives suppressed_ineligible. The ...",
+      "Q-outbound_queue-3 (runtime.ts:746-751 storeStatuses writes with no condition) and Q-outbound_queue-4 (runtime.ts:704-706, the repair reads only waiting statuses) are still in the code. Q-3 also breaks mirrorNotSentMeansNotOut, so that invariant is out of safety now.",
+      "Comments I did not check or fix: rt:345-347 and cc:57-61 (the receipt lookup is now around cloud-channel.ts:11-16 and 39-66), and 0007:168-189."
+    ]
+  },
+  "phone_identity": {
+    "files": {
+      "quint/phone_identity.qnt": "83b3da39f832e2eb",
+      "packages/blooio/src/phone.ts": "5176ce2270a89651",
+      "packages/platform/src/otp.ts": "d93f8d5c0d3e8d21"
+    }
+  },
+  "photo_relay_item": {
+    "files": {
+      "quint/photo_relay_item.qnt": "a470e9b80f6b199c",
+      "packages/platform/src/photo-relay.ts": "79d09991e65ed241"
+    }
+  },
+  "photos_rating": {
+    "files": {
+      "quint/photos_rating.qnt": "2dc5a4fd262d7e1f",
+      "packages/engine/src/packs/slop/appearance.ts": "a4226717b170ca89",
+      "packages/engine/src/packs/slop/clef.ts": "572868d33931e6d7",
+      "packages/engine/src/packs/slop/copy.ts": "208b6f77aa5850c7",
+      "packages/engine/src/packs/slop/plan.ts": "6cec13c54af73f85",
+      "packages/network/service/inbox.ts": "a414e202e2147db9",
+      "packages/network/service/packs.ts": "0da955c66538cdb1",
+      "packages/network/service/photoIntake.ts": "6c5b0d9ed944eb87",
+      "packages/platform/src/accounts.ts": "7956f87aef9a58e8",
+      "packages/platform/src/photos.ts": "e8e322186eded226",
+      "packages/platform/src/riff.ts": "c7d60c8934da603a",
+      "packages/platform/src/segments.ts": "de99b743b3bceb46"
+    },
+    "drift": [
+      "service.ts:835 (onForget, commit 8e96df9, SD-275/SD-256/SD-178) skips photos.deleteFor for a banned person, so a banned person keeps their photos after a leave or delete everything. In the model, leaveHide and delHide (photos_rating.qnt leave/delete sections) always hide ..."
+    ]
+  },
+  "plan_crew": {
+    "files": {
+      "quint/plan_crew.qnt": "7bfd513c8012f8aa",
+      "packages/engine/src/plans.ts": "1829772e65750ae5",
+      "packages/network/src/network.ts": "9cf96a90a923b9ae"
+    }
+  },
+  "plan_run": {
+    "files": {
+      "quint/plan_run.qnt": "e837480fb75c0008",
+      "packages/core/src/policy.ts": "17e8d76bc94abeac",
+      "packages/engine/src/intervalCore.ts": "9577e952576bb6ac",
+      "packages/engine/src/planCore.ts": "5c8d36862d2ebcea",
+      "packages/engine/src/plans.ts": "1829772e65750ae5",
+      "packages/network/src/network.ts": "9cf96a90a923b9ae",
+      "packages/network/src/transitions.ts": "4f6a2fd0ab78a39a"
+    },
+    "drift": [
+      "planReveal can be deferred. The code sends the reveal with logistics timing, so send() can defer it outside the member's window (network.ts:3336 through send 4180-4199). The model delivers or refuses it at once. Its header says only plan probes are deferred. This is minor and ...",
+      "In-body line references (about 60 network.ts:<line> comments) are still lines at wave2/plan_run, about 150-260 lines lower now. This is comment-only. The header now documents it."
+    ]
+  },
+  "profile_learning": {
+    "files": {
+      "quint/profile_learning.qnt": "aa1533d73114bcc3",
+      "packages/core/src/fact-window.ts": "4c6dca68e82a4f42",
+      "packages/core/src/svc/learning-collection-command.ts": "b903b7b4f7601065",
+      "packages/core/src/svc/learning-consent-context.ts": "92c06d9cf7ca5e13",
+      "packages/core/src/svc/profile-review-disconnect.ts": "9bbaca2f05b8be99",
+      "packages/core/src/svc/profile-review-owner.ts": "83439d97aa1b791b",
+      "packages/core/src/svc/profile-review-source.ts": "ce106b6549850109",
+      "packages/core/src/svc/profile-review-withdrawal.ts": "ee36577a75e99c71",
+      "packages/core/src/svc/svc-auth.ts": "80c561af25581926",
+      "packages/network/service/cloud-profile-review-owner.ts": "23ac171c28a534af",
+      "packages/network/service/learning-consent-context-endpoint.ts": "a44388f32183a276",
+      "packages/network/service/profile-review-factory.ts": "89ff90bac339a876",
+      "packages/network/service/profile-suggestion-disconnect-endpoint.ts": "dbef894492a153b9",
+      "packages/network/service/profile-suggestion-endpoint.ts": "34a84153e9374667",
+      "packages/network/service/profile-suggestion-withdrawal-endpoint.ts": "60d06f9fe8631911",
+      "packages/network/service/profile-suggestions.ts": "829d1df073239c1b",
+      "packages/network/service/service.ts": "505c06c2b3c646fd",
+      "packages/observatory/db/migrations/0052_profile_learning.sql": "dbd62a3a5faccd4a",
+      "packages/platform/src/accounts.ts": "7956f87aef9a58e8",
+      "packages/platform/src/pg-store.ts": "f9a75cb1f5a92737"
+    }
+  },
+  "profile_read": {
+    "files": {
+      "quint/profile_read.qnt": "2a89c48080dd5782",
+      "packages/network/service/profile-read.ts": "0e06bfe575caa665",
+      "packages/network/service/profile-suggestion-review.ts": "d4116368a48de666"
+    }
+  },
+  "relay": {
+    "files": {
+      "quint/relay.qnt": "3ce31084505e842e",
+      "packages/engine/src/relay.ts": "c04490439ba6a51d",
+      "packages/engine/src/relayClef.ts": "6ab81c3800c5642a",
+      "packages/engine/src/relayCore.ts": "2f2aff5ee27095b1",
+      "packages/network/service/relay-endpoint.ts": "771ecf46326b4efa",
+      "packages/network/service/runtime.ts": "16511c01a49960c6",
+      "packages/network/service/service.ts": "505c06c2b3c646fd",
+      "packages/network/src/network.ts": "9cf96a90a923b9ae",
+      "packages/network/src/relay.ts": "b9525251911e0297",
+      "packages/network/src/transitions.ts": "4f6a2fd0ab78a39a",
+      "packages/platform/src/photo-relay.ts": "79d09991e65ed241"
+    },
+    "drift": [
+      "The number swap is now all or nothing in code, commit 07c5567 (SD-007). network/src/relay.ts:315-343 preflights both shares with canSend and transitions.ts:517 swapPlan, and sends both or neither. network.ts:5201-5225 flushSwapShares checks a waiting pair again with swapFlush ..."
+    ]
+  },
+  "review_desk": {
+    "files": {
+      "quint/review_desk.qnt": "2b7b110329073c17",
+      "packages/network/src/network.ts": "9cf96a90a923b9ae",
+      "packages/observatory/web/admin.tsx": "36ce0223a61c98fd",
+      "packages/observatory/web/logic/review.ts": "5cc3221d50ef81ef",
+      "packages/observatory/web/review.tsx": "fbc42fc24f47c908"
+    },
+    "drift": [
+      "approveMatchesSeenPeople (gap G6) is still a known code defect, and the model documents it. The server side is wrong, not the model: web/store.ts:861 sends {type: review, oppId, decision} with no item version, and network.ts decide (about line 2006) has no version check. So ..."
+    ]
+  },
+  "runtime_ops": {
+    "files": {
+      "quint/runtime_ops.qnt": "b3f79e08caa9938d",
+      "deploy/backend/backend.ts": "3e4805838b46d2c6",
+      "deploy/backend/ops.ts": "f4124ba93c6bd964",
+      "deploy/backend/route.ts": "ca93654baf126ac1",
+      "deploy/backend/server.ts": "d8a73b8d79daa616",
+      "deploy/backup/backup.ts": "aec882b0de7bb832",
+      "deploy/backup/lib.ts": "3b92b998656752c2",
+      "deploy/cloudflare/worker.ts": "f6f711caba14cecc",
+      "packages/core/src/llm.ts": "a1b71807141050c8",
+      "packages/engine/src/packs/slop/biasMonitor.ts": "2485a4b984259ad8",
+      "packages/network/service/bias.ts": "3759ab04493068a5",
+      "packages/network/service/runtime.ts": "16511c01a49960c6",
+      "packages/network/service/serve.ts": "04a9062d44511529",
+      "packages/network/service/service.ts": "505c06c2b3c646fd",
+      "packages/network/src/network.ts": "9cf96a90a923b9ae",
+      "packages/network/src/store.ts": "3dcfdfbcab02d8c4",
+      "packages/observatory/db/migrate.ts": "8b222599550b6af9",
+      "packages/observatory/db/migrations/0054_runtime_ops.sql": "4092697d73768282",
+      "packages/observatory/src/console-gate.ts": "bc857d1c836884bd",
+      "scripts/wrangler.sh": "eea084bd40fbd32d"
+    },
+    "drift": [
+      "deploy/cloudflare/worker.ts:55 versus model inactiveStops (outside safety, SD-159 family). A rollback deploy without BACKEND_RUNTIME_CONFIG returns before getContainer().stop(), so the old container keeps running. This is a code or operator-procedure gap, not a model error. ...",
+      "Unchanged open defects, still outside safety: SD-050 (restoreKeepsStops, founder decision), SD-159 (inactiveStops, missing BUILD_ID), SD-169 (staffRouted, founder decision). The code matches the model on each, so these are not new drift."
+    ]
+  },
+  "safety_trust": {
+    "files": {
+      "quint/safety_trust.qnt": "023915991507eb4c",
+      "packages/engine/src/packs/slop/profile.ts": "6b3fe3dfb1680d8a",
+      "packages/engine/src/packs/slop/rules.ts": "8a629aed87370954",
+      "packages/network/service/packs.ts": "0da955c66538cdb1",
+      "packages/network/service/runtime.ts": "16511c01a49960c6",
+      "packages/network/service/service.ts": "505c06c2b3c646fd",
+      "packages/network/service/snapshot.ts": "a6112e478843e703",
+      "packages/network/src/network.ts": "9cf96a90a923b9ae",
+      "packages/network/src/relay.ts": "b9525251911e0297",
+      "packages/network/src/reports.ts": "62cf89df63963898",
+      "packages/network/src/trust.ts": "f691c770c5da334e",
+      "packages/observatory/db/migrations/0049_safety_trust.sql": "37eeb595f7213c08"
+    },
+    "drift": [
+      "Block-abuse window missing. trust.ts:104-105 counts stranger blocks only within 14 days (blocksMade). trust.ts:116 makes a reporter not credible only while 3 or more of those are recent. The model keeps a permanent strangers set (trustBlock, credibleT, model ~lines 179 and ...",
+      "Inviter accountability missing. onTrustChange to hold (network.ts:1268-1272) blocks the inviter's invites for 30 days and adds 1 trust point (invitee_held) to the inviter. That point can move the inviter to watch or hold and drop their items. The model has no invitedBy and ...",
+      "service liftHold deletes this app's and the '*' person_holds rows before the Network's liftHold runs (service.ts:1799-1807). The rows are gone even when Network.liftHold refuses with not_on_hold. The model guards the whole action on level == hold. This is minor and not fixed."
+    ]
+  },
+  "staff_console": {
+    "files": {
+      "quint/staff_console.qnt": "007846f604586382",
+      "packages/network/service/runtime.ts": "16511c01a49960c6",
+      "packages/observatory/db/numbers.ts": "e0a3a8a059bcff2a",
+      "packages/observatory/src/appProfile.ts": "b6739ab7535ccbac",
+      "packages/observatory/src/apps.ts": "6f205ecfcb5365d8",
+      "packages/observatory/src/console-gate.ts": "bc857d1c836884bd",
+      "packages/observatory/src/health.ts": "a9426532356519cb",
+      "packages/observatory/src/projector.ts": "675494860532ecb0",
+      "packages/observatory/src/server.ts": "c9b4fe22953ae5ce",
+      "packages/observatory/src/sources/real.ts": "199e84a4dd65f577",
+      "packages/observatory/src/sources/service.ts": "77a2b0e616c4bd10",
+      "packages/observatory/src/staff-roles.ts": "4de33a314387b284",
+      "packages/observatory/src/staff.ts": "757465ee8d6fde53",
+      "packages/observatory/web/admin.tsx": "36ce0223a61c98fd",
+      "packages/observatory/web/panels.tsx": "4a42542e37017cbd",
+      "packages/observatory/web/store.ts": "db4b10f1bbb587f5"
+    }
+  },
+  "turn_consent": {
+    "files": {
+      "quint/turn_consent.qnt": "e024865d21f17917",
+      "packages/blooio/src/blooio/webhook.ts": "ba0fc93d0e63665b",
+      "packages/core/src/replies.ts": "5d98b5e3dc4a8722",
+      "packages/core/src/reply-decision.ts": "bd353a0bed5c9d30",
+      "packages/core/src/svc/proof-window.ts": "48617aae0ea6649d",
+      "packages/network/service/decisions.ts": "d158775265cdc970",
+      "packages/network/service/inbox.ts": "a414e202e2147db9",
+      "packages/network/service/route-authority.ts": "b2819b194d1b2487",
+      "packages/network/service/service.ts": "505c06c2b3c646fd",
+      "packages/network/service/snapshot.ts": "a6112e478843e703",
+      "packages/network/src/network.ts": "9cf96a90a923b9ae",
+      "packages/observatory/db/migrations/0042_turn_consent.sql": "bae6e3ac9a342075",
+      "packages/platform/src/accounts.ts": "7956f87aef9a58e8",
+      "packages/platform/src/consent.ts": "cd050f88a7b4777c",
+      "packages/platform/src/pg-store.ts": "f9a75cb1f5a92737"
+    },
+    "drift": [
+      "service.ts:1357 (startKeyword) sets turn.consent opted_in right after the ledger write, before service.ts:1280 resumes the membership. A throw between them is rescued (inbox.ts rescueCompliance) as handled with the opt-in, and the membership stays paused. When I modelled ...",
+      "inbox.ts:91 uses pg_try_advisory_xact_lock. When another claim transaction of the same sender holds the lock, a STOP gets [] and then priorAnswer 'busy' (turn_busy, retryable). The model's claim is atomic, so stopNeverHeldBack (busyKw) cannot see this short, retryable ...",
+      "inbox.ts:94 and service.ts:2279-2287 (route-authority.ts, NETWORK_ROUTE_AUTHORITY_POLICY, staging only): after admitUntil a new turn, a STOP included, gets 403 route_admission_closed. This is not in the model or its header.",
+      "service.ts stopAt raises the STOP time above a web opt-in that has no ref. The model has no web opt-ins, so this path is not exercised. This is a known abstraction gap, not checked further."
+    ]
+  }
+}

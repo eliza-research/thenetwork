@@ -14,6 +14,7 @@ import type { Selected, SelectionResult } from "../../policy.ts";
 import type { Scored } from "../../scoring.ts";
 import type { Candidate } from "../../types.ts";
 import { pairKey, type World } from "../../world.ts";
+import { greedyPick } from "../decisions.ts";
 import type { SlopPackOptions } from "./options.ts";
 import { slopProfiles } from "./profile.ts";
 import { appearanceGap } from "./score.ts";
@@ -76,7 +77,7 @@ export function slopAssign(o: SlopPackOptions, w: World, scored: readonly Scored
   // Interruption budget (ME-002): proposals in the budget period. Asks are not counted here: a missing
   // hard field already holds the member back (needs_answer), and the Network sends one open question at a time.
   const budgetLeft = (id: MemberId) => { const mi = w.get(id)!; return w.cfg.budgets[mi.m.state].limit - mi.recentProactive; };
-  const usable = (id: MemberId) => !ctx.exclude?.has(id) && !w.get(id)!.inOpenOpportunity && budgetLeft(id) > 0;
+  const usable = (id: MemberId) => !w.get(id)!.inOpenOpportunity && budgetLeft(id) > 0;
   const edges: Edge[] = [];
   for (const x of pairs) {
     const [a, b] = x.c.participants as [MemberId, MemberId];
@@ -117,14 +118,7 @@ export function slopAssign(o: SlopPackOptions, w: World, scored: readonly Scored
 
 /** Greedy: highest adjusted value first, each member at most once this round. */
 function greedyRound(edges: readonly Edge[]): Edge[] {
-  const taken = new Set<MemberId>();
-  const out: Edge[] = [];
-  for (const e of edges) {
-    if (taken.has(e.a) || taken.has(e.b)) continue;
-    taken.add(e.a); taken.add(e.b);
-    out.push(e);
-  }
-  return out;
+  return greedyPick(edges).map(i => edges[i]!);
 }
 
 /**

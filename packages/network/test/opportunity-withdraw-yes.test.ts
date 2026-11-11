@@ -44,7 +44,10 @@ describe("taking back a yes before the reveal", () => {
 
   test(`"no thanks" after an unanswered time retry books nothing and reveals no name`, async () => {
     const { w, id, first, second, name } = await start();
-    await w.say(first, "neither of those");
+    // A yes with none of the times. A bare "neither of those" is no yes (founder decision 11, SD-041):
+    // it gets other times too, but silence after it is a no (consent-transitions.integration.test.ts).
+    await w.say(first, "yes, but neither of those times work");
+    expect(opp(w, id).primed.has(first)).toBe(true);
     expect(opp(w, id).timeRetry).toContain(first);
     // No answer to the new times for 26 hours: the yes is kept.
     await w.run(27 * HOUR);

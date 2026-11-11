@@ -12,6 +12,7 @@ import type { Intent, MemberId } from "@thenetwork/core";
 import type { ObjectiveDef } from "./pack.ts";
 import type { Ontology } from "./pack.ts";
 import { networkOntology } from "./packs/network/ontology.ts";
+import { harmonic } from "./scoreCore.ts";
 import type { MemberIndex, World } from "./world.ts";
 
 export interface StructuredProfile {
@@ -32,8 +33,6 @@ export const GOAL_WEIGHT = 0.8;
 /** Satisfaction levels (same ordering as the shared-intent and help generators use). */
 export const SAT = { need: 1, pool: 0.85, romance: 0.9, interest: 0.45 } as const;
 
-/** Harmonic mean (0 if any side is 0), as scoring.ts `harmonic`; local to avoid an import cycle. */
-const harmonicMean = (xs: number[]) => (xs.some(x => x <= 0) ? 0 : xs.length / xs.reduce((s, x) => s + 1 / x, 0));
 
 const cache = new WeakMap<World, Map<MemberId, StructuredProfile>>();
 
@@ -135,7 +134,7 @@ export function complementarity(w: World, ids: MemberId[], anchor?: Intent): Com
     benefit[a] = s / (ids.length - 1);
   }
   for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
-    pairSum += harmonicMean([sideBenefit(w, ids[i]!, ids[j]!), sideBenefit(w, ids[j]!, ids[i]!)]); pairs++;
+    pairSum += harmonic([sideBenefit(w, ids[i]!, ids[j]!), sideBenefit(w, ids[j]!, ids[i]!)]); pairs++;
   }
   return { pair: pairSum / pairs, benefit };
 }

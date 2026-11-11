@@ -174,13 +174,15 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const before = directs.length;
     expect(await text(s, clock, ben, "peon")).toBe("held");
     expect(directs.length).toBe(before);
-    // On the web the banned number gets no session (SD-013): the start answers as for any number and sends no
-    // code, and the code check fails, so the join has no session.
+    // On the web the banned number gets no session (SD-013, founder decision 3): the start answers as for any
+    // number and sends no code, and the code check fails, so the join has no session.
+    web.forget("peon");
     clock.advance(31_000);
-    const sent = otp.codes.get(ben);
+    const sent = otp.sent, code = otp.codes.get(ben);
     expect((await web.json("peon", "POST", "/api/auth/otp/start", { phone: ben })).status).toBe(200);
-    expect(otp.codes.get(ben)).toBe(sent);
-    expect((await web.json("peon", "POST", "/api/auth/otp/verify", { phone: ben, code: sent })).status).toBe(400);
+    expect(otp.sent).toBe(sent);
+    expect(otp.codes.get(ben)).toBe(code);
+    expect((await web.json("peon", "POST", "/api/auth/otp/verify", { phone: ben, code: code ?? "000000" })).status).toBe(400);
     expect((await web.join("peon", 32, "Ben")).status).toBe(401);
     expect(await memberOf("peon", ben)).toBeUndefined();
     expect((await sql`select count(*)::int as n from platform.bans`)[0].n).toBe(1);

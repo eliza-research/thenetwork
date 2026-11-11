@@ -6,9 +6,10 @@
 // the quintile of their photo rating ("unrated" without one), and runs the engine's biasMonitor. A
 // group whose outcome rate is under 0.8x the overall rate raises an alert (the four-fifths rule). The
 // report holds group counts and ratios only: no member id, no score.
-import { DAY, type MemberId } from "@thenetwork/core";
+import { canBeMatched, DAY, type MemberId } from "@thenetwork/core";
 import { biasMonitor, OUTCOME_METRICS, ratingQuintiles, type BiasReport, type MemberOutcome } from "../../engine/src/packs/slop/biasMonitor.ts";
 import { parseAppearance } from "../../engine/src/packs/slop/appearance.ts";
+import { biasEligible } from "./decisions.ts";
 
 export const BIAS_WINDOW_MS = 28 * DAY;
 export const BIAS_EVERY_MS = 7 * DAY;
@@ -29,7 +30,7 @@ export interface BiasOpp {
 /** One outcome row per adult member (18+) with at least one day in the window. */
 export function biasRows(members: readonly BiasMember[], opps: readonly BiasOpp[], now: number, windowMs = BIAS_WINDOW_MS): MemberOutcome[] {
   const from = now - windowMs;
-  const adults = members.filter(m => typeof m.age === "number" && m.age >= 18 && m.joinedAt !== null && now - Math.max(m.joinedAt, from) >= DAY);
+  const adults = members.filter(m => biasEligible(canBeMatched(m.age), m.joinedAt !== null, m.joinedAt ?? 0, now, from, DAY));
   const overall = new Map<string, number>();
   for (const m of adults) { const a = parseAppearance(m.tags); if (a) overall.set(m.id, a.overall); }
   const quintile = ratingQuintiles(overall);

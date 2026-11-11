@@ -8,27 +8,13 @@
 //  - `chat:<id>` group/chat targets are kept verbatim (ids are case-sensitive).
 //  - Anything else is trimmed and lowercased so it still compares consistently.
 
-const E164 = /^\+[1-9]\d{7,14}$/;
+import { anyE164 } from "../../core/src/phone-core.ts";
 
-/** E.164 form of a phone number, or null if `raw` is not a plausible phone number. */
+export { isE164 } from "../../core/src/phone-core.ts";
+
+/** E.164 form of a phone number, or null if `raw` is not a plausible phone number. The rule is anyE164 in core/src/phone-core.ts (proved). */
 export function toE164(raw: string): string | null {
-  const s = raw.normalize("NFKC").trim();
-  if (!s || s.includes("@") || /^chat:/i.test(s)) return null;
-  if (/[^\d\s+().\-]/.test(s)) return null; // letters or other symbols: not a phone number
-  const plus = s.startsWith("+") || s.startsWith("00");
-  let digits = s.replace(/\D/g, "");
-  if (s.startsWith("00")) digits = digits.slice(2);
-  if (!digits) return null;
-  let out: string;
-  if (plus) out = `+${digits}`;
-  else if (digits.length === 10) out = `+1${digits}`;
-  else if (digits.length === 11 && digits.startsWith("1")) out = `+${digits}`;
-  else out = `+${digits}`;
-  return E164.test(out) ? out : null;
-}
-
-export function isE164(s: string): boolean {
-  return E164.test(s);
+  return anyE164(raw.normalize("NFKC"));
 }
 
 /** Canonical key for any recipient address (phone, email, or chat:<id>). */

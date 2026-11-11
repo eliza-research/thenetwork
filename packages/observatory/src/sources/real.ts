@@ -10,7 +10,7 @@
 // ghosts and never written (PRD 34.6).
 import { SQL } from "bun";
 import {
-  DAY, isMinor, validAge, type City, type EdgeType, type WorldSnapshot,
+  DAY, isMinor, type City, type EdgeType, type WorldSnapshot,
 } from "@thenetwork/core";
 import { OUTREACH, SIM_AUTO_REVIEWER } from "@thenetwork/network";
 import { CONNECTION } from "@thenetwork/network";
@@ -26,6 +26,7 @@ import type {
   ObsDelta, ObsEdge, ObsFeedItem, ObsMember, ObsMessage, ObsOpportunity, ObsRequest, ObsState, OpportunityDetail, ParticipantStatus, ReviewInfo,
   SafetyAction, SafetyInfo, SearchHit, TimelineEntry,
 } from "../types.ts";
+import { consoleMinor, loginVerdict } from "../console-gate.ts";
 import { appUrlEnv, DEFAULT_APP, MATCHING_OFF_TEXT, matchingAllowed, slaHours, type AppId } from "../apps.ts";
 import { serviceAlerts, ServiceClient, serviceFromEnv, type ServiceConfig } from "./service.ts";
 import { Listeners, searchPattern, snippet, type DataSource, type ViewOptions } from "./source.ts";
@@ -69,16 +70,14 @@ interface AgeInfo {
   optIns: Map<string, { calendar?: boolean; weekly?: boolean }>;
 }
 const AGE_EVENTS = ["age_unknown", "age_resolved", "minor_signal", "age_conflict"];
-/** A valid record age under 18 (core policy; a missing age is handled apart: unknown). */
-const recordMinor = (age: number | null | undefined) => validAge(age) && isMinor(age);
-
 /**
  * Whether the console treats a member as under 18. With the Network's view: its flag, or a record age
  * under 18. Without it: the record age, and a missing age fails closed (treated as under 18).
  */
 export function ageView(recordAge: number | null, net?: AgeState): { minor: boolean; ageUnknown?: true } {
-  if (net) return { minor: net.minor || recordMinor(recordAge), ...(net.unknown ? { ageUnknown: true as const } : {}) };
-  return recordAge === null ? { minor: true, ageUnknown: true } : { minor: recordMinor(recordAge) };
+  const minor = consoleMinor(recordAge !== null, isMinor(recordAge), !!net, !!net?.minor);
+  if (net) return { minor, ...(net.unknown ? { ageUnknown: true as const } : {}) };
+  return recordAge === null ? { minor, ageUnknown: true } : { minor };
 }
 
 /**
@@ -87,21 +86,20 @@ export function ageView(recordAge: number | null, net?: AgeState): { minor: bool
  * record age, and a missing age fails closed (audit observatory-19).
  */
 export function minorAt(info: AgeInfo, id: string, recordAge: number | null | undefined, t: number): boolean {
-  if (recordMinor(recordAge)) return true;
   let st: AgeState | undefined;
   for (const c of info.changes.get(id) ?? []) { if (c.at > t) break; st = c; }
-  if (st) return st.minor;
-  const stored = info.changes.has(id) ? undefined : info.latest.get(id);
-  if (stored) return stored.minor;
-  return !validAge(recordAge);
+  const net = st ?? (info.changes.has(id) ? undefined : info.latest.get(id));
+  return consoleMinor(recordAge != null, isMinor(recordAge), !!net, !!net?.minor);
 }
 
 /** Why a database login may not serve the console, or undefined (audit observatory-9). */
 export function loginProblem(r: { su: boolean; bypass: boolean; ro: string; inAppRole: boolean | null }, o: { local: boolean; isolation: "rls_role" | "app_filter"; app: string }): string | undefined {
-  if (r.ro !== "on") return "the console's connection is not read-only";
-  if (o.isolation === "rls_role" && r.inAppRole !== true) return `the app's read login is not a member of network_observatory_${o.app}`;
-  if (!o.local && (r.su || r.bypass)) return "the console's login is a superuser or bypasses row-level security: use a network_observatory_<app> login";
-  return undefined;
+  switch (loginVerdict(r.ro === "on", o.isolation === "rls_role", r.inAppRole === true, o.local, r.su, r.bypass)) {
+    case "ok": return undefined;
+    case "not_read_only": return "the console's connection is not read-only";
+    case "not_app_role": return `the app's read login is not a member of network_observatory_${o.app}`;
+    case "too_strong": return "the console's login is a superuser or bypasses row-level security: use a network_observatory_<app> login";
+  }
 }
 
 /**
@@ -226,7 +224,11 @@ export class RealSource implements DataSource {
           (select pg_has_role(current_user, oid, 'member') from pg_roles where rolname = ${`network_observatory_${this.app}`}) as in_app_role
         from pg_roles r where r.rolname = current_user` as any[];
       why = loginProblem({ su: !!who?.su, bypass: !!who?.bypass, ro: String(who?.ro), inAppRole: who?.in_app_role ?? null }, { local: isLocal(this.url!), isolation: this.isolation, app: this.app });
-    } catch (e) { this.store.setEnv(this.env(`Could not check the database login: ${(e as Error).message}`)); return; }
+    } catch (e) {
+      // Refused while unchecked (LemmaScript observatory fix): nothing is read, and the next poll checks again (SD-083).
+      this.store.setEnv(this.env(`Refused: could not check the database login: ${(e as Error).message}. Could not check the database login, so the console reads nothing until the next poll checks it again.`));
+      return;
+    }
     this.unchecked = undefined;
     if (why) {
       this.refused = `Refused: ${why}.`;

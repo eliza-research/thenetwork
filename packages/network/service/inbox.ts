@@ -31,6 +31,7 @@ import type { Clock } from "@thenetwork/core";
 import { normalizeAddress } from "../../blooio/src/phone.ts";
 import type { InboundMessage } from "../../blooio/src/types.ts";
 import { detectKeyword, leaveTarget } from "../../platform/src/consent.ts";
+import { pickWaiting, priorAnswer, replyKindOf, rescueAction, turnHeldBack } from "./decisions.ts";
 
 const MAX_ATTEMPTS = 5;
 /** How many waiting rows of one sender are read to find a compliance keyword among them. */
@@ -97,29 +98,32 @@ export class Inbox {
         where sender_hash=${senderHash} and status='processing' and request_hash is not null and coalesce(lease_at,arrived_at)<${new Date(now - PROCESSING_LEASE_MS)} returning id)
         delete from platform.eliza_notices where turn_id in (select id from swept)`;
       // A compliance turn waits only for another compliance turn of the sender (its own claim slot, migration 0042).
-      const inserted = await tx`insert into platform.inbound(id,line,sender,received_at,arrived_at,lease_at,event,status,request_hash,sender_hash,network_authority,compliance)
+      const [waiting] = await tx`select coalesce(bool_or(status='processing'),false) as processing,coalesce(bool_or(status='processing' and compliance),false) as processing_compliance,
+        coalesce(bool_or(status='pending'),false) as pending,
+        coalesce(bool_or(status='unresolved' and coalesce(lease_at,arrived_at)>${new Date(now - UNRESOLVED_BLOCK_MS)}),false) as unresolved
+        from platform.inbound where sender_hash=${senderHash}`;
+      const held = turnHeldBack(keyword, waiting.processing, waiting.processing_compliance, waiting.pending, waiting.unresolved);
+      const inserted = held ? [] : await tx`insert into platform.inbound(id,line,sender,received_at,arrived_at,lease_at,event,status,request_hash,sender_hash,network_authority,compliance)
       select ${id},null,null,${new Date(input.receivedAt)},${new Date(now)},${new Date(now)},null,'processing',${requestHash},${senderHash},${input.networkAuthority ?? null}::jsonb,${keyword}
-      where ${admitUntil === undefined || now < admitUntil} and not exists(select 1 from platform.inbound where sender_hash=${senderHash} and ((status='processing' and (not ${keyword} or compliance))
-        or (not ${keyword} and (status='pending' or (status='unresolved' and coalesce(lease_at,arrived_at)>${new Date(now - UNRESOLVED_BLOCK_MS)})))))
+      where ${admitUntil === undefined || now < admitUntil}
       on conflict do nothing returning id`;
       if (inserted.length || !keyword) return this.stopCancels(tx, input, inserted);
       // A compliance turn that never answered (its worker died, or staff resolved it) runs again on the retry of
       // the same request: the consent ledger and the member's unit are idempotent per message.
       return this.stopCancels(tx, input, await tx`update platform.inbound set status='processing',lease_at=${new Date(now)},sender_hash=${senderHash},compliance=true
         where id=${id} and request_hash=${requestHash} and status='unresolved' and handled_at is null and response is null
-        and ${admitUntil === undefined || now < admitUntil} and not exists(select 1 from platform.inbound where sender_hash=${senderHash} and status='processing' and compliance)
-        returning id`);
+        and ${!held && (admitUntil === undefined || now < admitUntil)} returning id`);
     });
     if (!wrote.length) {
       const [prior] = await this.o.sql`select request_hash,status,response,handled_at from platform.inbound where id=${id}`;
-      if (!prior) return {status:409,body:{error:"turn_busy",retryable:true}};
-      if (prior.request_hash !== requestHash) return {status:409,body:{error:"turn_conflict",retryable:false}};
-      if (prior.status === "done" && prior.response) return {status:200,body:prior.response};
-      // The same turn is still running (a gateway timeout and its retry): the caller may try again; the worker's answer is kept for that replay.
-      if (prior.status === "processing") return {status:409,body:{error:"turn_busy",retryable:true}};
-      // A compliance turn that never answered waits for another compliance turn of the sender: a later retry claims it again.
-      if (keyword && this.reclaimable(prior)) return {status:409,body:{error:"turn_busy",retryable:true}};
-      return {status:409,body:{error:"turn_unresolved",retryable:false}};
+      // A compliance turn that never answered waits for another compliance turn of the sender: a later retry claims it again (busy).
+      switch (priorAnswer(!!prior, prior?.request_hash === requestHash, prior?.status === "done", !!prior?.response, prior?.status === "processing", keyword, !!prior && this.reclaimable(prior))) {
+        case "conflict": return {status:409,body:{error:"turn_conflict",retryable:false}};
+        case "replay": return {status:200,body:prior!.response};
+        // The same turn is still running (a gateway timeout and its retry): the caller may try again; the worker's answer is kept for that replay.
+        case "busy": return {status:409,body:{error:"turn_busy",retryable:true}};
+        case "unresolved": return {status:409,body:{error:"turn_unresolved",retryable:false}};
+      }
     }
     const turn: InboundTurn = {id,from:input.from};
     // Renew the lease while the turn runs, so a slow turn (an LLM read, lock waits) is never swept as abandoned after its effects committed.
@@ -193,7 +197,7 @@ export class Inbox {
     const sealed = row?.status === "unresolved" && row.response === null && !!turn.consent;
     if (!row || (row.status !== "processing" && !sealed)) return undefined;
     const collected = ((typeof row.replies === "string" ? JSON.parse(row.replies) : row.replies) ?? []) as CollectedReply[];
-    if (!turn.consent && !collected.length) {
+    if (rescueAction(!!turn.consent, collected.length) === "release") {
       const released = await this.o.sql`delete from platform.inbound where id=${id} and status='processing' returning id`;
       if (!released.length) return undefined;
       await this.undo(turn);
@@ -202,7 +206,7 @@ export class Inbox {
     const replies = [...collected];
     if (turn.confirmation && !replies.some(r => r.kind === "compliance")) replies.push({...turn.confirmation, kind: "compliance"});
     const body: TurnResponse = {outcome: "handled", replies: replies.map(r => r.body), replyIds: replies.map(r => r.id), delivery: "collected",
-      replyKind: replies.length && replies.every(r => r.kind === "compliance") ? "compliance" : "reply", accountEligible: false,
+      replyKind: replyKindOf(replies.map(r => r.kind)), accountEligible: false,
       app: turn.app ?? null, memberId: turn.memberId ?? null, reason: "compliance_partial", ...(turn.consent ? {consent: turn.consent} : {})};
     const rows = await this.o.sql`update platform.inbound set status='done',response=${body}::jsonb,replies=(${{items: replies}}::jsonb->'items'),
       handled_at=${new Date(this.o.clock.now())},handled_order=nextval('platform.inbound_handled_seq'),event=null,sender=null,
@@ -302,7 +306,8 @@ export class Inbox {
       if (!waiting.length) return n;
       const parsed = (waiting as any[]).map(w => ({ ...w, ...((typeof w.event === "string" ? JSON.parse(w.event) : w.event) as { ev: InboundMessage; app: string | null }) }));
       // A compliance keyword goes ahead of an earlier row (one that keeps failing must not hold back a STOP).
-      const compliance = parsed.find(w => isComplianceText(w.ev?.text));
+      const flags = parsed.map(w => isComplianceText(w.ev?.text));
+      const compliance = flags.includes(true);
       // A signed turn of this sender that is running (or ended unresolved a short while ago) holds back
       // their ordinary rows only: STOP, STOP ALL, leave, START and HELP are handled at once, as signed() does.
       if (!compliance) {
@@ -310,7 +315,7 @@ export class Inbox {
         if ((await this.o.sql`select 1 from platform.inbound where sender_hash=${this.o.senderKey(sender)} and request_hash is not null
           and ((status='processing' and coalesce(lease_at,arrived_at)>${stale}) or (status='unresolved' and coalesce(lease_at,arrived_at)>${blockedSince})) limit 1`).length) return n;
       }
-      const r = compliance ?? parsed[0]!;
+      const r = parsed[pickWaiting(flags)]!;
       const { ev, app } = r;
       try {
         const outcome = await this.o.handle(ev, app ?? undefined);

@@ -5,13 +5,20 @@
 // The model follows the code after the relay fixes on branch wave2/relay (SD-039, SD-040, SD-064, SD-133, SD-137,
 // SD-138, SD-252, SD-320, SD-387, Q-relay-1).
 //
+// OPEN DRIFT (2026-11-09 review; not modelled): the code makes a number swap all or nothing (07c5567, SD-007).
+// RelayDesk.swap preflights both shares (canSend, transitions.ts swapPlan) and sends both or neither; a pair
+// that waits for quiet hours is checked again as a pair at the tick (network.ts flushSwapShares, swapFlush);
+// and the queue admission refuses a contact share whose partner share is not passed, rejected, withdrawn or
+// ended unsent (runtime.ts:277-287). commitShare, tickFlush and queueSend below still model the older
+// one-at-a-time swap, so noOneWayNumber and the run tests that expect it violated describe that older code.
+//
 // Machines in this model:
 //   relay-item            packages/network/src/relay.ts (RelayDesk.request, apply, deliver, release, reject, forget)
-//   relay-swap            packages/network/src/relay.ts:269-312 (swap, cancelSwaps)
-//   relay-match-view      packages/network/src/network.ts:4895-4903 (relayMatchOf), modelled as `matchOpen`
+//   relay-swap            packages/network/src/relay.ts:298-362 (swap, cancelSwaps)
+//   relay-match-view      packages/network/src/network.ts:5374-5379 (relayMatchOf), modelled as `matchOpen`
 //   photo-relay-item      packages/platform/src/photo-relay.ts (select, review, revoke, claimForAction, issueDelivery, delivery)
-//   action-receipt        packages/network/service/relay-endpoint.ts:175-261
-//   relay-classifier-hook packages/engine/src/relay.ts:430-445 (relayItemAsync), an oracle
+//   action-receipt        packages/network/service/relay-endpoint.ts:175-263
+//   relay-classifier-hook packages/engine/src/relay.ts:411-434 (relayItemAsync), an oracle
 //
 // Rules for the model (quint/README.md):
 //   * One SQL transaction is one action. A unit of work (runtime.ts unitOfWork: load, desk decision, save with
@@ -29,13 +36,13 @@ module relay {
   pure val MEMBERS = Set("A", "B")
   pure val REQS = Set("a1", "a2", "b1", "b2")
   pure val TTL = 15
-  // RELAY_LOG_MAX is 5000 in the code (network/src/relay.ts:43). The model scales it down to 3 so that the
+  // RELAY_LOG_MAX is 5000 in the code (network/src/relay.ts:44). The model scales it down to 3 so that the
   // log cap is reachable in a short trace (SD-387). Everything else that reads the log reads the same cap.
   pure val LOG_MAX = 3
   // The review SLA of the app (service.ts afterTick -> slaAlerts, DEFAULT_SLA_HOURS: 6 to 24 hours), scaled to
   // 30 minutes. A held relay item past it raises one "[alert] review SLA" line (SD-133); it does not expire.
   pure val HELD_SLA = 30
-  // The selected-photo path stays off in production (no PhotoRelayPolicy, service.ts:396). The model keeps it
+  // The selected-photo path stays off in production (no PhotoRelayPolicy, service.ts:400-403). The model keeps it
   // on as a regression guard.
   pure val PHOTO_RELAY = true
   pure val PHOTO_TTL = 15
@@ -44,7 +51,7 @@ module relay {
 
   pure def owner(k: str): str = if (k == "a1" or k == "a2") "A" else "B"
   pure def other(m: str): str = if (m == "A") "B" else "A"
-  // The outbound id of the swap ask: "relay:<item>:ask" (relay.ts:281).
+  // The outbound id of the swap ask: "relay:<item>:ask" (relay.ts:310).
   pure def askKey(k: str): str = if (k == "a1") "a1:ask" else if (k == "a2") "a2:ask" else if (k == "b1") "b1:ask" else "b2:ask"
 
   // ------------------------------------------------------------------------------------------ types
@@ -116,13 +123,13 @@ module relay {
   // ------------------------------------------------------------------------------------------ helpers
   pure def mapRemove(m: str -> a, k: str): str -> a = m.keys().exclude(Set(k)).mapBy(x => m.get(x))
 
-  // The parties as the engine sees them (engine relay.ts:306-316; the canonical view only tightens).
+  // The parties as the engine sees them (engine relay.ts:307-310; the canonical view only tightens).
   pure def partiesBlock(x: World, src: str, dst: str): bool =
     not(x.matchOpen) or x.blocked or x.minor.get(src) or x.minor.get(dst) or x.optedOut.get(src) or x.optedOut.get(dst)
       or x.erased.get(src) or x.erased.get(dst)
   pure def partiesHold(x: World, src: str, dst: str): bool = x.trustHold.get(src) or x.trustHold.get(dst)
 
-  // Network.checkRecipient for a relay send (network.ts:4215-4244): opted out, account, hold, minor, block.
+  // Network.checkRecipient for a relay send (network.ts:4527-4542): opted out, account, hold, minor, block.
   pure def recipientRefuses(x: World, src: str, dst: str): bool =
     x.optedOut.get(dst) or x.erased.get(dst) or x.trustHold.get(dst) or x.blocked or x.minor.get(dst)
       or x.minor.get(src) or x.trustHold.get(src) or x.erased.get(src)
@@ -133,7 +140,7 @@ module relay {
       and not(x.optedOut.get(dst)) and not(x.trustHold.get(src)) and not(x.trustHold.get(dst))
       and not(x.erased.get(src)) and not(x.erased.get(dst))
 
-  // RelayDesk.log (relay.ts:354-362): replace or append, then drop the oldest past the cap, but never the row of an
+  // RelayDesk.log (relay.ts:377-385): replace or append, then drop the oldest past the cap, but never the row of an
   // item that still waits for staff (SD-387).
   pure def logPut(d: Desk, iid: str, r: LogRec): Desk = {
     val known = d.log.keys().contains(iid)
@@ -148,11 +155,11 @@ module relay {
     } else d0.with("log", log1).with("order", order1)
   }
 
-  // RelayDesk.prior (relay.ts:346-351): a logged item replays its decision, except a rate-only hold (SD-320).
+  // RelayDesk.prior (relay.ts:369-375): a logged item replays its decision, except a rate-only hold (SD-320).
   pure def priorReplays(d: Desk, iid: str): bool =
     d.log.keys().contains(iid) and not(d.log.get(iid).decision == "hold" and d.log.get(iid).rateOnly)
 
-  // RelayDesk.unsent (relay.ts:258-268, network.ts:4789-4790): passed items that did not go are logged as not delivered (no number
+  // RelayDesk.unsent (relay.ts:278-283, network.ts:5229): passed items that did not go are logged as not delivered (no number
   // shared) and leave the thread.
   pure def unsentDesk(d: Desk, items: Set[str]): Desk = {
     val d1 = items.fold(d, (acc, i) =>
@@ -177,18 +184,18 @@ module relay {
     d.thread.filter(i => gh.lost.contains(i)).union(
       d.log.keys().filter(i => d.log.get(i).kind == "share" and d.log.get(i).contactShared and gh.lost.contains(i)))
 
-  // A contact share by `src` was already delivered in this match (engine relay.ts:377).
+  // A contact share by `src` was already delivered in this match (engine relay.ts:365).
   pure def alreadyShared(d: Desk, src: str): bool =
     d.log.keys().exists(i => d.log.get(i).kind == "share" and d.log.get(i).src == src and d.log.get(i).contactShared)
 
-  // RelayHost.send (network.ts:4771-4781) into Network.send (network.ts:3858-3891): refused, deferred or a queued row.
+  // RelayHost.send (network.ts:5159-5168) into Network.send (network.ts:4162-4263): refused, deferred or a queued row.
   type SendOut = { d: Desk, q: Queue, res: str }
   pure def hostSend(x: World, d: Desk, q: Queue, s: Send, refuse: bool): SendOut =
     if (recipientRefuses(x, s.src, s.dst) or refuse) { d: d, q: q, res: "refused" }
     else if (x.quiet.get(s.dst)) { d: d.with("deferred", d.deferred.union(Set(s))), q: q, res: "deferred" }
     else { d: d, q: q.with("rows", q.rows.put(s.key, { send: s, status: "queued", body: true })), res: "sent" }
 
-  // RelayDesk.deliver (relay.ts:256-266): the thread gets the wording on "sent" and on "deferred".
+  // RelayDesk.deliver (relay.ts:285-295): the thread gets the wording on "sent" and on "deferred".
   pure def deliver(x: World, d: Desk, q: Queue, s: Send, refuse: bool): SendOut = {
     val o = hostSend(x, d, q, s, refuse)
     if (o.res == "refused") o else o.with("d", o.d.with("thread", o.d.thread.union(Set(s.iid))))
@@ -196,6 +203,8 @@ module relay {
 
   // The save writes network.relay_records from the log (store.ts relayRows, writeRelayRows): an upsert per
   // log entry, with the review status of its held entry. A row whose log entry is gone is not touched.
+  // The code writes only entries of the last 2 days (RELAY_ROW_WINDOW_MS) or with a held entry; every trace
+  // here is shorter than that, so the model writes every entry.
   pure def persist(d: Desk, q: Queue): Queue =
     q.with("records", d.log.keys().fold(q.records, (acc, i) => {
       val r = d.log.get(i)
@@ -208,18 +217,18 @@ module relay {
   pure val TEXT_OUTCOMES = Set("pass", "hold", "block", "rate", "minorRules", "minorClef")
   type Decision = { decision: str, row: bool, ageSignal: bool, minorRead: bool }
 
-  // relayItemAsync for a text (engine relay.ts:300-445). Clef runs only on an item the rules pass (line 433).
+  // relayItemAsync for a text (engine relay.ts:301-434). Clef runs only on an item the rules pass (line 413).
   pure def textDecision(x: World, src: str, dst: str, tc: str): Decision =
     if (partiesBlock(x, src, dst) or tc == "block" or tc == "minorRules")
       { decision: "block", row: false, ageSignal: tc == "minorRules", minorRead: tc == "minorRules" }
     else if (partiesHold(x, src, dst)) { decision: "hold", row: true, ageSignal: false, minorRead: false }
     else if (tc == "rate") { decision: "hold", row: false, ageSignal: false, minorRead: false }
     else if (tc == "hold") { decision: "hold", row: true, ageSignal: false, minorRead: false }
-    // Clef minor_signal: a hold with flag clef:minor_signal that also sets ageSignal (engine relay.ts:444-446, SD-064).
+    // Clef minor_signal: a hold with flag clef:minor_signal that also sets ageSignal (engine relay.ts:431-433, SD-064).
     else if (tc == "minorClef") { decision: "hold", row: true, ageSignal: true, minorRead: true }
     else { decision: "pass", row: false, ageSignal: false, minorRead: false }
 
-  // relayItem for a contact share (engine relay.ts:329-335, 377): parties, fresh consent, one share per sender.
+  // relayItem for a contact share (engine relay.ts:312-321, 365): parties, fresh consent, one share per sender.
   pure def shareDecision(x: World, d: Desk, src: str, dst: str, consentAt: int, rate: bool): Decision =
     if (partiesBlock(x, src, dst) or consentAt > x.now or x.now - consentAt > TTL or alreadyShared(d, src))
       { decision: "block", row: false, ageSignal: false, minorRead: false }
@@ -227,11 +236,11 @@ module relay {
     else if (rate) { decision: "hold", row: false, ageSignal: false, minorRead: false }
     else { decision: "pass", row: false, ageSignal: false, minorRead: false }
 
-  // The record RelayDesk.undelivered writes for a share that did not go (relay.ts:252-254, 296, 303).
+  // The record RelayDesk.undelivered writes for a share that did not go (relay.ts:269-271, 333, 342).
   pure def shareBlock(src: str, dst: str): LogRec =
     { kind: "share", src: src, dst: dst, decision: "block", contactShared: false, ageSignal: false, staff: "", rateOnly: false, withdrawn: false }
 
-  // RelayDesk.apply (relay.ts:232-249) for one decided item.
+  // RelayDesk.apply (relay.ts:244-266) for one decided item.
   type Applied = { d: Desk, q: Queue, gh: Ghost, told: str }
   pure def apply(x: World, d: Desk, q: Queue, gh: Ghost, iid: str, kind: str, src: str, dst: str, dec: Decision,
                  number: bool, refuse: bool): Applied = {
@@ -247,7 +256,7 @@ module relay {
       val s = { key: iid, iid: iid, src: src, dst: dst, number: number, ask: false, at: x.now }
       val o = deliver(x, d1, q, s, refuse)
       if (o.res == "refused")
-        // RelayDesk.undelivered (relay.ts:252-254): the log says block, no number shared.
+        // RelayDesk.undelivered (relay.ts:269-271): the log says block, no number shared.
         { d: logPut(o.d, iid, rec.with("decision", "block").with("contactShared", false)), q: o.q, gh: gh, told: "refused" }
       else { d: o.d, q: o.q, gh: gh, told: "sent" }
     }
@@ -287,7 +296,7 @@ module relay {
   pure def readGhost(x: World, d: Desk, gh: Ghost, src: str, dst: str): Ghost =
     if (partiesBlock(x, src, dst)) gh else gh.with("staleRead", gh.staleRead.union(staleItems(d, gh)))
 
-  // A text request (relay-endpoint.ts:225-254; RelayDesk.request relay.ts:178-195).
+  // A text request (relay-endpoint.ts:225-256; RelayDesk.request relay.ts:190-207).
   action commitText(k: str, tc: str, refuse: bool): bool = {
     val src = owner(k)
     val dst = other(src)
@@ -296,7 +305,7 @@ module relay {
       ep.phase.get(k) == "claimed", ep.kind.get(k) == "text",
       not(w.erased.get(src)),
       if (not(w.matchOpen)) all {
-        // matchFor finds no open match: refused, nothing logged (relay.ts:181-182).
+        // matchFor finds no open match: refused, nothing logged (relay.ts:193-194).
         desk' = desk, queue' = queue, g' = g,
       } else {
         val a = apply(w, d0, queue, readGhost(w, d0, g, src, dst), k, "text", src, dst, textDecision(w, src, dst, tc), false, refuse)
@@ -307,7 +316,7 @@ module relay {
     }
   }
 
-  // "Send them my number" (relay-endpoint.ts:225-254; RelayDesk.swap relay.ts:269-305).
+  // "Send them my number" (relay-endpoint.ts:225-256; RelayDesk.swap relay.ts:298-344).
   action commitShare(k: str, rateTheirs: bool, rateMine: bool, refuseAsk: bool, refuseTheirs: bool, refuseMine: bool): bool = {
     val src = owner(k)
     val dst = other(src)
@@ -325,7 +334,7 @@ module relay {
       if (not(w.matchOpen)) all { desk' = desk, queue' = queue, g' = g0 }
       else if (theirs.size() == 0) {
         if (swaps0.exists(s => s.src == src)) all {
-          // "I already asked them" (relay.ts:275).
+          // "I already asked them" (relay.ts:304).
           desk' = d0, queue' = queue, g' = g1,
         } else {
           val probe = shareDecision(w, d0, src, dst, now, rateMine)
@@ -334,7 +343,7 @@ module relay {
             all { desk' = a.d, queue' = persist(a.d, a.q), g' = a.gh }
           } else {
             // The other member is asked once, now or not at all (noDefer: quiet hours refuse it), and only an
-            // asked swap waits (relay.ts:294-297, SD-138). A refused ask logs nothing and answers "refused".
+            // asked swap waits (relay.ts:309-313, SD-138). A refused ask logs nothing and answers "refused".
             val s = { key: askKey(k), iid: k, src: src, dst: dst, number: false, ask: true, at: now }
             if (recipientRefuses(w, src, dst) or refuseAsk or w.quiet.get(dst)) all {
               desk' = d0, queue' = persist(d0, queue), g' = g1.with("askRefused", g1.askRefused.union(Set(k))),
@@ -348,13 +357,13 @@ module relay {
       } else {
         nondet t = theirs.oneOf()
         val d1 = d0.with("swaps", swaps0.exclude(Set(t)))
-        // Both asked: each share through the engine with its own consent (relay.ts:284-304).
+        // Both asked: each share through the engine with its own consent (relay.ts:315-343).
         val theirRes = shareDecision(w, d1, dst, src, t.at, rateTheirs)
         val myRes = shareDecision(w, d1, src, dst, now, rateMine)
         if (theirRes.decision == "pass" and myRes.decision == "pass") {
           val first = apply(w, d1, queue, g1, t.iid, "share", dst, src, theirRes, true, refuseTheirs)
           if (first.told != "sent") {
-            // The first share was refused: the second never goes (relay.ts:294-298).
+            // The first share was refused: the second never goes (relay.ts:331-335).
             val d2 = logPut(first.d, k, shareBlock(src, dst))
             all { desk' = d2, queue' = persist(d2, first.q), g' = first.gh }
           } else {
@@ -374,8 +383,8 @@ module relay {
     }
   }
 
-  // "Don't send my number" (relay-endpoint.ts:212-220; RelayDesk.cancelSwaps relay.ts:323-339). The same
-  // withdrawal runs on the /internal/turn path (network.ts:617). The answer is always "Okay, I won't share your number."
+  // "Don't send my number" (relay-endpoint.ts:212-220; RelayDesk.cancelSwaps relay.ts:352-362). The same
+  // withdrawal runs on the /internal/turn path (network.ts:653). The answer is always "Okay, I won't share your number."
   // The pending swap goes, and each passed share of theirs gets consent:withdrawn, which the queue admission refuses (SD-039).
   action commitWithdraw(k: str): bool = {
     val src = owner(k)
@@ -400,14 +409,14 @@ module relay {
   }
 
   // Any throw before or inside the save (lock: authority changed, a unit error): nothing commits; the catch
-  // marks the key unresolved and answers 409 (relay-endpoint.ts:257-260).
+  // marks the key unresolved and answers 409 (relay-endpoint.ts:259-262).
   action unitThrow(k: str): bool = all {
     ep.phase.get(k) == "claimed",
     ep' = ep.with("receipt", ep.receipt.set(k, "unresolved")).with("phase", ep.phase.set(k, "failed")).with("response", ep.response.set(k, "409")),
     w' = w, desk' = desk, queue' = queue, photo' = photo, g' = g,
   }
 
-  // rt.unitOfWork calls deliver() after the commit (runtime.ts:691-697). An error there is logged and the unit's
+  // rt.unitOfWork calls deliver() after the commit (runtime.ts:778-782). An error there is logged and the unit's
   // result is returned, so the endpoint answers the committed decision (SD-137).
   action postCommitDeliverError(k: str): bool = all {
     ep.phase.get(k) == "committed",
@@ -437,7 +446,7 @@ module relay {
   }
 
   // ------------------------------------------------------------------------------------------ tick and queue
-  // Network.tick flushes deferred sends (network.ts:3269-3277): each runs every send-time check again. A relayed
+  // Network.tick flushes deferred sends (network.ts:3529-3542): each runs every send-time check again. A relayed
   // item refused now goes through RelayDesk.unsent (SD-252, Q-relay-1).
   action tickFlush(refused: Set[Send]): bool = {
     val due = desk.deferred.filter(s => not(w.quiet.get(s.dst)))
@@ -455,16 +464,19 @@ module relay {
     }
   }
 
-  // The outbound queue's final admission and send (runtime.ts relayAdmission, lines 238-269).
+  // The outbound queue's final admission and send (runtime.ts relayAdmission, lines 257-302).
   action queueSend(key: str): bool = {
     val r = queue.rows.get(key)
     val s = r.send
-    // The swap question goes only while its swap still waits inside its 15 minutes (runtime.ts:259-261, SD-138);
-    // an item row needs a passed record for this recipient, not rejected and not withdrawn (runtime.ts:263-265, SD-039).
+    // The swap question goes only while its swap still waits inside its 15 minutes (runtime.ts:268-272, SD-138);
+    // an item row needs a passed record for this recipient, not rejected and not withdrawn (runtime.ts:274-276, SD-039).
     val recOk = if (s.ask) desk.swaps.exists(sw => sw.iid == s.iid and sw.src == s.src and sw.at <= w.now and w.now - sw.at <= TTL)
       else (queue.records.keys().contains(s.iid) and queue.records.get(s.iid).decision == "pass"
         and queue.records.get(s.iid).dst == s.dst and queue.records.get(s.iid).review != "rejected" and not(queue.records.get(s.iid).withdrawn))
-    val ok = recOk and pairOk(w, s.src, s.dst)
+    // A row that carries the selected photo needs the item still approved and current (runtime.ts:294-301,
+    // photoRelay.approved: "photo:revoked").
+    val photoOk = s.iid != PHOTO_ITEM or (photo.state == "approved" and w.now < photo.exp)
+    val ok = recOk and photoOk and pairOk(w, s.src, s.dst)
     val c = g.consent.get(s.src)
     // Ground truth, apart from what the admission read: the desk's own last decision for the item (no log cap, no
     // persisted copy), or for the swap question its swap still waiting in the desk.
@@ -493,7 +505,7 @@ module relay {
   }
 
   // ------------------------------------------------------------------------------------------ staff
-  // RelayDesk.release (relay.ts:347-366), a unit of work (service.ts:2461).
+  // RelayDesk.release (relay.ts:402-421), a unit of work (service.ts:2777).
   action staffRelease(iid: str, refuse: bool): bool = {
     val h = desk.held.get(iid)
     val decided = desk.with("held", desk.held.set(iid, h.with("status", "released").with("hasText", false)))
@@ -504,7 +516,7 @@ module relay {
                 rateOnly: false, withdrawn: false }
     val d2 = if (canGo and o.res != "refused") logPut(o.d, iid, rec) else if (canGo) o.d else decided
     val q2 = if (canGo) o.q else queue
-    // The release decides again with the thread as context (relay.ts:389); the staff route runs no unsent sync.
+    // The release decides again with the thread as context (relay.ts:412); the staff route runs no unsent sync.
     val g2 = if (canGo) g.with("staleRelease", g.staleRelease.union(staleItems(desk, g))) else g
     all {
       iid != PHOTO_ITEM,
@@ -514,7 +526,7 @@ module relay {
     }
   }
 
-  // RelayDesk.reject (relay.ts:369-376). The log row gets staff:rejected only while it is still in the log.
+  // RelayDesk.reject (relay.ts:424-431). The log row gets staff:rejected only while it is still in the log.
   action staffReject(iid: str): bool = {
     val h = desk.held.get(iid)
     val d1 = desk.with("held", desk.held.set(iid, h.with("status", "rejected").with("hasText", false)))
@@ -564,7 +576,7 @@ module relay {
     w' = w.with("now", w.now + dt),
     desk' = desk, queue' = queue, ep' = ep, photo' = photo, g' = g,
   }
-  // service.ts afterTick -> slaAlerts (lines 533-537, 2553-2565): held relay items share the app's review SLA (SD-133).
+  // service.ts afterTick -> slaAlerts (lines 539-545, 2862-2877): held relay items share the app's review SLA (SD-133).
   action slaTick: bool = {
     val over = desk.held.keys().filter(i => desk.held.get(i).status == "held" and w.now - desk.held.get(i).at > HELD_SLA)
     all {
@@ -573,7 +585,7 @@ module relay {
     }
   }
 
-  // The forget path for `m` (network.ts forget -> RelayDesk.forget relay.ts:430-434; runtime.ts writeUnit 537-571):
+  // The forget path for `m` (network.ts:994-1000 forget -> RelayDesk.forget relay.ts:453-457; runtime.ts writeUnit 587-633):
   // held items of theirs rejected, swaps with them gone, the thread emptied, deferred sends to them or about them
   // dropped, outbound rows with member_id = m nulled, and the rows of items relayed FROM m (by their relay_records
   // row, `relay:<item>` and `relay:<item>:ask`) nulled too; what of these still waits ends unsent (SD-040).
@@ -605,13 +617,13 @@ module relay {
   }
 
   // ------------------------------------------------------------------------------------------ selected photo
-  // PhotoRelayService.select (photo-relay.ts:111-135): A selects a photo for the current thread.
+  // PhotoRelayService.select (photo-relay.ts:112-140): A selects a photo for the current thread.
   action selectPhoto: bool = all {
     PHOTO_RELAY, photo.state == "none", pairOk(w, "A", "B"),
     photo' = photo.with("state", "pending").with("exp", w.now + PHOTO_TTL),
     w' = w, desk' = desk, queue' = queue, ep' = ep, g' = g,
   }
-  // review (photo-relay.ts:143-153): only before expiry; safe needs the item current.
+  // review (photo-relay.ts:148-161): only before expiry; safe needs the item current.
   action reviewPhoto(safe: bool): bool = all {
     photo.state == "pending" or photo.state == "approved",
     w.now < photo.exp,
@@ -619,13 +631,13 @@ module relay {
     else photo' = photo.with("state", if (photo.state == "approved") "revoked" else "rejected"),
     w' = w, desk' = desk, queue' = queue, ep' = ep, g' = g,
   }
-  // revoke by the sender (photo-relay.ts:136-141).
+  // revoke by the sender (photo-relay.ts:141-146).
   action revokePhoto: bool = all {
     photo.state != "none",
     photo' = photo.with("state", "revoked"),
     w' = w, desk' = desk, queue' = queue, ep' = ep, g' = g,
   }
-  // The photo request on /internal/relay (relay-endpoint.ts:231-252): only the one approved, unclaimed, current
+  // The photo request on /internal/relay (relay-endpoint.ts:233-254): only the one approved, unclaimed, current
   // item; the desk decides with id pri_...; a pass claims the item in the save transaction.
   action photoRequest(rate: bool, refuse: bool): bool = {
     val d0 = syncUnsent(desk, queue)
@@ -644,7 +656,7 @@ module relay {
       w' = w, ep' = ep,
     }
   }
-  // The staff route for a pri_ id goes to the selected-photo branch (service.ts:2430-2462). Reject reviews it
+  // The staff route for a pri_ id goes to the selected-photo branch (service.ts:2735-2776). Reject reviews it
   // unsafe; the desk's own held row is never touched (SD-320).
   action staffPhotoReject: bool = all {
     desk.held.keys().contains(PHOTO_ITEM),
@@ -653,7 +665,7 @@ module relay {
     photo' = photo.with("state", if (photo.state == "approved") "revoked" else "rejected"),
     w' = w, desk' = desk, queue' = queue, ep' = ep, g' = g,
   }
-  // issueDelivery (photo-relay.ts:196-213): Cloud resolves the queued row; the first resolve fixes the deadline.
+  // issueDelivery (photo-relay.ts:204-221): Cloud resolves the queued row; the first resolve fixes the deadline.
   action resolvePhoto: bool = {
     val exp = if (photo.intent) photo.dexp else if (photo.exp < w.now + FETCH_TTL) photo.exp else w.now + FETCH_TTL
     all {
@@ -663,7 +675,7 @@ module relay {
       w' = w, desk' = desk, queue' = queue, ep' = ep, g' = g,
     }
   }
-  // delivery (photo-relay.ts:215-224): the provider fetches the bytes with a URL that carries `reqExp` and a
+  // delivery (photo-relay.ts:223-233): the provider fetches the bytes with a URL that carries `reqExp` and a
   // signature. The guard is what delivery() checks on the request and the stored row; `ok` is the rule
   // (bytesServedImpliesApprovedBound), so the checker shows that the checks imply the rule. The signature binds the
   // descriptor, the action, the intent and the exp (sign()): only the issued capability (reqExp == dexp) verifies.
@@ -748,24 +760,24 @@ module relay {
   val numberMovesOnlyIfBothConsented = g.events.forall(e => e.number implies e.peerAsked)
 
   // Per-item consent (founder decision 9; engine relay.ts:15-17): after "don't send my number" the endpoint
-  // answers "Okay, I won't share your number" (relay-endpoint.ts:59). No number of that member goes out after it (SD-039).
+  // answers "Okay, I won't share your number" (relay-endpoint.ts:60). No number of that member goes out after it (SD-039).
   val withdrawnNotSent = g.events.forall(e => e.number implies e.live)
 
   // AGENTS.md "Relay (#7)": only what the relay passed goes out, and only inside an open match of two eligible
-  // adults with no block, at final dispatch (runtime.ts:236-245 comment).
+  // adults with no block, at final dispatch (runtime.ts:247-256 comment).
   val rowSentImpliesPass = g.events.forall(e => e.recPass and e.pairOk)
 
-  // network/src/relay.ts:93 and engine relay.ts:495-500 (the thread keeps the delivered wording only), and engine
-  // relay.ts:125 ("contactShared: A contact share was delivered"; alreadyShared reads it). The desk corrects its
+  // network/src/relay.ts:105-106 and engine relay.ts:493-496 (the thread keeps the delivered wording only), and engine
+  // relay.ts:127 ("contactShared: A contact share was delivered"; alreadyShared reads it). The desk corrects its
   // state lazily (RelayDesk.unsent before each endpoint decision and in the tick), so the rule is checked where it
   // matters: no endpoint decision that can deliver reads a lost item as delivered (Q-relay-1, SD-252).
   val decisionsReadDelivered = g.staleRead.size() == 0
 
-  // network/src/relay.ts:241 and :339 ("never a minor's words"): no text that a rule or the classifier read as a
+  // network/src/relay.ts:258 and :394 ("never a minor's words"): no text that a rule or the classifier read as a
   // minor's is kept for staff (SD-064).
   val minorTextNeverKept = desk.held.keys().forall(i => desk.held.get(i).hasText implies not(desk.held.get(i).minorRead))
 
-  // runtime.ts:525 ("keep only the id. Nothing that names the member stays") and runtime.ts:563-564: after the
+  // runtime.ts:587 ("keep only the id. Nothing that names the member stays") and runtime.ts:624-631: after the
   // forget path no stored outbound body holds the erased member's number (SD-040).
   val erasedNumberGone = queue.rows.keys().forall(key => {
     val r = queue.rows.get(key)
@@ -773,7 +785,7 @@ module relay {
   })
 
   // relay.ts:15 ("the other member is asked once"): a waiting swap rests on an ask that was not refused, and
-  // the ask arrives inside the 15 minutes it names (relay.ts:154) (SD-138).
+  // the ask arrives inside the 15 minutes it names (relay.ts:166) (SD-138).
   val waitingSwapAsked = desk.swaps.forall(s => not(g.askRefused.contains(s.iid)))
   val askInsideWindow = g.events.forall(e => e.ask implies not(e.late))
 
@@ -781,26 +793,26 @@ module relay {
   val effectAtMostOncePerKey = REQS.forall(k => ep.commits.get(k) <= 1)
   // relay-endpoint.ts:26-27: the receipt, the log, the messages and the rows commit together.
   val completedIffCommitted = REQS.forall(k => (ep.receipt.get(k) == "completed") iff (ep.commits.get(k) == 1))
-  // The Cloud wire (contract.ts RelaySendResponse; relay-endpoint.ts:260 retryable:false): a failure answer
+  // The Cloud wire (contract.ts RelaySendResponse; relay-endpoint.ts:262 retryable:false): a failure answer
   // means nothing was done, so Cloud tells the member it did not go (SD-137).
   val failureMeansNoEffect = REQS.forall(k => ep.response.get(k) == "409" implies ep.commits.get(k) == 0)
 
-  // photo-relay.ts:215-224 and AGENTS.md decision 9: bytes reach a provider only for an approved, claimed,
+  // photo-relay.ts:223-233 and AGENTS.md decision 9: bytes reach a provider only for an approved, claimed,
   // bound item inside its deadline, between current parties.
   val bytesServedImpliesApprovedBound = photo.servedOk
 
-  // service.ts:2430-2462 and relay.ts:20 ("A held item waits for staff ... release or reject"): a desk-held
+  // service.ts:2735-2776 and relay.ts:20 ("A held item waits for staff ... release or reject"): a desk-held
   // photo item can be decided: once its selected row is final, the desk row is not left held.
   val photoHeldDecidable = (photo.state == "revoked" or photo.state == "rejected") implies
     not(desk.held.keys().contains(PHOTO_ITEM) and desk.held.get(PHOTO_ITEM).status == "held")
 
-  // relay.ts:236 ("A hold that is only the rate limit ... is answered, not queued: the member can try again"):
+  // relay.ts:254-255 ("A hold that is only the rate limit ... is answered, not queued: the member can try again"):
   // the selected photo has one fixed id (pri_...), so a rate-only hold must not leave a log row that RelayDesk.prior
   // replays as "held" for every later try and every staff release (SD-320).
   val photoRetryAfterRateHold = not(priorReplays(desk, PHOTO_ITEM) and desk.log.get(PHOTO_ITEM).decision == "hold"
     and not(desk.held.keys().contains(PHOTO_ITEM)) and photo.state == "approved" and not(photo.claimed))
 
-  // store.ts:143-144: network.relay_records carries the staff review status of each held item (SD-387).
+  // network/src/store.ts:154-167 (relayRows): network.relay_records carries the staff review status of each held item (SD-387).
   val recordReviewMatches = desk.held.keys().forall(i =>
     (desk.held.get(i).status != "held" and queue.records.keys().contains(i)) implies queue.records.get(i).review == desk.held.get(i).status)
 
@@ -832,7 +844,7 @@ module relay {
 
   // ---- Properties outside `safety` (checked one by one; see the findings file).
   // SD-007 (not in this fix batch; the register verdict is "refuted" and the findings ask to open it again): "nobody's
-  // number goes one way" (network/src/relay.ts:285-286). Still violated: a deferred share refused by the tick, a
+  // number goes one way" (network/src/relay.ts:315-319). Still violated: a deferred share refused by the tick, a
   // queued row that ends unsent, a refusal of the second share in one unit, and (new with the SD-039 fix) a
   // withdrawal that stops only the withdrawer's share. A fix needs a design decision on an all-or-nothing swap.
   val noOneWayNumber = MEMBERS.forall(m => numberSent(m) implies (numberSent(other(m)) or numberPending(other(m))))
@@ -848,14 +860,14 @@ module relay {
   // wording that the other member never got as thread context. It makes the release check stricter, not looser.
   val releaseReadsDelivered = g.staleRelease.size() == 0
   // The engine checks consent freshness at decision time only; delivery after quiet hours is by design
-  // ("I'll pass that on when it's a reasonable hour", relay.ts:152). Not a stated rule at delivery time.
+  // ("I'll pass that on when it's a reasonable hour", relay.ts:164). Not a stated rule at delivery time.
   val consentFreshAtDelivery = g.events.forall(e => e.number implies e.fresh)
   // SD-133: a held relay item has no expiry by design (service.ts slaAlerts: "does not expire"); the fix raises the
   // SLA alert (heldSlaAlerted, in `safety`). This property stays violated.
   val heldDecidedInTime = desk.held.keys().forall(i => desk.held.get(i).status == "held" implies w.now - desk.held.get(i).at <= HELD_SLA)
   // SD-093: a claimed key does not stay processing with no worker. Liveness, not safety.
   val noStuckKey = REQS.forall(k => not(ep.receipt.get(k) == "processing" and ep.phase.get(k) == "dead"))
-  // SD-426 (skipped: copy change, not allowed): an answer "held" has a held row (relay.ts:236-238 answers a
+  // SD-426 (skipped: copy change, not allowed): an answer "held" has a held row (relay.ts:254-255 answers a
   // rate-only hold with no row by design).
   val heldAnswerHasRow = g.toldHeldNoRow.size() == 0
 

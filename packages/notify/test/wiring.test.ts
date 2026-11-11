@@ -76,6 +76,26 @@ describe.skipIf(!pgAvailable)("notify + the Postgres outbound queue", () => {
     expect(await queue.statusOf(sent[0]!.deliveryId)).toBe("sent");
   });
 
+  test("a person erased between plan and dispatch: their partly fresh plan is cancelled and the people after them still get theirs", async () => {
+    const one = await setup(), two = await setup();
+    const notifier = new Notifier(one.store, { get: id => (id === two.r.personId ? two.r : id === one.r.personId ? erased ? undefined : one.r : undefined) }, { isQuiet: () => false });
+    let erased = false;
+    const first = (await notifier.add(req(one.r.personId, "gone-1"), one.now())).item;
+    await notifier.add(req(one.r.personId, "gone-2", "Lunch at 1 is confirmed."), one.now());
+    await notifier.add(req(two.r.personId, "stay-1"), one.now());
+    const plan = notifier.plan.bind(notifier);
+    notifier.plan = async now => {
+      const out = await plan(now);
+      await one.store.markSeen(one.r.personId, "claude", now, [first.id]);
+      erased = true;
+      return out;
+    };
+    const { sent, cancelled } = await notifier.dispatch(one.now(), one.sink);
+    expect(sent.map(s => s.personId)).toEqual([two.r.personId]);
+    expect(cancelled.length).toBe(1);
+    await two.queue.drain();
+  });
+
   test("seen on another surface while waiting in the queue: suppressed", async () => {
     const { now, store, notifier, queue, sink, sent: calls, r } = await setup();
     const it = (await notifier.add(req(r.personId, "pl2", "Dinner moved to 8."), now())).item;

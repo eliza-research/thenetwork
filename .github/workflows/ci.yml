@@ -57,6 +57,8 @@ jobs:
           --health-retries 20
     env:
       REQUIRE_PG: "1"
+      # The formal block fails instead of skipping when Dafny is missing.
+      REQUIRE_DAFNY: "1"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -64,6 +66,13 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.2
+      - name: Install Dafny 4.11.0 (pinned by SHA-256)
+        # For the formal block of `bun run sim`. The release zip carries its own Z3.
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/dafny.zip" https://github.com/dafny-lang/dafny/releases/download/v4.11.0/dafny-4.11.0-x64-ubuntu-22.04.zip
+          echo "a46a9ff7cdd720f7955854c78e95df13f4cfe6b80691b05f8654fe19e8267179  $RUNNER_TEMP/dafny.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/dafny.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/dafny" >> "$GITHUB_PATH"
       - name: Put the Postgres client tools on PATH
         # The simulations call pg_isready, pg_ctl, pg_dump and psql (dev-pg.ts, the ops backup drill).
         run: |
@@ -99,10 +108,6 @@ jobs:
           if [ -n "$skipped" ]; then echo "Postgres gates skipped with REQUIRE_PG=1:"; echo "$skipped"; exit 1; fi
       - name: Plugin packages match their sources (OpenAI and Claude manifests, SKILL.md snapshots)
         run: bun run plugins/build.ts --check
-      - name: Quint state-machine models (typecheck, run tests, safety simulation, reachability witnesses)
-        # quint/README.md. The models are the formal form of docs/research/2026-11-07-state-machines.md.
-        run: bun run quint:check
-        timeout-minutes: 15
       - name: The retired domain is gone (the hub is ntwrk.party; the old domain only redirects)
         run: |
           if git grep -n -I -E 'ntwrk[.]love' -- .; then echo "use ntwrk.party / api.ntwrk.party instead"; exit 1; fi
@@ -110,6 +115,27 @@ jobs:
         run: bun run sites/sites.ts
         env:
           DEPLOY_TARGET: production
+
+  quint:
+    # The Quint state-machine models (quint/README.md): typecheck, run tests, a safety simulation and the
+    # reachability witnesses of every model. Its own job, so that it runs next to the simulations. Each
+    # safety run is capped at 1000 samples here; `bun run quint:check` without the cap (and --verify) is the
+    # full check before a model change. No Postgres, no network, no secrets.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - name: Install
+        run: bun install --frozen-lockfile
+        timeout-minutes: 5
+      - name: Quint state-machine models (typecheck, run tests, safety simulation, reachability witnesses)
+        run: bun run quint:check --safety-samples 1000
+        timeout-minutes: 35
 
   integration:
     # The integration suite (real Postgres, real HTTP servers, several packages together, the full

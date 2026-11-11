@@ -8,6 +8,7 @@ import { DAY, type Edge, type EdgeType, type Facet, type Intent, type Member, ty
 
 import type { SetStateRequest } from "../../core/src/svc/contract.ts";
 import { peonSeats } from "@thenetwork/engine";
+import { effectiveState, windowActive } from "./decisions.ts";
 
 /** Static SQL-only purpose fence for automated inputs; never interpolate a caller-provided identifier. */
 export function automatedFacetPredicate(sql: SQL, memberJoin = false) {
@@ -27,9 +28,10 @@ export function effectiveParticipation(row: {participation_state: ParticipationS
     && validDate(value.from) && validDate(value.until) && (value.note === null || typeof value.note === "string")
     && (value.from === null || value.until === null || Date.parse(value.from as string)<Date.parse(value.until as string));
   const window = valid ? value as unknown as Pick<SetStateRequest,"state"|"from"|"until"|"note"> : null;
-  const active = !row.opted_out && !!window && (window.from === null || Date.parse(window.from)<=now) && (window.until === null || Date.parse(window.until)>now);
-  const scheduled = window?.state === "open" ? "normal" : window?.state === "paused" ? "paused" : "quiet";
-  return {state:row.opted_out?"paused":active?scheduled:row.participation_state,window,active};
+  const optedOut = !!row.opted_out;
+  const active = windowActive({optedOut, hasWindow: !!window, hasFrom: !!window && window.from !== null, fromMs: window?.from ? Date.parse(window.from) : 0,
+    hasUntil: !!window && window.until !== null, untilMs: window?.until ? Date.parse(window.until) : 0, now});
+  return {state: effectiveState(optedOut, active, window?.state ?? "open", row.participation_state), window, active};
 }
 
 const CORE_EDGES = new Set<EdgeType>(["invited_by", "vouched_for", "knows", "met", "introduced", "helped", "hosted", "enjoyed", "would_interact_again", "group_only", "avoid", "blocked"]);

@@ -57,8 +57,9 @@ module join_age {
   type Vol = { app: str, age: int, explicit: bool, declined: bool }
   // One text message as the oracles read it: kw is a whole-message app keyword (keywordApp), age and name
   // from parseJoinText or the network classifier, wants from lookingFor, signal a minor signal with no age
-  // ("i have homework"), long a text over 12 characters, explicit a first-person explicit age.
-  type Msg = { kw: str, age: int, name: bool, wants: Set[str], signal: bool, long: bool, explicit: bool }
+  // ("i have homework"), long a text over 12 characters, explicit a first-person explicit age, badHome a home
+  // city that parseJoinText reads as invalid (invalidHome: the need_home step of decisions.ts joinStep).
+  type Msg = { kw: str, age: int, name: bool, wants: Set[str], signal: bool, long: bool, explicit: bool, badHome: bool }
   type Turn = {
     pc: str, kind: str, app: str, msg: Msg,
     wroteNotice: bool, replied: bool, turnApp: str, outcome: str,
@@ -83,7 +84,7 @@ module join_age {
 
   pure val NO_NET: Net = { exists: false, mid: 0, age: NONE, statedAge: NONE, minor: false, stage: "new", awaitInt: false }
   pure val NO_PEND: Pend = { has: false, app: "", age: NONE, name: false }
-  pure val NO_MSG: Msg = { kw: "", age: NONE, name: false, wants: Set(), signal: false, long: false, explicit: false }
+  pure val NO_MSG: Msg = { kw: "", age: NONE, name: false, wants: Set(), signal: false, long: false, explicit: false, badHome: false }
   pure val IDLE: Turn = {
     pc: "idle", kind: "", app: "", msg: NO_MSG, wroteNotice: false, replied: false, turnApp: "", outcome: "",
     todo: Set(), joined: Set(), lowest: NONE, askOpenAt: false, askedLF: false,
@@ -327,12 +328,21 @@ module join_age {
         // SD-315 (ff807e1): no age in the text and an age floor under 13: the decline, the pending join goes.
         db' = db.with("pendJoin", NO_PEND),
         turn' = turn.with("pc", "done").with("replied", true).with("outcome", "under_age"), g' = g1,
+      } else if (age < 0 and m.badHome) all {
+        // decisions.ts joinStep need_home with no age: the home-city question, no pending join, nothing stored.
+        db' = db, turn' = turn.with("pc", "done").with("replied", true).with("outcome", "join_asked"), g' = g1,
       } else if (age < 0) all {
         // S:1408-1414: pending join with the name; the join question (S:1412, at most 3 a day).
         db' = db.with("pendJoin", { has: true, app: a, age: NONE, name: name }),
         turn' = turn.with("pc", "done").with("replied", true).with("outcome", "join_asked"), g' = g1,
       } else if (not(ok)) all {
         db' = db, turn' = turn.with("pc", "j_under").with("age", age), g' = g1,
+      } else if (m.badHome) all {
+        // decisions.ts joinStep need_home with an age that passed: service.ts join records the age (a statement
+        // on every exit past the ban check), then the home-city question; no pending join.
+        db' = recordAge(db, age),
+        turn' = turn.with("pc", "done").with("replied", true).with("outcome", "join_asked"),
+        g' = g1.with("everStated", g.everStated.union(Set(age))),
       } else if (not(name)) all {
         // S:1428-1432: pending join with the age. SD-010 (84c9fef): recordAge first, so the floor keeps it.
         db' = recordAge(db, age).with("pendJoin", { has: true, app: a, age: age, name: false }),
@@ -574,6 +584,10 @@ module join_age {
         db' = r, turn' = turn.with("pc", "w_create").with("repeat", true).with("lowest", lo(age, effLowest(r))), g' = g1,
       } else if (joinMode(a) == "invite" and existing != "invited") all {
         // A:364 refuses before the age is read: the age is not a statement here.
+        // OPEN DRIFT (not modelled): accounts.ts:372 now records the age on this exit (decisions.ts:144 joinPlan
+        // invite_only has recordAge true) and runs no declineUnderAge. With that write, a live member of another
+        // app who posts an ntwrk web join with age 12 keeps that membership with a floor of 12, and under13StoresNothing
+        // fails. The code needs a decision (decline on this exit too, or no age write) before the model follows it.
         db' = db, turn' = turn.with("pc", "done").with("outcome", "invite_only"), g' = g,
       } else if (not(joinOk(age, effLowest(db), a))) all {
         db' = declineUnderAge(r), turn' = turn.with("pc", "done").with("outcome", "under_age"), g' = g1,
@@ -706,8 +720,9 @@ module join_age {
     val keywordMsgs = Set("slop", "friends").map(k => NO_MSG.with("kw", k).with("wants", if (k == "friends") Set("friends") else Set()))
     val wantSets: Set[Set[str]] = Set(Set(), Set("slop"), Set("friends"))
     val free = tuples(TEXT_AGES, Set(false, true), wantSets, Set(false, true), Set(false, true), Set(false, true))
-      .map(((age, name, wants, signal, long, explicit)) => { kw: "", age: age, name: name, wants: wants, signal: signal, long: long, explicit: explicit })
-    keywordMsgs.union(free)
+      .map(((age, name, wants, signal, long, explicit)) => { kw: "", age: age, name: name, wants: wants, signal: signal, long: long, explicit: explicit, badHome: false })
+    val badHome = tuples(TEXT_AGES, Set(false, true)).map(((age, name)) => NO_MSG.with("age", age).with("name", name).with("explicit", age >= 0).with("badHome", true))
+    keywordMsgs.union(free).union(badHome)
   }
 
   action progress = any {
@@ -1085,6 +1100,15 @@ module join_age {
       .then(receive(M_AM12, "friends")).then(unitStep).then(stepThrows)
       .expect(db.floor == 12 and not(db.net.get("friends").exists) and live(db, "slop") and db.net.get("slop").exists
         and g.declineOpen and not(under13StoresNothingStrict) and under13StoresNothing)
+
+  // need_home (decisions.ts joinStep): "Sam 25, Boston" keeps the age and asks for the home city; no pending
+  // join and no membership. The next "Sam 25" (a valid home) joins at 25.
+  run needHomeKeepsAgeTest =
+    init.then(receive(M_SAM25.with("badHome", true), "ntwrk")).then(noticeStep).then(joinStep).then(doneStep(true))
+      .expect(g.last.outcome == "join_asked" and db.floor == 25 and not(db.pendJoin.has) and db.mstate.get("ntwrk") == "none" and lowestWins)
+      .then(receive(M_SAM25, "ntwrk")).then(noticeStep).then(joinStep).then(personStep).then(ageStep)
+      .then(memberStep).then(createStep).then(welcomeStep).then(afterStep).then(lfPendStep).then(doneStep(true))
+      .expect(db.mstate.get("ntwrk") == "active" and safety)
 
   // A 15-year-old joins by text: single-player, matchable nowhere, the minor looking-for question.
   run minorJoinTest =

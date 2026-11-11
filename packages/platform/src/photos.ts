@@ -37,9 +37,15 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { S3Client, type SQL } from "bun";
+import { isMinor } from "../../core/src/policy.ts";
 import { PgPeopleStore } from "./pg-store.ts";
 import type { AppId } from "./apps.ts";
 import { readCapped } from "./body.ts";
+import { adultGate } from "./decisions.ts";
+import { riffSpans } from "./riff.ts";
+import {
+  JPEG_BAD_SEGMENT, JPEG_NO_IMAGE, JPEG_NO_MARKER, JPEG_TRUNCATED, jpegSegments, PNG_BAD_CHUNK, PNG_IHDR_NOT_FIRST, PNG_NO_IEND, pngChunks, WALK_OK,
+} from "./segments.ts";
 import type { MembershipState, PeopleStore } from "./store.ts";
 import type { AppearanceRater, AppearanceScore, RatingSubject } from "../../engine/src/packs/slop/appearance.ts";
 import { makeClefRaterFromEnv, type ClefRaterOptions } from "../../engine/src/packs/slop/clef.ts";
@@ -197,80 +203,53 @@ const JPEG_KEEP = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca,
  * pictures, depth maps, motion-photo trailers) with their own EXIF and GPS: those never survive.
  */
 function stripJpeg(b: Uint8Array): Uint8Array {
+  // Bytes are all the walk reads: index and length, the same on a Uint8Array.
+  const walk = jpegSegments(b as unknown as readonly number[]);
+  if (walk.error !== WALK_OK) throw new BadImage(WALK_ERRORS[walk.error]);
   const out: Uint8Array[] = [b.subarray(0, 2)];
-  let i = 2, scanned = false, jfif = false;
-  while (i < b.length) {
-    if (b[i] !== 0xff) throw new BadImage("jpeg: marker expected");
-    const m = b[i + 1]!;
-    if (m === 0xd9) { out.push(b.subarray(i, i + 2)); return concat(out); } // EOI: anything after it is dropped
-    if (m === 0xda) {
-      // SOS: its header, then the entropy-coded data up to the next real marker (0xFF00 is a stuffed
-      // byte, 0xFFD0-0xFFD7 are restart markers, 0xFFFF is fill).
-      if (i + 4 > b.length) throw new BadImage("jpeg: truncated");
-      const len = (b[i + 2]! << 8) | b[i + 3]!;
-      if (len < 2 || i + 2 + len > b.length) throw new BadImage("jpeg: bad segment");
-      let j = i + 2 + len;
-      while (j < b.length) {
-        if (b[j] !== 0xff) { j++; continue; }
-        const n = b[j + 1];
-        if (n === undefined) { j++; break; }
-        if (n === 0x00 || (n >= 0xd0 && n <= 0xd7)) { j += 2; continue; }
-        if (n === 0xff) { j++; continue; }
-        break;
-      }
-      out.push(b.subarray(i, Math.min(j, b.length)));
-      i = j; scanned = true;
-      continue;
-    }
-    // Bare markers (no length): TEM, restart markers; 0xFF is fill before a marker.
-    if (m === 0x01 || (m >= 0xd0 && m <= 0xd7)) { out.push(b.subarray(i, i + 2)); i += 2; continue; }
-    if (m === 0xff) { i += 1; continue; }
-    if (i + 4 > b.length) throw new BadImage("jpeg: truncated");
-    const len = (b[i + 2]! << 8) | b[i + 3]!;
-    if (len < 2 || i + 2 + len > b.length) throw new BadImage("jpeg: bad segment");
-    const payload = b.subarray(i + 4, i + 2 + len);
-    if (JPEG_KEEP.has(m)) out.push(b.subarray(i, i + 2 + len));
+  let jfif = false;
+  for (const { at, end, marker: m, whole } of walk.segs) {
+    // SOS with its scan data, EOI and the bare markers (TEM, restart markers) are copied as they are.
+    if (whole) { out.push(b.subarray(at, end)); continue; }
+    const payload = b.subarray(at + 4, end);
+    if (JPEG_KEEP.has(m)) out.push(b.subarray(at, end));
     else if (m === 0xe0 && !jfif && payload.length >= 14 && ascii(payload, 0, 5) === "JFIF\0") {
       // JFIF: version, units and density only; the thumbnail (and anything after it) is dropped.
       out.push(Uint8Array.of(0xff, 0xe0, 0x00, 0x10), payload.subarray(0, 12), Uint8Array.of(0, 0));
       jfif = true;
-    } else if (m === 0xee && payload.length === 12 && ascii(payload, 0, 5) === "Adobe") out.push(b.subarray(i, i + 2 + len)); // the colour transform of CMYK/YCCK files: flags only
-    i += 2 + len;
+    } else if (m === 0xee && payload.length === 12 && ascii(payload, 0, 5) === "Adobe") out.push(b.subarray(at, end)); // the colour transform of CMYK/YCCK files: flags only
   }
   // A file cut off after its scan data (no EOI): keep the image, close it.
-  if (scanned) { out.push(Uint8Array.of(0xff, 0xd9)); return concat(out); }
-  throw new BadImage("jpeg: no image data");
+  if (!walk.eoi) out.push(Uint8Array.of(0xff, 0xd9));
+  return concat(out);
 }
 
 const PNG_KEEP = new Set(["IHDR", "PLTE", "IDAT", "IEND", "tRNS", "gAMA", "sRGB"]);
 function stripPng(b: Uint8Array): Uint8Array {
+  const walk = pngChunks(b as unknown as readonly number[]);
+  if (walk.error !== WALK_OK) throw new BadImage(WALK_ERRORS[walk.error]);
   const out: Uint8Array[] = [b.subarray(0, 8)];
-  let i = 8, end = false, first = true;
-  while (i + 12 <= b.length) {
-    const len = ((b[i]! << 24) >>> 0) + (b[i + 1]! << 16) + (b[i + 2]! << 8) + b[i + 3]!;
-    const type = ascii(b, i + 4, 4);
-    if (i + 12 + len > b.length) throw new BadImage("png: bad chunk");
-    if (first && type !== "IHDR") throw new BadImage("png: IHDR must come first");
-    first = false;
-    if (PNG_KEEP.has(type)) out.push(b.subarray(i, i + 12 + len));
-    i += 12 + len;
-    if (type === "IEND") { end = true; break; }
-  }
-  if (!end) throw new BadImage("png: no IEND");
+  for (const { at, len } of walk.chunks) if (PNG_KEEP.has(ascii(b, at + 4, 4))) out.push(b.subarray(at, at + 12 + len));
   return concat(out);
 }
+
+/** The BadImage message for each walk error (segments.ts). */
+const WALK_ERRORS: Record<number, string> = {
+  [JPEG_NO_MARKER]: "jpeg: marker expected", [JPEG_TRUNCATED]: "jpeg: truncated", [JPEG_BAD_SEGMENT]: "jpeg: bad segment",
+  [JPEG_NO_IMAGE]: "jpeg: no image data", [PNG_BAD_CHUNK]: "png: bad chunk", [PNG_IHDR_NOT_FIRST]: "png: IHDR must come first", [PNG_NO_IEND]: "png: no IEND",
+};
 
 const WEBP_KEEP = new Set(["VP8 ", "VP8L", "VP8X", "ALPH", "ANIM", "ANMF"]);
 const WEBP_FRAME_KEEP = new Set(["ALPH", "VP8 ", "VP8L"]);
 /** RIFF chunks from `at` to `end`, each with its padding; only the types in `keep`. */
 function riffChunks(b: Uint8Array, at: number, end: number, keep: Set<string>): Uint8Array[] {
+  // Bytes are all the walk reads: index and length, the same on a Uint8Array.
+  const spans = riffSpans(b as unknown as readonly number[], at, end);
+  if (!spans) throw new BadImage("webp: bad chunk");
   const chunks: Uint8Array[] = [];
-  let i = at;
-  while (i + 8 <= end) {
+  for (const { at: i, len } of spans) {
     const type = ascii(b, i, 4);
-    const len = b[i + 4]! | (b[i + 5]! << 8) | (b[i + 6]! << 16) | ((b[i + 7]! << 24) >>> 0);
     const padded = len + (len & 1);
-    if (i + 8 + len > end) throw new BadImage("webp: bad chunk");
     if (keep.has(type)) {
       if (type === "ANMF") {
         // A frame: its 16-byte header, then its own chunks (only the image ones are kept).
@@ -286,7 +265,6 @@ function riffChunks(b: Uint8Array, at: number, end: number, keep: Set<string>): 
         chunks.push(c);
       }
     }
-    i += 8 + padded;
   }
   return chunks;
 }
@@ -507,9 +485,10 @@ export class PhotoService {
   /** An adult on this app: lowest age 18+ (an unknown age fails) and the app's own check (slop: no failed staff age check). */
   async adult(personId: string, app: AppId, tx?: SQL): Promise<PhotoRefusal | undefined> {
     const p = await (tx ? new PgPeopleStore(tx) : this.o.people).getPerson(personId);
-    if (!p || p.deletedAt !== null || p.lowestAge === null || p.lowestAge < 18) return "adults_only";
-    if (!(await (this.o.eligible?.(personId, app, tx) ?? Promise.resolve(false)))) return "not_verified";
-    return undefined;
+    const live = !!p && p.deletedAt === null, adult = !!p && !isMinor(p.lowestAge);
+    const eligible = live && adult && await (this.o.eligible?.(personId, app, tx) ?? Promise.resolve(false));
+    const gate = adultGate(adult, live, eligible);
+    return gate === "ok" ? undefined : gate;
   }
 
   /**

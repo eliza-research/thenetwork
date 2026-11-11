@@ -8,6 +8,7 @@
 //  - STOP on the shared line stops every app; "leave <app>" leaves one.
 
 import { APP_IDS, isAppId, type AppId } from "../../core/src/types.ts";
+import { keywordFor, lookingForApps } from "./routing-core.ts";
 export { APP_IDS, isAppId, type AppId };
 
 export type JoinMode = "invite" | "open" | "waitlist";
@@ -95,12 +96,11 @@ export const APP_KEYWORDS: Record<AppId, readonly string[]> = Object.fromEntries
 
 /** The app a whole message names (keyword routing on the shared line), or undefined. A word inside a sentence never counts. */
 export function keywordApp(text: string, apps: Record<AppId, Pick<AppInfo, "id" | "domain">> = APPS): AppId | undefined {
-  const t = text.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}. ]+/gu, " ").replace(/\s+/g, " ").trim().replace(/\.$/, "");
-  const bare = t.replace(/^join /, "");
-  for (const a of Object.values(apps)) if (bare === a.id || bare === a.domain || bare === `www.${a.domain}`) return a.id;
+  // The shell cleans the text with regexes; routing-core.ts strips one final "." and "join ", then matches.
   // The Network by name ("the network", "network") joins ntwrk like its keyword.
-  if ((bare === "the network" || bare === "network") && "ntwrk" in apps) return "ntwrk";
-  return undefined;
+  const t = text.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}. ]+/gu, " ").replace(/\s+/g, " ").trim();
+  const id = keywordFor(t, Object.values(apps).map(a => ({ id: a.id, domain: a.domain })), "ntwrk" in apps);
+  return id === "" ? undefined : (id as AppId);
 }
 
 /**
@@ -113,12 +113,13 @@ export function lookingFor(text: string): AppId[] {
     .replace(/ (i|i'm|im|i am) (work|working|worked|date|dating|dated) /g, " ");
   const neg = "(?:not|no|never|don't want|dont want|without)(?: \\S+){0,2} ";
   const want = (words: string) => new RegExp(` (${words}) `).test(t) && !new RegExp(` ${neg}(${words}) `).test(t);
-  const out: AppId[] = [];
-  if (want("friends?|friendship|friendships|new people|people to hang out with|hanging out|hang out|social life|crew")) out.push("friends");
-  if (want("dating|date|dates|love|romance|romantic|relationship|a relationship|partner|boyfriend|girlfriend|someone to date")) out.push("slop");
-  if (want("work|job|jobs|hiring|hire|career|employment|recruiting|a job|clients|gigs?")) out.push("peon");
-  if (/ (all|all of (them|it|these)|everything|all three) /.test(t)) for (const a of ["friends", "slop", "peon"] as const) if (!out.includes(a)) out.push(a);
-  return out;
+  // The regexes read the four facts; routing-core.ts puts the apps in order with no duplicate.
+  return lookingForApps(
+    want("friends?|friendship|friendships|new people|people to hang out with|hanging out|hang out|social life|crew"),
+    want("dating|date|dates|love|romance|romantic|relationship|a relationship|partner|boyfriend|girlfriend|someone to date"),
+    want("work|job|jobs|hiring|hire|career|employment|recruiting|a job|clients|gigs?"),
+    / (all|all of (them|it|these)|everything|all three) /.test(t),
+  ) as AppId[];
 }
 
 /** The network id for an app and a city: network.network_state.id and platform.networks.id. */

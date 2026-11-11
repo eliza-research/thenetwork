@@ -31,6 +31,7 @@
 // letters collapsed ("d i v o r c e") and digit/symbol substitutions undone ("d1v0rce").
 // Reasons never contain the matched text (logs must not carry the private value): matches are
 // reported as a short hash.
+import { windowHit } from "./fact-window.ts";
 
 const CONFUSABLES: Record<string, string> = {
   "а": "a", "в": "b", "е": "e", "ѕ": "s", "і": "i", "ј": "j", "к": "k", "м": "m", "н": "h", "о": "o", "р": "p", "с": "c",
@@ -184,14 +185,19 @@ export function contactVariants(s: string): string[] {
 }
 
 const YEAR = /^(?:19|20)\d\d$/;
-/** A full North American number (area code and exchange start with 2-9), with or without the country code 1. */
+/** Ten digits of a North American number, with or without the country code. */
 const NANP = /^1?[2-9]\d\d[2-9]\d{6}$/;
-/** A phone-pattern match that is not an order number, a booking reference or a list of years. */
+/**
+ * A phone-pattern match that is not an order number, a booking reference or a list of years. A label
+ * word excuses a number only when the number cannot be dialed: "id 2125550102" is a phone with a word
+ * in front, and "order #1034567890" is not. A seven-digit number stays excused after a label ("Booking
+ * ref 555-0102"): it has no shape that tells the two apart.
+ */
 function isPhone(text: string, m: RegExpExecArray): boolean {
   const before = text.slice(Math.max(0, m.index - 24), m.index);
-  // A reference word does not exempt a full phone number ("my id 2125550102"): the 7-digit pattern cannot match inside it.
+  const digits = m[0].replace(/\D/g, "");
   if (/#\s*$|\b(?:order|conf|confirmation|ref|reference|booking|ticket|tracking|invoice|receipt|account|acct|case|id)\b[\s:#.no]*$/.test(before)
-    && !NANP.test(m[0].replace(/\D/g, ""))) return false;
+    && !m[0].startsWith("+") && !NANP.test(digits)) return false;
   const groups = m[0].split(/[^\d]+/).filter(Boolean);
   if (groups.length >= 2 && groups.every(g => YEAR.test(g))) return false;
   return true;
@@ -375,17 +381,10 @@ function compileFact(body: string): FuzzyFact | null {
 function factMatches(f: FuzzyFact, textTokens: string[][], textSquashed: string[]): boolean {
   if (f.squashed && textSquashed.some(t => t.includes(f.squashed))) return true;
   if (!f.want.size) return false;
+  const ids = new Map([...f.want].map((w, i) => [w, i] as const));
   for (const tt of textTokens) {
     if (f.grams.size) for (let i = 0; i + 3 <= tt.length; i++) if (f.grams.has(tt.slice(i, i + 3).join(" "))) return true;
-    const counts = new Map<string, number>();
-    let distinct = 0;
-    for (let i = 0; i < tt.length; i++) {
-      const add = tt[i]!;
-      if (f.want.has(add)) { const c = counts.get(add) ?? 0; if (c === 0) distinct++; counts.set(add, c + 1); }
-      const drop = i - f.window >= 0 ? tt[i - f.window]! : undefined;
-      if (drop !== undefined && f.want.has(drop)) { const c = counts.get(drop)! - 1; counts.set(drop, c); if (c === 0) distinct--; }
-      if (distinct >= f.need) return true;
-    }
+    if (windowHit(tt.map(t => ids.get(t) ?? -1), new Array<number>(ids.size).fill(0), f.need, f.window)) return true;
   }
   return false;
 }

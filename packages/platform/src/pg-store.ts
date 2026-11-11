@@ -3,6 +3,7 @@
 import { SQL } from "bun";
 import type { AppId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
+import { hitPasses } from "./decisions.ts";
 import type { Ban, Hit, HitResult, HitRule, Membership, MembershipState, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneChange, PhoneHold, PhoneIdentity, PhoneMethod, PhoneMove, PhoneMoveResult, Session, ShareGrant } from "./store.ts";
 
 type Row = Record<string, any>;
@@ -244,6 +245,16 @@ export class PgPeopleStore implements PeopleStore {
     await this.sql`insert into platform.sessions (token_hash, app_id, e164, person_id, created_at, started_at, expires_at, rotated_from, revoked_at)
       values (${s.tokenHash}, ${s.app}, ${s.e164}, ${s.personId}, ${ts(s.createdAt)}, ${ts(s.startedAt)}, ${ts(s.expiresAt)}, ${s.rotatedFrom}, ${ts(s.revokedAt)})`;
   }
+  async rotateSession(from: string, next: Session, graceAt: number, at: number) {
+    // One statement: the update locks the old row and checks it again after a concurrent bindSessions commits.
+    const [r] = await this.sql`with prev as (
+        update platform.sessions set revoked_at = least(coalesce(revoked_at, ${ts(graceAt)}), ${ts(graceAt)})
+        where token_hash = ${from} and (revoked_at is null or revoked_at > ${ts(at)}) returning person_id)
+      insert into platform.sessions (token_hash, app_id, e164, person_id, created_at, started_at, expires_at, rotated_from, revoked_at)
+      select ${next.tokenHash}, ${next.app}, ${next.e164}, prev.person_id, ${ts(next.createdAt)}, ${ts(next.startedAt)}, ${ts(next.expiresAt)}, ${next.rotatedFrom}, null from prev
+      returning *`;
+    return r ? session(r) : undefined;
+  }
   async getSession(tokenHash: string) {
     const [r] = await this.sql`select * from platform.sessions where token_hash = ${tokenHash}`;
     return r ? session(r) : undefined;
@@ -274,7 +285,7 @@ export class PgPeopleStore implements PeopleStore {
         const start = new Date(at - (at % windowMs));
         const [prev] = await tx`select max(last_at) as last_at, coalesce(sum(count) filter (where window_start = ${start}), 0)::int as n from platform.rate_limits where bucket = ${bucket}`;
         const prevAt = ms(prev?.last_at), n = (prev?.n as number) ?? 0;
-        const ok = !((rule.limit !== undefined && n >= rule.limit) || (rule.minGapMs !== undefined && prevAt !== null && at - prevAt < rule.minGapMs));
+        const ok = hitPasses(n, prevAt, at, rule.limit, rule.minGapMs);
         results.push({ count: n + 1, prevAt, ok });
         if (!ok) return results;
       }

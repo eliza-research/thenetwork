@@ -13,10 +13,11 @@
 //   asks       unknown age range, distance or orientation -> ask instead of proposing
 // Core invariants (minors never matched, blocks win, hard filters before scoring, LeakGuard,
 // determinism, consent before reveal) are the engine's and cannot be loosened here.
-import { DAY } from "@thenetwork/core";
+import { canBeMatched, DAY } from "@thenetwork/core";
 import { DEFAULT_ATTENTION, DEFAULT_PLANS, GENERATOR_NAMES, resolveConfig, type AttentionConfig, type EngineConfig, type EngineConfigInput } from "../../config.ts";
 import type { AppPack, EligibilityPolicy } from "../../pack.ts";
 import type { World } from "../../world.ts";
+import { mutualSeek, romanceItemAllowed } from "../decisions.ts";
 import { slopAdjust, slopAssign } from "./assign.ts";
 import { ageBand, distancePhrase, SLOP_ASK_QUESTIONS, SLOP_FACET_PHRASE, SLOP_LANE_ACTIVITY, SLOP_LANE_LABEL, SLOP_SAFE_FALLBACK, slopProbeText } from "./copy.ts";
 import { makeRadiusGeo, mutualMarkets } from "./geo.ts";
@@ -82,7 +83,7 @@ export function makeSlopPack(over: DeepPartial<SlopPackOptions> = {}): AppPack &
       objectivesFor: () => [],
       mutualPreferenceMatch: (w, a, b) => {
         const P = slopProfiles(w.input, w.canonical), pa = P.get(a), pb = P.get(b);
-        return !!pa?.is && !!pb?.is && pa.seeks.includes(pb.is) && pb.seeks.includes(pa.is);
+        return !!pa && !!pb && mutualSeek(pa.is, pa.seeks, pb.is, pb.seeks);
       },
       // Constraints are read from typed profiles (profile.ts); this view feeds the core's romance shape.
       constraints: fs => {
@@ -151,7 +152,7 @@ export function makeSlopPack(over: DeepPartial<SlopPackOptions> = {}): AppPack &
       calibrator: { knots: [[0, 0.05], [0.3, 0.25], [0.6, 0.5], [1, 0.75]], byLane: {} },
       shipsAloneLane: SLOP_LANE,
       noWarmMentionLanes: [SLOP_LANE],
-      itemGate: (m, it) => (it.category === SLOP_LANE && (!(typeof m.age === "number" && Number.isFinite(m.age) && m.age >= 18) || !(m.categoriesOptIn ?? [SLOP_LANE]).includes(SLOP_LANE)) ? "romance_not_allowed" : null),
+      itemGate: (m, it) => (it.category === SLOP_LANE && !romanceItemAllowed(canBeMatched(m.age), m.categoriesOptIn, SLOP_LANE) ? "romance_not_allowed" : null),
       probeAllowed: (lane, n) => lane === SLOP_LANE && n === 1,
       laneActivity: SLOP_LANE_ACTIVITY,
       probeText: (ctx, activity, attribute) => slopProbeText(ctx, activity, attribute),

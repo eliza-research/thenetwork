@@ -13,6 +13,7 @@
 import { DAY, HOUR } from "../../core/src/clock.ts";
 import { isMinor } from "../../core/src/policy.ts";
 import { resolveCapital, type CapitalConfig, type CapitalConfigInput } from "./config.ts";
+import { catMultOf, creditAmount } from "./credit.ts";
 import type { CapitalEvent, EarnCategory, EntryCategory, LedgerEntry, LoseCategory, MemberId, PlanOrigin, Verification, Viewer } from "./types.ts";
 import { CapitalEventRejected, validateCapitalEvent } from "./validate.ts";
 import type { CapitalStore } from "./store.ts";
@@ -407,9 +408,8 @@ export class CapitalLedger {
     const decays = counterparts.map(cp => ag.pairDecay ** (seenWith.get(cp) ?? 0));
     const pairMult = !decays.length ? 1 : controlled ? Math.min(...decays) : decays.reduce((s, x) => s + x, 0) / decays.length;
     // Per category and period.
-    const catMult = 1 / (1 + nCat / ag.categorySoftN[cat]);
-    const room = Math.max(0, ag.periodCap - inPeriod);
-    const amount = round(Math.min(base * pairMult * catMult, room));
+    const catMult = catMultOf(nCat, ag.categorySoftN[cat]);
+    const amount = round(creditAmount(base, pairMult, catMult, ag.periodCap, inPeriod));
     return this.write(member, cat, 1, amount, base, base > 0 ? amount / base : 0, ev, { counterparts, confirmedBy, outcome, ...extra }, out);
   }
 

@@ -22,7 +22,9 @@
 // The simulated hiring world (packages/sim/src/apps/peon) writes seats directly and never uses
 // these functions, so the pinned peon gates do not move. Pure; reads no hidden truth.
 import type { Edge, Facet, Intent, Member, MemberId, Presence } from "@thenetwork/core";
+import { canBeMatched } from "@thenetwork/core";
 import type { EngineInput } from "../../types.ts";
+import { seatLeft } from "../decisions.ts";
 import { JOB_INTENT, SAFETY, T } from "./schema.ts";
 
 /** The seat member id of a posting (the posting's intent id). */
@@ -62,7 +64,7 @@ export function peonSeats<S extends SnapshotLike>(snap: S): S {
   for (const p of [...postings].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))) {
     const owner = byId.get(p.memberId)!;
     // A job seat is 18+: only a manager with a valid adult age on the record gets one (unknown is not adult).
-    if (typeof owner.age !== "number" || !Number.isInteger(owner.age) || owner.age < 18) continue;
+    if (!canBeMatched(owner.age)) continue;
     const id = seatIdOf(p.id);
     if (byId.has(id)) continue;
     members.push({ ...owner, id, age: 18, joinedAt: p.createdAt, seatOwner: owner.id } as Member);
@@ -117,7 +119,7 @@ export function peonSeatCapacity(input: EngineInput): EngineInput {
   const facets = input.facets.map(f => {
     if (!isSeatId(f.memberId) || f.id !== `${f.memberId}:openings`) return f;
     const posted = Number(f.tags.find(t => t.startsWith(T.openings))?.slice(T.openings.length) ?? 0);
-    const left = Math.max(0, posted - (fills.get(f.memberId)?.size ?? 0));
+    const left = seatLeft(posted, fills.get(f.memberId)?.size ?? 0);
     return { ...f, value: `Openings: ${left} of ${posted}`, tags: [`${T.openings}${left}`, `${T.seatCap}${left}`] };
   });
   return { ...input, facets };

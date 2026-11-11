@@ -21,9 +21,10 @@ import { randomUUID } from "node:crypto";
 import type { City } from "../../core/src/types.ts";
 import { DAY } from "../../core/src/clock.ts";
 import { canJoin, validAge } from "../../core/src/policy.ts";
-import { canJoinApp, joinAgeCheck, lowestAge } from "./age.ts";
+import { canJoinApp, lowestAge } from "./age.ts";
 import type { AppId, AppInfo } from "./apps.ts";
 import { type ConsentEvent, resolveConsent, type StopScope, stopScope } from "./consent.ts";
+import { joinPlan } from "./decisions.ts";
 import { keyedHash } from "./phone.ts";
 import type { Membership, PeopleStore, Person, PhoneIdentity, PhoneMethod } from "./store.ts";
 
@@ -352,40 +353,45 @@ export class Accounts {
   }
 
   async join(app: AppInfo, who: Who, input: JoinInput): Promise<{ ok: true; membership: Membership } | { ok: false; error: JoinError }> {
-    if (!consentMatches(app, input.consent)) return { ok: false, error: "consent_wording" };
     // One join per phone at a time: parallel requests see the first one's person and membership.
     return this.store.withLock(`join:${who.e164}`, () => this.joinLocked(app, who, input));
   }
 
   private async joinLocked(app: AppInfo, who: Who, input: JoinInput): Promise<{ ok: true; membership: Membership } | { ok: false; error: JoinError }> {
     const at = this.now();
-    if ((await this.seen(who.e164)) === "held") return { ok: false, error: "review" };
+    const held = (await this.seen(who.e164)) === "held";
     let person = await this.personFor(who.e164);
-    if (await this.banned(who.e164, person)) return { ok: false, error: "review" };
     const existing = person && (await this.store.getMembership(person.id, app.id));
-    if (existing && existing.state !== "removed" && existing.state !== "invited") {
-      // A repeated join is still an age statement. Keep the membership and consent unchanged,
-      // but propagate a lower age before returning the existing membership.
+    const plan = joinPlan({
+      wordingOk: consentMatches(app, input.consent), held, banned: await this.banned(who.e164, person),
+      member: !!existing && existing.state !== "removed" && existing.state !== "invited",
+      inviteOnly: app.joinMode === "invite", invited: existing?.state === "invited",
+      stated: validAge(input.age) ? input.age : null, lowest: (await this.lowestAge(who.e164, person)) ?? null, minJoinAge: app.minJoinAge,
+    });
+    // Every exit keeps the age it was told. A real join records it below, once the person exists.
+    if (plan.recordAge && plan.step !== "join") {
       await this.recordAge(who.e164, person, input.age);
-      const again = joinAgeCheck(input.age, await this.lowestAge(who.e164, person), app);
-      if (!again.ok) { await this.declineUnderAge(who.e164, person); return { ok: false, error: "under_age" }; }
-      // A first join can stop after its membership committed and before the hook made the network member:
-      // the repeat completes it (the hook does nothing for a member that already exists).
-      await this.store.bindSessions(who.e164, person!.id, who.session ?? null, at);
-      await this.hooks.onJoin?.({ app, person: person!, membership: existing, e164: who.e164, age: again.effective ?? input.age, input });
-      return { ok: true, membership: existing };
+      // An age under 13 on any exit (invite_only, consent_wording, existing) declines the person on every app.
+      if (plan.step !== "under_age") await this.declineUnderAge(who.e164, person);
     }
-    if (app.joinMode === "invite" && existing?.state !== "invited") return { ok: false, error: "invite_only" };
-    const age = joinAgeCheck(input.age, await this.lowestAge(who.e164, person), app);
-    if (!age.ok) {
+    if (plan.step === "under_age") {
       // Nothing is stored for this app: only the age, on the phone's age floor (and the person, if any).
+      // Under 13 also removes every membership and the pending text join (declineUnderAge).
       // A number with no person keeps no web session either (the session row holds the number in plain text).
-      await this.recordAge(who.e164, person, input.age);
       await this.declineUnderAge(who.e164, person);
       if (!person) await this.store.forgetPersonlessSessions(who.e164);
       return { ok: false, error: "under_age" };
     }
-    if (!person) person = await this.createPerson(who.e164, "otp_sms", age.effective ?? input.age, who.session ?? null);
+    if (plan.step === "existing") {
+      // A first join can stop after its membership committed and before the hook made the network member:
+      // the repeat completes it (the hook does nothing for a member that already exists).
+      await this.store.bindSessions(who.e164, person!.id, who.session ?? null, at);
+      await this.hooks.onJoin?.({ app, person: person!, membership: existing!, e164: who.e164, age: plan.effective ?? input.age, input });
+      return { ok: true, membership: existing! };
+    }
+    if (plan.step !== "join") return { ok: false, error: plan.step };
+    const effective = plan.effective!;
+    if (!person) person = await this.createPerson(who.e164, "otp_sms", effective, who.session ?? null);
     await this.recordAge(who.e164, person, input.age);
     // A new opt-in by the person: a delete of everything no longer suppresses the number.
     const suppressed = await this.store.isSuppressed(this.phoneHash(who.e164));
@@ -403,7 +409,7 @@ export class Accounts {
     await this.store.bindSessions(who.e164, person.id, who.session ?? null, at);
     try {
       // The network member gets the person's lowest age, not the one typed now (a minor anywhere is a minor here).
-      await this.hooks.onJoin?.({ app, person, membership, e164: who.e164, age: age.effective ?? input.age, input });
+      await this.hooks.onJoin?.({ app, person, membership, e164: who.e164, age: effective, input });
     } catch (e) {
       // The hook can fail after the network member committed (the welcome): it goes through the forget path
       // too. No opt-in stands, so a number that deleted everything is suppressed again (banned numbers never get here).
@@ -464,10 +470,11 @@ export class Accounts {
 
   /**
    * Leave one app: the forget path. The phone and other memberships stay. A leave by text gives the time the
-   * person sent it and the message ref: the ledger orders by that time, so an older leave (a late gateway retry)
-   * never undoes a newer opt-in, and the membership then stays as the ledger reads.
+   * person sent it and the message ref (or only the time a turn was received): the ledger orders by that time,
+   * so an older leave (a late gateway retry) never undoes a newer opt-in, and the membership then stays as the ledger reads.
    */
-  async leave(app: AppInfo, who: Who, sent?: { at: number; ref: string }): Promise<void> {
+  async leave(app: AppInfo, who: Who, when?: number | { at: number; ref: string }): Promise<void> {
+    const sent = typeof when === "number" ? { at: when, ref: null } : when;
     const at = sent?.at ?? this.now();
     const person = await this.personFor(who.e164);
     const m = person && (await this.store.getMembership(person.id, app.id));

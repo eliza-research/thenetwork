@@ -8,6 +8,7 @@ import type { City, MemberId } from "@thenetwork/core";
 import { cityBucketGeo } from "../../geo.ts";
 import type { GeoModel } from "../../pack.ts";
 import type { World } from "../../world.ts";
+import { marketMutual, radiusPairReason } from "./geoCore.ts";
 import type { SlopPackOptions } from "./options.ts";
 import { cellIn, datingMarkets, slopProfiles, type SlopProfile } from "./profile.ts";
 import { cellMiles, distanceBand } from "./zips.ts";
@@ -24,13 +25,14 @@ export function limitMiles(p: SlopProfile, o: SlopPackOptions): number | undefin
 export function mutualMarkets(a: SlopProfile, b: SlopProfile, o: SlopPackOptions, markets: readonly City[]): { market: City; miles: number }[] {
   const la = limitMiles(a, o), lb = limitMiles(b, o);
   if (la === undefined || lb === undefined) return [];
-  const lim = Math.min(la, lb);
   const mb = datingMarkets(b);
   const out: { market: City; miles: number }[] = [];
   for (const m of datingMarkets(a)) {
-    if (!mb.includes(m) || !markets.includes(m)) continue;
+    const inB = mb.includes(m), listed = markets.includes(m);
+    if (!inB || !listed) continue;
     const d = cellMiles(cellIn(a, m), cellIn(b, m));
-    if (d + o.radiusMargin <= lim) out.push({ market: m, miles: d });
+    // The decision (geoCore.marketMutual): inside BOTH limits, d + margin <= min(la, lb).
+    if (marketMutual(true, inB, listed, d, o.radiusMargin, la, lb)) out.push({ market: m, miles: d });
   }
   return out.sort((x, y) => (x.miles - y.miles) || (x.market < y.market ? -1 : 1));
 }
@@ -54,9 +56,10 @@ export function makeRadiusGeo(o: SlopPackOptions): GeoModel {
     pairReason(w: World, a: MemberId, b: MemberId): string | null {
       const P = prof(w);
       const pa = P.get(a), pb = P.get(b);
-      if (!pa || !pb) return "unknown_member";
-      if (limitMiles(pa, o) === undefined || limitMiles(pb, o) === undefined) return "distance_unknown";
-      return mutualMarkets(pa, pb, o, w.pack.geo.markets(w.cfg)).length ? null : "outside_radius";
+      const la = pa ? limitMiles(pa, o) : undefined, lb = pb ? limitMiles(pb, o) : undefined;
+      const mutual = pa && pb && la !== undefined && lb !== undefined ? mutualMarkets(pa, pb, o, w.pack.geo.markets(w.cfg)).length : 0;
+      // The decision (geoCore.radiusPairReason): unknown_member, then distance_unknown, then outside_radius.
+      return radiusPairReason(!!pa, !!pb, la !== undefined, lb !== undefined, mutual);
     },
     displayDistance: km => distanceBand(km / 1.609344),
   };

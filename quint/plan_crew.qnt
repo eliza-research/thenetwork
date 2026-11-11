@@ -7,9 +7,10 @@
 // plan run: it reads only STOP, the trust watch and the minors policy (planSeatOk) and the clock. Those are
 // actor events here too, so this model has every crew trace of the old combined model.
 //
-// Code: packages/engine/src/plans.ts (crewOptIn, crewSessionPlan) and packages/network/src/network.ts
-// (crewCheck 3212, onCrewAnswer 3242, resolveCrew 3252, crewSessions 3270). The model follows the code at the
-// same commit as quint/plan_run.qnt (branch wave2/plan_run).
+// Code: packages/engine/src/plans.ts (crewOptIn 696, crewSessionPlan 704) and packages/network/src/network.ts
+// at the merge of formal-main (crewCheck 3418, onCrewAnswer 3450, resolveCrew 3460, crewSessions 3480,
+// planSeatOk 3113). The model follows the code at the same commit as quint/plan_run.qnt (branch
+// wave2/plan_run); the other "network.ts:<line>" references in this file are lines at that commit.
 //
 // Abstractions: one crew offer to a, b, c, then sessions by abstract week slot. A session opportunity is
 // reviewed like any plan; here it ends "held" (its time passed) or "failed" (rejected, expired in review, or no
@@ -93,10 +94,16 @@ module plan_crew {
   // ------------------------------------------------------------------------------------------------
   // Crew actions
 
-  action resolveCrew(yes: Set[str]): bool = all {
-    crewStage' = if (yes.size() >= CREW_MIN) "formed" else "none",
-    crewMembers' = if (yes.size() >= CREW_MIN) crewMembers.intersect(yes) else crewMembers,
-    crewTold' = crewTold.union(yes.filter(id => not(optedOut.contains(id)))),
+  // resolveCrew (formal-main network.ts:3460-3473): a yes counts only from a member who may still take a seat
+  // (planSeatOk with busyOk: not a minor, not opted out, trust ok); crewOptIn needs CREW_MIN of them, and only
+  // they hear crewFormed or crewNotFormed.
+  action resolveCrew(yes0: Set[str]): bool = {
+    val yes = yes0.filter(id => seatOk(id))
+    all {
+      crewStage' = if (yes.size() >= CREW_MIN) "formed" else "none",
+      crewMembers' = if (yes.size() >= CREW_MIN) crewMembers.intersect(yes) else crewMembers,
+      crewTold' = crewTold.union(yes),
+    }
   }
 
   /** onCrewAnswer (network.ts:3192): when everyone answered, resolveCrew (network.ts:3203). */
