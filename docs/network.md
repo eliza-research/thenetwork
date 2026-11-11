@@ -391,6 +391,7 @@ Result (21 days, seeds 1-3 pooled, simulated reviewer, plan-aware personas): 99 
 | hold | 6 or more | Everything paused. Open opportunities with them close. They hear that a person will look. Only a person lifts a hold. |
 
 - The score drops by 1 point for each 14 days with no new signal. Holds do not decay.
+- Each score reduction records a negative `decay` event, capped at the remaining score. The open safety case also records it. Decay does not reopen a closed case.
 - **Corroborated reports.** A report adds points only when two different members report the same person, or the target already has a risk score. The reporter must be credible (trust "ok", fewer than 3 blocks in 14 days). One person cannot get someone removed.
 - **Block abuse.** A member who blocks 3 people in 14 days gets 2 risk points.
 - **Inviter accountability.** When an invitee reaches hold, the inviter loses invites for 30 days and gets 1 risk point.
@@ -398,7 +399,7 @@ Result (21 days, seeds 1-3 pooled, simulated reviewer, plan-aware personas): 99 
 
 ### 6.2.1 Safety cases (PRD 32.14)
 
-Every trust event about a member goes into that member's open safety case, or opens a new one. A case holds the time, kind, points and reporter of each event. It never holds message text.
+Every trust event about a member goes into that member's open safety case, or opens a new one. Decay only updates an open case. A case holds the time, kind, points and reporter of each event. It never holds message text.
 
 | Status | When |
 |---|---|

@@ -128,8 +128,7 @@ export class Trust {
       if (steps <= 0) continue;
       r.lastDecay += steps * DECAY_DAYS * DAY;
       if (r.level === "hold" || r.score <= 0) continue; // holds are lifted by a person, not by time
-      r.score = Math.max(0, r.score - steps);
-      this.relevel(id, now, "decay");
+      this.add(id, now, "decay", -Math.min(r.score, steps));
     }
   }
 
