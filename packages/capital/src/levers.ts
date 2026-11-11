@@ -71,9 +71,14 @@ const recentPenalty = (entries: readonly LedgerEntry[], at: number, days: number
 export function vouchCapacity(entries: readonly LedgerEntry[], at: number, cfg: CapitalConfig = DEFAULT_CAPITAL): number {
   const v = cfg.levers.vouch;
   if (recentPenalty(entries, at, v.abuseLockDays)) return 0;
+  // The capacity is a rate per rolling period (levers.vouch.periodDays, 30 by default): only the
+  // vouches and stakes inside the window count. Counting all history made a lost stake remove the
+  // member's invites for good, and an old good vouch raise the rate for good.
+  const since = at - v.periodDays * DAY;
+  const inPeriod = (e: LedgerEntry) => e.t > since && e.t <= at;
   const reversed = new Set(entries.filter(e => e.provenance.reverses && e.t <= at).map(e => e.provenance.reverses!));
-  const good = entries.filter(e => e.category === "vouch" && e.t <= at && !reversed.has(e.id)).length;
-  const lost = entries.filter(e => e.category === "vouch_stake" && e.t <= at).length;
+  const good = entries.filter(e => e.category === "vouch" && inPeriod(e) && !reversed.has(e.id)).length;
+  const lost = entries.filter(e => e.category === "vouch_stake" && inPeriod(e)).length;
   return Math.max(0, Math.min(v.max, v.base + Math.min(v.maxBonus, good * v.perGood) - lost * v.perLost));
 }
 
