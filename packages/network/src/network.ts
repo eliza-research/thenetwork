@@ -1205,9 +1205,11 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   // ------------------------------------------------------------------ safety cases (PRD 32.14)
-  /** Every trust event goes into the member's open case, or opens one. Cases hold no message text. */
+  /** Trust events update or open a case; decay only updates an open case. Cases hold no message text. */
   private caseEvent(id: MemberId, e: SafetyCaseEvent) {
     let c = this.openCase(id);
+    // A falling score updates an open case; clean time alone must not open a new staff case.
+    if (!c && e.kind === "decay") return;
     if (!c) { c = { id: `sc${++this.caseSeq}`, memberId: id, opened: e.at, level: this.trust.level(id), events: [], status: "open" }; this.cases.push(c); }
     else if (c.status === "lifted" && e.kind !== "hold_lifted") c.status = "open";
     c.events.push({ at: e.at, kind: e.kind, points: e.points, ...(e.by ? { by: e.by } : {}) });
