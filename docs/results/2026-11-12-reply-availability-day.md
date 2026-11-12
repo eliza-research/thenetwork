@@ -111,6 +111,21 @@ The other 184 corpus rows keep their labels; the invariants the evals block alre
 green (no negated or hedged reply read as yes, the reason never carries member text, the
 constraints and counters keep their shape).
 
+## Suite runs
+
+Re-run on 2026-11-13: Linux, Bun 1.4.2, local Postgres 16 on port 54339, no provider key set.
+
+| Revision | Command | Result |
+|---|---|---|
+| `main` (`a0ed7bc`) | `bun run sim` | `PASS: 327/327 blocking gates, 14 tracked off target, 741.2s` |
+| this branch | `bun run sim` | `PASS: 327/327 blocking gates, 14 tracked off target, 745.9s` |
+| this branch | `bun run typecheck` | exits 0 |
+| this branch | `bun run test:integration` | `681 pass, 8 skip, 0 fail, 13974 expect() calls. Ran 689 tests across 68 files.` |
+| this branch | `bun run test:e2e` | `42 pass, 1 skip, 0 fail, 654 expect() calls. Ran 43 tests across 3 files.` |
+
+The full run on `main` uses the corpus without the four new rows. With those rows on `main` the
+evals block fails as shown above. No other gate or tracked number moves between the two revisions.
+
 ## Limits
 
 - The rule lists only words whose negation means unavailable. "I don't work Thursdays" and "I'm
