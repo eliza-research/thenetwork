@@ -44,10 +44,10 @@ class SeatWorld {
   private seq = 0;
   private readonly opts: NetworkOptions;
 
-  constructor() {
+  constructor(seed = 7) {
     const w = appWiring("peon");
     this.opts = {
-      app: APPS.peon, seed: 7, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
+      app: APPS.peon, seed, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
       pack: w.pack!, hooks: w.hooks!, engine: { ...PEON_ENGINE_CONFIG, cities: ["nyc"] },
       onPosting: p => this.write(p),
     };
@@ -128,6 +128,73 @@ const startsWith = (body: string, re: RegExp) => re.test(body.replace(ACK, ""));
 const POST = "We're hiring a data analyst (level 2), 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL";
 
 export async function peonSeatsBlock(b: Block): Promise<void> {
+  await b.run("posting corrections: read changed fields back before a yes can save them", async () => {
+    const cases: { name: string; reply: string; patch?: Partial<JobPosting>; cancel?: boolean; readback?: RegExp }[] = [
+      { name: "plain_yes", reply: "yes" },
+      { name: "yes_echo", reply: "Yes, two openings" },
+      { name: "plain_no", reply: "no", cancel: true },
+      { name: "no_thanks", reply: "No thanks, don't post it", cancel: true },
+      { name: "no_mode", reply: "No, make it remote", patch: { mode: "remote" }, readback: /remote/ },
+      { name: "no_headcount", reply: "No, three openings", patch: { openings: 3 }, readback: /3 openings/ },
+      { name: "no_skills", reply: "No, must have Python", patch: { must: [{ skill: "python", level: 2 }] }, readback: /Must-haves: python/ },
+      { name: "no_area", reply: "No, in Queens", patch: { area: "queens" }, readback: /in Queens/ },
+      { name: "yes_mode", reply: "Yes, make it remote", patch: { mode: "remote" }, readback: /remote/ },
+      { name: "yes_pay", reply: "Yes, $100k-$130k", patch: { payMin: 100, payMax: 130 }, readback: /\$100k-\$130k/ },
+      { name: "no_pay", reply: "No, $100k-$130k", patch: { payMin: 100, payMax: 130 }, readback: /\$100k-\$130k/ },
+    ];
+    const outcomes: { seed: number; kind: string; savedAtReply: number; finalSaves: number; readBack: boolean; correct: boolean }[] = [];
+    const fields = (p: JobPosting) => ({ title: p.title, seniority: p.seniority, openings: p.openings, payMin: p.payMin, payMax: p.payMax, mode: p.mode, area: p.area, must: p.must, nice: p.nice, status: p.status });
+    const original = { title: "data analyst", seniority: 2, openings: 2, payMin: 90, payMax: 120, mode: "hybrid", area: "brooklyn", must: [{ skill: "sql", level: 2 }], nice: [], status: "active" };
+    for (const seed of [7, 13, 17]) {
+      for (const update of [false, true]) for (const c of cases) {
+        const x = new SeatWorld(seed);
+        x.add("hm1", "Rowan Abbott", 34, { verified: "Acme" });
+        for (const body of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await x.say("hm1", body);
+        await x.say("hm1", POST);
+        if (update) {
+          await x.say("hm1", "yes");
+          await x.say("hm1", "Update my data analyst post: (level 2), 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL");
+        }
+        const before = x.saved.length;
+        expect(before).toBe(update ? 1 : 0);
+        x.restart();
+        await x.say("hm1", c.reply);
+        const savedAtReply = x.saved.length - before;
+        const readBack = !!c.readback?.test(x.last("hm1")) && /Reply yes to post it/.test(x.last("hm1"));
+        const waiting = x.net.memberList().find(m => m.id === "hm1")?.awaiting?.kind === "posting";
+        x.restart();
+        if (c.patch) await x.say("hm1", "yes");
+        else if (c.cancel) await x.say("hm1", "yes"); // A discarded draft cannot be resurrected by a later yes.
+        x.restart();
+        await x.run(HOUR);
+        const finalSaves = x.saved.length - before;
+        const last = x.saved.at(-1);
+        const correct = savedAtReply === (c.patch || c.cancel ? 0 : 1)
+          && waiting === !!c.patch && (!c.patch || readBack)
+          && finalSaves === (c.cancel ? 0 : 1)
+          && (c.cancel ? !last || JSON.stringify(fields(last)) === JSON.stringify(original)
+            : !!last && JSON.stringify(fields(last)) === JSON.stringify({ ...original, ...c.patch }))
+          && (update && last ? last.id === x.saved[0]!.id : true);
+        outcomes.push({ seed, kind: `${update ? "update" : "create"}_${c.name}`, savedAtReply, finalSaves, readBack, correct });
+      }
+      for (const yes of [true, false]) {
+        const x = new SeatWorld(seed);
+        x.add("hm1", "Rowan Abbott", 34, { verified: "Acme" });
+        for (const body of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await x.say("hm1", body);
+        await x.say("hm1", POST); await x.say("hm1", "yes");
+        await x.say("hm1", "Close my data analyst post");
+        x.restart();
+        await x.say("hm1", yes ? "Yes, close my data analyst job" : "No, keep my data analyst job");
+        x.restart();
+        await x.run(HOUR);
+        const correct = x.saved.length === (yes ? 2 : 1) && x.saved.at(-1)!.status === (yes ? "closed" : "active");
+        outcomes.push({ seed, kind: yes ? "close_yes" : "close_no", savedAtReply: x.saved.length - 1, finalSaves: x.saved.length - 1, readBack: false, correct });
+      }
+    }
+    console.log("PEON_POSTING_CORRECTION_OUTCOMES", JSON.stringify(outcomes));
+    expect(outcomes.filter(x => x.correct).length).toBe(outcomes.length);
+  });
+
   await b.run("intake rules: a job post is read from text, read back, and needs a title and a pay range", () => {
     const d = parsePosting(POST);
     expect(d).toMatchObject({ title: "data analyst", openings: 2, payMin: 90, payMax: 120, mode: "hybrid", area: "brooklyn", seniority: 2, must: [{ skill: "sql", level: 2 }] });
