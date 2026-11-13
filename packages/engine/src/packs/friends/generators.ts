@@ -33,8 +33,10 @@ export function sameTableAgain(ctx: GenCtx): Candidate[] {
   const recent = w.interactions.filter(r => r.outcome === "completed" && w.now - r.at < 21 * DAY && r.participants.length >= 2)
     .sort((a, b) => (b.at - a.at) || (a.id < b.id ? -1 : 1));
   for (const r of recent) {
+    // Network check-ins have one interaction ID per reply; feedback names the meeting.
+    const opportunityId = r.id.split(":fb:")[0]!;
     // Attendees with a mutual "see again" with at least one other attendee.
-    const ids = r.participants.filter(a => r.participants.some(b => b !== a && positiveAbout(ctx, a, b, r.id) && positiveAbout(ctx, b, a, r.id)));
+    const ids = r.participants.filter(a => r.participants.some(b => b !== a && positiveAbout(ctx, a, b, opportunityId) && positiveAbout(ctx, b, a, opportunityId)));
     const ok = ids.filter(id => !memberReason(w, id, { category: "social", role: "peer", format: ids.length >= 3 ? "small_group" : "one_to_one", timeSensitive: false }));
     if (ok.length < 2) continue;
     if (ok.some((a, i) => ok.slice(i + 1).some(b => pairReason(w, a, b, "social")))) continue;
