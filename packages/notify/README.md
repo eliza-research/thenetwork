@@ -24,7 +24,7 @@ The single inbox and the notification scheduler from `docs/research/2026-10-08-e
 **Production:**
 - **Service.** `packages/network/service/service.ts` builds `NetworkService.notify` with `PgNotifyStore` on the service database by default. `notify: false` turns it off.
   - **`delivered` hook.** After the adapter takes them (`runtime.ts` `RuntimeHost.delivered`), every member-facing Network send (probe, plan_probe, proposal, reminder, feedback_request, cancellation, scheduling) is recorded with `recordSent`. It is stored as already delivered, so nothing texts it again.
-  - **Thread.** Every member text from the thread calls `threadReply`. An assistant's `submit_profile` does not, and neither does STOP.
+  - **Thread.** Handled member texts and open turns handed to the shared agent call `threadReply`. An assistant's `submit_profile`, saved-profile reads and STOP do not.
   - **`notifyTick`.** Runs the outcome sweep, then `dispatch`. The inbox's own sends go out as a unit of work on the member's network (`runtime.system(..., type "notify")`), so the platform consent ledger, the member's opt-out and the person cap apply, as for every other send.
 - **MCP.** `packages/mcp` has the tool `get_updates` (scope `membership:read`, the grant's own app only, optional `update_token`). Its hooks `updates` and `assistantLinked` are wired in `serve.ts`. The assistant is identified by the client's redirect hosts (`assistantOf`). Consent marks the assistant active, and every revocation path marks it inactive.
 - **Ticks.** `deploy/backend/backend.ts` runs `svc.notifyTick()` once per round, after the networks. The standalone `serve.ts` does the same. Replicas may overlap safely: a delivery id is recorded once.
