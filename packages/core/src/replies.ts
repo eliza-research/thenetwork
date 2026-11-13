@@ -308,6 +308,8 @@ export const KEYWORDS = {
   stop: ["STOP", "UNSUBSCRIBE", "CANCEL", "END", "QUIT", "REVOKE", "OPTOUT", "OPT OUT"],
   /** "STOP PLEASE", "PLEASE STOP": a stop with a courtesy word (the platform ledger). */
   stopPolite: ["STOP PLEASE", "PLEASE STOP"],
+  /** Courtesy and urgency words a whole-message STOP or STOP ALL may carry around it ("PLS STOP NOW", "STOP RN", "STOP ALL PLS"). */
+  stopTail: ["PLEASE", "PLS", "PLZ", "NOW", "OK", "OKAY", "JUST", "ALREADY", "THANKS", "THANK YOU", "THX", "RN", "ASAP", "IMMEDIATELY", "FOR REAL"],
   /** Spanish whole-message opt-outs, accents folded. */
   stopEs: ["PARA", "PARAR", "ALTO", "BASTA", "BAJA", "CANCELAR", "DETENER", "NO MAS", "NO MAS MENSAJES"],
   start: ["START", "UNSTOP", "SUBSCRIBE", "RESUME"],
