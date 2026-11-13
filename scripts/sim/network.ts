@@ -5,10 +5,14 @@
 import { readdirSync } from "node:fs";
 import { DAY, HOUR, MINUTE, type MemberId } from "../../packages/core/src/index.ts";
 import { DEFAULT_ATTENTION } from "../../packages/engine/src/index.ts";
+import { World as EngineWorld } from "../../packages/engine/src/world.ts";
+import { resolveConfig } from "../../packages/engine/src/config.ts";
+import { localEmbed } from "../../packages/engine/src/embed.ts";
+import { memberReason } from "../../packages/engine/src/filters.ts";
 import { networkPack } from "../../packages/engine/src/packs/network/index.ts";
 import type { RunRecord } from "../../packages/core/src/index.ts";
 import { computeMetrics } from "../../packages/sim/src/judge/metrics.ts";
-import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, loadScenario, runScenario as runSimScenario, runScenarioPassK } from "../../packages/sim/src/index.ts";
+import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, loadScenario, networkStateFromRecords, scenarioWorldOptions, runScenario as runSimScenario, runScenarioPassK } from "../../packages/sim/src/index.ts";
 import { friendFactory, nycPersonas, runArm, runScenario, SCENARIOS, type ArmResult } from "../../packages/network/harness/index.ts";
 import { allowedAt, ConsentNetwork, NY, OUTREACH, SIM_AUTO_REVIEWER, VENUES, type NetworkOptions } from "../../packages/network/src/index.ts";
 import { styleViolations } from "../../packages/network/src/copy.ts";
@@ -312,6 +316,48 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
     const r = await runSimScenario({ ...s, background: { personas: 6 } }, { network: () => new StubNetwork({ seed: 1, leakyExplanations: true, introRate: 1 }) });
     b.gate("negative control: the canary check fails against a leaky network", r.results.find(x => x.expectation.check === "canary_not_leaked")?.status === "fail");
   }
+
+  await b.run("response cooldowns: only actual nonresponders are held back; declines start their clock when answered", async () => {
+    const scenario = {
+      name: "response-cooldowns", description: "An unanswered first invite must not penalize its uncontacted partner.", seed: 83, days: 5,
+      personas: ["a", "b"].map(ref => ({ ref, age: 30, city: "nyc" as const, interests: ["film", "books", "coffee"], desires: ["new_friends"], capacity: 1, socialEnergy: 1, join: { day: 0, hour: 9 } })),
+      actions: [
+        ...["a", "b"].map(persona => ({ at: { day: 0, hour: 12 }, do: "go_silent" as const, persona })),
+        { at: { day: 0, hour: 13 }, do: "propose" as const, kind: "intro" as const, participants: ["a", "b"], objective: "coffee", city: "nyc" as const },
+      ], expectations: [],
+    };
+    const check = { category: "social" as const, role: "peer" as const, format: "one_to_one" as const, timeSensitive: false };
+    for (const decline of [false, true]) {
+      const w = new World(scenarioWorldOptions(scenario, { network: () => new StubNetwork({ seed: 83, randomIntros: false }) }));
+      await w.begin();
+      let answeredAt: number | undefined;
+      if (decline) {
+        await w.advanceTo(w.clock.now() + 2 * DAY + 9 * HOUR);
+        answeredAt = w.clock.now();
+        w.act({ do: "say", persona: "a", text: "No thanks" });
+      }
+      await w.advanceTo(w.end);
+      const r = await w.complete();
+      const history = networkStateFromRecords(r.records, w.clock.now());
+      const input = { ...w.snapshot(), ...history };
+      const engine = new EngineWorld(input, resolveConfig(), localEmbed);
+      expect(memberReason(engine, "b", check)).toBeNull();
+      expect(memberReason(engine, "a", check)).toBe("category_cooldown");
+      if (decline) {
+        expect(history.interactions[0]!.at).toBe(answeredAt);
+        const later = new EngineWorld({ ...input, now: answeredAt! + 6 * DAY }, resolveConfig(), localEmbed);
+        expect(memberReason(later, "a", check)).toBe("category_cooldown");
+      } else {
+        expect(history.interactions[0]!.noResponse).toEqual(["a"]);
+        const record = history.interactions[0]!;
+        const none = new EngineWorld({ ...input, interactions: [{ ...record, noResponse: [] }] }, resolveConfig(), localEmbed);
+        expect(none.memberCategoryDeclines.size).toBe(0);
+        const legacy = { ...record }; delete legacy.noResponse;
+        const old = new EngineWorld({ ...input, interactions: [legacy] }, resolveConfig(), localEmbed);
+        expect([...old.memberCategoryDeclines.keys()].sort()).toEqual(["a", "b"]);
+      }
+    }
+  });
 
   // ---- conformance rules for networkPack (engine level) ---------------------------------------------------
   await conformance(b, networkPack, { seeds: o.quick ? [1, 2] : [1, 2, 3, 4] });
