@@ -365,7 +365,7 @@ export class World {
     const metrics = computeMetrics(this.records);
     let dir: string | undefined;
     if (this.opts.writeLog !== false) dir = await this.write(metrics);
-    return { runId: this.runId, dir, records: this.records, metrics, personas: this.opts.personas, wallMs, events: s.processed, memories: this.memories, channel: this.channel };
+    return { runId: this.runId, dir, records: this.records, metrics, personas: this.personaList(), wallMs, events: s.processed, memories: this.memories, channel: this.channel };
   }
 
   private finish(end: number) {
@@ -379,7 +379,7 @@ export class World {
     const dir = join(this.opts.runsDir ?? join(REPO_ROOT, "runs"), this.runId);
     mkdirSync(dir, { recursive: true });
     await Bun.write(join(dir, "events.jsonl"), this.records.map(r => JSON.stringify(r)).join("\n") + "\n");
-    await Bun.write(join(dir, "personas.json"), JSON.stringify(this.opts.personas, null, 1));
+    await Bun.write(join(dir, "personas.json"), JSON.stringify(this.personaList(), null, 1));
     await Bun.write(join(dir, "metrics.json"), JSON.stringify(metrics, null, 2));
     return dir;
   }
