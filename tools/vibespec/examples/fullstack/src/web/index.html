@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shared to-do list</title>
+  <style>
+    body { font: 16px/1.5 system-ui, sans-serif; max-width: 32rem; margin: 2rem auto; padding: 0 1rem; }
+    ul { list-style: none; padding: 0; }
+    li { display: flex; gap: .5rem; align-items: center; padding: .25rem 0; }
+    li .title { flex: 1; text-align: left; background: none; border: 0; color: inherit; font: inherit; cursor: pointer; }
+    li.done .title { text-decoration: line-through; color: #666; }
+    form { display: flex; gap: .5rem; }
+    form input { flex: 1; }
+    .status { color: #666; font-size: .875rem; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.3.1",
+        "react-dom/client": "https://esm.sh/react-dom@18.3.1/client"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module">
+    import React from "react";
+    import { createRoot } from "react-dom/client";
+    import { mount } from "/src/web/app.ts";
+    mount(React, createRoot, document.getElementById("root"));
+  </script>
+</body>
+</html>

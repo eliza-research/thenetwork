@@ -1,0 +1,57 @@
+{
+  "name": "vibespec",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "node tools/spec.ts studio",
+    "check": "node tools/spec.ts check",
+    "gen": "node tools/spec.ts gen",
+    "accept": "node tools/spec.ts accept",
+    "new": "node tools/spec.ts new",
+    "demo": "npm run -s gen && node src/demo.ts",
+    "selftest": "node --test tools/selftest.ts",
+    "build": "node -e \"fs.rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json && node -e \"fs.mkdirSync('dist/proof', { recursive: true }); fs.copyFileSync('tools/proof/lib.dfy', 'dist/proof/lib.dfy'); fs.cpSync('tools/studio/public', 'dist/studio/public', { recursive: true })\"",
+    "prepare": "npm run build && node tools/spec.ts gen --if-valid",
+    "check:dashboard": "cd examples/dashboard && node ../../tools/spec.ts check"
+  },
+  "version": "0.1.0",
+  "description": "Stories, rules and a Quint model in one Markdown file; verified TypeScript out.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lalalune/vibespec-starter.git"
+  },
+  "homepage": "https://github.com/lalalune/vibespec-starter#readme",
+  "bugs": "https://github.com/lalalune/vibespec-starter/issues",
+  "keywords": [
+    "formal-verification",
+    "quint",
+    "dafny",
+    "typescript",
+    "specification",
+    "state-machine",
+    "ai-agents"
+  ],
+  "bin": {
+    "spec": "dist/spec.js"
+  },
+  "files": [
+    "dist",
+    ".claude/skills",
+    "README.md",
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@informalsystems/quint": "^0.33.1",
+    "lemmascript": "^0.6.8",
+    "typescript": "^5.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0"
+  }
+}

@@ -6,6 +6,17 @@
     "packages/*"
   ],
   "scripts": {
+    "spec:setup": "npm --prefix tools/vibespec ci --no-audit --no-fund",
+    "gen": "node tools/vibespec/tools/spec.ts gen",
+    "check": "node tools/vibespec/tools/spec.ts check",
+    "accept": "node tools/vibespec/tools/spec.ts accept",
+    "new": "node tools/vibespec/tools/spec.ts new",
+    "spec:studio": "node tools/vibespec/tools/spec.ts studio",
+    "spec:watch": "node tools/vibespec/tools/spec.ts watch",
+    "spec:demo": "npm --prefix tools/vibespec run demo",
+    "spec:selftest": "npm --prefix tools/vibespec run selftest",
+    "spec:sync": "node scripts/spec-snapshots.ts",
+    "spec:check-generated": "node scripts/spec-snapshots.ts --check",
     "test:integration": "bun test --conditions eliza-source --timeout 120000 ./deploy ./packages ./sites",
     "test:e2e": "bun test --conditions eliza-source --timeout 180000 ./tests/e2e",
     "security": "bun test --conditions eliza-source --timeout 120000 packages/platform/test/db.test.ts packages/platform/test/api-security.test.ts packages/platform/test/proxy.test.ts packages/platform/test/cloud-auth.pg.test.ts packages/platform/test/notify-retention.pg.test.ts packages/mcp/test/oauth.test.ts packages/mcp/test/pg.test.ts deploy/backend/backend.test.ts deploy/router.test.ts packages/network/test/shared-agent.integration.test.ts packages/observatory/test/staff.test.ts",
