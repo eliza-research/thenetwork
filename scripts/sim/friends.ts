@@ -18,8 +18,9 @@ import { BASELINES } from "../../packages/sim/src/apps/friends/baselines.ts";
 import { officialGates, trackedMetrics } from "../../packages/sim/src/apps/friends/gates.ts";
 import { friendsMetrics, type FriendsMetrics } from "../../packages/sim/src/apps/friends/metrics.ts";
 import { engineInputOf, evidenceOf, friendsPackMatcher } from "../../packages/sim/src/apps/friends/packMatcher.ts";
-import { buildFriendsSnapshot, NYC_TZ, type FriendsSnapshot } from "../../packages/sim/src/apps/friends/snapshot.ts";
-import { runFriendsWorld, VENUES } from "../../packages/sim/src/apps/friends/world.ts";
+import { SLOTS } from "../../packages/sim/src/apps/friends/persona.ts";
+import { buildFriendsSnapshot, NYC_TZ, slotTime, type FriendsSnapshot } from "../../packages/sim/src/apps/friends/snapshot.ts";
+import { runFriendsWorld, slotOfCrew, VENUES, type MeetupRecord } from "../../packages/sim/src/apps/friends/world.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
 
@@ -43,7 +44,44 @@ export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<voi
   const spec = o.quick ? { seeds: [5], weeks: 4, n: 200 } : FRIENDS_PINNED;
   const all: Record<"pack" | "random" | "oracle", FriendsMetrics[]> = { pack: [], random: [], oracle: [] };
   const matchers = { pack: friendsPackMatcher(), random: BASELINES.random, oracle: BASELINES.oracle };
-  for (const arm of ["pack", "random", "oracle"] as const) for (const seed of spec.seeds) all[arm].push(friendsMetrics(runFriendsWorld({ seed, n: spec.n, weeks: spec.weeks, matcher: matchers[arm] })));
+  let priorChecks = 0, priorErrors = 0, memoryChecks = 0, memoryErrors = 0;
+  for (const arm of ["pack", "random", "oracle"] as const) for (const seed of spec.seeds) {
+    const decisions: { id: MemberId; week: number; enjoy: number | undefined; crew: boolean }[] = [];
+    const result = runFriendsWorld({ seed, n: spec.n, weeks: spec.weeks, matcher: w => {
+      // Observe the real oracle without changing its answers, draws or matcher proposals.
+      const answer = w.oracle.answer.bind(w.oracle), crewOptIn = w.oracle.crewOptIn.bind(w.oracle);
+      w.oracle.answer = (id, key, c) => {
+        if (!/:(plan|partner)$/.test(key)) decisions.push({ id, week: c.week, enjoy: c.prevEnjoy, crew: false });
+        return answer(id, key, c);
+      };
+      w.oracle.crewOptIn = (id, key, enjoyed) => {
+        decisions.push({ id, week: w.state.week, enjoy: enjoyed, crew: true });
+        return crewOptIn(id, key, enjoyed);
+      };
+      const matcher = matchers[arm];
+      return typeof matcher === "function" ? matcher(w) : matcher;
+    } });
+    const latest = new Map<MemberId, number>();
+    const bookedAt = new Map(result.world.state.interactions.map(x => [x.id, x.at]));
+    const at = (m: MeetupRecord) => m.kind === "crew_self"
+      ? slotTime(m.week, SLOTS.indexOf(slotOfCrew(result.world.state.crews.find(c => c.id === m.crewId)!)))
+      : bookedAt.get(m.key)!;
+    for (let week = 0; week < spec.weeks; week++) {
+      for (const d of decisions.filter(x => x.week === week)) {
+        priorChecks++;
+        if (d.enjoy !== (latest.get(d.id) ?? (d.crew ? 0.5 : undefined))) priorErrors++;
+      }
+      for (const m of result.meetups.filter(x => x.week === week).sort((a, c) => at(a) - at(c)))
+        for (const id of m.attendees) latest.set(id, m.enjoy[id]!);
+    }
+    for (const id of new Set([...latest.keys(), ...result.world.lastEnjoy.keys()])) {
+      memoryChecks++;
+      if (result.world.lastEnjoy.get(id) !== latest.get(id)) memoryErrors++;
+    }
+    all[arm].push(friendsMetrics(result));
+  }
+  b.gate("harness: invitations use the latest prior-week enjoyment", priorChecks > 0 && memoryChecks > 0 && priorErrors + memoryErrors === 0,
+    `${priorErrors}/${priorChecks} wrong invitation inputs; ${memoryErrors}/${memoryChecks} wrong final memories`);
   b.track("fingerprint: pack, random and oracle arms", true, digest(all));
   for (const g of officialGates(all.pack, all.random, all.oracle)) b.gate(`gate ${g.gate}`, g.pass, g.value, SAFETY.has(g.id) || !o.quick);
   for (const g of trackedMetrics(all.pack, all.random)) b.track(`tracked ${g.gate}`, g.pass, g.value);
