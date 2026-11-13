@@ -5,7 +5,8 @@
 // member-facing gates, the MCP connector's output guard and the Blooio outbound queue all call it.
 //
 // What it catches:
-//  - contact details: phone numbers, emails (also spelled out: "sam at mail dot com"), street
+//  - contact details: phone numbers, emails (also spelled out: "sam at mail dot com",
+//    "sam at example period com", "two twelve, five fifty-five"), street
 //    addresses, URLs and bare domains, @handles;
 //  - canary tokens (simulator privacy canaries), anywhere in the text;
 //  - forbidden strings (other members' agent-private facts), matched whole or by any run of 4+ of
@@ -25,8 +26,9 @@
 // (Cyrillic, Greek, Armenian, Cherokee, small capitals, IPA, regional indicators), all punctuation and
 // whitespace collapsed to one space, letters and digits of every script kept), so "Ｄivorce",
 // "dívorce", "ᴅɪᴠᴏʀᴄᴇ" and "divorce," match, and non-Latin facts are protected too (audit core-3).
-// Contact checks also run on variants with number words, other-script digits, letter O/l inside
-// numbers, spaced "@" and ".", and spelled "at"/"dot" normalized (audit core-2).
+// Contact checks also run on variants with number words (ones, teens, tens and hundreds),
+// other-script digits, letter O/l inside numbers, spaced "@" and ".", and spelled "at"/"dot"/"period"
+// normalized (audit core-2).
 // Forbidden strings, facts, vocabulary and canaries are also matched on variants with spaced-out
 // letters collapsed ("d i v o r c e") and digit/symbol substitutions undone ("d1v0rce").
 // Reasons never contain the matched text (logs must not carry the private value): matches are
@@ -147,8 +149,187 @@ export const CONTACT_PATTERNS: { name: string; re: RegExp }[] = [
 
 const NUMBER_WORDS: Record<string, string> = {
   zero: "0", one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9",
+  nought: "0", naught: "0",
   cero: "0", uno: "1", dos: "2", tres: "3", cuatro: "4", cinco: "5", seis: "6", siete: "7", ocho: "8", nueve: "9",
 };
+
+// Spoken compounds ("twelve", "fifty-five", "two hundred twelve"). Ones stay in NUMBER_WORDS.
+const SPOKEN_ONES: Record<string, number> = {
+  zero: 0, oh: 0, nought: 0, naught: 0,
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
+  cero: 0, uno: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9,
+};
+const SPOKEN_TEENS: Record<string, number> = {
+  ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15,
+  sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19,
+};
+const SPOKEN_TENS: Record<string, number> = {
+  twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+};
+const SPOKEN_SOFT = new Set(["dash", "hyphen", "dot"]);
+const PERIOD_STOP = /^(?:the|a|an|this|that|next|last|each|every)$/;
+
+type SpokenTok = { text: string; start: number; end: number };
+type SpokenKind = "ones" | "teen" | "tens" | "hundred" | "digits";
+type SpokenGroup = { emit: string; value: number; kind: SpokenKind };
+
+function spacedDigits(n: number, width: number): string {
+  return String(n).padStart(width, "0").slice(-width).split("").join(" ");
+}
+
+function spokenGapOk(s: string, a: SpokenTok, b: SpokenTok): boolean {
+  return /^[\s,\-]*$/.test(s.slice(a.end, b.start));
+}
+
+function isSpokenStart(w: string): boolean {
+  return SPOKEN_ONES[w] !== undefined || SPOKEN_TEENS[w] !== undefined || SPOKEN_TENS[w] !== undefined || /^\d+$/.test(w);
+}
+
+function isPositiveOne(w: string): boolean {
+  const n = SPOKEN_ONES[w];
+  return n !== undefined && n >= 1 && n <= 9;
+}
+
+/** A teen, a tens word plus an optional 1-9, or (when `allowBare`) one ones word. */
+function parseUnder100(toks: SpokenTok[], i: number, allowBare: boolean): { group: SpokenGroup; next: number } | null {
+  if (i >= toks.length) return null;
+  const w = toks[i]!.text;
+  const teen = SPOKEN_TEENS[w];
+  if (teen !== undefined) return { group: { emit: spacedDigits(teen, 2), value: teen, kind: "teen" }, next: i + 1 };
+  const ten = SPOKEN_TENS[w];
+  if (ten !== undefined) {
+    let value = ten;
+    let next = i + 1;
+    if (next < toks.length && isPositiveOne(toks[next]!.text)) { value += SPOKEN_ONES[toks[next]!.text]!; next++; }
+    return { group: { emit: spacedDigits(value, 2), value, kind: "tens" }, next };
+  }
+  const one = SPOKEN_ONES[w];
+  if (allowBare && one !== undefined) return { group: { emit: String(one), value: one, kind: "ones" }, next: i + 1 };
+  return null;
+}
+
+function parseSpokenSlice(toks: SpokenTok[]): { groups: SpokenGroup[]; soft: number } | null {
+  const groups: SpokenGroup[] = [];
+  let soft = 0;
+  let i = 0;
+  while (i < toks.length) {
+    const w = toks[i]!.text;
+    if (SPOKEN_SOFT.has(w)) { soft++; i++; continue; }
+    if (/^\d+$/.test(w)) {
+      groups.push({ emit: w.split("").join(" "), value: Number(w), kind: w.length === 1 ? "ones" : "digits" });
+      i++;
+      continue;
+    }
+    const one = SPOKEN_ONES[w];
+    if (one !== undefined && one >= 1 && one <= 9 && i + 1 < toks.length && toks[i + 1]!.text === "hundred") {
+      let value = one * 100;
+      let next = i + 2;
+      const and = next < toks.length && toks[next]!.text === "and";
+      if (and) next++;
+      const rest = parseUnder100(toks, next, and);
+      if (and && !rest) return null;
+      if (rest && (and || rest.group.kind === "teen" || rest.group.kind === "tens")) {
+        value += rest.group.value;
+        next = rest.next;
+      }
+      groups.push({ emit: spacedDigits(value, 3), value, kind: "hundred" });
+      i = next;
+      continue;
+    }
+    const under = parseUnder100(toks, i, false);
+    if (under) { groups.push(under.group); i = under.next; continue; }
+    if (one !== undefined) { groups.push({ emit: String(one), value: one, kind: "ones" }); i++; continue; }
+    return null;
+  }
+  return { groups, soft };
+}
+
+/** A count ("one two three…", "ten twenty thirty…") is not a phone. */
+function isSpokenCount(groups: SpokenGroup[]): boolean {
+  if (groups.length < 3) return false;
+  const step = groups[1]!.value - groups[0]!.value;
+  if (step !== 1 && step !== 10) return false;
+  for (let k = 2; k < groups.length; k++) if (groups[k]!.value - groups[k - 1]!.value !== step) return false;
+  return true;
+}
+
+/** Rising round numbers ("twelve, twenty, thirty, forty, fifty") are not a phone. */
+function isRoundList(groups: SpokenGroup[]): boolean {
+  if (groups.length < 3) return false;
+  if (groups.some(g => g.kind === "ones" || g.kind === "hundred")) return false;
+  for (let k = 1; k < groups.length; k++) if (groups[k]!.value <= groups[k - 1]!.value) return false;
+  return true;
+}
+
+/** The same tens or teen word repeated ("fifty fifty fifty fifty fifty") is not a phone. */
+function isRepeatedRound(groups: SpokenGroup[]): boolean {
+  if (groups.length < 3) return false;
+  if (groups.some(g => g.kind !== "tens" && g.kind !== "teen")) return false;
+  return groups.every(g => g.value === groups[0]!.value);
+}
+
+function spokenReplacement(toks: SpokenTok[]): string | null {
+  const parsed = parseSpokenSlice(toks);
+  if (!parsed || parsed.groups.length === 0) return null;
+  const { groups, soft } = parsed;
+  const hasCompound = groups.some(g => g.kind === "teen" || g.kind === "tens" || g.kind === "hundred");
+  if (!hasCompound && soft === 0) return null;
+  const digitLen = groups.reduce((n, g) => n + g.emit.replace(/ /g, "").length, 0);
+  if (!(digitLen === 7 || (digitLen >= 10 && digitLen <= 15))) return null;
+  if (isSpokenCount(groups) || isRoundList(groups) || isRepeatedRound(groups)) return null;
+  return groups.map(g => g.emit).join(" ");
+}
+
+function growSpoken(s: string, tokens: SpokenTok[], start: number): SpokenTok[] {
+  const out: SpokenTok[] = [tokens[start]!];
+  let j = start + 1;
+  while (j < tokens.length) {
+    const prev = out[out.length - 1]!;
+    const cur = tokens[j]!;
+    if (!spokenGapOk(s, prev, cur)) break;
+    const w = cur.text;
+    if (isSpokenStart(w) || SPOKEN_SOFT.has(w)) { out.push(cur); j++; continue; }
+    if (w === "hundred" && isPositiveOne(prev.text)) { out.push(cur); j++; continue; }
+    const nxt = tokens[j + 1];
+    if (w === "and" && prev.text === "hundred" && nxt && spokenGapOk(s, cur, nxt) && isSpokenStart(nxt.text)) { out.push(cur); j++; continue; }
+    break;
+  }
+  return out;
+}
+
+/**
+ * Turn a spoken phone into digits before the ones-word pass. "two twelve, five fifty-five,
+ * oh one oh two" becomes "2 1 2 5 5 5 0 1 0 2". A short phrase ("fifty five minutes", "I'm twenty
+ * five") is left as words. Counts and rising round lists are left as words.
+ */
+function expandSpokenCompounds(s: string): string {
+  const tokens: SpokenTok[] = [...s.matchAll(/[a-z]+|\d+/g)].map(m => ({ text: m[0]!, start: m.index!, end: m.index! + m[0]!.length }));
+  const reps: { start: number; end: number; text: string }[] = [];
+  let i = 0;
+  while (i < tokens.length) {
+    if (!isSpokenStart(tokens[i]!.text)) { i++; continue; }
+    const grown = growSpoken(s, tokens, i);
+    const text = spokenReplacement(grown);
+    if (text) reps.push({ start: grown[0]!.start, end: grown[grown.length - 1]!.end, text });
+    i += grown.length;
+  }
+  let out = s;
+  for (let r = reps.length - 1; r >= 0; r--) {
+    const rep = reps[r]!;
+    out = out.slice(0, rep.start) + rep.text + out.slice(rep.end);
+  }
+  return out;
+}
+
+/** "period" is a dot only in an address ("example period com"), not in "the period com". */
+function closePeriod(v: string): string {
+  if (!/(?:^|[\s([{])at(?:$|[\s)\]}])/.test(v) && !/[\[(]\s*at\s*[\])]/.test(v)) return v;
+  return v.replace(new RegExp(`[\\s([{]+period[\\s)\\]}]+(?=(?:${TLDS})\\b|[a-z0-9-]+[\\s([{]+period\\b)`, "g"), (m: string, offset: number, str: string) => {
+    const prev = str.slice(0, offset).match(/([a-z0-9-]+)\s*$/);
+    if (!prev || PERIOD_STOP.test(prev[1]!)) return m;
+    return ".";
+  });
+}
 
 /** Decimal digits of any script ("٢١٢", "२१२") as ASCII digits. */
 function asciiDigits(s: string): string {
@@ -163,19 +344,20 @@ function asciiDigits(s: string): string {
 
 /**
  * Variants of `plain` text for the contact checks (audit core-2): number words as digits ("two one
- * two" → "2 1 2"), other-script digits as ASCII, letter O/l/i inside numbers as 0/1, keycap emoji
- * dropped, spaced "@" and "." closed up, spelled "at"/"dot" as "@"/".", underscores as spaces.
+ * two" → "2 1 2", "two twelve" → "2 1 2"), other-script digits as ASCII, letter O/l/i inside numbers
+ * as 0/1, keycap emoji dropped, spaced "@" and "." closed up, spelled "at"/"dot"/"period" as "@"/".",
+ * underscores as spaces.
  */
 export function contactVariants(s: string): string[] {
   const out = new Set<string>();
   for (const p of plainVariants(s)) {
-    let v = asciiDigits(p).replace(/⃣/g, "");
+    let v = expandSpokenCompounds(asciiDigits(p).replace(/⃣/g, ""));
     v = v.replace(/\b[a-z]+\b/g, w => NUMBER_WORDS[w] ?? w);
     v = v.replace(/\boh\b(?=[\s.\-]*\d)|(?<=\d[\s.\-]*)\boh\b/g, "0");
     v = v.replace(/(?<=\d[\s.\-]{0,2})[o](?![a-z])|(?<![a-z])[o](?=[\s.\-]{0,2}\d)/g, "0").replace(/(?<=\d[\s.\-]{0,2})[li](?![a-z])|(?<![a-z])[li](?=[\s.\-]{0,2}\d)/g, "1");
     out.add(v);
     // Spelled "dot" only before a known TLD or another spelled dot; spelled "at" only before a domain.
-    const dotted = v.replace(new RegExp(`[\\s([{]+(?:dot|punto)[\\s)\\]}]+(?=(?:${TLDS})\\b|[a-z0-9-]+[\\s([{]+(?:dot|punto)\\b)`, "g"), ".");
+    const dotted = closePeriod(v.replace(new RegExp(`[\\s([{]+(?:dot|punto)[\\s)\\]}]+(?=(?:${TLDS})\\b|[a-z0-9-]+[\\s([{]+(?:dot|punto)\\b)`, "g"), "."));
     const closed = dotted.replace(/\s*@\s*/g, "@").replace(/(?<=[a-z0-9])\s*\.\s*(?=(?:com|net|org|io|xyz|biz|info)\b)/g, ".")
       .replace(/[\s([{]+at[\s)\]}]+(?=[a-z0-9-]+\.[a-z]{2,})/g, "@");
     out.add(closed);
