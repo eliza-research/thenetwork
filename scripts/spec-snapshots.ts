@@ -18,6 +18,10 @@ try {
   const models = new Map<string, Model>();
   for (const spec of specs) await gen(staging, spec, models);
 
+  if (JSON.stringify(readSpecs(root)) !== JSON.stringify(specs)) {
+    throw new Error("Specs changed during generation. Rerun the command to publish or check the current specs.");
+  }
+
   const changed = [...expected].filter((file) => {
     const current = join(destination, file);
     return !existsSync(current) || !readFileSync(current).equals(readFileSync(join(staging, "gen", file)));

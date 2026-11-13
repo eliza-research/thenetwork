@@ -48,7 +48,7 @@ in a top-level Vibespec module. For a flow with I/O or concurrency, use the
 | Safety and relay | [Trust levels](../trustLevel.md), [relay decisions](../relayDecision.md), [photo eligibility and limits](../photoPolicy.md) |
 | Outreach and matching | [Daily outreach cap](../outreachPolicy.md), [quiet hours](../quietHours.md), [participation budgets](../participationBudgets.md), [participation windows](../participationWindow.md), [matching budgets and cooldowns](../matchingBudgets.md), [dating radius](../datingRadius.md), [candidate exposure floor](../exposureFloor.md) |
 | Hiring | [Job posting policy](../postingPolicy.md) |
-| Inbox | [Notification delivery](../notificationDelivery.md) |
+| Inbox and network capital | [Notification delivery](../notificationDelivery.md), [capital levers](../capitalLevers.md) |
 | Group plans | [Plan decisions](../planDecision.md), [crew offers](../crewOffer.md) |
 | Member profile | [Saved profile reads](../savedProfileRead.md), [suggestion review](../profileSuggestionReview.md) |
 | Staff operations | [Review, safety and heartbeat timing](../operationsTiming.md) |

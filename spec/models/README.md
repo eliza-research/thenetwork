@@ -22,36 +22,41 @@ The [source coverage ledger](baseline/coverage.md), [drift record](baseline/drif
 
 ## Model index
 
-| Model | Flow |
-|---|---|
-| [auth_edge](auth_edge.md) | Web sessions and trusted requests |
-| [backup_restore](backup_restore.md) | Database restore |
-| [boot_config](boot_config.md) | Service start and proxy configuration |
-| [candidate_pool](candidate_pool.md) | Candidate retrieval and groups |
-| [chatjson_loop](chatjson_loop.md) | Structured model calls |
-| [cloud_auth](cloud_auth.md) | Eliza Cloud sign-in and grants |
-| [console_privacy](console_privacy.md) | Staff console data visibility |
-| [console_views](console_views.md) | Staff member views |
-| [engine_rules](engine_rules.md) | Matching rules and outreach budgets |
-| [identity_sagas](identity_sagas.md) | Phone ownership and account changes |
-| [join_age](join_age.md) | Membership and age |
-| [join_flow](join_flow.md) | Browser signup |
-| [matching_engine](matching_engine.md) | Matching, interviews, and job seats |
-| [notify_capital](notify_capital.md) | Inbox and network capital |
-| [oauth_mcp](oauth_mcp.md) | Connector authorization and member tools |
-| [observatory_sync](observatory_sync.md) | Staff console synchronization |
-| [opportunity](opportunity.md) | Proposal, review, and response |
-| [outbound_queue](outbound_queue.md) | Outbound queue and delivery receipts |
-| [phone_identity](phone_identity.md) | Phone number identity |
-| [photo_relay_item](photo_relay_item.md) | Selected-photo delivery |
-| [photos_rating](photos_rating.md) | Photo storage and private ratings |
-| [plan_crew](plan_crew.md) | Crew invitations and sessions |
-| [plan_run](plan_run.md) | Group plans and fallback |
-| [profile_learning](profile_learning.md) | Suggestions from connected sources |
-| [profile_read](profile_read.md) | Read a saved profile |
-| [relay](relay.md) | Relay between matched members |
-| [review_desk](review_desk.md) | Staff review desk |
-| [runtime_ops](runtime_ops.md) | Runtime work, retention, and alerts |
-| [safety_trust](safety_trust.md) | Safety reports, holds, and blocks |
-| [staff_console](staff_console.md) | Staff roles and console actions |
-| [turn_consent](turn_consent.md) | Signed turns and carrier consent |
+The last column identifies a generated production seam for that flow.
+Imported whole-flow models still need comparison with the runtime. A
+generated decision or subflow alone does not establish coverage for the
+entire imported model.
+
+| Model | Flow | Vibespec production seam |
+|---|---|---|
+| [auth_edge](auth_edge.md) | Web sessions and trusted requests | [Phone verification limits](../otpLimits.md) |
+| [backup_restore](backup_restore.md) | Database restore | — |
+| [boot_config](boot_config.md) | Service start and proxy configuration | — |
+| [candidate_pool](candidate_pool.md) | Candidate retrieval and groups | [Exposure floor state machine](../exposureFloor.md) |
+| [chatjson_loop](chatjson_loop.md) | Structured model calls | [Structured request state machine](../chatRetry.md) |
+| [cloud_auth](cloud_auth.md) | Eliza Cloud sign-in and grants | — |
+| [console_privacy](console_privacy.md) | Staff console data visibility | — |
+| [console_views](console_views.md) | Staff member views | — |
+| [engine_rules](engine_rules.md) | Matching rules and outreach budgets | [Matching budgets and cooldowns](../matchingBudgets.md), [dating radius](../datingRadius.md) |
+| [identity_sagas](identity_sagas.md) | Phone ownership and account changes | — |
+| [join_age](join_age.md) | Membership and age | [Member age](../memberAge.md) |
+| [join_flow](join_flow.md) | Browser signup | [Member age](../memberAge.md), [phone verification limits](../otpLimits.md) |
+| [matching_engine](matching_engine.md) | Matching, interviews, and job seats | — |
+| [notify_capital](notify_capital.md) | Inbox and network capital | [Notification delivery](../notificationDelivery.md), [capital levers](../capitalLevers.md) |
+| [oauth_mcp](oauth_mcp.md) | Connector authorization and member tools | — |
+| [observatory_sync](observatory_sync.md) | Staff console synchronization | — |
+| [opportunity](opportunity.md) | Proposal, review, and response | [Review deadline](../reviewDeadline.md), [probe reply](../probeReply.md) |
+| [outbound_queue](outbound_queue.md) | Outbound queue and delivery receipts | [Outreach cap](../outreachPolicy.md), [participation budgets](../participationBudgets.md), [quiet hours](../quietHours.md) |
+| [phone_identity](phone_identity.md) | Phone number identity | — |
+| [photo_relay_item](photo_relay_item.md) | Selected-photo delivery | — |
+| [photos_rating](photos_rating.md) | Photo storage and private ratings | [Photo eligibility and limits](../photoPolicy.md) |
+| [plan_crew](plan_crew.md) | Crew invitations and sessions | [Crew offer state machine](../crewOffer.md), [formation rules](../planDecision.md) |
+| [plan_run](plan_run.md) | Group plans and fallback | [Plan reply, fallback and allowance](../planDecision.md) |
+| [profile_learning](profile_learning.md) | Suggestions from connected sources | [Suggestion review state machine](../profileSuggestionReview.md) |
+| [profile_read](profile_read.md) | Read a saved profile | [Saved-profile read](../savedProfileRead.md) and [suggestion review](../profileSuggestionReview.md) state machines |
+| [relay](relay.md) | Relay between matched members | [Consent timing and verdict](../relayDecision.md) |
+| [review_desk](review_desk.md) | Staff review desk | [Server review deadline](../reviewDeadline.md) |
+| [runtime_ops](runtime_ops.md) | Runtime work, retention, and alerts | [Observatory timing](../operationsTiming.md) |
+| [safety_trust](safety_trust.md) | Safety reports, holds, and blocks | [Trust levels](../trustLevel.md) |
+| [staff_console](staff_console.md) | Staff roles and console actions | — |
+| [turn_consent](turn_consent.md) | Signed turns and carrier consent | [Carrier consent](../carrierConsent.md) |

@@ -27,10 +27,15 @@ The batch is pending, has a valid ID and a positive revision, belongs to the aut
 ```quint
 pure def canCheckBatch(review: ReviewRequest): bool = review.phase == Unchecked
 
+pure def reviewBeforeExpiry(asOf: int, expiresAt: int): bool = asOf < expiresAt
+
 pure def checkBatch(review: ReviewRequest, pending: bool, ownerMatches: bool,
     batchIdValid: bool, revision: int, asOf: int, expiresAt: int): ReviewRequest =
-  val eligible = pending and ownerMatches and batchIdValid and revision > 0 and asOf < expiresAt
+  val eligible = pending and ownerMatches and batchIdValid and revision > 0 and reviewBeforeExpiry(asOf, expiresAt)
   { ...review, metadataApproved: eligible, phase: if (eligible) NeedsItems else BatchUnavailable }
+
+pure def lawDeadlineDoesNotIncludeExpiry(expiresAt: int): bool =
+  not(reviewBeforeExpiry(expiresAt, expiresAt))
 ```
 
 ### Only a bounded batch of distinct, valid suggestions can be shown

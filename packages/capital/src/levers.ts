@@ -3,6 +3,7 @@
 // only changes how much work the Network does for this member's own intents, and its engine part
 // touches only judge-effort knobs (never weights, thresholds, budgets or exposure).
 import type { EngineConfigInput } from "../../engine/src/config.ts";
+import { capitalEffortBand, reachFromBands, vouchCapacityFromCounts } from "../../core/src/generated/capitalLevers.ts";
 import { DAY } from "../../core/src/clock.ts";
 import { DEFAULT_CAPITAL, type CapitalConfig } from "./config.ts";
 import type { LedgerEntry } from "./types.ts";
@@ -49,9 +50,11 @@ export const EFFORT_TABLE: Record<EffortTier, Omit<EffortOverlay, "tier">> = {
 
 export const balanceOf = (entries: readonly LedgerEntry[], at = Infinity) => entries.reduce((s, e) => (e.t <= at ? s + e.amount : s), 0);
 
+const EFFORT_TIER = { Baseline: 0, First: 1, Second: 2, Highest: 3 } as const;
+
 export function effortTier(balance: number, cfg: CapitalConfig = DEFAULT_CAPITAL): EffortTier {
   const [a, b, c] = cfg.levers.effortThresholds;
-  return balance >= c ? 3 : balance >= b ? 2 : balance >= a ? 1 : 0;
+  return EFFORT_TIER[capitalEffortBand(balance, a, b, c)];
 }
 
 export function effortOverlay(entries: readonly LedgerEntry[], at: number, cfg: CapitalConfig = DEFAULT_CAPITAL): EffortOverlay {
@@ -74,7 +77,7 @@ export function vouchCapacity(entries: readonly LedgerEntry[], at: number, cfg: 
   const reversed = new Set(entries.filter(e => e.provenance.reverses && e.t <= at).map(e => e.provenance.reverses!));
   const good = entries.filter(e => e.category === "vouch" && e.t <= at && !reversed.has(e.id)).length;
   const lost = entries.filter(e => e.category === "vouch_stake" && e.t <= at).length;
-  return Math.max(0, Math.min(v.max, v.base + Math.min(v.maxBonus, good * v.perGood) - lost * v.perLost));
+  return vouchCapacityFromCounts(good, lost, v.base, v.perGood, v.perLost, v.maxBonus, v.max);
 }
 
 export interface OrganizingReach {
@@ -94,6 +97,5 @@ export function organizingReach(entries: readonly LedgerEntry[], at: number, cfg
   if (recentPenalty(entries, at, r.abuseLockDays)) return { max: r.afterAbuse, reservedForLowExposure: 0 };
   const reversed = new Set(entries.filter(e => e.provenance.reverses && e.t <= at).map(e => e.provenance.reverses!));
   const sessions = entries.filter(e => e.category === "organizing" && e.t <= at && !reversed.has(e.id)).length;
-  const max = Math.min(r.max, r.base + Math.floor(sessions / r.perSessions) * r.step);
-  return { max, reservedForLowExposure: Math.max(0, max - r.base) };
+  return reachFromBands(Math.floor(sessions / r.perSessions), r.base, r.step, r.max);
 }
