@@ -102,3 +102,24 @@
 {"text": "stop slop", "label": "not_stop", "lang": "en"}
 {"text": "quit peon", "label": "not_stop", "lang": "en"}
 {"text": "remove me from the group chat with Ana?", "label": "not_stop", "lang": "en"}
+{"text": "STOP STOP", "label": "stop", "lang": "en"}
+{"text": "Stop stop stop", "label": "stop", "lang": "en"}
+{"text": "STOP. STOP.", "label": "stop", "lang": "en"}
+{"text": "stop!!! stop!!!", "label": "stop", "lang": "en"}
+{"text": "unsubscribe unsubscribe", "label": "stop", "lang": "en"}
+{"text": "stop please stop please", "label": "stop", "lang": "en"}
+{"text": "STOP ALL STOP ALL", "label": "stop_all", "lang": "en"}
+{"text": "I SAID STOP", "label": "stop", "lang": "en"}
+{"text": "i said stop", "label": "stop", "lang": "en"}
+{"text": "I already said stop", "label": "stop", "lang": "en"}
+{"text": "I just said STOP!!", "label": "stop", "lang": "en"}
+{"text": "STOP I SAID", "label": "stop", "lang": "en"}
+{"text": "I said STOP. STOP.", "label": "stop", "lang": "en"}
+{"text": "PARA PARA", "label": "stop", "lang": "es"}
+{"text": "basta basta basta", "label": "stop", "lang": "es"}
+{"text": "stop stop, you're making me laugh", "label": "not_stop", "lang": "en"}
+{"text": "my friend said stop", "label": "not_stop", "lang": "en"}
+{"text": "I said stop by at 7", "label": "not_stop", "lang": "en"}
+{"text": "I said cancel", "label": "not_stop", "lang": "en"}
+{"text": "I said end it at 10", "label": "not_stop", "lang": "en"}
+{"text": "stop slop stop slop", "label": "not_stop", "lang": "en"}
