@@ -133,10 +133,15 @@ export class PhotoIntake {
     return true;
   }
 
-  /** One text a day per number and kind. True when it was sent. */
+  /**
+   * One text a day per number and kind. True when it was sent. The cap uses the store's minimum-gap
+   * rule, not the raw count of a fixed clock window: a window that starts at midnight UTC sends the
+   * same text twice in one evening for a member in New York (the STOP hint, PR #124, fixed the same
+   * class the same way: docs/results/2026-10-22-stop-hint-cooldown.md).
+   */
   private async once(e164: string, kind: string, text: string, ref: string): Promise<boolean> {
-    const { count } = await this.d.people.hit(`${kind}:${this.d.phoneKey(e164)}`, DAY, this.d.now());
-    if (count > 1) return false;
+    const { ok } = await this.d.people.hit(`${kind}:${this.d.phoneKey(e164)}`, DAY, this.d.now(), { minGapMs: DAY });
+    if (!ok) return false;
     await this.d.reply(e164, text, `sys:${ref}`);
     return true;
   }

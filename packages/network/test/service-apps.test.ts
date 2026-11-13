@@ -174,6 +174,24 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     const bo = newPhone();
     expect(await text(s, clock, bo, "hi", { line: LINE })).toBe("join_asked");
     expect(directs.at(-1)!.app).toBe(FR);
+
+    // The Network's own line is invite-only: one answer a day per number, nothing stored (mvp-gaps
+    // item 12). The counting window starts at midnight UTC, which is 20:00 in New York, so an answer
+    // at 13:00 and the next one at 20:01 local are inside one evening for the member.
+    const NLINE = "+12125550777";
+    await sql`insert into platform.app_lines (line_e164, app_id, city, provider, env) values (${NLINE}, 'ntwrk', 'nyc', 'blooio', 'dev')`;
+    const guest = newPhone();
+    expect(await text(s, clock, guest, "hello", { line: NLINE })).toBe("invite_only");
+    expect(directs.at(-1)!.body).toBe(APPS.ntwrk.brand.inviteOnly);
+    const answered = directs.length;
+    // Cross the fixed day window by a minute: no second answer inside 24 hours.
+    clock.advance(24 * HOUR - (clock.now() % (24 * HOUR)) + MINUTE);
+    expect(await text(s, clock, guest, "hello again", { line: NLINE })).toBe("invite_only");
+    expect(directs.length).toBe(answered);
+    // A day after the first answer it is sent again, so the cap still expires.
+    clock.advance(24 * HOUR);
+    expect(await text(s, clock, guest, "still here", { line: NLINE })).toBe("invite_only");
+    expect(directs.length).toBe(answered + 1);
   }, T);
 
   test("one person in two apps: the link notice names no app, SHARE stores a grant, STOP is per app, STOP ALL and the shared line stop every app, leave forgets one app", async () => {
