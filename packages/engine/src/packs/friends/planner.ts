@@ -23,11 +23,10 @@
 //
 // Engine-visible inputs only (the World, availability evidence, the Network's own outcome records).
 import type { MemberId } from "@thenetwork/core";
-import { DAY, HOUR } from "@thenetwork/core";
+import { CITY_TZ, DAY, HOUR, MINUTE, fromLocal, localParts } from "@thenetwork/core";
 import { candidateSlots, type TimeSlot } from "../../attention.ts";
 import { DEFAULT_ATTENTION, DEFAULT_PLANS, type AttentionConfig, type PlansConfig } from "../../config.ts";
 import { isMinor, memberReason } from "../../filters.ts";
-import { localParts } from "@thenetwork/core";
 import {
   activityFit, crewSessionPlan, daypartOf, detectCrews, hasWindow, planFreeProb, planMemberReason, planProposals, scorePlanGroup,
   type Crew, type Plan, type PlanEvidence, type PlanMemberInput, type PlanOutcomeRecord,
@@ -178,9 +177,14 @@ export function zoneHub(zone: string): Neighborhood {
   return h;
 }
 
-export function nextSameSlot(at: number, now: number, pcfg: PlansConfig): number {
-  let t = at;
-  while (t < now + pcfg.minLeadHours * HOUR) t += 7 * DAY;
+export function nextSameSlot(at: number, now: number, pcfg: PlansConfig, tz = CITY_TZ.nyc): number {
+  const lp = localParts(at, tz);
+  let t = at, weeks = 0;
+  // A local week can be 167 or 169 hours across DST. Keep the original wall-clock slot.
+  while (t < now + pcfg.minLeadHours * HOUR) {
+    const d = new Date(Date.UTC(lp.year, lp.month - 1, lp.day + ++weeks * 7));
+    t = fromLocal(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), lp.hour, tz) + lp.minute * MINUTE + at % MINUTE;
+  }
   return t;
 }
 
@@ -288,7 +292,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       if (ids.some((x, i) => ids.slice(i + 1).some(y => w.blocked.has(x < y ? `${x}|${y}` : `${y}|${x}`)))) continue;
       const a = activityById.get(o.activityId);
       if (!a) continue;
-      const start = nextSameSlot(o.at, now, pcfg);
+      const start = nextSameSlot(o.at, now, pcfg, tz);
       if (start > now + pcfg.horizonDays * DAY + DAY) continue;
       const v = o.venueId ? venueById.get(o.venueId) : undefined;
       const partner = ids.length === 2;
