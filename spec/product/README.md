@@ -43,11 +43,11 @@ in a top-level Vibespec module. For a flow with I/O or concurrency, use the
 
 | Product area | Generated decisions used by the app |
 |---|---|
-| Signup and identity | [Site enrollment](../siteEnrollment.md), [phone changes](../phoneChange.md), [member age](../memberAge.md), [phone verification limits](../otpLimits.md), [connector grant issuance](../oauthGrantIssuance.md), [Cloud sign-in](../cloudSignIn.md), [Slop onboarding](../slopOnboarding.md) |
+| Signup and identity | [Site enrollment](../siteEnrollment.md), [shared-line enrollment](../textEnrollment.md), [phone changes](../phoneChange.md), [member age](../memberAge.md), [phone verification](../otpLimits.md), [web sessions](../webSession.md), [connector grant issuance](../oauthGrantIssuance.md), [Cloud sign-in](../cloudSignIn.md), [Slop onboarding](../slopOnboarding.md) |
 | Consent and review | [Carrier consent](../carrierConsent.md), [probe answers](../probeReply.md), [review deadlines](../reviewDeadline.md), [opportunity lifecycle](../opportunityLifecycle.md) |
-| Safety and relay | [Trust levels](../trustLevel.md), [relay decisions](../relayDecision.md), [relay item lifecycle](../relayLifecycle.md), [selected-photo relay](../photoRelayItem.md), [photo eligibility and limits](../photoPolicy.md) |
+| Safety and relay | [Safety cases](../safetyCase.md), [trust levels](../trustLevel.md), [relay decisions](../relayDecision.md), [relay item lifecycle](../relayLifecycle.md), [selected-photo relay](../photoRelayItem.md), [photo eligibility and limits](../photoPolicy.md) |
 | Outreach and matching | [Daily outreach cap](../outreachPolicy.md), [quiet hours](../quietHours.md), [participation budgets](../participationBudgets.md), [participation windows](../participationWindow.md), [matching budgets and cooldowns](../matchingBudgets.md), [dating radius](../datingRadius.md), [candidate exposure floor](../exposureFloor.md), [global selection](../selectionRun.md), [Slop assignment](../slopAssignment.md) |
-| Hiring | [Job posting policy](../postingPolicy.md) |
+| Hiring | [Job posting policy](../postingPolicy.md), [seat capacity](../peonCapacity.md) |
 | Inbox and network capital | [Notification delivery](../notificationDelivery.md), [capital levers](../capitalLevers.md) |
 | Group plans | [Plan decisions](../planDecision.md), [crew offers](../crewOffer.md), [group formation](../groupFormation.md) |
 | Member profile | [Saved profile reads](../savedProfileRead.md), [suggestion review](../profileSuggestionReview.md) |

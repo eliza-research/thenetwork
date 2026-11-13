@@ -29,7 +29,7 @@ entire imported model.
 
 | Model | Flow | Vibespec production seam |
 |---|---|---|
-| [auth_edge](auth_edge.md) | Web sessions and trusted requests | [Phone verification limits](../otpLimits.md) |
+| [auth_edge](auth_edge.md) | Web sessions and trusted requests | [Phone verification](../otpLimits.md), [web sessions](../webSession.md) |
 | [backup_restore](backup_restore.md) | Database restore | [Scratch restore lifecycle](../databaseRestore.md) |
 | [boot_config](boot_config.md) | Service start and proxy configuration | [Startup configuration](../bootPolicy.md) |
 | [candidate_pool](candidate_pool.md) | Candidate retrieval and groups | [Exposure floor state machine](../exposureFloor.md), [group formation](../groupFormation.md) |
@@ -39,7 +39,7 @@ entire imported model.
 | [console_views](console_views.md) | Staff member views | [Member inspector and photo reads](../consoleMemberView.md) |
 | [engine_rules](engine_rules.md) | Matching rules and outreach budgets | [Matching budgets and cooldowns](../matchingBudgets.md), [dating radius](../datingRadius.md) |
 | [identity_sagas](identity_sagas.md) | Phone ownership and account changes | [Phone change lifecycle](../phoneChange.md) |
-| [join_age](join_age.md) | Membership and age | [Member age](../memberAge.md) |
+| [join_age](join_age.md) | Membership and age | [Shared-line enrollment](../textEnrollment.md), [member age](../memberAge.md) |
 | [join_flow](join_flow.md) | Browser signup | [Current site enrollment](../siteEnrollment.md), [member age](../memberAge.md), [phone verification limits](../otpLimits.md) |
 | [matching_engine](matching_engine.md) | Matching, interviews, and job seats | [Global selection run](../selectionRun.md), [Slop assignment rounds](../slopAssignment.md), [Slop onboarding](../slopOnboarding.md), [Peon capacity](../peonCapacity.md) |
 | [notify_capital](notify_capital.md) | Inbox and network capital | [Notification delivery](../notificationDelivery.md), [capital levers](../capitalLevers.md) |

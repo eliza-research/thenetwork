@@ -10,8 +10,8 @@ import { randomInt, randomUUID } from "node:crypto";
 import { BlooioClient, ChannelSendError, resolveSenderLine, type BlooioClientOptions } from "@thenetwork/blooio";
 import { DAY, HOUR } from "../../core/src/clock.ts";
 import {
-  otpChallengeMaxAttempts, otpChecksPerIpHour, otpChecksPerPhoneHour, otpLifetimeMs, otpSendGapMs,
-  otpSendsGlobalHour, otpSendsPerIpHour, otpSendsPerPhoneDay, otpSendsPerPhoneHour,
+  initial, otpChallengeMaxAttempts, otpChecksPerIpHour, otpChecksPerPhoneHour, otpLifetimeMs, otpSendGapMs,
+  otpSendsGlobalHour, otpSendsPerIpHour, otpSendsPerPhoneDay, otpSendsPerPhoneHour, step,
 } from "../../core/src/generated/otpLimits.ts";
 import type { AppId, AppInfo } from "./apps.ts";
 import { devShortcutsAllowed, type Env } from "./env.ts";
@@ -178,47 +178,64 @@ export class OtpService {
     const at = this.now(), L = this.limits;
     const hourLeft = HOUR - (at % HOUR);
     const limited = (retryAfterMs = hourLeft): OtpStart => ({ ok: false, error: "rate_limited", retryAfterMs });
-    // The client IP (the socket address, or the IP a trusted site router signed: proxy.ts).
-    if (!(await this.store.hit(`otp:ip:${keyedHash(this.opts.hashKey, ipBucket(ip))}`, HOUR, at, { limit: L.perIpPerHour })).ok) return limited();
-    // The number alone, not the app: one number gets 3 codes an hour and 6 a day whatever site asks.
+    // spec/otpLimits.md, "Code sends have limits shared across apps"
+    let challenge = step(initial, { type: "requestCode" });
+    const byIp = await this.store.hit(`otp:ip:${keyedHash(this.opts.hashKey, ipBucket(ip))}`, HOUR, at, { limit: L.perIpPerHour });
+    challenge = step(challenge, { type: "readSendAddress", allowed: byIp.ok });
+    if (challenge.phase !== "SendPhoneHour") return limited();
     const phoneKey = keyedHash(this.opts.hashKey, e164);
     const byPhone = await this.store.hit(`otp:phone:${phoneKey}`, HOUR, at, { limit: L.perPhonePerHour, minGapMs: L.minGapMs });
-    if (!byPhone.ok) {
-      const gap = byPhone.prevAt !== null && at - byPhone.prevAt < L.minGapMs;
-      return limited(gap ? L.minGapMs - (at - byPhone.prevAt!) : hourLeft);
-    }
-    if (!(await this.store.hit(`otp:phone_day:${phoneKey}`, DAY, at, { limit: L.perPhonePerDay })).ok) return limited(DAY - (at % DAY));
+    const gapLeft = byPhone.prevAt === null ? 0 : L.minGapMs - (at - byPhone.prevAt);
+    challenge = step(challenge, { type: "readSendPhoneHour", allowed: byPhone.ok, gapLeft });
+    if (challenge.phase !== "SendPhoneDay") return limited(challenge.reason === "LimitedGap" ? gapLeft : hourLeft);
+    const byDay = await this.store.hit(`otp:phone_day:${phoneKey}`, DAY, at, { limit: L.perPhonePerDay });
+    challenge = step(challenge, { type: "readSendPhoneDay", allowed: byDay.ok });
+    if (challenge.phase !== "SendGlobal") return limited(DAY - (at % DAY));
     const all = await this.store.hit("otp:global", HOUR, at, { limit: L.globalPerHour });
-    if (!all.ok) {
+    challenge = step(challenge, { type: "readSendGlobal", allowed: all.ok });
+    if (challenge.phase !== "Sending") {
       this.opts.log?.(`[otp] ALERT: the global budget of ${L.globalPerHour} codes an hour is used up; sends are refused until the hour ends`);
       return limited();
     }
+    // spec/otpLimits.md, "Start keeps its public response private"
     try {
       const { code, ref, chatId } = await this.provider.send(e164, app);
-      await this.store.putChallenge({
-        app: app.id, e164, provider: this.provider.name, providerRef: ref ?? null, providerChatId: chatId ?? null, codeHash: code ? keyedHash(this.opts.hashKey, `${app.id}:${e164}:${code}`) : null,
-        attempts: 0, createdAt: at, expiresAt: at + L.ttlMs, consumedAt: null,
-      });
+      challenge = step(challenge, { type: "recordSend", providerAccepted: true });
+      if (challenge.phase === "RecordingChallenge") await this.store.putChallenge({
+          app: app.id, e164, provider: this.provider.name, providerRef: ref ?? null, providerChatId: chatId ?? null,
+          codeHash: code ? keyedHash(this.opts.hashKey, `${app.id}:${e164}:${code}`) : null,
+          attempts: 0, createdAt: at, expiresAt: at + L.ttlMs, consumedAt: null,
+        });
     } catch (e) {
       this.opts.log?.(`[otp] send failed for ${app.id}: ${(e as Error).message}`);
+      if (challenge.phase === "Sending") challenge = step(challenge, { type: "recordSend", providerAccepted: false });
     }
-    return { ok: true };
+    const done = step(challenge, { type: "finishStart" });
+    return done.phase === "StartComplete" ? { ok: true } : limited();
   }
 
   /** True once for the right code on the newest live challenge. Wrong, expired, used-up and unknown all give false. */
   async verify(app: AppId, e164: string, code: string, ip = "unknown"): Promise<boolean> {
-    if (!/^\d{4,10}$/.test(code)) return false;
+    // spec/otpLimits.md, "Verification needs a claimed attempt, the right code, and a successful consume"
+    let challenge = step(initial, { type: "beginVerification", codeWellFormed: /^\d{4,10}$/.test(code) });
+    if (challenge.phase !== "CheckAddress") return false;
     const at = this.now(), L = this.limits;
-    // Guessing across apps and challenges: a ceiling on code checks per number and per IP.
-    if (!(await this.store.hit(`otp:verify:ip:${keyedHash(this.opts.hashKey, ipBucket(ip))}`, HOUR, at, { limit: L.verifyPerIpPerHour })).ok) return false;
-    if (!(await this.store.hit(`otp:verify:phone:${keyedHash(this.opts.hashKey, e164)}`, HOUR, at, { limit: L.verifyPerPhonePerHour })).ok) return false;
+    const byIp = await this.store.hit(`otp:verify:ip:${keyedHash(this.opts.hashKey, ipBucket(ip))}`, HOUR, at, { limit: L.verifyPerIpPerHour });
+    challenge = step(challenge, { type: "readCheckAddress", allowed: byIp.ok });
+    if (challenge.phase !== "CheckPhone") return false;
+    const byPhone = await this.store.hit(`otp:verify:phone:${keyedHash(this.opts.hashKey, e164)}`, HOUR, at, { limit: L.verifyPerPhonePerHour });
+    challenge = step(challenge, { type: "readCheckPhone", allowed: byPhone.ok });
+    if (challenge.phase !== "ReadingChallenge") return false;
     const c = await this.store.latestChallenge(app, e164);
-    if (!c || c.provider !== this.provider.name) return false;
-    if (!(await this.store.claimAttempt(c.id, this.limits.maxAttempts, at))) return false;
+    challenge = step(challenge, { type: "readChallenge", matchingProvider: c?.provider === this.provider.name });
+    if (challenge.phase !== "ClaimingAttempt" || !c) return false;
+    challenge = step(challenge, { type: "claimAttempt", claimed: await this.store.claimAttempt(c.id, L.maxAttempts, at) });
+    if (challenge.phase !== "CheckingCode") return false;
     let ok: boolean;
     if (c.codeHash) ok = safeEqual(c.codeHash, keyedHash(this.opts.hashKey, `${app}:${e164}:${code}`));
     else ok = this.provider.check ? await this.provider.check(e164, code, c.providerRef).catch(() => false) : false;
-    if (!ok) return false;
-    return this.store.consumeChallenge(c.id, at);
+    challenge = step(challenge, { type: "checkCode", correct: ok });
+    if (challenge.phase !== "ConsumingChallenge") return false;
+    return step(challenge, { type: "consumeChallenge", consumed: await this.store.consumeChallenge(c.id, at) }).phase === "Verified";
   }
 }
