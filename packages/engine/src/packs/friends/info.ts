@@ -53,6 +53,7 @@ function tagsBy(w: World): Map<MemberId, string[]> {
   for (const f of w.input.facets) {
     const id = w.canonical(f.memberId);
     if (f.validTo !== undefined && f.validTo < w.now) continue;
+    if (f.validFrom !== undefined && f.validFrom > w.now) continue;
     if (!out.has(id)) out.set(id, []);
     out.get(id)!.push(...f.tags);
   }
