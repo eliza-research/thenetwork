@@ -44,10 +44,10 @@ class SeatWorld {
   private seq = 0;
   private readonly opts: NetworkOptions;
 
-  constructor() {
+  constructor(seed = 7) {
     const w = appWiring("peon");
     this.opts = {
-      app: APPS.peon, seed: 7, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
+      app: APPS.peon, seed, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
       pack: w.pack!, hooks: w.hooks!, engine: { ...PEON_ENGINE_CONFIG, cities: ["nyc"] },
       onPosting: p => this.write(p),
     };
@@ -142,6 +142,38 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
     expect(fixed.draft).toMatchObject({ id: "p-2", title: "barista", payMin: 40, payMax: 50 });
     // Not a posting command, no draft waiting: not about a posting (the turn goes on as usual).
     expect(readPostingText("Any jobs for me this week?", { postings: [], newId: "p-4" })).toBeUndefined();
+  });
+
+  await b.run("intake: nice-to-have spellings stay optional through confirmation and matching", async () => {
+    const labels = ["nice to have", "nice-to-have", "nice to haves", "nice-to-haves", "nice-to have", "nice to-have", "nice-to haves", "nice to-haves"];
+    const failures: string[] = [];
+    let correctRequirements = 0, qualifiedMatches = 0, unqualifiedMatches = 0;
+    for (const seed of [7, 11, 19]) for (const label of labels) {
+      const w = new SeatWorld(seed);
+      w.add("hm1", "Rowan Abbott", 34, { verified: "Acme" });
+      w.add("c1", "Morgan Reed", 29, { candidate: true });
+      w.add("c2", "Alex Chen", 32, { candidate: true });
+      // Neither candidate has optional Python; only c1 has the required SQL skill.
+      w.facets.splice(w.facets.findIndex(f => f.id === "c2-s"), 1);
+      for (const id of ["hm1", "c1", "c2"]) for (const body of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await w.say(id, body);
+      await w.say("hm1", `${POST}, ${label}: Python`);
+      expect(w.saved.length).toBe(0);
+      await w.say("hm1", "yes");
+      expect(w.saved.length).toBe(1);
+      const post = w.saved[0]!;
+      if (Bun.deepEquals(post.must, [{ skill: "sql", level: 2 }]) && Bun.deepEquals(post.nice, ["python"])) correctRequirements++;
+      else failures.push(`${seed}/${label}: wrong required or optional skills`);
+      const queue = () => w.net.reviewQueue().filter(i => i.proposal.participants.includes("hm1"));
+      await w.runUntil(() => queue().length > 0, 2 * DAY);
+      const matched = queue().flatMap(i => i.proposal.participants.filter(id => id !== "hm1")).sort();
+      qualifiedMatches += matched.filter(id => id === "c1").length;
+      unqualifiedMatches += matched.filter(id => id !== "c1").length;
+      if (!Bun.deepEquals(matched, ["c1"])) failures.push(`${seed}/${label}: expected only the SQL candidate, got ${matched.join(",") || "none"}`);
+      // The restored match still waits for human review; this gate approves nothing.
+      expect(w.sent.some(s => s.meta.probe || s.meta.proposalId)).toBe(false);
+    }
+    console.log(`  optional-skill cases: ${JSON.stringify({ cases: labels.length * 3, correctRequirements, qualifiedMatches, unqualifiedMatches })}`);
+    expect(failures).toEqual([]);
   });
 
   const w = new SeatWorld();
