@@ -84,7 +84,7 @@ export function parseJoin(body: unknown): JoinInput | undefined {
   const b = body as Record<string, unknown>;
   const str = (v: unknown, max: number) => (typeof v === "string" && v.trim().length > 0 && v.trim().length <= max ? v.trim() : undefined);
   const firstName = str(b.firstName, 50);
-  if (!firstName || !validAge(b.age) || !Number.isInteger(b.age) || (b.age as number) > 120) return undefined;
+  if (!firstName || !validAge(b.age) || !Number.isInteger(b.age)) return undefined;
   const c = b.consent as Record<string, unknown> | undefined;
   const wording = str(c?.wording, 2000), version = str(c?.version, 40);
   if (!c || c.sms !== true || (!wording && !version)) return undefined;

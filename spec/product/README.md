@@ -37,7 +37,23 @@ Track legal and compliance work separately from the pilot's technical gates. The
 
 ## How to change a rule
 
-Start from the relevant product story and use the same story and rule in the executable spec when the Vibespec generator can express it. See the executable specs for [member age](../memberAge.md), [trust levels](../trustLevel.md), [outreach](../outreachPolicy.md), [carrier consent](../carrierConsent.md), [quiet hours](../quietHours.md) and [conversation retries](../chatRetry.md), along with the [imported Quint flow models](../models/README.md). Those files record which states and checks are modeled. This product directory also records operating, provider and human requirements that need independent evidence. A requirement being present here is not proof that it ships or that it is covered by generation.
+Start from the relevant product story. Put each rule and its Quint together
+in a top-level Vibespec module. For a flow with I/O or concurrency, use the
+[whole-flow model](../models/README.md) to compare the complete sequence.
+
+| Product area | Generated decisions used by the app |
+|---|---|
+| Signup and identity | [Member age](../memberAge.md), [phone verification limits](../otpLimits.md) |
+| Consent and review | [Carrier consent](../carrierConsent.md), [probe answers](../probeReply.md), [review deadlines](../reviewDeadline.md) |
+| Safety | [Trust levels](../trustLevel.md) |
+| Outreach and matching | [Daily outreach cap](../outreachPolicy.md), [quiet hours](../quietHours.md), [participation budgets](../participationBudgets.md), [matching budgets and cooldowns](../matchingBudgets.md), [dating radius](../datingRadius.md) |
+| Group plans | [Plan decisions](../planDecision.md) |
+| Conversation infrastructure | [Structured reply retries](../chatRetry.md) |
+
+The product directory also records provider, rollout, and human requirements
+that need separate evidence. Each generated module covers its stated decision
+boundary. The flow models still cover storage, concurrent work, browser and
+provider events, and the effect of failures on the whole journey.
 
 ## Sources
 

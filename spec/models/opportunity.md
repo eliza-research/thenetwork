@@ -8,6 +8,8 @@ A member needs staff review before contact and control over when The Network mak
 
 Check review and deadlines, participant answers, name disclosure, STOP, and cancellation. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
+Production uses the generated [review deadline rule](../reviewDeadline.md).
+
 Imported from `quint/opportunity.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint

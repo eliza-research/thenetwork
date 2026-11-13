@@ -7,6 +7,7 @@
 //    person joins The Network, which asks what they are looking for (LOOKING_FOR).
 //  - STOP on the shared line stops every app; "leave <app>" leaves one.
 
+import { ADULT_AGE, MIN_MEMBER_AGE } from "../../core/src/policy.ts";
 import { APP_IDS, isAppId, type AppId } from "../../core/src/types.ts";
 export { APP_IDS, isAppId, type AppId };
 
@@ -67,23 +68,23 @@ function brand(name: string, domain: string, agentName: string, what: string, mi
 
 export const APPS: Record<AppId, AppInfo> = {
   ntwrk: {
-    id: "ntwrk", name: "The Network", domain: "ntwrk.party", joinMode: "invite", minJoinAge: 13, minMatchAge: 18,
-    brand: brand("The Network", "ntwrk.party", "the Network's agent", "messages about people, plans, and events you asked for.", 13),
+    id: "ntwrk", name: "The Network", domain: "ntwrk.party", joinMode: "invite", minJoinAge: MIN_MEMBER_AGE, minMatchAge: ADULT_AGE,
+    brand: brand("The Network", "ntwrk.party", "the Network's agent", "messages about people, plans, and events you asked for.", MIN_MEMBER_AGE),
     consent: { version: CONSENT_VERSION, text: consentText("The Network", "replies, introductions and plans I ask for, reminders, and occasional suggestions") },
   },
   slop: {
-    id: "slop", name: "slop", domain: "slop.date", joinMode: "open", minJoinAge: 13, minMatchAge: 18,
-    brand: brand("slop", "slop.date", "slop's matchmaker", "dating introductions you asked for, only with mutual opt-in.", 13),
+    id: "slop", name: "slop", domain: "slop.date", joinMode: "open", minJoinAge: MIN_MEMBER_AGE, minMatchAge: ADULT_AGE,
+    brand: brand("slop", "slop.date", "slop's matchmaker", "dating introductions you asked for, only with mutual opt-in.", MIN_MEMBER_AGE),
     consent: { version: CONSENT_VERSION, text: consentText("slop.date", "questions from the matchmaker, introductions I agree to, date plans and reminders") },
   },
   peon: {
-    id: "peon", name: "peon", domain: "peon.biz", joinMode: "open", minJoinAge: 13, minMatchAge: 18,
-    brand: brand("peon", "peon.biz", "peon's recruiter", "job and hiring introductions you asked for.", 13),
+    id: "peon", name: "peon", domain: "peon.biz", joinMode: "open", minJoinAge: MIN_MEMBER_AGE, minMatchAge: ADULT_AGE,
+    brand: brand("peon", "peon.biz", "peon's recruiter", "job and hiring introductions you asked for.", MIN_MEMBER_AGE),
     consent: { version: CONSENT_VERSION, text: consentText("peon.biz", "questions about work or hiring, waitlist updates, introductions I agree to, and scheduling reminders") },
   },
   friends: {
-    id: "friends", name: "friends", domain: "friends.help", joinMode: "open", minJoinAge: 13, minMatchAge: 18,
-    brand: brand("friends", "friends.help", "friends.help's planner", "friends and plans in New York City that you asked for.", 13),
+    id: "friends", name: "friends", domain: "friends.help", joinMode: "open", minJoinAge: MIN_MEMBER_AGE, minMatchAge: ADULT_AGE,
+    brand: brand("friends", "friends.help", "friends.help's planner", "friends and plans in New York City that you asked for.", MIN_MEMBER_AGE),
     consent: { version: CONSENT_VERSION, text: consentText("friends.help", "questions about what I like to do, invitations to plans, plan details and reminders") },
   },
 };

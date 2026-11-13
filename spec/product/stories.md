@@ -28,7 +28,7 @@ Authorize a staff member to create individually attributable invites with city a
 
 Require phone verification, current app consent, age and a valid invite where required. Joining from a new verified number goes through identity linking or staff recovery. Duplicate joins attach to the existing person without exposing other memberships. A banned number cannot join, and an under-13 join creates no membership.
 
-Models: [join and age](../models/join_age.md), [join flow](../models/join_flow.md), [identity lifecycle](../models/identity_sagas.md), [phone identity](../models/phone_identity.md), [member age rules](../memberAge.md).
+Models: [join and age](../models/join_age.md), [join flow](../models/join_flow.md), [identity lifecycle](../models/identity_sagas.md), [phone identity](../models/phone_identity.md), [member age rules](../memberAge.md), [phone verification limits](../otpLimits.md).
 
 ## Story F4 — Onboard in conversation
 

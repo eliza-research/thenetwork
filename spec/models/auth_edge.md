@@ -8,6 +8,8 @@ A member needs to confirm their phone and use their own session. The service nee
 
 Check banned numbers, session ownership, OTP and Cloud authentication, and signed proxy requests. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
+The [OTP limits spec](../otpLimits.md) supplies runtime defaults. This model uses seconds for the lifetime and minimum gap and scales the global send limit for reachability. It does not model the per-number and per-address verification counters.
+
 Imported from `quint/auth_edge.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint

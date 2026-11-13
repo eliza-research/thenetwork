@@ -3,10 +3,17 @@
 // ConsentNetwork send path, the Blooio queue hook and the tests all read these numbers from here
 // (audit P2-13). The send-time functions themselves come from the engine (@thenetwork/engine
 // attention.ts): learnSendProfile, inSendWindow, inMemberQuietHours, canInterrupt, canSendLogistics.
-import { DAY, HOUR, MINUTE, withinQuietHours, type ParticipationState } from "@thenetwork/core";
+import {
+  availabilityCheckInBudget, DAY, HOUR, initialInviteBudget, MINUTE, planInviteBudget, unsolicitedStateBudget,
+  withinQuietHours, type OutreachBudget, type ParticipationState,
+} from "@thenetwork/core";
 import { DEFAULT_ATTENTION } from "@thenetwork/engine";
 
 export const NY = "America/New_York";
+
+function toSendBudget({ limit, periodDays }: OutreachBudget): { n: number; days: number } {
+  return { n: limit, days: periodDays };
+}
 
 export const OUTREACH = {
   /**
@@ -16,10 +23,14 @@ export const OUTREACH = {
    * partner's first probe), once per member and opportunity. Counted at send time over what was sent.
    */
   budget: {
-    open: { n: 4, days: 7 }, normal: { n: 2, days: 7 }, quiet: { n: 1, days: 30 }, receiving: { n: 2, days: 7 }, paused: { n: 0, days: 7 },
+    open: toSendBudget(initialInviteBudget("open")),
+    normal: toSendBudget(initialInviteBudget("normal")),
+    quiet: toSendBudget(initialInviteBudget("quiet")),
+    receiving: toSendBudget(initialInviteBudget("receiving")),
+    paused: toSendBudget(initialInviteBudget("paused")),
   } as Record<string, { n: number; days: number }>,
   /** The most initial invites any member can get in a rolling 7 days (the judge's weeklyBudget). */
-  maxPerWeek: 4,
+  maxPerWeek: initialInviteBudget("open").limit,
   /** An initial invite counts as unanswered after this long without any inbound message. */
   unansweredAfterMs: 72 * HOUR,
   /** At this many unanswered initial invites the member moves to "only when I ask". */
@@ -92,7 +103,11 @@ export function allowedAt(t: number, quietHours: [number, number]): boolean {
  * invites have their own per-state numbers, OUTREACH.budget above, where Receiving is 2 / 7 days.)
  */
 export const PRD_BUDGETS: Record<ParticipationState, { n: number; days: number }> = {
-  open: { n: 4, days: 7 }, normal: { n: 2, days: 7 }, quiet: { n: 1, days: 30 }, receiving: { n: 0, days: 7 }, paused: { n: 0, days: 7 },
+  open: toSendBudget(unsolicitedStateBudget("open")),
+  normal: toSendBudget(unsolicitedStateBudget("normal")),
+  quiet: toSendBudget(unsolicitedStateBudget("quiet")),
+  receiving: toSendBudget(unsolicitedStateBudget("receiving")),
+  paused: toSendBudget(unsolicitedStateBudget("paused")),
 };
 /**
  * Lanes outside the state budget (founder decisions 2026-10-08): plan invites have their own
@@ -102,7 +117,8 @@ export const PRD_BUDGETS: Record<ParticipationState, { n: number; days: number }
  * whose state budget is 0 (receiving, paused) get nothing in any lane.
  */
 export const LANE_BUDGETS: Record<"plan" | "check_in", { n: number; days: number }> = {
-  plan: { n: 1, days: 7 }, check_in: { n: 1, days: 7 },
+  plan: toSendBudget(planInviteBudget),
+  check_in: toSendBudget(availabilityCheckInBudget),
 };
 
 /** Text that connects the recipient to other people (an intro, a meetup, a group): the observatory's real source and the simulator's judge read it. */

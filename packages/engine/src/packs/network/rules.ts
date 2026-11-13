@@ -3,7 +3,7 @@
 // The core runs its own prefix first (filters.ts: unknown_member, underage, safety_hold, state_paused;
 // pairs: duplicate_participant, underage, blocked; configurations: duplicate_participant, then these
 // pre-rules, then minors / via / member / pair, then these post-rules, then the geo overlap).
-import { DAY } from "@thenetwork/core";
+import { budgetReached, DAY, inCooldown, pairInteractionCooling } from "@thenetwork/core";
 import { isHomeEntry, riskTerms } from "../../filters.ts";
 import type { CandidateRule, MemberRule, PairRule } from "../../pack.ts";
 import { CONTRIBUTOR_ROLES } from "../../types.ts";
@@ -19,23 +19,25 @@ export const NETWORK_MEMBER_RULES: readonly MemberRule[] = [
       return (mi.m.prefs.onlyWhenAsked || mi.m.unansweredProactive >= 2) && !askedRecently ? "only_when_asked" : null;
     },
   },
+  // spec/matchingBudgets.md, "The limit includes use already reserved for the decision"
   {
     id: "interruption_budget", check: (w, _id, mi, c) => {
       const budget = w.cfg.budgets[mi.m.state];
-      return mi.recentProactive + (c.extraProactive ?? 0) >= budget.limit ? "interruption_budget" : null;
+      return budgetReached(mi.recentProactive, c.extraProactive ?? 0, budget.limit) ? "interruption_budget" : null;
     },
   },
-  { id: "contribution_budget", check: (w, _id, mi, c) => (CONTRIBUTOR_ROLES.has(c.role) && mi.recentContribution + (c.extraContribution ?? 0) >= w.cfg.contribution.limit ? "contribution_budget" : null) },
+  { id: "contribution_budget", check: (w, _id, mi, c) => (CONTRIBUTOR_ROLES.has(c.role) && budgetReached(mi.recentContribution, c.extraContribution ?? 0, w.cfg.contribution.limit) ? "contribution_budget" : null) },
   {
     id: "category_quota", check: (w, id, mi, c) => {
       const quota = w.quotas[id]?.[c.category];
-      return quota !== undefined && (mi.categoryCount30.get(c.category) ?? 0) >= quota ? "category_quota" : null;
+      return quota !== undefined && budgetReached(mi.categoryCount30.get(c.category) ?? 0, 0, quota) ? "category_quota" : null;
     },
   },
+  // spec/matchingBudgets.md, "An applicable event blocks proposals until its cooldown ends"
   {
     id: "category_cooldown", check: (w, id, _mi, c) => {
       const declinedAt = w.memberCategoryDeclines.get(id)?.get(c.category);
-      return declinedAt !== undefined && w.now - declinedAt < w.cfg.cooldowns.categoryDeclineDays * DAY ? "category_cooldown" : null;
+      return inCooldown(w.now, declinedAt !== undefined, declinedAt ?? 0, w.cfg.cooldowns.categoryDeclineDays * DAY) ? "category_cooldown" : null;
     },
   },
   {
@@ -59,13 +61,14 @@ export const NETWORK_PAIR_RULES: readonly PairRule[] = [
   {
     id: "negative_feedback_cooldown", check: (w, a, b) => {
       const neg = w.negativeFeedback.get(pairKey(a, b));
-      return neg !== undefined && w.now - neg < w.cfg.cooldowns.negativeFeedbackDays * DAY ? "negative_feedback_cooldown" : null;
+      return inCooldown(w.now, neg !== undefined, neg ?? 0, w.cfg.cooldowns.negativeFeedbackDays * DAY) ? "negative_feedback_cooldown" : null;
     },
   },
+  // spec/matchingBudgets.md, "A recent decline, expiry, or cancellation blocks another pair proposal"
   {
     id: "pair_cooldown", check: (w, a, b) => {
       for (const r of w.pairInteractions.get(pairKey(a, b)) ?? []) {
-        if ((r.outcome === "declined" || r.outcome === "expired" || r.outcome === "cancelled") && w.now - r.at < w.cfg.cooldowns.pairDeclinedDays * DAY) return "pair_cooldown";
+        if (pairInteractionCooling(r.outcome, w.now, r.at, w.cfg.cooldowns.pairDeclinedDays * DAY)) return "pair_cooldown";
       }
       return null;
     },

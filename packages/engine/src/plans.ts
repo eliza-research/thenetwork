@@ -16,6 +16,7 @@
 // Engine-visible inputs only. Nothing here reads hidden truth.
 import type { Category, City, MemberId, ScoreComponents } from "@thenetwork/core";
 import { DAY, HOUR } from "@thenetwork/core";
+import { canApplyPlanReply, planFallbackShape, planProbeExpired, planReplyChoice, unmetPlanQuorum, type PlanStage } from "../../core/src/generated/planDecision.ts";
 import { activitiesForTags, activityById, type ActivityType, type Daypart, type Venue } from "./packs/network/activities.ts";
 import { availabilityProb, candidateSlots, timeOptionsPhrase, type AvailabilityEvidence, type TimeSlot } from "./attention.ts";
 import { DEFAULT_ATTENTION, DEFAULT_CONFIG, DEFAULT_PLANS, type AttentionConfig, type PlansConfig } from "./config.ts";
@@ -557,6 +558,7 @@ function nextOnBench(r: PlanRun, opts: PlanRunOpts): MemberId | undefined {
 }
 export const yesOf = (r: PlanRun) => Object.keys(r.answers).filter(x => r.answers[x] === "yes");
 export const pendingOf = (r: PlanRun) => Object.keys(r.answers).filter(x => r.answers[x] === "pending");
+const planStage: Record<PlanRun["stage"], PlanStage> = { probing: "Probing", booked: "Booked", closed: "Closed" };
 
 /**
  * Record a probe answer. Yes: quorum reached -> "book" (the reveal is the booked plan); after
@@ -565,34 +567,49 @@ export const pendingOf = (r: PlanRun) => Object.keys(r.answers).filter(x => r.an
  * when nobody is pending and quorum can no longer be reached -> "fallback". Never says who declined.
  */
 export function recordPlanAnswer(run: PlanRun, member: MemberId, yes: boolean, now: number, pcfg: PlansConfig = DEFAULT_PLANS, opts: PlanRunOpts = {}): { run: PlanRun; action: PlanAction } {
-  if (run.stage === "closed" || run.answers[member] !== "pending") return { run, action: { kind: "none" } };
+  const phase = planStage[run.stage];
+  const pendingMember = run.answers[member] === "pending";
+  if (!canApplyPlanReply(phase, pendingMember)) return { run, action: { kind: "none" } };
   const r: PlanRun = { ...run, answers: { ...run.answers, [member]: yes ? "yes" : "no" }, bench: [...run.bench] };
-  const p = r.plan;
-  if (yes) {
-    if (r.stage === "booked") {
-      if (now <= p.window.start - pcfg.lateJoinHours * HOUR) return { run: r, action: { kind: "join", member } };
+  const p = run.plan;
+  const going = yesOf(r);
+  const choice = planReplyChoice({
+    phase, pendingMember, accepted: yes, yesAfter: going.length,
+    needed: p.quorum, partnerPlan: p.partner, firstMember: member === p.invited[0],
+    beforeDeadline: now < p.probeDeadline, lateJoinOpen: now <= p.window.start - pcfg.lateJoinHours * HOUR,
+  });
+  switch (choice) {
+    case "AddMember":
+      return { run: r, action: { kind: "join", member } };
+    case "RecordLate":
       r.answers[member] = "late";
       return { run: r, action: { kind: "none" } };
+    case "BookPlan":
+      r.stage = "booked";
+      return { run: r, action: { kind: "book", going } };
+    case "ClosePlan":
+      r.stage = "closed";
+      return { run: r, action: { kind: "fallback" } };
+    case "AskPartner":
+    case "AskAlternate": {
+      const next = nextOnBench(r, opts);
+      if (next) {
+        r.answers[next] = "pending";
+        return { run: r, action: { kind: choice === "AskPartner" ? "probe_partner" : "backfill", member: next } };
+      }
+      break;
     }
-    const y = yesOf(r);
-    if (y.length >= p.quorum) { r.stage = "booked"; return { run: r, action: { kind: "book", going: y } }; }
-    if (p.partner && now < p.probeDeadline) { const nx = nextOnBench(r, opts); if (nx) { r.answers[nx] = "pending"; return { run: r, action: { kind: "probe_partner", member: nx } }; } }
-    return { run: r, action: { kind: "none" } };
   }
-  if (r.stage === "booked") return { run: r, action: { kind: "none" } };
-  // Partner plan: a no from the first ends it (one-to-one rules: no swap without re-review); a no from the partner tries the next.
-  if (p.partner && member === p.invited[0]) { r.stage = "closed"; return { run: r, action: { kind: "fallback" } }; }
-  if (now < p.probeDeadline) {
-    const nx = nextOnBench(r, opts);
-    if (nx) { r.answers[nx] = "pending"; return { run: r, action: { kind: "backfill", member: nx } }; }
+  if (!yes && r.stage === "probing" && unmetPlanQuorum(pendingOf(r).length, going.length, p.quorum)) {
+    r.stage = "closed";
+    return { run: r, action: { kind: "fallback" } };
   }
-  if (!pendingOf(r).length && yesOf(r).length < p.quorum) { r.stage = "closed"; return { run: r, action: { kind: "fallback" } }; }
   return { run: r, action: { kind: "none" } };
 }
 
 /** At the probe deadline without quorum: close and fall back. */
 export function checkPlanDeadline(run: PlanRun, now: number): { run: PlanRun; action: PlanAction } {
-  if (run.stage !== "probing" || now < run.plan.probeDeadline) return { run, action: { kind: "none" } };
+  if (!planProbeExpired(planStage[run.stage], !(now < run.plan.probeDeadline))) return { run, action: { kind: "none" } };
   return { run: { ...run, stage: "closed" }, action: { kind: "fallback" } };
 }
 
@@ -642,10 +659,9 @@ export function planFallback(run: PlanRun, now: number, events: readonly Network
   const a = activityById.get(p.activityId)!;
   const carry = pcfg.fallback.nextWeek ? yes.map(memberId => ({ memberId, activityId: p.activityId, until: now + pcfg.fallback.carryDays * DAY })) : [];
   if (!yes.length) return { fallback: { kind: "none" }, carry };
-  if (pcfg.fallback.smaller && yes.length >= 2 && a.groupSize[0] <= 2 && p.window.start - now > pcfg.lateJoinHours * HOUR) {
-    if (yes.length === 2) return { fallback: { kind: "smaller", members: yes, partnerPlan: partnerPlanFor(p, [yes[0]!, yes[1]!], now, pcfg) }, carry: [] };
-    return { fallback: { kind: "smaller", members: yes }, carry: [] };
-  }
+  const shape = planFallbackShape(yes.length, pcfg.fallback.smaller, a.groupSize[0], p.window.start - now > pcfg.lateJoinHours * HOUR);
+  if (shape === "FreshPartnerPlan") return { fallback: { kind: "smaller", members: yes, partnerPlan: partnerPlanFor(p, [yes[0]!, yes[1]!], now, pcfg) }, carry: [] };
+  if (shape === "SmallerGroup") return { fallback: { kind: "smaller", members: yes }, carry: [] };
   if (pcfg.fallback.soloEvent) {
     const ev = events.find(e => e.city === p.city && !e.riskTags?.length && e.start > now + 24 * HOUR && e.start < now + 7 * DAY && e.tags.some(t => a.tags.includes(t)));
     if (ev) return { fallback: { kind: "solo_event", members: yes, eventId: ev.id }, carry };

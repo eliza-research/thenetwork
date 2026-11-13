@@ -4,7 +4,7 @@
 // market both date in this week when the cell distance plus a safety margin is within BOTH members'
 // limits: d <= min(rA, rB). Time overlap (presence, trips, multi-city routines) is the core
 // city-bucket model, unchanged. Members only ever see a distance band ("2-5 mi").
-import type { City, MemberId } from "@thenetwork/core";
+import { sharedDatingMarket, withinMutualRadius, type City, type MemberId } from "@thenetwork/core";
 import { cityBucketGeo } from "../../geo.ts";
 import type { GeoModel } from "../../pack.ts";
 import type { World } from "../../world.ts";
@@ -24,13 +24,14 @@ export function limitMiles(p: SlopProfile, o: SlopPackOptions): number | undefin
 export function mutualMarkets(a: SlopProfile, b: SlopProfile, o: SlopPackOptions, markets: readonly City[]): { market: City; miles: number }[] {
   const la = limitMiles(a, o), lb = limitMiles(b, o);
   if (la === undefined || lb === undefined) return [];
-  const lim = Math.min(la, lb);
   const mb = datingMarkets(b);
   const out: { market: City; miles: number }[] = [];
   for (const m of datingMarkets(a)) {
-    if (!mb.includes(m) || !markets.includes(m)) continue;
+    // spec/datingRadius.md, "A meeting market must be available to both members"
+    if (!sharedDatingMarket(true, mb.includes(m), markets.includes(m))) continue;
     const d = cellMiles(cellIn(a, m), cellIn(b, m));
-    if (d + o.radiusMargin <= lim) out.push({ market: m, miles: d });
+    // spec/datingRadius.md, "The distance and margin must fit both members' limits"
+    if (withinMutualRadius(d, o.radiusMargin, la, lb)) out.push({ market: m, miles: d });
   }
   return out.sort((x, y) => (x.miles - y.miles) || (x.market < y.market ? -1 : 1));
 }

@@ -9,6 +9,10 @@
 import { randomInt, randomUUID } from "node:crypto";
 import { BlooioClient, ChannelSendError, resolveSenderLine, type BlooioClientOptions } from "@thenetwork/blooio";
 import { DAY, HOUR } from "../../core/src/clock.ts";
+import {
+  otpChallengeMaxAttempts, otpChecksPerIpHour, otpChecksPerPhoneHour, otpLifetimeMs, otpSendGapMs,
+  otpSendsGlobalHour, otpSendsPerIpHour, otpSendsPerPhoneDay, otpSendsPerPhoneHour,
+} from "../../core/src/generated/otpLimits.ts";
 import type { AppId, AppInfo } from "./apps.ts";
 import { devShortcutsAllowed, type Env } from "./env.ts";
 import { otpConfigProblems } from "./otp-config.ts";
@@ -127,8 +131,15 @@ export interface OtpLimits {
   verifyPerIpPerHour: number;
 }
 export const OTP_LIMITS: OtpLimits = {
-  ttlMs: 10 * 60_000, maxAttempts: 5, perPhonePerHour: 3, perPhonePerDay: 6, perIpPerHour: 10, minGapMs: 30_000,
-  globalPerHour: 500, verifyPerPhonePerHour: 10, verifyPerIpPerHour: 30,
+  ttlMs: otpLifetimeMs,
+  maxAttempts: otpChallengeMaxAttempts,
+  perPhonePerHour: otpSendsPerPhoneHour,
+  perPhonePerDay: otpSendsPerPhoneDay,
+  perIpPerHour: otpSendsPerIpHour,
+  minGapMs: otpSendGapMs,
+  globalPerHour: otpSendsGlobalHour,
+  verifyPerPhonePerHour: otpChecksPerPhoneHour,
+  verifyPerIpPerHour: otpChecksPerIpHour,
 };
 
 /**

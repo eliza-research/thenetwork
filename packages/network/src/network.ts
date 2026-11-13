@@ -35,6 +35,7 @@ import {
   type AskRecord, type EngineAsk, type EngineConfigInput, type EngineInput, type EngineProposal, type FeedbackRecord, type InteractionRecord, type MatchingRunLog,
   type AppPack, type PlansConfig, type PlansConfigInput, type World as EngineWorld,
 } from "@thenetwork/engine";
+import { reviewLate } from "../../core/src/generated/reviewDeadline.ts";
 import { HELP_TEXT, STOP_CONFIRMATION, type InboundMessage, type NetworkContext, type NetworkUnderTest, type SimMeta } from "@thenetwork/core";
 import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { ageAnswer, availabilityTags, checkinTags, classify, extractProfile, feedbackOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, type Classified, type TimeOption } from "./classify.ts";
@@ -1942,6 +1943,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     const o = this.opps.get(oppId);
     if (!o || o.stage !== "review" || !o.review) return "not_in_review";
     if (opts.reason === "other" && !opts.note?.trim()) return "note_required";
+    // spec/reviewDeadline.md, "An opportunity expires at its review deadline"
+    if (reviewLate(this.now(), o.review.deadline)) return "review_expired";
     if (decision === "approve" || decision === "edit") {
       for (const id of o.participants) {
         if (this.declinedIds.has(id)) return "participant_declined";
@@ -3342,7 +3345,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   private advance(o: Opp, now: number) {
-    if (o.stage === "review" && o.review && now >= o.review.deadline) {
+    if (o.stage === "review" && o.review && reviewLate(now, o.review.deadline)) {
       // Missed its SLA: expires instead of being sent late (PRD 32.8).
       o.review.decision = "expired"; o.review.decidedAt = now;
       this.counters.reviewExpired++;

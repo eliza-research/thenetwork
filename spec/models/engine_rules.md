@@ -8,6 +8,8 @@ A member needs outreach and proposals to respect their settings, prior refusals,
 
 Check send budgets, cooldowns, adult mutual romance opt-in, and mutual travel radius. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
+The [matching budgets spec](../matchingBudgets.md) generates the engine’s budget and cooldown predicates. The [dating radius spec](../datingRadius.md) generates the market and distance predicates.
+
 Imported from `quint/engine_rules.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
