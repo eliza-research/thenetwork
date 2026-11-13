@@ -45,6 +45,8 @@ export interface PersonaMemory {
   silentFrom?: number;
   /** Scenario hook: persona will flake on the next group meeting (morning-of notice). */
   forceFlake?: "notice" | "no_show";
+  /** The booked meeting targeted by a one-shot forced flake. */
+  forceFlakeFor?: string;
   /** Names of people the Network most recently proposed (for adversarial follow-ups). */
   recentMatches: MemberId[];
   /**
