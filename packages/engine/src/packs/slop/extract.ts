@@ -687,7 +687,16 @@ const INTEREST_LEX: [string, RegExp][] = [
   ["writing", /\bwriting\b|\bwriter\b|\bpoetry\b/], ["gardening", /\bgardening\b|\bplant (?:mom|dad|parent|lady|guy)\b|\bhouseplants\b/],
 ];
 const INTEREST_TAGS = new Set(INTERESTS.map(i => i.tag));
-const PARTNER_CTX = /\b(?:someone who|somebody who|a (?:guy|girl|woman|man|person|partner) who|partner who|anyone who|people who|men who|women who|guys who|girls who|looking for someone)\b/;
+/**
+ * The words just before a hobby name it as someone else's, not the sender's ("someone who plays
+ * tennis"). "I'm someone who likes hiking" is the sender. A partner clause does not erase a hobby
+ * the sender named earlier in the same sentence.
+ */
+function otherPersonsTrait(before: string): boolean {
+  const tail = before.slice(-100);
+  if (/\b(?:i'?m|im|i am)\s+(?:just\s+|really\s+|actually\s+)?(?:someone|somebody|a person)\s+who\b/.test(tail)) return false;
+  return /\b(?:someone|somebody|anyone|anybody|people|person|partner|guy|girl|woman|man|folks|friends?)\s+(?:who\s+(?:really\s+|also\s+|actually\s+|just\s+)?(?:likes?\s+|loves?\s+|plays?\s+|enjoys?\s+|is\s+into\s+|does\s+|works?\s+(?:in\s+|on\s+)?)?|into\s+)(?:a\s+|the\s+|some\s+|to\s+)?$/.test(tail);
+}
 const ACT_LEX: [DateActivity, RegExp, boolean][] = [
   // [activity, words, counts outside a date context in a "like" clause]
   ["coffee", /\bcoffee\b(?! (?:nerd|snob|geek))|\bcafe\b|\ba coffee\b/, false], ["drinks", /\bdrinks?\b|\bcocktails?\b|\bbeers?\b|\bwine bars?\b|\bhappy hour\b|\ba bar\b/, true],
@@ -701,18 +710,18 @@ const LIKE_CTX = /\b(?:into|love|loves|like|likes|enjoy|enjoys|big on|fan of|obs
 function readInterests(t: string, asked: OnboardField | undefined): { interests: Cand<string>[]; activities: Cand<DateActivity>[] } {
   const interests: Cand<string>[] = [], activities: Cand<DateActivity>[] = [];
   for (const s of sentences(t)) {
-    if (PARTNER_CTX.test(s.text) || /\bdeal ?breakers?\b/.test(s.text)) continue;
+    if (/\bdeal ?breakers?\b/.test(s.text)) continue;
     const date = asked === "activities" || DATE_CTX.test(s.text);
     const like = asked === "interests" || LIKE_CTX.test(s.text) || /^\s*[a-z ,&+\/']+$/.test(s.text) && s.text.split(/\s+/).length <= 8;
     for (const [tag, rx] of INTEREST_LEX) for (const m of all(rx, s.text)) {
-      if (!INTEREST_TAGS.has(tag) || negated(s.text, m.index, 4)) continue;
+      if (!INTEREST_TAGS.has(tag) || negated(s.text, m.index, 4) || otherPersonsTrait(s.text.slice(0, m.index))) continue;
       if (date && ACT_LEX.some(([, arx]) => new RegExp(arx.source).test(m[0])) && !like) continue;
       if (!like && !date) continue;
       if (/\b(?:tv )?shows?\b/.test(m[0]) && /\btv\b/.test(s.text)) continue;
       if (!interests.some(c => c.value === tag)) interests.push(cand(tag, s, m, 0.85));
     }
     for (const [act, rx, outside] of ACT_LEX) for (const m of all(rx, s.text)) {
-      if (negated(s.text, m.index, 4)) continue;
+      if (negated(s.text, m.index, 4) || otherPersonsTrait(s.text.slice(0, m.index))) continue;
       if (!(date || (outside && like))) continue;
       if (!activities.some(c => c.value === act)) activities.push(cand(act, s, m, date ? 0.9 : 0.8));
     }
