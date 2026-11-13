@@ -633,6 +633,30 @@ const NEG_AFTER = /^\s*(?:(?:one|option|time|slot)\b\s*)?(?:\d{1,2}(?::\d\d)?\s*
 const CLAUSE_START = /[.,;!?]|\b(but|though|however|although|so)\b/g;
 /** Words that make a named time a pick ("Saturday works", "free Sunday"), not just a mention ("Saturday I'm at a wedding"). */
 const POSITIVE_PICK = /\b(works|work for (?:me|us)|does|good|fine|great|perfect|best|better|free|open|i can|let'?s|is ok|okay|please|for me|yes|yeah|sure)\b/;
+/**
+ * Hour from a probe label ("Thursday 7pm" -> 19). Used to map a daypart word onto offered slots.
+ * Morning: 5:00-11:59. Afternoon: 12:00-16:59. Evening/night: 17:00-4:59.
+ */
+function labelHour(label: string): number | undefined {
+  const m = /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i.exec(label);
+  if (!m) return undefined;
+  let h = Number(m[1]);
+  const ap = m[3]!.toLowerCase();
+  if (h === 12) h = 0;
+  if (ap === "pm") h += 12;
+  return h;
+}
+const daypartOfHour = (h: number): "morning" | "afternoon" | "evening" =>
+  h >= 5 && h < 12 ? "morning" : h >= 12 && h < 17 ? "afternoon" : "evening";
+/** Daypart words in a probe reply. "night" and "after work" read as evening. */
+const DAYPART_WORDS: [RegExp, "morning" | "afternoon" | "evening"][] = [
+  [/\bmornings?\b/g, "morning"],
+  [/\bafternoons?\b|\blunch\b/g, "afternoon"],
+  [/\b(?:evenings?|nights?|after work)\b/g, "evening"],
+];
+/** "evenings work", "mornings are best": bare "work" is a pick only next to a daypart (not "I work Saturdays"). */
+const DAYPART_POSITIVE = /\b(works?|work for (?:me|us)|are best|is best|does|good|fine|great|perfect|best|better|free|open|please|for me|yes|yeah|sure)\b/;
+
 /** True when the words at `i` (of length `len`) are refused: a negation cue earlier in their clause, or a refusal right after them. */
 function negatedAt(t: string, i: number, len: number): boolean {
   let from = 0;
@@ -689,13 +713,54 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     [ord("third|3rd"), 2], [/(?<![\d:])\b3\b(?!\s*(am|pm|:|\d|of|more|people|hours?|mins?))/g, 2], [/\b(last|later|latest) one\b/g, options.length - 1],
   ];
   for (const [re, i] of ordinals) if (options[i]) for (const m of t.matchAll(re)) mark([options[i]!.key], m.index!, m[0].length);
+  // Daypart miss tracking: "morning works" with only evening slots -> yes with empty keys, not every slot.
+  let daypartNamed = false, daypartHit = false;
+  const partIn = (cl: string): "morning" | "afternoon" | "evening" | undefined => {
+    for (const [re, part] of DAYPART_WORDS) { re.lastIndex = 0; if (re.test(cl)) return part; }
+    return undefined;
+  };
+  const dayKeysIn = (cl: string): string[] => {
+    const keys: string[] = [];
+    for (const [re, dayName] of DAY_WORDS) {
+      re.lastIndex = 0;
+      if (re.test(cl)) for (const o of options) if (o.label.startsWith(dayName)) keys.push(o.key);
+    }
+    return keys;
+  };
+  const keysForPart = (part: "morning" | "afternoon" | "evening") =>
+    options.filter(o => { const h = labelHour(o.label); return h !== undefined && daypartOfHour(h) === part; }).map(o => o.key);
   for (const [re, dayName] of DAY_WORDS) {
     const keys = options.filter(o => o.label.startsWith(dayName)).map(o => o.key);
-    if (keys.length) for (const m of t.matchAll(re)) mark(keys, m.index!, m[0].length);
+    if (!keys.length) continue;
+    for (const m of t.matchAll(re)) {
+      // "Thursday morning": keep only Thursday slots that are mornings. No match: do not book Thursday evening.
+      const part = partIn(clauseAt(t, m.index!, m[0].length));
+      const filtered = part ? keys.filter(k => keysForPart(part).includes(k)) : keys;
+      if (part) daypartNamed = true;
+      if (filtered.length) { if (part) daypartHit = true; mark(filtered, m.index!, m[0].length); }
+    }
   }
   for (const m of t.matchAll(/\b(\d{1,2})(?::\d\d)?\s*(am|pm)\b/g)) {
     const label = `${Number(m[1])}${m[2]}`;
     mark(options.filter(o => o.label.endsWith(` ${label}`)).map(o => o.key), m.index!, m[0].length);
+  }
+  // Daypart alone ("morning works", "evenings"): pick the offered slots in that part of the day.
+  // Without this, a bare "works" after a daypart books every option, including evenings for "morning".
+  for (const [re, part] of DAYPART_WORDS) {
+    for (const m of t.matchAll(re)) {
+      daypartNamed = true;
+      const cl = clauseAt(t, m.index!, m[0].length);
+      // A day in the same clause constrains the daypart ("Thursday morning", not Saturday morning).
+      const withDay = dayKeysIn(cl);
+      let keys = keysForPart(part);
+      if (withDay.length) keys = keys.filter(k => withDay.includes(k));
+      if (!keys.length) continue;
+      daypartHit = true;
+      mark(keys, m.index!, m[0].length);
+      // Bare "work" is a pick next to a daypart only ("evenings work"), never for "I work Saturdays".
+      if (!negatedAt(t, m.index!, m[0].length) && DAYPART_POSITIVE.test(cl))
+        for (const k of keys) strong.add(k);
+    }
   }
   // A reply that is only time words ("sat 11am", "thursday or sunday") picks them all firmly.
   let residue = t;
@@ -715,7 +780,12 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // "Any of them" (not refused, not a request for other days): every option the member did not rule out.
   const allAt = ALL.exec(t) ?? ALL_WEAK.exec(t);
   if (allAt && c.answer !== "counter" && !negatedAt(t, allAt.index, allAt[0].length)) return open.length ? { answer: "yes", keys: open, why: c.why } : unclear;
-  if (c.answer === "yes") return { answer: "yes", keys: open, why: c.why };
+  // A yes with no named pick takes every open option. A daypart that matches no offered slot is
+  // "yes, but none of those times" (empty keys), never every evening and afternoon for "morning".
+  if (c.answer === "yes") {
+    if (daypartNamed && !daypartHit && !picked.length) return { answer: "yes", keys: [], why: c.why };
+    return { answer: "yes", keys: open, why: c.why };
+  }
   if (c.answer === "counter") return { answer: "yes", keys: [], why: c.why };
   // Only refusals ("Thursday doesn't work") are not a yes: the probe stays open for a clear answer.
   return unclear;

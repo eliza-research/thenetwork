@@ -65,6 +65,19 @@
 {"text":"sat 11am","label":"yes","keys":["b"]}
 {"text":"Saturday!","label":"yes","keys":["b"]}
 {"text":"saturday morning works great","label":"yes","keys":["b"]}
+{"text":"morning works","label":"yes","keys":["b"]}
+{"text":"mornings work for me","label":"yes","keys":["b"]}
+{"text":"evening works","label":"yes","keys":["a"]}
+{"text":"evenings work","label":"yes","keys":["a"]}
+{"text":"night works","label":"yes","keys":["a"]}
+{"text":"afternoon works","label":"yes","keys":["c"]}
+{"text":"afternoons are good","label":"yes","keys":["c"]}
+{"text":"morning or afternoon","label":"yes","keys":["b","c"]}
+{"text":"lunch works","label":"yes","keys":["c"]}
+{"text":"after work","label":"yes","keys":["a"]}
+{"text":"yes, not mornings","label":"yes","keys":["a","c"]}
+{"text":"Thursday morning","label":"unclear"}
+{"text":"Sunday evening","label":"unclear"}
 {"text":"Sunday please","label":"yes","keys":["c"]}
 {"text":"sunday is best for me","label":"yes","keys":["c"]}
 {"text":"the first one","label":"yes","keys":["a"]}
