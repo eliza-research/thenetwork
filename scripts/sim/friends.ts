@@ -4,21 +4,22 @@
 // tracked metrics (printed, non-blocking), the harness caps, and the conformance rules for friendsPack.
 // PINNED (CI): seeds 5-8, 8 weeks, 400 personas (docs/results/2026-10-08-friends-pack.md, held-out).
 // --quick: seed 5, 4 weeks, 200 personas; only the safety gates block.
-import { canBeMatched, type MemberId } from "../../packages/core/src/index.ts";
+import { canBeMatched, DAY, HOUR, localParts, type MemberId } from "../../packages/core/src/index.ts";
 import * as A from "../../packages/engine/src/attention.ts";
 import { resolveConfig } from "../../packages/engine/src/config.ts";
 import { localEmbed } from "../../packages/engine/src/embed.ts";
 import { runEngine } from "../../packages/engine/src/engine.ts";
 import { candidateReason, memberReason } from "../../packages/engine/src/filters.ts";
 import { DEFAULT_FRIENDS_POLICY, FRIENDS_PLANS, ROMANCE_FRAMING, friendsInfo, friendsPack, planFriendsWeek } from "../../packages/engine/src/packs/friends/index.ts";
-import { buildPlanProbe } from "../../packages/engine/src/plans.ts";
+import { buildPlanProbe, type PlanEvidence } from "../../packages/engine/src/plans.ts";
 import type { Candidate, EngineInput } from "../../packages/engine/src/types.ts";
 import { World } from "../../packages/engine/src/world.ts";
 import { BASELINES } from "../../packages/sim/src/apps/friends/baselines.ts";
 import { officialGates, trackedMetrics } from "../../packages/sim/src/apps/friends/gates.ts";
 import { friendsMetrics, type FriendsMetrics } from "../../packages/sim/src/apps/friends/metrics.ts";
 import { engineInputOf, evidenceOf, friendsPackMatcher } from "../../packages/sim/src/apps/friends/packMatcher.ts";
-import { buildFriendsSnapshot, NYC_TZ, type FriendsSnapshot } from "../../packages/sim/src/apps/friends/snapshot.ts";
+import { SLOTS } from "../../packages/sim/src/apps/friends/persona.ts";
+import { buildFriendsSnapshot, NYC_TZ, slotTime, type FriendsSnapshot } from "../../packages/sim/src/apps/friends/snapshot.ts";
 import { runFriendsWorld, VENUES } from "../../packages/sim/src/apps/friends/world.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
@@ -40,6 +41,83 @@ function friendsSnapshotAfter(seed: number, weeks = 3, n = 160): FriendsSnapshot
 const friendsWorld = (seed: number): EngineInput => engineInputOf(friendsSnapshotAfter(seed));
 
 export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<void> {
+  await b.run("plans: every offered time fits the selected venue's opening hours", () => {
+    const recurring: { seed: number; closed: number; valid: number; retained: number; sources: string[] }[] = [];
+    for (const seed of [101, 102, 103]) {
+      const r = runFriendsWorld({ seed, n: 160, weeks: 3, matcher: BASELINES.random });
+      r.world.state.week = 3; r.world.state.now += 7 * DAY;
+      const s = buildFriendsSnapshot(r.world.personas, r.world.state);
+      const w = new World(engineInputOf(s), resolveConfig({ seed }), localEmbed, friendsPack);
+      // A venue can serve evenings on weekdays and only mornings on weekends.
+      const venues = VENUES.map(v => ({ ...v, hours: { weekday: [18, 23] as [number, number], weekend: [9, 12] as [number, number] } }));
+      const wk = planFriendsWeek(w, { now: s.now, tz: NYC_TZ, evidence: evidenceOf(w, s), venues, crews: [], outcomes: [], offered: [] },
+        { ...DEFAULT_FRIENDS_POLICY, crews: false, repeat: false, tableOptions: 3 }, FRIENDS_PLANS);
+      const placed = wk.plans.filter(p => p.venueId);
+      expect(placed.length).toBeGreaterThan(0);
+      expect(placed.some(p => p.options.length > 1)).toBe(true);
+      // These generated members attended a group and share climbing. Their stated windows
+      // include a closed Saturday evening between an open Tuesday evening and Sunday morning.
+      const pair = seed === 101 ? ["f0057", "f0159"] : seed === 102 ? ["f0060", "f0102"] : undefined;
+      if (pair) {
+        const windows = (["tue_eve", "sat_eve", "sun_am"] as const).map(name => {
+          const start = slotTime(s.week, SLOTS.indexOf(name));
+          return { start, end: start + 3 * HOUR };
+        });
+        const evidence = new Map<MemberId, PlanEvidence>(pair.map(id => [id, {
+          memberId: id, tz: NYC_TZ, quietHours: [22, 8], stated: { windows, at: s.now, until: s.now + 7 * DAY },
+        }]));
+        const input = { now: s.now, tz: NYC_TZ, evidence, venues, crews: [], outcomes: [], offered: [] };
+        const policy = { ...DEFAULT_FRIENDS_POLICY, crews: false, repeat: false, universal: false, universalFirst: false, singleSlot: false, loosePass: false };
+        const partners = planFriendsWeek(w, input, policy, FRIENDS_PLANS).partners;
+        expect(partners.length).toBe(1);
+        const open = planFriendsWeek(w, { ...input, venues: venues.map(v => ({ ...v, hours: { ...v.hours, weekend: [9, 23] as [number, number] } })) }, policy, FRIENDS_PLANS).partners;
+        expect(open.length).toBe(1);
+        expect(open[0]!.options.length).toBe(3);
+        expect(partners[0]!.window.start).toBe(open[0]!.window.start);
+        expect(JSON.stringify(partners[0]!.invited)).toBe(JSON.stringify(open[0]!.invited));
+        placed.push(...partners);
+      }
+      for (const p of placed) {
+        const v = venues.find(v => v.id === p.venueId)!;
+        expect(p.options.some(o => o.start === p.window.start && o.end === p.window.end)).toBe(true);
+        for (const option of p.options) {
+          const lp = localParts(option.start, NYC_TZ);
+          const [open, close] = [0, 6].includes((lp.weekday + 1) % 7) ? v.hours.weekend : v.hours.weekday;
+          const start = lp.hour + lp.minute / 60;
+          expect(start).toBeGreaterThanOrEqual(open);
+          expect(start + (option.end - option.start) / HOUR).toBeLessThanOrEqual(close);
+        }
+      }
+      // Replay real crew and repeat history after venues shorten their hours. Morning plans
+      // remain possible; an old successful meetup does not prove the venue is still open.
+      const history = runFriendsWorld({ seed, n: 160, weeks: 3, matcher: friendsPackMatcher() });
+      history.world.state.week = 3; history.world.state.now += 7 * DAY;
+      const snapshot = buildFriendsSnapshot(history.world.personas, history.world.state);
+      const world = new World(engineInputOf(snapshot), resolveConfig({ seed }), localEmbed, friendsPack);
+      const recurringAt = (hours: [number, number]) => {
+        const next = planFriendsWeek(world, { now: snapshot.now, tz: NYC_TZ, evidence: new Map(),
+          venues: VENUES.map(v => ({ ...v, hours: { weekday: hours, weekend: hours } })),
+          crews: snapshot.crews, outcomes: snapshot.outcomes, offered: snapshot.offered },
+        { ...DEFAULT_FRIENDS_POLICY, timeOptions: false }, FRIENDS_PLANS);
+        return [...next.sessions, ...next.offers.map(x => x.first), ...next.repeats];
+      };
+      const open = recurringAt([0, 24]), morning = recurringAt([9, 12]);
+      const fitsMorning = (p: (typeof open)[number]) => {
+        const lp = localParts(p.window.start, NYC_TZ), hour = lp.hour + lp.minute / 60;
+        return hour >= 9 && hour + (p.window.end - p.window.start) / HOUR <= 12;
+      };
+      const valid = open.filter(fitsMorning);
+      expect(valid.length).toBeGreaterThan(0);
+      expect(open.some(p => !fitsMorning(p))).toBe(true);
+      const retained = valid.filter(p => morning.some(q => q.id === p.id && Bun.deepEquals(q.invited, p.invited)));
+      recurring.push({ seed, closed: morning.filter(p => !fitsMorning(p)).length, valid: valid.length,
+        retained: retained.length, sources: [...new Set(open.map(p => p.source))].sort() });
+    }
+    console.log(`recurring venue hours: ${JSON.stringify(recurring)}`);
+    expect([...new Set(recurring.flatMap(r => r.sources))].sort()).toEqual(["crew_offer", "crew_session", "repeat"]);
+    for (const r of recurring) { expect(r.closed).toBe(0); expect(r.retained).toBe(r.valid); }
+  });
+
   const spec = o.quick ? { seeds: [5], weeks: 4, n: 200 } : FRIENDS_PINNED;
   const all: Record<"pack" | "random" | "oracle", FriendsMetrics[]> = { pack: [], random: [], oracle: [] };
   const matchers = { pack: friendsPackMatcher(), random: BASELINES.random, oracle: BASELINES.oracle };
