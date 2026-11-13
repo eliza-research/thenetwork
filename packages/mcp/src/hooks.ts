@@ -46,6 +46,12 @@ export interface PlatformHooks {
   phoneKey(e164: string): string;
   /** The person whose number has this keyed hash now, or null (no person, deleted, or on hold). */
   personForKey(phoneKey: string): Promise<string | null>;
+  /**
+   * True when this keyed phone hash, or its person, is staff-banned. Live OAuth grants must refuse
+   * when this is true (ban must not leave agent keys usable). Optional only for bare unit fixtures;
+   * platformHooks always provides it.
+   */
+  bannedKey?(phoneKey: string): Promise<boolean>;
   /** Internal canonical phone-age guard. No age is exposed to the agent. Missing support disables drafts. */
   withSignupAgePolicy?<T>(phoneKey: string, app: McpAppId, fn: (allowed: boolean) => Promise<T>): Promise<T>;
   /** Wire the one temporary-draft cleanup consumer to canonical age recording, including null-person phones. */
@@ -174,6 +180,10 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
     phoneKey: e164 => p.accounts.phoneHash(e164),
     async personForKey(key) {
       return (await p.accounts.byPhoneHash(key))?.person.id ?? null;
+    },
+    async bannedKey(key) {
+      const who = await p.accounts.byPhoneHash(key);
+      return p.store.isBanned(key, who?.person.id ?? null);
     },
     async customChatGptSlopEligible(personId, key) {
       const app = p.app("slop");
