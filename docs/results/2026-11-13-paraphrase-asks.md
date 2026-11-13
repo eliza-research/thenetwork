@@ -20,8 +20,10 @@ Same 960 sentences. 20 wants, 3 areas (Park Slope, Astoria, Harlem), 8 persona i
 | Read as a people request | 897 / 960 (93.4%) | 960 / 960 (100%) |
 | Requests that were lost | 63 | 0 |
 | Right want id kept | 873 / 960 | 873 / 960 |
-| Yes replies still read as yes | 56 / 56 | 56 / 56 |
-| No replies still read as no | 48 / 48 | 48 / 48 |
+| Yes replies still read as yes | 35 / 35 | 56 / 56 |
+| No replies still read as no | 30 / 30 | 48 / 48 |
+
+The yes and no lines were not edited. The before check used 5 persona ids. The after check used 8.
 
 The 63 lost requests were only these wants: start a band (15), learn to sail (12), try ceramics (18), a hardware collaborator (18).
 
