@@ -15,6 +15,7 @@ import { styleViolations } from "../../packages/network/src/copy.ts";
 import { DATA_DIR } from "../synthetic/common.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
+import { Mini } from "../../packages/network/test/mini.ts";
 
 type Msg = Extract<RunRecord, { type: "message" }>;
 type Log = Extract<RunRecord, { type: "network_log" }>;
@@ -36,6 +37,130 @@ async function world(days: number, seed = 3, network: NetworkOptions = { review:
 }
 
 export async function networkBlock(b: Block, o: { quick: boolean }): Promise<void> {
+  await b.run("feedback: a member's own absence is not attributed to the counterpart", async () => {
+    const cases = [
+      { kind: "didnt", text: "I didn't show up.", self: true, other: false },
+      { kind: "curly", text: "Sorry, I didn\u2019t show up.", self: true, other: false },
+      { kind: "did_not", text: "I did not come.", self: true, other: false },
+      { kind: "never", text: "I never showed up.", self: true, other: false },
+      { kind: "turned", text: "I never turned up.", self: true, other: false },
+      { kind: "noun", text: "I was a no-show.", self: true, other: false },
+      { kind: "legacy", text: "I couldn't make it.", self: true, other: false },
+      { kind: "other", text: "Ben didn't show up.", self: false, other: true, report: "no_show" },
+      { kind: "other_noun", text: "Ben was a no-show.", self: false, other: true, report: "no_show" },
+      { kind: "mixed", text: "I didn't show up. Ben didn't show up either.", self: true, other: true, report: "no_show" },
+      { kind: "urgent", text: "I didn't show up because he kept texting me after I said no.", self: true, other: false, report: "harassment" },
+      { kind: "positive", text: "It was great!", self: false, other: false },
+      { kind: "object", text: "I showed him my photos.", self: false, other: false },
+      { kind: "name_couldnt", text: "Ben couldn't make it.", self: false, other: true, report: "no_show" },
+      { kind: "name_didnt", text: "Ben didn't make it.", self: false, other: true, report: "no_show" },
+      { kind: "name_bail", text: "Ben had to bail.", self: false, other: true, report: "no_show" },
+      { kind: "he_couldnt", text: "He couldn't make it.", self: false, other: true, report: "no_show" },
+      { kind: "she_didnt", text: "She didn't make it.", self: false, other: true, report: "no_show" },
+      { kind: "they_bail", text: "They had to bail.", self: false, other: true, report: "no_show" },
+      { kind: "other_adverb", text: "Ben unfortunately couldn't make it.", self: false, other: true, report: "no_show" },
+      { kind: "lower_name", text: "ben couldn\u2019t make it.", self: false, other: true, report: "no_show" },
+      { kind: "contrast", text: "I was there, but Ben couldn't make it.", self: false, other: true, report: "no_show" },
+      { kind: "two_sentences", text: "I showed up. Ben had to bail.", self: false, other: true, report: "no_show" },
+      { kind: "both_legacy", text: "I couldn't make it. Ben had to bail too.", self: true, other: true, report: "no_show" },
+      { kind: "bare_couldnt", text: "Couldn't make it.", self: true, other: false },
+      { kind: "bare_didnt", text: "Didn't make it.", self: true, other: false },
+      { kind: "bare_bail", text: "Had to bail.", self: true, other: false },
+      { kind: "sorry_bare", text: "Sorry, had to bail.", self: true, other: false },
+      { kind: "unfortunately_bare", text: "Unfortunately, couldn't make it.", self: true, other: false },
+      { kind: "emphatic", text: "I really couldn't make it.", self: true, other: false },
+      { kind: "explanation", text: "The train broke; couldn't make it.", self: true, other: false },
+      { kind: "bail_object", text: "Ben had to bail me out.", self: false, other: false },
+      { kind: "make_object", text: "Ben didn't make it awkward.", self: false, other: false },
+    ];
+    const outcomes: { seed: number; reportOn: boolean; kind: string; self: boolean; other: boolean; ownMisses: number; counterpartMisses: number; reports: string[]; correct: boolean }[] = [];
+    for (const seed of [1, 2, 3]) for (const reportOn of [false, true]) for (const c of cases) {
+      const w = new Mini([
+        { id: "a", name: "Ana Diaz", age: 30, area: "Greenpoint", interests: ["climbing", "hiking"] },
+        { id: "b", name: "Ben Ito", age: 30, area: "Greenpoint", interests: ["climbing", "hiking"] },
+      ], { seed, review: "human", growth: false, hooks: { postDateReports: reportOn } });
+      w.clock.advance(4 * DAY); await w.onboard("a", "b");
+      const id = w.propose(["a", "b"], { category: "hobby", objective: "a climbing session" });
+      expect(await w.runUntil(() => w.net.reviewQueue().some(q => q.oppId === id), DAY)).toBe(true);
+      expect(w.sent.some(s => s.meta.probe || s.meta.proposalId)).toBe(false);
+      expect(w.net.decide(id, "approve", { reviewer: "sim_staff" })).toEqual({ ok: true });
+      await w.answerProbes(["a", "b"]); expect(w.meetings.length).toBe(1);
+      for (const p of ["a", "b"]) await w.say(p, "Thanks, still coming.");
+      await w.run(w.meetings[0]!.at + 3 * HOUR - w.clock.now()); w.restart();
+      expect(w.net.memberList().find(m => m.id === "a")?.awaiting?.kind).toBe("feedback");
+      await w.say("a", c.text); w.restart(); await w.run(5 * DAY); w.restart();
+      const feedback = w.logs.filter(l => l.kind === "feedback" && l.detail.memberId === "a" && l.detail.proposalId === id);
+      expect(feedback.length).toBe(1);
+      const flags = feedback[0]!.detail;
+      const ownMisses = w.net.memberList().find(m => m.id === "a")!.noShows;
+      const counterpartMisses = w.net.memberList().find(m => m.id === "b")!.noShows;
+      const history = w.net.engineInput(w.clock.now()).interactions?.filter(r => r.id === `${id}:fb:a`) ?? [];
+      const reports = w.net.safetyReports().map(r => `${r.subjectId}:${r.kind}`);
+      const expectedReports = reportOn && c.report ? [`b:${c.report}`] : [];
+      const correct = flags.selfNoShow === c.self && flags.otherNoShow === c.other
+        && ownMisses === Number(c.self) && counterpartMisses === Number(c.other && !c.self)
+        && history.length === 1 && history[0]!.outcome === (c.self ? "no_show" : "completed")
+        && Bun.deepEquals(reports, expectedReports);
+      outcomes.push({ seed, reportOn, kind: c.kind, self: !!flags.selfNoShow, other: !!flags.otherNoShow, ownMisses, counterpartMisses, reports, correct });
+    }
+    console.log("SELF_ABSENCE_OUTCOMES", JSON.stringify(outcomes));
+    const routingCases = [
+      { kind: "came_up_couldnt", text: "Something came up, I couldn't make it.", missed: true },
+      { kind: "came_up_didnt", text: "Something came up, I didn't make it.", missed: true },
+      { kind: "came_up_bailed", text: "Something came up, I had to bail.", missed: true },
+      { kind: "came_up_show", text: "Something came up, I didn't show up.", missed: true },
+      { kind: "curly_couldnt", text: "Sorry, I couldn\u2019t make it. Something came up.", missed: true },
+      { kind: "generic_cancel", text: "Something came up.", missed: false, cancel: true },
+      { kind: "positive", text: "It was great!", missed: false },
+      { kind: "future", text: "I can't make it next week.", missed: false, cancel: true },
+      { kind: "past_and_future", text: "I couldn't make it last time. I need to cancel the next one.", missed: false, cancel: true },
+      { kind: "bare_came_up", text: "Something came up, couldn't make it.", missed: true },
+      { kind: "bare_bail_came_up", text: "Something came up. Had to bail.", missed: true },
+      { kind: "bare_apology", text: "Sorry, couldn't make it. Something came up.", missed: true },
+    ];
+    const routed: { seed: number; reportOn: boolean; kind: string; feedback: number; cancelled: number; futureStage: string; ownMisses: number; correct: boolean }[] = [];
+    for (const seed of [1, 2, 3]) for (const reportOn of [false, true]) for (const c of routingCases) {
+      const w = new Mini(["a", "b", "c"].map((id, i) => ({ id, name: ["Ana Diaz", "Ben Ito", "Cara Li"][i]!, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"] })),
+        { seed, review: "human", growth: false, hooks: { postDateReports: reportOn } });
+      await w.onboard("a", "b", "c");
+      const book = async (ids: string[], answer: string) => {
+        const id = w.propose(ids, { category: "hobby", objective: "a climbing session" });
+        expect(await w.runUntil(() => w.net.reviewQueue().some(q => q.oppId === id), DAY)).toBe(true);
+        expect(w.sent.some(s => s.meta.proposalId === id || s.meta.probe?.key === id)).toBe(false);
+        expect(w.net.decide(id, "approve", { reviewer: "sim_staff" })).toEqual({ ok: true });
+        const count = w.meetings.length;
+        await w.answerProbes(ids, () => answer); expect(w.meetings.length).toBe(count + 1);
+        for (const p of ids) await w.say(p, "Thanks, still coming.");
+        return id;
+      };
+      const past = await book(["a", "b"], "the first one");
+      const at = w.meetings.find(m => m.proposalId === past)!.at;
+      await w.run(at + 3 * HOUR - w.clock.now());
+      expect(w.net.memberList().find(m => m.id === "a")?.awaiting?.kind).toBe("feedback");
+      // Acknowledgement leaves the old feedback unanswered; a new intro then uses the normal gates.
+      await w.say("a", "Thanks"); await w.say("c", "Still interested.");
+      const future = await book(["a", "c"], "the last one");
+      const futureAt = w.meetings.find(m => m.proposalId === future)!.at;
+      expect(futureAt).toBeGreaterThan(at + 5 * DAY);
+      w.restart(); expect(w.net.memberList().find(m => m.id === "a")?.awaiting).toBe(undefined);
+      await w.say("a", c.text); w.restart();
+      await w.run(at + 5 * DAY - w.clock.now()); w.restart();
+      const feedback = w.log("feedback").filter(l => l.detail.memberId === "a" && l.detail.proposalId === past);
+      const cancelled = w.log("booked_cancelled").filter(l => l.detail.memberId === "a" && l.detail.oppId === future);
+      const futureState = w.net.exportState().opps.find(o => o.id === future)!;
+      const member = w.net.memberList().find(m => m.id === "a")!;
+      const history = w.net.engineInput(w.clock.now()).interactions?.filter(r => r.id === `${past}:fb:a`) ?? [];
+      const correct = feedback.length === (c.cancel ? 0 : 1) && cancelled.length === Number(!!c.cancel)
+        && futureState.stage === (c.cancel ? "closed" : "scheduled") && member.noShows === Number(c.missed)
+        && w.net.safetyReports().length === 0 && history.length === (c.cancel ? 0 : 1)
+        && (c.cancel || (feedback[0]!.detail.selfNoShow === c.missed && history[0]!.outcome === (c.missed ? "no_show" : "completed")));
+      routed.push({ seed, reportOn, kind: c.kind, feedback: feedback.length, cancelled: cancelled.length, futureStage: futureState.stage, ownMisses: member.noShows, correct });
+    }
+    console.log("SELF_ABSENCE_ROUTING_OUTCOMES", JSON.stringify(routed));
+    expect(routed.filter(r => r.correct).length).toBe(routed.length);
+    expect(outcomes.filter(r => r.correct).length).toBe(outcomes.length);
+  });
+
   // ---- invariants: NYC, 10 days, seed 3, simulated reviewer ---------------------------------------
   const run = await world(10);
   await run.w.advanceTo(run.w.end);
