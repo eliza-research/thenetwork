@@ -78,7 +78,7 @@ export async function evalsBlock(b: Block): Promise<void> {
   b.gate(`abuse: recall >= 95% (n ${abuse.length})`, abuse.length >= 100 && caught.length / abuse.length >= 0.95, pct(caught.length / abuse.length));
   b.gate("abuse: wrong kind <= 5%", wrongKind.length / abuse.length <= 0.05, pct(wrongKind.length / abuse.length));
 
-  const teen = await jsonl<{ text: string; teen?: boolean; other?: number | null }>("network/teen-age.jsonl");
+  const teen = await jsonl<{ text: string; teen?: boolean; other?: number | null; age?: number }>("network/teen-age.jsonl");
   const minor = (t: string) => { const c = classify(t); return c.minorSignal || (c.statedAge !== undefined && c.statedAge < 18); };
   const teens = teen.filter(l => l.teen === true), adults = teen.filter(l => l.teen === false);
   b.gate(`teen ages: recall >= 95% (n ${teen.length})`, teen.length >= 150 && teens.filter(l => minor(l.text)).length / teens.length >= 0.95, pct(teens.filter(l => minor(l.text)).length / teens.length));
@@ -86,6 +86,8 @@ export async function evalsBlock(b: Block): Promise<void> {
   b.gate("teen ages: 0 adults (or teachers) read as minors", adultAsMinor.length === 0, adultAsMinor.slice(0, 5).join(" | "));
   const thirdParty = teen.filter(l => l.other !== undefined && (otherAgeStated(l.text) ?? null) !== (l.other ?? null)).map(l => l.text);
   b.gate("third-party ages are read exactly", thirdParty.length === 0, thirdParty.slice(0, 5).join(" | "));
+  const statedMiss = teen.filter(l => l.age !== undefined && classify(l.text).statedAge !== l.age).map(l => `${JSON.stringify(l.text)} -> ${classify(l.text).statedAge ?? "none"} (want ${l.age})`);
+  b.gate("stated ages: the youngest real age in the message", statedMiss.length === 0, statedMiss.slice(0, 5).join(" | "));
 
   const para = await jsonl<{ text: string; desire: string | null }>("network/paraphrases.jsonl");
   const ids = [...new Set(para.map(l => l.desire).filter((x): x is string => !!x))];
