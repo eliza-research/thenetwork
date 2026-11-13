@@ -90,7 +90,7 @@
 {"text":"interested, but none of those days work for me","label":"yes","keys":[]}
 {"text":"neither works this week sorry","label":"yes","keys":[]}
 {"text":"none of those, but I'm up for it another day","label":"yes","keys":[]}
-{"text":"would love to, can we find another time?","label":"yes"}
+{"text":"would love to, can we find another time?","label":"yes","keys":[]}
 {"text":"Interested, but could we do a different day?","label":"yes"}
 {"text":"yes but next week would be better","label":"yes"}
 {"text":"Sounds fun! how about next week instead","label":"yes"}
