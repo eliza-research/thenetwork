@@ -28,6 +28,8 @@
 //             the ops tables under row-level security and the backup drill (dump, restore, equal row counts)
 //   pipeline  the real message path: signed Blooio webhook -> NetworkService -> Postgres (a throwaway database on the dev
 //             cluster, :54339) -> persisted queue -> Blooio adapter -> fake provider, simulated clock; skipped (tracked) without Postgres
+//   pipeline-slop the slop world on that path: 30 simulated days of joins, review, probes, dates, STOP, leave, a restart,
+//             quiet hours, the person cap and a ban mid-relay through signed webhooks; skipped (tracked) without Postgres
 //   audit     regression gates for the 2026-10-08 audit's P0/P1 fixes that lost their tests in the cleanup
 //             (docs/audit/2026-10-09-platform-status.md): NYC world (seed 3, 9 days), trust, plans, the four
 //             site builds, the sites' API client and the Cloudflare deploy guard (refused commands only)
@@ -47,6 +49,7 @@ import { opsBlock } from "./sim/ops.ts";
 import { peonBlock } from "./sim/peon.ts";
 import { peonSeatsBlock } from "./sim/peon-seats.ts";
 import { pipelineBlock } from "./sim/pipeline.ts";
+import { pipelineSlopBlock } from "./sim/pipeline-slop.ts";
 import { safetyBlock } from "./sim/safety.ts";
 import { relayBlock } from "./sim/relay.ts";
 import { slopBlock } from "./sim/slop.ts";
@@ -62,13 +65,14 @@ const BLOCKS: Record<string, (b: Block, o: Opts) => Promise<void>> = {
   "peon-seats": b => peonSeatsBlock(b),
   friends: friendsBlock,
   pipeline: b => pipelineBlock(b),
+  "pipeline-slop": b => pipelineSlopBlock(b),
   safety: b => safetyBlock(b),
   ops: b => opsBlock(b),
   audit: b => auditBlock(b),
   clef: b => clefBlock(b),
   capital: capitalBlock,
 };
-const DEFAULT = ["evals", "onboard", "network", "slop", "relay", "peon", "peon-seats", "friends", "clef", "safety", "ops", "pipeline", "audit"];
+const DEFAULT = ["evals", "onboard", "network", "slop", "relay", "peon", "peon-seats", "friends", "clef", "safety", "ops", "pipeline", "pipeline-slop", "audit"];
 
 const argv = process.argv.slice(2);
 const values = (k: string) => argv.flatMap((x, i) => (x === `--${k}` ? (argv[i + 1] ?? "").split(",") : x.startsWith(`--${k}=`) ? x.slice(k.length + 3).split(",") : [])).filter(Boolean);
