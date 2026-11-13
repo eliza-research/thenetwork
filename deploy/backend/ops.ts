@@ -19,6 +19,7 @@
 import type { SQL } from "bun";
 import { URGENT_REPORTS } from "../../packages/network/src/reports.ts";
 import { SIM_AUTO_REVIEWER } from "../../packages/network/src/network.ts";
+import { WAITING_STATUSES } from "../../packages/network/service/channel.ts";
 import { budgetLines, costBudgetsFromEnv, dayOf, type BudgetLine, type CostApp, type CostBudgets, type CostLedger } from "../../packages/network/service/cost.ts";
 import type { AppId } from "../../packages/platform/src/apps.ts";
 
@@ -176,7 +177,7 @@ export const PRECISION_TARGET = 0.8;
 /** Final outcomes of a send that reached (or tried to reach) the provider. */
 const FAILED = /^(failed|parked_error|undeliverable)/;
 const REFUSED = /^(refused|suppressed|blocked|parked|dropped|expired)/;
-const WAITING = new Set(["queued", "pending", "sending", "deferred_quiet_hours", "held_awaiting_reply", "retry_scheduled"]);
+const WAITING = new Set(WAITING_STATUSES);
 
 export function sendOutcomes(statuses: Record<string, number>): NetworkMetrics["sends24h"] {
   const out = { attempted: 0, failed: 0, refused: 0, dryRun: 0, smsFallback: 0 };
