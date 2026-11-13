@@ -3,7 +3,7 @@
 // print what the observatory shows (funnel, outcomes vs ground truth, unsafe proposals by cause,
 // dispatch skips, fairness over time, the graph the Network learned, the review gate, and the
 // judge scorer's invariant, canary-leak and minor-contact counts).
-//   bun run packages/observatory/src/report.ts --days 14 --seed 1 [--engine engine-v1|random]
+//   bun run packages/observatory/src/report.ts --days 14 --seed 1 [--engine engine-v1|random|off]
 //       [--network consent|stub] [--review auto|human]
 // With --review human nobody reviews, so every queued opportunity expires unsent (a check of the gate).
 import { parseArgs } from "node:util";
@@ -15,9 +15,19 @@ const { values: a } = parseArgs({ options: {
   days: { type: "string", default: "14" }, seed: { type: "string", default: "1" }, engine: { type: "string", default: "engine-v1" }, personas: { type: "string", default: "0" },
   network: { type: "string", default: "consent" }, review: { type: "string", default: "auto" },
 } });
+for (const [name, allowed] of [
+  ["engine", ["engine-v1", "random", "off"]],
+  ["network", ["consent", "stub"]],
+  ["review", ["auto", "human"]],
+] as const) {
+  if (!allowed.some(value => value === a[name])) {
+    console.error(`invalid --${name}: ${JSON.stringify(a[name])}; expected ${allowed.join("|")}`);
+    process.exit(2);
+  }
+}
 const days = Number(a.days);
 const g = new GameSource({
-  seed: Number(a.seed), days, engine: a.engine as "engine-v1" | "random", personas: Number(a.personas), pushMs: 3_600_000, tickMs: 3_600_000,
+  seed: Number(a.seed), days, engine: a.engine as "engine-v1" | "random" | "off", personas: Number(a.personas), pushMs: 3_600_000, tickMs: 3_600_000,
   network: a.network as "consent" | "stub", review: a.review as "auto" | "human",
 });
 const t0 = performance.now();
