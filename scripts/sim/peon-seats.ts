@@ -44,10 +44,10 @@ class SeatWorld {
   private seq = 0;
   private readonly opts: NetworkOptions;
 
-  constructor() {
+  constructor(seed = 7) {
     const w = appWiring("peon");
     this.opts = {
-      app: APPS.peon, seed: 7, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
+      app: APPS.peon, seed, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
       pack: w.pack!, hooks: w.hooks!, engine: { ...PEON_ENGINE_CONFIG, cities: ["nyc"] },
       onPosting: p => this.write(p),
     };
@@ -128,6 +128,63 @@ const startsWith = (body: string, re: RegExp) => re.test(body.replace(ACK, ""));
 const POST = "We're hiring a data analyst (level 2), 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL";
 
 export async function peonSeatsBlock(b: Block): Promise<void> {
+  await b.run("manager review: concurrent applications keep one answerable question at a time", async () => {
+    const cases = ["single", "two_yes", "three_yes", "first_no", "second_no", "first_expires", "close_waiting", "posting_pending"] as const;
+    const outcomes: { seed: number; kind: string; applications: number; initialQuestions: number; keptQuestion: boolean; postingOnly: boolean; questions: number; stages: (string | undefined)[]; meetings: number; correct: boolean }[] = [];
+    for (const seed of [7, 13, 17]) for (const kind of cases) {
+      const x = new SeatWorld(seed), count = kind === "single" ? 1 : kind === "three_yes" ? 3 : 2;
+      const candidates = Array.from({ length: count }, (_, i) => `c${i + 1}`);
+      x.add("hm1", "Rowan Abbott", 34, { verified: "Acme" });
+      for (const c of candidates) x.add(c, `Cand ${c}`, 29, { candidate: true });
+      for (const id of ["hm1", ...candidates]) for (const body of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await x.say(id, body);
+      await x.say("hm1", POST.replace("2 openings", `${count} openings`));
+      await x.say("hm1", "yes");
+      expect(await x.runUntil(() => x.net.reviewQueue().length === count, 2 * DAY)).toBe(true);
+      const ids = x.net.reviewQueue().map(q => q.oppId);
+      for (const id of ids) expect(x.net.review(id, "approve", { reviewer: "sim_staff" })).toBe(true);
+      if (kind === "posting_pending") await x.say("hm1", "Update my data analyst post: 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL");
+      const cand = (id: string) => x.opp(id)!.participants.find(p => p !== "hm1")!;
+      for (const id of ids) {
+        expect(await x.runUntil(() => x.probedFor(cand(id), id))).toBe(true);
+        await x.say(cand(id), "yes");
+      }
+      const questions = () => x.to("hm1").filter(m => m.meta.type === "probe" && ids.includes(m.meta.proposalId ?? m.meta.probe?.key ?? "")).length;
+      const initialQuestions = questions(), keptQuestion = kind === "posting_pending"
+        ? x.net.memberList().find(m => m.id === "hm1")?.awaiting?.kind === "posting" : x.probedFor("hm1", ids[0]!);
+      expect(x.meetings.length).toBe(0);
+      x.restart();
+      let postingOnly = true;
+      if (kind === "posting_pending") {
+        await x.say("hm1", "yes");
+        postingOnly = x.saved.length === 2 && x.meetings.length === 0;
+        x.restart();
+      }
+      if (kind === "close_waiting") {
+        await x.say("hm1", "Close my data analyst post");
+        await x.say("hm1", "yes");
+      } else {
+        if (kind === "first_expires") await x.run(27 * HOUR);
+        for (let i = kind === "first_expires" ? 1 : 0; i < ids.length; i++) {
+          await x.run(HOUR);
+          await x.say("hm1", (kind === "first_no" && i === 0) || (kind === "second_no" && i === 1) ? "no" : "yes");
+          x.restart();
+          await x.run(HOUR);
+        }
+      }
+      await x.run(2 * HOUR);
+      x.restart();
+      const stages = ids.map(id => x.opp(id)?.stage);
+      const expected = ids.map((_, i) => kind === "close_waiting" || (kind === "first_no" && i === 0) || (kind === "second_no" && i === 1) || (kind === "first_expires" && i === 0) ? "closed" : "scheduled");
+      const correct = initialQuestions === (kind === "posting_pending" ? 0 : 1) && keptQuestion && postingOnly && questions() === (kind === "close_waiting" ? 1 : count)
+        && stages.every((s, i) => s === expected[i])
+        && x.meetings.length === expected.filter(s => s === "scheduled").length
+        && candidates.every(c => x.to(c).filter(m => m.meta.type === "probe").length === 1);
+      outcomes.push({ seed, kind, applications: count, initialQuestions, keptQuestion, postingOnly, questions: questions(), stages, meetings: x.meetings.length, correct });
+    }
+    console.log("PEON_MANAGER_QUEUE_OUTCOMES", JSON.stringify(outcomes));
+    expect(outcomes.filter(x => x.correct).length).toBe(outcomes.length);
+  });
+
   await b.run("intake rules: a job post is read from text, read back, and needs a title and a pay range", () => {
     const d = parsePosting(POST);
     expect(d).toMatchObject({ title: "data analyst", openings: 2, payMin: 90, payMax: 120, mode: "hybrid", area: "brooklyn", seniority: 2, must: [{ skill: "sql", level: 2 }] });
