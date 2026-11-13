@@ -529,7 +529,7 @@ const REFUSAL_RX: RegExp[] = [
   /\b(?:don'?t|do not|doesn'?t) (?:think so|want to|wanna|feel like it|really want|have (?:time|the time|room|the bandwidth)|need)\b/,
   /\b(?:i'?m|im|i am) (?:not|no longer) (?:in|down|up for (?:it|that)|interested|free|available|keen|able|looking)\b/,
   /\b(?:i'?m|im|i am) (?:good|ok|okay|fine|all set)(?:,? (?:thanks?|thank you|tho|though|for now))?\s*$/,
-  /\bcount me out\b|\b(?:i'?m|im) out\b|\bskip(?:ping)? (?:this|it|that)\b|\bi'?ll sit (?:this|that) one out\b/,
+  /\b(?:i'?m|im) out\b|\bskip(?:ping)? (?:this|it|that)\b|\bi'?ll sit (?:this|that) one out\b/,
   /\b(?:not gonna|won'?t|can'?t|cannot|couldn'?t|not going to) make it\b/,
   /(?<!not )\btoo (?:busy|swamped|slammed|far|tired)\b/,
   /\b(?:maybe|perhaps|some|next) (?:other |another )?time\b(?!s)|^\s*(?:another|other) time\s*$/,
@@ -540,7 +540,7 @@ const CANT = /\b(?:can'?t|cannot|can not|won'?t be able to|unable to|not able to
 /** "Busy now, ask me later": a deferral, not a refusal of the offer. */
 const DEFER = /\b(?:ask|text|message|ping|try) me (?:later|again|tomorrow|tmrw|tonight|in a bit)\b|\bget back to you\b|\btalk later\b|\btext later\b/;
 const CANT_HARMLESS = /^\s*(?:wait|believe|say no|complain|go wrong|resist|beat|miss (?:it|this))/;
-const AFFIRM_RX = /(?:^|[^\w'])(?:yes+|yess+|yeah+|yea|yah|yep|yup|sure|surely|ok+|okay+|okey|kk?|alright|aight|absolutely|definitely|def|of course|for sure|fosho|bet|deal|perfect|great|awesome|amazing|love (?:to|that|it)|i'?d love|would love|i'?d like that|would like that|happy to|glad to|let'?s (?:do (?:it|this|that)|go)|lets (?:do it|go)|(?:i'?m|im|i am) (?:totally |so |definitely |all |fully )?in|count me in|sign me up|i'?m down|im down|i am down|down for (?:it|that|this)|down to\b|so down|totally down|i'?m game|im game|(?:i'?m |i am |i'?d be |i would be |would be )?up for (?:it|that|this)|works for me|that works|works|sounds (?:good|great|fun|lovely|perfect|nice|like a plan|amazing|awesome)|why not|please do|go for it|go ahead|yes please|can do|i can (?:make it|do (?:it|that))|that'?d be (?:great|nice|fun|lovely)|would be (?:great|nice|fun)|count on me|can'?t wait|^\s*down\s*[!.]*\s*$|good with (?:that|it|me|this)|that'?s (?:good|great|fine|perfect)|fine by me|fine with me)(?![\w'])|💯|👍|🙌|✅|👌|🤝/;
+const AFFIRM_RX = /(?:^|[^\w'])(?:yes+|yess+|yeah+|yea|yah|yep|yup|sure|surely|ok+|okay+|okey|kk?|alright|aight|absolutely|definitely|def|of course|for sure|fosho|bet|deal|perfect|great|awesome|amazing|love (?:to|that|it)|i'?d love|would love|i'?d like that|would like that|happy to|glad to|let'?s (?:do (?:it|this|that)|go)|lets (?:do it|go)|(?:i'?m|im|i am) (?:totally |so |definitely |all |fully )?in(?!\s+(?:a|an|the|my|our|his|her|their|recovery|love|town|school|treatment|rehab|therapy|mourning)\b)|count me in|sign me up|i'?m down|im down|i am down|down for (?:it|that|this)|down to\b|so down|totally down|i'?m game|im game|(?:i'?m |i am |i'?d be |i would be |would be )?up for (?:it|that|this)|works for me|that works|works|sounds (?:good|great|fun|lovely|perfect|nice|like a plan|amazing|awesome)|why not(?!\s+(?:ask|try|invite|just|pick|go with|find)\b)|please do|go for it|go ahead|yes please|can do|i can (?:make it|do (?:it|that))|that'?d be (?:great|nice|fun|lovely)|would be (?:great|nice|fun)|count on me|can'?t wait|^\s*down\s*[!.]*\s*$|good with (?:that|it|me|this)|that'?s (?:good|great|fine|perfect)|fine by me|fine with me)(?![\w'])|💯|👍|🙌|✅|👌|🤝/;
 /** A word just before a yes that negates it ("not ok", "never down", "don't love it"). "Not sure" is a hedge. */
 const AFFIRM_NEG_BEFORE = /\b(?:not|never|don'?t|didn'?t|wouldn'?t|won'?t|isn'?t)\s+(?:\w+\s+)?$/;
 const HEDGE_RX = /\b(?:maybe|perhaps|possibly|probably|might|could be|not sure|unsure|idk|i don'?t know|dunno|no idea|let me (?:check|think|see|get back|look)|i'?ll (?:check|think|see|let you know|get back)|who is (?:it|this|that|he|she|they)|who'?s (?:it|this|that)|what'?s (?:it|this) about|depends|kinda|sort of|i guess|we'?ll see|tbd|on the fence|torn|not certain|hard to say|remind me|need to check|have to check)\b|^\s*\?+\s*$/;
@@ -548,6 +548,8 @@ const COND_RX = /\b(?:only if|only with|only when|only for|as long as|so long as
 const COUNTER_RX = /\b(?:different (?:day|time|week)|another (?:day|week)|next week|later (?:in the week|this month|on)|reschedule|instead|rain ?check|some other (?:day|time)|how about|what about|later date|the week after|push it)\b/;
 /** "No problem", "no worries", "no rush", "no plans", "no doubt": not refusals. */
 const HARMLESS_NO = /\bno (?:problem|prob|probs|worries|worry|rush|pressure|biggie|doubt|plans?|stress|sweat|complaints)\b/g;
+/** A request not to arrange the connection is a refusal; not to cancel it is not. */
+const REFUSED_CONNECTION = /^\s*(?:(?:arrange|schedule|book|set up)\s+(?:(?:this|that|the|a|another)\s+)?(?:meeting|date|meetup|introduction|match)\b|(?:introduce|match|connect)\s+me\b|send\s+(?:(?:this|that|the|an?|another)\s+)?(?:introduction|invite|invitation|proposal)\b|go ahead\b(?!\s+without me))/;
 
 /** Read a reply as yes, no, a counter-offer or unclear, refusal first and sentence by sentence. */
 export function consentOf(body: string): Consent {
@@ -564,7 +566,32 @@ export function consentOf(body: string): Consent {
       const at = s.at + c.index!;
       // Refusal words are blanked before the yes words are read ("no deal" is not a "deal").
       let y = x;
-      for (const rx of REFUSAL_RX) { const m = rx.exec(x); if (m) { refusalAt = Math.min(refusalAt, at + m.index); y = y.slice(0, m.index) + " ".repeat(m[0].length) + y.slice(m.index + m[0].length); } }
+      // These phrases can reverse meaning under negation. Treat them as unclear rather
+      // than cancel a booking or infer consent when the request is not a clear refusal.
+      for (const m of x.matchAll(/\b(?:count|deal) me out\b|\bwithout me\b|\b(?:ask|find|try|pick) someone else\b/g)) {
+        const before = x.slice(0, m.index);
+        // Do not carry negation across a new instruction ("don't worry and go without me").
+        const boundary = [...before.matchAll(/\b(?:but|however|though|and|so)\b/g)].at(-1);
+        const from = boundary ? boundary.index + boundary[0].length : 0;
+        const prefix = before.slice(from);
+        const neg = /\b(?:not|never|don'?t|didn'?t|wouldn'?t|won'?t|hate)\b/.exec(prefix);
+        const whyNot = /\bwhy not\s*$/.exec(prefix);
+        const negated = neg && !(whyNot && neg.index === whyNot.index + 4);
+        const start = negated ? from + neg.index : m.index;
+        if (negated) hedge = true;
+        else refusalAt = Math.min(refusalAt, at + m.index);
+        // Also blank embedded yes words ("don't go ahead without me", "don't deal me out").
+        y = y.slice(0, start) + " ".repeat(m.index + m[0].length - start) + y.slice(m.index + m[0].length);
+      }
+      const pleaseDont = /\bplease (?:do not|don'?t)\b/.exec(y);
+      if (pleaseDont) {
+        const rest = y.slice(pleaseDont.index + pleaseDont[0].length);
+        if (/^[\s.!?;]*$/.test(rest) || REFUSED_CONNECTION.test(rest)) refusalAt = Math.min(refusalAt, at + pleaseDont.index);
+        else hedge = true;
+        y = y.slice(0, pleaseDont.index) + " ".repeat(pleaseDont[0].length) + y.slice(pleaseDont.index + pleaseDont[0].length);
+      }
+      const refusalText = y;
+      for (const rx of REFUSAL_RX) { const m = rx.exec(refusalText); if (m) { refusalAt = Math.min(refusalAt, at + m.index); y = y.slice(0, m.index) + " ".repeat(m[0].length) + y.slice(m.index + m[0].length); } }
       const deferred = DEFER.test(s.text);
       if (deferred) hedge = true;
       for (const m of x.matchAll(CANT)) {
