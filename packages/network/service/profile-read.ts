@@ -23,6 +23,10 @@ export function profileReadRequest(
     .trim()
     .replace(/[.!?]+$/u, "");
   t = t.replace(/^(?:can|could) you (?:please )?/u, "");
+  // A trailing courtesy or urgency word is not the app's name: "show my Friends profile please" is the
+  // same read as "show my Friends profile". The front of the sentence already allows "Please ...".
+  for (let i = 0; i < 2; i++)
+    t = t.replace(/[.,;!?\s]+(?:thank you|thanks|right now|real quick|please|asap|pls|now)$/u, "").trim();
   const read =
     /^(?:please )?(?:show|read)(?: me| back| me back)? (.+)$/u.exec(t) ??
     /^what does (.+) say$/u.exec(t) ??

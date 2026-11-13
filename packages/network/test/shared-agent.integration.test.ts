@@ -538,6 +538,9 @@ test("explicit saved-profile reads select the app without consuming onboarding o
     "Can you show me my Friends profile?",
     "Could you please show my saved profile?",
     "What is my saved profile?",
+    "Show me my Friends profile please.",
+    "Read my saved Friends profile, thanks.",
+    "Could you read my Friends profile? Thanks.",
   ];
   for (const [index, text] of texts.entries()) {
     if (index === 2) {
