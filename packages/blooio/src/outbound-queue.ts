@@ -31,6 +31,10 @@
 //  - Delivery receipts (Blooio webhooks) move a row to delivered, read or failed. Statuses never go back.
 //  - A row to someone who is not a member keeps the address and the text only until it ends.
 import { createHash } from "node:crypto";
+import {
+  consentPolicy, conversationPolicy, duePolicy, lineCaps, linePolicy, livePolicy, personPolicy, quietPolicy,
+  recipientPolicy, replyPolicy, textPolicy,
+} from "../../core/src/generated/outboundAdmission.ts";
 import { initial as initialReceipt, step as stepReceipt, type FailureKind, type ReceiptPhase } from "../../core/src/generated/outboundReceipt.ts";
 import { parseApprovedRelayPhotos, type ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import type { SQL } from "bun";
@@ -385,71 +389,68 @@ export class OutboundQueue {
     const agent = isAgentInitiated(row.kind);
     const compliance = row.kind === "compliance";
 
-    // 0. Too old, or about something that closed.
-    if (this.tooOld(row) || (await this.guarded(() => c.stale?.(row) ?? false, false))) return this.end(row, "expired");
-    // 1. The live flags (founder approval), checked again at send time.
-    if (!(await this.guarded(() => c.live(), false))) return this.end(row, "refused_not_approved");
+    // spec/outboundAdmission.md, "A current row needs live approval and the recipient's eligibility"
+    const stale = this.tooOld(row) || await this.guarded(() => c.stale?.(row) ?? false, false);
+    if (duePolicy(stale) === "Expired") return this.end(row, "expired");
+    if (livePolicy(await this.guarded(() => c.live(), false)) === "ApprovalMissing") return this.end(row, "refused_not_approved");
     if (!compliance) {
-      // 2. Consent: the ledger and the member's own flag, read now (a STOP that came while the row waited wins).
-      if (await this.guarded(() => c.optedOut?.(row) ?? false, true)) return this.end(row, "refused_opted_out");
-      // 3. The recipient at send time.
+      if (consentPolicy(compliance, await this.guarded(() => c.optedOut?.(row) ?? false, true)) === "OptedOut") return this.end(row, "refused_opted_out");
       const check = await this.guarded<RecipientCheck>(() => c.recipient?.(row, agent) ?? { ok: true }, { ok: false, reason: "recipient_check_error" });
-      if (!check.ok) return this.end(row, "suppressed_ineligible", check.reason);
+      if (recipientPolicy(compliance, check.ok) === "RecipientIneligible") return this.end(row, "suppressed_ineligible", check.ok ? undefined : check.reason);
     }
     const conv = await this.conversation(row.to);
-    // 4. A reply answers something the person sent in the last hour (the caller's word alone does not skip quiet hours).
-    if (row.kind === "reply") {
-      const last = ms(conv?.last_inbound_at);
-      if (last === undefined || now - last > this.opt("replyWindowMs", HOUR)) {
-        this.o.onAlert?.(row.id, "reply_without_recent_inbound");
-        return this.end(row, "suppressed_ineligible", "reply without a recent inbound");
-      }
+    // spec/outboundAdmission.md, "Replies, quiet hours and unanswered messages limit when a send can go out"
+    const last = ms(conv?.last_inbound_at);
+    if (replyPolicy(row.kind === "reply", last !== undefined && !(now - last > this.opt("replyWindowMs", HOUR))) === "ReplyTooOld") {
+      this.o.onAlert?.(row.id, "reply_without_recent_inbound");
+      return this.end(row, "suppressed_ineligible", "reply without a recent inbound");
     }
-    // 5. Quiet hours in the recipient's zone.
     if (agent) {
-      if (!isValidTimeZone(row.timeZone)) return this.end(row, "parked_invalid_timezone");
+      const validZone = isValidTimeZone(row.timeZone);
       const quiet = this.o.quiet ?? DEFAULT_QUIET;
-      if (isQuietAt(now, row.timeZone, quiet)) return this.wait(row, "deferred_quiet_hours", nextAllowedAt(now, row.timeZone, quiet), "quiet hours");
+      const decision = quietPolicy(agent, validZone, validZone && isQuietAt(now, row.timeZone, quiet));
+      if (decision === "InvalidZone") return this.end(row, "parked_invalid_timezone");
+      if (decision === "QuietHours") return this.wait(row, "deferred_quiet_hours", nextAllowedAt(now, row.timeZone, quiet), "quiet hours");
     }
-    // 6. Apple line safety: the unanswered streak and the one re-engagement.
-    let reengagement = false;
-    if (!compliance && conv && conv.unanswered >= this.opt("maxUnanswered", 3)) {
-      const quietFor = now - (ms(conv.last_outbound_at) ?? -Infinity);
-      if (agent && !conv.reengagement_used && quietFor >= this.opt("reengageAfterMs", 14 * DAY)) reengagement = true;
-      else return this.wait(row, "held_awaiting_reply", now, conv.reengagement_used ? "unanswered cap: re-engagement used" : "unanswered cap");
+    const quietFor = now - (ms(conv?.last_outbound_at) ?? -Infinity);
+    const conversation = conversationPolicy(compliance, !!conv && conv.unanswered >= this.opt("maxUnanswered", 3),
+      agent, !!conv?.reengagement_used, quietFor >= this.opt("reengageAfterMs", 14 * DAY));
+    if (conversation.decision === "AwaitingReply") {
+      return this.wait(row, "held_awaiting_reply", now, conv?.reengagement_used ? "unanswered cap: re-engagement used" : "unanswered cap");
     }
-    // 7. Blooio's safety state of the line.
+    // spec/outboundAdmission.md, "Apply line controls and sending caps before checking the text"
     const isNew = !conv;
     const [safety] = await this.sql`select action from platform.line_safety where line = ${this.line}`;
     const action = safety?.action as string | undefined;
-    if (action === "review" || (action === "reply_only" && (agent || isNew)) || (action === "pause_new" && isNew)) {
+    if (linePolicy(action ?? "", agent, isNew) === "LinePaused") {
       this.o.onAlert?.(row.id, `line_safety_${action}`);
       return this.wait(row, "retry_scheduled", now + HOUR, `line safety ${action}`);
     }
-    // 8. The caps of the line and the recipient (compliance texts always go).
     if (!compliance) {
       const [counts] = await this.sql`select
         count(*) filter (where to_address = ${row.to} and sent_at > ${new Date(now - HOUR)})::int as recipient,
         count(*) filter (where kind in ('proactive', 'transactional') and sent_at > ${new Date(now - DAY)})::int as line,
         count(*) filter (where new_conversation and sent_at > ${new Date(now - DAY)})::int as new_chats
         from platform.outbound where line = ${this.line} and sent_at > ${new Date(now - DAY)}`;
-      if (counts.recipient >= this.opt("perRecipientPerHour", 10)) return this.wait(row, "retry_scheduled", now + 5 * MINUTE, "per-recipient hourly cap");
-      if (agent && counts.line >= this.opt("perLinePerDay", 200)) return this.wait(row, "retry_scheduled", now + HOUR, "per-line daily cap");
-      if (agent && isNew && counts.new_chats >= this.opt("newChatsPerLinePerDay", 20)) return this.wait(row, "retry_scheduled", now + HOUR, "per-line new conversation cap");
+      const decision = lineCaps(compliance, agent, isNew, counts.recipient >= this.opt("perRecipientPerHour", 10),
+        counts.line >= this.opt("perLinePerDay", 200), counts.new_chats >= this.opt("newChatsPerLinePerDay", 20));
+      if (decision === "RecipientCap") return this.wait(row, "retry_scheduled", now + 5 * MINUTE, "per-recipient hourly cap");
+      if (decision === "LineCap") return this.wait(row, "retry_scheduled", now + HOUR, "per-line daily cap");
+      if (decision === "NewConversationCap") return this.wait(row, "retry_scheduled", now + HOUR, "per-line new conversation cap");
     }
     // 9. The person cap (proactive only, at send time; a redelivered id is never counted twice).
     if (row.kind === "proactive" && c.capTake) {
-      if (!(await this.guarded(() => c.capTake!(row), false))) return this.end(row, "refused_person_cap");
+      if (personPolicy(await this.guarded(() => c.capTake!(row), false)) === "PersonCap") return this.end(row, "refused_person_cap");
       if (!row.personCap) { row.personCap = true; await this.sql`update platform.outbound set person_cap = true where id = ${row.id}`; }
     }
     // 10. The leak guard, right before the send: only hashed labels are stored, never the text or the match.
     // A row staff released from leak review (releaseLeak) is not parked again for the same text.
     const leaks = row.leakReleased ? [] : await this.leakReasons(row);
-    if (leaks.length) {
+    if (textPolicy(leaks.length > 0) === "LeakReview") {
       this.o.onAlert?.(row.id, "leak_blocked");
       return this.end(row, "parked_leak_review", `leak: ${leaks.join(",")}`);
     }
-    return this.send(row, isNew, reengagement);
+    return this.send(row, isNew, conversation.reengage);
   }
 
   private async leakReasons(row: QueueRow, db: SQL = this.sql): Promise<string[]> {

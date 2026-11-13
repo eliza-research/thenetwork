@@ -12,6 +12,8 @@ The [participation budgets](../participationBudgets.md) supply the engine and Ne
 
 Production uses the generated [provider receipt lifecycle](../outboundReceipt.md) to decide retry, receipt recovery and status updates.
 
+The [outbound admission spec](../outboundAdmission.md) generates the live pre-claim checks. The database still owns the locked check and lease acquisition.
+
 Imported from `quint/outbound_queue.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint

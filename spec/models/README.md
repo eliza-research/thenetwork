@@ -46,9 +46,9 @@ entire imported model.
 | [oauth_mcp](oauth_mcp.md) | Connector authorization and member tools | [Connector grant issuance](../oauthGrantIssuance.md) |
 | [observatory_sync](observatory_sync.md) | Staff console synchronization | [Snapshot and delta lifecycle](../observatorySync.md) |
 | [opportunity](opportunity.md) | Proposal, review, and response | [Opportunity lifecycle](../opportunityLifecycle.md), [review deadline](../reviewDeadline.md), [probe reply](../probeReply.md) |
-| [outbound_queue](outbound_queue.md) | Outbound queue and delivery receipts | [Provider receipt lifecycle](../outboundReceipt.md), [outreach cap](../outreachPolicy.md), [participation budgets](../participationBudgets.md), [quiet hours](../quietHours.md) |
+| [outbound_queue](outbound_queue.md) | Outbound queue and delivery receipts | [Outbound admission](../outboundAdmission.md), [provider receipt lifecycle](../outboundReceipt.md), [outreach cap](../outreachPolicy.md), [participation budgets](../participationBudgets.md), [quiet hours](../quietHours.md) |
 | [phone_identity](phone_identity.md) | Phone number identity | [Phone change lifecycle](../phoneChange.md) |
-| [photo_relay_item](photo_relay_item.md) | Selected-photo delivery | — |
+| [photo_relay_item](photo_relay_item.md) | Selected-photo delivery | [Selected-photo claim and fetch](../photoRelayItem.md) |
 | [photos_rating](photos_rating.md) | Photo storage and private ratings | [Photo eligibility and limits](../photoPolicy.md) |
 | [plan_crew](plan_crew.md) | Crew invitations and sessions | [Crew offer state machine](../crewOffer.md), [formation rules](../planDecision.md) |
 | [plan_run](plan_run.md) | Group plans and fallback | [Plan reply, fallback and allowance](../planDecision.md) |
