@@ -107,6 +107,7 @@ const energyBucket = (x: number): FriendsStated["energy"] => (x < 0.38 ? "low" :
 
 export function generateFriendsPersonas(o: FriendsGenOptions): FriendsPersona[] {
   const n = o.n ?? FRIENDS_DEFAULTS.n;
+  if (!Number.isSafeInteger(n) || n < 0) throw new Error("Friends population n must be a non-negative safe integer");
   const minorShare = o.minorShare ?? FRIENDS_DEFAULTS.minorShare, liarShare = o.minorLiarShare ?? FRIENDS_DEFAULTS.minorLiarShare;
   const adv = { ...FRIENDS_DEFAULTS.adversaryShares, ...(o.adversaryShares ?? {}) };
   const mix = { ...FRIENDS_DEFAULTS.richnessMix, ...(o.richnessMix ?? {}) };

@@ -9,7 +9,8 @@ async function main() {
   const arg = (k: string, d?: string) => { const i = process.argv.indexOf(`--${k}`); return i >= 0 ? process.argv[i + 1]! : d; };
   const [s0, s1] = arg("seeds", "1-4")!.split("-").map(Number);
   const seeds = Array.from({ length: (s1 ?? s0!) - s0! + 1 }, (_, i) => s0! + i);
-  const perCity = Number(arg("per-city", "400")), jobsPerCity = Number(arg("jobs", "80")), weeks = Number(arg("weeks", "8"));
+  const perCityArg = arg("per-city", "400"), jobsArg = arg("jobs", "80");
+  const perCity = perCityArg?.trim() ? Number(perCityArg) : NaN, jobsPerCity = jobsArg?.trim() ? Number(jobsArg) : NaN, weeks = Number(arg("weeks", "8"));
   const arms = arg("arms", "keyword,keyword3,greedy,oracle,pack")!.split(",");
   const realism = arg("realism", "v2") === "v1" ? REALISM_V1 : REALISM_V2;
 
