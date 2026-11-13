@@ -31,6 +31,7 @@
 //                  contact share per opportunity.
 // Deterministic and offline: no clock reads (the caller passes `now`), no randomness, no model call
 // unless the caller passes a hook. Network code, so it never reads hidden persona truth.
+import { relayConsentStale, relayVerdict } from "../../core/src/generated/relayDecision.ts";
 import { canBeMatched, labelHash, LeakGuard, textVariants, type MemberId, type Owned } from "@thenetwork/core";
 
 export const RELAY_POLICY_VERSION = "relay-1.0.0";
@@ -320,7 +321,7 @@ export function relayItem(item: RelayItem, ctx: RelayContext): RelayResult {
     const c = item.consent;
     if (!c) return "consent:missing";
     if (c.kind !== kind || c.by !== item.from || c.itemId !== item.id) return "consent:mismatch";
-    if (c.at > item.at || item.at - c.at > L.consentTtlMs) return "consent:stale";
+    if (relayConsentStale(c.at, item.at, L.consentTtlMs)) return "consent:stale";
     return null;
   };
   const text = (item.text ?? "").trim();
@@ -381,7 +382,9 @@ export function relayItem(item: RelayItem, ctx: RelayContext): RelayResult {
 
 function finish(item: RelayItem, ctx: RelayContext, reasons: string[], x: { contactValue: string | null; photos: string[]; text: string; ageSignal: boolean }): RelayResult {
   const fam = (r: string) => r.split(":")[0]!;
-  const decision: RelayDecision = reasons.some(r => BLOCK_PREFIX.has(fam(r))) ? "block" : reasons.length ? "hold" : "pass";
+  // spec/relayDecision.md, "A blocking reason takes precedence over a hold"
+  const verdict = relayVerdict(reasons.some(r => BLOCK_PREFIX.has(fam(r))), reasons.length > 0);
+  const decision: RelayDecision = verdict === "Block" ? "block" : verdict === "Hold" ? "hold" : "pass";
   const name = cleanName(ctx.sender.firstName);
   let rendered = "";
   if (decision === "pass") {
