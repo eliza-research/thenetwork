@@ -26,6 +26,8 @@ export interface InteractionRecord {
   acceptedBy?: MemberId[];
   /** Invitees who were asked but never answered before the invite expired. */
   noResponse?: MemberId[];
+  /** Members known to have missed the meeting. Absent on legacy records without attribution. */
+  noShowBy?: MemberId[];
 }
 export type { OpenOpportunity } from "@thenetwork/core";
 /** A question the agent asked a member instead of proposing (engine output "ask"; v1.2). */

@@ -244,7 +244,7 @@ function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<Membe
       const s = slotOf(r.at);
       if (s !== undefined) x.attendedSlots.push(s);
     }
-    if (r.outcome === "no_show") for (const id of r.participants) h(C(id)).noShows++;
+    if (r.outcome === "no_show") for (const id of r.noShowBy ?? r.participants) h(C(id)).noShows++;
   }
   const negFrom = new Map<MemberId, Set<MemberId>>();
   const lastDate = new Map<MemberId, { at: number; liked?: boolean }>();
