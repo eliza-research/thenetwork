@@ -10,7 +10,7 @@
 //   other          one relay Clef classifier call to Workers AI       COST_CLEF_RELAY_USD per call, else the engine's list price
 //                  (provider workers_ai, detail.purpose             per input token (relayClefCost: clef-flash 0.09 USD per M)
 //                  "relay_classifier"; relayClefEvent)
-//   sms_fallback   one outbound message stored as fell_back (SMS)     0.0083  COST_SMS_USD
+//   sms_fallback   one accepted SMS receipt (or legacy fell_back row) 0.0083  COST_SMS_USD
 //   blooio_line    one line for one day                              COST_BLOOIO_LINE_MONTHLY_USD / 30 (no default: from the contract)
 //
 // Rows hold codes and counts only: never a member id, a phone number or text. A write failure is

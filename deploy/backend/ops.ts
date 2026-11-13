@@ -109,7 +109,7 @@ export interface NetworkMetrics {
   /** Review items that expired unsent in the last 24 h (the SLA was missed). */
   reviewExpired24h: number;
   safety24h: { reports: number; urgentReports: number; minorAfterContact: number; holds: number; bans: number };
-  /** Outbound messages stored as fell_back (sent by SMS) on this UTC day and the day before. */
+  /** Accepted SMS receipts (or legacy fell_back rows) on this UTC day and the day before. */
   smsByDay: { today: number; yesterday: number };
   /** Agent safety_concern signals (POST /internal/signals) waiting for a person in GET /signals: the safety alert. */
   safetySignalsWaiting?: number;
@@ -165,7 +165,7 @@ export interface NetworkProbe {
    * Rows since a time: outbound statuses, event counts (type and action), report rows from the stored
    * state, and the SMS fallbacks of the UTC day that starts at `dayStart` and of the day before (the cost accruals).
    */
-  since(t: number, dayStart: number): Promise<{ statuses: Record<string, number>; events: { type: string; action: string | null; n: number }[]; reports: { kind: string }[]; sms: { today: number; yesterday: number }; safetySignals?: number; biasAlerts?: number; precision7d?: { decided: number; clean: number } }>;
+  since(t: number, dayStart: number): Promise<{ statuses: Record<string, number>; events: { type: string; action: string | null; n: number }[]; reports: { kind: string }[]; sms: { today: number; yesterday: number; last24h?: number }; safetySignals?: number; biasAlerts?: number; precision7d?: { decided: number; clean: number } }>;
 }
 
 /** Below this many person decisions in 7 days the precision is not alerted on (too few to read). */
@@ -200,17 +200,19 @@ export async function collectNetwork(p: NetworkProbe, now: number): Promise<Netw
     const [h, s] = await Promise.all([p.health(), p.since(now - DAY, utcDayStart(now))]);
     const last = Math.max(h.lastTick.stored ?? -Infinity, h.lastTick.savedAt ?? -Infinity);
     const ev = (type: string, action?: string) => s.events.filter(e => e.type === type && (action === undefined || e.action === action)).reduce((x, e) => x + e.n, 0);
+    const sends24h = sendOutcomes(s.statuses);
+    if (s.sms.last24h !== undefined) sends24h.smsFallback = s.sms.last24h;
     return {
       ...empty,
       lastTickAgoMs: Number.isFinite(last) ? Math.max(0, now - last) : null,
       backlog: { review: h.backlog.review, reviewOverdue: h.backlog.reviewOverdue, deferred: h.backlog.deferred, outboundWaiting: h.backlog.outboundWaiting },
-      sends24h: sendOutcomes(s.statuses),
+      sends24h,
       reviewExpired24h: ev("review_expired"),
       safety24h: {
         reports: s.reports.length, urgentReports: s.reports.filter(r => URGENT_REPORTS.has(r.kind as never)).length,
         minorAfterContact: ev("minor_after_contact"), holds: ev("safety_action", "hold"), bans: ev("safety_action", "ban"),
       },
-      smsByDay: s.sms,
+      smsByDay: { today: s.sms.today, yesterday: s.sms.yesterday },
       safetySignalsWaiting: s.safetySignals ?? 0,
       biasAlerts24h: s.biasAlerts ?? 0,
       ...(s.precision7d ? { precision7d: s.precision7d } : {}),
@@ -238,8 +240,17 @@ export function runtimeProbe(rt: {
       // Reports live in the stored state (ids and a kind only); `at` is epoch ms.
       const reports = (await tx`select r->>'kind' as kind from network.network_state s, jsonb_array_elements(coalesce(s.state->'reports', '[]'::jsonb)) r
         where s.id = ${rt.id} and (r->>'at')::float8 > ${t}`) as { kind: string }[];
-      const [sms] = (await tx`select count(*) filter (where ts >= ${new Date(dayStart)})::int as today, count(*) filter (where ts < ${new Date(dayStart)})::int as yesterday
-        from network.messages where app_id = ${rt.app.id} and direction = 'outbound' and status = 'fell_back' and ts >= ${new Date(dayStart - DAY)}`) as { today: number; yesterday: number }[];
+      // The queue keeps the SMS transport across sent/delivered/read updates. A delayed receipt
+      // belongs to its acceptance day, not the day its message was queued. Legacy rows still count once.
+      const [sms] = (await tx`with sms as (
+          select case when o.transport = 'sms' and o.sent_at is not null then o.sent_at else m.ts end as sent_at
+          from network.messages m left join platform.outbound o on o.id = m.id and o.app_id = m.app_id
+          where m.app_id = ${rt.app.id} and m.direction = 'outbound'
+            and (m.status = 'fell_back' or (o.transport = 'sms' and o.sent_at is not null))
+        ) select count(*) filter (where sent_at >= ${new Date(dayStart)})::int as today,
+          count(*) filter (where sent_at < ${new Date(dayStart)})::int as yesterday,
+          count(*) filter (where sent_at > ${at})::int as last24h
+        from sms where sent_at >= ${new Date(dayStart - DAY)}`) as { today: number; yesterday: number; last24h: number }[];
       // Counts only: a signal's evidence and a report's groups never leave the database here.
       const [sig] = (await tx`select count(*)::int as n from network.facets where app_id = ${rt.app.id} and status = 'proposed'
         and tags && ${tx.array(["signal:safety_concern"], "TEXT")}`) as { n: number }[];
@@ -249,7 +260,7 @@ export function runtimeProbe(rt: {
           count(*) filter (where decision = 'approve' and coalesce(jsonb_array_length(case when jsonb_typeof(edits) = 'array' then edits end), 0) = 0)::int as clean
         from network.review_items where app_id = ${rt.app.id} and decision in ('approve', 'reject') and decided_at > ${new Date(t - 6 * DAY)}
           and reviewer is not null and reviewer <> ${SIM_AUTO_REVIEWER}`) as { decided: number; clean: number }[];
-      return { statuses, events, reports, sms: { today: sms?.today ?? 0, yesterday: sms?.yesterday ?? 0 }, safetySignals: sig?.n ?? 0, biasAlerts: bias?.n ?? 0,
+      return { statuses, events, reports, sms: { today: sms?.today ?? 0, yesterday: sms?.yesterday ?? 0, last24h: sms?.last24h ?? 0 }, safetySignals: sig?.n ?? 0, biasAlerts: bias?.n ?? 0,
         precision7d: { decided: prec?.decided ?? 0, clean: prec?.clean ?? 0 } };
     }),
   };
