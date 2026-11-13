@@ -13,6 +13,7 @@
 // you met (a harassment victim) and reports are not counted (network-consent-14). Inviters are
 // accountable: when someone they vouched for reaches hold, the inviter loses invites for 30 days.
 import { DAY, type MemberId } from "@thenetwork/core";
+import { holdScore, levelForScore, watchScore, type TrustLevel as ModelTrustLevel } from "../../core/src/generated/trustLevel.ts";
 import type { Abuse } from "./classify.ts";
 
 export type TrustLevel = "ok" | "watch" | "hold";
@@ -24,7 +25,9 @@ export interface TrustRecord {
   heldAt?: number; lastDecay?: number;
 }
 
-export const WATCH = 3, HOLD = 6;
+// spec/trustLevel.md, "Trust scores at three trigger watch and scores at six trigger hold"
+export const WATCH = watchScore, HOLD = holdScore;
+const STORED_LEVEL = { Ok: "ok", Watch: "watch", Hold: "hold" } as const satisfies Record<ModelTrustLevel, TrustLevel>;
 /** A Trust as plain JSON (exportState). */
 export type TrustState = { id: MemberId; score: number; level: TrustLevel; events: TrustEvent[]; reportsFrom: MemberId[]; blocksMade: number[]; blockedStrangers?: MemberId[]; heldAt?: number; lastDecay?: number }[];
 const DECAY_DAYS = 14;
@@ -136,7 +139,7 @@ export class Trust {
   private relevel(id: MemberId, now: number, why: string) {
     const r = this.get(id);
     const prev = r.level;
-    const next: TrustLevel = r.level === "hold" || r.score >= HOLD ? "hold" : r.score >= WATCH ? "watch" : "ok";
+    const next = STORED_LEVEL[levelForScore(r.score, r.level === "hold")];
     if (next === prev) return;
     r.level = next;
     if (next === "hold") r.heldAt = now;

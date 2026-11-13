@@ -35,6 +35,7 @@ import { DAY, LLMBudget, RealClock, recommenderLLM, type Clock, type City, type 
 import type { ActionResult, NetworkOptions, NetworkState, ReviewDecision, ReviewOptions } from "../src/network.ts";
 import { brandOf, copy as ntwrkCopy, copyFor, ELIZA_NOTICE, type Copy } from "../src/copy.ts";
 import { isMinor } from "@thenetwork/core";
+import { personDailyCap } from "../../core/src/generated/outreachPolicy.ts";
 import { ageAnswer, agesStated } from "../src/classify.ts";
 import { NetworkRuntime, type RuntimeHost } from "./runtime.ts";
 import { effectiveParticipation, automatedFacetPredicate } from "./snapshot.ts";
@@ -114,7 +115,8 @@ const REQUIRED_TABLES = [
 /** The dev-only key for keyed phone hashes (the platform's own default). Production needs PLATFORM_HASH_KEY. */
 const DEV_HASH_KEY = "dev-only-platform-hash-key";
 /** Proactive messages one person gets a day, across every app (PRD 40.3). */
-export const PERSON_DAILY_CAP = 3;
+// spec/outreachPolicy.md, "The default daily proactive limit is three across all apps"
+export const PERSON_DAILY_CAP = personDailyCap;
 /** A pending text flow (a join, "what are you looking for?", a SHARE offer) is forgotten after a day. */
 const PENDING_MS = DAY;
 /**

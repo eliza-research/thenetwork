@@ -22,7 +22,7 @@
 // no LLM calls). The Network runtime owns the state (hold queues, ledger, conversation streaks)
 // and calls these functions; see docs/results/2026-10-07-attention-budget.md for the integration note.
 import type { Category, MemberId, ParticipationState } from "@thenetwork/core";
-import { canBeMatched, DAY, fromLocal, HOUR, inQuietHours, localParts, MINUTE } from "@thenetwork/core";
+import { canBeMatched, DAY, fromLocal, HOUR, inQuietHours, localParts, MINUTE, withinQuietHours } from "@thenetwork/core";
 import { DEFAULT_ATTENTION, type AttentionConfig } from "./config.ts";
 import { tokenize } from "./embed.ts";
 import { privateVocabulary } from "./explain.ts";
@@ -337,8 +337,6 @@ export function inSendWindow(m: MemberAttention, now: number, cfg: AttentionConf
 // ------------------------------------------------------------------------------------------------
 // Send time learned from replies (founder decision 1)
 
-const hourInQuiet = (h: number, [s, e]: [number, number]) => (s === e ? false : s < e ? h >= s && h < e : h >= s || h < e);
-
 export interface SendProfile {
   /** Local send hour on weekdays and on weekends. */
   weekday: number; weekend: number;
@@ -359,7 +357,7 @@ export function learnSendProfile(replies: readonly number[], tz: string, now: nu
   const T = cfg.sendTime;
   const slotOf = (h: number) => T.slots.findIndex(sl => h >= sl.start && h < sl.end);
   const def = slotOf(T.defaultHour);
-  const okHour = (h: number) => !quietHours || Array.from({ length: Math.max(1, T.minOpenHours) }, (_, i) => (h + i) % 24).every(x => !hourInQuiet(x, quietHours));
+  const okHour = (h: number) => !quietHours || Array.from({ length: Math.max(1, T.minOpenHours) }, (_, i) => (h + i) % 24).every(x => !withinQuietHours(x, ...quietHours));
   const learn = (weekend: boolean) => {
     const w = T.slots.map(() => 0);
     let n = 0;
@@ -998,7 +996,7 @@ export function availabilityProb(ev: AvailabilityEvidence, slot: TimeSlot, now: 
   const lp = localParts(slot.start, ev.tz);
   const day = (lp.weekday + 1) % 7;
   const weekend = cfg.sendTime.weekendDays.includes(day);
-  if (ev.quietHours && hourInQuiet(lp.hour, ev.quietHours)) return 0;
+  if (ev.quietHours && withinQuietHours(lp.hour, ...ev.quietHours)) return 0;
   if (ev.away?.some(a => a.start < slot.end && a.end > slot.start)) return 0;
   const part = daypart(lp.hour);
   let p = weekend ? (part === "day" ? A.prior.weekendDay : A.prior.weekendEvening) : (part === "day" ? A.prior.weekdayDay : A.prior.weekdayEvening);

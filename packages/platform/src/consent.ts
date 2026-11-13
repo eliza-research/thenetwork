@@ -4,6 +4,7 @@
 // PLATFORM_STOP_SCOPE=app stops that app alone. "leave <app>" (and the site's leave button) leaves one
 // app. START opts in to one app. The ledger reads the last event per (e164, app) and per (e164, null);
 // a global opt-out wins over an older app opt-in, and a newer app opt-in (START, a new join) wins over it.
+import { appMayText } from "../../core/src/generated/carrierConsent.ts";
 import { foldKeywordText as fold, KEYWORDS, keywordKey, optOutPhrase as coreOptOutPhrase } from "../../core/src/replies.ts";
 import { type AppId, type AppInfo, APPS } from "./apps.ts";
 
@@ -39,7 +40,8 @@ export function resolveConsent(last: ConsentLast): ConsentState | undefined {
   if (!app) return global?.state === "opted_out" ? "opted_out" : undefined;
   if (!global || global.state === "opted_in") return app.state;
   // A global opt-out. Only a newer opt-in for this app (START on its line, a new join) beats it.
-  return app.state === "opted_in" && app.at > global.at ? "opted_in" : "opted_out";
+  // spec/carrierConsent.md, "A global STOP beats an older or simultaneous app opt-in"
+  return appMayText(app.state === "opted_in", true, app.at, global.at) ? "opted_in" : "opted_out";
 }
 
 /** Pick the two last events from a list (the memory store and tests). Ties go to the later entry. */

@@ -9,8 +9,7 @@
 //    or safety with a typed reason (POST /api/member/:id/photos, audited before the read).
 //  - peon: the roles a job seat hires for and the member's introductions (applications). Proxy tags
 //    (zip, graduation year, gaps: peon:proxy:*) are never shown.
-import type { Facet } from "@thenetwork/core";
-import { validAge } from "@thenetwork/core";
+import { canBeMatched, type Facet } from "@thenetwork/core";
 import type { AppProfile360, MemberDetail, PeonProfile360, SlopPrefs, SlopProfile360 } from "./types.ts";
 
 /** A score or rating of a person by its name (older rows and other raters). */
@@ -43,7 +42,7 @@ const after = (tags: string[], prefix: string) => tags.filter(t => t.startsWith(
 /** Adult for the photo rule: a valid age of 18 or more and not treated as under 18 by the Network (unknown age fails closed). */
 function adultOf(d: MemberDetail): boolean {
   const m = d.member;
-  return !m.minor && !m.ageUnknown && !m.declined && validAge(m.age) && (m.age ?? 0) >= 18;
+  return !m.minor && !m.ageUnknown && !m.declined && canBeMatched(m.age);
 }
 const ageVerifiedOf = (d: MemberDetail) => tagsOf(d.facets).includes("verify:age:pass");
 

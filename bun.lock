@@ -15,6 +15,9 @@
     "packages/blooio": {
       "name": "@thenetwork/blooio",
       "version": "0.0.0",
+      "dependencies": {
+        "@thenetwork/core": "workspace:*",
+      },
     },
     "packages/capital": {
       "name": "@thenetwork/capital",
