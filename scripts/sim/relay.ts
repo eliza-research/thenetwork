@@ -465,6 +465,12 @@ async function deskGates(b: Block): Promise<void> {
     // Withdrawn: "don't send my number" (or the relay action's cancel) removes the pending request.
     for (const t of ["actually don't send my number", "cancel the number swap", "never mind about my number"]) expect(withdrawsSwap(t)).toBe(true);
     for (const t of ["send them my number", "my number is in my profile", "don't be late"]) expect(withdrawsSwap(t)).toBe(false);
+    // A yes, or a message that only mentions the number, never takes the request back.
+    for (const t of ["I dont mind, send them my number", "don't wait, send them my number", "send them my number, I don't care", "yes send my number, stop asking", "lol never had to wait this long for someone to want my number", "no worries, send my number", "no problem, send them my number", "send my number, no rush", "I don't mind sharing my number", "never had someone ask to swap numbers before"]) expect([t, withdrawsSwap(t)]).toEqual([t, false]);
+    // A withdrawal in any wording still withdraws (a swap left pending after a no would share the number).
+    for (const t of ["I'd rather not share my number", "please don't give them my number", "changed my mind about my number", "scratch the swap", "stop sharing my number", "hold off for now, my number can wait", "cancel, I'll keep my number",
+      "I don't want to swap numbers anymore", "actually I don't want to swap numbers", "I changed my mind about sharing my number", "never mind, I'd rather keep my number", "cancel that, keep my number", "I don't want you to send my number", "I don't want them to have my number",
+      "I don't mind waiting, but don't send my number yet", "don't worry, cancel the swap", "I don't mind, but I'd rather keep my number", "no worries, I'll keep my number to myself", "no, not my number", "hmm not sure about sharing my number", "please keep my number private"]) expect([t, withdrawsSwap(t)]).toEqual([t, true]);
     expect(d.cancelSwaps("b")).toBe(1);
     h.t += 60_000;
     expect((await d.request({ itemId: "c3", from: "a", kind: "contact_share" }, { contactOf })).decision).toBe("held");
