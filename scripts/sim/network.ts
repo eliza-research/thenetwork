@@ -8,7 +8,7 @@ import { DEFAULT_ATTENTION } from "../../packages/engine/src/index.ts";
 import { networkPack } from "../../packages/engine/src/packs/network/index.ts";
 import type { RunRecord } from "../../packages/core/src/index.ts";
 import { computeMetrics } from "../../packages/sim/src/judge/metrics.ts";
-import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, loadScenario, runScenario as runSimScenario, runScenarioPassK } from "../../packages/sim/src/index.ts";
+import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, loadScenario, scenarioWorldOptions, runScenario as runSimScenario, runScenarioPassK } from "../../packages/sim/src/index.ts";
 import { friendFactory, nycPersonas, runArm, runScenario, SCENARIOS, type ArmResult } from "../../packages/network/harness/index.ts";
 import { allowedAt, ConsentNetwork, NY, OUTREACH, SIM_AUTO_REVIEWER, VENUES, type NetworkOptions } from "../../packages/network/src/index.ts";
 import { styleViolations } from "../../packages/network/src/copy.ts";
@@ -312,6 +312,27 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
     const r = await runSimScenario({ ...s, background: { personas: 6 } }, { network: () => new StubNetwork({ seed: 1, leakyExplanations: true, introRate: 1 }) });
     b.gate("negative control: the canary check fails against a leaky network", r.results.find(x => x.expectation.check === "canary_not_leaked")?.status === "fail");
   }
+
+  await b.run("forced flakes: a booked member cancels or no-shows as scripted, then the one-shot ends", async () => {
+    const scenario = await loadScenario(`${dir}/group-flake-morning-of.json`);
+    for (const how of [undefined, "notice", "no_show", "late_notice"] as const) {
+      const w = new World(scenarioWorldOptions({ ...scenario, actions: scenario.actions.filter(a => a.do !== "force_flake") }, {
+        network: () => new StubNetwork({ seed: scenario.seed, randomIntros: false }),
+      }));
+      await w.begin();
+      await w.advanceTo(w.clock.now() + DAY + 11 * HOUR);
+      const meeting = w.records.find((r): r is Extract<RunRecord, { type: "meeting_scheduled" }> => r.type === "meeting_scheduled")!;
+      expect(w.memories.get("dinner-1")!.proposals[meeting.proposalId]!.plannedShow).toBe(true);
+      if (how === "late_notice") await w.advanceTo(meeting.at - 2 * HOUR);
+      if (how) w.act({ do: "force_flake", persona: "dinner-1", how: how === "no_show" ? "no_show" : "notice" });
+      await w.advanceTo(w.end);
+      const r = await w.complete();
+      const outcome = r.records.find((x): x is Extract<RunRecord, { type: "outcome" }> => x.type === "outcome" && x.proposalId === meeting.proposalId)!;
+      expect(outcome.attendance["dinner-1"]!.showed).toBe(how === undefined);
+      expect(outcome.attendance["dinner-1"]!.cancelledWithNotice).toBe(how === "notice" || how === "late_notice");
+      expect(w.memories.get("dinner-1")!.forceFlake).toBeUndefined();
+    }
+  });
 
   // ---- conformance rules for networkPack (engine level) ---------------------------------------------------
   await conformance(b, networkPack, { seeds: o.quick ? [1, 2] : [1, 2, 3, 4] });
