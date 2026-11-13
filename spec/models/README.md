@@ -41,7 +41,7 @@ entire imported model.
 | [identity_sagas](identity_sagas.md) | Phone ownership and account changes | [Phone change lifecycle](../phoneChange.md) |
 | [join_age](join_age.md) | Membership and age | [Member age](../memberAge.md) |
 | [join_flow](join_flow.md) | Browser signup | [Current site enrollment](../siteEnrollment.md), [member age](../memberAge.md), [phone verification limits](../otpLimits.md) |
-| [matching_engine](matching_engine.md) | Matching, interviews, and job seats | [Global selection run](../selectionRun.md), [Slop assignment rounds](../slopAssignment.md), [Slop onboarding](../slopOnboarding.md) |
+| [matching_engine](matching_engine.md) | Matching, interviews, and job seats | [Global selection run](../selectionRun.md), [Slop assignment rounds](../slopAssignment.md), [Slop onboarding](../slopOnboarding.md), [Peon capacity](../peonCapacity.md) |
 | [notify_capital](notify_capital.md) | Inbox and network capital | [Notification delivery](../notificationDelivery.md), [capital levers](../capitalLevers.md) |
 | [oauth_mcp](oauth_mcp.md) | Connector authorization and member tools | [Connector grant issuance](../oauthGrantIssuance.md) |
 | [observatory_sync](observatory_sync.md) | Staff console synchronization | [Snapshot and delta lifecycle](../observatorySync.md) |
@@ -57,6 +57,6 @@ entire imported model.
 | [relay](relay.md) | Relay between matched members | [Consent timing and verdict](../relayDecision.md), [item lifecycle](../relayLifecycle.md) |
 | [review_desk](review_desk.md) | Staff review desk | [Staff review interaction](../staffReview.md), [server review deadline](../reviewDeadline.md) |
 | [runtime_ops](runtime_ops.md) | Runtime work, retention, and alerts | [Observatory timing](../operationsTiming.md) |
-| [safety_trust](safety_trust.md) | Safety reports, holds, and blocks | [Trust levels](../trustLevel.md) |
+| [safety_trust](safety_trust.md) | Safety reports, holds, and blocks | [Safety case lifecycle](../safetyCase.md), [trust levels](../trustLevel.md) |
 | [staff_console](staff_console.md) | Staff roles and console actions | [Staff request permissions](../staffPermissions.md) |
 | [turn_consent](turn_consent.md) | Signed turns and carrier consent | [Carrier consent](../carrierConsent.md) |

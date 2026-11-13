@@ -27,7 +27,7 @@
 //  - Network capital. Every NC ledger event goes to one typed emitter (onLedger); the levers are read
 //    through an optional reader (capital.ts); gaming flags wait in the review queue as "fraud" items.
 import {
-  canJoin, DAY, HOUR, isMinor, localParts, LeakGuard, MINUTE, UNDER_MIN_AGE_DECLINE, validAge,
+  ADULT_AGE, canJoin, DAY, HOUR, isMinor, localParts, LeakGuard, MINUTE, UNDER_MIN_AGE_DECLINE, validAge,
   type Category, type Facet, type Intent, type LeakOptions, type LLM, type MemberId, type ParticipationState, type Proposal, type ScoreComponents, type WorldSnapshot,
 } from "@thenetwork/core";
 import {
@@ -40,7 +40,12 @@ import {
   groupCanContinue, initial as initialOpportunity, step as stepOpportunity,
   type OpportunityLifecycle, type OpportunityPhase,
 } from "../../core/src/generated/opportunityLifecycle.ts";
+import { bookedCapacityReached, bookedOccupies } from "../../core/src/generated/peonCapacity.ts";
 import { reviewLate } from "../../core/src/generated/reviewDeadline.ts";
+import {
+  caseCloseResult, holdAuthority, holdLiftResult, holdSubjectKnown, initial as initialCase, minorClearResult, reportAfterDecision,
+  reportRestrictsMatching, step as stepSafetyCase, type CasePhase, type ReportPhase, type StaffActionResult,
+} from "../../core/src/generated/safetyCase.ts";
 import { HELP_TEXT, STOP_CONFIRMATION, type InboundMessage, type NetworkContext, type NetworkUnderTest, type SimMeta } from "@thenetwork/core";
 import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { ageAnswer, availabilityTags, checkinTags, classify, extractProfile, feedbackOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, type Classified, type TimeOption } from "./classify.ts";
@@ -121,6 +126,15 @@ export interface SafetyCase {
   status: "open" | "held" | "lifted" | "closed";
   closedAt?: number; closedBy?: string;
 }
+const CASE_PHASE = { open: "CaseOpen", held: "CaseHeld", lifted: "CaseLifted", closed: "CaseClosed" } as const;
+const CASE_STATUS = { CaseOpen: "open", CaseHeld: "held", CaseLifted: "lifted", CaseClosed: "closed", NoCase: "open" } as const satisfies Record<CasePhase, SafetyCase["status"]>;
+const REPORT_PHASE = { open: "ReportOpen", held: "ReportHeld", banned: "ReportBanned", dismissed: "ReportDismissed" } as const;
+const REPORT_STATUS = { ReportOpen: "open", ReportHeld: "held", ReportBanned: "banned", ReportDismissed: "dismissed" } as const satisfies Record<ReportPhase, SafetyReport["status"]>;
+const SAFETY_REFUSAL = {
+  ActorRequired: "actor_required", NotOnHold: "not_on_hold", UnknownCase: "unknown_case", AlreadyClosed: "already_closed",
+  UnknownReport: "unknown_report", UnknownMember: "unknown_member", NoMinorSignal: "no_signal", AgeUnknown: "age_unknown",
+  RecordMinor: "record_minor", StatedMinor: "stated_minor",
+} as const satisfies Record<Exclude<StaffActionResult, "AllowedAction">, string>;
 const REVIEW_DECISIONS = new Set<string>(["approve", "reject", "edit", "reroll"]);
 /** The reviewer name logged for "auto" approvals. */
 export const SIM_AUTO_REVIEWER = "sim_auto_reviewer";
@@ -1215,7 +1229,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (to !== "ok") { this.emit({ type: "safety_flag", member: id, serious: to === "hold" }, `${id}:${to}:${this.now()}`); this.dropMember(id, `trust ${to}`); }
     if (to === "hold") {
       const c = this.openCase(id);
-      if (c) c.status = "held";
+      if (c) c.status = CASE_STATUS[stepSafetyCase({ phase: CASE_PHASE[c.status] }, { type: "markCaseHeld" }).phase];
       this.counters.holds++;
       if (m) this.send(m, copy.hold, { type: "info", safety: true }, "safety");
       // Inviter accountability: no invites for 30 days, and a risk point.
@@ -1231,8 +1245,10 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** Every trust event goes into the member's open case, or opens one. Cases hold no message text. */
   private caseEvent(id: MemberId, e: SafetyCaseEvent) {
     let c = this.openCase(id);
-    if (!c) { c = { id: `sc${++this.caseSeq}`, memberId: id, opened: e.at, level: this.trust.level(id), events: [], status: "open" }; this.cases.push(c); }
-    else if (c.status === "lifted" && e.kind !== "hold_lifted") c.status = "open";
+    const { phase } = stepSafetyCase(c ? { phase: CASE_PHASE[c.status] } : initialCase, { type: "recordCaseEvent", liftEvent: e.kind === "hold_lifted" });
+    const status = CASE_STATUS[phase];
+    if (!c) { c = { id: `sc${++this.caseSeq}`, memberId: id, opened: e.at, level: this.trust.level(id), events: [], status }; this.cases.push(c); }
+    else c.status = status;
     c.events.push({ at: e.at, kind: e.kind, points: e.points, ...(e.by ? { by: e.by } : {}) });
   }
   /**
@@ -1265,21 +1281,24 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** Staff lift a member's hold (only a person can). Their case stays open as "lifted" until staff close it. */
   liftHold(memberId: MemberId, actor: string, note?: string): ActionResult {
-    if (!actor.trim()) return { ok: false, reason: "actor_required" };
+    const decision = holdLiftResult(!!actor.trim(), this.trust.level(memberId) === "hold");
+    if (decision !== "AllowedAction") return { ok: false, reason: SAFETY_REFUSAL[decision] };
     if (!this.trust.lift(memberId, this.now())) return { ok: false, reason: "not_on_hold" };
     const c = this.openCase(memberId);
-    if (c) c.status = "lifted";
+    if (c) c.status = CASE_STATUS[stepSafetyCase({ phase: CASE_PHASE[c.status] }, { type: "markCaseLifted" }).phase];
     this.ctx.log("safety_action", { action: "lift_hold", caseId: c?.id ?? null, memberId, actor, note: note ?? null });
     return { ok: true };
   }
 
   /** Staff close a case with a decision. A member still on hold stays on hold (a confirmed hold). */
   closeCase(caseId: string, actor: string, note?: string): ActionResult {
-    if (!actor.trim()) return { ok: false, reason: "actor_required" };
     const c = this.cases.find(x => x.id === caseId);
+    const phase = c ? CASE_PHASE[c.status] : "NoCase";
+    const decision = caseCloseResult(!!actor.trim(), phase);
+    if (decision !== "AllowedAction") return { ok: false, reason: SAFETY_REFUSAL[decision] };
     if (!c) return { ok: false, reason: "unknown_case" };
-    if (c.status === "closed") return { ok: false, reason: "already_closed" };
-    c.status = "closed"; c.closedAt = this.now(); c.closedBy = actor;
+    c.status = CASE_STATUS[stepSafetyCase({ phase }, { type: "closeCase" }).phase];
+    c.closedAt = this.now(); c.closedBy = actor;
     const held = this.trust.level(c.memberId) === "hold";
     this.ctx.log("safety_action", { action: "close_case", caseId, memberId: c.memberId, actor, note: note ?? null, held });
     if (held) {
@@ -1316,7 +1335,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    * question the member was answering. A report by someone they never met holds nobody.
    */
   private reportHeld(id: MemberId): boolean {
-    return this.reports.some(r => r.subjectId === id && r.status === "open" && r.met && URGENT_REPORTS.has(r.kind));
+    return this.reports.some(r => r.subjectId === id && reportRestrictsMatching(REPORT_PHASE[r.status], r.met, URGENT_REPORTS.has(r.kind)));
   }
 
   /** Reports for staff, newest first, each with how many earlier reports name the same member. Never the words. */
@@ -1332,12 +1351,15 @@ export class ConsentNetwork implements NetworkUnderTest {
    * they hear the hold notice once. Their open reports read "held".
    */
   holdMember(memberId: MemberId, actor: string, note?: string, reportId?: string): ActionResult {
-    if (!actor.trim()) return { ok: false, reason: "actor_required" };
-    if (reportId !== undefined && !this.reports.some(r => r.id === reportId && r.subjectId === memberId)) return { ok: false, reason: "unknown_report" };
+    const actorPresent = !!actor.trim();
+    const reportMatches = reportId === undefined || this.reports.some(r => r.id === reportId && r.subjectId === memberId);
+    const beforeLoad = holdAuthority(actorPresent, reportMatches);
+    if (beforeLoad !== "AllowedAction") return { ok: false, reason: SAFETY_REFUSAL[beforeLoad] };
     // A member this Network has not loaded yet (no message since the state began) is loaded from the snapshot.
     if (!this.members.has(memberId) && this.record(memberId) && !this.declinedIds.has(memberId)) this.member(memberId);
-    if (!this.members.has(memberId) && !this.reports.some(r => r.subjectId === memberId)) return { ok: false, reason: "unknown_member" };
-    if (this.members.has(memberId) && this.trust.level(memberId) !== "hold") {
+    const known = this.members.has(memberId);
+    if (!holdSubjectKnown(known, !known && this.reports.some(r => r.subjectId === memberId))) return { ok: false, reason: "unknown_member" };
+    if (known && this.trust.level(memberId) !== "hold") {
       const score = this.trust.get(memberId).score;
       this.trust.add(memberId, this.now(), "staff_hold", Math.max(HOLD - score, 0) || 1);
     }
@@ -1365,8 +1387,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!actor.trim()) return { ok: false, reason: "actor_required" };
     const r = this.reports.find(x => x.id === reportId);
     if (!r) return { ok: false, reason: "unknown_report" };
-    if (r.status !== "open") return { ok: false, reason: `already_${r.status}` };
-    r.status = "dismissed"; r.decidedBy = actor; r.decidedAt = this.now();
+    const next = REPORT_STATUS[reportAfterDecision(REPORT_PHASE[r.status], "DismissReport", true, true)];
+    if (next === r.status) return { ok: false, reason: `already_${r.status}` };
+    r.status = next; r.decidedBy = actor; r.decidedAt = this.now();
     this.caseEvent(r.subjectId, { at: this.now(), kind: "report_dismissed", points: 0 });
     this.ctx.log("safety_action", { action: "dismiss_report", reportId, memberId: r.subjectId, actor, note: note ?? null });
     this.dirty = true;
@@ -1375,8 +1398,11 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   private decideReports(memberId: MemberId, status: "held" | "banned", actor: string, reportId?: string) {
     const now = this.now();
-    for (const r of this.reports) if (r.subjectId === memberId && (r.status === "open" || (status === "banned" && r.status === "held")) && (reportId === undefined || r.id === reportId || status === "banned")) {
-      r.status = status; r.decidedBy = actor; r.decidedAt = now;
+    const decision = status === "held" ? "HoldReport" : "BanReport";
+    for (const r of this.reports) {
+      const next = REPORT_STATUS[reportAfterDecision(REPORT_PHASE[r.status], decision, r.subjectId === memberId, reportId === undefined || r.id === reportId)];
+      if (next === r.status) continue;
+      r.status = next; r.decidedBy = actor; r.decidedAt = now;
     }
     this.dirty = true;
   }
@@ -1586,14 +1612,13 @@ export class ConsentNetwork implements NetworkUnderTest {
    * stated is under 18. Audited (safety_action log and a case event); otherwise refused with a reason.
    */
   clearMinorSignal(memberId: MemberId, actor: string, note?: string): ActionResult {
-    if (!actor.trim()) return { ok: false, reason: "actor_required" };
     const m = this.members.get(memberId);
+    const actorPresent = !!actor.trim();
+    const signal = !!(m?.minorSignal || m?.minorReported || m?.minor);
+    const record = m && signal && actorPresent ? this.attestedAge(m) : undefined;
+    const decision = minorClearResult(actorPresent, !!m, signal, record !== undefined, record !== undefined && record < ADULT_AGE, m?.statedAge !== undefined && m.statedAge < ADULT_AGE);
+    if (decision !== "AllowedAction") return { ok: false, reason: SAFETY_REFUSAL[decision] };
     if (!m) return { ok: false, reason: "unknown_member" };
-    if (!m.minorSignal && !m.minorReported && !m.minor) return { ok: false, reason: "no_signal" };
-    const record = this.attestedAge(m);
-    if (record === undefined) return { ok: false, reason: "age_unknown" };
-    if (record < 18) return { ok: false, reason: "record_minor" };
-    if (m.statedAge !== undefined && m.statedAge < 18) return { ok: false, reason: "stated_minor" };
     m.minor = false; m.minorSignal = false; m.minorReported = false; m.ageConflict = false;
     this.dirty = true;
     const c = this.openCase(memberId);
@@ -4586,8 +4611,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       ...(x.contributors ? { contributors: view(x.id, x.contributors) } : {}), ...(x.noResponse ? { noResponse: view(x.id, x.noResponse) } : {}),
     }));
     for (const o of this.opps.values()) {
-      if (!o.seat || o.meetingAt === undefined || o.stage === "closed" || interactions.some(x => x.id.startsWith(`${o.id}:fb:`))) continue;
-      interactions.push({ id: `${o.id}:seat`, kind: o.kind, category: o.category, participants: view(o.id, o.participants), at: o.meetingAt, outcome: "accepted", acceptedBy: view(o.id, o.participants) });
+      if (!o.seat || !bookedOccupies(o.meetingAt !== undefined, o.stage === "closed") || interactions.some(x => x.id.startsWith(`${o.id}:fb:`))) continue;
+      interactions.push({ id: `${o.id}:seat`, kind: o.kind, category: o.category, participants: view(o.id, o.participants), at: o.meetingAt!, outcome: "accepted", acceptedBy: view(o.id, o.participants) });
     }
     return {
       ...input, interactions,
@@ -4608,8 +4633,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       const active = snap.intents.some(i => i.memberId === seatId && i.status === "active");
       if (!active) { this.endSeat(seatId, "posting closed"); continue; }
       const posted = Number(snap.facets.find(f => f.id === `${seatId}:openings`)?.tags.find(t => t.startsWith("peon:openings:"))?.slice("peon:openings:".length) ?? 0);
-      const filled = new Set([...this.opps.values()].filter(o => o.seat?.id === seatId && o.meetingAt !== undefined && o.stage !== "closed").map(o => o.participants.find(p => p !== o.seat!.manager)));
-      if (filled.size >= posted) this.endSeat(seatId, "posting filled");
+      const filled = new Set([...this.opps.values()].filter(o => o.seat?.id === seatId && bookedOccupies(o.meetingAt !== undefined, o.stage === "closed")).map(o => o.participants.find(p => p !== o.seat!.manager)));
+      if (bookedCapacityReached(posted, filled.size)) this.endSeat(seatId, "posting filled");
     }
   }
 

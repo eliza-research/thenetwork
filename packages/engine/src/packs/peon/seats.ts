@@ -22,6 +22,7 @@
 // The simulated hiring world (packages/sim/src/apps/peon) writes seats directly and never uses
 // these functions, so the pinned peon gates do not move. Pure; reads no hidden truth.
 import type { Edge, Facet, Intent, Member, MemberId, Presence } from "@thenetwork/core";
+import { initial, interactionOccupies, remainingOpenings, step, type SeatLedger } from "../../../../core/src/generated/peonCapacity.ts";
 import type { EngineInput } from "../../types.ts";
 import { JOB_INTENT, SAFETY, T } from "./schema.ts";
 
@@ -98,16 +99,20 @@ export function peonSeats<S extends SnapshotLike>(snap: S): S {
  * and no-show intros free the opening again.
  */
 export function seatFills(input: Pick<EngineInput, "interactions" | "openOpportunities">): Map<MemberId, Set<MemberId>> {
-  const out = new Map<MemberId, Set<MemberId>>();
-  const add = (participants: readonly MemberId[]) => {
+  const ledgers = new Map<MemberId, SeatLedger>();
+  const observe = (participants: readonly MemberId[]) => {
     const seat = participants.find(isSeatId);
     if (!seat) return;
-    if (!out.has(seat)) out.set(seat, new Set());
-    for (const id of participants) if (id !== seat) out.get(seat)!.add(id);
+    let ledger = ledgers.get(seat) ?? initial;
+    for (const candidate of participants) if (candidate !== seat) {
+      ledger = step(ledger, { type: "observeCandidate", candidate, occupies: true });
+    }
+    ledgers.set(seat, ledger);
   };
-  for (const r of input.interactions ?? []) if (r.outcome === "accepted" || r.outcome === "completed" || r.outcome === "pending") add(r.participants);
-  for (const o of input.openOpportunities ?? []) add(o.participants);
-  return out;
+  // spec/peonCapacity.md, "Only live or successful introductions occupy an opening"
+  for (const r of input.interactions ?? []) if (interactionOccupies(r.outcome)) observe(r.participants);
+  for (const o of input.openOpportunities ?? []) observe(o.participants);
+  return new Map([...ledgers].map(([seat, ledger]) => [seat, new Set(step(ledger, { type: "publishLedger" }).occupied)]));
 }
 
 /** The capacity each seat has left (see the header). Inputs without seats pass through unchanged. */
@@ -117,7 +122,7 @@ export function peonSeatCapacity(input: EngineInput): EngineInput {
   const facets = input.facets.map(f => {
     if (!isSeatId(f.memberId) || f.id !== `${f.memberId}:openings`) return f;
     const posted = Number(f.tags.find(t => t.startsWith(T.openings))?.slice(T.openings.length) ?? 0);
-    const left = Math.max(0, posted - (fills.get(f.memberId)?.size ?? 0));
+    const left = remainingOpenings(posted, fills.get(f.memberId)?.size ?? 0);
     return { ...f, value: `Openings: ${left} of ${posted}`, tags: [`${T.openings}${left}`, `${T.seatCap}${left}`] };
   });
   return { ...input, facets };

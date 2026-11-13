@@ -10,6 +10,8 @@ Check person and app scope, age signals, review and hold decisions, and safety n
 
 Imported from `quint/safety_trust.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
+Production uses [Safety cases and report review](../safetyCase.md) for the case lifecycle, report decisions, and staff hold and age-clearance admission. The standalone model also covers member contact, trust scores, and cross-app effects.
+
 ```quint
 // quint-check: max-steps=14 max-samples=6000 verify-steps=2
 // Safety and trust (docs/research/2026-11-07-state-machines.md section 6.9). Machines: person-safety-carryover
