@@ -170,7 +170,7 @@ The console calls the Network service's staff API. Every call carries `Authoriza
 
 **Clearing a wrong minor signal.** A member report ("he's only 15") or a misread message can mark an adult as a minor on one app. First correct the person's age record (the lowest age must be 18 or more), then open the `minor` report in the Safety tab and press **Clear minor signal (every app)** with a note that says why the record says adult. This is one action for every app; before, staff cleared each app by hand. The Network refuses it while the member's record age or any age the member stated is under 18. In game mode it clears the simulated world's one network.
 
-A 404 without a `reason` means that the service has no such route yet: the console says so (`service_missing`). Without the service (game mode, or real mode without `NETWORK_SERVICE_URL`), the queue is built from the Network's safety cases (a `report_received` event between two members who had a date), and hold and ban are refused (`service_only`).
+A 404 without a `reason` means that the service has no such route yet: the console says so (`service_missing`). Game mode reads the simulated Network's report store, retaining each report's id, kind, optional opportunity id and decision status. Real mode without `NETWORK_SERVICE_URL` builds the queue from the Network's safety cases (a `report_received` event between two members who had a date). Hold and ban are refused without the service (`service_only`).
 
 #### 3.7.2 Held texts: leak review and held relay
 
