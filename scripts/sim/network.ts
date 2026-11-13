@@ -8,7 +8,7 @@ import { DEFAULT_ATTENTION } from "../../packages/engine/src/index.ts";
 import { networkPack } from "../../packages/engine/src/packs/network/index.ts";
 import type { RunRecord } from "../../packages/core/src/index.ts";
 import { computeMetrics } from "../../packages/sim/src/judge/metrics.ts";
-import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, loadScenario, runScenario as runSimScenario, runScenarioPassK } from "../../packages/sim/src/index.ts";
+import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, loadScenario, scenarioWorldOptions, runScenario as runSimScenario, runScenarioPassK } from "../../packages/sim/src/index.ts";
 import { friendFactory, nycPersonas, runArm, runScenario, SCENARIOS, type ArmResult } from "../../packages/network/harness/index.ts";
 import { allowedAt, ConsentNetwork, NY, OUTREACH, SIM_AUTO_REVIEWER, VENUES, type NetworkOptions } from "../../packages/network/src/index.ts";
 import { styleViolations } from "../../packages/network/src/copy.ts";
@@ -312,6 +312,54 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
     const r = await runSimScenario({ ...s, background: { personas: 6 } }, { network: () => new StubNetwork({ seed: 1, leakyExplanations: true, introRate: 1 }) });
     b.gate("negative control: the canary check fails against a leaky network", r.results.find(x => x.expectation.check === "canary_not_leaked")?.status === "fail");
   }
+
+  await b.run("oracle travel: members must share a city at the same time inside the proposal window", async () => {
+    for (const overlap of [false, true]) {
+      const opts = scenarioWorldOptions({
+        name: "joint-presence", description: "A good pair still needs a common time in the city.", seed: 83, days: 4,
+        personas: ["a", "b"].map(ref => ({ ref, age: 30, city: "nyc" as const, interests: ["film", "books", "coffee"], desires: ["new_friends"], capacity: 1, socialEnergy: 1, join: { day: 0, hour: 9 } })),
+        actions: [{ at: { day: 0, hour: 13 }, do: "propose", kind: "intro", participants: ["a", "b"], objective: "coffee", city: "nyc" }], expectations: [],
+      }, { network: () => new StubNetwork({ seed: 83, randomIntros: false }) });
+      for (const p of opts.personas) { p.hidden.boundaries = []; p.hidden.openness = 1; p.relationships = []; p.secondaryCity = undefined; }
+      opts.personas[0]!.hidden.trips = [{ city: "sf", fromDay: 2, toDay: 3 }];
+      opts.personas[1]!.hidden.trips = [{ city: "sf", fromDay: 0, toDay: overlap ? 0 : 1 }];
+      const action = opts.actions!.find(a => a.action.do === "propose")!.action;
+      if (action.do === "propose") action.proposal.window = { start: opts.start!, end: opts.start! + 4 * DAY - 1 };
+      const r = await new World(opts).run();
+      const proposal = r.records.find((x): x is Extract<RunRecord, { type: "proposal" }> => x.type === "proposal" && x.source === "scenario")!;
+      expect(proposal.oracle.quality).toBeGreaterThan(0.9);
+      expect(proposal.oracle.compatible).toBe(overlap);
+      expect(proposal.oracle.flags.includes("city_mismatch")).toBe(!overlap);
+    }
+  });
+
+  await b.run("traveler recall: count compatible pairs in their actual shared city once", async () => {
+    for (const arm of ["visitor", "returned", "both-away", "two-cities"] as const) {
+      const opts = scenarioWorldOptions({
+        name: `traveler-recall-${arm}`, description: "Recall follows actual presence rather than home city.", seed: 83, days: 2,
+        personas: ["a", "b"].map(ref => ({ ref, age: 30, city: "nyc" as const, interests: ["film", "books", "coffee"], desires: ["new_friends"], capacity: 1, socialEnergy: 1, join: { day: 0, hour: 9 } })),
+        actions: [], expectations: [],
+      }, { network: () => new StubNetwork({ seed: 83, randomIntros: false }) });
+      for (const p of opts.personas) { p.hidden.boundaries = []; p.hidden.openness = 1; p.relationships = []; p.secondaryCity = undefined; p.hidden.trips = []; }
+      const [a, peer] = opts.personas;
+      if (arm === "visitor" || arm === "returned") {
+        peer!.homeCity = "sf";
+        peer!.hidden.trips = [{ city: "nyc", fromDay: 0, toDay: arm === "visitor" ? 3 : 0 }];
+      } else if (arm === "both-away") {
+        for (const p of opts.personas) p.hidden.trips = [{ city: "sf", fromDay: 0, toDay: 3 }];
+      } else {
+        for (const p of opts.personas) p.secondaryCity = "sf";
+      }
+      const w = new World(opts), r = await w.run();
+      const latent = r.records.find((x): x is Extract<RunRecord, { type: "latent_opportunities" }> => x.type === "latent_opportunities")!;
+      const city = arm === "both-away" ? "sf" : "nyc";
+      const verdict = w.oracle.evaluate({ id: `latent:${a!.id}:${peer!.id}`, kind: "intro", participants: [a!.id, peer!.id], city, window: { start: latent.t, end: latent.t } });
+      expect(verdict.quality).toBeGreaterThan(0.9);
+      expect(verdict.compatible).toBe(arm !== "returned");
+      expect(latent.pairs.length).toBe(arm === "returned" ? 0 : 1);
+      if (latent.pairs.length) expect(latent.pairs[0]!.quality).toBe(verdict.quality);
+    }
+  });
 
   // ---- conformance rules for networkPack (engine level) ---------------------------------------------------
   await conformance(b, networkPack, { seeds: o.quick ? [1, 2] : [1, 2, 3, 4] });
