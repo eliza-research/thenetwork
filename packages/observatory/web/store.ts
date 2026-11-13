@@ -4,6 +4,7 @@
 // global filters (range, borough, members, origin, state group). Every panel filters through the
 // predicates on ObsStore, never its own copy.
 import { useSyncExternalStore } from "react";
+import { acceptsFeedItem, deltaAction, initial as initialSync, ownsLoad, step as stepSync } from "../../core/src/generated/observatorySync.ts";
 import { APP_IDS } from "../../core/src/types.ts";
 import { NEIGHBORHOOD, type Borough } from "@thenetwork/network/geo"; // geo only: the package root pulls server code into the browser bundle
 import type { ConsoleApp } from "../src/apps.ts";
@@ -191,9 +192,12 @@ function initialToken(): string {
 
 // ---------------------------------------------------------------- store
 class ObsStore {
-  mode: Mode = "game";
+  private sync = stepSync(initialSync, { type: "changeView", appName: parseApp(), viewMode: "game" });
+  get mode(): Mode { return this.sync.viewMode === "real" ? "real" : "game"; }
+  set mode(mode: Mode) { this.changeView(this.app, mode); }
   /** The app every panel shows (the switcher; ?app= on every request). */
-  app: string = parseApp();
+  get app(): string { return this.sync.appName; }
+  set app(app: string) { this.changeView(app, this.mode); }
   /** One app, every app's health, or the cross-app person view. */
   page: Page = parsePage();
   env?: EnvInfo;
@@ -214,7 +218,7 @@ class ObsStore {
   reveals: RevealGrant[] = [];
   /** When each review card was opened (wall clock): the decision sends the seconds since. */
   private reviewOpened = new Map<string, number>();
-  version = 0;
+  get version(): number { return this.sync.version; }
   connected = false;
   loading = true;
   /** The API answered 401: the UI shows the token prompt. */
@@ -228,7 +232,6 @@ class ObsStore {
    * not be lost under it (an item would stay "in review" here after the server moved it on); those at
    * or after the state's version are applied once it lands.
    */
-  private loadingState = false;
   private buffered: ObsDelta[] = [];
   /** Review decisions sent and not answered yet, by opportunity (a second press is not sent). */
   private deciding = new Set<string>();
@@ -292,7 +295,12 @@ class ObsStore {
     }
     return r;
   }
-  getJSON<T>(path: string): Promise<T> { return this.api(path).then(r => r.json() as Promise<T>); }
+  async getJSON<T>(path: string): Promise<T> {
+    const r = await this.api(path);
+    if (r.ok) return r.json() as Promise<T>;
+    const j = await r.json().catch(() => ({})) as { error?: string };
+    throw new Error(j.error ?? `HTTP ${r.status}`);
+  }
   /** GET or POST that keeps the status: a 403 is shown as "your role cannot…", not as a crash. */
   async fetch<T>(path: string, body?: unknown): Promise<Fetched<T>> {
     try {
@@ -315,47 +323,88 @@ class ObsStore {
     this.load();
   }
 
+  private beginLoad() {
+    this.sync = stepSync(this.sync, { type: "startLoad" });
+    this.buffered = [];
+    return this.sync.generation;
+  }
+
   async load() {
+    let generation = this.beginLoad();
     this.loading = true; this.notify();
-    this.loadingState = true; this.buffered = [];
     try {
       const [mode, me] = await Promise.all([this.getJSON<{ mode: Mode }>("/api/mode"), this.fetch<Me>("/api/me")]);
+      if (!ownsLoad(this.sync, generation)) return;
       // An older server has no /api/me: it has one admin token.
-      if(JSON.stringify([this.me?.id,this.me?.grants,this.me?.roles])!==JSON.stringify([me.data?.id,me.data?.grants,me.data?.roles]))this.authEpoch++;
-      this.me = me.data ?? { id: "token", roles: ["admin"], grants: [{ role: "admin", app: "*" }], via: "token" };
-      this.mode = mode.mode;
+      if (!me.data && me.status !== 404) throw me.status === 401 ? new AuthError(me.error) : new Error(me.error);
+      const viewer: Me = me.data ?? { id: "token", roles: ["admin"], grants: [{ role: "admin", app: "*" }], via: "token" };
+      if (JSON.stringify([this.me?.id, this.me?.grants, this.me?.roles]) !== JSON.stringify([viewer.id, viewer.grants, viewer.roles])) this.authEpoch++;
+      this.me = viewer;
       // No role for this app: the first app this person holds one for. None (cross_app_safety only): the person view.
       const apps = this.me.apps ?? APP_ORDER;
-      if (!apps.includes(this.app)) {
-        if (apps[0]) { this.app = apps[0]; this.replaceHash(); this.connect(); }
-        else { this.loading = false; this.notify(); return; }
+      const selectedApp = this.app;
+      const app = apps.includes(selectedApp) ? selectedApp : apps[0];
+      if (this.changeView(app ?? selectedApp, mode.mode)) generation = this.beginLoad();
+      if (!app) {
+        this.sync = stepSync(this.sync, { type: "failLoad", generation });
+        return;
       }
+      if (app !== selectedApp) { this.replaceHash(); this.connect(); }
       const state = await this.getJSON<ObsState>("/api/state");
+      if (!ownsLoad(this.sync, generation)) return;
+      if (!Number.isSafeInteger(state.version) || !state.env) throw new Error("Invalid snapshot response");
+      const next = stepSync(this.sync, {
+        type: "publishSnapshot", generation, appName: state.env.app ?? app, viewMode: state.env.mode, version: state.version,
+      });
+      if (next === this.sync) throw new Error("Invalid state for the selected view");
       this.loadReveals();
       if (this.filtersMode !== this.mode) { this.filtersMode = this.mode; this.ui = { ...this.ui, filters: loadFilters(this.mode) }; }
       this.applyFull(state);
-      const later = this.buffered.filter(d => d.version >= state.version);
-      this.loadingState = false;
-      for (const d of later) this.applyDelta(d);
+      this.sync = next;
+      const later = this.buffered;
+      this.buffered = [];
+      for (const d of later) {
+        if (generation !== this.sync.generation) break;
+        this.applyDelta(d);
+      }
     } catch (e) {
+      if (!ownsLoad(this.sync, generation)) return;
+      this.sync = stepSync(this.sync, { type: "failLoad", generation });
       if (!(e instanceof AuthError)) this.toast(`Could not load: ${(e as Error).message}`, "bad");
+    } finally {
+      if (this.sync.generation === generation) {
+        this.buffered = [];
+        this.loading = false;
+        this.notify();
+      }
     }
-    this.loadingState = false; this.buffered = [];
-    this.loading = false;
-    this.notify();
   }
 
   private applyFull(s: ObsState) {
+    const members = new Map(s.members.map(m => [m.id, m]));
+    const edges = new Map(s.edges.map(e => [e.id, e]));
+    const opps = new Map(s.opportunities.map(o => [o.id, o]));
+    const feed = s.feed.filter(it => Number.isSafeInteger(it.seq));
     this.env = s.env; this.clock = s.clock; this.stats = s.stats; this.runs = s.engineRuns; this.game = s.game; this.truth = s.truth; this.network = s.network;
     this.requests = s.requests ?? [];
-    this.members = new Map(s.members.map(m => [m.id, m]));
-    this.edges = new Map(s.edges.map(e => [e.id, e]));
-    this.opps = new Map(s.opportunities.map(o => [o.id, o]));
-    this.feed = s.feed; this.version = s.version; this.pulses = [];
+    this.members = members; this.edges = edges; this.opps = opps;
+    this.feed = feed; this.pulses = [];
     if (!this.focusExists(this.ui.focus)) { this.ui = { ...this.ui, focus: null }; this.focusHistory = []; }
     this.focusHistory = this.focusHistory.filter(f => this.focusExists(f));
     this.ui = { ...this.ui, picks: this.ui.picks.filter(id => this.members.has(id)) };
     this.graphTick++;
+  }
+
+  private changeView(appName: string, viewMode: Mode): boolean {
+    const next = stepSync(this.sync, { type: "changeView", appName, viewMode });
+    if (next === this.sync) return false;
+    this.sync = next;
+    this.buffered = [];
+    this.members = new Map(); this.edges = new Map(); this.opps = new Map(); this.feed = []; this.pulses = [];
+    this.env = undefined; this.clock = undefined; this.stats = undefined; this.runs = []; this.game = undefined;
+    this.truth = undefined; this.network = undefined; this.requests = []; this.reveals = [];
+    this.graphTick++;
+    return true;
   }
 
   private focusExists(f: Focus) {
@@ -366,14 +415,24 @@ class ObsStore {
   }
 
   private applyDelta(d: ObsDelta) {
-    if (this.loadingState && !d.reset) { this.buffered.push(d); return; }
-    if (d.reset) { this.load(); return; }
+    if (!d.reset && !Number.isSafeInteger(d.version)) return;
+    const action = deltaAction(this.sync, d.version, !!d.reset);
+    if (action === "BufferDelta") { this.buffered.push(d); return; }
     // A version was skipped (a delta was dropped or arrived under a full load): read the full state again.
-    if (d.version > this.version + 1) { this.load(); return; }
+    if (action === "ReloadSnapshot") { this.load(); return; }
+    if (action === "DropDelta") return;
     this.clock = d.clock;
-    if (d.env) this.env = d.env;
     if (d.game) this.game = d.game;
     if (d.network) this.network = d.network;
+    if (action === "ApplyData") {
+      this.applyData(d);
+      this.sync = stepSync(this.sync, { type: "acceptDelta", version: d.version });
+    }
+    this.notify();
+  }
+
+  private applyData(d: ObsDelta) {
+    if (d.env) this.env = d.env;
     if (d.stats) this.stats = d.stats;
     if (d.engineRuns) this.runs = d.engineRuns;
     if (d.requests) this.requests = d.requests;
@@ -383,13 +442,19 @@ class ObsStore {
     for (const o of d.opportunities ?? []) this.opps.set(o.id, o);
     for (const id of d.removedOpportunities ?? []) this.opps.delete(id);
     if (d.feed?.length) {
-      this.feed = [...this.feed, ...d.feed].slice(-400);
-      this.pulses.push(...d.feed);
-      if (this.pulses.length > 200) this.pulses = this.pulses.slice(-200);
+      const added: ObsFeedItem[] = [];
+      let tail = this.feed.at(-1);
+      for (const it of d.feed) {
+        if (!Number.isSafeInteger(it.seq) || !acceptsFeedItem(tail !== undefined, tail?.seq ?? 0, it.seq)) continue;
+        added.push(it);
+        tail = it;
+      }
+      if (added.length) {
+        this.feed = [...this.feed, ...added].slice(-400);
+        this.pulses = [...this.pulses, ...added].slice(-200);
+      }
     }
     if (graph) this.graphTick++;
-    this.version = d.version;
-    this.notify();
   }
 
   /**
@@ -399,6 +464,7 @@ class ObsStore {
   async connect() {
     const gen = ++this.wsGen;
     this.ws?.close();
+    if (this.connected) { this.connected = false; this.notify(); }
     const t = await this.fetch<{ ticket: string }>("/api/ws-ticket", {});
     if (gen !== this.wsGen) return;
     if (!t.data) {
@@ -421,7 +487,7 @@ class ObsStore {
       const msg = JSON.parse(ev.data);
       if (msg.app !== undefined && msg.app !== this.app) return;
       if (msg.type === "delta" && msg.mode === this.mode) this.applyDelta(msg.delta);
-      else if (msg.type === "clock") { this.clock = msg.clock; this.notify(); }
+      else if (msg.type === "clock" && this.sync.phase === "Live") { this.clock = msg.clock; this.notify(); }
       else if (msg.type === "mode") { if (msg.mode !== this.mode) { this.mode = msg.mode; this.ui = { ...this.ui, picks: [] }; this.clearFocus(); this.load(); } }
     };
   }
@@ -501,13 +567,11 @@ class ObsStore {
   /** Switch the app: every panel reloads for it. "all": the health of every app. */
   setApp(app: string) {
     if (app === "all") { this.page = { kind: "all" }; this.replaceHash(); this.notify(); return; }
-    const changed = app !== this.app;
+    const changed = this.changeView(app, this.mode);
     this.page = { kind: "app" };
-    this.app = app;
     if (changed) {
       this.ui = { ...this.ui, picks: [], focus: null };
       this.focusHistory = [];
-      this.opps = new Map(); this.members = new Map(); this.edges = new Map(); this.feed = []; this.version = 0;
       this.connect();
       this.load();
     }
@@ -538,7 +602,9 @@ class ObsStore {
   canSim() { return this.can("reviewer", "safety", "engineer"); }
   realOnly() { return !!(this.me?.realOnly || this.env?.realOnly); }
   async loadReveals() {
+    const { generation } = this.sync;
     const r = await this.fetch<RevealGrant[]>("/api/reveal");
+    if (generation !== this.sync.generation) return;
     this.reveals = r.data ?? [];
     this.notify();
   }

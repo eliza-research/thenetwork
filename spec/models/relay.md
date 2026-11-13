@@ -8,7 +8,7 @@ A matched member needs to control which text or contact details The Network shar
 
 Check per-item consent and withdrawal, relay decisions, age restrictions, and erasure. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-Production calls the generated [relay verdict and consent window](../relayDecision.md).
+Production calls the generated [relay verdict and consent window](../relayDecision.md) and [item lifecycle](../relayLifecycle.md). Phone swaps and durable queue acceptance remain separate.
 
 Imported from `quint/relay.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 

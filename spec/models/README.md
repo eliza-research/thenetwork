@@ -44,7 +44,7 @@ entire imported model.
 | [matching_engine](matching_engine.md) | Matching, interviews, and job seats | [Global selection run](../selectionRun.md) |
 | [notify_capital](notify_capital.md) | Inbox and network capital | [Notification delivery](../notificationDelivery.md), [capital levers](../capitalLevers.md) |
 | [oauth_mcp](oauth_mcp.md) | Connector authorization and member tools | — |
-| [observatory_sync](observatory_sync.md) | Staff console synchronization | — |
+| [observatory_sync](observatory_sync.md) | Staff console synchronization | [Snapshot and delta lifecycle](../observatorySync.md) |
 | [opportunity](opportunity.md) | Proposal, review, and response | [Opportunity lifecycle](../opportunityLifecycle.md), [review deadline](../reviewDeadline.md), [probe reply](../probeReply.md) |
 | [outbound_queue](outbound_queue.md) | Outbound queue and delivery receipts | [Outreach cap](../outreachPolicy.md), [participation budgets](../participationBudgets.md), [quiet hours](../quietHours.md) |
 | [phone_identity](phone_identity.md) | Phone number identity | — |
@@ -54,7 +54,7 @@ entire imported model.
 | [plan_run](plan_run.md) | Group plans and fallback | [Plan reply, fallback and allowance](../planDecision.md) |
 | [profile_learning](profile_learning.md) | Suggestions from connected sources | [Suggestion review state machine](../profileSuggestionReview.md) |
 | [profile_read](profile_read.md) | Read a saved profile | [Saved-profile read](../savedProfileRead.md) and [suggestion review](../profileSuggestionReview.md) state machines |
-| [relay](relay.md) | Relay between matched members | [Consent timing and verdict](../relayDecision.md) |
+| [relay](relay.md) | Relay between matched members | [Consent timing and verdict](../relayDecision.md), [item lifecycle](../relayLifecycle.md) |
 | [review_desk](review_desk.md) | Staff review desk | [Server review deadline](../reviewDeadline.md) |
 | [runtime_ops](runtime_ops.md) | Runtime work, retention, and alerts | [Observatory timing](../operationsTiming.md) |
 | [safety_trust](safety_trust.md) | Safety reports, holds, and blocks | [Trust levels](../trustLevel.md) |

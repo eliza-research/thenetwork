@@ -10,6 +10,8 @@ Check load generations, delta ordering, reveal badges, and filter behavior. The 
 
 Imported from `quint/observatory_sync.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
+The browser calls [Observatory snapshot and live updates](../observatorySync.md) for the current load, delta versions, and feed sequence. Reveal, filters, and other separate console state remain in this standalone model.
+
 ```quint
 // -*- mode: Bluespec; -*-
 // quint-check: max-steps=20 max-samples=20000
