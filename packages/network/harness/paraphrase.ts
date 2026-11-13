@@ -47,8 +47,13 @@ export function paraphrase(personaId: string, text: string): string {
   let t = text;
   for (const d of DESIRES) if (t.includes(d.text)) t = t.split(d.text).join(pick(WANT_WORDS[d.id] ?? [d.text], personaId, d.id));
   t = t.replace(/I'm around ([A-Z][\w'.-]*(?: [A-Z][\w'.-]*)*) most of the week/, (_m, area: string) => pick([`I live in ${area}`, `I'm based in ${area}`, `home is ${area}`], personaId, area));
-  t = t.replace(/^Anyone around who'd want to (.+)\? I'm near ([^.]+)\.$/, (_m, want: string, area: string) => pick([`would love to ${want}, I'm over in ${area}`, `looking to ${want}. I'm in ${area}`], personaId, want));
-  t = t.replace(/^Still hoping to (.+)\. Anything come up\?$/, (_m, want: string) => `any luck finding someone? still want to ${want}`);
+  // Keep the ask. "looking to get a band going" and "finding someone" (the -ing form) are not
+  // read as a request, so the Network never searches. The want words stay. The sentence still asks.
+  t = t.replace(/^Anyone around who'd want to (.+)\? I'm near ([^.]+)\.$/i, (_m, want: string, area: string) => pick([
+    `would love to ${want}. know anyone? I'm over in ${area}`,
+    `looking to ${want}. anyone up for it? I'm in ${area}`,
+  ], personaId, want));
+  t = t.replace(/^Still hoping to (.+)\. Anything come up\?$/i, (_m, want: string) => `any luck? find someone? still want to ${want}`);
   if (/^(Yes, I'd like that!|Sure, sounds good\.|Yeah, I'm in\.|Happy to, sounds fun\.|Yes, I'd be up for that\.|Sure, that sounds good\.|I'm in, tell me more\.)/.test(t)) t = pick(YES, personaId, t);
   if (/^(No thanks, not right now\.|I'll pass this time, thanks\.|Not for me, but thanks\.|Can't right now, pass\.|Not this week, thanks\.|I'll pass for now\.)/.test(t)) t = pick(NO, personaId, t);
   return t;
