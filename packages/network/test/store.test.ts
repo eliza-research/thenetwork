@@ -185,12 +185,16 @@ describe("runTick and the tick lock", () => {
 
   test("console rows: review items with time spent, requests without the member's words", async () => {
     const w = await scripted();
-    const rows = consoleRows(w.net.exportState());
+    const state = w.net.exportState();
+    const rows = consoleRows(state);
     expect(rows.opportunities.length).toBe(w.net.opps.size);
     expect(rows.review_items.length).toBe(w.net.opps.size);
     expect(rows.requests.map(r => r.member_id)).toContain("r");
     expect(JSON.stringify(rows.requests)).not.toContain("Anyone around");
-    expect(new Set(rows.opportunities.map(r => r.state))).toContain("COMPLETED");
+    // This week reaches the feedback request, but no meeting has finalized attendance yet.
+    expect(state.opps.some(o => o.stage === "done" && !o.finalized)).toBe(true);
+    expect(new Set(rows.opportunities.map(r => r.state))).toContain("SCHEDULED");
+    expect(rows.participations.some(p => p.status === "attended")).toBe(false);
   }, T);
 });
 
@@ -248,6 +252,56 @@ describe.skipIf(!pgAvailable)("PgStore", () => {
     w.clock.set(now);
     expect(await runTick(net, undefined, now)).toBe(true);
     expect((await a.load())!.lastTick).toBe(now);
+  }, T);
+
+  test("saved attendance follows feedback evidence through booking, finalization and restart", async () => {
+    const store = new PgStore(TEST_URL);
+    stores.push(store);
+    const people = [climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")];
+    for (const p of people) await store.sql`insert into network.members (id, name, home_city) values (${p.id}, ${p.name}, 'nyc') on conflict (id) do nothing`;
+    for (const outcome of ["missed", "reported", "group", "held", "silent", "vouched"] as const) {
+      const ids = outcome === "group" ? ["a", "b", "c"] : ["a", "b"];
+      const w = new Mini(people.filter(p => ids.includes(p.id)));
+      await w.onboard(...ids);
+      const id = w.propose(ids);
+      await w.answerProbes(ids);
+      const opp = () => w.net.exportState().opps.find(o => o.id === id)!;
+      expect(opp().stage).toBe("scheduled");
+      expect(Object.keys(opp().bookedAt ?? {}).sort()).toEqual(ids);
+      const saved = async () => {
+        await store.save(w.net.exportState());
+        const [row] = await store.sql`select state from network.opportunities where id = ${id}`;
+        const parts = await store.sql`select member_id, status from network.participations where opportunity_id = ${id} order by member_id`;
+        return { state: row.state, status: parts.map((p: any) => [p.member_id, p.status]) };
+      };
+      const pending = { state: "SCHEDULED", status: ids.map(id => [id, "confirmed"]) };
+      expect(await saved()).toEqual(pending);
+      expect(await w.runUntil(() => opp().feedbackSent === true, 7 * DAY)).toBe(true);
+      expect(await saved()).toEqual(pending);
+      w.restart();
+      w.net.importState((await store.load())!);
+      expect(await saved()).toEqual(pending);
+
+      if (outcome === "missed" || outcome === "reported" || outcome === "group") {
+        await w.say("a", "I was there but Ben did not show up.");
+        if (outcome === "missed") await w.say("b", "I couldn't make it.");
+      } else if (outcome !== "silent") {
+        await w.say("a", "It was great, we really clicked. Would do it again.");
+        if (outcome === "held") await w.say("b", "It was great, we really clicked. Would do it again.");
+      }
+      expect(await w.runUntil(() => opp().finalized === true, 5 * DAY)).toBe(true);
+      const present = outcome === "silent" ? 0 : outcome === "held" || outcome === "vouched" ? 2 : 1;
+      expect(w.log("attendance").find(l => l.detail.oppId === id)?.detail.present).toBe(present);
+      const expected = {
+        state: present >= 2 ? "COMPLETED" : "ABANDONED",
+        status: ids.map(id => [id, id === "a" ? (present ? "attended" : "confirmed")
+          : outcome === "missed" || outcome === "reported" ? "no_show" : present >= 2 ? "attended" : "confirmed"]),
+      };
+      expect(await saved()).toEqual(expected);
+      w.restart();
+      w.net.importState((await store.load())!);
+      expect(await saved()).toEqual(expected);
+    }
   }, T);
 
   test("participations: written on save, rewritten after a re-roll and after an under-13 decline", async () => {
