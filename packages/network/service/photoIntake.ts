@@ -19,6 +19,7 @@
 import type { Accounts } from "../../platform/src/accounts.ts";
 import type { AppId } from "../../platform/src/apps.ts";
 import { readCapped } from "../../platform/src/body.ts";
+import { photoMaxPerMessage } from "../../core/src/generated/photoPolicy.ts";
 import { PHOTO_CONSENT, PHOTO_MAX_BYTES, type PhotoRefusal, type PhotoService } from "../../platform/src/photos.ts";
 import type { PeopleStore } from "../../platform/src/store.ts";
 import { DAY } from "@thenetwork/core";
@@ -26,7 +27,7 @@ import { DAY } from "@thenetwork/core";
 /** The app that takes photos by text. */
 export const PHOTO_APP: AppId = "slop";
 /** Attachments taken from one message. */
-export const PHOTO_MAX_PER_MESSAGE = 4;
+export const PHOTO_MAX_PER_MESSAGE = photoMaxPerMessage;
 /** Membership states that may send photos. */
 const LIVE = new Set(["active", "paused", "onboarding"]);
 

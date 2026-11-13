@@ -8,6 +8,8 @@ An adult slop.date member needs their photos and private scores managed under th
 
 Check photo limits, adult eligibility, erasure, private scores, and consent for probe photos. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
+Production uses the generated [photo eligibility and limits](../photoPolicy.md).
+
 Imported from `quint/photos_rating.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint

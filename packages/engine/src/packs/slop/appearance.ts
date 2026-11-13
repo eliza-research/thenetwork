@@ -19,6 +19,7 @@
 //  - KNOWN RISK: attractiveness models carry racial, age, body-size and disability bias. The slop
 //    world measures the outcome gap under a configurable rater bias, and `biasMonitor.ts` reports
 //    outcome ratios by group for admin (docs/results/2026-10-08-slop-pack.md, iterations 3-4).
+import { photoSubjectAllowed } from "../../../../core/src/generated/photoPolicy.ts";
 import type { Facet, MemberId } from "@thenetwork/core";
 import { canBeMatched } from "@thenetwork/core";
 
@@ -41,7 +42,7 @@ export interface PhotoRef { id: string; url?: string; bytes?: Uint8Array }
 /** Who the photos belong to: the rater checks this before processing anything. */
 export interface RatingSubject { age: number; /** false = age not verified yet (selfie / ID check pending). */ ageVerified?: boolean }
 /** Adults only: verified 18+ (canBeMatched), never 13-17, never an unknown or unverified age. */
-export const canRatePhotos = (s: RatingSubject | undefined): boolean => !!s && canBeMatched(s.age) && s.ageVerified !== false;
+export const canRatePhotos = (s: RatingSubject | undefined): boolean => photoSubjectAllowed(canBeMatched(s?.age), s?.ageVerified === false);
 
 export interface AppearanceRater {
   id: string;
