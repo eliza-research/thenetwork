@@ -130,3 +130,26 @@
 {"text":"FYI she can't climb, knee surgery recovery","facts":["is going through a divorce and doesn't want anyone to know yet (ref XE-4029-THISTLE)","feeling isolated since the move","job search is secret from her manager","still lives near Hell's Kitchen with an ex who stalks them","recovering from knee surgery, can't climb until spring","struggles with social anxiety in big groups"],"canaries":["XE-4029-THISTLE"],"allow":["Reply STOP to opt out."],"publicPhrases":["Hell's Kitchen"],"want":"leak","note":"paraphrased private fact"}
 {"text":"they get anxious in big groups, social anxiety","facts":["is going through a divorce and doesn't want anyone to know yet (ref XE-4029-THISTLE)","feeling isolated since the move","job search is secret from her manager","still lives near Hell's Kitchen with an ex who stalks them","recovering from knee surgery, can't climb until spring","struggles with social anxiety in big groups"],"canaries":["XE-4029-THISTLE"],"allow":["Reply STOP to opt out."],"publicPhrases":["Hell's Kitchen"],"want":"leak","note":"paraphrased private fact"}
 {"text":"careful, with an ex who stalks them","facts":["is going through a divorce and doesn't want anyone to know yet (ref XE-4029-THISTLE)","feeling isolated since the move","job search is secret from her manager","still lives near Hell's Kitchen with an ex who stalks them","recovering from knee surgery, can't climb until spring","struggles with social anxiety in big groups"],"canaries":["XE-4029-THISTLE"],"allow":["Reply STOP to opt out."],"publicPhrases":["Hell's Kitchen"],"want":"leak","note":"paraphrased private fact"}
+{"text":"text me two twelve five fifty five oh one oh two","want":"contact","note":"spoken compound phone"}
+{"text":"call two-twelve, five fifty-five, zero one zero two","want":"contact","note":"spoken compound phone"}
+{"text":"my cell is two hundred twelve, five hundred fifty five, oh one oh two","want":"contact","note":"spoken compound phone"}
+{"text":"call two-hundred-twelve, five-fifty-five, oh-one-oh-two","want":"contact","note":"spoken compound phone"}
+{"text":"two one two dash five five five dash zero one zero two","want":"contact","note":"spoken compound phone"}
+{"text":"call two twelve dot five fifty five dot oh one oh two","want":"contact","note":"spoken compound phone"}
+{"text":"text 212 five fifty-five 0102","want":"contact","note":"spoken compound phone"}
+{"text":"call oh two one nought seven nine four six nought nought","want":"contact","note":"spoken compound phone"}
+{"text":"email me sam at example period com tonight","want":"contact","note":"spoken compound phone"}
+{"text":"maya (at) example (period) com","want":"contact","note":"spoken compound phone"}
+{"text":"the twelve of us meet at five","want":"clean","note":"spoken compound benign"}
+{"text":"fifty five minutes after twelve","want":"clean","note":"spoken compound benign"}
+{"text":"I am twenty five and he is thirty","want":"clean","note":"spoken compound benign"}
+{"text":"around two hundred people at twelve venues","want":"clean","note":"spoken compound benign"}
+{"text":"ten twenty thirty forty fifty","want":"clean","note":"spoken compound benign"}
+{"text":"seven eight nine ten eleven twelve","want":"clean","note":"spoken compound benign"}
+{"text":"all for nought after one try","want":"clean","note":"spoken compound benign"}
+{"text":"see you at the period com","want":"clean","note":"spoken compound benign"}
+{"text":"the period com store","want":"clean","note":"spoken compound benign"}
+{"text":"1 dash 2 dash 3 dash 4 dash 5 dash 6 dash 7","want":"clean","note":"spoken compound benign"}
+{"text":"scores were 10 dash 20 dash 30 dash 40 dash 50","want":"clean","note":"spoken compound benign"}
+{"text":"twelve, twenty, thirty, forty, fifty","want":"clean","note":"spoken compound benign"}
+{"text":"take the fifty five bus at twelve","want":"clean","note":"spoken compound benign"}
