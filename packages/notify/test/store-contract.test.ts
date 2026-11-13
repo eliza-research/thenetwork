@@ -57,6 +57,20 @@ function contract(name: string, make: () => Promise<NotifyStore>) {
       expect((await s.getDelivery("ntf_c3b"))!.outcome).toBe("ignored");
     });
 
+    test("withdrawDelivery: removes a pending delivery from the cap and the sweep, keeps one with an outcome", async () => {
+      const a = (await s.addItem({ ...base, personId: "c5", subjectId: "w1" }, T0)).item;
+      const b = (await s.addItem({ ...base, personId: "c5", subjectId: "w2" }, T0)).item;
+      expect(await s.recordDelivery({ deliveryId: "ntf_w1", personId: "c5", itemIds: [a.id], target: "imessage", countsTowardCap: true, sentAt: T0 + 1 })).toBe(true);
+      expect(await s.recordDelivery({ deliveryId: "ntf_w2", personId: "c5", itemIds: [b.id], target: "imessage", countsTowardCap: true, sentAt: T0 + 2 })).toBe(true);
+      expect(await s.actOnDelivery("ntf_w2", "imessage", T0 + 3)).toBe(true);
+      expect(await s.withdrawDelivery("ntf_w1")).toBe(true);
+      expect(await s.withdrawDelivery("ntf_w1")).toBe(false);
+      expect(await s.withdrawDelivery("ntf_w2")).toBe(false);
+      expect(await s.getDelivery("ntf_w1")).toBeUndefined();
+      expect(await s.capSendsSince("c5", T0)).toEqual([T0 + 2]);
+      expect((await s.expireDeliveries(T0 + 100, T0 + 100)).filter(d => d.personId === "c5")).toEqual([]);
+    });
+
     test("tokens: unique, first redemption kept", async () => {
       const a = (await s.addItem({ ...base, personId: "c4", subjectId: "a" }, T0)).item;
       const t = { token: "T-ABCDEF", personId: "c4", itemIds: [a.id], issuedAt: T0, expiresAt: T0 + 1000 };
