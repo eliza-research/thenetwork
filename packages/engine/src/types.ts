@@ -22,6 +22,8 @@ export type InteractionOutcome =
 export interface InteractionRecord {
   id: string; kind: OpportunityKind; category: Category; participants: MemberId[];
   at: number; outcome: InteractionOutcome; declinedBy?: MemberId[]; contributors?: MemberId[];
+  /** Per-member refusal time when a later group booking or meeting has a different `at`. Defaults to `at` for legacy records. */
+  declinedAt?: Record<MemberId, number>;
   /** Invitees who said yes (engine-visible responsiveness history; v1.2 acceptance estimate). */
   acceptedBy?: MemberId[];
   /** Invitees who were asked but never answered before the invite expired. */
