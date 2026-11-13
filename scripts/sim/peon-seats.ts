@@ -44,10 +44,10 @@ class SeatWorld {
   private seq = 0;
   private readonly opts: NetworkOptions;
 
-  constructor() {
+  constructor(seed = 7) {
     const w = appWiring("peon");
     this.opts = {
-      app: APPS.peon, seed: 7, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
+      app: APPS.peon, seed, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
       pack: w.pack!, hooks: w.hooks!, engine: { ...PEON_ENGINE_CONFIG, cities: ["nyc"] },
       onPosting: p => this.write(p),
     };
@@ -128,6 +128,60 @@ const startsWith = (body: string, re: RegExp) => re.test(body.replace(ACK, ""));
 const POST = "We're hiring a data analyst (level 2), 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL";
 
 export async function peonSeatsBlock(b: Block): Promise<void> {
+  await b.run("posting sponsorship: a refusal is saved as no and reaches only candidates who do not need it", async () => {
+    const cases = [
+      { text: "No sponsorship available.", sponsors: false },
+      { text: "No visa sponsorship available.", sponsors: false },
+      { text: "No sponsorship.", sponsors: false },
+      { text: "We can't sponsor.", sponsors: false },
+      { text: "Sponsorship available.", sponsors: true },
+      { text: "We can sponsor.", sponsors: true },
+    ];
+    const outcomes: { seed: number; text: string; update: boolean; needsSponsor: boolean; readBack: boolean; saved: boolean | undefined; reviews: number; intros: number; correct: boolean }[] = [];
+    for (const seed of [7, 13, 17]) for (const update of [false, true]) for (const needsSponsor of [false, true]) for (const c of cases) {
+      const x = new SeatWorld(seed);
+      x.add("hm1", "Rowan Abbott", 34, { verified: "Acme" });
+      x.add("c1", "Cand One", 29, { candidate: true });
+      if (needsSponsor) for (const f of x.facets) if (f.memberId === "c1") f.tags = f.tags.map(t => t === "peon:sponsorship:no" ? "peon:sponsorship:yes" : t);
+      for (const id of ["hm1", "c1"]) for (const body of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await x.say(id, body);
+      if (update) {
+        await x.say("hm1", `${POST}. We can sponsor.`);
+        await x.say("hm1", "yes");
+      }
+      const command = update ? "Update my data analyst post: (level 2), 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL" : POST;
+      await x.say("hm1", `${command}. ${c.text}`);
+      const readBack = x.last("hm1").includes(`Visa sponsorship: ${c.sponsors ? "yes" : "no"}.`);
+      expect(x.saved.length).toBe(update ? 1 : 0);
+      x.restart();
+      await x.say("hm1", "yes");
+      const saved = x.saved.at(-1)!.sponsors;
+      expect(x.saved.length).toBe(update ? 2 : 1);
+      if (update) expect(x.saved[1]!.id).toBe(x.saved[0]!.id);
+      x.restart();
+      await x.runUntil(() => x.net.reviewQueue().length > 0, 2 * DAY);
+      const reviews = x.net.reviewQueue().length;
+      expect(x.meetings.length).toBe(0);
+      expect(x.to("c1").filter(m => m.meta.type === "probe").length).toBe(0);
+      if (reviews) {
+        expect(reviews).toBe(1);
+        const id = x.net.reviewQueue()[0]!.oppId;
+        expect(x.net.review(id, "approve", { reviewer: "sim_staff" })).toBe(true);
+        expect(await x.runUntil(() => x.probedFor("c1", id))).toBe(true);
+        await x.say("c1", "yes");
+        x.restart();
+        expect(await x.runUntil(() => x.probedFor("hm1", id))).toBe(true);
+        expect(x.meetings.length).toBe(0);
+        await x.say("hm1", "yes");
+      }
+      x.restart(); await x.run(HOUR);
+      const expected = c.sponsors || !needsSponsor ? 1 : 0;
+      const correct = readBack && saved === c.sponsors && reviews === expected && x.meetings.length === expected;
+      outcomes.push({ seed, text: c.text, update, needsSponsor, readBack, saved, reviews, intros: x.meetings.length, correct });
+    }
+    console.log("PEON_SPONSORSHIP_OUTCOMES", JSON.stringify(outcomes));
+    expect(outcomes.filter(x => x.correct).length).toBe(outcomes.length);
+  });
+
   await b.run("intake rules: a job post is read from text, read back, and needs a title and a pay range", () => {
     const d = parsePosting(POST);
     expect(d).toMatchObject({ title: "data analyst", openings: 2, payMin: 90, payMax: 120, mode: "hybrid", area: "brooklyn", seniority: 2, must: [{ skill: "sql", level: 2 }] });
