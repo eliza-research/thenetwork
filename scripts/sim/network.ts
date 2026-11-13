@@ -8,8 +8,9 @@ import { DEFAULT_ATTENTION } from "../../packages/engine/src/index.ts";
 import { networkPack } from "../../packages/engine/src/packs/network/index.ts";
 import type { RunRecord } from "../../packages/core/src/index.ts";
 import { computeMetrics } from "../../packages/sim/src/judge/metrics.ts";
-import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, loadScenario, runScenario as runSimScenario, runScenarioPassK } from "../../packages/sim/src/index.ts";
-import { friendFactory, nycPersonas, runArm, runScenario, SCENARIOS, type ArmResult } from "../../packages/network/harness/index.ts";
+import { DESIRES, INTERESTS, PolicyPersonaAgent, StubNetwork, World, loadScenario, runScenario as runSimScenario, runScenarioPassK } from "../../packages/sim/src/index.ts";
+import { friendFactory, nycPersonas, paraphrase, runArm, runScenario, SCENARIOS, type ArmResult } from "../../packages/network/harness/index.ts";
+import { classify } from "../../packages/network/src/classify.ts";
 import { allowedAt, ConsentNetwork, NY, OUTREACH, SIM_AUTO_REVIEWER, VENUES, type NetworkOptions } from "../../packages/network/src/index.ts";
 import { styleViolations } from "../../packages/network/src/copy.ts";
 import { DATA_DIR } from "../synthetic/common.ts";
@@ -36,6 +37,21 @@ async function world(days: number, seed = 3, network: NetworkOptions = { review:
 }
 
 export async function networkBlock(b: Block, o: { quick: boolean }): Promise<void> {
+  // The paraphrase arm must keep an ask an ask. The want words change. The sentence still asks.
+  const askAreas = ["Park Slope", "Astoria", "Harlem"];
+  const askIds = ["m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8"];
+  const lostAsks: string[] = [];
+  let askN = 0;
+  for (const d of DESIRES) for (const area of askAreas) for (const id of askIds) for (const orig of [
+    `Anyone around who'd want to ${d.text}? I'm near ${area}.`,
+    `Still hoping to ${d.text}. Anything come up?`,
+  ]) {
+    askN++;
+    const text = paraphrase(id, orig);
+    if (classify(text).kind !== "people_request") lostAsks.push(`${d.id}: ${text}`);
+  }
+  b.gate(`paraphrase asks stay requests (n ${askN})`, askN === 960 && lostAsks.length === 0, lostAsks.slice(0, 3).join(" | "));
+
   // ---- invariants: NYC, 10 days, seed 3, simulated reviewer ---------------------------------------
   const run = await world(10);
   await run.w.advanceTo(run.w.end);
