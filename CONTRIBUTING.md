@@ -25,23 +25,28 @@ gh api -X PUT user/starred/eliza-research/thenetwork
 gh repo fork eliza-research/thenetwork --clone
 ```
 
-## 2. Scope: the PRD and the MVP plan are binding
+## 2. Scope and specification
 
-Two documents define the minimum viable product (MVP). Work only inside them.
+The [product specification](spec/product/README.md) combines the PRD, MVP
+plan, user stories, and founder decisions. It defines what ships and what
+needs approval. Link the specific story or rule when you propose a change.
 
-| Document | Where |
-|---|---|
-| PRD (product requirements document), canonical | [Google Doc](https://docs.google.com/document/d/1lLQAZNAMSC_yHCkUBVbp1CCwvyR17PuvV7TnpfuY8Xc/edit). Section 28 is the MVP. Section 29 lists the MVP flows. Section 37 is the build plan. Section 40 is the four-app platform. |
-| PRD local copy | [docs/prd-snapshot.md](docs/prd-snapshot.md). If it disagrees with the Google Doc, the Google Doc is correct. |
-| PRD edits not yet applied | [docs/prd-pending-edits.md](docs/prd-pending-edits.md) |
-| MVP plan | [docs/mvp-plan.md](docs/mvp-plan.md), with the status detail in [docs/mvp-gaps.md](docs/mvp-gaps.md) |
-| Founder decisions after the snapshot | [AGENTS.md](AGENTS.md), "Platform decisions" and "Founder decisions" |
-
-Rules:
-
-- If a capability is not in PRD Section 28.3 or Section 40, it is not in the MVP. PRD Section 28.4 lists capabilities that are not in the MVP. Do not build them.
-- If the documents do not clearly cover your change, ask a maintainer in the issue. Start work only after a maintainer confirms the scope in writing.
-- **New features need human approval first.** Maintainers discuss a new feature with the founders. If they agree, they add it to the PRD and the MVP plan. Only then can a contributor build it. An issue or a PR cannot add a feature by itself.
+- Work within the launch scope. Capabilities marked deferred need written
+  maintainer approval and an update to the product specification.
+- Add or update the story and its rules in `spec/<name>.md`. Put the Quint
+  for a rule immediately below its prose. Follow the
+  [sync skill](.claude/skills/sync/SKILL.md).
+- Use the generated TypeScript for the decision in the owning package.
+  Run `bun run spec:sync` to publish the generated modules. Commit the
+  source spec and the published modules together.
+- Keep the relevant [whole-flow model](spec/models/README.md) consistent
+  with the runtime. Compare the guards, outcomes, and invariants where
+  the generated rule enters the flow.
+- Run `bun run check` for the Vibespec pipeline and the project commands in
+  section 6 for the application. The product owner runs `bun run accept`
+  after comparing the prose and Quint.
+- For work on the generator, run `bun run spec:selftest` and add a fixture
+  for each new class of error it detects.
 
 ## 3. What is accepted and what is not
 
@@ -55,7 +60,7 @@ Rules:
 | **Validation of simulations and core algorithms** | Proof that a simulation, a gate, the oracle (the simulator's hidden answer key) or a judge measures the wrong thing, and the fix. |
 | **Security** | A reproduced weakness and its fix, with a security-suite case that fails before the fix. |
 | **Tests that prove real behavior** | A sim gate, a scenario, a corpus row in `evals/`, or an integration or e2e case that fails before the fix and passes after it. |
-| **A missing MVP capability** | The PRD or MVP plan requires it, and the code does not have it. Give the section number. |
+| **A missing MVP capability** | Link the in-scope product story and the rule the code must implement. |
 
 ### 3.2 Not accepted
 
@@ -63,7 +68,7 @@ Maintainers close these. They can penalize the contributor under the project con
 
 - UI, visual, style or copy changes (section 9).
 - Refactors for preference, renames, file moves and comment edits with no bug and no measured result.
-- Speculative features, and new features without approved PRD and MVP-plan updates.
+- Speculative features, and new features without approved updates to the product specification.
 - Busywork tests: unit tests, smoke tests, coverage-only tests, tests that repeat the implementation. See [docs/tests-policy.md](docs/tests-policy.md).
 - Proof that uses only mocked LLM output.
 - Defensive code, extra validation, null checks or truncation for conditions that cannot occur.
@@ -79,6 +84,7 @@ You need [Bun](https://bun.sh) 1.4.2 (the version in `package.json`) and Postgre
 ```bash
 cp .env.example .env                                   # never commit .env
 bun install --frozen-lockfile
+bun run spec:setup                                     # Node 24+ for Vibespec
 bun run packages/observatory/db/dev-pg.ts up           # the dev Postgres on localhost:54339
 bun run sim                                            # must pass before you start
 ```
@@ -253,7 +259,7 @@ For each run, report: the client name and version, the provider, the exact model
 
 Caution: use only fictional 555-01xx phone numbers locally. Never give an agent a real phone number or a real login code.
 
-## 9. No UI changes
+## 9. Public interface changes
 
 Do not change the UI, the visual design, styles or copy. This includes the sites, the Observatory, the admin console, `SKILL.md` text and any message text that a member sees.
 
@@ -297,7 +303,7 @@ Bug | MVP gap | Measured problem
 ## Summary
 One or two sentences. Say what is incorrect. Say who it affects.
 
-## PRD reference
+## Product story or rule
 Section number(s). Example: PRD 32.9.
 
 ## Steps to see the problem
@@ -318,7 +324,7 @@ Command, seed, provider and model. A maintainer must be able to do it again.
 
 ### 12.1 Rules
 
-- Link a reproduced issue or an approved requirement (PRD or MVP-plan section).
+- Link a reproduced issue or an approved story or rule in the product specification.
 - Use the code that exists. Remove dead code and merge duplicates. Add a new type, file, package or dependency only when it is necessary, and say why.
 - Explain the cause. Describe at least two other implementations and why yours is better.
 - A bug fix adds one sim gate, scenario, corpus row, or integration or e2e case that fails before the fix. That is enough. Do not add more.
@@ -329,7 +335,7 @@ Command, seed, provider and model. A maintainer must be able to do it again.
 Every PR must include each item. Write `N/A: <reason>` only when an item does not apply.
 
 - [ ] The repository is starred and the PR comes from your fork.
-- [ ] Linked issue or approved requirement (PRD or MVP-plan section).
+- [ ] Linked issue or approved story or rule in the product specification.
 - [ ] The root cause, in plain words.
 - [ ] The fix, and two other implementations you did not use.
 - [ ] The before and after results, with the same command, seeds and data.
@@ -337,6 +343,7 @@ Every PR must include each item. Write `N/A: <reason>` only when an item does no
 - [ ] Agent clients tested (section 8): client and version, provider, model, result.
 - [ ] Logs or video when a flow is involved.
 - [ ] `bun run sim`, `bun run typecheck`, `bun run test:integration` and `bun run test:e2e` pass. Paste the summary lines.
+- [ ] Spec, generated modules, and related flow model agree. Include Vibespec check results and any open obligations.
 - [ ] Test steps and the expected result of each step.
 - [ ] Risks and trade-offs.
 - [ ] No UI change, or the broken-flow exception with before and after video (section 9).
@@ -352,7 +359,7 @@ One or two sentences. What changes and why.
 Bug fix | Measured improvement | Security | MVP capability
 
 ## Linked issue or requirement
-#<issue>, PRD <section>
+#<issue>, spec/<name>.md and rule heading
 
 ## Problem and root cause
 
@@ -387,7 +394,7 @@ Write every issue and PR so that a person who is not technical can understand it
 - Write one instruction in one sentence.
 - Use the active voice and the imperative for steps.
 - Use simple tenses.
-- Use one word for one meaning. Use the PRD terms.
+- Use one word for one meaning. Use the product specification terms.
 - Explain a technical word the first time you use it.
 - Put a warning before the step it applies to.
 - Use lists and tables for steps, options and numbers.

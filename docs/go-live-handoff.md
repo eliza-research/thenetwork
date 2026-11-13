@@ -1,6 +1,6 @@
 # Go-live handoff: Railway, GitHub, Cloudflare and Eliza
 
-Instructions for an agent who takes over going live. Read this whole file first. Then read `docs/deploy.md` (the canonical deploy doc), `docs/design/eliza-conversation-layer.md`, `docs/mvp-plan.md` and the "Platform decisions" and "Founder decisions" sections of `AGENTS.md`.
+Instructions for an agent who takes over going live. Read this whole file first. Then read `docs/deploy.md` (the canonical deploy doc), `docs/design/eliza-conversation-layer.md`, the [product spec](../spec/product/README.md) and the [pilot plan](../spec/product/pilot.md).
 
 Repo: <https://github.com/eliza-research/thenetwork> (public). Work from a fresh worktree of `origin/main`.
 
@@ -176,7 +176,7 @@ Network service sends → POST Eliza Cloud /api/internal/network/deliver (signed
    - STOP handled once;
    - webhook reopen rate;
    - Blooio delivery failures under 2%.
-4. ★ **Live sends** for slop.date in NYC, behind the review gate, per `docs/mvp-plan.md` section 13.
+4. ★ **Live sends** for slop.date in NYC, behind the review gate, per [the pilot plan](../spec/product/pilot.md#evidence-before-live-slop-sends).
 
 **Rollback:**
 - Set `NETWORK_TAKEOVER=0` on the **gateway**. It's a gateway variable, not a Cloud one. Traffic returns to the legacy path, where the gateway handles STOP itself. The Cloud needs no change; without the gateway's turn context it uses its own store and gates.
@@ -201,5 +201,5 @@ Network service sends → POST Eliza Cloud /api/internal/network/deliver (signed
 
 ## 9. When you finish
 
-- Update `docs/deploy.md` and `docs/runbook-platform.md` with what changed. Put a short status note in `docs/mvp-plan.md`.
+- Update `docs/deploy.md` and `docs/runbook-platform.md` with what changed. Record current rollout evidence in the owner tracker.
 - Tell both owners in one message what you changed. Report to the founder what is live, what is still off, and any secret you were waiting on.

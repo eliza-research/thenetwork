@@ -1,5 +1,7 @@
 # MVP gaps: what is left before the slop.date pilot in NYC
 
+> Historical gap analysis. Use the [product spec](../spec/product/README.md) and [pilot plan](../spec/product/pilot.md) for current requirements. Use [issue #22](https://github.com/eliza-research/thenetwork/issues/22) for current owner actions.
+
 Status: 2026-10-08, checked against `origin/main` b2bb4d6; sections 0a-0b and the relay, probe-photo and adversarial rows re-checked on 2026-10-10 against `origin/main` b53bd86 (after the cleanup in [CLEANUP-REPORT.md](CLEANUP-REPORT.md)). This is the detailed companion to [mvp-plan.md](mvp-plan.md). It started as a read-only gap analysis of c60db0a; paths and test references were updated for the cleaned repo (`packages/blooio`, `packages/sim/src/apps`, `bun run sim`, no unit or e2e tests). Gate numbers are quoted from `bun run sim` and the results docs. The PRD Google Doc (Sections 28, 37, 40) is canonical.
 
 The frame (founder decisions):
