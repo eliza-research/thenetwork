@@ -21,6 +21,8 @@ export type InteractionOutcome =
 /** A past opportunity and how it ended (from the opportunity workflow / event log). */
 export interface InteractionRecord {
   id: string; kind: OpportunityKind; category: Category; participants: MemberId[];
+  /** Shared opportunity when several participant reports describe the same interaction. */
+  opportunityId?: string;
   at: number; outcome: InteractionOutcome; declinedBy?: MemberId[]; contributors?: MemberId[];
   /** Invitees who said yes (engine-visible responsiveness history; v1.2 acceptance estimate). */
   acceptedBy?: MemberId[];

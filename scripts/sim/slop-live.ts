@@ -18,7 +18,10 @@
 // probe passes the leak guard, names no one and is slop's copy, the booked copy and the check-in are
 // slop's, one date at a time, at most 3 proactive texts a day.
 // TRACKED: the quality numbers (probes, mutual yes per probe, dates booked and held).
-import { DAY, type MemberId, type RunRecord } from "../../packages/core/src/index.ts";
+import { DAY, HOUR, type MemberId, type RunRecord } from "../../packages/core/src/index.ts";
+import { appearanceFacet, localEmbed, resolveConfig, SLOP_DEFAULT_OPTIONS, World as EngineWorld, slopProfiles } from "../../packages/engine/src/index.ts";
+import { ratingFloorLift } from "../../packages/engine/src/packs/slop/assign.ts";
+import { Mini } from "../../packages/network/test/mini.ts";
 import { SLOP_ASK_QUESTIONS, SLOP_ONBOARD_QUESTIONS } from "../../packages/engine/src/packs/slop/index.ts";
 import { findLeaks } from "../../packages/core/src/guard.ts";
 import { computeMetrics } from "../../packages/sim/src/judge/metrics.ts";
@@ -167,6 +170,53 @@ export async function runSlopLive(seed: number, o: { days?: number; n?: number }
 }
 
 export async function slopLiveArm(b: Block, o: { quick: boolean }): Promise<void> {
+  await b.run("slop-live: both check-ins count one date, including after restart", async () => {
+    for (const seed of [1, 2, 3]) {
+      const wiring = appWiring("slop");
+      const ids = Array.from({ length: 10 }, (_, i) => `member${i}`);
+      const w = new Mini(ids.map((id, i) => ({ id, name: `Person ${i}`, age: 30, interests: ["climbing"], shareable: true,
+        romance: { is: i % 2 ? "woman" : "man", seeks: [i % 2 ? "man" : "woman"] },
+      })), { seed, app: "slop", review: "human", pack: wiring.pack, hooks: wiring.hooks, plans: wiring.plans ?? true, engine: wiring.engine });
+      for (const [i, id] of ids.entries()) {
+        await w.say(id, "Hi");
+        await w.say(id, `I'm a ${i % 2 ? "woman looking for men" : "man looking for women"}, aged 30. Ages 25-40, within 10 miles of 11211. Looking for a long-term relationship. I like climbing. My schedule varies.`);
+        await w.say(id, "Yes, that's right.");
+        // Synthetic stored ratings exercise the production exposure floor; no photo/rater claim.
+        w.facets.push(appearanceFacet(id, { age: 30 }, { face: 0, body: 0, overall: i / 5 - 1, confidence: 1, model: "synthetic-fixture" }, w.clock.now()));
+      }
+      const book = async (pair: string[], answer = "Saturday afternoon") => {
+        const opp = w.propose(pair, { category: "romance", objective: "coffee" });
+        expect(await w.runUntil(() => w.net.reviewQueue().some(q => q.oppId === opp))).toBe(true);
+        expect(w.sent.some(m => m.meta.probe?.key === opp)).toBe(false);
+        expect(w.net.review(opp, "approve", { reviewer: "sim" })).toBe(true);
+        const n = w.meetings.length;
+        await w.answerProbes(pair, () => answer);
+        expect(w.meetings.length).toBe(n + 1);
+      };
+      for (let i = 0; i < 10; i += 2) await book(ids.slice(i, i + 2));
+      await w.run(Math.max(...w.meetings.map(m => m.at)) + 3 * HOUR - w.clock.now());
+      expect(ids.map(id => slopProfiles(w.net.packInput(w.clock.now())).get(id)!.history.dates)).toEqual(ids.map(() => 0));
+      for (let i = 0; i < 10; i += 2) await w.say(ids[i]!, "It went well, thanks!");
+      const state = () => {
+        const input = w.net.packInput(w.clock.now());
+        return { dates: ids.map(id => slopProfiles(input).get(id)!.history.dates),
+          lift: [...ratingFloorLift(SLOP_DEFAULT_OPTIONS, new EngineWorld(input, resolveConfig(wiring.engine), localEmbed, wiring.pack), ids)],
+          feedback: input.feedback!.length, interactions: input.interactions!.length };
+      };
+      expect(state()).toEqual({ dates: ids.map(() => 1), lift: [], feedback: 5, interactions: 5 });
+      w.restart();
+      for (const i of [1, 3]) await w.say(ids[i]!, "It went well, thanks!");
+      w.restart();
+      expect(state()).toEqual({ dates: ids.map(() => 1), lift: [], feedback: 7, interactions: 7 });
+      // A different opportunity with a returning member still counts as another date.
+      await book([ids[0]!, ids[3]!], "yes");
+      await w.run(w.meetings.at(-1)!.at + 3 * HOUR - w.clock.now());
+      for (const i of [3, 0]) await w.say(ids[i]!, "It went well, thanks!");
+      w.restart();
+      expect(state().dates).toEqual(ids.map((_, i) => i === 0 || i === 3 ? 2 : 1));
+      expect([state().feedback, state().interactions]).toEqual([9, 9]);
+    }
+  });
   const seeds = o.quick ? [SLOP_LIVE_PINNED.seeds[0]!] : SLOP_LIVE_PINNED.seeds;
   const runs: SlopLiveRun[] = [];
   for (const s of seeds) runs.push(await runSlopLive(s, o.quick ? { days: 14 } : {}));
