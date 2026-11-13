@@ -10,6 +10,8 @@ Check queue claims, caps, leak checks, receipt reconciliation, and uncertain del
 
 The [participation budgets](../participationBudgets.md) supply the engine and Network's default state and lane caps. This queue model starts after the attention controller has applied those caps and models its own person-level and provider limits.
 
+Production uses the generated [provider receipt lifecycle](../outboundReceipt.md) to decide retry, receipt recovery and status updates.
+
 Imported from `quint/outbound_queue.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint

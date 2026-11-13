@@ -11,7 +11,7 @@ import { SimClock } from "../../core/src/clock.ts";
 import { applySchema, devPgUp, DEV_PG_PORT } from "../../observatory/db/dev-pg.ts";
 import { pgAvailable } from "../../observatory/test/pg.ts";
 import { OutboundQueue, type AppChecks, type QueueOptions } from "../src/outbound-queue.ts";
-import { ChannelSendError, type ChannelAdapter, type SendRequest } from "../src/types.ts";
+import { ChannelSendError, type ChannelAdapter, type SendRequest, type StatusUpdate } from "../src/types.ts";
 
 const user = process.env.USER ?? "postgres";
 const db = `blooio_queue_${randomUUID().replaceAll("-", "")}`;
@@ -88,6 +88,21 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
     await w1.drain();
     expect(calls.map(c => c.idempotencyKey)).toEqual(["tn:lease-1"]);
     expect(await w2.statusOf("lease-1")).toBe("sent");
+  });
+
+  test("concurrent provider updates retain the latest delivery status", async () => {
+    const { provider } = recorder();
+    const q1 = queue(a, provider), q2 = queue(b, provider);
+    await q1.enqueue(a, [{ id: "receipt-order", to: "+12125556709", kind: "transactional", text: "Here is your update.", timeZone: NY }]);
+    await q1.drain();
+    expect(await q1.statusOf("receipt-order")).toBe("sent");
+    const receipt = (status: StatusUpdate["status"]): StatusUpdate =>
+      ({ kind: "status", channel: "sim", providerMessageId: "sim:tn:receipt-order", status, at: clock.now() });
+    // spec/outboundReceipt.md, "A provider receipt advances through acceptance, send, delivery, and read"
+    await Promise.all([q1.applyStatus(receipt("read")), q2.applyStatus(receipt("delivered"))]);
+    expect(await q1.statusOf("receipt-order")).toBe("read");
+    expect(await q1.applyStatus(receipt("failed"))).toBeUndefined();
+    expect(await q2.applyStatus(receipt("sent"))).toBeUndefined();
   });
 
   test("unknown acceptance: an authoritative 'never admitted' sends again with the same key; a row nothing resolves ends failed_unknown after its TTL, and both are counted while they wait", async () => {
