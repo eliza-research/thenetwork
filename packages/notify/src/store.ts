@@ -33,7 +33,7 @@ export interface NotifyStore {
   /** Mark unseen items seen. `ids` omitted = all of the person's. Returns the ids changed. */
   markSeen(personId: string, surface: Surface, now: number, ids?: string[]): Promise<string[]>;
 
-  /** Record a delivery and mark its items notified, atomically. False if the delivery id exists. */
+  /** Record and claim items atomically. False if the delivery id exists or any item is already notified. */
   recordDelivery(d: DeliveryRecord): Promise<boolean>;
   getDelivery(deliveryId: string): Promise<DeliveryRecord | undefined>;
   /** Send times of cap-counting deliveries to a person at or after `since`. */
@@ -110,6 +110,7 @@ export class MemoryNotifyStore implements NotifyStore {
 
   async recordDelivery(d: DeliveryRecord) {
     if (this.deliveries.has(d.deliveryId)) return false;
+    if (d.itemIds.some(id => this.items.get(id)?.notifiedAt !== undefined)) return false;
     this.deliveries.set(d.deliveryId, { ...d, itemIds: [...d.itemIds] });
     for (const id of d.itemIds) {
       const i = this.items.get(id);

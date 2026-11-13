@@ -103,6 +103,11 @@ export class PgNotifyStore implements NotifyStore {
 
   async recordDelivery(d: DeliveryRecord) {
     return this.sql.begin(async tx => {
+      // Different digests can overlap when an item arrives between replica plans.
+      // Lock in item order, then reject the whole stale batch before recording it.
+      const items = await tx`select notified_at from notify.inbox_items
+        where id = any(${tx.array(numIds(d.itemIds), "int8")}) order by id for update`;
+      if (items.some((r: Row) => r.notified_at !== null)) return false;
       const ins = await tx`
         insert into notify.deliveries (delivery_id, person_id, item_ids, target, counts_toward_cap, sent_at)
         values (${d.deliveryId}, ${d.personId}, ${tx.array(numIds(d.itemIds), "int8")}, ${d.target}, ${d.countsTowardCap}, ${new Date(d.sentAt)})
