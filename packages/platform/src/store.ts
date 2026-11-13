@@ -135,6 +135,13 @@ export interface PeopleStore {
   putSession(s: Session): Promise<void>;
   getSession(tokenHash: string): Promise<Session | undefined>;
   revokeSession(tokenHash: string, at: number): Promise<void>;
+  /**
+   * A staff ban ends every live web session and open OTP challenge for this person
+   * (PRD 40.3 / go-live-handoff: a banned number cannot keep acting with a cookie, and a
+   * code sent before the ban cannot finish a login). Mirrors the phone-change path that
+   * ends the old number's sessions.
+   */
+  endAuthForBan(personId: string, at: number): Promise<void>;
   /** Sessions of a verified phone that had no person get the person after a join. */
   attachPerson(e164: string, personId: string): Promise<void>;
 
@@ -302,6 +309,16 @@ export class MemoryPeopleStore implements PeopleStore {
   async putSession(s: Session) { this.sessions.set(s.tokenHash, { ...s }); }
   async getSession(tokenHash: string) { const s = this.sessions.get(tokenHash); return s && { ...s }; }
   async revokeSession(tokenHash: string, at: number) { const s = this.sessions.get(tokenHash); if (s) s.revokedAt = s.revokedAt === null ? at : Math.min(s.revokedAt, at); }
+  async endAuthForBan(personId: string, at: number) {
+    const e164s = new Set<string>();
+    for (const [e164, ph] of this.phones) if (ph.personId === personId) e164s.add(e164);
+    for (const s of this.sessions.values()) {
+      if (s.personId === personId || e164s.has(s.e164)) {
+        s.revokedAt = s.revokedAt === null ? at : Math.min(s.revokedAt, at);
+      }
+    }
+    for (const [id, c] of this.challenges) if (e164s.has(c.e164)) this.challenges.delete(id);
+  }
   async attachPerson(e164: string, personId: string) { for (const s of this.sessions.values()) if (s.e164 === e164 && s.personId === null) s.personId = personId; }
 
   async hit(bucket: string, windowMs: number, at: number, rule: HitRule = {}) {

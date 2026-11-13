@@ -170,6 +170,9 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const after = await (await staff(s, "saf-tok", "GET", "/apps/slop/safety/reports")).json() as any;
     expect(after.reports[0].status).toBe("banned");
 
+    // Live web session from before the ban must end (PRD 40.3): the banned number cannot keep acting with the cookie.
+    expect((await web.json("friends", "GET", "/api/me")).status).toBe(401);
+
     // The banned number cannot join any other app, by text or on the web; nothing is stored and nothing is answered.
     const before = directs.length;
     expect(await text(s, clock, ben, "peon")).toBe("held");
