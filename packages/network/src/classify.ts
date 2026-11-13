@@ -184,6 +184,11 @@ const AGE_END = `(?=\\s*(?:${CLAUSE_END}|${YEARS_OLD}))`;
 // "I'm 2 years in nyc now" must never decline an adult (a decline deletes the member's data).
 // Also "actually", "tbh", "honestly", "fyi" and "last week": "I'm 15 actually", "I turned 13 last week".
 const AGE_END_LOOSE = `(?=\\s*(?:${CLAUSE_END}|${YEARS_OLD}|and\\b|now\\b|too\\b|turning\\b|actually\\b|tbh\\b|honestly\\b|fyi\\b|last (?:week|month|year)\\b|yesterday\\b|recently\\b|in (?:high|middle) school\\b))`;
+// A status word in front of a school claim: "I'm still in 11th grade", "I'm currently in high school".
+// "still" was already allowed for "in high school" and "in middle school", and not for a grade.
+const SCHOOL_ADV = "(?:(?:still|currently|actually|now)\\s+)?";
+// After a grade, the same loose endings as a number ("I'm in 11th grade tbh"). "classrooms" does not end it.
+const GRADE_END = `(?=\\s*(?:${CLAUSE_END}|and\\b|now\\b|too\\b|actually\\b|tbh\\b|honestly\\b|fyi\\b))`;
 /** "15f", "16 m", "15/f": an age and a sex, the way teens introduce themselves. Never "15m away" or "raised 15m". */
 const AGE_SEX_END = "(?=\\s*(?:$|[.,!?;:)]|here\\b|lol\\b|btw\\b|from\\b|in\\b|looking\\b|nyc\\b|bk\\b))";
 const atLeast13 = (n: number) => (n >= 13 ? n : NaN);
@@ -223,18 +228,20 @@ const AGE_RX: AgeRule[] = [
   // "I'm a minor", "I'm under 18", "I'm underage": a minor (17 fails closed; never a decline).
   { rx: new RegExp(`\\b${ME}\\s+(?:a minor|underage|under ?age|under 18|not 18 yet|not (?:an )?adult yet)\\b`), age: () => 17 },
   // School year: "I'm a sophomore in high school", "I'm a high school junior", "junior at Lincoln High", "I'm in 7th grade", "9th grader".
-  { rx: new RegExp(`\\b${ME}\\s+(?:a\\s+)?(freshman|sophomore|junior|senior)\\s+(?:in|at)\\s+(?:high school|hs)\\b`), age: m => SCHOOL_YEAR[m[1]!]! },
-  { rx: new RegExp(`\\b${ME}\\s+(?:a\\s+)?(freshman|sophomore|junior|senior)\\s+(?:in|at)\\s+[\\w' .-]{1,30}?\\bhigh(?: school)?\\b`), age: m => SCHOOL_YEAR[m[1]!]! },
-  { rx: new RegExp(`\\b${ME}\\s+a\\s+(?:high school|hs)\\s+(freshman|sophomore|junior|senior|student)\\b`), age: m => SCHOOL_YEAR[m[1]!] ?? 15 },
-  { rx: new RegExp(`\\b${ME}\\s+a\\s+(6|7|8|9|10|11|12)(?:st|nd|rd|th)\\s+grader\\b`), age: m => Number(m[1]) + 5 },
+  // A status word may sit in front: "I'm still a junior in high school", "I'm currently a high school senior".
+  { rx: new RegExp(`\\b${ME}\\s+${SCHOOL_ADV}(?:a\\s+)?(freshman|sophomore|junior|senior)\\s+(?:in|at)\\s+(?:high school|hs)\\b`), age: m => SCHOOL_YEAR[m[1]!]! },
+  { rx: new RegExp(`\\b${ME}\\s+${SCHOOL_ADV}(?:a\\s+)?(freshman|sophomore|junior|senior)\\s+(?:in|at)\\s+[\\w' .-]{1,30}?\\bhigh(?: school)?\\b`), age: m => SCHOOL_YEAR[m[1]!]! },
+  { rx: new RegExp(`\\b${ME}\\s+${SCHOOL_ADV}a\\s+(?:high school|hs)\\s+(freshman|sophomore|junior|senior|student)\\b`), age: m => SCHOOL_YEAR[m[1]!] ?? 15 },
+  { rx: new RegExp(`\\b${ME}\\s+${SCHOOL_ADV}a\\s+(6|7|8|9|10|11|12)(?:st|nd|rd|th)\\s+grader\\b`), age: m => Number(m[1]) + 5 },
   // "grade" must end the clause: "I'm in 7th grade classrooms all day as a teacher" is not an age.
-  { rx: new RegExp(`\\b${ME}\\s+in\\s+(?:the\\s+)?(6|7|8|9|10|11|12)(?:st|nd|rd|th)?\\s+grade(?=\\s*(?:${CLAUSE_END}|and\\b|now\\b))`), age: m => Number(m[1]) + 5 },
-  { rx: new RegExp(`\\b${ME}\\s+in\\s+(?:the\\s+)?(sixth|seventh|eighth|ninth|tenth|eleventh|twelfth)\\s+grade(?=\\s*(?:${CLAUSE_END}|and\\b|now\\b))`), age: m => ORDINAL[m[1]!]! + 5 },
+  // "still", "currently", "actually" and "now" may sit in front: "I'm still in 11th grade".
+  { rx: new RegExp(`\\b${ME}\\s+${SCHOOL_ADV}in\\s+(?:the\\s+)?(6|7|8|9|10|11|12)(?:st|nd|rd|th)?\\s+grade${GRADE_END}`), age: m => Number(m[1]) + 5 },
+  { rx: new RegExp(`\\b${ME}\\s+${SCHOOL_ADV}in\\s+(?:the\\s+)?(sixth|seventh|eighth|ninth|tenth|eleventh|twelfth)\\s+grade${GRADE_END}`), age: m => ORDINAL[m[1]!]! + 5 },
   // Middle school (ages 11-14) alone fails closed to "minor", not to "under 13": a decline deletes the
   // member's data, so it needs an explicit age or grade ("I'm 12", "I'm in 6th grade").
-  { rx: new RegExp(`\\b(?:${ME}\\s+(?:still\\s+)?(?:in|at)|i go to)\\s+middle school\\b(?!\\s*(?:teacher|counselor|principal|nurse|coach|librarian|aide|staff))|\\bi'?m a\\s+middle schooler\\b`), age: () => 13 },
-  { rx: new RegExp(`\\b(?:${ME}\\s+(?:still\\s+)?(?:in|at)|i go to)\\s+high school\\b`), age: () => 15 },
-  { rx: new RegExp(`\\b${ME}\\s+a\\s+(?:high schooler|hs student|high school student)\\b`), age: () => 15 },
+  { rx: new RegExp(`\\b(?:${ME}\\s+${SCHOOL_ADV}(?:in|at)|i go to)\\s+middle school\\b(?!\\s*(?:teacher|counselor|principal|nurse|coach|librarian|aide|staff))|\\b${ME}\\s+${SCHOOL_ADV}a\\s+middle schooler\\b`), age: () => 13 },
+  { rx: new RegExp(`\\b(?:${ME}\\s+${SCHOOL_ADV}(?:in|at)|i go to)\\s+high school\\b`), age: () => 15 },
+  { rx: new RegExp(`\\b${ME}\\s+${SCHOOL_ADV}a\\s+(?:high schooler|hs student|high school student)\\b`), age: () => 15 },
 ];
 
 /**
