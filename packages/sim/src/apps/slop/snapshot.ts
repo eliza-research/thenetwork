@@ -331,7 +331,7 @@ export function buildSlopSnapshot(personas: readonly SlopPersona[], state: SlopN
   }
   return {
     now: state.now, members, facets, intents, presence, edges: state.edges.map(e => ({ ...e })), recentProposals: [],
-    interactions: state.interactions.map(i => ({ ...i })), feedback: state.feedback.map(f => ({ ...f })),
+    interactions: state.interactions.map(i => ({ ...i })), feedback: state.feedback.filter(f => f.at <= state.now).map(f => ({ ...f })),
     safetyHolds: state.safetyHolds.map(h => ({ ...h })), inboundAsks: state.inboundAsks.map(a => ({ ...a })),
     asks: (state.asks ?? []).map(a => ({ ...a })),
   };
