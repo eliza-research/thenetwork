@@ -104,6 +104,10 @@ export async function evalsBlock(b: Block): Promise<void> {
   b.gate(`areas: recall >= 0.9 (n ${areas.length})`, areas.length >= 190 && areaRecall >= 0.9, areaRecall.toFixed(3));
   const defaulted = unknown.filter(l => extractProfile(l.text).area !== undefined).map(l => l.text);
   b.gate("areas: an unknown place is never defaulted", defaulted.length === 0 && extractProfile("I live in Hoboken").areaUnknown === true, defaulted.slice(0, 5).join(" | "));
+  // A known neighborhood's standard abbreviation resolves like every other multi-word neighborhood's
+  // ("Wash Heights", "Crown Hts", "Bed Stuy"): "Ft Greene" / "Ft. Greene" is Fort Greene.
+  const ftGreene = ["based in Ft Greene", "I'm in ft. greene", "live in ft greene near the park"].filter(t => extractProfile(t).area !== "Fort Greene");
+  b.gate("areas: the Ft/Ft. abbreviation of Fort Greene resolves", ftGreene.length === 0, ftGreene.join(" | "));
 
   const neg = await jsonl<{ text: string }>("network/negations.jsonl");
   const negBad = neg.filter(l => { const x = extractProfile(l.text); return x.desireIds.length || x.interests.length || classify(l.text).kind === "people_request"; }).map(l => l.text);

@@ -379,7 +379,7 @@ const AREA_ALIASES: [RegExp, string][] = [
   [/\b(lic|long island city)\b/, "Long Island City"], [/\bdumbo\b/, "DUMBO"], [/\bsoho\b/, "SoHo"], [/\b(wash(ington)? heights)\b/, "Washington Heights"],
   [/\bcrown (heights|hts)\b/, "Crown Heights"], [/\bprospect (heights|hts)\b/, "Prospect Heights"], [/\bjackson (heights|hts)\b/, "Jackson Heights"],
   [/\b(st\.? george)\b/, "St. George"], [/\b(e\.? ?village|east vill(age)?)\b/, "East Village"], [/\b(w\.? ?village|west vill(age)?)\b/, "West Village"],
-  [/\bwilliamsburg|\bwburg\b|\bbillyburg\b/, "Williamsburg"], [/\bgreenpoint\b/, "Greenpoint"], [/\bbushwick\b/, "Bushwick"], [/\bfort greene\b/, "Fort Greene"],
+  [/\bwilliamsburg|\bwburg\b|\bbillyburg\b/, "Williamsburg"], [/\bgreenpoint\b/, "Greenpoint"], [/\bbushwick\b/, "Bushwick"], [/\b(?:fort|ft\.?) greene\b/, "Fort Greene"],
   [/\bpark slope\b|\bthe slope\b/, "Park Slope"], [/\bcarroll gardens\b/, "Carroll Gardens"], [/\bred hook\b/, "Red Hook"], [/\bsunset park\b/, "Sunset Park"], [/\bbay ridge\b/, "Bay Ridge"],
   [/\bflatbush\b/, "Flatbush"], [/\bastoria\b/, "Astoria"], [/\bsunnyside\b/, "Sunnyside"], [/\bridgewood\b/, "Ridgewood"], [/\bflushing\b/, "Flushing"],
   [/\bmott haven\b/, "Mott Haven"], [/\briverdale\b/, "Riverdale"], [/\binwood\b/, "Inwood"], [/\beast harlem\b|\bspanish harlem\b|\bel barrio\b/, "East Harlem"],
@@ -407,7 +407,7 @@ export interface Profile {
 
 /** The neighborhood a text names as the sender's place, or { unknown } when it names a place the Network does not know. */
 export function areaOf(text: string): { area?: string; unknown?: boolean } {
-  const t = normText(text).replace(/\bst\.\s*/g, "st ");
+  const t = normText(text).replace(/\b(st|ft)\.\s*/g, "$1 ");
   for (const s of sentencesOf(t)) {
     // The first neighborhood named as home in the sentence ("between Greenpoint and Williamsburg": Greenpoint).
     let best: { at: number; name: string } | undefined;
