@@ -10,6 +10,8 @@ Check selection, repeat actions, deadline, direction, and draft ownership. The m
 
 Imported from `quint/review_desk.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
+The browser calls the [staff review controller](../staffReview.md) for selected card, mode, draft scope, and response ownership. The standalone model also explores server races and matching controls.
+
 ```quint
 // -*- mode: Bluespec; -*-
 // quint-check: max-steps=30 max-samples=20000

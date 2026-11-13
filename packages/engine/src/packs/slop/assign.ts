@@ -9,6 +9,7 @@
 // a backup the harness / dispatcher only sends when round 1 failed), so nobody is flooded with probes
 // and every probe is one the member can act on (one first date at a time).
 import type { MemberId } from "@thenetwork/core";
+import { canReservePair, initial, step } from "../../../../core/src/generated/slopAssignment.ts";
 import type { AssignContext } from "../../pack.ts";
 import type { Selected, SelectionResult } from "../../policy.ts";
 import type { Scored } from "../../scoring.ts";
@@ -94,20 +95,26 @@ export function slopAssign(o: SlopPackOptions, w: World, scored: readonly Scored
     edges.sort((p, q) => (tier(p) - tier(q)) || (bucket(q.v) - bucket(p.v)) || (gap(p) - gap(q)) || (q.v - p.v) || (p.s.c.key < q.s.c.key ? -1 : 1));
   } else edges.sort((p, q) => (tier(p) - tier(q)) || (q.v - p.v) || (p.s.c.key < q.s.c.key ? -1 : 1));
 
-  const count = new Map<MemberId, number>();
-  const used = new Set<string>();
   const selected: Selected[] = [];
-  const rounds = Math.max(1, C.perMemberPerTick, C.backupMaxDegree > 0 ? 2 : 1);
-  for (let round = 1; round <= rounds; round++) {
-    const backupOnly = round > C.perMemberPerTick;
-    const avail = edges.filter(e => !used.has(pairKey(e.a, e.b)) && (count.get(e.a) ?? 0) < round && (count.get(e.b) ?? 0) < round
-      && (!backupOnly || Math.min(degree.get(e.a) ?? 0, degree.get(e.b) ?? 0) <= C.backupMaxDegree));
+  // spec/slopAssignment.md, "Assignment opens each configured round once in order"
+  const configuredRounds = Math.floor(Math.max(1, C.perMemberPerTick, C.backupMaxDegree > 0 ? 2 : 1));
+  const totalRounds = Number.isNaN(configuredRounds) ? 0 : Math.min(configuredRounds, edges.length);
+  const baseRounds = Math.max(0, Math.min(Math.floor(C.perMemberPerTick), totalRounds)) || 0;
+  let run = step(initial, { type: "configureAssignment", totalRounds, baseRounds });
+  const withinBackupDegree = (e: Edge) => Math.min(degree.get(e.a) ?? 0, degree.get(e.b) ?? 0) <= C.backupMaxDegree;
+  while (run.phase === "BetweenRounds") {
+    run = step(run, { type: "openRound" });
+    const avail = edges.filter(e => canReservePair(run, pairKey(e.a, e.b), e.a, e.b, withinBackupDegree(e)));
     const chosen = o.assignment === "stable" ? stableRound(avail) : greedyRound(avail);
     for (const e of chosen) {
-      used.add(pairKey(e.a, e.b));
-      count.set(e.a, (count.get(e.a) ?? 0) + 1); count.set(e.b, (count.get(e.b) ?? 0) + 1);
-      selected.push({ s: e.s, exploration: false, rank: selected.length, probability: 1 });
+      // spec/slopAssignment.md, "Each pair can be reserved once and each member can participate once per round"
+      const next = step(run, { type: "reservePair", pairKey: pairKey(e.a, e.b),
+        memberA: e.a, memberB: e.b, withinBackupDegree: withinBackupDegree(e) });
+      if (next === run) throw new Error(`Assignment reservation refused for ${e.s.c.key}`);
+      run = next;
+      selected.push({ s: e.s, exploration: false, rank: run.proposed - 1, probability: 1 });
     }
+    run = step(run, { type: "closeRound" });
   }
   return { selected, budgetSkips: edges.length - selected.length };
 }

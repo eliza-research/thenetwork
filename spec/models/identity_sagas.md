@@ -8,6 +8,8 @@ A person needs identity and consent to follow their account through phone change
 
 Check bans, new ownership, STOP, and reconciliation after interrupted account changes. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
+The [phone change spec](../phoneChange.md) generates the account service's challenge and confirmation transitions. The separate saga models storage state, interleavings, consent and related cleanup.
+
 Imported from `quint/identity_sagas.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint

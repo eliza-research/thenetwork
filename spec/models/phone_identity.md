@@ -8,6 +8,8 @@ A person needs each supported representation of their phone number to resolve to
 
 Check number normalization, ownership, and bans across entry points. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
+The [phone change spec](../phoneChange.md) generates challenge and confirmation decisions for changing the number on an existing account. Number normalization and provider checks still belong to the shell.
+
 Imported from `quint/phone_identity.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
