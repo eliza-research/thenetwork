@@ -50,11 +50,12 @@ in a top-level Vibespec module. For a flow with I/O or concurrency, use the
 | Hiring | [Job posting policy](../postingPolicy.md) |
 | Inbox | [Notification delivery](../notificationDelivery.md) |
 | Group plans | [Plan decisions](../planDecision.md) |
+| Member profile | [Saved profile reads](../savedProfileRead.md) |
 | Conversation infrastructure | [Structured reply retries](../chatRetry.md) |
 
 The product directory also records provider, rollout, and human requirements
-that need separate evidence. Each generated module covers its stated decision
-boundary. The flow models still cover storage, concurrent work, browser and
+that need separate evidence. Saved-profile reads and structured request retries use generated state
+transitions. The other generated modules cover the decisions in their rules. The flow models still cover storage, concurrent work, browser and
 provider events, and the effect of failures on the whole journey.
 
 ## Sources

@@ -8,6 +8,8 @@ A member needs to read their own saved profile without restarting onboarding or 
 
 Check ownership, app scope, opt-out, revision, and expiry. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
+The [saved-profile read spec](../savedProfileRead.md) generates the production classification and resolution steps for flow A. Its terminal outcomes match this flow's `Reply` values. The standalone model still covers routing, membership state and suggestion batches.
+
 Imported from `quint/profile_read.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint

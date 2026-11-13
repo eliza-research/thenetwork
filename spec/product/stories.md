@@ -50,7 +50,7 @@ Models: [join flow](../models/join_flow.md), [profile learning](../models/profil
 
 Return the person's own app profile, with source and scope as applicable. Ask for explicit approval to correct, remove or change how a fact may be used. Remove its derived data where required and apply the change at the next relevant engine read. A saved-profile readback must not advance onboarding or claim a pending draft was saved.
 
-Models: [profile read](../models/profile_read.md), [profile learning](../models/profile_learning.md).
+Models: [generated saved-profile read](../savedProfileRead.md), [profile read flow](../models/profile_read.md), [profile learning](../models/profile_learning.md).
 
 ## Story F6 — Answer a useful follow-up
 

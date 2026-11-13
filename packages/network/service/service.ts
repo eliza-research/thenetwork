@@ -42,6 +42,7 @@ import { effectiveParticipation, automatedFacetPredicate } from "./snapshot.ts";
 import { ProfileSuggestions, type SuggestionAuthorization } from "./profile-suggestions.ts";
 import { profileReviewFromEnv } from "./profile-review-factory.ts";
 import { profileReadRequest, savedProfileText } from "./profile-read.ts";
+import { step as stepProfileRead } from "../../core/src/generated/savedProfileRead.ts";
 import { Inbox, type CollectedReply } from "./inbox.ts";
 import { networkRoutePolicy, routeEnvelopeAllowed, sameNetworkAuthority, type NetworkRoutePolicy } from "./route-authority.ts";
 import { TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH, RELAY_PHOTO_RESOLVE_PATH, parseApprovedRelayPhotos, type SetStateRequest, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
@@ -964,7 +965,7 @@ export class NetworkService implements RuntimeHost {
       if (r && isAppId(r.app_id)) return { app: r.app_id, shared: false };
     }
     const read = profileReadRequest(ev.text, this.apps);
-    if (read?.kind === "read" && read.app) return { app: read.app, shared: true };
+    if (read?.app) return { app: read.app, shared: true };
     const named = this.namedApp(ev.text);
     if (named) return { app: named, shared: true };
     const mine = (await this.memberApps(ev.from)).filter(x => this.runtimeFor(x.app));
@@ -1251,20 +1252,32 @@ export class NetworkService implements RuntimeHost {
           const own = person && (await this.accounts.activeMembership(rt.app, { e164: e164!, personId: person.id }));
           // Recheck canonical phone/person/age/review/consent authority inside the
           // ordinary member unit. This is a reply, never a compliance exemption.
-          if (
-            !own ||
-            own.membership.memberId !== memberId ||
-            n.memberList().find((m) => m.id === memberId)?.optedOut
-          )
-            return "handled" as const;
-          const body =
-            read.kind === "ambiguous"
-              ? "Which profile should I show? For example, say: show my Friends profile."
-              : read.kind === "refused"
-                ? "I can only show the profile saved for your own number."
-                : read.app && read.app !== rt.app.id
-                  ? `This line is for ${rt.app.name}. Ask for that profile here.`
-                  : savedProfileText(rt.app, own.membership, await this.accounts.lowestAge(e164!, own.person));
+          const sameMember = !!own && own.membership.memberId === memberId;
+          const optedOut = sameMember && !!n.memberList().find((m) => m.id === memberId)?.optedOut;
+          const result = stepProfileRead(read.decision, {
+            type: "resolveRead",
+            sameMember,
+            optedOut,
+            requestedAppMatches: read.app === rt.app.id,
+          });
+          let body: string;
+          switch (result.phase) {
+            case "AskWhichApp":
+              body = "Which profile should I show? For example, say: show my Friends profile.";
+              break;
+            case "RefuseOtherProfile":
+              body = "I can only show the profile saved for your own number.";
+              break;
+            case "DifferentAppLine":
+              body = `This line is for ${rt.app.name}. Ask for that profile here.`;
+              break;
+            case "ShowOwnProfile":
+              if (!e164 || !own) return "handled" as const;
+              body = savedProfileText(rt.app, own.membership, await this.accounts.lowestAge(e164, own.person));
+              break;
+            default:
+              return "handled" as const;
+          }
           rt.system(memberId, `sys:${rowId}`, body, "reply", "profile_read");
           return "handled" as const;
         } finally {

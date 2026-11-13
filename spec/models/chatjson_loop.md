@@ -8,6 +8,8 @@ A caller needs a validated response or a failure within the attempt and time bud
 
 Check retries, deadlines, successful validation, and the distinction between exhaustion and early stop. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
+The [structured request spec](../chatRetry.md) generates the state machine used in production. This reference model also represents elapsed time, bounded client duration, and an abort during a client call.
+
 Imported from `quint/chatjson_loop.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint

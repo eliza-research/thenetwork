@@ -1,7 +1,8 @@
+import { initial, step as stepProfileRead, type ProfileRead } from "../../core/src/generated/savedProfileRead.ts";
 import { APPS, keywordApp, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import type { Membership } from "../../platform/src/store.ts";
 
-export type ProfileReadRequest = { kind: "read"; app?: AppId } | { kind: "ambiguous" } | { kind: "refused" };
+export type ProfileReadRequest = { decision: ProfileRead; app?: AppId };
 
 /** Only an explicit own-profile read selects an app within a sentence. */
 export function profileReadRequest(
@@ -27,27 +28,26 @@ export function profileReadRequest(
     /^(?:please )?(?:show|read)(?: me| back| me back)? (.+)$/u.exec(t) ??
     /^what does (.+) say$/u.exec(t) ??
     /^what is (.+)$/u.exec(t);
-  if (!read || !/\bprofiles?\b/u.test(read[1]!)) return;
-  // A combined read/edit is still an edit request, never a read-only operation.
-  if (
-    /\b(?:edit|change|update|delete|remove|replace|set|save|join|leave|stop|start|add|enroll|suggest|introduce)\b/u.test(
-      t,
-    )
-  )
-    return;
-  let subject = read[1]!;
-  if (subject.startsWith("my ")) subject = subject.slice(3);
-  else if (subject.startsWith("the ") && subject.endsWith(" i saved")) subject = subject.slice(4, -8);
-  else return { kind: "refused" };
-  subject = subject.replace(/ (?:i saved|you saved|you have saved)$/u, "");
-  if (!/\bprofiles?$/u.test(subject)) return { kind: "ambiguous" };
+  const raw = read?.[1] ?? "";
+  const ownSubject = raw.startsWith("my ") || (raw.startsWith("the ") && raw.endsWith(" i saved"));
+  const subject = raw.replace(/^(?:my|the) /u, "").replace(/ (?:i saved|you saved|you have saved)$/u, "");
   const appText = subject
     .replace(/\bprofiles?$/u, "")
     .replace(/\b(?:saved|stored|current)\b/gu, "")
     .trim();
-  if (!appText) return { kind: "read" };
-  const app = keywordApp(appText, apps);
-  return app ? { kind: "read", app } : { kind: "ambiguous" };
+  const app = appText ? keywordApp(appText, apps) : undefined;
+  const facts = {
+    readForm: !!read,
+    namesProfile: /\bprofiles?\b/u.test(raw),
+    asksChange: /\b(?:edit|change|update|delete|remove|replace|set|save|join|leave|stop|start|add|enroll|suggest|introduce)\b/u.test(t),
+    ownSubject,
+    endsWithProfile: /\bprofiles?$/u.test(subject),
+    hasAppName: !!appText,
+    appKnown: app !== undefined,
+  };
+  const decision = stepProfileRead(initial, { type: "classifyRead", facts });
+  if (decision.phase !== "AwaitingAuthority") return;
+  return { decision, app: decision.intent === "NamedRead" ? app : undefined };
 }
 
 /** Stored member-supplied fields only; no inferred facts, suggestions or model call. */

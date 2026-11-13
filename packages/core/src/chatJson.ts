@@ -6,7 +6,7 @@
 // Note that the core client already doubles the completion budget on empty or length-truncated
 // content (llm.ts chatCompletions); `grow` is an additional, per-attempt budget change on top.
 import { RealClock, type Clock } from "./clock.ts";
-import { afterFailure, attemptGate, hasDeadline, isFinalCode } from "./generated/chatRetry.ts";
+import { deadlineExpired, hasDeadline, initial, isFinalCode, step } from "./generated/chatRetry.ts";
 import { LLMError, parseJson, type ChatMessage, type ChatOptions, type LLM } from "./llm.ts";
 
 export interface ChatJsonOptions {
@@ -49,14 +49,29 @@ export async function tryChatJson<T>(llm: LLMSource, messages: ChatMessage[], pa
   const after = (attempt: number, ok: boolean) => { try { o.afterAttempt?.(attempt, ok); } catch { /* observer errors never discard a result */ } };
   let maxTokens = o.maxTokens;
   let error: unknown;
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    try { o.beforeAttempt?.(attempt); } catch (e) { return { ok: false, error: e, attempts: attempt, stopped: true }; }
+  // spec/chatRetry.md, "The configured attempt budget limits how many requests start"
+  const unbounded = attempts === Infinity;
+  const attemptLimit = attempts > 0 && !unbounded ? Math.ceil(attempts) : 0;
+  let run = step(initial, { type: "configure", attemptLimit, unbounded });
+  while (run.phase === "Ready") {
+    const attempt = run.attemptsStarted;
+    try { o.beforeAttempt?.(attempt); } catch (e) {
+      error = e;
+      run = step(run, { type: "stopBeforeAttempt" });
+      break;
+    }
     // spec/chatRetry.md, "Caller cancellation wins over a deadline"
-    const aborted = o.signal?.aborted === true;
-    const left = aborted || deadlineAt === undefined ? undefined : deadlineAt - clock.now();
-    const gate = attemptGate({ aborted, hasDeadline: left !== undefined, left: left ?? 0 });
-    if (gate === "aborted") return { ok: false, error: new LLMError("aborted", "chatJson aborted by caller"), attempts: attempt, stopped: true };
-    if (gate === "deadline") return { ok: false, error: new LLMError("deadline", `chatJson deadline of ${o.deadlineMs} ms reached`), attempts: attempt, stopped: true };
+    const cancelled = o.signal?.aborted === true;
+    const left = cancelled || deadlineAt === undefined ? undefined : deadlineAt - clock.now();
+    run = step(run, { type: "preflight", cancelled, expired: deadlineExpired(left !== undefined, left ?? 0) });
+    if (run.phase === "Aborted") {
+      error = new LLMError("aborted", "chatJson aborted by caller");
+      break;
+    }
+    if (run.phase === "Expired") {
+      error = new LLMError("deadline", `chatJson deadline of ${o.deadlineMs} ms reached`);
+      break;
+    }
     let value: T;
     try {
       const client = typeof llm === "function" ? llm(attempt) : llm;
@@ -69,16 +84,19 @@ export async function tryChatJson<T>(llm: LLMSource, messages: ChatMessage[], pa
       error = e;
       after(attempt, false);
       // spec/chatRetry.md, "Terminal errors stop the retry loop"
-      const next = afterFailure(e instanceof LLMError && isFinalCode(e.code), attempt, attempts);
-      if (next === "stop") return { ok: false, error: e, attempts: attempt + 1, stopped: true };
-      if (o.grow && maxTokens !== undefined) { try { maxTokens = o.grow(maxTokens); } catch { /* keep the current budget */ } }
-      if (next === "exhausted") break;
+      run = step(run, { type: "rejectReply", terminal: e instanceof LLMError && isFinalCode(e.code) });
+      if (run.phase !== "TerminalFailure" && o.grow && maxTokens !== undefined) {
+        try { maxTokens = o.grow(maxTokens); } catch { /* keep the current budget */ }
+      }
       continue;
     }
+    // spec/chatRetry.md, "A validated reply completes the request"
+    run = step(run, { type: "acceptReply" });
     after(attempt, true);
-    return { ok: true, value, attempts: attempt + 1 };
+    return { ok: true, value, attempts: run.attemptsStarted };
   }
-  return { ok: false, error, attempts, stopped: false };
+  if (run.phase === "Exhausted") return { ok: false, error, attempts, stopped: false };
+  return { ok: false, error, attempts: run.attemptsStarted, stopped: true };
 }
 
 /** Like tryChatJson, but returns the value or throws the last error. */
