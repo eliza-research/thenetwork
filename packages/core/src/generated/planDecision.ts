@@ -83,6 +83,12 @@ export function singlePlanSeedsCrew(positiveCount: number, minimum: number, minP
 
 /** Story: Turn a good plan into a recurring crew / Only accepting members join the recurring crew (spec/planDecision.md:115) */
 //@ pure
+export function crewBelowMinimum(memberCount: number, minimum: number): boolean {
+  return memberCount < minimum;
+}
+
+/** Story: Turn a good plan into a recurring crew / Only accepting members join the recurring crew (spec/planDecision.md:115) */
+//@ pure
 export function crewMembersWhoOptedIn(invitedMembers: string[], optIns: string[]): string[] {
   return invitedMembers.filter((memberId: string) => optIns.includes(memberId));
 }
