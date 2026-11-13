@@ -114,7 +114,9 @@ if (a.scenario) {
   process.exit(res.passK ? 0 : 1);
 }
 
-const n = Number(a.personas), days = Number(a.days);
+// A blank --personas is not zero personas: Number("") is 0, so the empty world used to be reported as a
+// successful run. Pass NaN through instead and let the generator's count check reject it.
+const n = a.personas.trim() === "" ? Number.NaN : Number(a.personas), days = Number(a.days);
 const genOpts = {
   n, seed, adversarialRate: a["adversarial-rate"] ? Number(a["adversarial-rate"]) : undefined,
   minorShare: a["minor-share"] !== undefined ? Number(a["minor-share"]) : undefined, joinSpreadDays: Math.min(7, days),
