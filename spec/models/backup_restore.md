@@ -8,6 +8,8 @@ An operator needs to restore a backup into a scratch database without modifying 
 
 Check target placement, manifest validation, decryption, and privilege flags. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
+The [database restore spec](../databaseRestore.md) generates the current restore command decisions. This imported model includes other branch behavior for server identity and cleanup. The current command uses the existing host and port comparison and leaves a failed scratch restore for operator cleanup.
+
 Imported from `quint/backup_restore.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint

@@ -7,7 +7,7 @@
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "deploy/backup/Dockerfile"
-watchPatterns = ["deploy/backup/**"]
+watchPatterns = ["deploy/backup/**", "packages/core/src/generated/databaseRestore.ts"]
 
 [deploy]
 startCommand = "bun run deploy/backup/backup.ts"

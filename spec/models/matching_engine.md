@@ -8,7 +8,7 @@ A member needs a match that fits their app, profile, preferences, and availabili
 
 Check candidate eligibility, profile corrections, consent flow, matching budgets, and job-seat capacity. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [global selection spec](../selectionRun.md) generates the default selector’s phase and reservation transitions. The [Slop assignment spec](../slopAssignment.md) generates the pack’s round and pair reservations. This reference model also includes the downstream service gate.
+The [global selection spec](../selectionRun.md) generates the default selector’s phase and reservation transitions. The [Slop assignment spec](../slopAssignment.md) generates the pack’s round and pair reservations. The [Slop onboarding spec](../slopOnboarding.md) generates read-back and question routing and confirmation decisions. This reference model also includes the downstream service gate.
 
 Imported from `quint/matching_engine.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 

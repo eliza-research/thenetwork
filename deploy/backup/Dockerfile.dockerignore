@@ -1,5 +1,6 @@
-# Build context: the repository root. Only the backup scripts go in.
+# Build context: the repository root. The backup scripts and generated restore policy go in.
 *
 !deploy/backup/
+!packages/core/src/generated/databaseRestore.ts
 **/.env
 **/.env.*

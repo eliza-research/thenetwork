@@ -10,6 +10,8 @@ Check asynchronous reads, access to photos, visible tabs, and proposal eligibili
 
 Imported from `quint/console_views.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
+The browser calls [Observatory detail and photo reads](../consoleMemberView.md) for the inspector detail responses and Slop photo panel. The standalone model also covers search, drawer tabs, game proposals and counts.
+
 ```quint
 // -*- mode: Bluespec; -*-
 // quint-check: max-steps=20 max-samples=2000

@@ -21,11 +21,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SQL } from "bun";
+import { initial, shouldApplyRoles, step } from "../../packages/core/src/generated/databaseRestore.ts";
 import { pgEnv } from "./backup.ts";
 import { backupBucketFromEnv, backupKey, compareCounts, decryptFile, pgBin, redactUrls, rowCounts, run, safeDbName, sameServer, withDatabase, type BackupKey, type Manifest } from "./lib.ts";
-
-/** Database names a restore never creates: the live ones. */
-const LIVE_NAMES = new Set(["railway", "network", "postgres", "template0", "template1"]);
 
 export interface RestoreResult { db: string; url: string; manifest: Manifest; mismatches: ReturnType<typeof compareCounts>; ms: number }
 
@@ -36,33 +34,50 @@ export interface RestoreResult { db: string; url: string; manifest: Manifest; mi
  */
 export async function restore(o: { serverUrl: string; db: string; dir: string; keepPrivileges?: boolean; roles?: boolean; log?: (msg: string, f?: Record<string, unknown>) => void }): Promise<RestoreResult> {
   const t0 = performance.now();
-  if (!safeDbName(o.db) || LIVE_NAMES.has(o.db)) throw new Error(`refusing to restore into "${o.db}": use a new scratch name such as restore_drill_<date>`);
+  // spec/databaseRestore.md, "The target must be a valid scratch database name"
+  let state = step(initial, { type: "checkName", name: o.db, validName: safeDbName(o.db) });
+  if (state.phase !== "ReadingManifest") throw new Error(`refusing to restore into "${o.db}": use a new scratch name such as restore_drill_<date>`);
   const manifest = JSON.parse(await Bun.file(join(o.dir, "manifest.json")).text()) as Manifest;
-  if (manifest.version !== 1) throw new Error(`unknown manifest version ${manifest.version}`);
+  state = step(state, { type: "checkVersion", versionOne: manifest.version === 1 });
+  if (state.phase !== "CheckingSource") throw new Error(`unknown manifest version ${manifest.version}`);
   const target = pgEnv(withDatabase(o.serverUrl, o.db));
-  // A backup without a recorded source (older than the field) counts as taken on this server.
-  const onSource = !manifest.source || sameServer(manifest.source, { host: target.PGHOST!, port: target.PGPORT! });
-  if (o.db === manifest.database && onSource) throw new Error(`refusing to restore into the backup's own database "${o.db}" on its own server`);
-  if (o.roles && onSource) throw new Error("refusing --roles: roles.sql changes roles for the whole server, and this is the source server (or the backup does not name its source)");
-  if (manifest.encryption && !existsSync(join(o.dir, manifest.files.dump))) throw new Error("the backup is encrypted: download it with restore.ts --r2 (BACKUP_ENCRYPTION_KEY), which decrypts it");
+  // spec/databaseRestore.md, "Manifest admission refuses source writes and unavailable dump files"
+  state = step(state, { type: "checkManifest", manifest: {
+    sourceKnown: Boolean(manifest.source),
+    sameServer: Boolean(manifest.source && sameServer(manifest.source, { host: target.PGHOST!, port: target.PGPORT! })),
+    ownDatabase: o.db === manifest.database, rolesRequested: Boolean(o.roles), keepPrivileges: Boolean(o.keepPrivileges),
+    encrypted: Boolean(manifest.encryption), dumpPresent: Boolean(manifest.encryption && manifest.files?.dump && existsSync(join(o.dir, manifest.files.dump))),
+  } });
+  switch (state.reason) {
+    case "OwnDatabase": throw new Error(`refusing to restore into the backup's own database "${o.db}" on its own server`);
+    case "RolesOnSource": throw new Error("refusing --roles: roles.sql changes roles for the whole server, and this is the source server (or the backup does not name its source)");
+    case "NeedsDecryption": throw new Error("the backup is encrypted: download it with restore.ts --r2 (BACKUP_ENCRYPTION_KEY), which decrypts it");
+  }
   const admin = new SQL({ url: o.serverUrl, max: 1 });
   try {
     const [exists] = await admin`select 1 as x from pg_database where datname = ${o.db}`;
-    if (exists) throw new Error(`database ${o.db} already exists: a restore only creates a new one`);
+    state = step(state, { type: "checkTarget", targetExists: Boolean(exists) });
+    if (state.phase !== "CreatingTarget") throw new Error(`database ${o.db} already exists: a restore only creates a new one`);
     await admin.unsafe(`create database "${o.db}"`);
+    state = step(state, { type: "recordCreation" });
   } finally { await admin.close(); }
   const url = withDatabase(o.serverUrl, o.db);
   const env = pgEnv(url);
   // Roles (without passwords) only on another server, and only when asked: errors for roles that already exist are expected and ignored.
-  if (o.roles && manifest.files.roles && existsSync(join(o.dir, manifest.files.roles))) {
-    await run([pgBin("psql"), "--no-password", "--quiet", "-v", "ON_ERROR_STOP=0", "-f", join(o.dir, manifest.files.roles)], { env: { ...env, PGOPTIONS: "-c client_min_messages=error" } }).catch(e => o.log?.("roles: some statements failed", { error: redactUrls((e as Error).message) }));
+  const rolesFile = manifest.files.roles && join(o.dir, manifest.files.roles);
+  if (rolesFile && shouldApplyRoles(state, existsSync(rolesFile))) {
+    await run([pgBin("psql"), "--no-password", "--quiet", "-v", "ON_ERROR_STOP=0", "-f", rolesFile], { env: { ...env, PGOPTIONS: "-c client_min_messages=error" } }).catch(e => o.log?.("roles: some statements failed", { error: redactUrls((e as Error).message) }));
   }
-  const privileges = o.keepPrivileges ? [] : ["--no-owner", "--no-privileges"];
+  const privileges = state.keepPrivileges ? [] : ["--no-owner", "--no-privileges"];
   await run([pgBin("pg_restore"), "--no-password", "--exit-on-error", ...privileges, `--dbname=${env.PGDATABASE}`, join(o.dir, manifest.files.dump)], { env });
+  state = step(state, { type: "recordDump" });
   const sql = new SQL({ url, max: 1 });
   let got: Record<string, number>;
   try { got = await rowCounts(sql); } finally { await sql.close(); }
-  return { db: o.db, url, manifest, mismatches: compareCounts(manifest.rowCounts, got), ms: Math.round(performance.now() - t0) };
+  const mismatches = compareCounts(manifest.rowCounts, got);
+  state = step(state, { type: "recordCounts", countsAgree: mismatches.length === 0 });
+  if (state.phase !== "Finished") throw new Error("restore did not complete the row-count check");
+  return { db: o.db, url, manifest, mismatches, ms: Math.round(performance.now() - t0) };
 }
 
 /**

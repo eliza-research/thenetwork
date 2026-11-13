@@ -25,10 +25,11 @@ import {
 } from "@thenetwork/engine";
 import { classifyYesNo } from "@thenetwork/core";
 import {
-  ageBand, applyCorrection, distancePhrase, emptyOnboarding, extractSlopProfile, hardComplete, markAsked, MAX_ASKS_PER_QUESTION, nextQuestion, readBack,
+  ageBand, applyCorrection, distancePhrase, emptyOnboarding, extractSlopProfile, markAsked,
   SLOP_ONBOARD_QUESTIONS, slopBookedText, slopCheckInText, slopOnboardTags, slopProbeText, type OnboardField, type SlopOnboarding,
 } from "@thenetwork/engine/src/packs/slop/index.ts";
 import { finalize } from "@thenetwork/engine/src/packs/slop/extract.ts";
+import { nextOnboardingPrompt, SLOP_READBACK } from "@thenetwork/engine/src/packs/slop/onboard.ts";
 import { slopProbeMessage } from "@thenetwork/engine/src/packs/slop/copy.ts";
 import { probePhotoRefs } from "@thenetwork/engine/src/packs/slop/plan.ts";
 import { ZIPS } from "@thenetwork/engine/src/packs/slop/zips.ts";
@@ -103,7 +104,7 @@ export function zipForArea(area: string | undefined): string | undefined {
 // who they seek unset and the question is asked again (a founder decision may still change this).
 
 /** The read-back's reason: the member's next message confirms or corrects it. */
-export const SLOP_READBACK = "slop_readback";
+export { SLOP_READBACK };
 /** The field each question is about (onboarding questions and the pack's own asks), so bare answers ("30s", "5") are read. */
 const ASKED: Record<string, OnboardField> = Object.fromEntries(Object.entries(SLOP_ONBOARD_QUESTIONS).map(([r, q]) => [r, q.field]));
 
@@ -134,17 +135,7 @@ export const slopOnboarding: AppOnboarding = {
     const r = slopOnboardTags(p);
     return { state: withoutWords(p), tags: r.tags.map(t => ({ tag: t.tag, kind: t.kind, scope: t.scope, at: now })), replaces: r.replaces };
   },
-  next(state, { age, skip = [] }) {
-    const p = stateOf(state, age);
-    if (p.minor || p.declined) return undefined;
-    if (hardComplete(p) && !p.confirmed && !skip.includes(SLOP_READBACK) && (p.askCounts[SLOP_READBACK] ?? 0) < MAX_ASKS_PER_QUESTION) {
-      const text = readBack(p);
-      if (text) return { reason: SLOP_READBACK, text };
-    }
-    // A question that just went unanswered is not asked again right away (the pack's own asks come back to it later).
-    const q = nextQuestion({ ...p, askCounts: { ...p.askCounts, ...Object.fromEntries(skip.map(r => [r, MAX_ASKS_PER_QUESTION])) } });
-    return q && { reason: q.reason, text: q.text };
-  },
+  next: (state, { age, skip }) => nextOnboardingPrompt(stateOf(state, age), skip),
   asked: (state, reasons, { age }) => reasons.reduce((p, r) => markAsked(p, r), stateOf(state, age)),
 };
 

@@ -14,6 +14,9 @@
 //   Bun.serve({ fetch: async (req, server) => (await api.fetch(req, server)) ?? new Response("not found", { status: 404 }) });
 import { NETWORK_SITES, NETWORK_FRESH_PERSON_SITES, type CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
 import { initial as enrollmentInitial, step as stepEnrollment } from "../../core/src/generated/siteEnrollment.ts";
+import {
+  cloudIssuedAtWithinSkew, cloudSessionStartedAt, initial as cloudSignInInitial, liveBeforeDeadline, step as stepCloudSignIn,
+} from "../../core/src/generated/cloudSignIn.ts";
 import { productionCloudDelegation } from "./cloud-delegation.ts";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { type AccountHooks, Accounts, type HomeInput, type MemberHookContext, parseHome, parseJoin, publicMembership, type Who } from "./accounts.ts";
@@ -98,8 +101,6 @@ export interface PublicApi {
   sessions: SessionService;
 }
 
-/** How far ahead of us a Cloud phone proof's issuedAt may be (clock skew). */
-const CLOUD_CLOCK_SKEW_MS = 30_000;
 class CloudAuthUnavailableError extends Error {}
 
 const DEV_HASH_KEY = "dev-only-platform-hash-key";
@@ -247,7 +248,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   // Secure (and the __Host- prefix) outside dev, like the session cookie. Cloud auth runs only in dev today;
   // this keeps the cookies safe if the gate is ever widened.
   const oauthReturnPath = (path: unknown): path is string => typeof path === "string" && path.length === "/oauth/cloud-return?rid=".length+22 && /^\/oauth\/cloud-return\?rid=[A-Za-z0-9_-]{22}$/.test(path);
-  const cloudReturnPath = (path: unknown) => path === "/join" || oauthReturnPath(path);
+  const cloudReturnPath = (path: unknown): path is string => path === "/join" || oauthReturnPath(path);
   const startCloudHandoff = async (app: AppId, returnPath: string) => {
     const cloud=cloudFor(app);if(!cloud || !cloudReturnPath(returnPath))return;
     const state=randomBytes(32).toString("hex"),verifier=randomBytes(32).toString("hex");
@@ -413,39 +414,59 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         if (!cloud) return json(404, {ok: false, error: "not_found"});
         const reject = (status: number) => json(status, {ok: false, error: "cloud_auth_unavailable"}, {"set-cookie": pendingCookie("", 0)});
         const pending = unseal("cloud-pending", cookies.get(pendingName));
-        if (!pending || pending.app !== appId || pending.state !== url.searchParams.get("state") || typeof pending.verifier !== "string"
-          || typeof pending.until !== "number" || pending.until <= now() || !cloudReturnPath(pending.returnPath)) return reject(400);
+        const bound = !!pending && pending.app === appId && pending.state === url.searchParams.get("state") && typeof pending.verifier === "string";
+        const pendingLive = bound && typeof pending.until === "number" && liveBeforeDeadline(now(), pending.until);
+        const returnPath = pending?.returnPath;
+        const allowedReturnPath = cloudReturnPath(returnPath);
         const code = url.searchParams.get("code");
-        if (!code || !/^enso_[0-9a-f]{64}$/.test(code)) return reject(400);
+        const handoff = stepCloudSignIn(cloudSignInInitial, {
+          type: "checkHandoff",
+          handoffFacts: {
+            bindingValid: bound && allowedReturnPath,
+            pendingLive,
+            codeWellFormed: !!code && /^enso_[0-9a-f]{64}$/.test(code),
+          },
+        });
+        if (handoff.phase !== "AwaitingExchange" || !allowedReturnPath || !pending || typeof pending.verifier !== "string" || !code) return reject(400);
         try {
-          let identity: Record<string, any>;
+          let identity: Record<string, any> | undefined;
+          let exchangeAccepted: boolean;
           if (productionDelegation) {
             const delegated = await productionDelegation.exchange(appId, code, pending.verifier);
-            if (!delegated) return reject(403);
-            identity = { ...delegated, identity: Object.fromEntries(Object.entries(delegated).filter(([key]) => key !== "proof")) };
+            exchangeAccepted = delegated !== undefined;
+            if (delegated) identity = { ...delegated, identity: Object.fromEntries(Object.entries(delegated).filter(([key]) => key !== "proof")) };
           } else {
             const response = await (o.cloudAuthFetch ?? fetch)(new Request(`${cloud.apiOrigin}/api/auth/sso-bridge/network-exchange`, {
               method: "POST", headers: {"content-type": "application/json", origin: cloud.siteOrigin, authorization: `Bearer ${cloud.serverToken}`},
               body: JSON.stringify({code, codeVerifier: pending.verifier}), redirect: "error", cache: "no-store", signal: AbortSignal.timeout(5000),
             }));
-            if (!response.ok || response.redirected) return reject(403);
-            identity = await response.json() as Record<string, any>;
+            exchangeAccepted = response.ok && !response.redirected;
+            if (exchangeAccepted) identity = await response.json() as Record<string, any>;
           }
-          if (typeof identity.userId !== "string" || !identity.userId || typeof identity.organizationId !== "string" || !identity.organizationId
-            || normalizePhone(identity.e164) !== identity.e164 || typeof identity.e164 !== "string" || typeof identity.expiresAt !== "number" || !Number.isFinite(identity.expiresAt) || identity.expiresAt <= now()
-            || typeof identity.stewardUserId !== "string" || !identity.stewardUserId || typeof identity.issuedAt !== "number"
-            || !Number.isSafeInteger(identity.issuedAt) || identity.issuedAt <= 0 || identity.issuedAt*1000 > now() + CLOUD_CLOCK_SKEW_MS) return reject(403);
-          if(await accounts.held(identity.e164) || await accounts.banned(identity.e164) || await o.store.isSuppressed(accounts.phoneHash(identity.e164)))return reject(403);
+          const exchanged = stepCloudSignIn(handoff, { type: "recordExchange", exchangeAccepted });
+          if (exchanged.phase !== "AwaitingIdentity") return reject(403);
+          if (identity == null) return reject(503);
+          const identityValid = typeof identity.userId === "string" && !!identity.userId && typeof identity.organizationId === "string" && !!identity.organizationId
+            && normalizePhone(identity.e164) === identity.e164 && typeof identity.e164 === "string" && typeof identity.expiresAt === "number" && Number.isFinite(identity.expiresAt) && liveBeforeDeadline(now(), identity.expiresAt)
+            && typeof identity.stewardUserId === "string" && !!identity.stewardUserId && typeof identity.issuedAt === "number"
+            && Number.isSafeInteger(identity.issuedAt) && identity.issuedAt > 0 && cloudIssuedAtWithinSkew(identity.issuedAt * 1000, now());
+          const checked = stepCloudSignIn(exchanged, { type: "checkIdentity", identityValid });
+          if (checked.phase !== "AwaitingPhone") return reject(403);
+          const phoneAllowed = !(await accounts.held(identity.e164) || await accounts.banned(identity.e164) || await o.store.isSuppressed(accounts.phoneHash(identity.e164)));
+          const eligible = stepCloudSignIn(checked, { type: "checkPhone", phoneAllowed });
+          if (eligible.phase !== "AwaitingSession") return reject(403);
           await sessions.revoke(cookies.get(cookieName(appId)));
           await accounts.seen(identity.e164);
           const person = await accounts.personFor(identity.e164);
           // A Cloud clock slightly ahead never makes the session start in the future.
-          const {token, session} = await sessions.create(appId, identity.e164, person?.id ?? null, null, Math.min(identity.issuedAt*1000, now()), identity.expiresAt, true);
+          const {token, session} = await sessions.create(appId, identity.e164, person?.id ?? null, null, cloudSessionStartedAt(identity.issuedAt * 1000, now()), identity.expiresAt, true);
+          const issued = stepCloudSignIn(eligible, { type: "recordSession" });
+          if (issued.phase !== "SignedIn") return reject(503);
           const age = Math.max(0, Math.floor((session.expiresAt-now())/1000));
           const sessionHash = tokenHash(token, sessionSecret);
           validated.set(sessionHash, now() + VALIDATION_TTL_MS);
           const delegatedIdentity = seal("cloud-identity", {...identity, app: appId, sessionHash});
-          const responseHeaders = new Headers({location: pending.returnPath, "cache-control": "no-store", "referrer-policy": "no-referrer"});
+          const responseHeaders = new Headers({location: returnPath, "cache-control": "no-store", "referrer-policy": "no-referrer"});
           responseHeaders.append("set-cookie", pendingCookie("", 0));
           responseHeaders.append("set-cookie", cookie(appId, token, age));
           responseHeaders.append("set-cookie", identityCookie(appId, delegatedIdentity, age));

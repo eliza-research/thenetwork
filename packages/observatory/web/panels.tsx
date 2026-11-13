@@ -2,7 +2,8 @@
 // Neighborhood. Lists and names link through MemberLink / OppLink / AreaLink, so a click anywhere
 // moves the one focus.
 import { CrossAppButton } from "./apps.tsx";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { initial as initialDetail, staffPhotoAllowed, staffPhotoReasonReady, staffPhotoView, step as stepDetail } from "../../core/src/generated/consoleMemberView.ts";
 import type { AppProfile360, BookedPlan, HealthAlert, MemberDetail, MemberPhoto, PeonProfile360, SlopProfile360, MemberTimeline, ObsFeedItem, ObsMember, ObsMessage, OpportunityDetail, SystemEvent, TimeChoice } from "../src/types.ts";
 import { STATE_COLOR } from "./graph.ts";
 import { historyBetween, isBusyElsewhere, ReviewActions, reviewLine, VenueLink, wantsOf } from "./review.tsx";
@@ -41,19 +42,48 @@ export function Inspector() {
 
 /** Detail loads are audited staff reads: load on open and when `key` (what the store knows changed) changes, at most every 3 s. No timer. */
 const RELOAD_GAP_MS = 3000;
-function useLive<T>(load: () => Promise<Fetched<T>>, key: string, deps: unknown[]): Fetched<T> | undefined {
-  const [d, setD] = useState<Fetched<T>>();
-  const last = useRef(0), prevKey = useRef(key), gen = useRef(0);
+function useDetailGate() {
+  const gate = useRef(initialDetail);
+  const begin = () => {
+    gate.current = stepDetail(gate.current, { type: "beginDetail" });
+    return gate.current.lastTicket;
+  };
+  const cancel = () => { gate.current = stepDetail(gate.current, { type: "cancelDetails" }); };
+  const finish = (readTicket: number) => {
+    const next = stepDetail(gate.current, { type: "finishDetail", readTicket });
+    if (next === gate.current) return false;
+    gate.current = next;
+    return true;
+  };
+  return { begin, cancel, finish };
+}
+
+const detailScope = (...parts: unknown[]) => JSON.stringify([store.app, store.mode, store.authEpoch, ...parts]);
+
+function useLive<T>(load: () => Promise<Fetched<T>>, key: string, scopeOf: () => string): Fetched<T> | undefined {
+  const scope = scopeOf();
+  const [d, setD] = useState<{ scope: string; value: Fetched<T> }>();
+  const last = useRef(0), prevKey = useRef(key);
+  const detail = useDetailGate();
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const run = () => { const g = gen.current; last.current = Date.now(); load().then(x => { if (g === gen.current) setD(x); }); };
-  useEffect(() => { gen.current++; run(); return () => { gen.current++; clearTimeout(timer.current); }; }, deps);
+  const run = () => {
+    const ticket = detail.begin();
+    last.current = Date.now();
+    load().then(value => {
+      if (scope === scopeOf() && detail.finish(ticket)) setD({ scope, value });
+    });
+  };
+  useLayoutEffect(() => {
+    run();
+    return () => { detail.cancel(); clearTimeout(timer.current); };
+  }, [scope]);
   useEffect(() => {
     if (prevKey.current === key) return;
     prevKey.current = key;
     clearTimeout(timer.current);
     timer.current = setTimeout(run, Math.max(0, RELOAD_GAP_MS - (Date.now() - last.current)));
   }, [key]);
-  return d;
+  return d?.scope === scope ? d.value : undefined;
 }
 /** What changes a member's detail: their counters and state, and the opportunities they are in. */
 function memberKey(id: string): string {
@@ -222,10 +252,9 @@ function NeighborhoodPanel({ area }: { area: string }) {
 function MemberPanel({ id }: { id: string }) {
   const s = useStore();
   const m = s.members.get(id);
-  const grant = s.revealFor(id);
   const key = memberKey(id);
-  const res = useLive<MemberDetail>(() => store.member(id), key, [id, s.mode, !!s.truth, grant?.until]);
-  const tl = useLive<MemberTimeline>(() => store.timeline(id), key, [id, s.mode, grant?.until]);
+  const res = useLive<MemberDetail>(() => store.member(id), key, () => detailScope(id, !!store.truth, store.revealFor(id)?.until));
+  const tl = useLive<MemberTimeline>(() => store.timeline(id), key, () => detailScope(id, store.revealFor(id)?.until));
   const d = res?.data;
   if (!m) return <div className="panel muted">Member not found.</div>;
   const game = !!s.env?.capabilities.canIntervene && s.canSim();
@@ -556,10 +585,9 @@ function RevealControl({ id }: { id: string }) {
 /** The app's own panel: slop (dating preferences behind a reveal, the photo rule) or peon (roles, applications). */
 function AppSection({ id }: { id: string }) {
   const s = useStore();
-  const grant = s.revealFor(id);
   const has = s.app === "slop" || s.app === "peon";
   // Only the apps with a panel ask (each ask is an audited read).
-  const r = useLive<AppProfile360>(() => (has ? store.memberApp(id) : Promise.resolve({ status: 200 as const, data: { app: s.app, none: true as const } })), memberKey(id), [id, s.mode, s.app, grant?.until]);
+  const r = useLive<AppProfile360>(() => (has ? store.memberApp(id) : Promise.resolve({ status: 200 as const, data: { app: s.app, none: true as const } })), memberKey(id), () => detailScope(id, store.revealFor(id)?.until));
   const p = r?.data;
   if (!has || !p || "none" in p) return null;
   return p.app === "slop"
@@ -578,8 +606,22 @@ function SlopPanel({ id, p }: { id: string; p: SlopProfile360 }) {
   const [reason, setReason] = useState("");
   const [photos, setPhotos] = useState<MemberPhoto[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const detail = useDetailGate();
+  const permitted = () => staffPhotoAllowed(p.photos === "reason_required", store.can("safety"), store.members.get(id)?.minor === false);
+  const allowed = permitted();
+  const scope = detailScope(id, allowed);
+  const reasonReady = staffPhotoReasonReady(reason.trim().length);
+  const view = staffPhotoView(allowed, photos !== null);
+  useLayoutEffect(() => {
+    setPhotos(null);
+    setError(null);
+    return detail.cancel;
+  }, [scope]);
   const show = async () => {
+    if (!permitted() || !reasonReady) return;
+    const ticket = detail.begin();
     const r = await store.photos(id, reason.trim());
+    if (!permitted() || scope !== detailScope(id, true) || !detail.finish(ticket)) return;
     if (r.data?.photos) { setPhotos(r.data.photos); setError(null); } else setError(r.error ?? r.data?.error ?? "refused");
   };
   return (
@@ -589,14 +631,14 @@ function SlopPanel({ id, p }: { id: string; p: SlopProfile360 }) {
         ? <div className="muted small">Dating preferences hidden ({p.prefs.count} facts). {s.env?.capabilities.hiddenTruth ? "Simulated world: the truth lens shows hidden facts." : s.can("safety") ? "Reveal this member (logged) to see them." : "Safety or admin only."}</div>
         : <SlopPrefsView prefs={p.prefs.prefs} />}
       <div className="muted small">{PHOTO_TEXT[p.photos]} Scores and ratings are never shown.</div>
-      {p.photos === "reason_required" && s.can("safety") && !photos && (
-        <form className="person-reason" onSubmit={e => { e.preventDefault(); if (reason.trim().length >= 5) show(); }}>
+      {view === "ShowPhotoForm" && (
+        <form className="person-reason" onSubmit={e => { e.preventDefault(); show(); }}>
           <input className="input grow" placeholder="Reason (logged)" value={reason} onChange={e => setReason(e.target.value)} aria-label="Reason to see photos" />
-          <button className="btn" type="submit" disabled={reason.trim().length < 5}>Show photos</button>
+          <button className="btn" type="submit" disabled={!reasonReady}>Show photos</button>
           {error && <span className="bad small" role="alert">{error}</span>}
         </form>
       )}
-      {photos && (photos.length
+      {view === "ShowGallery" && photos && (photos.length
         ? <div className="photos">{photos.map(ph => <img key={ph.id} src={ph.url} alt="Member photo" referrerPolicy="no-referrer" loading="lazy" />)}</div>
         : <div className="muted small">No photos.</div>)}
     </>
@@ -660,7 +702,7 @@ function Truth({ d }: { d: MemberDetail }) {
 function OpportunityPanel({ id }: { id: string }) {
   const s = useStore();
   const live = s.opps.get(id);
-  const res = useLive<OpportunityDetail>(() => store.opportunity(id), `${live?.state}|${live?.updatedAt}|${live?.review?.decision}|${live?.participants.join(",")}`, [id, s.mode, !!s.truth]);
+  const res = useLive<OpportunityDetail>(() => store.opportunity(id), `${live?.state}|${live?.updatedAt}|${live?.review?.decision}|${live?.participants.join(",")}`, () => detailScope(id, !!store.truth));
   const d = res?.data;
   // The store copy is the freshest (review state); the detail can carry more (the oracle under the lens).
   const o: Opp | undefined = live && d?.opportunity ? { ...d.opportunity, ...live, oracle: live.oracle ?? d.opportunity.oracle } : live ?? d?.opportunity;

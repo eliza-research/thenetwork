@@ -30,18 +30,18 @@ entire imported model.
 | Model | Flow | Vibespec production seam |
 |---|---|---|
 | [auth_edge](auth_edge.md) | Web sessions and trusted requests | [Phone verification limits](../otpLimits.md) |
-| [backup_restore](backup_restore.md) | Database restore | — |
+| [backup_restore](backup_restore.md) | Database restore | [Scratch restore lifecycle](../databaseRestore.md) |
 | [boot_config](boot_config.md) | Service start and proxy configuration | [Startup configuration](../bootPolicy.md) |
 | [candidate_pool](candidate_pool.md) | Candidate retrieval and groups | [Exposure floor state machine](../exposureFloor.md), [group formation](../groupFormation.md) |
 | [chatjson_loop](chatjson_loop.md) | Structured model calls | [Structured request state machine](../chatRetry.md) |
-| [cloud_auth](cloud_auth.md) | Eliza Cloud sign-in and grants | — |
+| [cloud_auth](cloud_auth.md) | Eliza Cloud sign-in and grants | [Cloud callback and session issuance](../cloudSignIn.md) |
 | [console_privacy](console_privacy.md) | Staff console data visibility | [Staff permissions and view scope](../staffPermissions.md) |
-| [console_views](console_views.md) | Staff member views | — |
+| [console_views](console_views.md) | Staff member views | [Member inspector and photo reads](../consoleMemberView.md) |
 | [engine_rules](engine_rules.md) | Matching rules and outreach budgets | [Matching budgets and cooldowns](../matchingBudgets.md), [dating radius](../datingRadius.md) |
 | [identity_sagas](identity_sagas.md) | Phone ownership and account changes | [Phone change lifecycle](../phoneChange.md) |
 | [join_age](join_age.md) | Membership and age | [Member age](../memberAge.md) |
 | [join_flow](join_flow.md) | Browser signup | [Current site enrollment](../siteEnrollment.md), [member age](../memberAge.md), [phone verification limits](../otpLimits.md) |
-| [matching_engine](matching_engine.md) | Matching, interviews, and job seats | [Global selection run](../selectionRun.md), [Slop assignment rounds](../slopAssignment.md) |
+| [matching_engine](matching_engine.md) | Matching, interviews, and job seats | [Global selection run](../selectionRun.md), [Slop assignment rounds](../slopAssignment.md), [Slop onboarding](../slopOnboarding.md) |
 | [notify_capital](notify_capital.md) | Inbox and network capital | [Notification delivery](../notificationDelivery.md), [capital levers](../capitalLevers.md) |
 | [oauth_mcp](oauth_mcp.md) | Connector authorization and member tools | [Connector grant issuance](../oauthGrantIssuance.md) |
 | [observatory_sync](observatory_sync.md) | Staff console synchronization | [Snapshot and delta lifecycle](../observatorySync.md) |
