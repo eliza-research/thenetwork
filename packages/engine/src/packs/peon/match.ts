@@ -34,7 +34,7 @@ export interface PairScore {
   need: number;
   /** Candidate side (candidate wants). */
   want: number;
-  /** Must-have coverage in [0, 1]; < MATCH_TUNING.mustFloor = not proposed. */
+  /** Must-have coverage in [0, 1], or a 0.5 scoring prior when unspecified. The floor applies to stated must-haves. */
   coverage: number;
 }
 /** Must-have coverage below this is never proposed (the employer's floors). */
