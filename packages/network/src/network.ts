@@ -1486,7 +1486,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         // The other member hears it is off, never why or who (network-consent-18).
         for (const id of o.participants) if (id !== m.id && o.status.get(id) === "yes" && o.bookedTold?.includes(id)) {
           const x = this.members.get(id);
-          if (x) this.send(x, copy.declinedQuiet, { type: "cancellation", proposalId: o.id }, "cancellation");
+          if (x) this.send(x, copy.declinedQuiet, { type: "cancellation", proposalId: o.id, meetingCancelled: true }, "cancellation");
         }
         this.ctx.log("meeting_cancelled", { proposalId: o.id, reason: "blocked" });
       }
@@ -2573,7 +2573,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const still = o.participants.filter(p => o.status.get(p) === "yes");
     const keep = groupCanContinue(still.length);
     // Only members who were told about the plan hear that it changed.
-    for (const id of still) if (o.bookedTold?.includes(id)) this.send(this.member(id), copy.dropNotice(m.first, keep), { type: "cancellation", proposalId: o.id }, "cancellation",
+    for (const id of still) if (o.bookedTold?.includes(id)) this.send(this.member(id), copy.dropNotice(m.first, keep), { type: "cancellation", proposalId: o.id, meetingCancelled: !keep }, "cancellation",
       { hook: { t: "drop_notice", oppId: o.id } });
     if (!keep) {
       const next = stepOpportunity(opportunityLifecycle(o), { type: "close" });

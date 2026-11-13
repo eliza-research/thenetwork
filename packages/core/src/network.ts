@@ -31,6 +31,8 @@ export interface SimMeta {
     /** "Want to make this a weekly thing?" after a plan (SimMeta.crew). */
     | "crew_offer";
   proposalId?: string;
+  /** On a cancellation notice: true if the whole meeting is off, false if the remaining group still meets. */
+  meetingCancelled?: boolean;
   participants?: MemberId[];
   /** Counts toward the interruption budget / two-unanswered rule. */
   proactive?: boolean;

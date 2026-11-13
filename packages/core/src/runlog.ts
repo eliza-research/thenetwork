@@ -37,7 +37,7 @@ export type RunRecord =
   | { t: number; type: "judgment"; memberId: MemberId; messageId: string; worthwhile: boolean; source: "policy" | "llm" }
   | { t: number; type: "proposal"; source: "network" | "engine" | "scenario" | "player"; proposal: Proposal; oracle: OracleSummary }
   | { t: number; type: "meeting_scheduled"; meetingId: string; proposalId: string; participants: MemberId[]; at: number; city: City }
-  | { t: number; type: "outcome"; meetingId: string; proposalId: string; at: number; attendance: Record<MemberId, { showed: boolean; cancelledWithNotice: boolean; enjoyment: number }> }
+  | { t: number; type: "outcome"; meetingId: string; proposalId: string; at: number; attendance: Record<MemberId, { showed: boolean; cancelledWithNotice: boolean; cancelledByNetwork?: boolean; enjoyment: number }> }
   | { t: number; type: "feedback"; memberId: MemberId; proposalId?: string; text: string; enjoyment?: number }
   | { t: number; type: "block"; from: MemberId; to: MemberId }
   | { t: number; type: "opt_out"; memberId: MemberId }
