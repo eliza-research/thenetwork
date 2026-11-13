@@ -25,7 +25,7 @@ import {
 } from "../../packages/engine/src/packs/slop/index.ts";
 import { generateSlopPersonas, type SlopPersona } from "../../packages/sim/src/apps/slop/persona.ts";
 import { zipInfo } from "../../packages/sim/src/apps/slop/geo.ts";
-import { Block } from "./gate.ts";
+import { Block, expect } from "./gate.ts";
 
 const ROOT = `${import.meta.dir}/../../evals/slop-onboarding`;
 const jsonl = async <T>(name: string): Promise<T[]> => (await Bun.file(`${ROOT}/${name}`).text()).trim().split("\n").filter(Boolean).map(l => JSON.parse(l) as T);
@@ -447,6 +447,17 @@ async function llmMergeGate(b: Block): Promise<void> {
 }
 
 export async function onboardBlock(b: Block, o: { quick: boolean; llm?: boolean }): Promise<void> {
+  await b.run("a partner clause does not erase the member's hobby or take the other person's", () => {
+    const mixed = extractSlopProfile(["I love hiking and I'm looking for someone who plays tennis"]);
+    expect(mixed.interests.map(i => i.value)).toEqual(["hiking"]);
+    const self = extractSlopProfile(["I'm someone who likes hiking"]);
+    expect(self.interests.map(i => i.value)).toEqual(["hiking"]);
+    const other = extractSlopProfile(["looking for someone who likes hiking"]);
+    expect(other.interests).toEqual([]);
+    const date = extractSlopProfile(["ideal first date is a museum with someone who likes coffee"]);
+    expect(date.activities.map(a => a.value)).toEqual(["museum"]);
+    expect(date.interests.map(i => i.value)).toEqual([]);
+  });
   await corpusGates(b, async msgs => extractSlopProfile(msgs));
   await llmMergeGate(b);
   await simGates(b, o, async (text, asked, p, market) => extractSlopProfile([{ text, asked }], p, { market: market as "nyc" }));

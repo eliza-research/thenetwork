@@ -108,6 +108,16 @@ export async function evalsBlock(b: Block): Promise<void> {
   const neg = await jsonl<{ text: string }>("network/negations.jsonl");
   const negBad = neg.filter(l => { const x = extractProfile(l.text); return x.desireIds.length || x.interests.length || classify(l.text).kind === "people_request"; }).map(l => l.text);
   b.gate(`negated wants (n ${neg.length}): 0 read as a want, interest or request`, neg.length >= 100 && negBad.length === 0, negBad.slice(0, 5).join(" | "));
+  await b.run("a hobby named as someone else's is not the member's interest", () => {
+    expect(extractProfile("I love hiking").interests).toContain("hiking");
+    expect(extractProfile("I'm someone who likes hiking").interests).toContain("hiking");
+    expect(extractProfile("I'm a person who plays tennis").interests).toContain("tennis");
+    expect(extractProfile("Looking for someone who likes tennis").interests).not.toContain("tennis");
+    expect(extractProfile("Looking for someone who likes tennis").desireIds).toContain("tennis_partner");
+    expect(extractProfile("I love hiking and I'm looking for someone who plays tennis").interests).toEqual(["hiking"]);
+    expect(extractProfile("Need someone who can belay me").interests).toContain("climbing");
+    expect(extractProfile("Need someone who can belay me").desireIds).toContain("climbing_partner");
+  });
 
   // ---- core reply parser -------------------------------------------------------------------------
   const replies = await jsonl<{ text: string; label: ReplyAnswer }>("replies.jsonl");

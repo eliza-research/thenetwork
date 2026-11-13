@@ -371,6 +371,15 @@ const SKILL_LEX: Record<string, RegExp> = {
 /** The sender's own skill is said in the first person; "looking for a bassist" is a want, not a skill. */
 const FIRST_PERSON = /\b(i|i'm|im|i've|ive|i am|my|me)\b/;
 const SEEKING = /\b(looking for|need|needs|want|wants|find|seeking|searching|someone who|anyone who|somebody who|a person who)\b/;
+/**
+ * The words just before a hobby name it as someone else's, not the sender's ("someone who plays
+ * tennis", "a person who likes jazz"). "I'm someone who likes hiking" is the sender.
+ */
+function otherPersonsTrait(before: string): boolean {
+  const tail = before.slice(-100);
+  if (/\b(?:i'?m|im|i am)\s+(?:just\s+|really\s+|actually\s+)?(?:someone|somebody|a person)\s+who\b/.test(tail)) return false;
+  return /\b(?:someone|somebody|anyone|anybody|people|person|partner|guy|girl|woman|man|folks|friends?)\s+(?:who\s+(?:really\s+|also\s+|actually\s+|just\s+)?(?:likes?\s+|loves?\s+|plays?\s+|enjoys?\s+|is\s+into\s+|does\s+|works?\s+(?:in\s+|on\s+)?)?|into\s+)(?:a\s+|the\s+|some\s+|to\s+)?$/.test(tail);
+}
 
 /** Aliases people use for the neighborhoods the Network knows (geo.ts names are canonical). */
 const AREA_ALIASES: [RegExp, string][] = [
@@ -451,8 +460,12 @@ export function extractProfile(body: string): Profile {
         break;
       }
       for (const [tag, rx] of Object.entries(INTEREST_LEX)) {
-        const m = rx.exec(part);
-        if (m && !(m.index > negAt)) interests.add(tag);
+        const g = new RegExp(rx.source, rx.flags.includes("g") ? rx.flags : `${rx.flags}g`);
+        for (const m of part.matchAll(g)) {
+          if (m.index > negAt || otherPersonsTrait(part.slice(0, m.index))) continue;
+          interests.add(tag);
+          break;
+        }
       }
       if (FIRST_PERSON.test(part)) for (const [tag, rx] of Object.entries(SKILL_LEX)) {
         const m = rx.exec(part);
@@ -469,7 +482,15 @@ export function extractProfile(body: string): Profile {
   // The taxonomy's own phrasing still counts (the simulator's sentences are real sentences too).
   const plain = kept.join(" ");
   for (const d of DESIRES) if (plain.includes(d.text.toLowerCase()) && !notWanted.has(d.id)) desires.add(d.id);
-  for (const i of INTERESTS) if (plain.includes(i.label.toLowerCase())) interests.add(i.tag);
+  for (const i of INTERESTS) {
+    const label = i.label.toLowerCase();
+    let at = plain.indexOf(label), own = false;
+    while (at >= 0) {
+      if (!otherPersonsTrait(plain.slice(0, at))) { own = true; break; }
+      at = plain.indexOf(label, at + Math.max(1, label.length));
+    }
+    if (own) interests.add(i.tag);
+  }
   for (const k of SKILLS) if (plain.includes(k.label.toLowerCase())) skills.add(k.tag);
   // A negated like is not an interest ("not into running"): drop interests named only after a negation.
   const where = areaOf(body);
