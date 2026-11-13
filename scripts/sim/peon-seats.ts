@@ -44,10 +44,10 @@ class SeatWorld {
   private seq = 0;
   private readonly opts: NetworkOptions;
 
-  constructor() {
+  constructor(seed = 7) {
     const w = appWiring("peon");
     this.opts = {
-      app: APPS.peon, seed: 7, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
+      app: APPS.peon, seed, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
       pack: w.pack!, hooks: w.hooks!, engine: { ...PEON_ENGINE_CONFIG, cities: ["nyc"] },
       onPosting: p => this.write(p),
     };
@@ -128,6 +128,51 @@ const startsWith = (body: string, re: RegExp) => re.test(body.replace(ACK, ""));
 const POST = "We're hiring a data analyst (level 2), 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL";
 
 export async function peonSeatsBlock(b: Block): Promise<void> {
+  await b.run("intake: skill levels never replace role seniority in saved jobs or candidate proposals", async () => {
+    const cases = [
+      { title: "senior data analyst", requirements: "must have SQL level 1", level: 3, sql: 1 },
+      { title: "principal data analyst", requirements: "must have SQL level 2", level: 5, sql: 2 },
+      { title: "senior data analyst", requirements: "must have SQL; nice to have Excel level 1", level: 3, sql: 2 },
+      { title: "principal data analyst", requirements: "must have SQL; nice to have junior mentoring", level: 5, sql: 2 },
+      { title: "data analyst", requirements: "level 4; must have SQL level 1", level: 4, sql: 1 },
+      { title: "data analyst", requirements: "must have SQL level 1; level 4", level: 4, sql: 1 },
+      { title: "data analyst", requirements: "must have SQL level 2", level: undefined, sql: 2 },
+    ];
+    const outcomes: { seed: number; case: number; saved: number | undefined; candidates: string[]; expected: string[] }[] = [];
+    for (const seed of [7, 13, 17]) for (const [index, c] of cases.entries()) {
+      const world = new SeatWorld(seed);
+      world.add("manager", "Rowan Abbott", 34, { verified: "Acme" });
+      for (const [id, level] of [["experienced", 4], ["junior", 1]] as const) {
+        world.add(id, `Candidate ${id}`, 29, { candidate: true });
+        // Both candidates want this exact role family and meet its SQL requirement.
+        world.facets.find(f => f.id === `${id}-g`)!.tags = [`peon:family:${c.title.replaceAll(" ", "_")}`, `peon:seniority:${level}`];
+      }
+      for (const id of ["manager", "experienced", "junior"]) for (const answer of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await world.say(id, answer);
+      await world.say("manager", `We're hiring a ${c.title}, 1 opening, $90k-$120k, hybrid in Brooklyn, ${c.requirements}`);
+      expect(world.last("manager")).toMatch(/Reply yes to post it/);
+      expect(world.saved.length).toBe(0);
+      world.restart();
+      await world.say("manager", "yes");
+      expect(world.saved.length).toBe(1);
+      expect(world.saved[0]!.must).toEqual([{ skill: "sql", level: c.sql }]);
+      const saved = world.saved[0]!;
+      world.restart();
+      const seat = seatIdOf(saved.id);
+      const levels = world.net.packInput(world.clock.now()).facets.filter(f => f.memberId === seat).flatMap(f => f.tags.filter(t => t.startsWith("peon:seniority:")));
+      expect(levels).toEqual(saved.seniority === undefined ? [] : [`peon:seniority:${saved.seniority}`]);
+      await world.run(2 * DAY);
+      const queue = world.net.reviewQueue().filter(item => item.proposal.participants.includes("manager"));
+      const candidates = queue.flatMap(item => item.proposal.participants.filter(id => id !== "manager")).sort();
+      for (const item of queue) expect(world.about(item.oppId).length).toBe(0);
+      outcomes.push({ seed, case: index + 1, saved: saved.seniority, candidates, expected: c.level === undefined ? [] : ["experienced"] });
+    }
+    console.log(`role seniority outcomes: ${JSON.stringify(outcomes)}`);
+    for (const result of outcomes) {
+      expect(result.saved).toBe(cases[result.case - 1]!.level);
+      expect(result.candidates).toEqual(result.expected);
+    }
+  });
+
   await b.run("intake rules: a job post is read from text, read back, and needs a title and a pay range", () => {
     const d = parsePosting(POST);
     expect(d).toMatchObject({ title: "data analyst", openings: 2, payMin: 90, payMax: 120, mode: "hybrid", area: "brooklyn", seniority: 2, must: [{ skill: "sql", level: 2 }] });
