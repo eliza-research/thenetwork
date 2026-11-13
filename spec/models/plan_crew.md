@@ -9,6 +9,7 @@ A member needs to opt in before joining a crew and get at most one crew session 
 Check opt-in, unique session slots, and handoff counts. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
 Imported from `quint/plan_crew.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
+Production offer transitions use [Recurring crew offers](../crewOffer.md). This standalone model keeps its abstract time and eligibility changes from the source branch.
 
 ```quint
 // -*- mode: Bluespec; -*-

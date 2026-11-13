@@ -70,7 +70,7 @@ Models: [profile learning](../models/profile_learning.md), [outbound queue](../m
 
 Offer authorized Google Calendar free/busy, pasted LinkedIn profile text, an allowed X profile or approved connection, or a summary from the member's agent. Mark proposed facts with source, confidence and scope. Persist confirmed facts, remove raw pasted summaries after confirmation, and support revocation. Exclude sensitive inferences and other people's private details.
 
-Models: [OAuth and MCP](../models/oauth_mcp.md), [profile learning](../models/profile_learning.md).
+Models: [OAuth and MCP](../models/oauth_mcp.md), [profile learning](../models/profile_learning.md), [generated suggestion review](../profileSuggestionReview.md).
 
 ## Story F8 — Ask for something
 

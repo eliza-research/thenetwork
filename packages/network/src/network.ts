@@ -35,6 +35,7 @@ import {
   type AskRecord, type EngineAsk, type EngineConfigInput, type EngineInput, type EngineProposal, type FeedbackRecord, type InteractionRecord, type MatchingRunLog,
   type AppPack, type PlansConfig, type PlansConfigInput, type World as EngineWorld,
 } from "@thenetwork/engine";
+import { initial as initialCrewOffer, step as stepCrewOffer, type CrewOfferState } from "../../core/src/generated/crewOffer.ts";
 import { reviewLate } from "../../core/src/generated/reviewDeadline.ts";
 import { HELP_TEXT, STOP_CONFIRMATION, type InboundMessage, type NetworkContext, type NetworkUnderTest, type SimMeta } from "@thenetwork/core";
 import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
@@ -92,6 +93,9 @@ export interface FraudItem {
 }
 /** A crew offered after one great plan (>= 3 attendees would do it again); each person opts in. */
 export interface CrewOffer { crew: plans.Crew; planId: string; at: number; offered: MemberId[]; yes: MemberId[]; no: MemberId[]; resolved?: boolean }
+function crewOfferState(offer: CrewOffer): CrewOfferState {
+  return { phase: offer.resolved ? "Resolved" : "Open", offered: offer.offered, yes: offer.yes, no: offer.no };
+}
 /** What a reviewer or staff action did: ok, or the reason it was refused or invalidated. */
 export type ActionResult = { ok: true } | { ok: false; reason: string };
 export interface ReviewOptions {
@@ -962,7 +966,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.lastPlannedAt.delete(id);
     this.planCarry = this.planCarry.filter(c => c.memberId !== id);
     for (const c of this.crews) { c.members = c.members.filter(x => x !== id); c.hostRotation = c.hostRotation.filter(x => x !== id); }
-    for (const c of this.crewOffers) { for (const k of ["offered", "yes", "no"] as const) c[k] = c[k].filter(x => x !== id); c.crew.members = c.crew.members.filter(x => x !== id); }
+    for (const c of this.crewOffers) {
+      const { offered, yes, no } = stepCrewOffer(crewOfferState(c), { type: "forgetCrewInvitee", memberId: id });
+      c.offered = offered; c.yes = yes; c.no = no;
+      c.crew.members = c.crew.members.filter(x => x !== id);
+    }
     this.fraud = this.fraud.filter(x => !x.flag.members.includes(id));
     this.dirty = true;
   }
@@ -3172,15 +3180,19 @@ export class ConsentNetwork implements NetworkUnderTest {
     // Already offered after this plan: a later "yes, again" from another attendee joins that one offer.
     const open = this.crewOffers.find(c => c.planId === o.id);
     if (open) {
-      if (open.resolved || !post[m.id]?.again || open.offered.includes(m.id)) return undefined;
-      open.offered.push(m.id); open.crew.members = [...open.crew.members, m.id].sort();
+      const before = crewOfferState(open);
+      const next = stepCrewOffer(before, { type: "extendOffer", memberId: m.id, enjoyedPlan: !!post[m.id]?.again });
+      if (next === before) return undefined;
+      open.offered = next.offered;
+      open.crew.members = [...open.crew.members, m.id].sort();
       return open.crew.id;
     }
     const w = this.planWorld(this.now());
     const [crew] = plans.detectCrews([rec], [...this.crews, ...this.crewOffers.map(c => c.crew)], id => !!w.get(id)?.isHost, this.pcfg);
     if (!crew) return undefined;
     const a = plans.activityById.get(crew.activityId)!;
-    this.crewOffers.push({ crew, planId: o.id, at: this.now(), offered: [...crew.members], yes: [], no: [] });
+    const { offered, yes, no } = stepCrewOffer(initialCrewOffer, { type: "openOffer", invitees: [...crew.members] });
+    this.crewOffers.push({ crew, planId: o.id, at: this.now(), offered, yes, no });
     this.plansCounters.crewOffers++;
     this.ctx.log("crew_offered", { crewId: crew.id, oppId: o.id, members: crew.members.length });
     // The others already had their reply: they get the offer as its own short message (not an invite).
@@ -3194,12 +3206,15 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** A member's answer to a crew offer. When everyone answered (or after 3 days) the crew forms with those who opted in (>= 3), or not at all. */
   private onCrewAnswer(m: MemberState, crewId: string, yes: boolean) {
     const offer = this.crewOffers.find(c => c.crew.id === crewId && !c.resolved);
-    if (!offer || !offer.offered.includes(m.id) || offer.yes.includes(m.id) || offer.no.includes(m.id)) return;
-    (yes ? offer.yes : offer.no).push(m.id);
+    if (!offer) return;
+    const before = crewOfferState(offer);
+    const answered = stepCrewOffer(before, { type: "recordCrewAnswer", memberId: m.id, accepted: yes });
+    if (answered === before) return;
+    offer.yes = answered.yes; offer.no = answered.no;
     this.ctx.log("crew_answer", { crewId, memberId: m.id, yes });
     if (yes) this.ack(m, copy.crewYes);
     else this.ack(m, "No problem.");
-    if (offer.yes.length + offer.no.length >= offer.offered.length) this.resolveCrew(offer);
+    if (stepCrewOffer(answered, { type: "finishCrewAnswers" }).phase === "Resolved") this.resolveCrew(offer);
   }
 
   private resolveCrew(offer: CrewOffer) {
@@ -3221,7 +3236,11 @@ export class ConsentNetwork implements NetworkUnderTest {
    * least recent participation who fit the activity (the exposure floor).
    */
   private crewSessions(now: number) {
-    for (const offer of this.crewOffers) if (!offer.resolved && now - offer.at > 3 * DAY) this.resolveCrew(offer);
+    for (const offer of this.crewOffers) {
+      if (offer.resolved) continue;
+      const next = stepCrewOffer(crewOfferState(offer), { type: "expireCrewOffer", elapsedMs: now - offer.at });
+      if (next.phase === "Resolved") this.resolveCrew(offer);
+    }
     for (const crew of this.crews) {
       if (crew.handedOff) continue;
       if ([...this.opps.values()].some(o => o.plan?.crewId === crew.id && OPEN_STAGES.has(o.stage))) continue;

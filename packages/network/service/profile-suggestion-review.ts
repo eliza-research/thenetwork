@@ -1,21 +1,34 @@
+import { initial, step as stepReview, type ReviewRequest, type ReviewVerb } from "../../core/src/generated/profileSuggestionReview.ts";
 import type { ProfileSuggestions, SuggestionOwner, SuggestionReviewBatch, SuggestionDecision } from "./profile-suggestions.ts";
 
 export type { SuggestionReviewBatch } from "./profile-suggestions.ts";
 
-function currentBatch(batch: SuggestionReviewBatch, owner: SuggestionOwner, now: number): boolean {
-  return batch.status === "pending" && batch.personId === owner.personId && batch.app === owner.app && batch.chatId === owner.chatId
-    && Number.isSafeInteger(now) && Number.isSafeInteger(batch.expiresAt) && now < batch.expiresAt
-    && /^[A-Za-z0-9_-]{1,64}$/.test(batch.id) && Number.isSafeInteger(batch.revision) && batch.revision > 0
-    && batch.suggestions.length > 0 && batch.suggestions.length <= 10
-    && new Set(batch.suggestions.map(s => s.id)).size === batch.suggestions.length
-    && batch.suggestions.every(s => /^[A-Za-z0-9_-]{1,64}$/.test(s.id) && s.value.trim().length > 0 && s.value.length <= 400
+const REVIEW_VERBS = { accept: "AcceptVerb", reject: "RejectVerb", edit: "EditVerb" } as const satisfies Record<string, ReviewVerb>;
+
+function batchReview(batch: SuggestionReviewBatch, owner: SuggestionOwner, now: number): ReviewRequest | null {
+  if (!Number.isSafeInteger(now) || !Number.isSafeInteger(batch.expiresAt) || !Number.isSafeInteger(batch.revision)) return null;
+  const metadata = stepReview(initial, {
+    type: "checkBatch",
+    pending: batch.status === "pending",
+    ownerMatches: batch.personId === owner.personId && batch.app === owner.app && batch.chatId === owner.chatId,
+    batchIdValid: /^[A-Za-z0-9_-]{1,64}$/.test(batch.id),
+    revision: batch.revision,
+    asOf: now,
+    expiresAt: batch.expiresAt,
+  });
+  if (metadata.phase !== "NeedsItems") return null;
+  const itemCount = batch.suggestions.length;
+  const distinctIds = new Set(batch.suggestions.map(s => s.id)).size === itemCount;
+  const allItemsValid = batch.suggestions.every(s => /^[A-Za-z0-9_-]{1,64}$/.test(s.id) && s.value.trim().length > 0 && s.value.length <= 400
       && !/[\r\n\u0000-\u001f\u007f]/.test(s.value) && Number.isSafeInteger(s.observedAt) && s.observedAt <= now
       && ["gmail", "google_calendar"].includes(s.source)
       && ["interest", "goal", "availability_pattern"].includes(s.kind));
+  const review = stepReview(metadata, { type: "checkItems", itemCount, distinctIds, allItemsValid });
+  return review.phase === "ReadyToReview" ? review : null;
 }
 
 export function renderSuggestionReview(batch: SuggestionReviewBatch, owner: SuggestionOwner, now: number): string | null {
-  if (!currentBatch(batch, owner, now)) return null;
+  if (!batchReview(batch, owner, now)) return null;
   const token = `${batch.id}.${batch.revision}`;
   return [
     `Suggestions for ${batch.app} — nothing saved yet (${token}).`,
@@ -32,19 +45,30 @@ export function renderSuggestionReview(batch: SuggestionReviewBatch, owner: Sugg
 export function parseSuggestionReview(text: string, batch: SuggestionReviewBatch, owner: SuggestionOwner, now: number):
   | { batchId: string; revision: number; decisions: SuggestionDecision[] }
   | null {
-  if (!currentBatch(batch, owner, now)) return null;
+  const review = batchReview(batch, owner, now);
+  if (!review) return null;
   const match = /^(accept|reject|edit) ([A-Za-z0-9_-]+)\.([1-9][0-9]*) (10|[1-9])(?:(?: (private|matching))|(?:: ([^\r\n]+)))?$/.exec(text.trim());
-  if (!match || match[2] !== batch.id || Number(match[3]) !== batch.revision) return null;
+  if (!match) return null;
+  const verb = REVIEW_VERBS[match[1] as keyof typeof REVIEW_VERBS];
   const suggestion = batch.suggestions[Number(match[4]) - 1];
+  const value = match[6]?.trim() ?? "";
+  const outcome = stepReview(review, {
+    type: "readCommand",
+    verb,
+    tokenMatches: match[2] === batch.id && Number(match[3]) === batch.revision,
+    itemExists: !!suggestion,
+    scopeGiven: !!match[5],
+    wordingGiven: !!match[6],
+    wordingValid: value.length > 0 && value.length <= 400 && !/[\u0000-\u001f\u007f]/.test(value),
+  });
   if (!suggestion) return null;
   const decision = (value: SuggestionDecision) => ({ batchId: batch.id, revision: batch.revision, decisions: [value] });
-  if (match[1] === "accept" && match[5] && !match[6]) return decision({ action: "accept", suggestionId: suggestion.id, scope: match[5] === "private" ? "agent_private" : "matchable" });
-  if (match[1] === "reject" && !match[5] && !match[6]) return decision({ action: "reject", suggestionId: suggestion.id });
-  if (match[1] === "edit" && !match[5] && match[6]) {
-    const value = match[6].trim();
-    if (value.length > 0 && value.length <= 400 && !/[\u0000-\u001f\u007f]/.test(value)) return decision({ action: "accept", suggestionId: suggestion.id, editedValue: value });
+  switch (outcome.phase) {
+    case "AcceptItem": return decision({ action: "accept", suggestionId: suggestion.id, scope: match[5] === "private" ? "agent_private" : "matchable" });
+    case "RejectItem": return decision({ action: "reject", suggestionId: suggestion.id });
+    case "PreviewEdit": return decision({ action: "accept", suggestionId: suggestion.id, editedValue: value });
+    default: return null;
   }
-  return null;
 }
 
 /** Only this store-backed entry verifies the full user/org binding and applies decisions. */

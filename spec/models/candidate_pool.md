@@ -8,6 +8,8 @@ A member needs recommendations and groups that respect consent, blocks, and loca
 
 Check pool eligibility, pair exclusions, group sizes, and seat uniqueness. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
+The [candidate exposure floor](../exposureFloor.md) supplies the generated allocation transitions used by the engine’s intent and embedding retrieval paths. The model below treats the combined retrieval channels as an oracle.
+
 Imported from `quint/candidate_pool.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint

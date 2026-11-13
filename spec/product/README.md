@@ -46,16 +46,17 @@ in a top-level Vibespec module. For a flow with I/O or concurrency, use the
 | Signup and identity | [Member age](../memberAge.md), [phone verification limits](../otpLimits.md) |
 | Consent and review | [Carrier consent](../carrierConsent.md), [probe answers](../probeReply.md), [review deadlines](../reviewDeadline.md) |
 | Safety and relay | [Trust levels](../trustLevel.md), [relay decisions](../relayDecision.md), [photo eligibility and limits](../photoPolicy.md) |
-| Outreach and matching | [Daily outreach cap](../outreachPolicy.md), [quiet hours](../quietHours.md), [participation budgets](../participationBudgets.md), [participation windows](../participationWindow.md), [matching budgets and cooldowns](../matchingBudgets.md), [dating radius](../datingRadius.md) |
+| Outreach and matching | [Daily outreach cap](../outreachPolicy.md), [quiet hours](../quietHours.md), [participation budgets](../participationBudgets.md), [participation windows](../participationWindow.md), [matching budgets and cooldowns](../matchingBudgets.md), [dating radius](../datingRadius.md), [candidate exposure floor](../exposureFloor.md) |
 | Hiring | [Job posting policy](../postingPolicy.md) |
 | Inbox | [Notification delivery](../notificationDelivery.md) |
-| Group plans | [Plan decisions](../planDecision.md) |
-| Member profile | [Saved profile reads](../savedProfileRead.md) |
+| Group plans | [Plan decisions](../planDecision.md), [crew offers](../crewOffer.md) |
+| Member profile | [Saved profile reads](../savedProfileRead.md), [suggestion review](../profileSuggestionReview.md) |
+| Staff operations | [Review, safety and heartbeat timing](../operationsTiming.md) |
 | Conversation infrastructure | [Structured reply retries](../chatRetry.md) |
 
 The product directory also records provider, rollout, and human requirements
-that need separate evidence. Saved-profile reads and structured request retries use generated state
-transitions. The other generated modules cover the decisions in their rules. The flow models still cover storage, concurrent work, browser and
+that need separate evidence. Saved-profile reads, suggestion review, structured retries, crew offers,
+and candidate exposure use generated state transitions. The other generated modules cover the decisions in their rules. The flow models still cover storage, concurrent work, browser and
 provider events, and the effect of failures on the whole journey.
 
 ## Sources
