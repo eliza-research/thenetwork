@@ -460,7 +460,7 @@ interface SendOpts {
 type SendHook =
   | { t: "interview" } | { t: "age" } | { t: "suggested"; venues: string[] } | { t: "retry_found"; oppId: string }
   | { t: "probe"; oppId: string; id: MemberId } | { t: "reveal"; oppId: string; id: MemberId } | { t: "times"; oppId: string; id: MemberId }
-  | { t: "drop_notice"; oppId: string } | { t: "feedback"; oppId: string }
+  | { t: "drop_notice"; oppId: string; meetingAt?: number } | { t: "feedback"; oppId: string }
   | { t: "growth"; kind: string } | { t: "reengage" } | { t: "ask"; reason: AskRecord["reason"]; also?: string[]; follow?: boolean } | { t: "checkin" }
   | { t: "plan_probe"; oppId: string; id: MemberId } | { t: "crew_offer"; crewId: string };
 interface HookFns { valid?: () => boolean; onSent?: () => void; onRefused?: () => void }
@@ -2574,7 +2574,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const keep = groupCanContinue(still.length);
     // Only members who were told about the plan hear that it changed.
     for (const id of still) if (o.bookedTold?.includes(id)) this.send(this.member(id), copy.dropNotice(m.first, keep), { type: "cancellation", proposalId: o.id }, "cancellation",
-      { hook: { t: "drop_notice", oppId: o.id } });
+      { hook: { t: "drop_notice", oppId: o.id, ...(o.meetingAt !== undefined ? { meetingAt: o.meetingAt } : {}) } });
     if (!keep) {
       const next = stepOpportunity(opportunityLifecycle(o), { type: "close" });
       if (next.phase !== "Closed" || o.stage === "closed") return;
@@ -3993,7 +3993,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     // Unsolicited sends (PRD 32.9 budgets, PH-003 pause path, F28 two-unanswered): marked proactive,
     // on the PRD budget of the member's state (plan invites and the weekly check-in on their own lane),
     // never a third in a row without an answer (the one re-engagement aside), and with a way to stop.
-    const unsol = this.unsolicited(m, meta, now);
+    const unsol = this.unsolicited(m, meta, now, o.hook);
     if (unsol) {
       const why = this.unsolicitedRefusal(m, meta, kind, now);
       if (why) return this.refuse(m.id, kind, why, fns);
@@ -4080,8 +4080,11 @@ export class ConsentNetwork implements NetworkUnderTest {
    * at most 3 of them), not inside an opportunity the member said yes to (or asked for), and not one
    * of the 2 follow-ups to the member's own ask within 48 hours. Safety notices are never budgeted.
    */
-  private unsolicited(m: MemberState, meta: SimMeta, now: number): boolean {
+  private unsolicited(m: MemberState, meta: SimMeta, now: number, hook?: SendHook): boolean {
     this.followup = false;
+    // A cancellation of a meeting they already accepted. Forget may have deleted the opportunity
+    // before quiet hours ended. It is not a new introduction.
+    if (hook?.t === "drop_notice") return false;
     if (meta.type === "system") return false;
     const lastIn = Math.max(m.lastInbound, m.joinedAt);
     if (now - lastIn <= REPLY_WINDOW_MS && (m.outbound ?? 0) < REPLY_BURST) return false;
@@ -4187,7 +4190,9 @@ export class ConsentNetwork implements NetworkUnderTest {
         valid: () => this.crewOffers.some(c => c.crew.id === h.crewId && !c.resolved),
         onSent: () => this.expect(m, { kind: "crew", crewId: h.crewId, at: now() }),
       };
-      case "drop_notice": return { valid: () => !!o && now() < (o.meetingAt ?? Infinity) };
+      // The text is already written. Forget deletes the opportunity, so the meeting time is kept on the
+      // hook. The notice stays valid until that time and still goes out on a later tick.
+      case "drop_notice": return { valid: () => { const until = h.meetingAt ?? o?.meetingAt; return until !== undefined ? now() < until : !!o; } };
       case "feedback": return { onSent: () => { if (o) this.expect(m, { kind: "feedback", oppId: o.id, at: now() }); } };
       case "growth": return { onSent: () => { this.expect(m, { kind: "growth", at: now() }); this.counters.growthAsks++; this.ctx.log("growth_ask", { memberId: m.id, kind: h.kind }); } };
       case "reengage": return { onSent: () => { this.counters.reengagements++; this.ctx.log("reengagement", { memberId: m.id }); } };
