@@ -44,10 +44,10 @@ class SeatWorld {
   private seq = 0;
   private readonly opts: NetworkOptions;
 
-  constructor() {
+  constructor(seed = 7) {
     const w = appWiring("peon");
     this.opts = {
-      app: APPS.peon, seed: 7, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
+      app: APPS.peon, seed, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
       pack: w.pack!, hooks: w.hooks!, engine: { ...PEON_ENGINE_CONFIG, cities: ["nyc"] },
       onPosting: p => this.write(p),
     };
@@ -128,6 +128,59 @@ const startsWith = (body: string, re: RegExp) => re.test(body.replace(ACK, ""));
 const POST = "We're hiring a data analyst (level 2), 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL";
 
 export async function peonSeatsBlock(b: Block): Promise<void> {
+  await b.run("posting conversations: resume the manager's unanswered intro question once, without reviving closed items", async () => {
+    const cases = ["unchanged", "save_edit", "drop_edit", "decline_intro", "close_job", "expired_intro", "still_editing"] as const;
+    const outcomes: { seed: number; kind: string; resumed: boolean; managerProbes: number; candidateProbes: number; intros: number; stage: string | undefined; correct: boolean }[] = [];
+    for (const seed of [7, 13, 17]) for (const kind of cases) {
+      const x = new SeatWorld(seed);
+      x.add("hm1", "Rowan Abbott", 34, { verified: "Acme" });
+      x.add("c1", "Cand One", 29, { candidate: true });
+      for (const id of ["hm1", "c1"]) for (const body of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await x.say(id, body);
+      await x.say("hm1", POST.replace("2 openings", "1 opening"));
+      await x.say("hm1", "yes");
+      expect(await x.runUntil(() => x.net.reviewQueue().length > 0, 2 * DAY)).toBe(true);
+      const id = x.net.reviewQueue()[0]!.oppId;
+      expect(x.net.review(id, "approve", { reviewer: "sim_staff" })).toBe(true);
+      expect(await x.runUntil(() => x.probedFor("c1", id))).toBe(true);
+      await x.say("c1", "yes");
+      expect(await x.runUntil(() => x.probedFor("hm1", id))).toBe(true);
+      const probes = (who: string) => x.about(id).filter(m => m.to === who && m.meta.type === "probe").length;
+      if (kind !== "unchanged") {
+        await x.say("hm1", kind === "close_job" ? "Close my data analyst post" : "Update my data analyst post: 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL");
+        expect(x.net.memberList().find(m => m.id === "hm1")?.awaiting?.kind).toBe("posting");
+        x.restart();
+        if (kind === "still_editing") {
+          await x.run(2 * HOUR);
+          expect(probes("hm1")).toBe(1);
+          expect(x.net.memberList().find(m => m.id === "hm1")?.awaiting?.kind).toBe("posting");
+        }
+        if (kind === "expired_intro") await x.run(27 * HOUR);
+        await x.say("hm1", kind === "drop_edit" || kind === "expired_intro" ? "no" : "yes");
+        // Saving or dropping the draft is never also an answer to the intro question.
+        expect(x.meetings.length).toBe(0);
+        x.restart();
+        await x.run(2 * HOUR);
+      }
+      const resumed = x.probedFor("hm1", id);
+      x.restart();
+      if (kind !== "close_job" && kind !== "expired_intro") await x.say("hm1", kind === "decline_intro" ? "no" : "Yes, make the intro");
+      await x.run(2 * HOUR);
+      x.restart();
+      const stage = x.opp(id)?.stage;
+      const intros = x.about(id).filter(m => m.meta.type === "proposal").length;
+      const noIntro = ["decline_intro", "close_job", "expired_intro"].includes(kind);
+      const ended = kind === "close_job" || kind === "expired_intro";
+      const correct = (ended ? !resumed : resumed)
+        && probes("hm1") === (kind === "unchanged" || ended ? 1 : 2)
+        && probes("c1") === 1
+        && (noIntro ? stage === "closed" && intros === 0 && x.meetings.length === 0
+          : stage === "scheduled" && intros === 2 && x.meetings.length === 1);
+      outcomes.push({ seed, kind, resumed, managerProbes: probes("hm1"), candidateProbes: probes("c1"), intros, stage, correct });
+    }
+    console.log("PEON_POSTING_RESUME_OUTCOMES", JSON.stringify(outcomes));
+    expect(outcomes.filter(x => x.correct).length).toBe(outcomes.length);
+  });
+
   await b.run("intake rules: a job post is read from text, read back, and needs a title and a pay range", () => {
     const d = parsePosting(POST);
     expect(d).toMatchObject({ title: "data analyst", openings: 2, payMin: 90, payMax: 120, mode: "hybrid", area: "brooklyn", seniority: 2, must: [{ skill: "sql", level: 2 }] });
