@@ -36,6 +36,10 @@ import {
   type AppPack, type PlansConfig, type PlansConfigInput, type World as EngineWorld,
 } from "@thenetwork/engine";
 import { initial as initialCrewOffer, step as stepCrewOffer, type CrewOfferState } from "../../core/src/generated/crewOffer.ts";
+import {
+  groupCanContinue, initial as initialOpportunity, step as stepOpportunity,
+  type OpportunityLifecycle, type OpportunityPhase,
+} from "../../core/src/generated/opportunityLifecycle.ts";
 import { reviewLate } from "../../core/src/generated/reviewDeadline.ts";
 import { HELP_TEXT, STOP_CONFIRMATION, type InboundMessage, type NetworkContext, type NetworkUnderTest, type SimMeta } from "@thenetwork/core";
 import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
@@ -335,12 +339,22 @@ const MEMBER_ASK = /\?|\b(looking for|i'?d (really )?(like|love)|i want|i need|c
 /** A bare acknowledgement ("thx", "ok") answers logistics, not an earlier unsolicited message. */
 const ACK_ONLY = /^(?:ok(?:ay)?|k|kk|thx|thanks?(?: you)?|ty|cool|great|nice|perfect|got it|sounds good|will do|see you( then)?|yep|yup|sure|[\s.!,:;)(-]|\p{Extended_Pictographic})+$/iu;
 
+const PHASE_BY_STAGE = { review: "InReview", probing: "Probing", scheduled: "Scheduled", done: "Done", closed: "Closed" } as const;
+const STAGE_BY_PHASE = { InReview: "review", Probing: "probing", Scheduled: "scheduled", Done: "done", Closed: "closed" } as const satisfies Record<OpportunityPhase, keyof typeof PHASE_BY_STAGE>;
+
+function opportunityLifecycle(o: Opp): OpportunityLifecycle {
+  // Older snapshots encode a successful review in the stage even when review metadata is absent.
+  const phase = PHASE_BY_STAGE[o.stage];
+  return { phase, approved: o.stage === "probing" || o.stage === "scheduled" || o.stage === "done" ||
+    (o.review?.decision === "approve" && !o.review.invalidated) };
+}
+
 type PStatus = "queued" | "probing" | "available" | "unavailable" | "yes" | "no" | "dropped";
 interface Opp {
   id: string; origin: Origin; kind: Proposal["kind"]; category: Category; objective: string; detail: string;
   participants: MemberId[]; alternates: MemberId[]; primed: Set<MemberId>; requester?: MemberId;
   status: Map<MemberId, PStatus>; explanations: Record<MemberId, string>;
-  stage: "review" | "probing" | "scheduled" | "done" | "closed"; deadline: number; createdAt: number;
+  stage: keyof typeof PHASE_BY_STAGE; deadline: number; createdAt: number;
   score: number; components: ScoreComponents; generator: string; exploration: boolean;
   /** Review record (PRD 32.8). An edit is stored as "approve" with `edits`; a re-roll keeps the item waiting. */
   review?: {
@@ -2062,7 +2076,6 @@ export class ConsentNetwork implements NetworkUnderTest {
       this.gate("category_not_allowed", o.participants);
       return this.close(o, "category not allowed");
     }
-    o.stage = "review";
     o.review = { queuedAt: now, deadline: now + (o.sameDay ? 1 : this.opts.reviewSlaHours) * HOUR };
     for (const p of o.participants) o.status.set(p, "queued");
     this.counters.reviewQueued++;
@@ -2072,8 +2085,14 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** Start the consent flow for an approved opportunity: probe the member with the want first. */
   private begin(o: Opp) {
+    // spec/opportunityLifecycle.md, "An opportunity starts in review"
+    const next = stepOpportunity(opportunityLifecycle(o), {
+      type: "startProbing", approvalRecorded: o.review?.decision === "approve", eligible: !o.review?.invalidated,
+    });
+    if (next.phase !== "Probing") return;
+    o.stage = STAGE_BY_PHASE[next.phase];
     if (o.plan) return this.beginPlan(o);
-    o.stage = "probing"; o.deadline = this.now() + PROBE_WAIT;
+    o.deadline = this.now() + PROBE_WAIT;
     o.first = this.firstOf(o);
     for (const p of o.participants) o.status.set(p, "queued");
     this.counters.oppsStarted++;
@@ -2111,7 +2130,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       id: x.recorded && x.id ? x.id : this.sid(x.id ?? `nw-${this.opts.seed}-${++this.oppSeq}`), origin: x.origin, kind: x.kind, category: x.category, objective: x.objective, detail: x.detail,
       participants: [...x.participants], alternates: this.distinctAlternates(x.participants, x.alternates), primed: new Set(x.primed), requester: x.requester,
       status: new Map(x.participants.map(id => [id, "queued" as PStatus])), explanations: { ...x.explanations },
-      stage: "review", deadline: now + PROBE_TTL, createdAt: now, score: x.score, components: x.components ?? ZERO, generator: x.generator,
+      stage: STAGE_BY_PHASE[initialOpportunity.phase], deadline: now + PROBE_TTL, createdAt: now, score: x.score, components: x.components ?? ZERO, generator: x.generator,
       exploration: !!x.exploration, tags: x.tags, replacements: 0, sameDay: !!x.sameDay, contacted: new Set(), reminded: new Set(), feedbackFrom: new Set(), runId: this.currentRunId,
     };
     this.opps.set(o.id, o);
@@ -2433,6 +2452,11 @@ export class ConsentNetwork implements NetworkUnderTest {
         return this.maybeReveal(o);
       }
     }
+    // spec/opportunityLifecycle.md, "Only an approved proposal with enough consent can book"
+    const next = stepOpportunity(opportunityLifecycle(o), {
+      type: "book", hasConsent: o.participants.every(id => o.status.get(id) === "available"),
+    });
+    if (next.phase !== "Scheduled") return;
     const t = this.meetingTime(o, now);
     if (!t) return this.closeNoCommonTime(o, o.participants[0]!);
     const areas = o.participants.map(p => this.member(p).area);
@@ -2446,7 +2470,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.ctx.log("venue", { oppId: o.id, venueId: spot.venue.id, venue: spot.venue.name, lat: spot.venue.lat, lng: spot.venue.lng, meetingAt: o.meetingAt, worstMinutes: spot.worst, time: t.how });
     this.counters.oppsRevealed++; this.counters.oppsAllYes++; this.counters.scheduled++;
     if (!o.recorded) { o.recorded = true; this.ctx.recordProposal(this.toProposal(o), o.origin === "engine" ? "engine" : o.origin === "player" ? "player" : "network"); }
-    o.stage = "scheduled";
+    o.stage = STAGE_BY_PHASE[next.phase];
     for (const id of o.participants) o.status.set(id, "yes");
     if (o.requester) {
       const r = this.requests.find(x => x.oppId === o.id && x.memberId === o.requester);
@@ -2522,11 +2546,19 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (ack) this.send(m, "No worries, thanks for the heads up.", { type: "info" }, "reply");
     if (m.awaiting?.oppId === o.id) m.awaiting = undefined;
     const still = o.participants.filter(p => o.status.get(p) === "yes");
-    const keep = o.participants.length > 2 && still.length >= 2;
+    const keep = groupCanContinue(still.length);
     // Only members who were told about the plan hear that it changed.
     for (const id of still) if (o.bookedTold?.includes(id)) this.send(this.member(id), copy.dropNotice(m.first, keep), { type: "cancellation", proposalId: o.id }, "cancellation",
       { hook: { t: "drop_notice", oppId: o.id } });
-    if (!keep) { this.expireReveals(o); o.closedFrom = o.stage; o.closedReason = "participant dropped"; o.stage = "closed"; this.ctx.log("opportunity_closed", { proposalId: o.id, reason: "participant dropped" }); }
+    if (!keep) {
+      const next = stepOpportunity(opportunityLifecycle(o), { type: "close" });
+      if (next.phase !== "Closed" || o.stage === "closed") return;
+      this.expireReveals(o);
+      o.closedFrom = o.stage;
+      o.closedReason = "participant dropped";
+      o.stage = STAGE_BY_PHASE[next.phase];
+      this.ctx.log("opportunity_closed", { proposalId: o.id, reason: "participant dropped" });
+    }
   }
 
   /** Members the booked plan reached who neither confirmed nor dropped before it closed: an expired reveal. */
@@ -2535,13 +2567,15 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   private close(o: Opp, reason: string) {
-    if (o.stage === "closed" || o.stage === "done") return;
+    const current = opportunityLifecycle(o);
+    const next = stepOpportunity(current, { type: "close" });
+    if (next === current) return;
     if (o.stage === "scheduled") this.expireReveals(o);
     o.closedFrom = o.stage; o.closedReason = reason;
     const wasReview = o.stage === "review";
     const wasProbing = o.stage === "probing" || wasReview;
     if (o.stage === "probing") this.counters.oppsNotAvailable++;
-    o.stage = "closed";
+    o.stage = STAGE_BY_PHASE[next.phase];
     const told = new Set<MemberId>();
     for (const id of o.participants) {
       const m = this.members.get(id);
@@ -2949,7 +2983,6 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** An approved plan: probe the first members (quorum; partner plans one at a time) through the plan lane. */
   private beginPlan(o: Opp) {
-    o.stage = "probing";
     o.plan = { ...o.plan!, invited: [...o.participants], alternates: [...o.alternates] };
     o.deadline = o.plan.probeDeadline;
     o.planRun = plans.startPlanRun(o.plan);
@@ -3068,8 +3101,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       seated.push(id);
     }
     keep = seated;
-    const enough = keep.length >= plan.quorum || (keep.length >= 2 && a.groupSize[0] <= 2);
-    if (!enough) {
+    const hasConsent = keep.length >= plan.quorum || (keep.length >= 2 && a.groupSize[0] <= 2);
+    const next = stepOpportunity(opportunityLifecycle(o), { type: "book", hasConsent });
+    if (next.phase !== "Scheduled") {
       o.planRun = { ...o.planRun!, stage: "closed" };
       if (fromFallback || keep.length < 2) { for (const id of keep) this.noteFor(id, copy.planNotTogether); return this.close(o, "plan did not come together"); }
       return this.planFallback(o);
@@ -3079,7 +3113,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const gv = VENUES.find(v => v.id === plan.venueId);
     this.ctx.log("venue", { oppId: o.id, venueId: plan.venueId ?? plan.eventId ?? null, venue: plan.place.name, lat: gv?.lat ?? null, lng: gv?.lng ?? null, meetingAt: o.meetingAt, time: "plan" });
     this.counters.oppsRevealed++; this.counters.oppsAllYes++; this.counters.scheduled++; this.plansCounters.plansBooked++;
-    o.stage = "scheduled";
+    o.stage = STAGE_BY_PHASE[next.phase];
     o.planRun = { ...o.planRun!, stage: "booked" };
     for (const id of keep) o.status.set(id, "yes");
     if (!o.recorded) { o.recorded = true; this.ctx.recordProposal({ ...this.toProposal(o), participants: [...keep] }, "network"); }
@@ -3424,8 +3458,12 @@ export class ConsentNetwork implements NetworkUnderTest {
         o.reminded.add(id);
         this.send(m, copy.reminder(whenPhrase(o.meetingAt), `${o.venue}`), { type: "reminder", proposalId: o.id }, "reminder", { about: o.participants.filter(p => o.status.get(p) === "yes") });
       }
-      if (!o.feedbackSent && now >= o.meetingAt + 3 * HOUR) {
-        o.feedbackSent = true; o.stage = "done";
+      const next = stepOpportunity(opportunityLifecycle(o), {
+        type: "complete", feedbackDue: !o.feedbackSent && now >= o.meetingAt + 3 * HOUR,
+      });
+      if (next.phase === "Done") {
+        o.feedbackSent = true;
+        o.stage = STAGE_BY_PHASE[next.phase];
         // A plan's probes still waiting are over: the plan has happened.
         if (o.planRun) for (const [p, a] of Object.entries(o.planRun.answers)) if (a === "pending") {
           o.status.set(p, "unavailable");

@@ -8,6 +8,8 @@ A person needs to verify their phone and complete their own profile even when re
 
 Check account boundaries, stale responses, and valid profile submission. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
+The public browser Join form is retired. This historical model covers its account and asynchronous form behavior. The supported direct-agent flow calls the same app-bound site API. The [site enrollment spec](../siteEnrollment.md) generates the server's current account-marker, profile, consent, eligibility, membership, age and completion transitions. Authentication, account lookup and persistence still belong to the service.
+
 Imported from `quint/join_flow.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint

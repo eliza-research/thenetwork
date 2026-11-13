@@ -40,12 +40,12 @@ entire imported model.
 | [engine_rules](engine_rules.md) | Matching rules and outreach budgets | [Matching budgets and cooldowns](../matchingBudgets.md), [dating radius](../datingRadius.md) |
 | [identity_sagas](identity_sagas.md) | Phone ownership and account changes | — |
 | [join_age](join_age.md) | Membership and age | [Member age](../memberAge.md) |
-| [join_flow](join_flow.md) | Browser signup | [Member age](../memberAge.md), [phone verification limits](../otpLimits.md) |
-| [matching_engine](matching_engine.md) | Matching, interviews, and job seats | — |
+| [join_flow](join_flow.md) | Browser signup | [Current site enrollment](../siteEnrollment.md), [member age](../memberAge.md), [phone verification limits](../otpLimits.md) |
+| [matching_engine](matching_engine.md) | Matching, interviews, and job seats | [Global selection run](../selectionRun.md) |
 | [notify_capital](notify_capital.md) | Inbox and network capital | [Notification delivery](../notificationDelivery.md), [capital levers](../capitalLevers.md) |
 | [oauth_mcp](oauth_mcp.md) | Connector authorization and member tools | — |
 | [observatory_sync](observatory_sync.md) | Staff console synchronization | — |
-| [opportunity](opportunity.md) | Proposal, review, and response | [Review deadline](../reviewDeadline.md), [probe reply](../probeReply.md) |
+| [opportunity](opportunity.md) | Proposal, review, and response | [Opportunity lifecycle](../opportunityLifecycle.md), [review deadline](../reviewDeadline.md), [probe reply](../probeReply.md) |
 | [outbound_queue](outbound_queue.md) | Outbound queue and delivery receipts | [Outreach cap](../outreachPolicy.md), [participation budgets](../participationBudgets.md), [quiet hours](../quietHours.md) |
 | [phone_identity](phone_identity.md) | Phone number identity | — |
 | [photo_relay_item](photo_relay_item.md) | Selected-photo delivery | — |

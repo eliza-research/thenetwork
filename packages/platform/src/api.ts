@@ -13,6 +13,7 @@
 //   const api = createPublicApi({ store, otp, turnstile });
 //   Bun.serve({ fetch: async (req, server) => (await api.fetch(req, server)) ?? new Response("not found", { status: 404 }) });
 import { NETWORK_SITES, NETWORK_FRESH_PERSON_SITES, type CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
+import { initial as enrollmentInitial, step as stepEnrollment } from "../../core/src/generated/siteEnrollment.ts";
 import { productionCloudDelegation } from "./cloud-delegation.ts";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { type AccountHooks, Accounts, type HomeInput, type MemberHookContext, parseHome, parseJoin, publicMembership, type Who } from "./accounts.ts";
@@ -546,12 +547,17 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         return withSession(async who => {
           // Updated forms bind the reviewed fields to the displayed account. Check before
           // recording age, creating a person or accepting consent; another tab may change cookies.
-          if (b.signupView !== undefined && b.signupView !== signupAccountView(appId, accounts.phoneHash(who.e164)))
+          const accountView = stepEnrollment(enrollmentInitial, {
+            type: "checkAccountView",
+            viewMatches: b.signupView === undefined || b.signupView === signupAccountView(appId, accounts.phoneHash(who.e164)),
+          });
+          if (accountView.phase === "AccountChanged")
             return json(409, { ok: false, error: "account_changed" });
           const input = parseJoin(b);
-          if (!input) return json(400, { ok: false, error: "invalid" });
+          const enrollment = stepEnrollment(accountView, { type: "decodeProfile", decoded: input !== undefined });
+          if (!input || enrollment.phase !== "AwaitingConsent") return json(400, { ok: false, error: "invalid" });
           try {
-            const r = await accounts.join(app, who, input);
+            const r = await accounts.join(app, who, input, enrollment);
             if (!r.ok) return json(400, { ok: false, error: r.error, ...(r.error === "invite_only" ? { message: app.brand.inviteOnly } : r.error === "under_age" ? { message: app.brand.underAge } : r.error === "review" ? { message: REVIEW_MESSAGE } : {}) });
             return json(200, { ok: true, membership: publicMembership(r.membership) });
           } catch (e) {

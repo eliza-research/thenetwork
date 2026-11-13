@@ -43,10 +43,10 @@ in a top-level Vibespec module. For a flow with I/O or concurrency, use the
 
 | Product area | Generated decisions used by the app |
 |---|---|
-| Signup and identity | [Member age](../memberAge.md), [phone verification limits](../otpLimits.md) |
-| Consent and review | [Carrier consent](../carrierConsent.md), [probe answers](../probeReply.md), [review deadlines](../reviewDeadline.md) |
+| Signup and identity | [Site enrollment](../siteEnrollment.md), [member age](../memberAge.md), [phone verification limits](../otpLimits.md) |
+| Consent and review | [Carrier consent](../carrierConsent.md), [probe answers](../probeReply.md), [review deadlines](../reviewDeadline.md), [opportunity lifecycle](../opportunityLifecycle.md) |
 | Safety and relay | [Trust levels](../trustLevel.md), [relay decisions](../relayDecision.md), [photo eligibility and limits](../photoPolicy.md) |
-| Outreach and matching | [Daily outreach cap](../outreachPolicy.md), [quiet hours](../quietHours.md), [participation budgets](../participationBudgets.md), [participation windows](../participationWindow.md), [matching budgets and cooldowns](../matchingBudgets.md), [dating radius](../datingRadius.md), [candidate exposure floor](../exposureFloor.md) |
+| Outreach and matching | [Daily outreach cap](../outreachPolicy.md), [quiet hours](../quietHours.md), [participation budgets](../participationBudgets.md), [participation windows](../participationWindow.md), [matching budgets and cooldowns](../matchingBudgets.md), [dating radius](../datingRadius.md), [candidate exposure floor](../exposureFloor.md), [global selection](../selectionRun.md) |
 | Hiring | [Job posting policy](../postingPolicy.md) |
 | Inbox and network capital | [Notification delivery](../notificationDelivery.md), [capital levers](../capitalLevers.md) |
 | Group plans | [Plan decisions](../planDecision.md), [crew offers](../crewOffer.md) |

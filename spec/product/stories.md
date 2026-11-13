@@ -28,7 +28,7 @@ Authorize a staff member to create individually attributable invites with city a
 
 Require phone verification, current app consent, age and a valid invite where required. Joining from a new verified number goes through identity linking or staff recovery. Duplicate joins attach to the existing person without exposing other memberships. A banned number cannot join, and an under-13 join creates no membership.
 
-Models: [join and age](../models/join_age.md), [join flow](../models/join_flow.md), [identity lifecycle](../models/identity_sagas.md), [phone identity](../models/phone_identity.md), [member age rules](../memberAge.md), [phone verification limits](../otpLimits.md).
+Models: [generated site enrollment](../siteEnrollment.md), [join and age](../models/join_age.md), [historical browser join](../models/join_flow.md), [identity lifecycle](../models/identity_sagas.md), [phone identity](../models/phone_identity.md), [member age rules](../memberAge.md), [phone verification limits](../otpLimits.md).
 
 ## Story F4 — Onboard in conversation
 
@@ -178,7 +178,7 @@ Models: [opportunity](../models/opportunity.md), [plan run](../models/plan_run.m
 
 ### Logistics follow the accepted opportunity and sending rules
 
-Send permitted reminders and a day-of check-in. Relay a late arrival. Offer a reviewed, eligible replacement or reschedule when someone drops, or cancel gracefully if minimum participation fails. Record attendance and apply the contextual no-show rule. STOP, bans, blocks and quiet hours still apply.
+Send permitted reminders and a day-of check-in. Relay a late arrival. Offer a reviewed, eligible replacement or reschedule when someone drops, or cancel gracefully if minimum participation fails. A booked group cannot continue with fewer than three people. Record attendance and apply the contextual no-show rule. STOP, bans, blocks and quiet hours still apply.
 
 Models: [plan run](../models/plan_run.md), [outbound queue](../models/outbound_queue.md).
 
@@ -300,7 +300,7 @@ Models: [opportunity](../models/opportunity.md), [plan run](../models/plan_run.m
 
 A named app or domain selects that app. A no-keyword text join starts at The Network and asks what the person seeks. Keep the invite boundary on app-bound Network signup. Check consent version and approved profile before submitting, then read back the app and the profile. Join mode, matching activation and send approval are separate states. A different app cannot see that the person already has another membership.
 
-Models: [join flow](../models/join_flow.md), [Cloud authentication](../models/cloud_auth.md), [OAuth and MCP](../models/oauth_mcp.md), [turn consent](../models/turn_consent.md), [profile read](../models/profile_read.md).
+Models: [generated site enrollment](../siteEnrollment.md), [Cloud authentication](../models/cloud_auth.md), [OAuth and MCP](../models/oauth_mcp.md), [turn consent](../models/turn_consent.md), [profile read](../models/profile_read.md).
 
 ## Story F31 — Add my adult dating photos privately
 

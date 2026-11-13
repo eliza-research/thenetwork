@@ -42,6 +42,23 @@ describe("block and report targets in a group plan", () => {
     expect(toA).not.toMatch(/Dee|Eve/);
   });
 
+  test("a booked group closes when only two consenting members remain", async () => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+    await w.onboard("a", "b", "c");
+    const id = w.propose(["a", "b", "c"]);
+    for (let i = 0; i < 6 && w.meetings.length === 0; i++) {
+      await w.runUntil(() => ["a", "b", "c"].some(x => w.probed(x)), 2 * DAY);
+      for (const x of ["a", "b", "c"]) if (w.probed(x)) await w.say(x, "yes");
+    }
+    const opportunity = () => w.net.exportState().opps.find(o => o.id === id);
+    expect(opportunity()?.stage).toBe("scheduled");
+    const from = w.mark();
+    await w.say("c", "sorry, I can't make it anymore");
+    // spec/opportunityLifecycle.md, "Only an approved proposal with enough consent can book"
+    expect(opportunity()?.stage).toBe("closed");
+    for (const id of ["a", "b"]) expect(w.to(id, from).map(s => s.body)).toEqual([expect.stringMatching(/this one is off now/i)]);
+  });
+
   test("a report by pronoun with no date ahead asks who first; the name then files it", async () => {
     const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
     await w.onboard("a", "b");
