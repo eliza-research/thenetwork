@@ -106,7 +106,9 @@ export function slateCap(w: World, j: JobProfile): number {
     : Number.isNaN(planned) ? planned : capSlate(planned, j.seatCap);
   if (companyTrusted(w, j)) return cap;
   const probation = j.verified && j.urgency >= C.urgentMinUrgency ? C.probationUrgentProbes : C.probationProbes;
-  return Math.min(cap, Math.ceil(probation / seatsOf(w, j.company)));
+  // The weekly probation share also includes proposals from earlier runs in its budget window.
+  const left = Math.max(0, Math.ceil(probation / seatsOf(w, j.company)) - w.get(j.id)!.recentProactive);
+  return Math.min(cap, left);
 }
 
 export function underApplied(w: World, j: JobProfile): number {
