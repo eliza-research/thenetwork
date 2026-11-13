@@ -247,10 +247,11 @@ function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<Membe
     if (r.outcome === "no_show") for (const id of r.participants) h(C(id)).noShows++;
   }
   const negFrom = new Map<MemberId, Set<MemberId>>();
-  const lastDate = new Map<MemberId, { at: number; liked?: boolean }>();
+  const lastDate = new Map<MemberId, { id: string; at: number; participants: MemberId[]; liked?: boolean }>();
   for (const r of input.interactions ?? []) if (r.outcome === "completed" && r.at <= now) for (const id of r.participants) {
     const k = C(id), cur = lastDate.get(k);
-    if (!cur || r.at > cur.at) lastDate.set(k, { at: r.at });
+    // ConsentNetwork writes one interaction per check-in as <opportunityId>:fb:<memberId>.
+    if (!cur || r.at > cur.at) lastDate.set(k, { id: r.id.split(":fb:")[0]!, at: r.at, participants: r.participants.map(C) });
   }
   const sum = new Map<MemberId, { g: number; gn: number; r: number; rn: number }>();
   const s = (id: MemberId) => { let x = sum.get(id); if (!x) { x = { g: 0, gn: 0, r: 0, rn: 0 }; sum.set(id, x); } return x; };
@@ -265,7 +266,11 @@ function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<Membe
     s(about).r += v; s(about).rn++;
     if (f.sentiment === "negative") { const set = negFrom.get(about) ?? new Set(); set.add(from); negFrom.set(about, set); }
     const ld = lastDate.get(from);
-    if (ld && f.at >= ld.at) ld.liked = f.wouldMeetAgain === true;
+    // Delayed feedback for an earlier date must not overwrite the latest date's pacing signal.
+    // Older records without an opportunity ID can still identify the date's other participant.
+    if (ld && f.at >= ld.at && (f.opportunityId !== undefined ? f.opportunityId === ld.id : ld.participants.includes(about))) {
+      ld.liked = f.wouldMeetAgain === true;
+    }
   }
   for (const [id, x] of sum) { const y = h(id); y.given = x.gn; y.givenMean = x.gn ? x.g / x.gn : 0; y.received = x.rn; y.receivedMean = x.rn ? x.r / x.rn : 0; }
   for (const [id, set] of negFrom) h(id).negativeFrom = set.size;

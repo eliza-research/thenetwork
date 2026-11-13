@@ -23,6 +23,7 @@ import * as A from "../../packages/engine/src/attention.ts";
 import { resolveConfig } from "../../packages/engine/src/config.ts";
 import { localEmbed } from "../../packages/engine/src/embed.ts";
 import { runEngine, type EngineResult } from "../../packages/engine/src/engine.ts";
+import { memberReason } from "../../packages/engine/src/filters.ts";
 import { privateVocabulary } from "../../packages/engine/src/explain.ts";
 import { checkMemberFacing } from "../../packages/engine/src/judgeCommon.ts";
 import { APPEARANCE_PREFIX, appearanceLeak } from "../../packages/engine/src/packs/slop/appearance.ts";
@@ -165,6 +166,43 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
     });
     expect(viaCheckin).toBeGreaterThan(0);
     for (const id of firstReport.keys()) expect(r.world.state.safetyHolds.some(x => x.memberId === id)).toBe(true);
+  });
+
+  await b.run("pacing: delayed feedback describes its own date, including legacy records and corrections", async () => {
+    for (const seed of [1, 2, 3]) {
+      const base = slopWorld(seed, { perCity: 40, minorShare: 0 });
+      const initial = await runEngine(base, { ...SLOP_ENGINE_CONFIG, seed }, { pack: slopPack });
+      expect(initial.proposals.length).toBeGreaterThan(0);
+      const [id, next] = initial.proposals[0]!.participants as [MemberId, MemberId];
+      const others = base.members.filter(m => m.id !== id && m.id !== next).map(m => m.id);
+      for (const c of [
+        { latest: false, late: true, same: false, legacy: false, current: false, expected: false },
+        { latest: true, late: false, same: false, legacy: false, current: false, expected: true },
+        { latest: false, late: true, same: true, legacy: false, current: false, expected: false },
+        { latest: false, late: true, same: false, legacy: true, current: false, expected: false },
+        { latest: true, late: true, same: false, legacy: true, current: true, expected: true },
+        { latest: true, late: false, same: false, legacy: false, current: true, expected: false },
+      ]) {
+        const old = others[0]!, recent = c.same ? old : others[1]!;
+        for (const serviceIds of [false, true]) for (const reverse of [false, true]) {
+          const input: EngineInput = { ...base, interactions: [
+            { id: serviceIds ? `old-date:fb:${id}` : "old-date", kind: "intro", category: "romance", participants: [id, old], at: base.now - 20 * DAY, outcome: "completed" },
+            { id: serviceIds ? `latest-date:fb:${recent}` : "latest-date", kind: "intro", category: "romance", participants: [id, recent], at: base.now - 2 * DAY, outcome: "completed" },
+          ], feedback: [
+            { id: "current", from: id, about: recent, opportunityId: "latest-date", at: base.now - DAY, sentiment: c.latest ? "positive" : "neutral", wouldMeetAgain: c.latest },
+            { id: "late", from: id, about: c.current ? recent : old, ...(c.legacy ? {} : { opportunityId: c.current ? "latest-date" : "old-date" }), at: base.now - DAY / 2, sentiment: c.late ? "positive" : "neutral", wouldMeetAgain: c.late },
+          ] };
+          if (reverse) { input.interactions!.reverse(); input.feedback!.reverse(); }
+          const w = new World(input, resolveConfig({ ...SLOP_ENGINE_CONFIG, seed }), localEmbed, slopPack);
+          const h = slopProfiles(input, w.canonical).get(id)!.history;
+          expect(h.lastDateLiked).toBe(c.expected);
+          expect(h.given).toBe(2); // Older feedback still contributes to the member's full history.
+          expect(memberReason(w, id, { category: "romance", role: "peer", format: "one_to_one", timeSensitive: true })).toBe(c.expected ? "recently_matched" : null);
+          const result = await runEngine(input, { ...SLOP_ENGINE_CONFIG, seed }, { pack: slopPack });
+          expect(result.proposals.filter(p => p.participants.includes(id)).length).toBe(c.expected ? 0 : 1);
+        }
+      }
+    }
   });
 
   // ---- conformance: core rules, then the stated filters and the never-shared rating -------------------
