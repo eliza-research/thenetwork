@@ -50,6 +50,17 @@
 {"text": "stop spamming me", "label": "stop", "lang": "en"}
 {"text": "STOP ALL", "label": "stop_all", "lang": "en"}
 {"text": "stop all", "label": "stop_all", "lang": "en"}
+{"text": "STOP ALL NOW", "label": "stop_all", "lang": "en"}
+{"text": "STOP ALL PLEASE", "label": "stop_all", "lang": "en"}
+{"text": "PLEASE STOP ALL", "label": "stop_all", "lang": "en"}
+{"text": "NOW STOP ALL", "label": "stop_all", "lang": "en"}
+{"text": "stop all now please", "label": "stop_all", "lang": "en"}
+{"text": "STOP ALL RIGHT NOW", "label": "stop_all", "lang": "en"}
+{"text": "PLEASE PLEASE STOP ALL", "label": "stop_all", "lang": "en"}
+{"text": "PLS PLS STOP ALL", "label": "stop_all", "lang": "en"}
+{"text": "STOP ALL THX", "label": "stop_all", "lang": "en"}
+{"text": "STOP ALL TY", "label": "stop_all", "lang": "en"}
+{"text": "stopall now", "label": "stop_all", "lang": "en"}
 {"text": "PARA", "label": "stop", "lang": "es"}
 {"text": "para", "label": "stop", "lang": "es"}
 {"text": "Alto", "label": "stop", "lang": "es"}
@@ -102,3 +113,7 @@
 {"text": "stop slop", "label": "not_stop", "lang": "en"}
 {"text": "quit peon", "label": "not_stop", "lang": "en"}
 {"text": "remove me from the group chat with Ana?", "label": "not_stop", "lang": "en"}
+{"text": "STOP ALL FOR NOW", "label": "not_stop", "lang": "en"}
+{"text": "STOP ALL 2", "label": "not_stop", "lang": "en"}
+{"text": "stop all by later", "label": "not_stop", "lang": "en"}
+{"text": "please don't stop all", "label": "not_stop", "lang": "en"}
