@@ -146,6 +146,8 @@ export interface IntakeStep { draft?: PostingDraft; text: string; ready: boolean
  * a question for a missing field, or the read-back (ready: a yes saves it).
  */
 export function readPostingText(body: string, ctx: { draft?: PostingDraft; postings: readonly PostingRef[]; newId: string }): IntakeStep | undefined {
+  // Phone keyboards' smart apostrophes carry the same commands and field values.
+  body = body.replace(/[\u2018\u2019]/g, "'");
   const command = POSTING_COMMAND.test(body);
   if (!command && !ctx.draft) return undefined;
   if (command && CLOSE_COMMAND.test(body)) {
