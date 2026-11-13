@@ -38,3 +38,5 @@
 {"text":"stop by later","match":"none"}
 {"text":"Stop it, I love this","match":"none"}
 {"text":"I'll stop at the store","match":"none"}
+{"text":"Don't stop emailing me, but please stop texting me.","match":"likely"}
+{"text":"Don't stop texting me.","match":"none"}

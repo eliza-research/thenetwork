@@ -102,3 +102,7 @@
 {"text": "stop slop", "label": "not_stop", "lang": "en"}
 {"text": "quit peon", "label": "not_stop", "lang": "en"}
 {"text": "remove me from the group chat with Ana?", "label": "not_stop", "lang": "en"}
+{"text": "Don't stop emailing me, but please stop texting me.", "label": "stop", "lang": "en"}
+{"text": "Don't stop emailing me, but stop texting me.", "label": "stop", "lang": "en"}
+{"text": "Don't stop texting me.", "label": "not_stop", "lang": "en"}
+{"text": "Please don't stop texting me, but slow down a bit.", "label": "not_stop", "lang": "en"}

@@ -271,6 +271,9 @@ export interface OptOutReading {
 const EXACT_EN = /^(?:stop|stopall|stop all|unsubscribe|cancel|end|quit|optout|opt out|opt-out|revoke)$/;
 const EXACT_ES = /^(?:para|parar|alto|baja|cancelar|detener|basta|no mas)$/;
 const LIKELY_EN = /\b(?:stop (?:texting|messaging|sending|contacting|writing|bothering)|don't (?:text|message|contact|send me)|do not (?:text|message|contact|send)|no more (?:texts|messages|msgs)|take me off|remove me|unsubscribe me|leave me alone|opt (?:me )?out|i want out|delete my (?:number|account)|lose my number|wrong number|stop (?:it|this|pls|please)|please stop|pls stop|stop already)\b/;
+const NEGATED_STOP = /\b(?:don't|dont|do not|never|won't|wont|can't|cant|cannot|not)\s+stop\b|\bstop (?:by|at|in|over|for|on by)\b/;
+/** Where one clause ends and the next begins: punctuation, "but", "however", "though". */
+const CLAUSE_BREAK = /[,;.!?]+|\b(?:but|however|though)\b/i;
 const LIKELY_ES = /\b(?:no me (?:escribas|mandes|envies|contactes|mensajees)|deja de (?:escribirme|mandarme|enviarme|mensajearme)|dejen de (?:escribirme|mandarme|enviarme)|no (?:mas|quiero) mensajes|ya no (?:quiero|me) (?:mensajes|escriban|manden)|darme de baja|dame de baja|me quiero dar de baja|quitame de|borrame de|sacame de|numero equivocado)\b/;
 
 /**
@@ -279,14 +282,20 @@ const LIKELY_ES = /\b(?:no me (?:escribas|mandes|envies|contactes|mensajees)|dej
  * ("my friend said stop") and questions about stopping ("how do I stop?") are "none".
  */
 export function parseOptOut(text: string, o: { apps?: readonly string[] } = {}): OptOutReading {
-  const t = normalize(text ?? "").replace(/[^a-z0-9.' -]/g, " ").replace(/\s+/g, " ").replace(/[. ]+$/, "").trim();
+  const norm = (s: string) => normalize(s ?? "").replace(/[^a-z0-9.' -]/g, " ").replace(/\s+/g, " ").replace(/[. ]+$/, "").trim();
+  const t = norm(text);
   const lang: "en" | "es" = LIKELY_ES.test(t) || EXACT_ES.test(t) ? "es" : "en";
   if (EXACT_EN.test(t) || EXACT_ES.test(t)) return { match: "exact", scope: "all", lang };
   // Reported speech and how-to questions do not opt out.
   if (/\b(?:said|says|told|asked) (?:me )?(?:to )?["']?stop\b/.test(t) || /\bhow (?:do|can) i (?:stop|unsubscribe|opt out)\b/.test(t)) return { match: "none", scope: "all", lang };
-  // "don't stop", "can't stop laughing", "stop by later", "stop it, I love this": not opt-outs.
-  if (/\b(?:don't|dont|do not|never|won't|wont|can't|cant|cannot|not)\s+stop\b/.test(t) || /\bstop (?:by|at|in|over|for|on by)\b/.test(t)
-    || /^stop (?:it|this)\b.*\b(?:love|lol|haha|lmao|omg|amazing|cute|funny|so good|too good)\b/.test(t)) return { match: "none", scope: "all", lang };
+  // "stop it, I love this": not an opt-out.
+  if (/^stop (?:it|this)\b.*\b(?:love|lol|haha|lmao|omg|amazing|cute|funny|so good|too good)\b/.test(t)) return { match: "none", scope: "all", lang };
+  // "don't stop", "can't stop laughing", "stop by later": not opt-outs. The negation covers its own clause only:
+  // "don't stop emailing me, but please stop texting me" still asks us to stop.
+  if (NEGATED_STOP.test(t)) {
+    const rest = text.split(CLAUSE_BREAK).map(norm).filter(c => c && !NEGATED_STOP.test(c)).join(" ");
+    if (!(LIKELY_EN.test(rest) || LIKELY_ES.test(rest))) return { match: "none", scope: "all", lang };
+  }
   // "leave slop" / "stop slop": one app only (when the caller names its apps).
   const app = t.match(/^(?:leave|stop|quit|salir de|dejar) ([a-z0-9.]+)$/)?.[1];
   if (app && o.apps?.some(a => a.toLowerCase() === app || a.toLowerCase().split(".")[0] === app.split(".")[0])) return { match: "likely", scope: "app", lang };
@@ -366,8 +375,12 @@ const NOT_OPT_OUT = /\b(?:don't|do not|dont|never|please don't) (?:stop|unsubscr
  * only, never a stop of everything.
  */
 export function optOutPhrase(text: string, isLeave: (text: string) => boolean = () => false): boolean {
-  const t = foldKeywordText(text).toLowerCase().replace(/[^\p{L}\p{N}' ]+/gu, " ").replace(/\s+/g, " ").trim();
-  if (!t || t.length > 160 || NOT_OPT_OUT.test(t)) return false;
+  const norm = (s: string) => foldKeywordText(s).toLowerCase().replace(/[^\p{L}\p{N}' ]+/gu, " ").replace(/\s+/g, " ").trim();
+  const asksStop = (s: string) => OPT_OUT_EN.some(r => r.test(s)) || OPT_OUT_ES.some(r => r.test(s));
+  const t = norm(text);
+  if (!t || t.length > 160) return false;
+  // The negation covers its own clause only: "don't stop emailing me, but please stop texting me" is a STOP.
+  if (NOT_OPT_OUT.test(t)) return asksStop(text.split(CLAUSE_BREAK).map(norm).filter(c => c && !NOT_OPT_OUT.test(c)).join(" ")) && !isLeave(text);
   if (isLeave(text)) return false;
-  return OPT_OUT_EN.some(r => r.test(t)) || OPT_OUT_ES.some(r => r.test(t));
+  return asksStop(t);
 }
