@@ -127,4 +127,65 @@ describe.skipIf(!pgAvailable)("peon postings: text intake, restart, staff API (N
     expect(snap.facets.find(f => f.id === `${seat}:openings`)?.tags).toEqual(["peon:openings:0"]);
     expect(snap.facets.filter(f => f.memberId === seat).flatMap(f => f.tags)).toContain("peon:verified");
   }, T);
+
+  test("repeated skill requirements save once at the strongest level through text and staff intake", async () => {
+    await svc?.close();
+    const clock = new SimClock(START);
+    let s = svc = service(clock);
+    await s.start();
+    const phone = "+12125550173";
+    await text(s, clock, phone, "peon");
+    await text(s, clock, phone, "Nina, 32");
+    const managerId = (await memberId(phone))!;
+    expect(managerId).toBeString();
+    const skill = (level: number) => ({ skill: "sql", level });
+    const cases = [
+      { name: "unique", must: [skill(3), { skill: "python", level: 2 }], nice: ["excel"], expected: ["sql:3", "python:2"], expectedNice: ["excel"] },
+      { name: "empty", must: [], nice: [], expected: [], expectedNice: [] },
+      { name: "same_level", must: [skill(3), skill(3)], nice: [], expected: ["sql:3"], expectedNice: [] },
+      { name: "strongest_first", must: [skill(4), skill(2)], nice: [], expected: ["sql:4"], expectedNice: [] },
+      { name: "strongest_last", must: [skill(2), skill(4)], nice: [], expected: ["sql:4"], expectedNice: [] },
+      { name: "zero_level", must: [skill(0), skill(0)], nice: [], expected: ["sql:0"], expectedNice: [] },
+      { name: "nice_only", must: [], nice: ["excel", "excel"], expected: [], expectedNice: ["excel"] },
+      { name: "both_lists", must: [skill(2), skill(4)], nice: ["sql", "sql"], expected: ["sql:4"], expectedNice: ["sql"] },
+    ];
+    const call = async (method: string, path: string, body?: unknown) => {
+      const routes = jobPostingRoutes({ rt: s.runtimeFor("peon")!, user: { id: "staff:test", roles: ["admin"] }, need: () => undefined, audit: async () => {}, now: () => clock.now() });
+      const res = await routes(new Request(`http://127.0.0.1:4848/apps/peon${path}`, { method,
+        ...(body ? { headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : {}) }), path.split("?")[0]!);
+      return { status: res!.status, body: await res!.json() as any };
+    };
+    const statuses: number[] = [];
+    const errors: { name: string; code?: string; errno?: string; constraint?: string }[] = [];
+    for (const c of cases) {
+      try {
+        statuses.push((await call("POST", "/postings", { id: `repeat-${c.name}`, managerId, title: "data analyst", payMin: 90, payMax: 120, must: c.must, nice: c.nice })).status);
+      } catch (error) { // Collect all outcomes on the base's transaction failure too.
+        statuses.push(0);
+        const e = error as { code?: string; errno?: string; constraint?: string };
+        errors.push({ name: c.name, code: e.code, errno: e.errno, constraint: e.constraint });
+      }
+    }
+    await text(s, clock, phone, "We're hiring a data analyst, $90k-$120k, must have SQL, SQL; nice to have Excel, Excel");
+    expect(await last(managerId)).toStartWith("Here's your job post:");
+    const beforeYes = (await postings(managerId)).length;
+    try { await text(s, clock, phone, "yes"); } catch { /* The base fails while saving the confirmed draft. */ }
+    const afterYes = (await postings(managerId)).length;
+    await s.close();
+    s = svc = service(clock);
+    await s.start();
+    const listed = (await call("GET", `/postings?managerId=${encodeURIComponent(managerId)}`)).body.postings as { id: string; must: { skill: string; level: number }[]; nice: string[] }[];
+    const snap = await loadSnapshot(sql, clock.now(), { app: "peon", city: "nyc" });
+    const outcomes = cases.map((c, i) => {
+      const p = listed.find(p => p.id === `repeat-${c.name}`);
+      return { name: c.name, status: statuses[i], seat: snap.members.some(m => m.id === `job:${p?.id}`),
+        must: p?.must.map(m => `${m.skill}:${m.level}`).sort() ?? null, nice: p?.nice.sort() ?? null };
+    });
+    const fromText = listed.find(p => !p.id.startsWith("repeat-"));
+    console.log(`repeated posting skills: ${JSON.stringify({ outcomes, errors, textSaved: afterYes - beforeYes, textMust: fromText?.must, textNice: fromText?.nice })}`);
+    for (const [i, c] of cases.entries()) expect(outcomes[i]).toEqual({ name: c.name, status: 200, seat: true, must: [...c.expected].sort(), nice: [...c.expectedNice].sort() });
+    expect(afterYes - beforeYes).toBe(1);
+    expect(fromText?.must).toEqual([skill(2)]);
+    expect(fromText?.nice).toEqual(["excel"]);
+  }, T);
 });
