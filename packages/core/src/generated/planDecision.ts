@@ -62,3 +62,34 @@ export function lawDirectFallbackRequiresGroup(yesCount: number, smallerOn: bool
   //@ ensures \result === true
   return !(planFallbackShape(yesCount, smallerOn, minGroup, leadOk) === "SmallerGroup") || yesCount >= 3;
 }
+
+/** Story: Keep plan invites on a separate allowance / The separate plan allowance requires availability evidence or weekly check-in consent (spec/planDecision.md:90) */
+//@ pure
+export function qualifiesForPlanAllowance(checkInOptIn: boolean, activeStated: boolean, standingWindow: boolean, learnedTime: boolean): boolean {
+  return checkInOptIn || activeStated || standingWindow || learnedTime;
+}
+
+/** Story: Turn a good plan into a recurring crew / A crew offer needs enough positive responses (spec/planDecision.md:103) */
+//@ pure
+export function hasCrewQuorum(memberCount: number, minimum: number): boolean {
+  return memberCount >= minimum;
+}
+
+/** Story: Turn a good plan into a recurring crew / A crew offer needs enough positive responses (spec/planDecision.md:103) */
+//@ pure
+export function singlePlanSeedsCrew(positiveCount: number, minimum: number, minPlans: number, recurringWant: boolean): boolean {
+  return hasCrewQuorum(positiveCount, minimum) && (minPlans <= 1 || recurringWant);
+}
+
+/** Story: Turn a good plan into a recurring crew / Only accepting members join the recurring crew (spec/planDecision.md:115) */
+//@ pure
+export function crewMembersWhoOptedIn(invitedMembers: string[], optIns: string[]): string[] {
+  return invitedMembers.filter((memberId: string) => optIns.includes(memberId));
+}
+
+/** Story: Turn a good plan into a recurring crew / Only accepting members join the recurring crew (spec/planDecision.md:115) */
+//@ pure
+export function crewHostOrder(members: string[], preferredHosts: string[]): string[] {
+  const hosts: string[] = crewMembersWhoOptedIn(preferredHosts, members);
+  return hosts.length > 0 ? hosts : members;
+}

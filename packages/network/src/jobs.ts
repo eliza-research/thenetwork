@@ -16,6 +16,7 @@
 //                 (must-have checkmarks, never a score, never a name), the intro after both yeses, and
 //                 the check-in. Every text still goes through the Network's leak guard.
 import type { Category, Facet, Intent, MemberId, WorldSnapshot } from "@thenetwork/core";
+import { maxOpenings, missingPostingFields, openingsInRange, payRangeAllowed } from "../../core/src/generated/postingPolicy.ts";
 import { isSeatId, postingIdOf, seatIdOf, seatOwnerOf } from "@thenetwork/engine";
 import type { EngineInput } from "@thenetwork/engine";
 import { JOB_INTENT, T, type PeonMode } from "@thenetwork/engine/src/packs/peon/schema.ts";
@@ -50,7 +51,7 @@ export interface PostingDraft {
 /** A manager's posting as the Network sees it in the snapshot (seat members). */
 export interface PostingRef { id: string; seat: MemberId; title: string; active: boolean; openings: number }
 
-export const MAX_OPENINGS = 50;
+export const MAX_OPENINGS = maxOpenings;
 const slug = (s: string) => s.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 48);
 const WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, a: 1, an: 1 };
 const SENIORITY: [RegExp, number][] = [[/\b(intern|entry[- ]level|junior|jr)\b/i, 1], [/\b(mid[- ]level|mid)\b/i, 2], [/\b(senior|sr)\b/i, 3], [/\b(staff|lead)\b/i, 4], [/\bprincipal\b/i, 5]];
@@ -71,9 +72,9 @@ export function parsePosting(body: string): PostingDraft {
     if (!/^(?:a|an|the|job|post|posting|new|for|my|our)$/i.test(raw) && raw.length >= 2) d.title = raw.toLowerCase();
   }
   const open = /\b(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:open(?:ing)?s?|roles?|seats?|positions?|hires?|people|spots?)\b/i.exec(t) ?? /\bx\s?(\d{1,2})\b/i.exec(t);
-  if (open) { const n = WORDS[open[1]!.toLowerCase()] ?? Number(open[1]); if (Number.isInteger(n) && n >= 1 && n <= MAX_OPENINGS) d.openings = n; }
+  if (open) { const n = WORDS[open[1]!.toLowerCase()] ?? Number(open[1]); if (Number.isInteger(n) && openingsInRange(n)) d.openings = n; }
   const pay = /\$?\s*(\d{2,3})(?:,000|k)?\s*(?:-|–|to)\s*\$?\s*(\d{2,3})(?:,000)?\s*k\b/i.exec(t) ?? /\$\s*(\d{2,3})(?:,000|k)\s*(?:-|–|to)\s*\$?\s*(\d{2,3})(?:,000|k)?/i.exec(t);
-  if (pay) { const a = Number(pay[1]), b = Number(pay[2]); if (a >= 10 && b >= a && b <= 999) { d.payMin = a; d.payMax = b; } }
+  if (pay) { const a = Number(pay[1]), b = Number(pay[2]); if (payRangeAllowed(a, b)) { d.payMin = a; d.payMax = b; } }
   if (/\bremote\b/i.test(t)) d.mode = "remote"; else if (/\bhybrid\b/i.test(t)) d.mode = "hybrid"; else if (/\b(on-?site|in[- ]office|in person)\b/i.test(t)) d.mode = "onsite";
   const lower = ` ${t.toLowerCase().replace(/[^a-z0-9' -]+/g, " ")} `;
   const area = AREAS.find(a => lower.includes(` ${a} `));
@@ -92,8 +93,7 @@ export function parsePosting(body: string): PostingDraft {
 
 /** The fields still missing before a draft can be read back (a title and a pay range). */
 export function missing(d: PostingDraft): ("title" | "pay")[] {
-  if (d.close) return [];
-  return [...(d.title ? [] : ["title" as const]), ...(d.payMin !== undefined && d.payMax !== undefined ? [] : ["pay" as const])];
+  return missingPostingFields(!!d.close, !!d.title, d.payMin !== undefined && d.payMax !== undefined) as ("title" | "pay")[];
 }
 
 const human = (s: string) => s.replace(/_/g, " ");
@@ -201,8 +201,8 @@ export function postingFromDraft(d: PostingDraft, managerId: MemberId, now: numb
 export function postingProblem(p: JobPosting): string | undefined {
   if (!/^[A-Za-z0-9_.-]{1,80}$/.test(p.id)) return "invalid_id";
   if (!p.title.trim() || p.title.length > 80) return "invalid_title";
-  if (!Number.isInteger(p.openings) || p.openings < 1 || p.openings > MAX_OPENINGS) return "invalid_openings";
-  if (!Number.isFinite(p.payMin) || !Number.isFinite(p.payMax) || p.payMin < 10 || p.payMax < p.payMin || p.payMax > 999) return "pay_range_required";
+  if (!Number.isInteger(p.openings) || !openingsInRange(p.openings)) return "invalid_openings";
+  if (!Number.isFinite(p.payMin) || !Number.isFinite(p.payMax) || !payRangeAllowed(p.payMin, p.payMax)) return "pay_range_required";
   if (!["onsite", "hybrid", "remote"].includes(p.mode)) return "invalid_mode";
   if (p.must.length > 12 || p.nice.length > 12 || p.must.some(m => !m.skill || !Number.isInteger(m.level) || m.level < 0 || m.level > 5)) return "invalid_skills";
   return undefined;

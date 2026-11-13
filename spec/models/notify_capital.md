@@ -8,6 +8,8 @@ A member needs to receive each relevant update once and get credit for confirmed
 
 Check notification projection and deduplication and the network capital ledger. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
+Production uses the generated [notification delivery rules](../notificationDelivery.md) for timing, caps, and surface scoring.
+
 Imported from `quint/notify_capital.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint

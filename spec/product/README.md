@@ -47,6 +47,8 @@ in a top-level Vibespec module. For a flow with I/O or concurrency, use the
 | Consent and review | [Carrier consent](../carrierConsent.md), [probe answers](../probeReply.md), [review deadlines](../reviewDeadline.md) |
 | Safety | [Trust levels](../trustLevel.md) |
 | Outreach and matching | [Daily outreach cap](../outreachPolicy.md), [quiet hours](../quietHours.md), [participation budgets](../participationBudgets.md), [matching budgets and cooldowns](../matchingBudgets.md), [dating radius](../datingRadius.md) |
+| Hiring | [Job posting policy](../postingPolicy.md) |
+| Inbox | [Notification delivery](../notificationDelivery.md) |
 | Group plans | [Plan decisions](../planDecision.md) |
 | Conversation infrastructure | [Structured reply retries](../chatRetry.md) |
 

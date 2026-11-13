@@ -3,6 +3,7 @@
 // a web page whether an app is installed, so we never guess silently: a surface whose links went
 // unused twice in a row drops out until the member uses it again.
 
+import { deliverySurfaceScore, maxIgnoredStreak, surfaceHasClearLead, surfaceIsUsable, surfaceRecentMs } from "../../core/src/generated/notificationDelivery.ts";
 import { isAssistant, type Assistant, type Channel, type Surface } from "./types.ts";
 
 export interface SurfaceSignal {
@@ -35,16 +36,14 @@ export type Delivery =
   | { mode: "deeplink"; assistant: Assistant; reason: string }
   | { mode: "button_page"; assistants: Assistant[]; reason: string };
 
-export const RECENT_MS = 14 * 24 * 3600_000;
-export const MAX_IGNORED_STREAK = 2;
-const LEAD = 2;
-const MIN_SCORE = 3;
+export const RECENT_MS = surfaceRecentMs;
+export const MAX_IGNORED_STREAK = maxIgnoredStreak;
 
 export function score(s: SurfaceSignal, now: number): number {
-  return s.acted * 3 + (s.lastUsedAt !== undefined && now - s.lastUsedAt <= RECENT_MS ? 2 : 0) + (s.active ? 1 : 0) - s.ignored * 2;
+  return deliverySurfaceScore(s.acted, s.ignored, s.lastUsedAt !== undefined && now - s.lastUsedAt <= RECENT_MS, s.active);
 }
 
-const usable = (s: SurfaceSignal) => s.active && s.ignoredStreak < MAX_IGNORED_STREAK;
+const usable = (s: SurfaceSignal) => surfaceIsUsable(s.active, s.ignoredStreak);
 
 export function resolveDelivery(prefs: SurfacePrefs, signals: SurfaceSignal[], now: number): Delivery {
   const bySurface = new Map(signals.map(s => [s.surface, s]));
@@ -72,6 +71,6 @@ export function resolveDelivery(prefs: SurfacePrefs, signals: SurfaceSignal[], n
   const top = ranked[0];
   if (!top) return { mode: "thread", reason: "no_assistant" };
   const runnerUp = Math.max(ranked[1]?.s ?? -Infinity, channelScore);
-  if (top.s >= MIN_SCORE && top.s - runnerUp >= LEAD) return toAssistant(top.a, "score");
+  if (surfaceHasClearLead(top.s, runnerUp)) return toAssistant(top.a, "score");
   return { mode: "thread", reason: "no_clear_leader" };
 }

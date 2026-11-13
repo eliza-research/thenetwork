@@ -13,6 +13,7 @@
 //    with neither after OUTCOME_WINDOW_MS is "ignored" (`sweep`).
 
 import { createHash, randomInt } from "node:crypto";
+import { inboxDueAt, removeProactiveItems } from "../../core/src/generated/notificationDelivery.ts";
 import { isQuietAt } from "../../blooio/src/quiet-hours.ts";
 import { composeText } from "./compose.ts";
 import type { NotifyStore } from "./store.ts";
@@ -111,9 +112,7 @@ export class Notifier {
   }
 
   private dueAt(i: InboxItem): number {
-    if (i.urgency === "requested") return i.createdAt;
-    if (i.urgency === "urgent") return i.createdAt + this.cfg.urgentDelayMs;
-    return i.createdAt + this.cfg.digestDelayMs;
+    return inboxDueAt(i.createdAt, i.urgency, this.cfg.urgentDelayMs, this.cfg.digestDelayMs);
   }
 
   /** Decide what to send now. Writes nothing except task tokens for link deliveries. */
@@ -133,7 +132,7 @@ export class Notifier {
       if (this.cfg.isQuiet(now, r.timeZone)) { holds.push({ personId, reason: "quiet_hours" }); continue; }
 
       const recent = await this.store.capSendsSince(personId, now - WEEK_MS + 1);
-      if (recent.length >= this.cfg.weeklyCap && items.some(i => i.urgency !== "requested")) {
+      if (removeProactiveItems(recent.length, this.cfg.weeklyCap, items.some(i => i.urgency !== "requested"))) {
         const requested = items.filter(i => i.urgency === "requested");
         if (requested.length === 0) {
           holds.push({ personId, reason: "weekly_cap", until: Math.min(...recent) + WEEK_MS });

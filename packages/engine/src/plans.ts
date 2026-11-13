@@ -16,7 +16,10 @@
 // Engine-visible inputs only. Nothing here reads hidden truth.
 import type { Category, City, MemberId, ScoreComponents } from "@thenetwork/core";
 import { DAY, HOUR } from "@thenetwork/core";
-import { canApplyPlanReply, planFallbackShape, planProbeExpired, planReplyChoice, unmetPlanQuorum, type PlanStage } from "../../core/src/generated/planDecision.ts";
+import {
+  canApplyPlanReply, crewBelowMinimum, crewHostOrder, crewMembersWhoOptedIn, hasCrewQuorum, planFallbackShape, planProbeExpired,
+  planReplyChoice, qualifiesForPlanAllowance, singlePlanSeedsCrew, unmetPlanQuorum, type PlanStage,
+} from "../../core/src/generated/planDecision.ts";
 import { activitiesForTags, activityById, type ActivityType, type Daypart, type Venue } from "./packs/network/activities.ts";
 import { availabilityProb, candidateSlots, timeOptionsPhrase, type AvailabilityEvidence, type TimeSlot } from "./attention.ts";
 import { DEFAULT_ATTENTION, DEFAULT_CONFIG, DEFAULT_PLANS, type AttentionConfig, type PlansConfig } from "./config.ts";
@@ -94,9 +97,12 @@ export function hasWindow(ev: PlanEvidence, slot: TimeSlot, now: number, pcfg: P
  * week, a standing window, a learned (accepted or attended) time, or the opt-in weekly check-in.
  */
 export function planAllowanceEligible(ev: PlanEvidence | undefined, checkInOptIn: boolean, now: number): boolean {
-  if (checkInOptIn) return true;
-  if (!ev) return false;
-  return !!(ev.stated && ev.stated.until > now) || !!ev.standing?.length || !!ev.history?.some(h => h.outcome !== "declined_time" && h.at <= now);
+  return qualifiesForPlanAllowance(
+    checkInOptIn,
+    !!(ev?.stated && ev.stated.until > now),
+    !!ev?.standing?.length,
+    ev?.history?.some(h => h.outcome !== "declined_time" && h.at <= now) ?? false,
+  );
 }
 
 /**
@@ -699,11 +705,11 @@ export function detectCrews(history: readonly PlanOutcomeRecord[], existing: rea
     for (let i = 0; i < sorted.length; i++) {
       const pos = new Set(sorted[i]!.positive.filter(m => !inCrew.has(`${act}|${m}`)));
       const groups: MemberId[][] = [];
-      if (pos.size >= pcfg.crews.minMembers && (pcfg.crews.minPlans <= 1 || sorted[i]!.recurringWant.some(m => pos.has(m)))) groups.push([...pos]);
+      if (singlePlanSeedsCrew(pos.size, pcfg.crews.minMembers, pcfg.crews.minPlans, sorted[i]!.recurringWant.some(m => pos.has(m)))) groups.push([...pos]);
       // minPlans = 2: the same members positive at a later plan of the same activity.
       for (let j = i + 1; j < sorted.length && pcfg.crews.minPlans === 2; j++) {
         const both = [...pos].filter(m => sorted[j]!.positive.includes(m));
-        if (both.length >= pcfg.crews.minMembers) groups.push(both);
+        if (hasCrewQuorum(both.length, pcfg.crews.minMembers)) groups.push(both);
       }
       const g = groups.sort((a, b) => b.length - a.length)[0];
       if (!g) continue;
@@ -723,10 +729,9 @@ export function detectCrews(history: readonly PlanOutcomeRecord[], existing: rea
  * said yes; below minMembers there is no crew. Hosts rotate among the members who stayed.
  */
 export function crewOptIn(crew: Crew, optedIn: readonly MemberId[], pcfg: PlansConfig = DEFAULT_PLANS): Crew | null {
-  const members = crew.members.filter(m => optedIn.includes(m));
-  if (members.length < pcfg.crews.minMembers) return null;
-  const hosts = crew.hostRotation.filter(m => members.includes(m));
-  return { ...crew, members, hostRotation: hosts.length ? hosts : members };
+  const members = crewMembersWhoOptedIn(crew.members, [...optedIn]);
+  if (crewBelowMinimum(members.length, pcfg.crews.minMembers)) return null;
+  return { ...crew, members, hostRotation: crewHostOrder(members, crew.hostRotation) };
 }
 
 /** The crew's next session (same weekday and time, `cadenceDays` after the last), as a plan; each session is opt-in. Hosts rotate. */

@@ -333,6 +333,11 @@ Stages run cheapest first. `✓` passed, `✗` failed, `-` skipped: blocked by a
 | `tests` | Does the shell work with the real services around it? | whole user journeys, where the checks above cannot see ([AGENTS.md](AGENTS.md#tests)) |
 | `review` | Does every story have rules and every rule Quint? Has every new or changed story, rule and `//@` contract been reconciled? | exact |
 
+The proof stage covers generated modules and eligible annotations under root
+`src/`. The root typecheck also covers workspace code that imports the
+published copies. Run the Network simulation, integration, e2e, and
+whole-flow Quint commands separately.
+
 ## What lives where
 
 | Path | Role |

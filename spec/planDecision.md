@@ -82,3 +82,48 @@ pure def planFallbackShape(yesCount: int, smallerOn: bool, minGroup: int, leadOk
 pure def lawDirectFallbackRequiresGroup(yesCount: int, smallerOn: bool, minGroup: int, leadOk: bool): bool =
   planFallbackShape(yesCount, smallerOn, minGroup, leadOk) == SmallerGroup implies yesCount >= 3
 ```
+
+## Story: Keep plan invites on a separate allowance
+
+> As a member who has told Eliza when I am free, I want group-plan invitations to use their own allowance.
+
+### The separate plan allowance requires availability evidence or weekly check-in consent
+
+An active stated window, a standing window, an accepted or attended time at or before the current time, or consent to the weekly check-in qualifies. A declined time does not count as evidence. The engine checks allowance and delivery limits separately.
+
+```quint
+pure def qualifiesForPlanAllowance(checkInOptIn: bool, activeStated: bool, standingWindow: bool, learnedTime: bool): bool =
+  checkInOptIn or activeStated or standingWindow or learnedTime
+```
+
+## Story: Turn a good plan into a recurring crew
+
+> As someone who enjoyed a plan, I want to opt in to meeting the group again and share hosting with the group.
+
+### A crew offer needs enough positive responses
+
+The configured minimum number of attendees must say they would do it again. Under the one-plan setting, one successful plan is enough. A stated wish for a recurring plan can also seed an offer from one plan. When the setting requires two plans, the engine also checks for enough of the same members to have responded positively to another plan for the same activity.
+
+```quint
+pure def hasCrewQuorum(memberCount: int, minimum: int): bool =
+  memberCount >= minimum
+
+pure def singlePlanSeedsCrew(positiveCount: int, minimum: int, minPlans: int, recurringWant: bool): bool =
+  hasCrewQuorum(positiveCount, minimum) and (minPlans <= 1 or recurringWant)
+```
+
+### Only accepting members join the recurring crew
+
+The crew forms only when the accepting members meet the configured minimum. Keep their original order. Use the preferred hosts who accepted. If none accepted, rotate among all accepting members.
+
+```quint
+pure def crewBelowMinimum(memberCount: int, minimum: int): bool =
+  memberCount < minimum
+
+pure def crewMembersWhoOptedIn(invitedMembers: List[str], optIns: List[str]): List[str] =
+  invitedMembers.select(memberId => optIns.includes(memberId))
+
+pure def crewHostOrder(members: List[str], preferredHosts: List[str]): List[str] =
+  val hosts = crewMembersWhoOptedIn(preferredHosts, members)
+  if (hosts.length() > 0) hosts else members
+```
