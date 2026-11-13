@@ -689,13 +689,48 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     [ord("third|3rd"), 2], [/(?<![\d:])\b3\b(?!\s*(am|pm|:|\d|of|more|people|hours?|mins?))/g, 2], [/\b(last|later|latest) one\b/g, options.length - 1],
   ];
   for (const [re, i] of ordinals) if (options[i]) for (const m of t.matchAll(re)) mark([options[i]!.key], m.index!, m[0].length);
+  // Times are resolved together, because two options can share a day or a clock
+  // time. A named day or time is a pick only when the words identify exactly one
+  // option; otherwise the option would be recorded as availability the member
+  // never gave.
+  const dayMentions: { day: string; index: number; len: number }[] = [];
   for (const [re, dayName] of DAY_WORDS) {
-    const keys = options.filter(o => o.label.startsWith(dayName)).map(o => o.key);
-    if (keys.length) for (const m of t.matchAll(re)) mark(keys, m.index!, m[0].length);
+    for (const m of t.matchAll(re)) dayMentions.push({ day: dayName, index: m.index!, len: m[0].length });
   }
+  const clockMentions: { clock: string; index: number; len: number }[] = [];
   for (const m of t.matchAll(/\b(\d{1,2})(?::\d\d)?\s*(am|pm)\b/g)) {
-    const label = `${Number(m[1])}${m[2]}`;
-    mark(options.filter(o => o.label.endsWith(` ${label}`)).map(o => o.key), m.index!, m[0].length);
+    clockMentions.push({ clock: m[0].replace(/\s+/g, "").toLowerCase(), index: m.index!, len: m[0].length });
+  }
+  // Each mention is resolved on its own, and a day carries the clock written right
+  // after it ("Thursday 7pm") so the pair can identify one option. Resolving every
+  // mention through one union applied a refusal at one position to options named in
+  // another clause: "Friday is out, Saturday 11am works" booked Thursday and Sunday.
+  type Mention = { index: number; len: number; day?: string; clock?: string };
+  const merged: Mention[] = [];
+  for (const m of [...dayMentions].sort((a, b) => a.index - b.index)) {
+    const next = clockMentions.find(c => c.index > m.index && /^[\s,]*(?:at|by|around|on)?[\s,]*$/.test(t.slice(m.index + m.len, c.index)));
+    if (next) merged.push({ index: m.index, len: next.index + next.len - m.index, day: m.day, clock: next.clock });
+    else merged.push({ index: m.index, len: m.len, day: m.day });
+  }
+  for (const c of clockMentions) {
+    if (!merged.some(m => m.clock === c.clock && m.index <= c.index && c.index < m.index + m.len)) merged.push({ index: c.index, len: c.len, clock: c.clock });
+  }
+  // Time words that fit more than one option are not a yes to all of them.
+  let ambiguousTime = false;
+  for (const m of merged.sort((a, b) => a.index - b.index)) {
+    const matched = options.filter(
+      o => (!m.day || o.label.startsWith(m.day)) && (!m.clock || o.label.endsWith(` ${m.clock}`)),
+    );
+    if (negatedAt(t, m.index, m.len)) {
+      // A refusal is safe even when the words fit more than one option, and a refused
+      // time that is not on offer refuses nothing.
+      for (const o of matched) neg.add(o.key);
+      continue;
+    }
+    if (matched.length === 1) { mark([matched[0]!.key], m.index, m.len); continue; }
+    // The words fit more than one option, or a time that is not on offer at all: the
+    // member named no single offered time, so ask again instead of booking one.
+    ambiguousTime = true;
   }
   // A reply that is only time words ("sat 11am", "thursday or sunday") picks them all firmly.
   let residue = t;
@@ -715,6 +750,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // "Any of them" (not refused, not a request for other days): every option the member did not rule out.
   const allAt = ALL.exec(t) ?? ALL_WEAK.exec(t);
   if (allAt && c.answer !== "counter" && !negatedAt(t, allAt.index, allAt[0].length)) return open.length ? { answer: "yes", keys: open, why: c.why } : unclear;
+  if (ambiguousTime) return unclear;
   if (c.answer === "yes") return { answer: "yes", keys: open, why: c.why };
   if (c.answer === "counter") return { answer: "yes", keys: [], why: c.why };
   // Only refusals ("Thursday doesn't work") are not a yes: the probe stays open for a clear answer.
