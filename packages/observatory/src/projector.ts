@@ -148,7 +148,12 @@ export class Projector {
         if (prev === st) return;
         o.status[r.memberId] = st;
         if (st === "accepted" || st === "countered") { c.accepts++; const k = this.counters(r.memberId); if (k) k.accepted++; }
-        if (st === "declined") { c.declines++; if (prev === "accepted" || prev === "countered" || prev === "confirmed") c.accepts--; }
+        if (st === "declined") {
+          c.declines++;
+          if (prev === "accepted" || prev === "countered" || prev === "confirmed") {
+            c.accepts--; const k = this.counters(r.memberId); if (k) k.accepted--;
+          }
+        }
         if (st === "accepted" || st === "declined") {
           s.pushFeed({ t: r.t, kind: st === "accepted" ? "accept" : "decline", text: `${this.name(r.memberId)} ${st === "accepted" ? "said yes to" : "passed on"} ${o.participants.length > 2 ? "a group" : "meeting " + this.names(o.participants.filter(x => x !== r.memberId))}`, members: [r.memberId], opportunityId: o.id, severity: st === "accepted" ? "good" : undefined });
         }
