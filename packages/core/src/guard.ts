@@ -25,8 +25,9 @@
 // (Cyrillic, Greek, Armenian, Cherokee, small capitals, IPA, regional indicators), all punctuation and
 // whitespace collapsed to one space, letters and digits of every script kept), so "Ｄivorce",
 // "dívorce", "ᴅɪᴠᴏʀᴄᴇ" and "divorce," match, and non-Latin facts are protected too (audit core-3).
-// Contact checks also run on variants with number words, other-script digits, letter O/l inside
-// numbers, spaced "@" and ".", and spelled "at"/"dot" normalized (audit core-2).
+// Contact checks also run on variants with number words, spoken "double"/"triple"/"doble",
+// other-script digits, letter O/l inside numbers, spaced "@" and ".", and spelled "at"/"dot"
+// normalized (audit core-2).
 // Forbidden strings, facts, vocabulary and canaries are also matched on variants with spaced-out
 // letters collapsed ("d i v o r c e") and digit/symbol substitutions undone ("d1v0rce").
 // Reasons never contain the matched text (logs must not carry the private value): matches are
@@ -163,13 +164,23 @@ function asciiDigits(s: string): string {
 
 /**
  * Variants of `plain` text for the contact checks (audit core-2): number words as digits ("two one
- * two" → "2 1 2"), other-script digits as ASCII, letter O/l/i inside numbers as 0/1, keycap emoji
- * dropped, spaced "@" and "." closed up, spelled "at"/"dot" as "@"/".", underscores as spaces.
+ * two" → "2 1 2"), a spoken repeat expanded first ("double oh" → "oh oh", "triple five" → "five
+ * five five", also Spanish "doble"), other-script digits as ASCII, letter O/l/i inside numbers as
+ * 0/1, keycap emoji dropped, spaced "@" and "." closed up, spelled "at"/"dot" as "@"/".",
+ * underscores as spaces.
  */
+const SPOKEN_DIGIT = `${Object.keys(NUMBER_WORDS).sort((a, b) => b.length - a.length).join("|")}|oh|o|\\d`;
+/** "double oh" / "triple 5" / "doble cero": the repeat word becomes that many copies of the next digit. */
+const SPOKEN_REPEAT = new RegExp(`\\b(double|triple|doble)[\\s-]+(${SPOKEN_DIGIT})\\b`, "g");
+function expandSpokenRepeats(v: string): string {
+  return v.replace(SPOKEN_REPEAT, (_, mult: string, d: string) => `${d} `.repeat(mult === "triple" ? 3 : 2).trimEnd());
+}
+
 export function contactVariants(s: string): string[] {
   const out = new Set<string>();
   for (const p of plainVariants(s)) {
     let v = asciiDigits(p).replace(/⃣/g, "");
+    v = expandSpokenRepeats(v);
     v = v.replace(/\b[a-z]+\b/g, w => NUMBER_WORDS[w] ?? w);
     v = v.replace(/\boh\b(?=[\s.\-]*\d)|(?<=\d[\s.\-]*)\boh\b/g, "0");
     v = v.replace(/(?<=\d[\s.\-]{0,2})[o](?![a-z])|(?<![a-z])[o](?=[\s.\-]{0,2}\d)/g, "0").replace(/(?<=\d[\s.\-]{0,2})[li](?![a-z])|(?<![a-z])[li](?=[\s.\-]{0,2}\d)/g, "1");
