@@ -127,8 +127,8 @@ export const CONTACT_PATTERNS: { name: string; re: RegExp }[] = [
   // Digits separated by up to three spaces, dots, dashes or brackets: "(212) 555-0102", "+1 212 555 0102".
   // Order numbers, year lists and other non-phones are filtered out in `isPhone`.
   { name: "phone", re: /(?:\+?\d[\s().\-\/_x]{0,3}){9,14}\d/g },
-  // A 7-digit local number: "555-0102", "555 0102", "5550102" (core-2).
-  { name: "phone", re: /(?<![\d#])(?:\d[\s.\-_]{0,2}){6}\d(?![\s.\-_]{0,2}\d)/g },
+  // A 7-digit local number: "555-0102", "555 0102", "5550102", "555, 0102" (core-2).
+  { name: "phone", re: /(?<![\d#])(?:\d[\s.\-_,;/]{0,2}){6}\d(?![\s.\-_,;/]{0,2}\d)/g },
   // Bounded quantifiers: linear time on adversarial input (core-7).
   { name: "email", re: /(?<![a-z0-9._%+-])[a-z0-9._%+-]{1,64}@[a-z0-9-]{1,63}(?:\.[a-z0-9-]{1,63}){0,8}\.[a-z]{2,24}(?![a-z])/ },
   // "sam@gmail", "sam at gmail" (well-known providers need no TLD).
@@ -173,6 +173,8 @@ export function contactVariants(s: string): string[] {
     v = v.replace(/\b[a-z]+\b/g, w => NUMBER_WORDS[w] ?? w);
     v = v.replace(/\boh\b(?=[\s.\-]*\d)|(?<=\d[\s.\-]*)\boh\b/g, "0");
     v = v.replace(/(?<=\d[\s.\-]{0,2})[o](?![a-z])|(?<![a-z])[o](?=[\s.\-]{0,2}\d)/g, "0").replace(/(?<=\d[\s.\-]{0,2})[li](?![a-z])|(?<![a-z])[li](?=[\s.\-]{0,2}\d)/g, "1");
+    // Collapse letter-spaced words ("s a m" → "sam", "g m a i l" → "gmail") for spelled emails.
+    v = v.replace(/\b((?:[a-z]\s){2,}[a-z])\b/g, (m) => m.replace(/\s/g, ""));
     out.add(v);
     // Spelled "dot" only before a known TLD or another spelled dot; spelled "at" only before a domain.
     const dotted = v.replace(new RegExp(`[\\s([{]+(?:dot|punto)[\\s)\\]}]+(?=(?:${TLDS})\\b|[a-z0-9-]+[\\s([{]+(?:dot|punto)\\b)`, "g"), ".");
@@ -190,6 +192,10 @@ function isPhone(text: string, m: RegExpExecArray): boolean {
   if (/#\s*$|\b(?:order|conf|confirmation|ref|reference|booking|ticket|tracking|invoice|receipt|account|acct|case|id)\b[\s:#.no]*$/.test(before)) return false;
   const groups = m[0].split(/[^\d]+/).filter(Boolean);
   if (groups.length >= 2 && groups.every(g => YEAR.test(g))) return false;
+  // Reject comma/semicolon/slash lists ("1, 2, 3, 4, 5, 6, 7"): every separator is punctuation,
+  // no plain space or dash between the digits.
+  const seps = m[0].split(/\d+/).filter(Boolean);
+  if (seps.length >= 2 && seps.every(s => /^[\s]*[,;/][,\s;\/]*$/.test(s)) && !seps.some(s => /[-]/.test(s) || /^\s+$/.test(s))) return false;
   return true;
 }
 
