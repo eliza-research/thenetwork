@@ -3,7 +3,9 @@
 // over 21 days; every NYC scenario; every sim/scenarios/*.json at pass^3 against the push stub; the
 // attention and plans invariants on the consent arms; and the shared conformance rules for networkPack.
 import { readdirSync } from "node:fs";
-import { DAY, HOUR, MINUTE, type MemberId } from "../../packages/core/src/index.ts";
+import { DAY, HOUR, MINUTE, SimClock, type MemberId, type NetworkContext, type SimMessage } from "../../packages/core/src/index.ts";
+import { randomWorld } from "../../packages/engine/src/testkit.ts";
+import { standingFromFacets, availabilityProb } from "../../packages/engine/src/attention.ts";
 import { DEFAULT_ATTENTION } from "../../packages/engine/src/index.ts";
 import { networkPack } from "../../packages/engine/src/packs/network/index.ts";
 import type { RunRecord } from "../../packages/core/src/index.ts";
@@ -36,6 +38,126 @@ async function world(days: number, seed = 3, network: NetworkOptions = { review:
 }
 
 export async function networkBlock(b: Block, o: { quick: boolean }): Promise<void> {
+  await b.run("recurring availability: refused day groups are not saved as free time", async () => {
+    const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri"].map(d => `evening:${d}`);
+    const weekends = ["Sun", "Sat"].flatMap(d => ["morning", "afternoon", "evening"].map(p => `${p}:${d}`));
+    const cases: [string, string[], number | undefined, number?][] = [
+      ["Usually free Tuesday evenings, not weekends", ["evening:Tue"], Date.UTC(2026, 9, 10, 14)],
+      ["Usually free Saturday mornings, not weekdays", ["morning:Sat"], Date.UTC(2026, 9, 6, 23)],
+      ["Usually free Sunday afternoons, not weeknights", ["afternoon:Sun"], Date.UTC(2026, 9, 6, 23)],
+      ["Usually free Tuesday evenings, weekends don't work", ["evening:Tue"], Date.UTC(2026, 9, 10, 14)],
+      ["Usually free Saturday mornings, weekdays are busy", ["morning:Sat"], Date.UTC(2026, 9, 6, 23)],
+      ["Usually free Sunday afternoons, weeknights are out", ["afternoon:Sun"], Date.UTC(2026, 9, 6, 23)],
+      ["Usually free weekends", weekends, undefined],
+      ["Usually free weekdays", weekdays, undefined],
+      ["Usually free weeknights", weekdays, undefined],
+      ["Usually free Tuesday evenings, not Saturday", ["evening:Tue"], Date.UTC(2026, 9, 10, 14)],
+      ["free most evenings, not weeknights", [], Date.UTC(2026, 9, 6, 23)],
+      ["Usually free any evenings, not weekdays", [], Date.UTC(2026, 9, 6, 23)],
+      ["Usually free all evenings, weeknights don't work", [], Date.UTC(2026, 9, 6, 23)],
+      ["Usually free every evening, weekdays are busy", [], Date.UTC(2026, 9, 6, 23)],
+      ["free most evenings", weekdays, undefined],
+      ["free most evenings, not weekends", weekdays, undefined],
+      ["Free every evening, not Tuesday", [], Date.UTC(2026, 9, 6, 23)],
+      ["Free all evenings, Friday is out", [], Date.UTC(2026, 9, 9, 23)],
+      ["Free most evenings, not Sunday", weekdays, undefined],
+      ["I'm free on weekdays except Tuesday", weekdays.filter(t => t !== "evening:Tue"), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["I'm free weekdays, not Tuesday", weekdays.filter(t => t !== "evening:Tue"), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["I can do weekdays but Tuesday is out", weekdays.filter(t => t !== "evening:Tue"), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["Usually free weekdays, Tuesdays are busy", weekdays.filter(t => t !== "evening:Tue"), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["Usually free weeknights but not Friday", weekdays.filter(t => t !== "evening:Fri"), Date.UTC(2026, 9, 9, 23), Date.UTC(2026, 9, 12, 23)],
+      ["Usually free weeknights except Friday", weekdays.filter(t => t !== "evening:Fri"), Date.UTC(2026, 9, 9, 23), Date.UTC(2026, 9, 12, 23)],
+      ["I'm free on weekends except Sunday", weekends.filter(t => t.endsWith(":Sat")), Date.UTC(2026, 9, 11, 14), Date.UTC(2026, 9, 10, 14)],
+      ["Free weekends, not Saturday", weekends.filter(t => t.endsWith(":Sun")), Date.UTC(2026, 9, 10, 14), Date.UTC(2026, 9, 11, 14)],
+      ["Free on weekends except Sunday mornings", ["morning:Sat"], Date.UTC(2026, 9, 11, 14), Date.UTC(2026, 9, 10, 14)],
+      ["Free weekday evenings except Tuesday and Friday", weekdays.filter(t => !["evening:Tue", "evening:Fri"].includes(t)), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["Free most weekend evenings except Saturday and Sunday", [], Date.UTC(2026, 9, 10, 23)],
+      ["Usually free weekdays, not Sunday", weekdays, undefined],
+      ["Usually free weekends, not Tuesday", weekends, undefined],
+      ["Usually free Tuesdays", ["evening:Tue"], undefined],
+      ["Usually free weekday mornings, not Tuesday", ["Mon", "Wed", "Thu", "Fri"].map(d => `morning:${d}`), Date.UTC(2026, 9, 13, 14), Date.UTC(2026, 9, 12, 14)],
+      ["Free weekday evenings except Monday and Tuesday and Wednesday and Thursday and Friday", [], Date.UTC(2026, 9, 13, 23)],
+      ["Usually free weekday mornings, not evenings", ["Mon", "Tue", "Wed", "Thu", "Fri"].map(d => `morning:${d}`), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 14)],
+      ["Usually free weekday afternoons, not evenings", ["Mon", "Tue", "Wed", "Thu", "Fri"].map(d => `afternoon:${d}`), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 18)],
+      ["Usually free weekends, not mornings", weekends.filter(t => !t.startsWith("morning:")), Date.UTC(2026, 9, 11, 14), Date.UTC(2026, 9, 10, 18)],
+      ["Usually free weekend mornings, not afternoons", ["morning:Sun", "morning:Sat"], Date.UTC(2026, 9, 11, 18), Date.UTC(2026, 9, 10, 14)],
+      ["Usually free weekdays, not evenings", [], Date.UTC(2026, 9, 13, 23)],
+      ["Free most evenings, not after work", [], Date.UTC(2026, 9, 13, 23)],
+      ["Usually free weekday mornings, evenings don't work", ["Mon", "Tue", "Wed", "Thu", "Fri"].map(d => `morning:${d}`), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 14)],
+      ["Usually free weekday mornings, no nights", ["Mon", "Tue", "Wed", "Thu", "Fri"].map(d => `morning:${d}`), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 14)],
+      ["Free Tuesday morning and afternoon, not evening", ["morning:Tue", "afternoon:Tue"], Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 13, 14)],
+      ["Free mornings on weekdays, not evenings", ["Mon", "Tue", "Wed", "Thu", "Fri"].map(d => `morning:${d}`), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 14)],
+      ["Not evenings, free Saturday afternoons", ["afternoon:Sat"], Date.UTC(2026, 9, 10, 23), Date.UTC(2026, 9, 10, 18)],
+      ["Usually free weekday mornings, not after work", ["Mon", "Tue", "Wed", "Thu", "Fri"].map(d => `morning:${d}`), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 14)],
+      ["Free weekend mornings but not afternoons", ["morning:Sun", "morning:Sat"], Date.UTC(2026, 9, 11, 18), Date.UTC(2026, 9, 10, 14)],
+      ["Free Tuesday evenings and Saturday mornings", ["evening:Tue", "morning:Sat"], undefined],
+      ["Usually free weekdays, not mornings", weekdays, Date.UTC(2026, 9, 13, 14), Date.UTC(2026, 9, 12, 23)],
+      ["Free Saturday mornings and afternoons", ["morning:Sat", "afternoon:Sat"], undefined],
+      ["Free most evenings, not mornings", weekdays, undefined],
+      ["Free mornings on weekdays", ["Mon", "Tue", "Wed", "Thu", "Fri"].map(d => `morning:${d}`), undefined],
+      ["I'm free on weekdays other than Tuesday", weekdays.filter(t => t !== "evening:Tue"), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["I'm free on weekdays apart from Tuesday", weekdays.filter(t => t !== "evening:Tue"), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["I'm free on weekdays aside from Tuesday", weekdays.filter(t => t !== "evening:Tue"), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["I'm free on weekdays barring Tuesday", weekdays.filter(t => t !== "evening:Tue"), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["Free weekends other than Sunday mornings", ["morning:Sat"], Date.UTC(2026, 9, 11, 14), Date.UTC(2026, 9, 10, 14)],
+      ["Free weekends apart from Sunday", weekends.filter(t => t.endsWith(":Sat")), Date.UTC(2026, 9, 11, 14), Date.UTC(2026, 9, 10, 14)],
+      ["Free weekday evenings aside from Tuesday and Friday", weekdays.filter(t => !["evening:Tue", "evening:Fri"].includes(t)), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["Free Tuesday evenings, other than weekends", ["evening:Tue"], Date.UTC(2026, 9, 10, 14), Date.UTC(2026, 9, 13, 23)],
+      ["Free Tuesday evenings apart from weekends", ["evening:Tue"], Date.UTC(2026, 9, 10, 14), Date.UTC(2026, 9, 13, 23)],
+      ["Free most evenings apart from weeknights", [], Date.UTC(2026, 9, 13, 23)],
+      ["Free weekday mornings other than evenings", ["Mon", "Tue", "Wed", "Thu", "Fri"].map(d => `morning:${d}`), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 14)],
+      ["Free weekends apart from mornings", weekends.filter(t => !t.startsWith("morning:")), Date.UTC(2026, 9, 11, 14), Date.UTC(2026, 9, 10, 18)],
+      ["Apart from mornings, free Saturday afternoons", ["afternoon:Sat"], Date.UTC(2026, 9, 10, 14), Date.UTC(2026, 9, 10, 18)],
+      ["Free weekdays other than on Tuesday", weekdays.filter(t => t !== "evening:Tue"), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["Free weekdays other than Tue", weekdays.filter(t => t !== "evening:Tue"), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["Free most evenings other than Friday", [], Date.UTC(2026, 9, 9, 23)],
+      ["Barring emergencies, Tuesday evenings work", ["evening:Tue"], undefined],
+      ["Apart from hiking, I'm free Tuesday evenings", ["evening:Tue"], undefined],
+      ["Other than work, Saturday mornings are free", ["morning:Sat"], undefined],
+      ["Aside from book club, I'm free Sunday afternoons", ["afternoon:Sun"], undefined],
+      ["Free Tuesday evenings at the bar", ["evening:Tue"], undefined],
+      ["Sorry, but Tuesday evenings work", ["evening:Tue"], undefined],
+    ];
+    const results: { seed: number; body: string; tags: string[]; expected: string[]; p?: number; prior?: number; allowedP?: number; allowedPrior?: number; hasStanding: boolean; hasAvailability: boolean }[] = [];
+    for (const seed of [1, 2, 3]) for (const [body, expected, refusedAt, allowedAt] of cases) {
+      const input = randomWorld({ seed, members: 120, minors: false });
+      const member = input.members.find(m => m.homeCity === "nyc" && m.state === "normal")!;
+      const clock = new SimClock(input.now);
+      let seq = 0;
+      const ctx: NetworkContext = {
+        clock, snapshot: () => input,
+        send: (memberId, body, options) => ({ id: `availability:${++seq}`, ts: clock.now(), direction: "outbound", channel: "sms", from: "network", to: memberId, memberId, body, status: "delivered", meta: options?.meta } satisfies SimMessage),
+        recordProposal: () => {}, recordMeeting: () => "unused", recordBlock: () => {}, log: () => {},
+      };
+      const opts = { seed, review: "human" as const, matchingEnabled: false };
+      let net = new ConsentNetwork(opts);
+      net.init(ctx);
+      await net.onInbound({ id: "join", memberId: member.id, body: "Hi", ts: clock.now(), channel: "sms" });
+      await net.onInbound({ id: "availability", memberId: member.id, body, ts: clock.now(), channel: "sms" });
+      // Reload persisted state into a fresh instance before the scheduler reads it.
+      const state = JSON.parse(JSON.stringify(net.exportState()));
+      net = new ConsentNetwork(opts); net.init(ctx); net.importState(state);
+      const reloaded = net.memberList().find(m => m.id === member.id)!;
+      const saved = reloaded.standing;
+      const standing = standingFromFacets(saved ? [{ kind: "availability_pattern", tags: saved.tags, observedAt: saved.at }] : [], clock.now());
+      const p = refusedAt === undefined ? undefined : availabilityProb({ memberId: member.id, tz: NY, standing }, { start: refusedAt, end: refusedAt + 2 * HOUR }, clock.now());
+      const prior = refusedAt === undefined ? undefined : availabilityProb({ memberId: member.id, tz: NY }, { start: refusedAt, end: refusedAt + 2 * HOUR }, clock.now());
+      const allowedP = allowedAt === undefined ? undefined : availabilityProb({ memberId: member.id, tz: NY, standing }, { start: allowedAt, end: allowedAt + 2 * HOUR }, clock.now());
+      const allowedPrior = allowedAt === undefined ? undefined : availabilityProb({ memberId: member.id, tz: NY }, { start: allowedAt, end: allowedAt + 2 * HOUR }, clock.now());
+      results.push({ seed, body, tags: saved?.tags ?? [], expected, hasStanding: saved !== undefined, hasAvailability: reloaded.availability !== undefined, ...(p === undefined ? {} : { p, prior }), ...(allowedP === undefined ? {} : { allowedP, allowedPrior }) });
+    }
+    console.log("AVAILABILITY_REFUSAL_OUTCOMES", JSON.stringify(results));
+    expect(results.filter(r => JSON.stringify(r.tags) === JSON.stringify(r.expected)).length).toBe(cases.length * 3);
+    for (const r of results) {
+      if (r.p !== undefined && r.expected.length) expect(r.p).toBeLessThan(r.prior!);
+      if (r.allowedP !== undefined) expect(r.allowedP).toBeGreaterThan(r.allowedPrior!);
+      if (!r.expected.length) {
+        expect(r.hasStanding).toBe(false);
+        expect(r.hasAvailability).toBe(false);
+        expect(r.p).toBe(r.prior);
+      }
+    }
+  });
   // ---- invariants: NYC, 10 days, seed 3, simulated reviewer ---------------------------------------
   const run = await world(10);
   await run.w.advanceTo(run.w.end);
