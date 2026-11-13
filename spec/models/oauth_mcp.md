@@ -8,6 +8,8 @@ A member needs to give an agent scoped access to their account and revoke it.
 
 Check code use, refresh, ownership, ban and revocation, scoped tools, and request retention. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
+The [connector grant issuance spec](../oauthGrantIssuance.md) generates the runtime steps from confirmed consent through authority, single-use request consumption and issuance. This standalone model also covers the earlier request and later token, grant revocation and tool flows.
+
 Imported from `quint/oauth_mcp.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint

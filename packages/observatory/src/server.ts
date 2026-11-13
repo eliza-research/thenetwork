@@ -29,6 +29,7 @@ import { randomBytes } from "node:crypto";
 import { parseArgs } from "node:util";
 import type { Server, ServerWebSocket } from "bun";
 import index from "../web/index.html";
+import { initial as initialRoute, staffMemberAccess, step as stepStaffRoute } from "../../core/src/generated/staffPermissions.ts";
 import { Lab, LAB_LIMITS, validateLab, type LabOptions } from "./lab.ts";
 import { runDiff } from "./runDiff.ts";
 import { SQL } from "bun";
@@ -39,7 +40,7 @@ import { appHealth } from "./health.ts";
 import { PeopleView, peopleUrl } from "./people.ts";
 import { CostView } from "./ops.ts";
 import {
-  AccessVerifier, allowed, appsFor, authenticateStaff, canCrossApp, createAudit, hasEverywhere, parseRoles, parseTokenGrants, PgStaffRoles, rolesFor, ssoGrants, staffUser,
+  AccessVerifier, allowed, appsFor, authenticateStaff, canCrossApp, createAudit, globalRolesFor, hasEverywhere, parseRoles, parseTokenGrants, PgStaffRoles, rolesFor, ssoGrants, staffUser,
   type AccessConfig, type AuditSink,
 } from "./staff.ts";
 // Game mode is imported only when used: it reads the synthetic data in scripts/synthetic, which the
@@ -354,6 +355,14 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
   const forbidden = (text: string) => json({ error: `forbidden: ${text}`, code: "forbidden" }, 403);
   type Req = Request & { params: Record<string, string> };
   type Handler = (req: Req, user: StaffUser, app: AppId) => Response | Promise<Response>;
+  const admitRoute = (req: Request, roles: StaffRole[], need: readonly StaffRole[] | undefined, appRoute: boolean) => {
+    const said = req.headers.get(MODE_HEADER);
+    const decision = stepStaffRoute(initialRoute, {
+      type: "authorizeRoute", roles, requiredRoles: [...(need ?? [])],
+      routeFacts: { appRoute, roleRestricted: need !== undefined, mutating: req.method !== "GET", hasModeHeader: !!said, matchesMode: said === mode },
+    });
+    return stepStaffRoute(decision, { type: "enterHandler" });
+  };
   /**
    * An app route: the caller needs a role for the request's app; with `need`, one of those roles
    * for that app (admin for the app always passes).
@@ -363,18 +372,19 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
     if (u instanceof Response) return u;
     const app = appOf(req);
     if (app instanceof Response) return app;
-    if (!rolesFor(u, app, mode).size) return forbidden(`no role for ${app}${mode === "real" && u.roles.includes("engineer") ? " (engineer: simulated worlds only)" : ""}`);
-    if (need && !allowed(u, need, app, mode)) return forbidden(`needs ${["admin", ...need].join(" or ")} for ${app}`);
-    // A change sent from a page that still shows the other mode would act on the wrong world (audit observatory-21).
-    const said = req.headers.get(MODE_HEADER);
-    if (req.method !== "GET" && said && said !== mode) return json({ ok: false, error: `the console switched to ${mode} mode: reload before you act`, code: "mode_changed" }, 409);
-    try { return await h(req, u, app); } catch (e) { return fail(e); }
+    const route = admitRoute(req, [...rolesFor(u, app, mode)], need, true);
+    if (route.phase === "RouteRunning") {
+      try { return await h(req, u, app); } catch (e) { return fail(e); }
+    }
+    if (route.decision === "NeedsRole") return forbidden(`needs ${["admin", ...(need ?? [])].join(" or ")} for ${app}`);
+    if (route.decision === "ModeChanged") return json({ ok: false, error: `the console switched to ${mode} mode: reload before you act`, code: "mode_changed" }, 409);
+    return forbidden(`no role for ${app}${mode === "real" && u.roles.includes("engineer") ? " (engineer: simulated worlds only)" : ""}`);
   };
   /** A route that is not about one app: any staff member, or with `need`, the role for every app (role@*). */
   const global = (h: (req: Req, user: StaffUser) => Response | Promise<Response>, need?: readonly StaffRole[]) => async (req: Req) => {
     const u = await identify(req);
     if (u instanceof Response) return u;
-    if (need && !allowed(u, need)) return forbidden(`needs ${["admin", ...need].map(r => `${r}@*`).join(" or ")}`);
+    if (admitRoute(req, globalRolesFor(u), need, false).phase !== "RouteRunning") return forbidden(`needs ${["admin", ...(need ?? [])].map(r => `${r}@*`).join(" or ")}`);
     try { return await h(req, u); } catch (e) { return fail(e); }
   };
   /** The env as the client sees it. */
@@ -413,10 +423,8 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
    * engineer sees simulated members only; a reviewer sees members in an open review item; an analyst sees none.
    */
   async function canSeeMember(u: StaffUser, app: AppId, id: string): Promise<boolean> {
-    const r = rolesFor(u, app, mode);
-    if (r.has("admin") || r.has("safety") || (r.has("engineer") && mode === "game")) return true;
-    if (r.has("reviewer")) return (await source(mode, app)).inOpenReview(id);
-    return false;
+    const access = staffMemberAccess([...rolesFor(u, app, mode)], mode === "real");
+    return access === "AnyMember" || (access === "OpenReviewMember" && (await source(mode, app)).inOpenReview(id));
   }
   /** The cross-app view's data (real mode only: the platform schema holds people and memberships). */
   function peopleView(): PeopleView | Response {

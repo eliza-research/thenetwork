@@ -5,6 +5,7 @@
 // predicates on ObsStore, never its own copy.
 import { useSyncExternalStore } from "react";
 import { acceptsFeedItem, deltaAction, initial as initialSync, ownsLoad, step as stepSync } from "../../core/src/generated/observatorySync.ts";
+import { allowedByRole, scopedGrants } from "../../core/src/generated/staffPermissions.ts";
 import { APP_IDS } from "../../core/src/types.ts";
 import { NEIGHBORHOOD, type Borough } from "@thenetwork/network/geo"; // geo only: the package root pulls server code into the browser bundle
 import type { ConsoleApp } from "../src/apps.ts";
@@ -590,8 +591,9 @@ class ObsStore {
   // -------------------------------------------------------------- roles and PII reveal
   /** The caller holds one of these roles; admin passes every check (server rule). False until /api/me answers. */
   can(...roles: StaffRole[]): boolean {
-    const g = this.me?.grants?.filter(x => (x.app === "*" || x.app === this.app) && x.role !== "cross_app_safety" && !(x.role === "engineer" && this.mode === "real")).map(x => x.role) ?? this.me?.roles;
-    return !!g && (g.includes("admin") || roles.some(x => g.includes(x)));
+    if (!this.me) return false;
+    const { grants, roles: held } = this.me;
+    return allowedByRole(grants ? scopedGrants(grants, this.app, this.mode === "real").map(g => g.role) : held, roles);
   }
   /** The roles held for the current app (the top bar). */
   rolesHere(): string[] {

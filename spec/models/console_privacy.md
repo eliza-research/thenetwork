@@ -10,6 +10,8 @@ Check field filtering, private sources, restricted holds, and reasons for access
 
 Imported from `quint/console_privacy.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
+Production chooses its view class with [Observatory staff permissions](../staffPermissions.md). This standalone model covers the field-level effects.
+
 ```quint
 // -*- mode: Bluespec; -*-
 // quint-check: max-steps=15 max-samples=3000

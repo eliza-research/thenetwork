@@ -9,6 +9,7 @@
 import { devShortcutsAllowed, ipBucket, signupAccountView, type Env } from "@thenetwork/platform";
 import { verifyProxyHeaders } from "@thenetwork/platform/src/proxy.ts";
 import { readCappedText } from "@thenetwork/platform/src/body.ts";
+import { initial as issuanceInitial, requestIsLive, step as stepIssuance } from "../../core/src/generated/oauthGrantIssuance.ts";
 import { defaultApps, defaultHostMap, type McpApp, type McpAppId, type Surface } from "./apps.ts";
 import type { AssistantKind, PlatformHooks } from "./hooks.ts";
 import { codePage, consentPage, consentsPage, messagePage, phonePage } from "./pages.ts";
@@ -524,15 +525,25 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   async function finishAuthorization(c: Ctx, r: AuthRequest & { e164: string }, client: OAuthClient, authority?: Grant["cloudAuthority"]): Promise<Response> {
     const clearCookie = `${browserCookie(c.app)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies(c.app) ? "; Secure" : ""}`;
     const at = now();
-    if (r.expiresAt <= at) return messagePage(c.app, "This page has expired", "Go back to the assistant and connect again.");
+    const expired = () => messagePage(c.app, "This page has expired", "Go back to the assistant and connect again.");
+    const began = stepIssuance(issuanceInitial, { type: "beginApproval", requestLive: requestIsLive(at, r.expiresAt) });
+    if (began.phase !== "AwaitingAuthority") return expired();
     const grant: Grant = { id: `${authority ? "grant_cloud_" : "grant_"}${randomId()}`, clientId: client.id, app: c.app.id, phoneKey: o.platform.phoneKey(r.e164), personId: r.personId, scopes: r.scopes, resource: r.resource, createdAt: at, expiresAt: Math.min(at + ttl.grantMs, authority?.expiresAt ?? Infinity), revokedAt: null, ...(authority ? { cloudAuthority: authority } : {}) };
     const cloudStatus = await cloudGrantCurrent(grant);
-    if (cloudStatus === "unavailable") return consentUnavailable(c, r, client);
-    if (cloudStatus !== "valid") return messagePage(c.app, "Connect again", "This connection is no longer valid. Return to your agent or text conversation and connect again.", 403);
+    const checked = stepIssuance(began, {
+      type: "checkGrantAuthority",
+      authority: cloudStatus === "valid" ? "AuthorityValid" : cloudStatus === "unavailable" ? "AuthorityUnavailable" : "AuthorityInvalid",
+    });
+    if (checked.phase === "RetryAuthority") return consentUnavailable(c, r, client);
+    if (checked.phase !== "AwaitingConsumption") return messagePage(c.app, "Connect again", "This connection is no longer valid. Return to your agent or text conversation and connect again.", 403);
     const approved = await store.takeConsentRequest(r.id, now());
-    if (!approved?.e164 || approved.e164 !== r.e164 || approved.personId !== r.personId
-      || approved.expiresAt <= now() || grant.expiresAt <= now())
-      return messagePage(c.app, "This page has expired", "Go back to the assistant and connect again.");
+    const ownerMatches = !!approved?.e164 && approved.e164 === r.e164 && approved.personId === r.personId;
+    const consumedRequestLive = ownerMatches && requestIsLive(now(), approved.expiresAt);
+    const consumed = stepIssuance(checked, {
+      type: "checkConsumption",
+      consumption: { ownerMatches, consumedRequestLive, pendingGrantLive: consumedRequestLive && requestIsLive(now(), grant.expiresAt) },
+    });
+    if (consumed.phase !== "AwaitingPersistence") return expired();
     await store.putGrant(grant);
     await linked(grant, true);
     const code = randomToken("ntwc_");
@@ -540,7 +551,10 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     await store.putCode(ac);
     await store.audit({ at, kind: "consent_granted", clientId: client.id, grantId: grant.id, app: c.app.id, detail: r.scopes.join(" ") });
     await store.audit({ at, kind: "code_issued", clientId: client.id, grantId: grant.id, app: c.app.id, detail: null });
-    return redirectTo(r.redirectUri, { code, state: r.state, iss: c.issuer }, 303, { "set-cookie": clearCookie });
+    const issued = stepIssuance(consumed, { type: "recordIssuance" });
+    return issued.phase === "GrantIssued"
+      ? redirectTo(r.redirectUri, { code, state: r.state, iss: c.issuer }, 303, { "set-cookie": clearCookie })
+      : expired();
   }
 
   // ---------------------------------------------------------------- token, revoke

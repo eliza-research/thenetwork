@@ -8,6 +8,8 @@ An operator needs the service to start with complete configuration and accept re
 
 Check required configuration, dev shortcuts, and proxy-secret changes. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
+The [startup configuration spec](../bootPolicy.md) generates the runtime checks for the two entry points, declared environment, dev shortcuts, and database service role. This imported model also covers operator actions, provider setup and proxy rotation. Its historical entry-point comments describe the code at import time.
+
 Imported from `quint/boot_config.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint

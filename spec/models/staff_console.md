@@ -10,6 +10,8 @@ Check role revocation, audit, reveal scope, and socket authorization. The model 
 
 Imported from `quint/staff_console.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
+The production staff role projection and route admission use [Observatory staff permissions](../staffPermissions.md). Audit, revocation and socket timing remain in this standalone flow.
+
 ```quint
 // quint-check: max-steps=14 max-samples=20000 verify-steps=6
 //

@@ -1,3 +1,4 @@
+import { backendBoot, databaseLogin, declaredEnvironment, minimumSecretLength } from "../../packages/core/src/generated/bootPolicy.ts";
 import { otpConfigProblems } from "../../packages/platform/src/otp-config.ts";
 // The shared backend as one deployable process (docs/deploy.md). It wraps the Network service
 // (packages/network/service) for a host that gives the process one public port (Railway):
@@ -75,7 +76,7 @@ export interface BackendConfig {
   warnings: string[];
 }
 
-const SECRET_MIN = 32;
+const SECRET_MIN = minimumSecretLength;
 /** The largest request body the public port reads: a photo (8 MB, packages/platform/src/photos.ts) and some room. */
 export const MAX_PUBLIC_BODY_BYTES = 9 * 1024 * 1024;
 
@@ -83,28 +84,36 @@ export const MAX_PUBLIC_BODY_BYTES = 9 * 1024 * 1024;
 export function loadConfig(e: Env = process.env, argv: string[] = []): BackendConfig {
   const env = requirePlatformEnv(e);
   const isolatedRoute = networkRoutePolicy(e);
-  const deployed = env === "staging" || env === "production";
   const databaseUrl = e.NETWORK_DATABASE_URL || e.DATABASE_URL;
-  const missing: string[] = [];
-  if (!databaseUrl) missing.push("DATABASE_URL (or NETWORK_DATABASE_URL)");
   const proxySecret = e.PLATFORM_PROXY_SECRET || undefined;
+  const migrateOnBoot = (e.MIGRATE_ON_BOOT ?? "1") !== "0";
+  const policy = backendBoot({
+    environment: declaredEnvironment(e.PLATFORM_ENV ?? "", e.NODE_ENV ?? ""), database: Boolean(databaseUrl),
+    migrate: migrateOnBoot, migrationUrl: Boolean(e.MIGRATION_DATABASE_URL),
+    sameLoginUrl: Boolean(e.MIGRATION_DATABASE_URL && databaseUrl && e.MIGRATION_DATABASE_URL === databaseUrl),
+    turnstile: Boolean(e.TURNSTILE_SECRET_KEY), proxyLength: proxySecret?.length ?? 0,
+    hashLength: e.PLATFORM_HASH_KEY?.length ?? 0, leakKeyBytes: new TextEncoder().encode(e.LEAK_LABEL_KEY ?? "").length,
+  });
+  const { deployed } = policy;
+  const missing: string[] = [];
+  if (policy.databaseMissing) missing.push("DATABASE_URL (or NETWORK_DATABASE_URL)");
   if (deployed) {
-    for (const k of ["PLATFORM_HASH_KEY", "TURNSTILE_SECRET_KEY"]) if (!e[k]) missing.push(k);
+    if (policy.hashMissing) missing.push("PLATFORM_HASH_KEY");
+    if (policy.turnstileMissing) missing.push("TURNSTILE_SECRET_KEY");
     missing.push(...otpConfigProblems(e));
-    if (!proxySecret) missing.push("PLATFORM_PROXY_SECRET");
+    if (policy.proxyMissing) missing.push("PLATFORM_PROXY_SECRET");
   }
   // Deployed: migrations run as the owner, the service as a login that RLS and the grants apply to
   // (audit: one superuser URL made every policy and grant moot in production).
-  const migrateOnBoot = (e.MIGRATE_ON_BOOT ?? "1") !== "0";
   const migrationUrl = e.MIGRATION_DATABASE_URL || (deployed ? undefined : databaseUrl);
-  if (deployed && migrateOnBoot && !migrationUrl) missing.push("MIGRATION_DATABASE_URL (or MIGRATE_ON_BOOT=0)");
-  if (deployed && migrationUrl && databaseUrl && migrationUrl === databaseUrl) throw new Error("MIGRATION_DATABASE_URL must be a different login from the service's NETWORK_DATABASE_URL");
+  if (policy.migrationMissing) missing.push("MIGRATION_DATABASE_URL (or MIGRATE_ON_BOOT=0)");
+  if (policy.sharedLogin) throw new Error("MIGRATION_DATABASE_URL must be a different login from the service's NETWORK_DATABASE_URL");
   if (missing.length) throw new Error(`PLATFORM_ENV=${env} needs ${missing.join(", ")}`);
-  if (proxySecret && proxySecret.length < SECRET_MIN) throw new Error(`PLATFORM_PROXY_SECRET must be at least ${SECRET_MIN} characters`);
-  if (deployed && e.PLATFORM_HASH_KEY!.length < SECRET_MIN) throw new Error(`PLATFORM_HASH_KEY must be at least ${SECRET_MIN} characters`);
+  if (policy.proxyShort) throw new Error(`PLATFORM_PROXY_SECRET must be at least ${SECRET_MIN} characters`);
+  if (policy.hashShort) throw new Error(`PLATFORM_HASH_KEY must be at least ${SECRET_MIN} characters`);
   // The leak guard's log labels are keyed in staging and production (core-6); dev and sims stay unkeyed and reproducible.
   const leakLabelKey = deployed ? e.LEAK_LABEL_KEY : undefined;
-  if (deployed && (!leakLabelKey || new TextEncoder().encode(leakLabelKey).length < SECRET_MIN)) throw new Error(`PLATFORM_ENV=${env} needs LEAK_LABEL_KEY of at least ${SECRET_MIN} bytes`);
+  if (policy.leakKeyShort) throw new Error(`PLATFORM_ENV=${env} needs LEAK_LABEL_KEY of at least ${SECRET_MIN} bytes`);
 
   const warnings: string[] = [];
   const num = (name: string, v: string | undefined, dflt: number) => {
@@ -180,11 +189,13 @@ export async function serviceLoginProblem(query: (q: string) => Promise<Record<s
   const [r] = await query(`select r.rolsuper, r.rolbypassrls,
       exists (select 1 from pg_tables t where t.schemaname in ('platform', 'network') and pg_has_role(current_user, t.tableowner, 'USAGE')) as owner
     from pg_roles r where r.rolname = current_user`);
-  if (!r) return "the service login is not a role";
-  if (r.rolsuper) return "the service login is a superuser";
-  if (r.rolbypassrls) return "the service login has BYPASSRLS";
-  if (r.owner) return "the service login owns (or is a member of the owner of) platform or network tables";
-  return undefined;
+  switch (databaseLogin(Boolean(r), Boolean(r?.rolsuper), Boolean(r?.rolbypassrls), Boolean(r?.owner))) {
+    case "MissingRole": return "the service login is not a role";
+    case "Superuser": return "the service login is a superuser";
+    case "BypassRls": return "the service login has BYPASSRLS";
+    case "OwnsTables": return "the service login owns (or is a member of the owner of) platform or network tables";
+    case "RestrictedRole": return undefined;
+  }
 }
 
 // ------------------------------------------------------------------ logs
