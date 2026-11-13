@@ -140,7 +140,7 @@ describe.each(SITES)("$domain", (s) => {
   test("the build ships the files Cloudflare serves as they are, with no empty file", () => {
     const files = walk(out(s));
     for (const f of ["_headers", "robots.txt", "SKILL.md", ".well-known/agent-skills/index.json", `.well-known/agent-skills/${s.skill}/SKILL.md`]) {
-      expect(files, f).toContain(f);
+      expect(files, f).toContain(join(f));
     }
     const staticDir = join(REPO, "sites", s.domain, "static");
     for (const f of walk(staticDir)) expect(readFileSync(join(out(s), f)).equals(readFileSync(join(staticDir, f))), f).toBe(true);
