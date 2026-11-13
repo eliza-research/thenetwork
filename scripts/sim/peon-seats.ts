@@ -44,10 +44,10 @@ class SeatWorld {
   private seq = 0;
   private readonly opts: NetworkOptions;
 
-  constructor() {
+  constructor(seed = 7) {
     const w = appWiring("peon");
     this.opts = {
-      app: APPS.peon, seed: 7, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
+      app: APPS.peon, seed, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
       pack: w.pack!, hooks: w.hooks!, engine: { ...PEON_ENGINE_CONFIG, cities: ["nyc"] },
       onPosting: p => this.write(p),
     };
@@ -128,6 +128,58 @@ const startsWith = (body: string, re: RegExp) => re.test(body.replace(ACK, ""));
 const POST = "We're hiring a data analyst (level 2), 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL";
 
 export async function peonSeatsBlock(b: Block): Promise<void> {
+  await b.run("posting updates: a delayed confirmation cannot reopen a closed job", async () => {
+    const cases = ["closed", "filled", "correction", "other_job", "decline", "still_open", "staff_reopen", "new_post", "close", "no_restart"] as const;
+    const outcomes: { seed: number; kind: string; writes: number; reopened: boolean; proposals: number; correct: boolean }[] = [];
+    for (const seed of [7, 13, 17]) for (const kind of cases) {
+      const x = new SeatWorld(seed);
+      x.add("hm1", "Rowan Abbott", 34, { verified: "Acme" });
+      for (const body of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await x.say("hm1", body);
+      await x.say("hm1", POST); await x.say("hm1", "yes");
+      const original = x.saved.at(-1)!;
+      if (kind === "other_job") {
+        await x.say("hm1", "We're hiring a product designer, 1 opening, $70k-$90k, remote, must have Figma");
+        await x.say("hm1", "yes");
+      }
+      const other = kind === "other_job" ? x.saved.at(-1)! : undefined;
+      // Supply pay explicitly so this isolated-main gate does not depend on the separate #144 fix.
+      await x.say("hm1", kind === "close" ? "Close my data analyst post"
+        : kind === "new_post" ? "We're hiring a product designer, 1 opening, $70k-$90k, remote, must have Figma"
+        : "Update my data analyst post: 3 openings, $90k-$120k");
+      expect(x.net.memberList().find(m => m.id === "hm1")?.posting?.ready).toBe(true);
+      expect(x.saved.length).toBe(other ? 2 : 1);
+      if (kind !== "still_open") expect(x.net.applyPosting({ ...original, status: "closed", closedReason: kind === "filled" ? "filled" : "closed", updatedAt: x.clock.now() }, "sim_staff").ok).toBe(true);
+      if (kind !== "no_restart") x.restart();
+      if (kind === "staff_reopen") expect(x.net.applyPosting({ ...original, status: "active", updatedAt: x.clock.now() }, "sim_staff").ok).toBe(true);
+      if (kind === "correction") { await x.say("hm1", "4 openings"); expect(x.net.memberList().find(m => m.id === "hm1")?.posting?.ready).toBe(true); x.restart(); }
+      const before = x.saved.length;
+      await x.say("hm1", kind === "decline" ? "no" : "yes");
+      const reply = x.last("hm1");
+      const writes = x.saved.length - before;
+      const latest = [...x.saved].reverse().find(p => p.id === original.id)!;
+      const allowedEdit = kind === "still_open" || kind === "staff_reopen";
+      const rejectedEdit = ["closed", "filled", "correction", "other_job", "no_restart"].includes(kind);
+      const cleared = !x.net.memberList().find(m => m.id === "hm1")?.posting;
+      // New candidates must not see a role reopened by an old yes. Keep human review enabled.
+      x.restart(); x.add("c1", "Cand One", 29, { candidate: true });
+      for (const body of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await x.say("c1", body);
+      await x.run(2 * DAY);
+      const proposals = x.net.exportState().opps.filter(o => o.seat?.id === seatIdOf(original.id)).length;
+      const untouched = !other || JSON.stringify([...x.saved].reverse().find(p => p.id === other.id)) === JSON.stringify(other);
+      const correct = cleared && untouched
+        && (allowedEdit ? writes === 1 && latest.status === "active" && latest.openings === 3 && proposals > 0
+          : latest.status === "closed" && proposals === 0
+            && (kind === "new_post" ? writes === 1 && x.saved.at(-1)!.id !== original.id && x.saved.at(-1)!.title === "product designer"
+              : kind === "close" ? writes === 1 && x.saved.at(-1)!.status === "closed"
+              : writes === 0))
+        && (!rejectedEdit || reply === POSTING_COPY.dropped)
+        && !x.sent.some(m => m.meta.probe || m.meta.proposalId) && x.meetings.length === 0;
+      outcomes.push({ seed, kind, writes, reopened: !allowedEdit && latest.status === "active", proposals, correct });
+    }
+    console.log("PEON_CLOSED_CONFIRMATION_OUTCOMES", JSON.stringify(outcomes));
+    expect(outcomes.filter(x => x.correct).length).toBe(outcomes.length);
+  });
+
   await b.run("intake rules: a job post is read from text, read back, and needs a title and a pay range", () => {
     const d = parsePosting(POST);
     expect(d).toMatchObject({ title: "data analyst", openings: 2, payMin: 90, payMax: 120, mode: "hybrid", area: "brooklyn", seniority: 2, must: [{ skill: "sql", level: 2 }] });
