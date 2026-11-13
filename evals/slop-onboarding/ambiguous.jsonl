@@ -66,3 +66,6 @@
 {"text":"no kids","unset":["dealbreakers"]}
 {"text":"kids","asked":"dealbreakers","unset":["dealbreakers"]}
 {"text":"a woman would be nice","asked":"seeks","unset":["gender"]}
+{"text":"my sister is about 30","asked":"ageRange","unset":["ageRange"]}
+{"text":"I am around 30 and want someone older","asked":"ageRange","unset":["ageRange"]}
+{"text":"late to early thirties","asked":"ageRange","unset":["ageRange"]}
