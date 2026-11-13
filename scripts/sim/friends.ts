@@ -17,7 +17,7 @@ import { World } from "../../packages/engine/src/world.ts";
 import { BASELINES } from "../../packages/sim/src/apps/friends/baselines.ts";
 import { officialGates, trackedMetrics } from "../../packages/sim/src/apps/friends/gates.ts";
 import { friendsMetrics, type FriendsMetrics } from "../../packages/sim/src/apps/friends/metrics.ts";
-import { engineInputOf, evidenceOf, friendsPackMatcher } from "../../packages/sim/src/apps/friends/packMatcher.ts";
+import { engineInputOf, evidenceOf, friendsPackMatcher, planToProposal } from "../../packages/sim/src/apps/friends/packMatcher.ts";
 import { buildFriendsSnapshot, NYC_TZ, type FriendsSnapshot } from "../../packages/sim/src/apps/friends/snapshot.ts";
 import { runFriendsWorld, VENUES } from "../../packages/sim/src/apps/friends/world.ts";
 import { conformance } from "./conformance.ts";
@@ -63,6 +63,28 @@ export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<voi
     // Negative control: random ignores verification and meets adversaries; the oracle never does.
     expect(friendsMetrics(runs[0]!).safety.adversaryContacts).toBeGreaterThan(0);
     expect(friendsMetrics(runs[2]!).safety.adversaryContacts + friendsMetrics(runs[2]!).safety.hiddenMinorContacts).toBe(0);
+  });
+
+  await b.run("planner: unavailable venues do not consume tables or hide viable dinner plans", () => {
+    // Generate history with the unchanged random baseline, so both planner versions read the same snapshot.
+    const r = runFriendsWorld({ seed: 101, n: 160, weeks: 3, matcher: BASELINES.random });
+    r.world.state.week = 3; r.world.state.now += 7 * 86400000;
+    const s = buildFriendsSnapshot(r.world.personas, r.world.state);
+    const w = new World(engineInputOf(s), resolveConfig({ seed: 1 }), localEmbed, friendsPack);
+    const counts = [];
+    for (const mode of ["none", "dinner", "all"] as const) {
+      const venues = mode === "none" ? [] : mode === "dinner" ? VENUES.filter(v => v.activities.includes("restaurant_dinner")) : VENUES;
+      const week = planFriendsWeek(w, { now: s.now, tz: NYC_TZ, evidence: evidenceOf(w, s), venues, crews: [], outcomes: [], offered: [] },
+        { ...DEFAULT_FRIENDS_POLICY, crews: false, repeat: false, partnerIntros: 0 }, FRIENDS_PLANS);
+      const proposals = week.plans.map(p => planToProposal(p)).filter(p => p !== null);
+      counts.push({ mode, unplaced: week.plans.filter(p => !p.venueId).length });
+      if (mode === "none") expect(proposals.length).toBe(0);
+      else {
+        expect(proposals.length).toBeGreaterThan(mode === "dinner" ? 7 : 0);
+        for (const p of proposals) expect(venues.some(v => v.id === p.venueId && v.activities.includes(p.activity))).toBe(true);
+      }
+    }
+    expect(counts).toEqual(["none", "dinner", "all"].map(mode => ({ mode, unplaced: 0 })));
   });
 
   // ---- conformance: core rules on friends worlds, then the friends rules ------------------------------
