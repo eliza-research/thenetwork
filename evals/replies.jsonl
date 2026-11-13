@@ -182,3 +182,26 @@
 {"text":"no puedo el viernes","label":"no"}
 {"text":"si puedo ir, sí","label":"unsure"}
 {"text":"si tengo tiempo","label":"unsure"}
+{"text":"I can't say no","label":"yes"}
+{"text":"I can't say no to that","label":"yes"}
+{"text":"I cannot say no","label":"yes"}
+{"text":"I wouldn't say no","label":"yes"}
+{"text":"I wouldn't say no to that","label":"yes"}
+{"text":"I won't say no","label":"yes"}
+{"text":"I won't say no to that","label":"yes"}
+{"text":"I don't say no to that","label":"yes"}
+{"text":"I'm not going to say no","label":"yes"}
+{"text":"not a no","label":"unsure"}
+{"text":"That's not a no","label":"unsure"}
+{"text":"I'm not saying no","label":"unsure"}
+{"text":"I can't say no to Thursday","label":"yes"}
+{"text":"I wouldn't say no to Sunday","label":"yes"}
+{"text":"I can't say no to anything but Thursday","label":"yes"}
+{"text":"I'm not going to say no to Thursday","label":"yes"}
+{"text": "I can't really say no", "label": "yes"}
+{"text": "I can't honestly say no", "label": "yes"}
+{"text": "I shouldn't say no", "label": "yes"}
+{"text": "We can't say no", "label": "yes"}
+{"text": "She can't say no", "label": "no"}
+{"text": "They can't say no to that", "label": "no"}
+{"text": "my boss can't say no to that", "label": "no"}
