@@ -591,9 +591,12 @@ export function expansion(ctx: GenCtx): Candidate[] {
     if (!outside.length) continue;
     const category: Category = "hobby";
     if (memberReason(w, a, { category, role: "seeker", format: "one_to_one", timeSensitive: false })) continue;
-    // A desire stored first must not hide a later one. Score every desire outside the
-    // member's cluster and keep the provider with the highest similarity at or above minSim.
-    const pool = eligibleMembers(ctx, category, "provider", "one_to_one", false, new Set([a])).filter(id => w.get(id)!.cluster !== ma.cluster && w.canMeet([a, id]));
+    // Score every desire outside the member's cluster. Drop a provider the shared pair
+    // rule rejects (blocked, dealbreaker, active duplicate, pair cooldown, negative-feedback
+    // cooldown) before that scan, so an ineligible top score cannot hide a lower provider.
+    // Keep the eligible provider with the highest similarity at or above minSim. A tie
+    // keeps the lower member id, then the lower desire id.
+    const pool = eligibleMembers(ctx, category, "provider", "one_to_one", false, new Set([a])).filter(id => w.get(id)!.cluster !== ma.cluster && w.canMeet([a, id]) && !pairReason(w, a, id, category));
     let best: { id: MemberId; sim: number; facet?: Facet; desire: Facet } | undefined;
     for (const d of outside) {
       const q = ma.facetEmb.get(d.id)!;

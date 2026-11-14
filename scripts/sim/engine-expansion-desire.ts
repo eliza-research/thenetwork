@@ -1,6 +1,7 @@
 // Expansion scores every desire outside the member's cluster. A desire stored first, with no
 // provider above minSim, must not hide a later desire that does have a provider. The best
-// similarity wins. No model call. The engine uses its default config (seed 1, city nyc).
+// eligible similarity wins. A blocked or otherwise ineligible provider is not in that scan.
+// No model call. The engine uses its default config (seed 1, city nyc).
 import { DAY, EngineRng as Rng, type Category } from "../../packages/core/src/index.ts";
 import { buildWorld, localEmbed, resolveConfig, runEngine, type EngineInput } from "../../packages/engine/src/index.ts";
 import { expansion } from "../../packages/engine/src/packs/network/generators.ts";
@@ -32,8 +33,8 @@ const PHYSICS = "quark lattice neutrino spectrometer calibration protocol";
 const SAIL_WANT = "learn to sail on the bay this season";
 const SAIL_OFFER = "certified sailing instructor teaches beginners on the bay";
 
-/** "later": the first stored desire has no provider. "best": that desire is also the strongest. "none": nothing clears minSim. */
-export function expansionDesireInput(mode: "later" | "best" | "none"): EngineInput {
+/** "later": the first stored desire has no provider. "best": that desire is also the strongest. "none": nothing clears minSim. "blocked": the strongest provider is blocked and a weaker provider remains. */
+export function expansionDesireInput(mode: "later" | "best" | "none" | "blocked"): EngineInput {
   const adaDesires = mode === "none"
     ? [
         facet("ada-physics", "ada", "desire", PHYSICS, ["physics"]),
@@ -57,7 +58,7 @@ export function expansionDesireInput(mode: "later" | "best" | "none"): EngineInp
     facet("bo-cer-3", "bo", "interest", "glaze chemistry ceramics", ["ceramics"]),
     boOffer,
   ];
-  if (mode === "best") {
+  if (mode === "best" || mode === "blocked") {
     members.push(person("cy", "Cy"));
     facets.push(
       facet("cy-cer-1", "cy", "interest", "pottery and ceramics studio", ["ceramics"]),
@@ -72,7 +73,9 @@ export function expansionDesireInput(mode: "later" | "best" | "none"): EngineInp
     facets,
     intents: [],
     presence: members.map(m => ({ memberId: m.id, city: "nyc" as const, type: "home" as const, areas: ["williamsburg"] })),
-    edges: [],
+    edges: mode === "blocked"
+      ? [{ from: "ada", to: "cy", type: "blocked", strength: 1, explicit: true, createdAt: now - DAY }]
+      : [],
     recentProposals: [],
   };
 }
@@ -97,6 +100,18 @@ export async function expansionDesireGate(b: Block): Promise<void> {
   });
   await b.run("engine: expansion proposes nothing when no outside desire clears minSim", () => {
     expect(expansionFor(expansionDesireInput("none"))).toEqual([]);
+  });
+  await b.run("engine: expansion skips a blocked strongest provider and keeps the viable second", async () => {
+    const out = expansionFor(expansionDesireInput("blocked"));
+    expect(out.map(c => c.participants)).toEqual([["ada", "bo"]]);
+    expect(out[0]!.evidence.ada).toEqual(["ada-sail"]);
+    expect(out[0]!.evidence.bo).toEqual(["bo-sail"]);
+    const { runLog } = await runEngine(expansionDesireInput("blocked"), { seed: 1, cities: ["nyc"] });
+    expect(runLog.funnel.byGenerator.expansion).toBe(1);
+    expect(runLog.funnel.rejectedBy.blocked ?? 0).toBe(0);
+    const row = runLog.scored.filter(s => s.generator === "expansion");
+    expect(row.map(s => s.participants)).toEqual([["ada", "bo"]]);
+    expect(row[0]!.eligible).toBe(true);
   });
   await b.run("engine: the later-desire expansion passes hard filters and score floors", async () => {
     const { runLog } = await runEngine(expansionDesireInput("later"), { seed: 1, cities: ["nyc"] });

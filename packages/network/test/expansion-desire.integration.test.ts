@@ -1,5 +1,6 @@
 // Expansion (engine section 33.4). A desire stored first, with no provider above minSim, must not
-// hide a later desire that does have a provider. The engine runs with its default config. No model.
+// hide a later desire that does have a provider. A blocked strongest provider must not hide a
+// viable second. The engine runs with its default config. No model.
 import { expect, test } from "bun:test";
 import { runEngine } from "@thenetwork/engine";
 import { expansionDesireInput, expansionFor } from "../../../scripts/sim/engine-expansion-desire.ts";
@@ -24,4 +25,17 @@ test("the stronger desire wins when it is stored first", () => {
 
 test("no outside desire below minSim is proposed", () => {
   expect(expansionFor(expansionDesireInput("none"))).toEqual([]);
+});
+
+test("a blocked strongest provider does not hide a viable second", async () => {
+  const out = expansionFor(expansionDesireInput("blocked"));
+  expect(out.map(c => c.participants)).toEqual([["ada", "bo"]]);
+  expect(out[0]!.evidence.ada).toEqual(["ada-sail"]);
+  expect(out[0]!.evidence.bo).toEqual(["bo-sail"]);
+  const { runLog } = await runEngine(expansionDesireInput("blocked"), { seed: 1, cities: ["nyc"] });
+  expect(runLog.funnel.byGenerator.expansion).toBe(1);
+  expect(runLog.funnel.rejectedBy.blocked ?? 0).toBe(0);
+  const row = runLog.scored.filter(s => s.generator === "expansion");
+  expect(row.map(s => s.participants)).toEqual([["ada", "bo"]]);
+  expect(row[0]!.eligible).toBe(true);
 });
