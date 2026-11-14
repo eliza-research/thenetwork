@@ -104,7 +104,8 @@ export function sentencesOf(t: string): { text: string; at: number }[] {
 }
 
 export function classify(body: string): Classified {
-  const t = body.trim();
+  // The RX patterns spell an apostrophe as "'": a phone's curly one ("can’t", "what’s") must match too.
+  const t = body.trim().replace(/[‘’ʼ`´]/g, "'");
   const low = normText(t);
   const abuse: Abuse[] = [];
   const disclosed: Abuse[] = [];
