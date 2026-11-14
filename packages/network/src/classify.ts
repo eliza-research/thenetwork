@@ -825,8 +825,12 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     if (refused) {
       namedExclusion ||= exclusion;
       for (const key of matching) neg.add(key);
-    } else if (!matching.length || matching.length > 1 && !m.part) unresolved.push(m);
-    else mark(matching, m.at, m.end - m.at);
+    } else if (!matching.length || matching.length > 1 && !m.part
+      || m.part && !m.day && c.answer !== "yes" && !onlyPick(m.at, m.end - m.at)
+        && !/^\s+(?:(?:work|works|will work)\b|(?:is|are) (?:good|fine|ok(?:ay)?|perfect)\b|for me\b)/.test(t.slice(m.end))) {
+      // General availability can answer an earlier profile question. A bare daypart needs a direct pick.
+      unresolved.push(m);
+    } else mark(matching, m.at, m.end - m.at);
   }
   // A reply that is only time words ("sat 11am", "thursday or sunday") picks them all firmly.
   let residue = t;

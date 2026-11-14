@@ -28,3 +28,8 @@
 {"text":"Saturday works instead","answer":"unclear","keys":[]}
 {"text":"Interested, but could we do a different day?","answer":"yes","keys":[]}
 {"text":"Option C","labels":["Thursday 7pm","Saturday 11am"],"answer":"unclear","keys":[]}
+{"text": "I'm around East Village most of the week, evenings are pretty open. This is lovely.", "labels": ["Saturday 2pm", "Sunday 2pm", "Monday 7pm"], "answer": "unclear", "keys": []}
+{"text": "Evenings are usually open", "labels": ["Saturday 2pm", "Sunday 2pm", "Monday 7pm"], "answer": "unclear", "keys": []}
+{"text": "Evenings work", "labels": ["Saturday 2pm", "Sunday 2pm", "Monday 7pm"], "answer": "yes", "keys": ["c"]}
+{"text": "Yes, evenings are pretty open", "labels": ["Saturday 2pm", "Sunday 2pm", "Monday 7pm"], "answer": "yes", "keys": ["c"]}
+{"text": "Evening", "labels": ["Saturday 2pm", "Sunday 2pm", "Monday 7pm"], "answer": "yes", "keys": ["c"]}

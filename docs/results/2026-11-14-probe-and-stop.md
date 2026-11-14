@@ -15,3 +15,5 @@ agree. The lane passed all 29 blocking gates against the two changes.
 No external model call or client was used.
 
 Seed 3 (10 days) reported two decliner disclosures. The requester received an acknowledgment and a probe, then sent “See you there. 👍💯” in response to the acknowledgment. The parser took the emoji as a yes to the probe. The actual response, “Can’t this week, maybe another time,” then arrived after the probe answer had been consumed. The ambiguous acknowledgment guard now covers “See you there” and leaves the probe open. The simulator retains its independent decliner check.
+
+The 21-day consent arm on seed 1 later disclosed one decliner. The member answered the previous profile question with general evening availability before their refusal reached the service. The probe reader now requires a direct selection or an explicit yes when a daypart appears without a named day. The eval adds the exact ambiguous reply and positive selection controls. This change keeps the independent simulator checks intact.
