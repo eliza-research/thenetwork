@@ -587,6 +587,8 @@ export function recordPlanAnswer(run: PlanRun, member: MemberId, yes: boolean, n
     beforeDeadline: now < p.probeDeadline, lateJoinOpen: now <= p.window.start - pcfg.lateJoinHours * HOUR,
   });
   switch (choice) {
+    case "ExpireProbe":
+      return checkPlanDeadline(run, now);
     case "AddMember":
       return { run: r, action: { kind: "join", member } };
     case "RecordLate":
@@ -608,7 +610,7 @@ export function recordPlanAnswer(run: PlanRun, member: MemberId, yes: boolean, n
       break;
     }
   }
-  if (!yes && r.stage === "probing" && unmetPlanQuorum(pendingOf(r).length, going.length, p.quorum)) {
+  if (r.stage === "probing" && unmetPlanQuorum(pendingOf(r).length, going.length, p.quorum)) {
     r.stage = "closed";
     return { run: r, action: { kind: "fallback" } };
   }
