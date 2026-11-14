@@ -69,7 +69,9 @@ const RX = {
   cancel: /\b(can'?t make it|have to bail|can'?t come|need to cancel|something came up)\b/i,
   block: /^\s*(?:please\s+)?block\s+(?!(?:back|on|out|off|of|time|my|the|this|that|it|in|for|a)\b)(.+)$/i,
   report: /^\s*(?:please\s+|i (?:want|need|'d like) to\s+)?report\s+(?!(?:back|on|to|that|this|it|in|for|my|the|when)\b)(.+)$/i,
-  plans: /\b(anything fun|what'?s (on|happening|good)|something to do|plans? (this|for the) (weekend|week|tonight)|fun (going on|this weekend)|any (events|plans))\b/i,
+  // "what's on / happening / good" asks for plans only when a time or place follows (or nothing):
+  // "what's on tonight", "what's happening in Bushwick". Never "what's happening with my date" or "what's on your mind".
+  plans: /\b(anything fun|what'?s on at\b|what'?s (on|happening|good)(?=\s*(?:$|[?.!]|(?:this|next|tonight|today|tomorrow|later|right now|in|around|near|nearby|out there|to do|to try|(?:mon|tues?|wed(?:nes)?|thu(?:rs)?|fri|sat(?:ur)?|sun)(?:day)?s?|weekend|for(?! (?:you|u|her|him|them)\b))\b))|something to do|plans? (this|for the) (weekend|week|tonight)|fun (going on|this weekend)|any (events|plans))\b/i,
   peopleAsk: /\b(anyone (around|who|want|up for)|looking for (a |an |someone|people|other|more)|hoping to|find (me )?(a|an|someone|people)|want to meet|wanna meet|know anyone|still hoping|would love to (meet|find)|i'?d (love|like) to (meet|find)|searching for|in search of)\b/i,
   feedback: /\b(it was (great|nice|fine|fun|good|ok|okay)|we (really )?clicked|(not|wasn'?t) great|didn'?t (really )?click|never showed|would (definitely )?(do it|meet|hang out) again|not much in common)\b/i,
   ack: /^(thanks|thank you|got it|ok|okay|👍|see you|sounds good|perfect|works for me|great|cool|nice)\b/i,
