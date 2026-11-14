@@ -3247,7 +3247,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!this.pcfg.crews.enabled || !o.plan || o.plan.crewId) return undefined;
     const post = o.post ?? {};
     const rec: plans.PlanOutcomeRecord = {
-      planId: o.id, activityId: o.plan.activityId, ...(o.plan.venueId ? { venueId: o.plan.venueId } : {}), city: "nyc", at: o.plan.window.start,
+      planId: o.id, activityId: o.plan.activityId, ...(o.plan.venueId ? { venueId: o.plan.venueId } : {}), city: o.plan.city, at: o.plan.window.start,
       attended: going.filter(p => post[p]?.came), positive: going.filter(p => post[p]?.again), recurringWant: [],
     };
     // Already offered after this plan: a later "yes, again" from another attendee joins that one offer.
@@ -3261,7 +3261,17 @@ export class ConsentNetwork implements NetworkUnderTest {
       return open.crew.id;
     }
     const w = this.planWorld(this.now());
-    const [crew] = plans.detectCrews([rec], [...this.crews, ...this.crewOffers.map(c => c.crew)], id => !!w.get(id)?.isHost, this.pcfg);
+    const history = [rec];
+    if (this.pcfg.crews.minPlans === 2) for (const prior of this.opps.values()) {
+      const p = prior.plan;
+      if (prior === o || !p || p.crewId || p.activityId !== rec.activityId || p.city !== rec.city || p.window.start >= rec.at) continue;
+      const attended = prior.participants.filter(id => prior.status.get(id) === "yes" && prior.post?.[id]?.came);
+      const positive = attended.filter(id => prior.post?.[id]?.again && rec.positive.includes(id));
+      if (!positive.length) continue;
+      history.push({ planId: prior.id, activityId: p.activityId, venueId: p.venueId, city: p.city, at: p.window.start, attended, positive, recurringWant: [] });
+    }
+    const crew = plans.detectCrews(history, [...this.crews, ...this.crewOffers.map(c => c.crew)], id => !!w.get(id)?.isHost, this.pcfg)
+      .find(candidate => candidate.members.includes(m.id));
     if (!crew) return undefined;
     const a = plans.activityById.get(crew.activityId)!;
     const { offered, yes, no } = stepCrewOffer(initialCrewOffer, { type: "openOffer", invitees: [...crew.members] });
