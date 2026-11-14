@@ -114,14 +114,18 @@ function selectOnce(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId,
     const window = c.fixedWindow ? c.window : undefined;
     return !window || c.participants.every(id => !(fixedSlots.get(id) ?? []).some(([s, e]) => window.start < e && s < window.end));
   };
-  // spec/selectionRun.md, "Each reservation checks the city, pair, and member limits"
+  // spec/selectionRun.md, "Each reservation checks the pack, city, pair, and member limits"
   const wasSelected = (x: Scored) => selectedBefore(run, x.c.key);
+  // The scored passes already check the pack adjustment against their threshold.
+  // Exploration keeps its base weights, but the pack’s hard refusal still applies.
+  const packAllows = (x: Scored, exploring: boolean) =>
+    !exploring || !w.pack.selection.adjust || adjusted(x) > -Infinity;
   const canTake = (x: Scored, exploring = false) =>
-    canReserveSelection(run, choiceFor(x), timeFree(x.c), exploring);
+    canReserveSelection(run, choiceFor(x), timeFree(x.c), exploring, packAllows(x, exploring));
   const take = (x: Scored, exploration: boolean, probability: number) => {
     const c = x.c;
     // spec/selectionRun.md, "Reserving a proposal consumes its slots together"
-    const next = step(run, { type: "reserveSelection", choice: choiceFor(x), timeFree: timeFree(c), exploring: exploration });
+    const next = step(run, { type: "reserveSelection", choice: choiceFor(x), timeFree: timeFree(c), exploring: exploration, packAllows: packAllows(x, exploration) });
     if (next === run) throw new Error(`Selection reservation refused for ${c.key}`);
     run = next;
     if (c.fixedWindow && c.window) {

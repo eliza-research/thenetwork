@@ -7,6 +7,10 @@
 // --quick: seed 13, 4 weeks; only the safety gates block.
 import { canBeMatched, DAY, type Facet, type Member, type Presence } from "../../packages/core/src/index.ts";
 import { runEngine } from "../../packages/engine/src/engine.ts";
+import { resolveConfig } from "../../packages/engine/src/config.ts";
+import { localEmbed } from "../../packages/engine/src/embed.ts";
+import { World } from "../../packages/engine/src/world.ts";
+import { historyOf } from "../../packages/engine/src/packs/peon/profile.ts";
 import { JOB_INTENT, T } from "../../packages/engine/src/packs/peon/schema.ts";
 import { isSeatId, peonSeatCapacity, peonSeats, seatIdOf } from "../../packages/engine/src/packs/peon/seats.ts";
 import type { EngineInput, InteractionRecord } from "../../packages/engine/src/types.ts";
@@ -30,7 +34,84 @@ const emptyState = (pop: PeonPopulation, week = 0): PeonNetworkState => ({
   hired: new Set(), exited: new Set(), openings: new Map(pop.jobs.map(j => [j.id, j.openings])), feedback: [],
 });
 
+export async function explorationSeatCapGate(b: Block): Promise<void> {
+  await b.run("exploration: pack limits still cap each job at its remaining openings", async () => {
+    const fixture = (nJobs: number): EngineInput => {
+      const now = Date.UTC(2026, 9, 12, 12);
+      const input: EngineInput = { now, members: [], facets: [], intents: [], presence: [], edges: [], recentProposals: [], interactions: [] };
+      for (let k = 0; k < nJobs + 24; k++) {
+        const job = k < nJobs, id = job ? `j${k}` : `c${k - nJobs}`;
+        input.members.push({ id, name: `Synthetic ${id}`, age: 30, homeCity: "nyc", state: "open", joinedAt: now - 40 * DAY, unansweredProactive: 0,
+          prefs: { categoriesOptIn: ["professional"], quietHours: [22, 8], romanceOptIn: false, formats: ["one_to_one"], maxTravelMinutes: 45, onlyWhenAsked: false } });
+        input.presence.push({ memberId: id, city: "nyc", type: "home", areas: ["manhattan"] });
+        const add = (tags: string[], value: string, kind: Facet["kind"] = "fact") => input.facets.push({ id: `${id}-f${input.facets.length}`, memberId: id, kind, value, tags, scope: "shareable", confidence: 1, provenance: "said" });
+        add([`${T.entity}${job ? "job" : "candidate"}`], job ? "Hiring role" : "Looking for work");
+        add([`${T.family}software_engineer`, `${T.seniority}2`, `${T.mode}remote`], "Remote software engineering");
+        if (job) {
+          add([`${T.company}one-company`, T.verified, `${T.pay}100-150`, `${T.openings}10`, `${T.urgency}1`, `${T.sponsors}yes`], "Verified One Company, salary 100-150k");
+          add([`${T.must}python:2`], "Python required", "skill");
+        } else {
+          add([`${T.skill}python:5:demonstrated`], "Python developer", "skill");
+          add([`${T.floor}60`, `${T.auth}yes`, `${T.needsSponsor}no`], "Authorized to work, minimum 60k");
+        }
+        input.intents.push({ id: `${id}-intent`, memberId: id, category: "professional", objective: job ? "Hire a software engineer" : "Find a software engineering role",
+          details: job ? JOB_INTENT : "peon:search", status: "active", createdAt: now - DAY, horizonDays: 90 });
+      }
+      return input;
+    };
+
+    for (const seed of [1, 2, 3]) for (const rate of [0, 0.125]) {
+      const input = fixture(40);
+      input.facets = input.facets.map(f => ({ ...f, tags: f.tags.map(t => t === `${T.company}one-company` ? `${T.company}${f.memberId}` : t) }));
+      for (const f of input.facets) if (f.tags.some(t => t.startsWith(T.openings))) f.tags.push(`${T.seatCap}1`);
+      const result = await runEngine(input, { ...PEON_ENGINE_CONFIG, seed, exploration: { rate, maxShare: 0.15 } }, { pack: peonPack });
+      const counts = new Map<string, number>();
+      for (const p of result.proposals) {
+        const job = p.participants.find(id => id.startsWith("j"))!;
+        counts.set(job, (counts.get(job) ?? 0) + 1);
+      }
+      expect(Math.max(...counts.values())).toBe(1);
+      expect(counts.size).toBe(40);
+      if (rate) expect(result.proposals.some(p => p.exploration)).toBe(true);
+    }
+  });
+}
+
+export async function peonHistoryAliasesGate(b: Block): Promise<void> {
+  await b.run("hiring history and recommendations survive aliases in acceptance and no-response records", async () => {
+    for (const seed of [1, 2]) {
+      const input = peonTestWorld({ seed, candidates: 90, jobs: 20 });
+      const cfg = { ...PEON_ENGINE_CONFIG, seed };
+      const initial = await runEngine(input, cfg, { pack: peonPack });
+      expect(initial.proposals.length).toBeGreaterThan(3);
+      const interactions: InteractionRecord[] = initial.proposals.map((p, i) => ({
+        id: `history-${i}`, kind: p.kind, category: p.category, participants: p.participants, at: input.now - 7 * DAY,
+        outcome: i % 3 === 0 ? "pending" : i % 3 === 1 ? "completed" : "expired",
+        acceptedBy: i % 3 === 1 ? p.participants : p.participants.filter(id => id.startsWith("c")),
+        noResponse: i % 3 === 2 ? p.participants.filter(id => id.startsWith("j")) : [],
+      }));
+      const canonical: EngineInput = { ...input, interactions,
+        idAliases: { ...input.idAliases, ...Object.fromEntries(input.members.map(m => [`legacy:${m.id}`, m.id])) } };
+      const expected = await runEngine(canonical, cfg, { pack: peonPack });
+      expect(expected.proposals.length).toBeGreaterThan(0);
+      const a = new World(canonical, resolveConfig(cfg), localEmbed, peonPack);
+      for (const mixed of [false, true]) {
+        const aliasIds = (ids: string[] | undefined) => ids?.flatMap(id => mixed ? [`legacy:${id}`, id] : [`legacy:${id}`]);
+        const aliased: EngineInput = { ...canonical, interactions: interactions.map(r => ({ ...r,
+          participants: aliasIds(r.participants)!, acceptedBy: aliasIds(r.acceptedBy), noResponse: aliasIds(r.noResponse),
+        })) };
+        const actual = await runEngine(aliased, cfg, { pack: peonPack });
+        expect(actual.proposals).toEqual(expected.proposals);
+        const b = new World(aliased, resolveConfig(cfg), localEmbed, peonPack);
+        for (const id of a.ids) expect(historyOf(b, id)).toEqual(historyOf(a, id));
+      }
+    }
+  });
+}
+
 export async function peonBlock(b: Block, o: { quick: boolean }): Promise<void> {
+  await peonHistoryAliasesGate(b);
+  await explorationSeatCapGate(b);
   const spec = o.quick ? { seeds: [13], weeks: 4 } : PEON_PINNED;
   const all: Record<"pack" | "keyword" | "oracle", PeonMetrics[]> = { pack: [], keyword: [], oracle: [] };
   for (const arm of ["pack", "keyword", "oracle"] as const) for (const seed of spec.seeds) {
