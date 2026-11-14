@@ -148,6 +148,30 @@ export async function safetyBlock(b: Block): Promise<void> {
     expect(w.ai.calls).toBe(0);
   });
 
+  await b.run("photos by text: the one-a-day text and the consent ask hold across the clock boundary (midnight UTC is not a local day)", async () => {
+    // The store's day window starts at midnight UTC. T0 is 16:00 UTC, so the next window is 8 hours
+    // away: still the same evening for a member in New York. "One text a day per number and kind" must
+    // not become two texts a minute apart because a fixed counting window rolled over
+    // (docs/results/2026-10-22-stop-hint-cooldown.md fixed the same class for the STOP hint).
+    const boundary = DAY - (T0 % DAY) + 60_000;
+    const minor = offlineWorld();
+    const kid = await minor.member(30, 15);
+    expect(await minor.intake.photosIn(kid.e164, ["https://media.test/a.jpg"], "in:d1")).toEqual({ outcome: "discarded", reason: "adults_only" });
+    minor.tick(boundary);
+    expect(await minor.intake.photosIn(kid.e164, ["https://media.test/b.jpg"], "in:d2")).toEqual({ outcome: "discarded", reason: "adults_only" });
+    expect(minor.replies.map(x => x.text)).toEqual([PHOTO_TEXT.notAdult]);
+    // A day after the first text the notice is sent again, so the cap still expires.
+    minor.tick(DAY);
+    await minor.intake.photosIn(kid.e164, ["https://media.test/c.jpg"], "in:d3");
+    expect(minor.replies.map(x => x.text)).toEqual([PHOTO_TEXT.notAdult, PHOTO_TEXT.notAdult]);
+
+    const adult = offlineWorld();
+    const a = await adult.member(31, 29);
+    expect(await adult.intake.photosIn(a.e164, ["https://media.test/1.jpg"], "in:e1")).toEqual({ outcome: "asked" });
+    adult.tick(boundary);
+    expect(await adult.intake.photosIn(a.e164, ["https://media.test/2.jpg"], "in:e2")).toEqual({ outcome: "ask_skipped" });
+  });
+
   await b.run("photos by text: consent is asked once; nothing is kept before YES; after YES the photo is stored without EXIF and rated once", async () => {
     const w = offlineWorld();
     const a = await w.member(20, 29);

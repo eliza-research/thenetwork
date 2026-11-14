@@ -186,6 +186,8 @@ const AGE_END = `(?=\\s*(?:${CLAUSE_END}|${YEARS_OLD}))`;
 // "I'm 2 years in nyc now" must never decline an adult (a decline deletes the member's data).
 // Also "actually", "tbh", "honestly", "fyi" and "last week": "I'm 15 actually", "I turned 13 last week".
 const AGE_END_LOOSE = `(?=\\s*(?:${CLAUSE_END}|${YEARS_OLD}|and\\b|now\\b|too\\b|turning\\b|actually\\b|tbh\\b|honestly\\b|fyi\\b|last (?:week|month|year)\\b|yesterday\\b|recently\\b|in (?:high|middle) school\\b))`;
+const IDENTITY_WORD = "person|guy|girl|boy|man|woman|kid|teen";
+const SELF_AGE_TAIL = "here\\b|from\\b|looking for\\b|in (?:high|middle) school\\b";
 /** "15f", "16 m", "15/f": an age and a sex, the way teens introduce themselves. Never "15m away" or "raised 15m". */
 const AGE_SEX_END = "(?=\\s*(?:$|[.,!?;:)]|here\\b|lol\\b|btw\\b|from\\b|in\\b|looking\\b|nyc\\b|bk\\b))";
 const atLeast13 = (n: number) => (n >= 13 ? n : NaN);
@@ -207,6 +209,7 @@ const AGE_RX: AgeRule[] = [
   // Explicit: "I am 12 years old", "im 15 y/o", "my age is 12", "15 y/o here", "age: 15".
   { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|my age is\\s+)(\\d{1,2})\\s*${YEARS_OLD}`), age: m => Number(m[1]), explicit: true },
   { rx: new RegExp(`\\b${ME}\\s+${SAME}(one|two|three|four|five|six|seven|eight|nine|${NUM_WORD})[\\s-]+${YEARS_OLD}`), age: m => AGE_WORDS[m[1]!]!, explicit: true },
+  { rx: new RegExp(`\\b${ME}\\s+${SAME}an?\\s+(\\d{1,2}|one|two|three|four|five|six|seven|eight|nine|${NUM_WORD})[\\s-]+(?:year|yr)[\\s-]+old\\b(?:\\s+(?:${IDENTITY_WORD}))?(?=\\s*(?:${CLAUSE_END}|${SELF_AGE_TAIL}))`), age: m => /^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!, explicit: true },
   { rx: new RegExp(`\\bmy age is\\s+(\\d{1,2})${AGE_END}`), age: m => Number(m[1]), explicit: true },
   { rx: new RegExp(`^\\W*(?:(?:hi|hey|hello|yo)\\W+)?(?:my )?age\\s*[:=-]?\\s*(\\d{1,2})${AGE_END}`), age: m => Number(m[1]), explicit: true },
   // Leading "15 y/o here", "12yo." (only when it is about the sender: "12 yo whisky is great" is not).
@@ -216,6 +219,7 @@ const AGE_RX: AgeRule[] = [
   { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(\\d{1,2})${AGE_END_LOOSE}`), age: m => atLeast13(Number(m[1])) },
   { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(${NUM_WORD})${AGE_END}`), age: m => AGE_WORDS[m[1]!]! },
   { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(${NUM_WORD})${AGE_END_LOOSE}`), age: m => atLeast13(AGE_WORDS[m[1]!]!) },
+  { rx: new RegExp(`\\b${ME}\\s+${SAME}(1[3-7])\\s+(?:from\\b|looking for\\b)`), age: m => Number(m[1]) },
   // "I'm almost 16", "I'm turning 16", "I'll be 16 in May", "I turn 16 next month": one less.
   { rx: new RegExp(`\\b${ME}\\s+${LESS}(\\d{1,2}|${NUM_WORD})\\b(?!\\s*(?:minutes|mins?|hours|hrs|blocks|miles|km|percent|%|feet|ft|times|for\\b|of\\b))`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1) },
   { rx: new RegExp(`\\bi(?:'ll| will) be\\s+(\\d{1,2}|${NUM_WORD})\\s+(?:in|on|next|this|soon)\\b`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1) },
@@ -347,15 +351,22 @@ export function otherAgeStated(body: string): number | undefined {
   return best;
 }
 
+/** Spelled-out ages from 20 to 99 ("thirty", "twenty-five", "forty one"); the teens are in AGE_WORDS. */
+const TENS: Record<string, number> = { twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
+const TENS_WORD = Object.keys(TENS).join("|");
+const UNIT_WORD = "one|two|three|four|five|six|seven|eight|nine";
+
 /**
  * The answer to "How old are you?": the whole message is an age ("34", "I'm 34.", "15 years old",
- * "fifteen"). Anything more is not read as an answer here (classify() reads ages in sentences).
+ * "fifteen", "thirty-two"). Anything more is not read as an answer here (classify() reads ages in
+ * sentences).
  */
 export function ageAnswer(body: string): number | undefined {
   const t = normText(body).trim();
-  const m = new RegExp(`^(?:${ME}\\s+)?(\\d{1,3}|${Object.keys(AGE_WORDS).join("|")})(?:\\s*${YEARS_OLD})?\\s*[.!]*$`).exec(t);
+  const m = new RegExp(`^(?:${ME}\\s+)?(\\d{1,3}|(?:${TENS_WORD})(?:[\\s-]+(?:${UNIT_WORD}))?|${Object.keys(AGE_WORDS).join("|")})(?:\\s*${YEARS_OLD})?\\s*[.!]*$`).exec(t);
   if (!m) return undefined;
-  const n = /^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!;
+  const [w, unit] = m[1]!.split(/[\s-]+/);
+  const n = /^\d/.test(w!) ? Number(w) : (TENS[w!] ?? AGE_WORDS[w!]!) + (unit ? AGE_WORDS[unit]! : 0);
   return n > 0 && n < 120 ? n : undefined;
 }
 
