@@ -5,7 +5,7 @@
 //   replies.jsonl  core parseReply (yes / no / unsure)
 //   opt-out*.jsonl the opt-out readers (core parseOptOut; the platform consent ledger's detectKeyword)
 //   guard/         the shared leak guard (contacts in disguise, private facts, homoglyphs, benign text)
-import { classifyYesNo, findLeaks, parseOptOut, parseReply, type ReplyAnswer } from "../../packages/core/src/index.ts";
+import { classifyYesNo, findLeaks, maskPii, parseOptOut, parseReply, type ReplyAnswer } from "../../packages/core/src/index.ts";
 import { classify, extractProfile, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
 import { detectKeyword, leaveTarget, optOutPhrase } from "../../packages/platform/src/consent.ts";
 import { createPublicApi } from "../../packages/platform/src/api.ts";
@@ -170,6 +170,13 @@ export async function evalsBlock(b: Block): Promise<void> {
     return want === "contact" ? !r.some(x => x.startsWith("contact:")) : want === "leak" ? r.length === 0 : r.length > 0;
   }).map(r => `${r.want}: ${JSON.stringify(r.text)} (${r.note})`);
   b.gate(`leak guard (n ${guard.length}): evasions caught, benign text clean`, guardMiss.length === 0, guardMiss.slice(0, 5).join("; "));
+
+  const contactRows = guard.filter(row => row.want === "contact");
+  const unmasked = contactRows.filter(row => findLeaks(maskPii(row.text)).some(reason => reason.startsWith("contact:")));
+  const profile = maskPii("I am 31 and I like climbing. My email is m a y a at g m a i l dot c o m.");
+  b.gate(`model input privacy (n ${contactRows.length}): contact hidden, nearby profile facts kept`,
+    unmasked.length === 0 && /i am 31 and i like climbing/i.test(profile) && !findLeaks(profile).some(reason => reason.startsWith("contact:")),
+    `${unmasked.length} contact rows unmasked`);
 
   await b.run("MCP output gate: update summaries with a phone, email, internal id or timestamp are withheld; plain ones pass", () => {
     for (const t of ["call me at (415) 555-0102", "maya [at] example [dot] test", "your match is mem_8f2k1", "meeting at 2026-10-08T19:30", "sam@example.com"]) expect(outputLeaks(t).length).toBeGreaterThan(0);
