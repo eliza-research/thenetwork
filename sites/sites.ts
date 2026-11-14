@@ -82,7 +82,7 @@ export function skillText(name: string, env: Record<string, string | undefined> 
   const s = SITES.find((x) => x.skill === name);
   if (!s) throw new Error(`no site for skill ${name}`);
   const source = readFileSync(join(SKILLS_DIR, name, "SKILL.md"), "utf8").replaceAll("{{RESPONSE_STYLE}}", RESPONSE_STYLE.trim());
-  return fill(source, env, s.domain);
+  return fill(source, env, s.domain).replaceAll("\r\n", "\n");
 }
 
 /** The frontmatter description of a SKILL.md (one line, no YAML block scalars in our files). */
