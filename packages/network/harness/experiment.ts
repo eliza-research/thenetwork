@@ -160,6 +160,8 @@ export function summarize(arm: string, days: number, records: RunRecord[], w: Wo
   const unsafe = props.filter(p => p.oracle.unsafe).length;
   const adversarialIn = props.filter(p => p.proposal.participants.some(id => personas.get(id)?.hidden.adversarial)).length;
   const proactive = records.filter(r => r.type === "message" && r.msg.direction === "outbound" && r.msg.meta?.proactive && r.msg.status === "delivered").length;
+  const joinAt = new Map(records.filter((r): r is Extract<RunRecord, { type: "join" }> => r.type === "join").map(r => [r.memberId, r.t]));
+  const memberWeeks = [...joinAt.values()].reduce((sum, at) => sum + Math.max(0, w.clock.now() - at) / (7 * DAY), 0);
   const joined = records.filter(r => r.type === "join").length;
   const initial = new Set(records.filter(r => r.type === "persona" && r.persona.joinDay <= 0).map(r => (r as any).persona.id));
   const newJoined = records.filter(r => r.type === "join" && !initial.has(r.memberId)).length;
@@ -171,12 +173,11 @@ export function summarize(arm: string, days: number, records: RunRecord[], w: Wo
     proposalsAllYes: allYes, proposalAllYesRate: r3(allYes / Math.max(1, props.length)),
     meetingsHeld: held, meanEnjoyment: r3(enjSum / Math.max(1, enjN)), enjoyedShare: r3(enjoyed / Math.max(1, held)),
     precision: r3(compatible / Math.max(1, props.length)), unsafe, adversarialInProposals: adversarialIn,
-    proactivePerMemberWeek: r3(proactive / Math.max(1, joined) / (days / 7)), optOuts, newMembersJoined: newJoined,
+    proactivePerMemberWeek: memberWeeks ? r3(proactive / memberWeeks) : 0, optOuts, newMembersJoined: newJoined,
     judge: { invariants: 0, byRule: {}, canaryLeaks: 0, minorContacts: 0 }, scorecard: { worthwhile: 0, optIn: null, completion: 0, firstOutcome14d: 0 },
   };
   const jm = computeMetrics(records, consent ? { requireReview: true } : {});
   res.judge = { invariants: jm.invariants.total, byRule: jm.invariants.byRule, canaryLeaks: jm.privacy.canaryLeaks, minorContacts: jm.safety.minorContacts, examples: jm.invariants.examples };
-  const joinAt = new Map(records.filter((r): r is Extract<RunRecord, { type: "join" }> => r.type === "join").map(r => [r.memberId, r.t]));
   const runStart = records.find(r => r.type === "run_start")?.t ?? 0;
   const firstGood = new Map<string, number>();
   for (const o of outcomes) for (const [id, a] of Object.entries(o.attendance)) if (a.showed && a.enjoyment >= 0.6 && !firstGood.has(id)) firstGood.set(id, o.at);
