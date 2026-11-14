@@ -1,0 +1,30 @@
+{"text":"Friday anytime works","answer":"unclear","keys":[]}
+{"text":"Any time Friday works","answer":"unclear","keys":[]}
+{"text":"Friday works, Saturday doesn't","answer":"unclear","keys":[]}
+{"text":"Friday 7pm works","answer":"unclear","keys":[]}
+{"text":"Saturday 11am works","labels":["Saturday 2pm","Saturday 11am","Sunday 11am"],"answer":"yes","keys":["b"]}
+{"text":"Saturday 11:30am works","labels":["Saturday 11am","Sunday 11:30am"],"answer":"unclear","keys":[]}
+{"text":"Saturday 11:30am works","labels":["Saturday 11am","Saturday 11:30am"],"answer":"yes","keys":["b"]}
+{"text":"Saturday works","labels":["Saturday 11am","Saturday 2pm"],"answer":"unclear","keys":[]}
+{"text":"11am works","labels":["Saturday 11am","Sunday 11am"],"answer":"unclear","keys":[]}
+{"text":"Monday or Saturday works","answer":"yes","keys":["b"]}
+{"text":"Sorry, but Saturday works","answer":"yes","keys":["b"]}
+{"text":"Friday is out, Saturday 11am works","answer":"yes","keys":["b"]}
+{"text":"Any day but Saturday works","answer":"yes","keys":["a","c"]}
+{"text":"I have a wedding Monday but any of those work","answer":"yes","keys":["a","b","c"]}
+{"text":"Morning works","answer":"yes","keys":["b"]}
+{"text":"Sunday morning works","answer":"unclear","keys":[]}
+{"text":"Evenings work","labels":["Thursday 7pm","Saturday 11am","Sunday 8pm"],"answer":"yes","keys":["a","c"]}
+{"text":"How about Friday?","answer":"unclear","keys":[]}
+{"text":"How about tomorrow?","labels":[],"answer":"unclear","keys":[]}
+{"text":"How about Friday? This is great timing.","answer":"unclear","keys":[]}
+{"text":"Would love to, can we find another time?","answer":"yes","keys":[]}
+{"text":"Yes if work permits","answer":"unclear","keys":[]}
+{"text":"Sure, pending the result","answer":"unclear","keys":[]}
+{"text":"Yes, I'm free after work","answer":"yes","keys":["a","b","c"]}
+{"text":"Yes, I get out of work at 6pm","answer":"yes","keys":["a","b","c"]}
+{"text":"A or B","answer":"yes","keys":["a","b"]}
+{"text":"B?","answer":"unclear","keys":[]}
+{"text":"Saturday works instead","answer":"unclear","keys":[]}
+{"text":"Interested, but could we do a different day?","answer":"yes","keys":[]}
+{"text":"Option C","labels":["Thursday 7pm","Saturday 11am"],"answer":"unclear","keys":[]}
