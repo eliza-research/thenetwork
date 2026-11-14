@@ -8,6 +8,7 @@
 // The rules were rebuilt against hand-written corpora (test/fixtures), not the simulator's own
 // sentences (audit 2026-10-08, network-consent-1, -2, -8, -9, -10, matching-e2e-1, -M1).
 import { parseReply, type Category } from "@thenetwork/core";
+import { reportsAbsence } from "./reports.ts";
 import type { TimeOption } from "@thenetwork/core";
 import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { NEIGHBORHOODS } from "./geo.ts";
@@ -555,7 +556,7 @@ export function extractProfile(body: string): Profile {
 export function feedbackOf(body: string): { sentiment: "positive" | "neutral" | "negative"; selfNoShow: boolean; otherNoShow: boolean; again: boolean } {
   const t = body.toLowerCase().replace(/[\u2018\u2019\u02bc]/g, "'");
   const selfNoShow = /couldn'?t make it|didn'?t make it|had to bail/.test(t);
-  const otherNoShow = /\b(never|didn'?t|did not) (show(ed)?( up)?|turn(ed)? up|come)\b(?! (me|us|you|him|her|them|off|around|any|much))|\bno[- ]show\b|\bstood (me|us) up\b/.test(t);
+  const otherNoShow = reportsAbsence(t);
   const negative = otherNoShow || NEGATIVE_FEEDBACK.test(t);
   const sentiment = negative ? "negative" : /great|clicked|loved|amazing|nice|easy to talk/.test(t) ? "positive" : "neutral";
   const again = !negative && /again|clicked/.test(t) && !/\b(wouldn'?t|won'?t|not|never)\b[^.!?]*\bagain\b/.test(t);
