@@ -146,6 +146,18 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(await count(sql`select count(*)::int as n from platform.phone_identities where e164 = ${kid}`)).toBe(0);
     expect(await count(sql`select count(*)::int as n from network.members where app_id = ${FR}`)).toBe(1);
 
+    const otherKid = newPhone();
+    expect(await text(s, clock, otherKid, "Hi, I'm a 12-year-old girl", { app: FR })).toBe("under_age");
+    expect(await memberOf(FR, otherKid)).toBeUndefined();
+    const conflicting = newPhone();
+    expect(await text(s, clock, conflicting, "Rae. I am 30 years old. I am 15.", { app: FR })).toBe("joined");
+    expect((await sql`select p.lowest_age from platform.people p join platform.phone_identities ph on ph.person_id = p.id where ph.e164 = ${conflicting}`)[0].lowest_age).toBe(15);
+    const spelled = newPhone();
+    expect(await text(s, clock, spelled, "hi", { app: FR })).toBe("join_asked");
+    expect(await text(s, clock, spelled, "Taylor", { app: FR })).toBe("join_asked");
+    expect(await text(s, clock, spelled, "thirty-two", { app: FR })).toBe("joined");
+    expect((await sql`select first_name from platform.memberships where member_id = ${(await memberOf(FR, spelled))!.id}`)[0].first_name).toBe("Taylor");
+
     // A member who says after joining that they are under 13 (first person, present tense): the kind
     // decline, the Network keeps only the id, the membership is forgotten, and the person keeps the age.
     const teen = newPhone();
@@ -174,6 +186,24 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     const bo = newPhone();
     expect(await text(s, clock, bo, "hi", { line: LINE })).toBe("join_asked");
     expect(directs.at(-1)!.app).toBe(FR);
+
+    // The Network's own line is invite-only: one answer a day per number, nothing stored (mvp-gaps
+    // item 12). The counting window starts at midnight UTC, which is 20:00 in New York, so an answer
+    // at 13:00 and the next one at 20:01 local are inside one evening for the member.
+    const NLINE = "+12125550777";
+    await sql`insert into platform.app_lines (line_e164, app_id, city, provider, env) values (${NLINE}, 'ntwrk', 'nyc', 'blooio', 'dev')`;
+    const guest = newPhone();
+    expect(await text(s, clock, guest, "hello", { line: NLINE })).toBe("invite_only");
+    expect(directs.at(-1)!.body).toBe(APPS.ntwrk.brand.inviteOnly);
+    const answered = directs.length;
+    // Cross the fixed day window by a minute: no second answer inside 24 hours.
+    clock.advance(24 * HOUR - (clock.now() % (24 * HOUR)) + MINUTE);
+    expect(await text(s, clock, guest, "hello again", { line: NLINE })).toBe("invite_only");
+    expect(directs.length).toBe(answered);
+    // A day after the first answer it is sent again, so the cap still expires.
+    clock.advance(24 * HOUR);
+    expect(await text(s, clock, guest, "still here", { line: NLINE })).toBe("invite_only");
+    expect(directs.length).toBe(answered + 1);
   }, T);
 
   test("one person in two apps: the link notice names no app, SHARE stores a grant, STOP is per app, STOP ALL and the shared line stop every app, leave forgets one app", async () => {

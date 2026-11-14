@@ -5,8 +5,8 @@
 //   replies.jsonl  core parseReply (yes / no / unsure)
 //   opt-out*.jsonl the opt-out readers (core parseOptOut; the platform consent ledger's detectKeyword)
 //   guard/         the shared leak guard (contacts in disguise, private facts, homoglyphs, benign text)
-import { classifyYesNo, findLeaks, parseOptOut, parseReply, type ReplyAnswer } from "../../packages/core/src/index.ts";
-import { classify, extractProfile, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
+import { classifyYesNo, findLeaks, maskPii, parseOptOut, parseReply, type ReplyAnswer } from "../../packages/core/src/index.ts";
+import { ageAnswer, classify, extractProfile, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
 import { mergeConsent } from "../../packages/network/src/extract.ts";
 import { detectKeyword, leaveTarget, optOutPhrase } from "../../packages/platform/src/consent.ts";
 import { createPublicApi } from "../../packages/platform/src/api.ts";
@@ -113,6 +113,11 @@ export async function evalsBlock(b: Block): Promise<void> {
   const statedMiss = teen.filter(l => l.age !== undefined && classify(l.text).statedAge !== l.age).map(l => `${JSON.stringify(l.text)} -> ${classify(l.text).statedAge ?? "none"} (want ${l.age})`);
   b.gate("stated ages: the youngest real age in the message", statedMiss.length === 0, statedMiss.slice(0, 5).join(" | "));
 
+  const ageAnswers = await jsonl<{ text: string; age: number | null }>("network/age-answers.jsonl");
+  const wrongAgeAnswers = ageAnswers.filter(row => (ageAnswer(row.text) ?? null) !== row.age);
+  b.gate(`the age question accepts spelled-out answers (n ${ageAnswers.length})`, wrongAgeAnswers.length === 0,
+    wrongAgeAnswers.slice(0, 5).map(row => row.text).join("; "));
+
   const para = await jsonl<{ text: string; desire: string | null }>("network/paraphrases.jsonl");
   const ids = [...new Set(para.map(l => l.desire).filter((x): x is string => !!x))];
   const badWants: string[] = [];
@@ -186,6 +191,13 @@ export async function evalsBlock(b: Block): Promise<void> {
     return want === "contact" ? !r.some(x => x.startsWith("contact:")) : want === "leak" ? r.length === 0 : r.length > 0;
   }).map(r => `${r.want}: ${JSON.stringify(r.text)} (${r.note})`);
   b.gate(`leak guard (n ${guard.length}): evasions caught, benign text clean`, guardMiss.length === 0, guardMiss.slice(0, 5).join("; "));
+
+  const contactRows = guard.filter(row => row.want === "contact");
+  const unmasked = contactRows.filter(row => findLeaks(maskPii(row.text)).some(reason => reason.startsWith("contact:")));
+  const profile = maskPii("I am 31 and I like climbing. My email is m a y a at g m a i l dot c o m.");
+  b.gate(`model input privacy (n ${contactRows.length}): contact hidden, nearby profile facts kept`,
+    unmasked.length === 0 && /i am 31 and i like climbing/i.test(profile) && !findLeaks(profile).some(reason => reason.startsWith("contact:")),
+    `${unmasked.length} contact rows unmasked`);
 
   await b.run("MCP output gate: update summaries with a phone, email, internal id or timestamp are withheld; plain ones pass", () => {
     for (const t of ["call me at (415) 555-0102", "maya [at] example [dot] test", "your match is mem_8f2k1", "meeting at 2026-10-08T19:30", "sam@example.com"]) expect(outputLeaks(t).length).toBeGreaterThan(0);

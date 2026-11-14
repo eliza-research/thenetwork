@@ -128,6 +128,8 @@ const PROVIDERS = "gmail|googlemail|yahoo|ymail|hotmail|outlook|icloud|protonmai
 // Those close only for TLDs that are not ordinary words. A space before the dot is defang spacing
 // and closes for the full TLD list ("example . ai", "example 。 co").
 const SENTENCE_DOT_TLDS = "com|net|org|io|xyz|biz|info";
+const SOCIAL_APPS = "ig|insta|instagram|snap|snapchat|tiktok|twitter|telegram|tg|whatsapp|signal|discord|venmo|cashapp|cash app|kik|threads|bluesky|bsky|linkedin|fb|facebook|wechat|line id";
+const HANDLE_VALUE = "(?!(?:a|an|the|me|my|same|private|you|it|later|too|now|today|tomorrow|tonight|soon|please|thanks|instead|first|also)\\b)@?[a-z][a-z0-9_.]{2,29}(?![a-z0-9_.@])";
 
 /** Contact-detail patterns, run on `plain` text (punctuation kept) and on the contact variants (`contactVariants`). */
 export const CONTACT_PATTERNS: { name: string; re: RegExp }[] = [
@@ -136,6 +138,8 @@ export const CONTACT_PATTERNS: { name: string; re: RegExp }[] = [
   { name: "phone", re: /(?:\+?\d[\s().\-\/_x]{0,3}){9,14}\d/g },
   // A 7-digit local number: "555-0102", "555 0102", "5550102" (core-2).
   { name: "phone", re: /(?<![\d#])(?:\d[\s.\-_]{0,2}){6}\d(?![\s.\-_]{0,2}\d)/g },
+  // Accept a separator between complete phone groups.
+  { name: "phone", re: /(?<![\d#])(?:(?:\d[ \t]{0,2}){2}\d[ \t]*[,;/][ \t]*)?(?:\d[ \t]{0,2}){2}\d[ \t]*[,;/.-][ \t]*(?:\d[ \t]{0,2}){3}\d(?!\d)/g },
   // Bounded quantifiers: linear time on adversarial input (core-7).
   { name: "email", re: /(?<![a-z0-9._%+-])[a-z0-9._%+-]{1,64}@[a-z0-9-]{1,63}(?:\.[a-z0-9-]{1,63}){0,8}\.[a-z]{2,24}(?![a-z])/ },
   // "sam@gmail", "sam at gmail", "sam<at>gmail" (well-known providers need no TLD).
@@ -149,7 +153,10 @@ export const CONTACT_PATTERNS: { name: string; re: RegExp }[] = [
   // "@samlee", "dm me@samlee" (an @ inside a word but not an email).
   { name: "handle", re: /(?:^|[^a-z0-9._%+-])@[a-z0-9_][a-z0-9_.]{1,29}|[a-z0-9]@[a-z0-9_]{2,30}(?![a-z0-9_]*\.[a-z])/ },
   // "ig: samlee_nyc", "my insta is samlee_nyc", "snap @sam", "discord sam#1234".
-  { name: "handle", re: /\b(?:ig|insta|instagram|snap|snapchat|tiktok|twitter|telegram|tg|whatsapp|signal|discord|venmo|cashapp|cash app|kik|threads|bluesky|bsky|linkedin|fb|facebook|wechat|line id)\b\s*(?:[:=]|is|handle|handle is|is at|at)?\s*@?(?:[a-z0-9_.]*[_.\d#][a-z0-9_.#]*[a-z0-9]|(?<=[:=@]\s*)[a-z][a-z0-9]{2,29})/ },
+  { name: "handle", re: new RegExp("\\b(?:" + SOCIAL_APPS + ")\\b\\s*(?:[:=]|is|handle|handle is|is at|at)?\\s*@?(?:[a-z0-9_.]*[_.\\d#][a-z0-9_.#]*[a-z0-9]|(?<=[:=@]\\s*)[a-z][a-z0-9]{2,29})") },
+  { name: "handle", re: new RegExp("\\b(?:(?:handle|username|user name|screen name|gamertag)\\s*(?:is\\b|[:=])\\s*|(?:(?:find|add|follow|dm|message|hit) me(?: up)?|hmu) on (?:" + SOCIAL_APPS + ") (?:as )?)" + HANDLE_VALUE) },
+  { name: "handle", re: new RegExp("\\b(?:search(?: for)?|look up|add|follow)\\s+" + HANDLE_VALUE + "\\s+on\\s+(?:" + SOCIAL_APPS + ")\\b") },
+  { name: "handle", re: /\b(?:cashapp|cash app|cashtag)\b\s*(?:[:=]|is)?\s*\$[a-z][a-z0-9_]{1,19}/ },
 ];
 
 const NUMBER_WORDS: Record<string, string> = {
@@ -204,6 +211,7 @@ export function contactVariants(s: string): string[] {
     v = v.replace(/\b[a-z]+\b/g, w => NUMBER_WORDS[w] ?? w);
     v = v.replace(/\boh\b(?=[\s.\-]*\d)|(?<=\d[\s.\-]*)\boh\b/g, "0");
     v = v.replace(/(?<=\d[\s.\-]{0,2})[o](?![a-z])|(?<![a-z])[o](?=[\s.\-]{0,2}\d)/g, "0").replace(/(?<=\d[\s.\-]{0,2})[li](?![a-z])|(?<![a-z])[li](?=[\s.\-]{0,2}\d)/g, "1");
+    if (/\b(?:at|dot)\b|@/.test(v)) v = v.replace(/\b(?:[a-z][ \t]){2,63}[a-z]\b/g, letters => letters.replace(/[ \t]/g, ""));
     out.add(v);
     // Spelled "dot" only before a known TLD or another spelled dot; spelled "at" only before a domain.
     spelledDot.lastIndex = 0;

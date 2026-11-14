@@ -193,3 +193,8 @@
 {"text":"He said \"I'm 12\" but I'm 30","teen":false,"age":30}
 {"text":"I act like I'm 12","teen":false}
 {"text":"I think I'm 16","teen":false}
+{"text":"I am a 12-year-old girl","teen":true,"age":12}
+{"text":"I am a 12-year-old at heart","teen":false}
+{"text":"I am a 12-year-old whisky fan","teen":false}
+{"text":"I am 16 from Queens","teen":true,"age":16}
+{"text":"I am 15 looking for friends","teen":true,"age":15}

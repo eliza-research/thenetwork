@@ -61,7 +61,7 @@ accepted merges and pays after maintainer review. There is no escrow.
 
 **Security suite** (`bun run security`, also part of `bun run test:integration`; the same list is in docs/tests-policy.md): `packages/platform/test/db.test.ts`, `packages/platform/test/api-security.test.ts`, `packages/platform/test/proxy.test.ts`, `packages/platform/test/cloud-auth.pg.test.ts`, `packages/platform/test/notify-retention.pg.test.ts`, `packages/mcp/test/oauth.test.ts`, `packages/mcp/test/pg.test.ts`, `deploy/backend/backend.test.ts`, `deploy/router.test.ts`, `packages/network/test/shared-agent.integration.test.ts`, `packages/observatory/test/staff.test.ts`.
 
-**Postgres in the simulations.** The safety, ops, pipeline and audit blocks use the dev Postgres (:54339) when it is there and record a tracked "skipped" gate when it is not. CI's sim job has a Postgres service and `REQUIRE_PG=1`, and it fails on any such skip. The migration runner (`packages/observatory/db/migrate.ts`) refuses two numbered migrations with the same NNNN prefix: take the next free number.
+**Postgres in the simulations.** The safety, ops, pipeline, pipeline-slop and audit blocks use the dev Postgres (:54339) when it is there and record a tracked "skipped" gate when it is not. CI's sim job has a Postgres service and `REQUIRE_PG=1`, and it fails on any such skip. The migration runner (`packages/observatory/db/migrate.ts`) refuses two numbered migrations with the same NNNN prefix: take the next free number.
 
 ## Code invariants
 
