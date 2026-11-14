@@ -34,6 +34,17 @@ describe("a counter-offer to a probe", () => {
     expect(w.log("probe_unclear").length).toBeGreaterThan(0);
   });
 
+  test("a hedged interested counter never books: a hedge in another clause hedges the whole counter", async () => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    await w.onboard("a", "b");
+    w.propose(["a", "b"]);
+    await w.answerProbes(["a", "b"], () => "I'm interested! Maybe Friday instead?");
+    await w.run(2 * DAY);
+    expect(w.meetings.length).toBe(0);
+    expect(scheduled(w)).toBe(false);
+    expect(w.log("probe_unclear").length).toBeGreaterThan(0);
+  });
+
   test("an affirmed counter still counts as a yes with no pick", async () => {
     const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
     await w.onboard("a", "b");

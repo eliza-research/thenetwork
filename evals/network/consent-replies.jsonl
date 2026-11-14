@@ -339,3 +339,6 @@
 {"text":"works for me. Saturday instead?","label":"yes","keys":[]}
 {"text":"perfect, Monday instead?","label":"yes","keys":[]}
 {"text":"I'm up for it — Friday instead?","label":"yes","keys":[]}
+{"text":"I'm interested! Maybe Friday instead?","label":"unclear"}
+{"text":"I'm interested — how about Thursday? Maybe that works?","label":"unclear"}
+{"text":"Interested! How about Friday? Not sure though.","label":"unclear"}

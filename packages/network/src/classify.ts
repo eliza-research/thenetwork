@@ -670,11 +670,15 @@ function clauseAt(t: string, i: number, len: number): string {
  * after a question, and every one of those would book a member who never said yes.
  * "Interested" is not an affirmation word in AFFIRM_RX, so it is read on its own: it counts
  * only in a clause that is not negated ("not interested"), hedged ("maybe I'm interested")
- * or conditional ("interested only if ...").
+ * or conditional ("interested only if ..."). A hedge, condition or question anywhere else in
+ * the reply still blocks it ("I'm interested! Maybe Friday instead?"): the interested clause
+ * alone cannot carry assent for a counter the rest of the reply hedges, so the fallback keeps
+ * the same reply-level guards as the affirmation above.
  */
 function counterIsAffirmed(body: string, t: string): boolean {
   const s = consentScan(body);
   if (s.affirmAt < Infinity && !s.cond && !s.hedge && !s.question) return true;
+  if (s.cond || s.hedge || s.question) return false;
   for (const m of t.matchAll(/\binterested\b/g)) {
     const clause = clauseAt(t, m.index!, m[0].length);
     if (COND_RX.test(clause) || HEDGE_RX.test(clause)) continue;
