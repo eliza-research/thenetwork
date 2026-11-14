@@ -4,7 +4,7 @@
 //   -> when every hard field is set and not yet confirmed: send readBack -> otherwise send nextQuestion.
 // Copy rules: one question per message, about the member only; the read-back repeats only what the
 // member said (or the one stated default: straight after an unclear seeks answer), and never identity, orientation, age, kids, faith or anything the rules did not read.
-import { classifyYesNo } from "@thenetwork/core";
+import { parseReply } from "@thenetwork/core";
 import {
   confirmationAfterAnswer, countAfterPrompt, initial, nextQuestionReason, readbackEligible, readbackReason, step,
 } from "../../../../core/src/generated/slopOnboarding.ts";
@@ -92,10 +92,18 @@ export function readBack(p: SlopOnboarding): string | undefined {
 export function applyCorrection(p: SlopOnboarding, text: string, o: ExtractOptions = {}): SlopOnboarding {
   const next = extractSlopProfile([{ text, asked: o.asked }], p, o);
   const changed = JSON.stringify(view(next)) !== JSON.stringify(view(p));
-  const yes = !changed && (classifyYesNo(text) === "yes" || /^\s*(?:right|correct|exactly|that'?s (?:it|right)|you got it|perfect|yup|yep|ya|ye|100|👍)\b/i.test(text));
-  return finalize({ ...next, confirmed: confirmationAfterAnswer(changed, yes, p.minor || p.declined) });
+  const reply = parseReply(text);
+  const bareAffirmation = /^\s*(?:right|correct|exactly|that['’]?s (?:it|right)|you got it|perfect|yup|yep|ya|ye|100|👍)[.!\s]*$/i.test(text);
+  const qualified = reply.constraints.length > 0 || /\?/.test(text) || /\b(?:maybe|idk|unsure|let me check|if|unless|wait)\b/i.test(text);
+  const yes = !qualified && (reply.answer === "yes" || (reply.answer !== "no" && bareAffirmation));
+  return finalize({ ...next, confirmed: confirmationAfterAnswer(changed, yes, next.minor || next.declined) });
 }
-const view = (p: SlopOnboarding) => ({ g: p.gender?.value, s: p.seeks?.value, a: p.ageRange?.value, d: p.distance?.value, l: p.location?.value, goal: p.goal?.value, db: p.dealbreakers.map(d => d.value).sort(), i: p.interests.map(x => x.value).sort(), ac: p.activities.map(x => x.value).sort(), f: p.free.map(x => x.value).sort(), age: p.age?.value, v: Object.fromEntries(Object.entries(p.values).map(([k, x]) => [k, x?.value])) });
+const view = (p: SlopOnboarding) => ({
+  g: p.gender?.value, o: p.orientation?.value, id: p.identity?.value, s: p.seeks?.value, a: p.ageRange?.value, d: p.distance?.value,
+  l: p.location?.value, goal: p.goal?.value, db: p.dealbreakers.map(d => d.value).sort(), ndb: !!p.noDealbreakers,
+  i: p.interests.map(x => x.value).sort(), ac: p.activities.map(x => x.value).sort(), f: p.free.map(x => x.value).sort(),
+  age: p.age?.value, minor: p.minor, declined: p.declined, v: Object.fromEntries(Object.entries(p.values).map(([k, x]) => [k, x?.value])),
+});
 
 // ------------------------------------------------------------------------------------------ next question
 
