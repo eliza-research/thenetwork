@@ -10,8 +10,13 @@ import { SQL } from "bun";
 import { migrate } from "./migrate.ts";
 
 const REPO = resolve(import.meta.dir, "../../..");
-export const DEV_PG_DIR = process.env.OBSERVATORY_PG_DIR ?? join(REPO, "runs", "pg");
-export const DEV_PG_PORT = Number(process.env.OBSERVATORY_PG_PORT ?? 54339);
+// CONTRIBUTING.md section 4 copies .env.example, whose optional values are empty lines
+// (OBSERVATORY_PG_PORT=, OBSERVATORY_PG_DIR=): an empty value means "leave the default", so only a
+// value with text overrides. ?? read "" as a value, and a copied .env broke `up` (mkdir of "" throws
+// ENOENT; Number("") is port 0, which the server refuses). deploy/backup/lib.ts already picks its
+// PG_BIN_DIR the same way (filter(Boolean)).
+export const DEV_PG_DIR = process.env.OBSERVATORY_PG_DIR?.trim() || join(REPO, "runs", "pg");
+export const DEV_PG_PORT = Number(process.env.OBSERVATORY_PG_PORT?.trim() || 54339);
 export const DEV_PG_URL = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/network`;
 
 function pgBin(name: string): string {
