@@ -21,11 +21,12 @@
 // Everything here is a deterministic pure function of its inputs (no clock reads, no randomness,
 // no LLM calls). The Network runtime owns the state (hold queues, ledger, conversation streaks)
 // and calls these functions; see docs/results/2026-10-07-attention-budget.md for the integration note.
-import type { Category, MemberId, ParticipationState } from "@thenetwork/core";
+import type { Category, Facet, MemberId, ParticipationState } from "@thenetwork/core";
 import { canBeMatched, DAY, fromLocal, HOUR, inQuietHours, localParts, MINUTE, withinQuietHours } from "@thenetwork/core";
 import { DEFAULT_ATTENTION, type AttentionConfig } from "./config.ts";
 import { tokenize } from "./embed.ts";
 import { privateVocabulary } from "./explain.ts";
+import { validityIncludes } from "./interval.ts";
 import { checkMemberFacing } from "./judgeCommon.ts";
 import type {
   AttentionItem, AttentionLedgerEntry, CadencePrefs, Effort, EngineProposal, HeldItem, HoldReason, ItemKind, LedgerKind, Role,
@@ -1100,12 +1101,12 @@ export function timeOptionsPhrase(slots: readonly TimeSlot[], tz: string): strin
 }
 
 /** Standing availability from `availability_pattern` facets ("calendar usually free Tue/Thu evenings": tags evening:Tue). */
-export function standingFromFacets(facets: readonly { kind: string; tags: string[]; inferred?: boolean; observedAt?: number; validFrom?: number }[], now: number): StandingAvailability[] {
+export function standingFromFacets(facets: readonly (Pick<Facet, "inferred" | "observedAt" | "validFrom" | "validTo"> & { kind: string; tags: string[] })[], now: number): StandingAvailability[] {
   const DAYS3 = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const PARTS: Record<string, [number, number]> = { morning: [7, 12], afternoon: [12, 17], evening: [17, 22] };
   const out: StandingAvailability[] = [];
   for (const f of facets) {
-    if (f.kind !== "availability_pattern") continue;
+    if (f.kind !== "availability_pattern" || !validityIncludes(f, now)) continue;
     const by = new Map<string, number[]>();
     for (const t of f.tags) {
       const [rawPart, rawDay] = t.split(":");
