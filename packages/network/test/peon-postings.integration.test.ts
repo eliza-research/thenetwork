@@ -78,17 +78,19 @@ describe.skipIf(!pgAvailable)("peon postings: text intake, restart, staff API (N
     await text(s, clock, ROWAN, "Rowan, 34");
     const rowan = (await memberId(ROWAN))!;
     expect(rowan).toBeString();
-    await text(s, clock, ROWAN, "We're hiring a data analyst (level 2), 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL");
-    expect(await last(rowan)).toMatch(/^Here's your job post: Data analyst, 2 openings, \$90k-\$120k a year, hybrid in Brooklyn\..*Reply yes to post it/);
+    await text(s, clock, ROWAN, "We're hiring a senior data analyst, 2 openings, $90,500-$120,750, hybrid, not remote, in Brooklyn. No sponsorship available. Must have SQL level 4 and SQL level 2");
+    expect(await last(rowan)).toMatch(/^Here's your job post: Senior data analyst, 2 openings, \$90\.5k-\$120\.75k a year, hybrid in Brooklyn\..*Visa sponsorship: no\..*Reply yes to post it/);
     expect(await postings(rowan)).toHaveLength(0);
 
     // ---- The yes saves it: the intent and the facets tagged with its id, on the manager.
     await text(s, clock, ROWAN, "yes");
-    expect(await last(rowan)).toMatch(/^Posted: data analyst\./);
+    expect(await last(rowan)).toMatch(/^Posted: senior data analyst\./);
     const [p] = await postings(rowan);
-    expect(p).toMatchObject({ status: "active", objective: "Hire: data analyst", details: "peon:job" });
+    expect(p).toMatchObject({ status: "active", objective: "Hire: senior data analyst", details: "peon:job" });
     const tags = ((await sql`select tags from network.facets where app_id = 'peon' and member_id = ${rowan} and ${`peon:posting:${p.id}`} = any(tags)`) as any[]).flatMap(r => r.tags as string[]);
-    for (const t of ["peon:family:data_analyst", "peon:seniority:2", "peon:pay:90-120", "peon:mode:hybrid", "peon:area:brooklyn", "peon:must:sql:2", "peon:openings:2"]) expect(tags).toContain(t);
+    for (const t of ["peon:family:senior_data_analyst", "peon:seniority:3", "peon:pay:90.5-120.75", "peon:mode:hybrid", "peon:area:brooklyn", "peon:must:sql:4", "peon:sponsors:no", "peon:openings:2"]) expect(tags).toContain(t);
+
+    expect(tags).not.toContain("peon:must:sql:2");
 
     // ---- A 15-year-old may join peon but cannot post a job.
     await text(s, clock, KAI, "peon");
@@ -119,12 +121,22 @@ describe.skipIf(!pgAvailable)("peon postings: text intake, restart, staff API (N
     expect(minor).toMatchObject({ status: 409, body: { ok: false, reason: "adults_only" } });
     const listed = await call("GET", `/postings?managerId=${encodeURIComponent(rowan)}`);
     expect(listed.body.postings).toHaveLength(1);
-    expect(listed.body.postings[0]).toMatchObject({ id: p.id, title: "data analyst", openings: 2, payMin: 90, payMax: 120, status: "active" });
+    expect(listed.body.postings[0]).toMatchObject({ id: p.id, title: "senior data analyst", openings: 2, payMin: 90.5, payMax: 120.75, mode: "hybrid", sponsors: false, status: "active" });
     const closed = await call("POST", `/postings/${encodeURIComponent(p.id)}/close`, { reason: "filled" });
     expect(closed.body).toMatchObject({ ok: true, posting: { id: p.id, status: "closed" } });
     expect((await postings(rowan))[0].status).toBe("closed");
+    const closedRead = await call("GET", `/postings?managerId=${encodeURIComponent(rowan)}`);
+    expect(closedRead.body.postings[0]).toMatchObject({
+      status: "closed", closedReason: "filled", openings: 2, updatedAt: clock.now(),
+    });
     snap = await loadSnapshot(sql, clock.now(), { app: "peon", city: "nyc" });
     expect(snap.facets.find(f => f.id === `${seat}:openings`)?.tags).toEqual(["peon:openings:0"]);
     expect(snap.facets.filter(f => f.memberId === seat).flatMap(f => f.tags)).toContain("peon:verified");
+    clock.advance(MINUTE);
+    const reopened = await call("POST", "/postings", { id: p.id, managerId: rowan });
+    expect(reopened.body.posting).toMatchObject({ status: "active", openings: 2, updatedAt: clock.now() });
+    expect(reopened.body.posting.closedReason).toBeUndefined();
+    snap = await loadSnapshot(sql, clock.now(), { app: "peon", city: "nyc" });
+    expect(snap.facets.find(f => f.id === `${seat}:openings`)?.tags).toEqual(["peon:openings:2"]);
   }, T);
 });

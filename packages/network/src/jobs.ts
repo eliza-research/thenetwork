@@ -56,6 +56,23 @@ const slug = (s: string) => s.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]
 const WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, a: 1, an: 1 };
 const SENIORITY: [RegExp, number][] = [[/\b(intern|entry[- ]level|junior|jr)\b/i, 1], [/\b(mid[- ]level|mid)\b/i, 2], [/\b(senior|sr)\b/i, 3], [/\b(staff|lead)\b/i, 4], [/\bprincipal\b/i, 5]];
 const BOROUGHS = ["manhattan", "brooklyn", "queens", "bronx", "staten island"];
+const MODE = "remote|hybrid|on-?site|in[- ]office|in person";
+const REFUSED_MODE = new RegExp(`\\b(?:(?:not|no)(?:\\s+longer)?\\s+(?:fully\\s+)?|non[- ])(?:${MODE})\\b(?:\\s+(?:or|nor)\\s+(?:${MODE})\\b)*`, "gi");
+const PAY_RANGE = /(?<![\w.,])(\$?\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s*k?)\s*(?:-|–|—|to)\s*(\$?\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s*k?)(?!\w|[.,]\d)/gi;
+
+function payRange(text: string): [number, number] | undefined {
+  for (const hit of text.matchAll(PAY_RANGE)) {
+    const amounts = [hit[1]!, hit[2]!];
+    if (!amounts.some(amount => /[$k]/i.test(amount))) continue;
+    const sharedK = amounts.some(amount => /k$/i.test(amount.trim()));
+    const [low, high] = amounts.map(amount => {
+      const value = Number(amount.replace(/[$,\sk]/gi, ""));
+      return /k$/i.test(amount.trim()) || (sharedK && value < 1000 && !amount.includes(",")) ? value : value / 1000;
+    }) as [number, number];
+    if (payRangeAllowed(low, high)) return [low, high];
+  }
+}
+
 const AREAS = [...BOROUGHS, ...NEIGHBORHOODS.map(n => n.name.toLowerCase())].sort((a, b) => b.length - a.length);
 
 /** A text that starts or changes a job post (a posting command). */
@@ -73,21 +90,30 @@ export function parsePosting(body: string): PostingDraft {
   }
   const open = /\b(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:open(?:ing)?s?|roles?|seats?|positions?|hires?|people|spots?)\b/i.exec(t) ?? /\bx\s?(\d{1,2})\b/i.exec(t);
   if (open) { const n = WORDS[open[1]!.toLowerCase()] ?? Number(open[1]); if (Number.isInteger(n) && openingsInRange(n)) d.openings = n; }
-  const pay = /\$?\s*(\d{2,3})(?:,000|k)?\s*(?:-|–|to)\s*\$?\s*(\d{2,3})(?:,000)?\s*k\b/i.exec(t) ?? /\$\s*(\d{2,3})(?:,000|k)\s*(?:-|–|to)\s*\$?\s*(\d{2,3})(?:,000|k)?/i.exec(t);
-  if (pay) { const a = Number(pay[1]), b = Number(pay[2]); if (payRangeAllowed(a, b)) { d.payMin = a; d.payMax = b; } }
-  if (/\bremote\b/i.test(t)) d.mode = "remote"; else if (/\bhybrid\b/i.test(t)) d.mode = "hybrid"; else if (/\b(on-?site|in[- ]office|in person)\b/i.test(t)) d.mode = "onsite";
+  const pay = payRange(t);
+  if (pay) [d.payMin, d.payMax] = pay;
+  const modeText = t.replace(REFUSED_MODE, " ");
+  if (/\bremote\b/i.test(modeText)) d.mode = "remote";
+  else if (/\bhybrid\b/i.test(modeText)) d.mode = "hybrid";
+  else if (/\b(on-?site|in[- ]office|in person)\b/i.test(modeText)) d.mode = "onsite";
   const lower = ` ${t.toLowerCase().replace(/[^a-z0-9' -]+/g, " ")} `;
   const area = AREAS.find(a => lower.includes(` ${a} `));
   if (area) d.area = slug(area);
-  for (const [re, n] of SENIORITY) if (re.test(t)) { d.seniority = n; break; }
-  const lvl = /\blevel\s*([1-5])\b/i.exec(t); if (lvl) d.seniority = Number(lvl[1]);
   const list = (s: string) => s.split(/,|\band\b|\/|;/i).map(x => x.trim().toLowerCase()).filter(x => x && x.length <= 40 && !/^(?:a|an|the|some)$/.test(x));
-  const must = /\bmust(?:[- ]haves?|\s+have|\s+know)?\s*:?\s*([^.;]+?)(?=\.|;|\bnice to have\b|$)/i.exec(t);
+  const must = /\bmust(?:[- ]haves?|\s+have|\s+know)?\s*:?\s*([^.;]+?)(?=\.|;|\bnice[- ]to[- ]haves?\b|$)/i.exec(t);
   if (must) d.must = list(must[1]!).map(x => { const m = /^(.*?)\s*(?:\(?(?:level\s*)?([0-5])\)?)$/i.exec(x); return { skill: slug(m?.[1] || x), level: m?.[2] ? Number(m[2]) : 2 }; }).filter(x => x.skill);
   const nice = /\bnice[- ]to[- ]haves?\s*:?\s*([^.;]+)/i.exec(t);
   if (nice) d.nice = list(nice[1]!).map(slug).filter(Boolean);
-  if (/\b(can|will|we)\s+sponsor\b|\bsponsorship (?:available|ok|yes)\b/i.test(t)) d.sponsors = true;
-  else if (/\bno (?:visa )?sponsorship\b|\b(?:can(?:'|no)?t|cannot|won'?t|don'?t) sponsor\b/i.test(t)) d.sponsors = false;
+  // Skill lists can contain levels and seniority words that do not describe the role.
+  let roleText = t;
+  for (const section of [must, nice]) if (section) {
+    roleText = roleText.slice(0, section.index) + " ".repeat(section[0].length) + roleText.slice(section.index + section[0].length);
+  }
+  for (const [re, n] of SENIORITY) if (re.test(roleText)) { d.seniority = n; break; }
+  const lvl = /\blevel\s*([1-5])\b/i.exec(roleText);
+  if (lvl) d.seniority = Number(lvl[1]);
+  if (/\bno (?:visa )?sponsorship\b|\b(?:can(?:'|no)?t|cannot|won'?t|don'?t) sponsor\b/i.test(t)) d.sponsors = false;
+  else if (/\b(can|will|we)\s+sponsor\b|\bsponsorship (?:available|ok|yes)\b/i.test(t)) d.sponsors = true;
   return d;
 }
 
@@ -218,13 +244,19 @@ export function postingFacts(p: JobPosting): { intent: Intent; facets: Facet[] }
   const f = (suffix: string, kind: Facet["kind"], value: string, tags: string[], scope: Facet["scope"] = "shareable"): Facet => ({
     id: `${p.id}-${suffix}`, memberId: p.managerId, kind, value, tags: [...tags, tag], scope, provenance: "said", confidence: 0.9, validFrom: p.createdAt, source: "chat", confirmedByMember: true,
   });
+  const mustLevels = new Map<string, number>();
+  for (const { skill, level } of p.must) mustLevels.set(skill, Math.max(level, mustLevels.get(skill) ?? level));
   const facets: Facet[] = [
+    f("revision", "fact", "Posting revision", [
+      `${T.postingUpdatedAt}${p.updatedAt}`,
+      ...(p.status === "closed" && p.closedReason ? [`${T.postingClosedReason}${p.closedReason}`] : []),
+    ], "agent_private"),
     f("role", "fact", `${p.title} role`, [`${T.family}${p.family}`, ...(p.seniority ? [`${T.seniority}${p.seniority}`] : [])]),
     f("pay", "fact", `Pay $${p.payMin}k-$${p.payMax}k`, [`${T.pay}${p.payMin}-${p.payMax}`]),
     f("mode", "fact", where(p.mode, p.area), [`${T.mode}${p.mode}`, `${T.market}nyc`, ...(p.area ? [`${T.area}${p.area}`] : [])]),
-    ...p.must.map(m => f(`must-${m.skill}`, "skill", `Must have ${human(m.skill)}`, [`${T.must}${m.skill}:${m.level}`])),
-    ...p.nice.map(n => f(`nice-${n}`, "skill", `Nice to have ${human(n)}`, [`${T.nice}${n}`])),
-    f("open", "fact", "Openings", [`${T.openings}${p.status === "active" ? p.openings : 0}`, `${T.urgency}2`, `${T.sponsors}${p.sponsors ? "yes" : "no"}`], "matchable"),
+    ...[...mustLevels].map(([skill, level]) => f(`must-${skill}`, "skill", `Must have ${human(skill)}`, [`${T.must}${skill}:${level}`])),
+    ...[...new Set(p.nice)].map(n => f(`nice-${n}`, "skill", `Nice to have ${human(n)}`, [`${T.nice}${n}`])),
+    f("open", "fact", "Openings", [`${T.openings}${p.openings}`, `${T.urgency}2`, `${T.sponsors}${p.sponsors ? "yes" : "no"}`], "matchable"),
   ];
   const intent: Intent = { id: p.id, memberId: p.managerId, objective: `Hire: ${p.title}`, category: "professional" as Category, details: JOB_INTENT, horizonDays: 90, status: p.status, createdAt: p.createdAt };
   return { intent, facets };
@@ -236,6 +268,8 @@ export function postingFromFacts(intent: Intent, facets: readonly Facet[]): JobP
   const one = (prefix: string) => tags.find(t => t.startsWith(prefix))?.slice(prefix.length);
   const [payMin, payMax] = (one(T.pay) ?? "0-0").split("-").map(Number) as [number, number];
   const seniority = one(T.seniority);
+  const updatedAt = Number(one(T.postingUpdatedAt));
+  const closedReason = one(T.postingClosedReason);
   return {
     id: intent.id, managerId: intent.memberId, title: intent.objective.replace(/^Hire:\s*/i, ""), family: one(T.family) ?? slug(intent.objective),
     ...(seniority ? { seniority: Number(seniority) } : {}),
@@ -243,7 +277,9 @@ export function postingFromFacts(intent: Intent, facets: readonly Facet[]): JobP
     must: tags.filter(t => t.startsWith(T.must)).map(t => { const [s, l] = t.slice(T.must.length).split(":"); return { skill: s!, level: Number(l ?? 2) }; }),
     nice: tags.filter(t => t.startsWith(T.nice)).map(t => t.slice(T.nice.length)),
     ...(one(T.sponsors) ? { sponsors: one(T.sponsors) === "yes" } : {}),
-    status: intent.status === "active" ? "active" : "closed", createdAt: intent.createdAt, updatedAt: intent.createdAt,
+    ...(intent.status !== "active" && (closedReason === "closed" || closedReason === "filled") ? { closedReason } : {}),
+    status: intent.status === "active" ? "active" : "closed",
+    createdAt: intent.createdAt, updatedAt: Number.isFinite(updatedAt) ? updatedAt : intent.createdAt,
   };
 }
 
