@@ -20,7 +20,7 @@ import { describe, onTimeline, requestLabel, type EventRow } from "../events.ts"
 import { ALERT_WINDOW, growthStats, healthAlerts, hours, reportsFromCases, safetyInfo, scorecard, type MsgMeta } from "../health.ts";
 import { memberFacets } from "../appProfile.ts";
 import { displayName, scrubFacet, scrubText } from "../scrub.ts";
-import { emptyCounters, Store, zeroCounts } from "../store.ts";
+import { edgeId, emptyCounters, Store, zeroCounts } from "../store.ts";
 import type {
   BiasReportView, HeldQueue, HeldText, BookedPlan, ConfigChange, ConfigInfo, ControlCommand, ControlResult, EngineRunSummary, EnvInfo, FeedKind, MemberDetail, MemberPhoto, MemberStatus, MemberTimeline, NetworkInfo,
   ObsDelta, ObsEdge, ObsFeedItem, ObsMember, ObsMessage, ObsOpportunity, ObsRequest, ObsState, OpportunityDetail, ParticipantStatus, ReviewInfo,
@@ -350,11 +350,17 @@ export class RealSource implements DataSource {
       };
       upsertIfChanged(s.members, m, x => s.upsertMember(x));
     }
+    // Collapse symmetric rows within this snapshot, then replace the old value even if it weakened.
+    const currentEdges = new Map<string, ObsEdge>();
     for (const r of edges as any[]) {
       if (!s.members.has(r.from_id) || !s.members.has(r.to_id)) continue;
-      const e = { from: r.from_id, to: r.to_id, type: r.type as EdgeType, strength: r.strength, createdAt: ms(r.created_at) ?? 0, origin: (r.explicit ? "graph" : "learned") as ObsEdge["origin"] };
-      s.addEdge(e);
+      const id = edgeId(r.type, r.from_id, r.to_id);
+      const e: ObsEdge = { id, from: r.from_id, to: r.to_id, type: r.type as EdgeType, strength: r.strength, createdAt: ms(r.created_at) ?? 0, origin: r.explicit ? "graph" : "learned" };
+      const current = currentEdges.get(id);
+      if (!current) currentEdges.set(id, e);
+      else current.strength = Math.max(current.strength, e.strength);
     }
+    for (const e of currentEdges.values()) upsertIfChanged(s.edges, e, x => s.upsertEdge(x));
     const partsBy = new Map<string, any[]>();
     for (const p of parts as any[]) { if (!partsBy.has(p.opportunity_id)) partsBy.set(p.opportunity_id, []); partsBy.get(p.opportunity_id)!.push(p); }
     const told = new Map<string, Record<string, number>>(), times = new Map<string, NonNullable<ObsOpportunity["times"]>>(), cancelled = new Map<string, BookedPlan["cancelled"]>();
