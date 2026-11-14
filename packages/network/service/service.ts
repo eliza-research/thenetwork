@@ -831,9 +831,15 @@ export class NetworkService implements RuntimeHost {
   /**
    * Run `fn` after a staff ban writes the ban rows and suppresses the numbers.
    * The backend uses it to revoke every live MCP OAuth grant of those phoneKeys
-   * (packages/mcp revokeAllForKey). Complements onForget (leave/delete) and open #172/#173.
+   * (packages/mcp revokeAllForKey). A listener error propagates, so a failed revoke
+   * fails the ban. #173 refuses the same phoneKey at bearer use, code exchange, and refresh.
    */
   onBan(fn: (ctx: { personId: string; phoneHashes: string[]; at: number }) => Promise<unknown> | unknown) { this.banListeners.push(fn); }
+
+  /** Staff-ban listeners. The caller leaves errors uncaught so a failed revoke fails the ban. */
+  private async runBanListeners(personId: string, phoneHashes: string[], at: number): Promise<void> {
+    for (const f of this.banListeners) await f({ personId, phoneHashes, at });
+  }
 
   /** Leave one app: the Network forgets the member, then the save deletes every row that names them (the forget path). */
   private async forget(app: AppInfo, memberId: MemberId) {
@@ -1793,7 +1799,11 @@ export class NetworkService implements RuntimeHost {
     const hashes = await this.people.phoneHashesOf(personId);
     if (by === "phone" && !hashes.length) return this.refused(user, rt, "ban", target, "no_phone");
     const already = by === "person" ? await this.people.isBanned("", personId) : (await Promise.all(hashes.map(h => this.people.isBanned(h)))).every(Boolean);
-    if (already) return this.refused(user, rt, "ban", target, "already_banned");
+    if (already) {
+      // The ban rows are already stored. Run listeners again so a revoke that failed on the first call can finish.
+      await this.runBanListeners(personId, hashes, this.clock.now());
+      return this.refused(user, rt, "ban", target, "already_banned");
+    }
     return this.audited(rt, user, target, { safety: "ban", by, reportId: reportId ?? null }, async () => {
       const at = this.clock.now();
       const rows: Ban[] = by === "person"
@@ -1802,11 +1812,6 @@ export class NetworkService implements RuntimeHost {
         : hashes.map(h => ({ id: `ban_${randomUUID()}`, scope: "phone" as const, personId, phoneHash: h, reason: note, reportId: reportId ?? null, bannedBy: user.id, at }));
       for (const b of rows) await this.people.ban(b);
       for (const h of hashes) await this.people.suppress(h, "banned", at);
-      // Live MCP OAuth grants end with the ban: a banned number cannot keep calling /mcp with a pre-ban Bearer.
-      for (const f of this.banListeners) {
-        try { await f({ personId, phoneHashes: hashes, at }); }
-        catch (e) { this.log(`[ban] grant revoke listener failed: ${(e as Error).message}`); }
-      }
       // No rating of looks is kept for a banned person (they are never matched again). The photos stay for the safety team.
       await this.dropRatings(personId);
       for (const m of await this.people.memberships(personId)) if (m.state !== "removed" && m.state !== "invited") await this.people.putMembership({ ...m, state: "restricted" });
@@ -1817,6 +1822,8 @@ export class NetworkService implements RuntimeHost {
         const r = await x.rt.unitOfWork(o => o.markBanned(x.memberId, user.id, note, mine ? reportId : undefined));
         if (mine) out = r;
       }
+      // Live MCP grants end here. A listener error leaves this function, and the staff route answers failure.
+      await this.runBanListeners(personId, hashes, at);
       return out;
     });
   }
