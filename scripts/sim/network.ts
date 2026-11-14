@@ -5,6 +5,9 @@
 import { readdirSync } from "node:fs";
 import { DAY, HOUR, MINUTE, type MemberId } from "../../packages/core/src/index.ts";
 import { DEFAULT_ATTENTION } from "../../packages/engine/src/index.ts";
+import { GENERATOR_NAMES } from "../../packages/engine/src/config.ts";
+import { runEngine } from "../../packages/engine/src/engine.ts";
+import { baseMember, emptyInput, facet } from "../../packages/engine/src/testkit.ts";
 import { networkPack } from "../../packages/engine/src/packs/network/index.ts";
 import type { RunRecord } from "../../packages/core/src/index.ts";
 import { computeMetrics } from "../../packages/sim/src/judge/metrics.ts";
@@ -36,6 +39,32 @@ async function world(days: number, seed = 3, network: NetworkOptions = { review:
 }
 
 export async function networkBlock(b: Block, o: { quick: boolean }): Promise<void> {
+  await b.run("newcomer welcome: an unavailable host does not hide an eligible host", async () => {
+    const input = emptyInput();
+    const now = input.now;
+    input.members = ["new", "busy", "guest", "available"].map(id => baseMember(id, { joinedAt: now - (id === "new" ? 1 : 90) * DAY }));
+    input.facets = ["new", "busy", "guest"].map(id => facet(id, 0, "interest", "Live music and jazz concerts", ["music"]));
+    input.facets.push(facet("available", 0, "interest", "Jazz concerts, baking cakes and bread", ["music", "baking"]));
+    for (const id of ["busy", "available"]) input.facets.push(facet(id, 1, "offer", "Happy to host a welcome coffee", ["host"]));
+    input.edges = [{ from: "busy", to: "guest", type: "knows", strength: 0.7, explicit: true, createdAt: now - 30 * DAY }];
+    // The two hosts are in town on different days. Either can meet the newcomer and guest,
+    // but the group cannot contain both hosts. The stronger match has already helped twice.
+    input.presence = [
+      ...input.members.map(m => ({ memberId: m.id, city: "sf" as const, type: "home" as const, areas: ["Mission"] })),
+      { memberId: "busy", city: "nyc", type: "temporary", areas: [], from: now + 3 * DAY, to: now + 7 * DAY },
+      { memberId: "available", city: "nyc", type: "temporary", areas: [], from: now, to: now + 3 * DAY },
+    ];
+    input.interactions = [1, 2].map(n => ({ id: `past-help-${n}`, kind: "help", category: "help", participants: ["busy", `past-client-${n}`], contributors: ["busy"], at: now - DAY, outcome: "completed" }));
+    const cfg = { seed: 7, generators: Object.fromEntries(GENERATOR_NAMES.map(n => [n, n === "newcomer_welcome"])) };
+    const control = await runEngine({ ...input, members: input.members.filter(m => m.id !== "busy") }, cfg);
+    expect(control.proposals.length).toBe(1);
+    const result = await runEngine(input, cfg);
+    expect(result.proposals.map(p => ({ participants: p.participants, roles: p.roles })))
+      .toEqual(control.proposals.map(p => ({ participants: p.participants, roles: p.roles })));
+    expect(result.proposals[0]!.roles.available).toBe("host");
+    expect(result.proposals[0]!.participants.includes("busy")).toBe(false);
+  });
+
   // ---- invariants: NYC, 10 days, seed 3, simulated reviewer ---------------------------------------
   const run = await world(10);
   await run.w.advanceTo(run.w.end);
