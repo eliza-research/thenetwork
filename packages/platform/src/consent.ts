@@ -64,16 +64,26 @@ const SPANISH_STOP_WORDS = new Set<string>(KEYWORDS.stopEs);
 // STOP (or STOP ALL) with only courtesy or urgency words around it, in any order: "PLS STOP NOW", "STOP RN",
 // "STOP ALL PLS". Only STOP: "cancel please" may mean a date, and "stop it" or "stop by" are not here.
 const STOP_TAIL = `(?:${KEYWORDS.stopTail.join("|")})`;
-const STOP_TAIL_RX = new RegExp(`^(?:${STOP_TAIL} )*STOP(?: ${STOP_TAIL})*$`);
-const STOP_ALL_TAIL_RX = new RegExp(`^(?:${STOP_TAIL} )*STOP ALL(?: ${STOP_TAIL})*$`);
+const STOP_TAIL_RX = new RegExp(`^(?:${STOP_TAIL} )*STOP(?:(?: ${STOP_TAIL})* STOP)*(?: ${STOP_TAIL})*$`);
+const STOP_ALL_TAIL_RX = new RegExp(`^(?:${STOP_TAIL} )*STOP ?ALL(?:(?: ${STOP_TAIL})* STOP ?ALL)*(?: ${STOP_TAIL})*$`);
+const REPEATED_SPANISH_STOP = new RegExp(`^(${KEYWORDS.stopEs.join("|")})(?: \\1)+$`);
+
+function repeatedOrInsistedStop(key: string): "stop" | "stop_all" | undefined {
+  const stop = key.replace(/^I (?:(?:ALREADY|JUST) )?SAID | I SAID$/g, "");
+  if (STOP_ALL_TAIL_RX.test(stop)) return "stop_all";
+  if (STOP_TAIL_RX.test(stop) || REPEATED_SPANISH_STOP.test(stop)) return "stop";
+  return undefined;
+}
 
 export type Keyword = "stop" | "stop_all" | "start" | "help";
 
 export function detectKeyword(text: string): Keyword | undefined {
   const k = keywordKey(text);
-  if (STOP_ALL_WORDS.has(k) || STOP_ALL_TAIL_RX.test(k)) return "stop_all";
+  const repeated = repeatedOrInsistedStop(k);
+  if (repeated) return repeated;
+  if (STOP_ALL_WORDS.has(k)) return "stop_all";
   // "STOPP", "STOOOP": a misspelt STOP is still a STOP.
-  if (STOP_WORDS.has(k) || SPANISH_STOP_WORDS.has(k) || /^S+T+O+P+$/.test(k) || STOP_TAIL_RX.test(k) || optOutPhrase(text)) return "stop";
+  if (STOP_WORDS.has(k) || SPANISH_STOP_WORDS.has(k) || /^S+T+O+P+$/.test(k) || optOutPhrase(text)) return "stop";
   if (START_WORDS.has(k)) return "start";
   if (HELP_WORDS.has(k)) return "help";
   return undefined;
