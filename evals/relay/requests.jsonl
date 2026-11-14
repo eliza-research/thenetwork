@@ -35,3 +35,26 @@
 {"text": "let Sam know I'll be there at 7", "want": "text"}
 {"text": "Tell her that I'm at the bar on the left", "want": "text"}
 {"text": "ask them if 6:30 works", "want": "text"}
+{"text": "text my number to her", "want": "contact_share"}
+{"text": "forward my number to them", "want": "contact_share"}
+{"text": "Would you send them my number?", "want": "contact_share"}
+{"text": "Would you please share my contact info with them?", "want": "contact_share"}
+{"text": "show this photo to Sam", "want": "photo"}
+{"text": "send the photo to them", "want": "photo"}
+{"text": "send this image to her", "want": "photo"}
+{"text": "pass this photo to them", "want": "photo"}
+{"text": "Would you send them this photo?", "want": "photo"}
+{"text": "Would it be okay to send my number?", "want": "none"}
+{"text": "don't tell them I'm running late", "want": "none"}
+{"text": "please don't tell them I am late", "want": "none"}
+{"text": "never tell Sam about this", "want": "none"}
+{"text": "Can you tell them I'm running late", "want": "text"}
+{"text": "Can you tell them I'm running late?", "want": "text"}
+{"text": "Could you tell Sam that I will be 5 minutes late", "want": "text"}
+{"text": "Could you please let them know that I am outside", "want": "text"}
+{"text": "Would you tell them I arrived", "want": "text"}
+{"text": "Can you ask them what table they are at?", "want": "text"}
+{"text": "tell them that I won't be long", "want": "text"}
+{"text": "let Sam know I do not eat dairy", "want": "text"}
+{"text": "tell her I've never been here before", "want": "text"}
+{"text": "tell them don't wait for me", "want": "text"}
