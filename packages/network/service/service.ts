@@ -1084,24 +1084,31 @@ export class NetworkService implements RuntimeHost {
       return "held";
     }
 
-    // A banned number or person: inbound refuses (docs/go-live-handoff.md). STOP above still records
-    // consent; HELP still answers. "leave <app>" still runs so a restricted membership can opt out
-    // (safety sim: ban, leave, then prove rejoin refuses). Membership may stay restricted after a
-    // ban, so this gate must run for existing members too, not only the join path.
+    // Inbound admission for a banned number or person (docs/go-live-handoff.md). STOP above still records
+    // consent. HELP still answers. "leave <app>" still runs so a restricted membership can opt out
+    // (safety sim: ban, leave, then prove rejoin refuses). Every other message is held here, before
+    // photo intake and the other side effects below. Membership may stay restricted after a ban, so
+    // this runs for existing members too, not only the join path.
+    let bannedInbound = false;
     if (e164) {
       const bannedPerson = await this.accounts.personFor(e164);
-      if (await this.accounts.banned(e164, bannedPerson) && !leaveTarget(ev.text, this.apps)) {
-        this.log(`[inbound] a banned number (${rt.id}): not handled`);
-        if (kw === "help") await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`, "compliance");
-        return "held";
+      if (await this.accounts.banned(e164, bannedPerson)) {
+        bannedInbound = true;
+        const leaving = leaveTarget(ev.text, this.apps);
+        if (kw === "help" || !leaving) {
+          this.log(`[inbound] a banned number (${rt.id}): not handled`);
+          if (kw === "help") await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`, "compliance");
+          return "held";
+        }
       }
     }
 
     // Photos by text (photoIntake.ts): the answer to the photo consent ask, then any attachment. A photo
     // from a minor, an unknown age, a banned person or a non-member of slop is dropped before it is fetched.
     // Only an explicit YES PHOTOS / NO PHOTOS routed to slop: a bare yes or no goes on to the Network (a probe, a date ask, another app).
-    if (e164 && !kw && !profileRead && (await this.photoIntake.consentAnswer(e164, ev.text, rowId, route.app))) return "handled";
-    if (e164 && ev.mediaUrls?.length && !profileRead) {
+    // A banned sender never reaches this, including a leave that also carries a photo.
+    if (!bannedInbound && e164 && !kw && !profileRead && (await this.photoIntake.consentAnswer(e164, ev.text, rowId, route.app))) return "handled";
+    if (!bannedInbound && e164 && ev.mediaUrls?.length && !profileRead) {
       // A provider retry of the same message takes no photo twice.
       const first = (await this.people.hit(`photo_msg:${rowId}`, DAY, t)).count === 1;
       const r = first ? await this.photoIntake.photosIn(e164, ev.mediaUrls, rowId) : { outcome: "duplicate" as const };
@@ -1124,6 +1131,12 @@ export class NetworkService implements RuntimeHost {
         await this.direct(lrt, ev.from, this.copyOf(leaving).leftApp, `sys:${rowId}`, "compliance");
         return "left";
       }
+    }
+
+    // A banned leave that did not match a membership still does not continue into ordinary work.
+    if (bannedInbound) {
+      this.log(`[inbound] a banned number (${rt.id}): not handled`);
+      return "held";
     }
 
     // A read request is never an instruction to join, opt in or create a person.

@@ -230,9 +230,11 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
     const person = await c.api.accounts.personFor(phone);
     expect(person).toBeTruthy();
 
-    // Active share still works.
+    // Active share still works, then the ban teardown revokes that grant.
     expect((await call(c, "slop", "POST", "/api/me/share", { fromApp: "friends", fields: ["first_name"] }, slop)).status).toBe(200);
-    expect((await store.shareGrants(person!.id)).some(g => g.revokedAt === null)).toBe(true);
+    const [live] = await store.shareGrants(person!.id);
+    expect(live?.revokedAt).toBeNull();
+    await store.putShareGrant({ ...live!, revokedAt: c.clock.t });
 
     // Staff ban row + restricted memberships (what NetworkService.ban writes on the platform side).
     await store.ban({
@@ -250,14 +252,11 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
     }
     expect(await c.api.accounts.banned(phone, person!)).toBe(true);
 
-    const before = (await store.shareGrants(person!.id)).length;
-    // API still returns ok:true (it must not advertise why), but accounts.share stores nothing new.
+    // API still returns ok:true (it must not advertise why). The revoked grant stays revoked.
     expect((await call(c, "slop", "POST", "/api/me/share", { fromApp: "friends", fields: ["city"] }, slop)).status).toBe(200);
     const grants = await store.shareGrants(person!.id);
-    expect(grants).toHaveLength(before);
-    expect(grants.every(g => g.fields.includes("city") === false || g.revokedAt !== null || g.fields.join(",") === "first_name")).toBe(true);
-    // No grant gained the city field.
-    expect(grants.some(g => g.revokedAt === null && g.fields.includes("city"))).toBe(false);
+    expect(grants).toHaveLength(1);
+    expect(grants[0]).toMatchObject({ fromApp: "friends", toApp: "slop", fields: ["first_name"], revokedAt: c.clock.t });
   });
 
   test("delete all: every membership forgotten, phone and sessions gone, a tombstone and the suppression hash stay", async () => {
