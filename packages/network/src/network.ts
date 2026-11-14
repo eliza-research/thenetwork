@@ -3977,7 +3977,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     // A pending yes/no (a probe or a booked plan) is the open question: an ask now would make the
     // member's next answer ambiguous ("Free Tuesday evening" read as a yes to the probe).
     if (ask && (m.awaiting?.kind === "probe" || m.awaiting?.kind === "booked")) return this.refuse(m.id, kind, "one_question", fns);
-    const timing = this.timingOf(kind, proactive, reply);
+    const outreach = this.classifyOutreach(m, meta, now);
+    const unsol = outreach === "unsolicited";
+    const timing = this.timingOf(kind, proactive || unsol, reply);
     if (timing !== "now") {
       const c = { outboundSinceInbound: m.outbound ?? 0 };
       const interrupt = timing === "slot" && kind !== "reengage";
@@ -4007,7 +4009,6 @@ export class ConsentNetwork implements NetworkUnderTest {
     // Unsolicited sends (PRD 32.9 budgets, PH-003 pause path, F28 two-unanswered): marked proactive,
     // on the PRD budget of the member's state (plan invites and the weekly check-in on their own lane),
     // never a third in a row without an answer (the one re-engagement aside), and with a way to stop.
-    const unsol = this.unsolicited(m, meta, now);
     if (unsol) {
       const why = this.unsolicitedRefusal(m, meta, kind, now);
       if (why) return this.refuse(m.id, kind, why, fns);
@@ -4041,7 +4042,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       const lane = this.laneOf(meta);
       m.unsol = { ...m.unsol, [lane]: [...(m.unsol?.[lane] ?? []), now].slice(-20) };
       m.unsolStreak = (m.unsolStreak ?? 0) + 1;
-    } else if (this.followup) m.askUsed = (m.askUsed ?? 0) + 1;
+    } else if (outreach === "followup") m.askUsed = (m.askUsed ?? 0) + 1;
     m.lastOutUnsol = unsol;
     m.outbound = (m.outbound ?? 0) + 1;
     this.ctx.send(m.id, text, { meta, idempotencyKey: o.key ?? `${m.id}:${++this.seq}`, reply });
@@ -4086,25 +4087,21 @@ export class ConsentNetwork implements NetworkUnderTest {
     return m.openAskAt !== undefined && now - m.openAskAt < ASK_HOLD_MS;
   }
 
-  /** Set by unsolicited(): this send is a follow-up to the member's own ask (it uses one of the two). */
-  private followup = false;
-
   /**
    * Is this send unsolicited (PRD 32.9)? Not a reply (within 15 minutes of the member's own message,
    * at most 3 of them), not inside an opportunity the member said yes to (or asked for), and not one
    * of the 2 follow-ups to the member's own ask within 48 hours. Safety notices are never budgeted.
    */
-  private unsolicited(m: MemberState, meta: SimMeta, now: number): boolean {
-    this.followup = false;
-    if (meta.type === "system") return false;
+  private classifyOutreach(m: MemberState, meta: SimMeta, now: number): "solicited" | "followup" | "unsolicited" {
+    if (meta.type === "system") return "solicited";
     const lastIn = Math.max(m.lastInbound, m.joinedAt);
-    if (now - lastIn <= REPLY_WINDOW_MS && (m.outbound ?? 0) < REPLY_BURST) return false;
+    if (now - lastIn <= REPLY_WINDOW_MS && (m.outbound ?? 0) < REPLY_BURST) return "solicited";
     const x = meta as SimMeta & { plan?: { planId?: string } };
     const oppId = x.proposalId ?? x.probe?.key ?? x.plan?.planId;
     const o = oppId ? this.opps.get(oppId) : undefined;
-    if (o && (o.status.get(m.id) === "yes" || o.primed.has(m.id) || o.planRun?.answers[m.id] === "yes")) return false;
-    if (m.askAt !== undefined && now - m.askAt <= ASK_WINDOW_MS && (m.askUsed ?? 0) < ASK_FOLLOWUPS) { this.followup = true; return false; }
-    return true;
+    if (o && (o.status.get(m.id) === "yes" || o.primed.has(m.id) || o.planRun?.answers[m.id] === "yes")) return "solicited";
+    if (m.askAt !== undefined && now - m.askAt <= ASK_WINDOW_MS && (m.askUsed ?? 0) < ASK_FOLLOWUPS) return "followup";
+    return "unsolicited";
   }
 
   /** The lane an unsolicited send counts on: the plan allowance, the weekly check-in, or the state budget. */
