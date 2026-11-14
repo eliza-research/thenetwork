@@ -106,17 +106,31 @@ async function networkGates(b: Block) {
   await w.complete();
 
   await b.run("network-consent-5: after a probe \"no\", the pair is not probed again (no later opportunity holds the member and the person they declined)", () => {
-    const parts = new Map<string, MemberId[]>();
-    for (const l of logs(R, "probe_started")) parts.set(String((l.detail.proposal as { id: string }).id), (l.detail.proposal as { participants: MemberId[] }).participants);
-    const noes = logs(R, "probe_answer").filter(l => l.detail.yes === false && !l.detail.expired && !l.detail.plan);
+    // The pair is who was in the opportunity when the member said no. A person who had
+    // already been replaced is not that pair (markDeclined uses the roster at the answer).
+    const roster = new Map<string, MemberId[]>();
+    const noes: { t: number; opp: string; member: string; others: string[] }[] = [];
+    const started: { t: number; id: string; participants: MemberId[] }[] = [];
+    for (const l of R) {
+      if (l.type !== "network_log" || l.detail.plan) continue;
+      if (l.kind === "probe_started") {
+        const p = l.detail.proposal as { id: string; participants: MemberId[] };
+        roster.set(String(p.id), [...p.participants]);
+        started.push({ t: l.t, id: String(p.id), participants: p.participants });
+      } else if (l.kind === "probe_replaced") {
+        const id = String(l.detail.oppId);
+        const p = l.detail.proposal as { participants?: MemberId[] } | undefined;
+        if (p?.participants) roster.set(id, [...p.participants]);
+      } else if (l.kind === "probe_answer" && l.detail.yes === false && !l.detail.expired) {
+        const opp = String(l.detail.oppId), member = String(l.detail.memberId);
+        noes.push({ t: l.t, opp, member, others: (roster.get(opp) ?? []).filter(x => x !== member) });
+      }
+    }
     expect(noes.length).toBeGreaterThan(5);
     const again: string[] = [];
-    for (const n of noes) {
-      const m = String(n.detail.memberId), others = (parts.get(String(n.detail.oppId)) ?? []).filter(x => x !== m);
-      for (const l of logs(R, "probe_started").filter(l => l.t > n.t && !l.detail.plan)) {
-        const p = (l.detail.proposal as { id: string; participants: MemberId[] });
-        if (p.participants.includes(m) && others.some(o => p.participants.includes(o))) again.push(`${n.detail.oppId} -> ${p.id}`);
-      }
+    for (const n of noes) for (const l of started) {
+      if (l.t <= n.t) continue;
+      if (l.participants.includes(n.member) && n.others.some(o => l.participants.includes(o))) again.push(`${n.opp} -> ${l.id}`);
     }
     expect(again).toEqual([]);
   });
