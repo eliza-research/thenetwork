@@ -248,6 +248,25 @@ const AGE_RX: AgeRule[] = [
   { rx: new RegExp(`\\b${ME}\\s+a\\s+(?:high schooler|hs student|high school student)\\b`), age: () => 15 },
 ];
 
+// These messages omit the pronoun. Read the whole message so a quote, question, or an
+// account of school years does not lower the sender's age.
+const SHORT_AGE_START = "^\\s*(?:(?:hi|hey|hello|yo)[\\s,!]+)?";
+const SHORT_AGE_END = "(?:\\s*,?\\s+(?:lol|lmao|haha|here|btw|rn|now|tho|fyi))*(?:\\s*,?\\s+(?:hbu|wbu)\\s*\\??)?\\s*[.!]*\\s*$";
+const shortAge = (s: string) => /^\d/.test(s) ? Number(s) : AGE_WORDS[s]!;
+const shortAgeRule = (form: string, age: AgeRule["age"]): AgeRule => (
+  { rx: new RegExp(`${SHORT_AGE_START}(?:${form})${SHORT_AGE_END}`), age }
+);
+const SHORT_AGE_RX = [
+  shortAgeRule(`(?:just |only )?turned\\s+(\\d{1,2}|${NUM_WORD})(?:\\s+(?:last (?:week|month)|yesterday|recently|today))?`, m => atLeast13(shortAge(m[1]!))),
+  shortAgeRule(`(?:just |only )?(?:an?\\s+)?(\\d{1,2}|${NUM_WORD})[\\s-]*${YEARS_OLD}(?:\\s+(?:${IDENTITY_WORD}|dude|female|male|[fm]))?`, m => atLeast13(shortAge(m[1]!))),
+  shortAgeRule("(1[3-7]|thirteen|fourteen|fifteen|sixteen|seventeen)\\s+(?:here|lol|btw|haha|rn)", m => shortAge(m[1]!)),
+  shortAgeRule("(?:still\\s+)?(?:not 18 yet|under 18|a minor|underage)", () => 17),
+  shortAgeRule("(?:almost|nearly|turning)\\s+(?:18|eighteen)(?:\\s+(?:in \\w+|next \\w+|this \\w+|soon))?|(?:18|eighteen)\\s+(?:next (?:week|month|year)|in (?:a few )?(?:weeks|months))", () => 17),
+  shortAgeRule("(?:still\\s+)?in\\s+(?:the\\s+)?(6|7|8|9|10|11|12)(?:st|nd|rd|th)?\\s+grade|(?:an?\\s+)?(6|7|8|9|10|11|12)(?:st|nd|rd|th)\\s+grader", m => Math.max(13, Number(m[1] ?? m[2]) + 5)),
+  shortAgeRule("(?:an?\\s+)?(freshman|sophomore|junior|senior)\\s+(?:in|at)\\s+(?:high school|hs)|(?:an?\\s+)?(?:high school|hs)\\s+(freshman|sophomore|junior|senior)", m => SCHOOL_YEAR[(m[1] ?? m[2])!]!),
+  shortAgeRule("(?:still\\s+)?in (middle|high) school", m => m[1] === "middle" ? 13 : 15),
+];
+
 /** Every match of one rule. A rule can match more than once in one message. */
 function allMatches(rx: RegExp, text: string): RegExpExecArray[] {
   const re = new RegExp(rx.source, rx.flags.includes("g") ? rx.flags : `${rx.flags}g`);
@@ -323,6 +342,12 @@ export function agesStated(body: string): { age?: number; explicit?: number } {
         if (explicit && (out.explicit === undefined || a < out.explicit)) out.explicit = a;
       }
     }
+  }
+  for (const { rx, age } of SHORT_AGE_RX) {
+    const m = rx.exec(t);
+    if (!m) continue;
+    const a = age(m);
+    if (Number.isFinite(a) && (out.age === undefined || a < out.age)) out.age = a;
   }
   return out;
 }
