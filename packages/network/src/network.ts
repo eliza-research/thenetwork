@@ -434,6 +434,8 @@ interface Request {
   toldRetryNone?: boolean;
   /** The requester's own "no" to candidates; the second one closes the request (matching-e2e-3). */
   noCount?: number; closed?: boolean;
+  /** A later explicit ask starts a fresh search. */
+  withdrawn?: boolean;
   /** When the requester last got a confirm question for it: at most one per 72 hours. */
   lastConfirmAt?: number;
 }
@@ -715,7 +717,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     const body = msg.body.trim();
     // Classify first, the first message included (audit P1-4): the age policy runs before the
     // welcome and before the trust-hold return (P2-17).
-    let c = this.withUnderstanding(classify(body), this.understood);
+    const parsed = classify(body);
+    let c = this.withUnderstanding(parsed, this.understood);
     // The answer to "How old are you?" (asked when the record has no valid age): a bare answer
     // ("34", "fifteen", "I'm 12") is an explicit age.
     if (m.awaiting?.kind === "age") {
@@ -790,6 +793,9 @@ export class ConsentNetwork implements NetworkUnderTest {
 
     // peon (#9): a job post by text, read back and saved only on the manager's yes (rules only, never an open-turn LLM output).
     if (this.opts.hooks?.postings && this.postingTurn(m, body)) return;
+
+    const withdrew = this.withdrawRequests(m, parsed.notWanted ?? []);
+    if (withdrew && c.kind !== "people_request" && c.kind !== "plans_request") return this.learnFrom(m, body);
 
     // Answers to what we asked (never from the assistant's profile: it can only teach, below).
     const aw = mcp && m.awaiting?.kind !== "interview" ? undefined : m.awaiting;
@@ -1632,12 +1638,31 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   // ================================================================== requests
+  private withdrawRequests(m: MemberState, desires: readonly string[]): boolean {
+    if (!desires.length) return false;
+    for (const desire of desires) m.learned.desires.delete(desire);
+    let changed = false;
+    for (const r of this.requests) {
+      if (r.memberId !== m.id || r.kind !== "people" || !r.desireId || !desires.includes(r.desireId) || r.withdrawn
+        || (r.outcome !== "none" && r.outcome !== "probing")) continue;
+      const opp = r.oppId ? this.opps.get(r.oppId) : undefined;
+      if (opp && (opp.stage === "review" || opp.stage === "probing")) this.close(opp, "requester unavailable");
+      r.closed = true;
+      r.withdrawn = true;
+      r.outcome = "none";
+      this.ctx.log("request_result", { requestId: r.id, memberId: m.id, outcome: "withdrawn" });
+      changed = true;
+    }
+    return changed;
+  }
+
   private openRequest(m: MemberState, c: Classified, o: { quiet?: boolean }) {
     const now = this.now();
     const canSearch = this.trust.ok(m.id) && !this.reportHeld(m.id);
     // Repeat asks ("still hoping to...") are the same request: don't open another one while one is
     // in progress, and don't re-search the same want more than once every 3 days.
-    const prior = [...this.requests].reverse().find(r => r.memberId === m.id && r.kind === "people" && r.outcome !== "booked" && r.outcome !== "fulfilled" && (r.desireId ?? r.category) === (c.desireId ?? c.category));
+    const prior = [...this.requests].reverse().find(r => r.memberId === m.id && r.kind === "people" && !r.withdrawn
+      && r.outcome !== "booked" && r.outcome !== "fulfilled" && (r.desireId ?? r.category) === (c.desireId ?? c.category));
     // The re-search interval is the member's effort overlay (NC; the floor is 3 days).
     if (prior && (prior.outcome === "probing" || now - prior.at < this.effort(m.id).intentReSearchDays * DAY)) {
       if (o.quiet) return;
