@@ -105,6 +105,23 @@ export async function scenarioRepetitionGate(b: Block): Promise<void> {
 export async function networkBlock(b: Block, o: { quick: boolean }): Promise<void> {
   await scenarioRepetitionGate(b);
   await inviteRootGate(b);
+  await b.run("judge: a time counter requires agreement before a name can be revealed", () => {
+    const person = (id: MemberId, name: string): RunRecord => ({ t: 0, type: "persona", persona: {
+      id, name, archetype: "regular", homeCity: "nyc", joinDay: 0, trueAge: 30, claimedAge: 30, quietHours: [23, 7], romanceOptIn: false,
+    } });
+    const run = (decision: "accept" | "counter" | "decline", intent: string = decision) => computeMetrics([
+      person("ada", "Ada"), person("bev", "Bev"),
+      { t: 1000, type: "message", msg: { id: "p1", ts: 1000, memberId: "ada", direction: "outbound", status: "delivered",
+        body: "Want to meet someone for coffee this week?", meta: { type: "probe", probe: { key: "opp-1", participants: ["ada", "bev"] } } } },
+      { t: 2000, type: "decision", memberId: "ada", messageId: "p1", messageType: "proposal", intent, decision, proposalId: "opp-1", delayMs: 1000 },
+      { t: 3000, type: "message", msg: { id: "c1", ts: 3000, memberId: "bev", direction: "outbound", status: "delivered",
+        body: "Ada is free Thursday.", meta: { type: "scheduling", proposalId: "opp-1" } } },
+    ]);
+    const counter = run("counter");
+    const named = (m: ReturnType<typeof run>) => m.invariants.byRule.name_before_reveal ?? 0;
+    expect([named(run("accept")), named(counter), named(run("decline")), named(run("counter", "confirm_schedule"))]).toEqual([0, 1, 1, 0]);
+    expect(counter.responses).toMatchObject({ accepted: 0, countered: 1, acceptRate: 0 });
+  });
   // ---- invariants: NYC, 10 days, seed 3, simulated reviewer ---------------------------------------
   const run = await world(10);
   await run.w.advanceTo(run.w.end);
