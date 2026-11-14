@@ -34,9 +34,9 @@ pure def stepCompletedRunStaysClosed(before: SelectionRun, after: SelectionRun):
   before.phase == Complete implies after.phase == Complete
 ```
 
-### Each reservation checks the city, pair, and member limits
+### Each reservation checks the pack, city, pair, and member limits
 
-A run can reserve each candidate key and each participant pair once. The city must have capacity. Each participant must be available to receive a proposal. Adding one invitation must fit the member’s proactive budget, including planned asks. A contributor also needs capacity in the contribution budget. The shell checks fixed windows against the prior reservations before it requests a reservation.
+A run can reserve each candidate key and each participant pair once. The city must have capacity. Each participant must be available to receive a proposal. Adding one invitation must fit the member’s proactive budget, including planned asks. A contributor also needs capacity in the contribution budget. The shell checks fixed windows against the prior reservations before it requests a reservation. An app pack may refuse a reservation because it has no room. Exploration respects that refusal without changing how it draws among the remaining candidates.
 
 ```quint
 type SelectionMember = {
@@ -84,8 +84,8 @@ pure def choiceHasRoom(s: SelectionRun, choice: SelectionChoice): bool =
     and choice.members.every(m => memberHasRoom(s, m))
     and choice.pairKeys.every(pair => not(pairAlreadyUsed(s, pair)))
 
-pure def canReserveSelection(s: SelectionRun, choice: SelectionChoice, timeFree: bool, exploring: bool): bool =
-  timeFree and (exploring iff s.phase == Exploration) and choiceHasRoom(s, choice)
+pure def canReserveSelection(s: SelectionRun, choice: SelectionChoice, timeFree: bool, exploring: bool, packAllows: bool): bool =
+  packAllows and timeFree and (exploring iff s.phase == Exploration) and choiceHasRoom(s, choice)
 ```
 
 ### Reserving a proposal consumes its slots together
@@ -96,7 +96,7 @@ A reservation records the candidate and its participant pairs, consumes one slot
 pure def addUse(counts: str -> int, key: str): str -> int =
   counts.put(key, numberUsed(counts, key) + 1)
 
-pure def reserveSelection(s: SelectionRun, choice: SelectionChoice, timeFree: bool, exploring: bool): SelectionRun =
+pure def reserveSelection(s: SelectionRun, choice: SelectionChoice, timeFree: bool, exploring: bool, packAllows: bool): SelectionRun =
   val newPairs = choice.pairKeys.foldl(s.usedPairs, (pairs, pair) => pairs.put(pair, true))
   val newProactive = choice.members.foldl(s.proactive, (counts, m) => addUse(counts, m.id))
   val newContribution = choice.members.foldl(s.contribution, (counts, m) =>

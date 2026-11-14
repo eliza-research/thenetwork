@@ -146,8 +146,11 @@ export class World {
     }
 
     // --- interactions ----------------------------------------------------------------------
+    const distinctIds = (ids: MemberId[]) => [...new Set(ids.map(C))];
     this.interactions = (input.interactions ?? []).map(r => ({
-      ...r, participants: r.participants.map(C), declinedBy: r.declinedBy?.map(C), contributors: r.contributors?.map(C),
+      ...r, participants: distinctIds(r.participants),
+      declinedBy: r.declinedBy && distinctIds(r.declinedBy), contributors: r.contributors && distinctIds(r.contributors),
+      acceptedBy: r.acceptedBy && distinctIds(r.acceptedBy), noResponse: r.noResponse && distinctIds(r.noResponse),
     }));
     for (const r of this.interactions) {
       for (let i = 0; i < r.participants.length; i++) for (let j = i + 1; j < r.participants.length; j++) {
@@ -169,9 +172,18 @@ export class World {
     const resolved = new Set(this.interactions.filter(r => r.outcome !== "pending").map(r => r.id));
     // v1.2: proposals the Network never sent neither count against budgets nor block the pair.
     const unsent = new Set(cfg.dispatch.billOnlySent ? input.unsentProposalIds ?? [] : []);
-    const recent: Proposal[] = (input.recentProposals ?? []).filter(p => !unsent.has(p.id)).map(p => ({
-      ...p, participants: p.participants.map(C), alternates: (p.alternates ?? []).map(C),
-    }));
+    const recent: Proposal[] = (input.recentProposals ?? []).filter(p => !unsent.has(p.id)).map(p => {
+      const roles = (p as Proposal & { roles?: Record<MemberId, Role> }).roles;
+      const canonicalRoles = new Map<MemberId, Role>();
+      for (const [raw, role] of Object.entries(roles ?? {})) {
+        const id = C(raw);
+        if (id === raw || !canonicalRoles.has(id)) canonicalRoles.set(id, role);
+      }
+      return {
+        ...p, participants: distinctIds(p.participants), alternates: distinctIds(p.alternates ?? []),
+        ...(roles ? { roles: Object.fromEntries(canonicalRoles) } : {}),
+      };
+    });
     for (const p of recent) {
       for (let i = 0; i < p.participants.length; i++) for (let j = i + 1; j < p.participants.length; j++) {
         const k = pairKey(p.participants[i]!, p.participants[j]!);
