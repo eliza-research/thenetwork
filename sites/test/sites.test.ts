@@ -6,7 +6,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, normalize } from "node:path";
 import { createHash } from "node:crypto";
 import { verifyProxyHeaders } from "../../packages/platform/src/proxy.ts";
 import { APPS, keywordApp } from "../../packages/platform/src/apps.ts";
@@ -140,7 +140,7 @@ describe.each(SITES)("$domain", (s) => {
   test("the build ships the files Cloudflare serves as they are, with no empty file", () => {
     const files = walk(out(s));
     for (const f of ["_headers", "robots.txt", "SKILL.md", ".well-known/agent-skills/index.json", `.well-known/agent-skills/${s.skill}/SKILL.md`]) {
-      expect(files, f).toContain(f);
+      expect(files, f).toContain(normalize(f));
     }
     const staticDir = join(REPO, "sites", s.domain, "static");
     for (const f of walk(staticDir)) expect(readFileSync(join(out(s), f)).equals(readFileSync(join(staticDir, f))), f).toBe(true);
@@ -148,6 +148,7 @@ describe.each(SITES)("$domain", (s) => {
     for (const f of files.filter((f) => /\.(html|md|json|txt)$/.test(f))) expect(read(s, f), f).not.toContain("{{");
     for (const f of ["SKILL.md", `.well-known/agent-skills/${s.skill}/SKILL.md`]) {
       const skill = read(s, f);
+      expect(skill).not.toContain("\r");
       expect(skill).toContain(`confirm its app is ${s.app}`);
       expect(skill).toContain("never submit across apps");
       if (["friends", "slop", "ntwrk"].includes(s.app)) {
