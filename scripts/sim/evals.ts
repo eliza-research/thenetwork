@@ -6,7 +6,7 @@
 //   opt-out*.jsonl the opt-out readers (core parseOptOut; the platform consent ledger's detectKeyword)
 //   guard/         the shared leak guard (contacts in disguise, private facts, homoglyphs, benign text)
 import { classifyYesNo, findLeaks, maskPii, parseOptOut, parseReply, type ReplyAnswer } from "../../packages/core/src/index.ts";
-import { classify, extractProfile, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
+import { ageAnswer, classify, extractProfile, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
 import { detectKeyword, leaveTarget, optOutPhrase } from "../../packages/platform/src/consent.ts";
 import { createPublicApi } from "../../packages/platform/src/api.ts";
 import { APPS, type AppId } from "../../packages/platform/src/apps.ts";
@@ -96,6 +96,11 @@ export async function evalsBlock(b: Block): Promise<void> {
   b.gate("third-party ages are read exactly", thirdParty.length === 0, thirdParty.slice(0, 5).join(" | "));
   const statedMiss = teen.filter(l => l.age !== undefined && classify(l.text).statedAge !== l.age).map(l => `${JSON.stringify(l.text)} -> ${classify(l.text).statedAge ?? "none"} (want ${l.age})`);
   b.gate("stated ages: the youngest real age in the message", statedMiss.length === 0, statedMiss.slice(0, 5).join(" | "));
+
+  const ageAnswers = await jsonl<{ text: string; age: number | null }>("network/age-answers.jsonl");
+  const wrongAgeAnswers = ageAnswers.filter(row => (ageAnswer(row.text) ?? null) !== row.age);
+  b.gate(`the age question accepts spelled-out answers (n ${ageAnswers.length})`, wrongAgeAnswers.length === 0,
+    wrongAgeAnswers.slice(0, 5).map(row => row.text).join("; "));
 
   const para = await jsonl<{ text: string; desire: string | null }>("network/paraphrases.jsonl");
   const ids = [...new Set(para.map(l => l.desire).filter((x): x is string => !!x))];

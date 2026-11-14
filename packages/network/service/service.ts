@@ -58,7 +58,7 @@ import { CostLedger, costRatesFromEnv, PgCostSink } from "./cost.ts";
 import { BlooioAdapter, type ChannelAdapter, type DirectKind, type Outbound } from "./channel.ts";
 import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { Accounts, homeCityOf, type AccountHooks, type HomeInput, type JoinHookContext, type MemberHookContext } from "../../platform/src/accounts.ts";
-import { joinAgeCheck } from "../../platform/src/age.ts";
+import { joinAgeCheck, lowestAge } from "../../platform/src/age.ts";
 import { detectKeyword as platformKeyword, keywordEvent, leaveTarget, resolveConsent, stopScope, type StopScope } from "../../platform/src/consent.ts";
 import { devShortcutsAllowed, isProduction, platformEnv, type Env } from "../../platform/src/env.ts";
 import { keyedHash, maskPhone, normalizePhone, safeEqual } from "../../platform/src/phone.ts";
@@ -260,7 +260,8 @@ export function parseJoinText(text: string, appWords: readonly string[], nameOk:
   const cities = [...homes.map(m => homeCityOf(m[1])), ...(suffixCity ? [suffixCity] : [])];
   const invalidHome = cities.some(c => !c) || new Set(cities).size > 1;
   const stated = agesStated(nameText);
-  let age = stated.explicit ?? stated.age ?? ageAnswer(nameText);
+  const ageOnly = ageAnswer(nameText);
+  let age = stated.age ?? ageOnly;
   if (age === undefined) {
     const nums = [...nameText.matchAll(/(?:^|[\s,.;:(])(\d{1,3})(?=$|[\s,.;:!)])/g)];
     const others = nameText.replace(/\d+/g, " ").replace(/[^\p{L}' ]+/gu, " ").split(/\s+/).filter(Boolean).map(lower)
@@ -270,7 +271,7 @@ export function parseJoinText(text: string, appWords: readonly string[], nameOk:
   if (age !== undefined && !(age > 0 && age < 120)) age = undefined;
   if (!nameOk && age === undefined) return { ...(cities[0] ? { homeCity: cities[0] } : {}), ...(invalidHome ? { invalidHome: true } : {}) };
   const words = nameText.replace(/[^\p{L}' -]+/gu, " ").split(/[\s-]+/).filter(Boolean);
-  const name = words.find(w => /^\p{L}[\p{L}']{0,29}$/u.test(w) && !NOT_NAMES.has(lower(w)) && !appWords.includes(lower(w)));
+  const name = ageOnly === undefined ? words.find(w => /^\p{L}[\p{L}']{0,29}$/u.test(w) && !NOT_NAMES.has(lower(w)) && !appWords.includes(lower(w))) : undefined;
   return { ...(age !== undefined ? { age } : {}), ...(name ? { name: name.charAt(0).toUpperCase() + name.slice(1).toLowerCase() } : {}), ...(cities[0] ? { homeCity: cities[0] } : {}), ...(invalidHome ? { invalidHome: true } : {}) };
 }
 
@@ -1426,15 +1427,15 @@ export class NetworkService implements RuntimeHost {
     const invitation = stepTextJoin(ban, { type: "checkInvitation", inviteOnly: app.joinMode === "invite", invited, sharedNetwork });
     if (invitation.phase === "InviteRequired") {
       // The same answer whether or not the number uses another app; at most once a day per number.
-      const { count } = await this.people.hit(`invite_only:${app.id}:${key}`, DAY, t);
-      if (count === 1) await this.direct(rt, ev.from, app.brand.inviteOnly, `sys:${rowId}`, "reply");
-      this.log(`[inbound] not a member of invite-only ${app.id}: ${count === 1 ? "invite-only reply" : "no reply (sent today)"}, not stored`);
+      const { ok } = await this.people.hit(`invite_only:${app.id}:${key}`, DAY, t, { minGapMs: DAY });
+      if (ok) await this.direct(rt, ev.from, app.brand.inviteOnly, `sys:${rowId}`, "reply");
+      this.log(`[inbound] not a member of invite-only ${app.id}: ${ok ? "invite-only reply" : "no reply (answered in the last day)"}, not stored`);
       return "invite_only";
     }
     let p = await this.pendingOf(e164, "join");
     if (p && !pendingMatchesApp(p.app, app.id)) p = undefined;
     const said = parseJoinText(ev.text, this.appWords(), !!p);
-    const age = said.age ?? p?.age ?? undefined, name = said.name ?? p?.name ?? undefined;
+    const age = lowestAge(said.age, p?.age), name = said.name ?? p?.name ?? undefined;
     const homeCity = said.homeCity ?? p?.homeCity;
     const ask = invited ? c.invited(app.minJoinAge) : c.joinAsk(app.minJoinAge);
     const answer = stepTextJoin(invitation, {
