@@ -1050,12 +1050,13 @@ export async function extractSlopProfileLLM(
       : k === "interests" ? !p.interests.length : k === "activities" ? !p.activities.length : k === "selfAge");
     const r = await o.llm.reader(text, { asked, missing });
     if (!r) continue;
-    p = mergeLlm(p, r, text, missing);
+    p = mergeLlm(p, r, text, missing, o.market);
   }
   return p;
 }
 
-function mergeLlm(p0: SlopOnboarding, r: SlopLlmReading, text: string, missing: LlmField[]): SlopOnboarding {
+function mergeLlm(p0: SlopOnboarding, r: SlopLlmReading, text: string, missing: LlmField[], market?: "nyc" | "sf" | "la"): SlopOnboarding {
+  const before = JSON.stringify(stripMeta(p0));
   const p = structuredClone(p0);
   const turn = p.turns - 1;
   const t = normText(text);
@@ -1074,12 +1075,17 @@ function mergeLlm(p0: SlopOnboarding, r: SlopLlmReading, text: string, missing: 
     if (k === "location") {
       const v = x.value as Location;
       if (v.zip) p.location = mk({ zip: v.zip, known: isKnownZip(v.zip) }, x.quote);
-      else if (v.area) { const e = AREA_INDEX.get(ALIAS.get(areaNorm(v.area)) ?? areaNorm(v.area))!; const pick = e.length === 1 ? e[0] : undefined; if (pick) p.location = mk({ area: pick.label, zip: pick.zip, known: true }, x.quote); }
+      else if (v.area) {
+        const canon = ALIAS.get(areaNorm(v.area)) ?? areaNorm(v.area);
+        const e = AREA_INDEX.get(canon);
+        const pick = e ? (market ? e.find(x => x.market === market) : e.length === 1 ? e[0] : undefined) : undefined;
+        if (pick) p.location = mk({ area: pick.label, zip: pick.zip, known: true }, x.quote);
+      }
     }
     if (k === "goal") p.goal = mk(x.value as Goal, x.quote);
     if (k === "dealbreakers") for (const d of x.value as Dealbreaker[]) if (!p.dealbreakers.some(y => y.value === d)) p.dealbreakers.push(mk(d, x.quote));
     if (k === "interests") for (const i of x.value as string[]) if (!p.interests.some(y => y.value === i)) p.interests.push(mk(i, x.quote));
     if (k === "activities") for (const a of x.value as DateActivity[]) if (!p.activities.some(y => y.value === a)) p.activities.push(mk(a, x.quote));
   }
-  return finalize(p, true);
+  return finalize(p, JSON.stringify(stripMeta(p)) !== before);
 }
