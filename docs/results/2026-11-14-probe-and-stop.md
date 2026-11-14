@@ -13,3 +13,5 @@ whole message as negated used to hide a later independent request.
 It now retains the active request, and the common and platform readers
 agree. The lane passed all 29 blocking gates against the two changes.
 No external model call or client was used.
+
+Seed 3 (10 days) reported two decliner disclosures. The requester received an acknowledgment and a probe, then sent “See you there. 👍💯” in response to the acknowledgment. The parser took the emoji as a yes to the probe. The actual response, “Can’t this week, maybe another time,” then arrived after the probe answer had been consumed. The ambiguous acknowledgment guard now covers “See you there” and leaves the probe open. The simulator retains its independent decliner check.
