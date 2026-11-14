@@ -129,6 +129,10 @@ export interface SafetyCase {
 const CASE_PHASE = { open: "CaseOpen", held: "CaseHeld", lifted: "CaseLifted", closed: "CaseClosed" } as const;
 const CASE_STATUS = { CaseOpen: "open", CaseHeld: "held", CaseLifted: "lifted", CaseClosed: "closed", NoCase: "open" } as const satisfies Record<CasePhase, SafetyCase["status"]>;
 const REPORT_PHASE = { open: "ReportOpen", held: "ReportHeld", banned: "ReportBanned", dismissed: "ReportDismissed" } as const;
+
+function pendingReportHold(reports: NetworkState["reports"], id: MemberId): boolean {
+  return (reports ?? []).some(r => r.subjectId === id && reportRestrictsMatching(REPORT_PHASE[r.status], r.met, URGENT_REPORTS.has(r.kind)));
+}
 const REPORT_STATUS = { ReportOpen: "open", ReportHeld: "held", ReportBanned: "banned", ReportDismissed: "dismissed" } as const satisfies Record<ReportPhase, SafetyReport["status"]>;
 const SAFETY_REFUSAL = {
   ActorRequired: "actor_required", NotOnHold: "not_on_hold", UnknownCase: "unknown_case", AlreadyClosed: "already_closed",
@@ -1335,7 +1339,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    * question the member was answering. A report by someone they never met holds nobody.
    */
   private reportHeld(id: MemberId): boolean {
-    return this.reports.some(r => r.subjectId === id && reportRestrictsMatching(REPORT_PHASE[r.status], r.met, URGENT_REPORTS.has(r.kind)));
+    return pendingReportHold(this.reports, id);
   }
 
   /** Reports for staff, newest first, each with how many earlier reports name the same member. Never the words. */
@@ -1630,6 +1634,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   // ================================================================== requests
   private openRequest(m: MemberState, c: Classified, o: { quiet?: boolean }) {
     const now = this.now();
+    const canSearch = this.trust.ok(m.id) && !this.reportHeld(m.id);
     // Repeat asks ("still hoping to...") are the same request: don't open another one while one is
     // in progress, and don't re-search the same want more than once every 3 days.
     const prior = [...this.requests].reverse().find(r => r.memberId === m.id && r.kind === "people" && r.outcome !== "booked" && r.outcome !== "fulfilled" && (r.desireId ?? r.category) === (c.desireId ?? c.category));
@@ -1638,7 +1643,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (o.quiet) return;
       if (prior.outcome === "probing") { this.send(m, "Still on it; I'll get back to you soon.", { type: "info" }, "reply"); return; }
       if (!this.opts.matchingEnabled) return this.requestWaits(m, prior, o);
-      if (prior.outcome === "none" && !prior.closed && this.trust.ok(m.id) && !this.busy(m.id) && (!prior.lastTry || now - prior.lastTry > HOUR) && !(prior.lastConfirmAt !== undefined && now - prior.lastConfirmAt < 72 * HOUR)) {
+      if (prior.outcome === "none" && !prior.closed && canSearch && !this.busy(m.id) && (!prior.lastTry || now - prior.lastTry > HOUR) && !(prior.lastConfirmAt !== undefined && now - prior.lastConfirmAt < 72 * HOUR)) {
         const opp = this.tryRequest(m, prior);
         if (opp) { this.send(m, copy.requestAck, { type: "info" }, "reply"); this.submit(opp); return; }
       }
@@ -1661,10 +1666,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     // Privacy (P3): the log keeps what was asked for (category, want, tags), never the member's words.
     this.ctx.log("request", { requestId: req.id, memberId: m.id, kind: "people", category: req.category, desireId: req.desireId, tags: req.tags });
     if (!this.opts.matchingEnabled) return this.requestWaits(m, req, o);
-    if (!this.trust.ok(m.id) || this.busy(m.id)) {
+    if (!canSearch || this.busy(m.id)) {
       req.outcome = "none";
-      // A member on watch gets an honest answer, once, and nobody is probed (network-consent-24).
-      if (!this.trust.ok(m.id)) { if (!o.quiet) this.send(m, copy.requestOnWatch, { type: "info" }, "reply"); return; }
+      // A watch or report hold stops the search and allows a reply (network-consent-24).
+      if (!canSearch) { if (!o.quiet) this.send(m, copy.requestOnWatch, { type: "info" }, "reply"); return; }
       if (!o.quiet) this.send(m, "You've got something in the works already; let's see how that goes first, then I'll look again.", { type: "info" }, "reply");
       return;
     }
@@ -2047,7 +2052,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (!m) return "unknown_member";
       if (m.optedOut) return "opted_out";
       const level = this.trust.level(id);
-      if (level !== "ok") return level === "hold" ? "held" : "on_watch";
+      if (level === "hold" || this.reportHeld(id)) return "held";
+      if (level !== "ok") return "on_watch";
       if (m.minor) return "participant_minor";
       if (this.busy(id, o.id)) return "busy_elsewhere";
     }
@@ -2725,7 +2731,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   private canInvite(m: MemberState) {
     // Vouch capacity (NC), read at invite time; the floor without a capital reader is invitesPerMonth.
     const limit = this.opts.capital ? this.opts.capital.vouchCapacity(m.id, this.now()) : this.opts.invitesPerMonth;
-    return !m.minor && this.trust.ok(m.id) && this.now() >= m.invitesBlockedUntil && m.invites.filter(t => this.now() - t < 30 * DAY).length < limit;
+    return !m.minor && this.trust.ok(m.id) && !this.reportHeld(m.id) && this.now() >= m.invitesBlockedUntil && m.invites.filter(t => this.now() - t < 30 * DAY).length < limit;
   }
 
   /**
@@ -2963,7 +2969,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** May this member take a seat in a plan now: an active adult, reachable, not on hold, not in another open opportunity. */
   private planSeatOk(m: MemberState, exceptOpp?: string, o: { busyOk?: boolean } = {}): boolean {
     this.syncRecord(m);
-    return !m.minor && !m.account && !m.optedOut && m.stage === "active" && !m.onlyWhenAsked && this.trust.ok(m.id) && validAge(m.age ?? m.statedAge) && (!!o.busyOk || !this.busy(m.id, exceptOpp));
+    return !m.minor && !m.account && !m.optedOut && m.stage === "active" && !m.onlyWhenAsked && this.trust.ok(m.id) && !this.reportHeld(m.id) && validAge(m.age ?? m.statedAge) && (!!o.busyOk || !this.busy(m.id, exceptOpp));
   }
 
   /**
@@ -4313,7 +4319,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.syncRecord(m);
     if (m.optedOut) return no("opted_out");
     if (m.account && !o.reply && kind !== "safety") return no(`account_${m.account}`);
-    if (!o.reply && kind !== "safety" && this.trust.level(id) === "hold") return no("held");
+    const reportHold = this.reportHeld(id);
+    if ((!o.reply && kind !== "safety" || ABOUT_OTHERS.has(kind)) && (this.trust.level(id) === "hold" || reportHold)) return no("held");
     if (m.onlyWhenAsked && kind !== "reengage" && (o.proactive || (ASK_KINDS.has(kind) && !o.reply))) return no("only_when_asked");
     if (ABOUT_OTHERS.has(kind)) {
       if (m.minor) return no("minor");
@@ -4324,6 +4331,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         const other = this.members.get(x);
         if (other) this.syncRecord(other);
         if (!other || other.minor || other.account || this.declinedIds.has(x)) return no("other_not_matchable");
+        if (this.reportHeld(x)) return no("other_held");
         if (!this.trust.ok(x)) return no("other_on_watch");
       }
     }
@@ -4849,7 +4857,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         const m = this.members.get(id);
         if (!m || this.declinedIds.has(id)) return undefined;
         this.syncRecord(m);
-        return relayMemberOf(m, this.trust.level(id) === "hold");
+        return relayMemberOf(m, this.trust.level(id) === "hold" || this.reportHeld(id));
       },
       matchesOf: id => {
         const now = this.now(), out: RelayMatch[] = [];
@@ -5015,7 +5023,7 @@ export function relayDispatchCheck(st: NetworkState, o: { matchId: string; from:
   for (const id of [o.from, o.to]) {
     const m = st.members.find(x => x.id === id);
     if (!m || st.declinedIds.includes(id)) return "party:unknown";
-    const v = relayMemberOf(m, trust.get(id) === "hold");
+    const v = relayMemberOf(m, trust.get(id) === "hold" || pendingReportHold(st.reports, id));
     if (v.age === undefined || v.age < 18) return "party:age";
     if (v.optedOut) return "party:opted_out";
     if (v.held) return "party:held";
