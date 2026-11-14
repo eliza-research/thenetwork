@@ -249,7 +249,12 @@ export async function runPeonWorld(o: PeonRunOptions): Promise<PeonRunResult> {
     const offersByCand = new Map<MemberId, Flow[]>();
     const decided = flows.filter(f => f.interviewed && f.interviewWeek === week - 1 && f.passed !== undefined && f.offered === undefined);
     const byJob = new Map<MemberId, Flow[]>();
-    for (const f of decided) { if (!byJob.has(f.job)) byJob.set(f.job, []); byJob.get(f.job)!.push(f); }
+    for (const f of decided) {
+      // An outside hire withdraws an application; it is not an employer rejection.
+      if (state.exited.has(f.cand)) { f.offered = false; f.withdrawn = true; f.rec!.outcome = "cancelled"; continue; }
+      if (!byJob.has(f.job)) byJob.set(f.job, []);
+      byJob.get(f.job)!.push(f);
+    }
     for (const [jid, fs] of [...byJob.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
       const j = oracle.job.get(jid)!;
       const left = state.openings.get(jid) ?? 0;
@@ -289,7 +294,7 @@ export async function runPeonWorld(o: PeonRunOptions): Promise<PeonRunResult> {
     for (const f of flows) {
       if (f.interviewWeek !== week || f.interviewed !== undefined) continue;
       const c = oracle.cand.get(f.cand)!, j = oracle.job.get(f.job)!;
-      if (state.hired.has(c.id) || (state.openings.get(j.id) ?? 0) <= 0 || held(j.id)) { f.interviewed = false; f.withdrawn = true; f.rec!.outcome = "cancelled"; continue; }
+      if (state.hired.has(c.id) || state.exited.has(c.id) || (state.openings.get(j.id) ?? 0) <= 0 || held(j.id)) { f.interviewed = false; f.withdrawn = true; f.rec!.outcome = "cancelled"; continue; }
       f.interviewed = u01(seed, "show", c.id, j.id) < oracle.P.showUp * Math.max(0.6, c.truth.replyProb);
       if (!f.interviewed) { f.rec!.outcome = "no_show"; continue; }
       f.passed = u01(seed, "pass", c.id, j.id) < oracle.pPass(c, j);
@@ -307,9 +312,10 @@ export async function runPeonWorld(o: PeonRunOptions): Promise<PeonRunResult> {
     for (const [jid, q] of [...queue.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
       const j = oracle.job.get(jid)!, co = oracle.co(j);
       const pending = q.filter(f => f.reviewed === undefined && !f.expired);
-      for (const f of pending) if (week - f.week >= EXPIRE_WEEKS || state.hired.has(f.cand) || (state.openings.get(jid) ?? 0) <= 0) {
+      for (const f of pending) if (week - f.week >= EXPIRE_WEEKS || state.hired.has(f.cand) || state.exited.has(f.cand) || (state.openings.get(jid) ?? 0) <= 0) {
         f.expired = true;
-        if (state.hired.has(f.cand)) f.rec!.outcome = "cancelled";
+        if (state.exited.has(f.cand)) { f.withdrawn = true; f.rec!.outcome = "cancelled"; }
+        else if (state.hired.has(f.cand)) f.rec!.outcome = "cancelled";
         else if ((state.openings.get(jid) ?? 0) <= 0) { f.rec!.outcome = "cancelled"; f.roleClosed = true; }
         else { f.rec!.outcome = "expired"; f.rec!.noResponse = [jid]; ghost(f); }
       }
