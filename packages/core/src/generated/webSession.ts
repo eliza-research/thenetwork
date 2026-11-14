@@ -9,7 +9,7 @@ export interface SessionFlow { phase: SessionPhase; revokeAt: number }
 /** One variant per transition in the spec. */
 export type Event =
   | { type: "readToken"; tokenPresent: boolean; tokenLength: number }
-  | { type: "readRow"; sameAppRow: boolean; expired: boolean; hasRevocation: boolean; revocationDue: boolean; rotationRequested: boolean; oldEnough: boolean; at: number }
+  | { type: "readRow"; sameAppRow: boolean; expired: boolean; hasRevocation: boolean; revocationDue: boolean; banned: boolean; rotationRequested: boolean; oldEnough: boolean; at: number }
   | { type: "recordRevocation" }
   | { type: "recordReplacement" };
 
@@ -69,9 +69,9 @@ export function canReadRow(flow: SessionFlow): boolean {
 
 /** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md:31) */
 //@ pure
-export function readRow(flow: SessionFlow, sameAppRow: boolean, expired: boolean, hasRevocation: boolean, revocationDue: boolean, rotationRequested: boolean, oldEnough: boolean, at: number): SessionFlow {
+export function readRow(flow: SessionFlow, sameAppRow: boolean, expired: boolean, hasRevocation: boolean, revocationDue: boolean, banned: boolean, rotationRequested: boolean, oldEnough: boolean, at: number): SessionFlow {
   //@ ensures (inv(flow) && canReadRow(flow)) ==> stepRotationRequiresAReplacement(flow, "readRow", \result)
-  return !sameAppRow || expired || revocationDue ? ({ ...flow, phase: "Refused" } as SessionFlow) : (!rotationRequested || hasRevocation || !oldEnough ? ({ ...flow, phase: "Usable" } as SessionFlow) : ({ phase: "RevokingOld", revokeAt: at + sessionGraceMs } as SessionFlow));
+  return !sameAppRow || expired || revocationDue || banned ? ({ ...flow, phase: "Refused" } as SessionFlow) : (!rotationRequested || hasRevocation || !oldEnough ? ({ ...flow, phase: "Usable" } as SessionFlow) : ({ phase: "RevokingOld", revokeAt: at + sessionGraceMs } as SessionFlow));
 }
 
 /** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md:31) */
@@ -134,7 +134,7 @@ export function step(current: SessionFlow, event: Event): SessionFlow {
   //@ requires inv(current)
   //@ ensures inv(\result)
   if (event.type === "readToken" && canReadToken(current)) return readToken(current, event.tokenPresent, event.tokenLength);
-  if (event.type === "readRow" && canReadRow(current)) return readRow(current, event.sameAppRow, event.expired, event.hasRevocation, event.revocationDue, event.rotationRequested, event.oldEnough, event.at);
+  if (event.type === "readRow" && canReadRow(current)) return readRow(current, event.sameAppRow, event.expired, event.hasRevocation, event.revocationDue, event.banned, event.rotationRequested, event.oldEnough, event.at);
   if (event.type === "recordRevocation" && canRecordRevocation(current)) return recordRevocation(current);
   if (event.type === "recordReplacement" && canRecordReplacement(current)) return recordReplacement(current);
   return current;
@@ -155,7 +155,7 @@ export function parseEvent(x: unknown): Event | undefined {
   }
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "readToken" && typeof raw.tokenPresent === "boolean" && Number.isSafeInteger(raw.tokenLength)) return { type: "readToken", tokenPresent: raw.tokenPresent, tokenLength: raw.tokenLength };
-  if (raw.type === "readRow" && typeof raw.sameAppRow === "boolean" && typeof raw.expired === "boolean" && typeof raw.hasRevocation === "boolean" && typeof raw.revocationDue === "boolean" && typeof raw.rotationRequested === "boolean" && typeof raw.oldEnough === "boolean" && Number.isSafeInteger(raw.at)) return { type: "readRow", sameAppRow: raw.sameAppRow, expired: raw.expired, hasRevocation: raw.hasRevocation, revocationDue: raw.revocationDue, rotationRequested: raw.rotationRequested, oldEnough: raw.oldEnough, at: raw.at };
+  if (raw.type === "readRow" && typeof raw.sameAppRow === "boolean" && typeof raw.expired === "boolean" && typeof raw.hasRevocation === "boolean" && typeof raw.revocationDue === "boolean" && typeof raw.banned === "boolean" && typeof raw.rotationRequested === "boolean" && typeof raw.oldEnough === "boolean" && Number.isSafeInteger(raw.at)) return { type: "readRow", sameAppRow: raw.sameAppRow, expired: raw.expired, hasRevocation: raw.hasRevocation, revocationDue: raw.revocationDue, banned: raw.banned, rotationRequested: raw.rotationRequested, oldEnough: raw.oldEnough, at: raw.at };
   if (raw.type === "recordRevocation") return { type: "recordRevocation" };
   if (raw.type === "recordReplacement") return { type: "recordReplacement" };
   return undefined;
