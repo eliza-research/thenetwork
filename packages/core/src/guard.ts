@@ -26,7 +26,9 @@
 // whitespace collapsed to one space, letters and digits of every script kept), so "Ｄivorce",
 // "dívorce", "ᴅɪᴠᴏʀᴄᴇ" and "divorce," match, and non-Latin facts are protected too (audit core-3).
 // Contact checks also run on variants with number words, other-script digits, letter O/l inside
-// numbers, spaced "@" and ".", and spelled "at"/"dot" normalized (audit core-2).
+// numbers, spaced "@" and ".", spelled "at"/"dot" (including "<dot>" and "<at>"), bracket-defanged
+// dots and ats ("example[.]com", "example (.) ai", "sam[@]gmail") and period lookalikes
+// ("example。com", "example 。 co", "212·555·0102") normalized (audit core-2).
 // Forbidden strings, facts, vocabulary and canaries are also matched on variants with spaced-out
 // letters collapsed ("d i v o r c e") and digit/symbol substitutions undone ("d1v0rce").
 // Reasons never contain the matched text (logs must not carry the private value): matches are
@@ -121,6 +123,11 @@ export function foldedVariants(s: string): string[] {
 }
 
 const TLDS = "com|co|io|ly|net|org|app|xyz|biz|me|link|gg|info|us|dev|ai|so|page|site|online|store|shop|club|live|tv|fm|to|cc|ca|uk|de|fr|es|it|nl|eu|au|in|mx|br|tech|life|world|blog|social|chat|zone|one|fun|art|bio|lol|wtf|vip|pro|nyc|la|sf|email|mail|cash|money|pay|bz|gl|im|is|ms|ws|fyi|space|website|top|icu|vercel|netlify|substack|onion";
+const PROVIDERS = "gmail|googlemail|yahoo|ymail|hotmail|outlook|icloud|protonmail|proton|aol|gmx|yandex|fastmail";
+// A dot glued to the previous word ("urbanism. Dev", "7. In", "Out. To") is sentence punctuation.
+// Those close only for TLDs that are not ordinary words. A space before the dot is defang spacing
+// and closes for the full TLD list ("example . ai", "example 。 co").
+const SENTENCE_DOT_TLDS = "com|net|org|io|xyz|biz|info";
 
 /** Contact-detail patterns, run on `plain` text (punctuation kept) and on the contact variants (`contactVariants`). */
 export const CONTACT_PATTERNS: { name: string; re: RegExp }[] = [
@@ -131,10 +138,10 @@ export const CONTACT_PATTERNS: { name: string; re: RegExp }[] = [
   { name: "phone", re: /(?<![\d#])(?:\d[\s.\-_]{0,2}){6}\d(?![\s.\-_]{0,2}\d)/g },
   // Bounded quantifiers: linear time on adversarial input (core-7).
   { name: "email", re: /(?<![a-z0-9._%+-])[a-z0-9._%+-]{1,64}@[a-z0-9-]{1,63}(?:\.[a-z0-9-]{1,63}){0,8}\.[a-z]{2,24}(?![a-z])/ },
-  // "sam@gmail", "sam at gmail" (well-known providers need no TLD).
-  { name: "email", re: /\b[a-z0-9._%+-]{1,64}\s{0,3}@\s{0,3}(?:gmail|googlemail|yahoo|ymail|hotmail|outlook|icloud|protonmail|proton|aol|gmx|yandex|fastmail)\b|\b[a-z0-9._%+-]{2,64}\s{0,3}(?:\(at\)|\[at\]|\bat\b)\s{0,3}(?:gmail|googlemail|yahoo|ymail|hotmail|outlook|icloud|protonmail|proton|aol|gmx|yandex|fastmail)(?=\s*(?:$|[.,;!?)]|dot\b|com\b))/ },
-  // "maya at example dot com", "maya [at] example [dot] com".
-  { name: "email_spelled", re: /\b[a-z0-9._%+-]{1,64}[\s([{]{1,3}at[\s)\]}]{1,3}[a-z0-9-]{1,63}(?:[\s([{]{1,3}dot[\s)\]}]{1,3}[a-z0-9-]{1,63}){0,4}[\s([{]{1,3}dot[\s)\]}]{1,3}[a-z]{2,10}\b/ },
+  // "sam@gmail", "sam at gmail", "sam<at>gmail" (well-known providers need no TLD).
+  { name: "email", re: new RegExp(`\\b[a-z0-9._%+-]{1,64}\\s{0,3}@\\s{0,3}(?:${PROVIDERS})\\b|\\b[a-z0-9._%+-]{2,64}\\s{0,3}(?:\\(at\\)|\\[at\\]|<at>|\\{at\\}|\\bat\\b)\\s{0,3}(?:${PROVIDERS})(?=\\s*(?:$|[.,;!?)]|dot\\b|com\\b))`) },
+  // "maya at example dot com", "maya [at] example [dot] com", "maya<at>example<dot>com".
+  { name: "email_spelled", re: /\b[a-z0-9._%+-]{1,64}[\s([{<]{1,3}at[\s)\]}>]{1,3}[a-z0-9-]{1,63}(?:[\s([{<]{1,3}dot[\s)\]}>]{1,3}[a-z0-9-]{1,63}){0,4}[\s([{<]{1,3}dot[\s)\]}>]{1,3}[a-z]{2,10}\b/ },
   // "123 Bedford Ave", "40 W 25th St" (a number, one to three words, a street suffix).
   // Not a time ("7 PM at St. Mary's Park") and no preposition in between.
   { name: "street_address", re: /\b\d{1,5}(?!\s*(?:am|pm|a\.m|p\.m|:\d))(?:\s+(?!(?:at|in|on|near|by|to|from)\b)[a-z0-9.]+){1,3}\s+(?:st|street|ave|avenue|rd|road|blvd|boulevard|ln|lane|dr|drive|ct|court|pl|place|ter|terrace|pkwy|parkway)\b/ },
@@ -165,19 +172,46 @@ function asciiDigits(s: string): string {
  * Variants of `plain` text for the contact checks (audit core-2): number words as digits ("two one
  * two" → "2 1 2"), other-script digits as ASCII, letter O/l/i inside numbers as 0/1, keycap emoji
  * dropped, spaced "@" and "." closed up, spelled "at"/"dot" as "@"/".", underscores as spaces.
+ * Bracket-wrapped dots ("[.]", "(.)", "{.}", "<.>", including a few surrounding spaces) and
+ * bracket-wrapped ats ("[@]", "(@)", "{@}", "<@>") become "." and "@". Period lookalikes that
+ * NFKC does not fold become a normal "." so "example[.]com", "example (.) ai" and "212·555·0102"
+ * match the same patterns as "example.com".
  */
 export function contactVariants(s: string): string[] {
   const out = new Set<string>();
+  // Angle brackets are included: "<dot>" and "<at>" are the same defang as "[dot]" and "(at)".
+  const spelledDot = new RegExp(`[\\s([{<]+(?:dot|punto)[\\s)\\]}>]+(?=(?:${TLDS})\\b|[a-z0-9-]+[\\s([{<]+(?:dot|punto)\\b)`, "g");
+  // Space before the dot: "example . ai", and "example 。 co" after the lookalike becomes ".".
+  const spacedDot = new RegExp(`(?<=[a-z0-9])\\s+\\.\\s*(?=(?:${TLDS})\\b)`, "g");
+  const sentenceDot = new RegExp(`(?<=[a-z0-9])\\.\\s+(?=(?:${SENTENCE_DOT_TLDS})\\b)`, "g");
+  // "example · com" only. A spaced middle dot before another word is prose, not a domain.
+  const proseSepDomain = new RegExp(`(?<=[a-z0-9])\\s+[\\u00b7\\u2022\\u30fb]\\s*(?=(?:${SENTENCE_DOT_TLDS})\\b)`, "g");
+  const bracketAt = new RegExp(`(?<=[a-z0-9._%+-])\\s{0,3}(?:\\[\\s{0,3}@\\s{0,3}\\]|\\(\\s{0,3}@\\s{0,3}\\)|\\{\\s{0,3}@\\s{0,3}\\}|<\\s{0,3}@\\s{0,3}>)\\s{0,3}(?=(?:${PROVIDERS})\\b|[a-z0-9-]{1,63}(?:\\.[a-z0-9-]{1,63}){0,8}\\.[a-z]{2,24}(?![a-z]))`, "g");
   for (const p of plainVariants(s)) {
     let v = asciiDigits(p).replace(/⃣/g, "");
+    proseSepDomain.lastIndex = 0;
+    bracketAt.lastIndex = 0;
+    v = v.replace(proseSepDomain, ".");
+    // "Saturday · in Brooklyn" and "• in the park": the separator is not a dot.
+    v = v.replace(/\s+[\u00b7\u2022\u30fb]\s+/g, " ");
+    // Middle dot, bullet, hyphenation point, bullet operator, dot operator, katakana middle dot,
+    // ideographic full stop. NFKC leaves these in place (fullwidth "." is already folded).
+    v = v.replace(/[\u00b7\u2022\u2027\u2219\u22c5\u30fb\u3002]/g, ".");
+    // Spaces around the brackets are part of the defang: "example (.) ai" → "example.ai".
+    v = v.replace(/\s{0,3}(?:\[\s{0,3}\.\s{0,3}\]|\(\s{0,3}\.\s{0,3}\)|\{\s{0,3}\.\s{0,3}\}|<\s{0,3}\.\s{0,3}>)\s{0,3}/g, ".");
+    // "sam[@]gmail" and "sam(@)outlook". A bare "(@)" in prose is left as it is.
+    v = v.replace(bracketAt, "@");
     v = v.replace(/\b[a-z]+\b/g, w => NUMBER_WORDS[w] ?? w);
     v = v.replace(/\boh\b(?=[\s.\-]*\d)|(?<=\d[\s.\-]*)\boh\b/g, "0");
     v = v.replace(/(?<=\d[\s.\-]{0,2})[o](?![a-z])|(?<![a-z])[o](?=[\s.\-]{0,2}\d)/g, "0").replace(/(?<=\d[\s.\-]{0,2})[li](?![a-z])|(?<![a-z])[li](?=[\s.\-]{0,2}\d)/g, "1");
     out.add(v);
     // Spelled "dot" only before a known TLD or another spelled dot; spelled "at" only before a domain.
-    const dotted = v.replace(new RegExp(`[\\s([{]+(?:dot|punto)[\\s)\\]}]+(?=(?:${TLDS})\\b|[a-z0-9-]+[\\s([{]+(?:dot|punto)\\b)`, "g"), ".");
-    const closed = dotted.replace(/\s*@\s*/g, "@").replace(/(?<=[a-z0-9])\s*\.\s*(?=(?:com|net|org|io|xyz|biz|info)\b)/g, ".")
-      .replace(/[\s([{]+at[\s)\]}]+(?=[a-z0-9-]+\.[a-z]{2,})/g, "@");
+    spelledDot.lastIndex = 0;
+    const dotted = v.replace(spelledDot, ".");
+    spacedDot.lastIndex = 0;
+    sentenceDot.lastIndex = 0;
+    const closed = dotted.replace(/\s*@\s*/g, "@").replace(spacedDot, ".").replace(sentenceDot, ".")
+      .replace(/[\s([{<]+at[\s)\]}>]+(?=[a-z0-9-]+\.[a-z]{2,})/g, "@");
     out.add(closed);
   }
   return [...out];
