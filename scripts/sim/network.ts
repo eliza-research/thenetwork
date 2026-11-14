@@ -80,7 +80,30 @@ export async function inviteRootGate(b: Block): Promise<void> {
   });
 }
 
+export async function scenarioRepetitionGate(b: Block): Promise<void> {
+  await b.run("scenario CLI: repetitions must be a positive integer; default and one run execute checks", () => {
+    const root = `${import.meta.dir}/../..`;
+    const run = (k?: string) => Bun.spawnSync([
+      process.execPath, "run", "--conditions", "eliza-source", "packages/sim/src/cli.ts", "--scenario", "packages/sim/scenarios/band-week-apart.json", "--no-log",
+      ...(k === undefined ? [] : [`--k=${k}`]),
+    ], { cwd: root, stdout: "pipe", stderr: "pipe" });
+    for (const k of ["0", "-1", "1.5", "invalid"]) {
+      const result = run(k);
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr.toString()).toContain("positive integer");
+      expect(result.stdout.toString()).not.toContain("pass^");
+    }
+    for (const k of [undefined, "1"]) {
+      const result = run(k);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.toString()).toContain("pass^1: PASS (1/1)");
+      expect(result.stdout.toString()).toMatch(/\n\s+pass\s+metric:/);
+    }
+  });
+}
+
 export async function networkBlock(b: Block, o: { quick: boolean }): Promise<void> {
+  await scenarioRepetitionGate(b);
   await inviteRootGate(b);
   // ---- invariants: NYC, 10 days, seed 3, simulated reviewer ---------------------------------------
   const run = await world(10);
