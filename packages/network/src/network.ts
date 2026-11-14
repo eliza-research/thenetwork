@@ -65,7 +65,8 @@ type LedgerInput = CapitalEventInput extends infer E ? (E extends CapitalEventIn
 import type { NetworkStore } from "./store.ts";
 import { HOLD, Trust, type TrustLevel, type TrustState } from "./trust.ts";
 import type { AppHooks, AppTag, HookOpp } from "./apphooks.ts";
-import { isSeatId, postingFromDraft, postingFromFacts, postingProblem, postingsOf, POSTING_COPY, readPostingText, seatIdOf, seatOwnerOf, SEAT_COPY, type JobPosting, type PostingDraft } from "./jobs.ts";
+import { confirmPosting } from "../../core/src/generated/postingPolicy.ts";
+import { isPostingCommand, isSeatId, postingDetailsChanged, postingFromDraft, postingFromFacts, postingProblem, postingRevision, postingsOf, POSTING_COPY, readPostingText, seatIdOf, seatOwnerOf, SEAT_COPY, type JobPosting, type PostingDraft } from "./jobs.ts";
 import { checkInReport, reportKindOf, URGENT_REPORTS, type ReportKind, type SafetyReport } from "./reports.ts";
 
 /** Where an opportunity came from. "planner": a plan from the engine planner, or a crew session (Opp.crewId). */
@@ -4704,25 +4705,30 @@ export class ConsentNetwork implements NetworkUnderTest {
     const waiting = m.awaiting?.kind === "posting" && m.posting ? m.posting : undefined;
     const reply = (text: string) => { this.send(m, text, { type: "info" }, "reply"); return true; };
     const clear = () => { m.posting = undefined; if (m.awaiting?.kind === "posting") m.awaiting = undefined; };
-    if (waiting?.ready) {
+    if (waiting && !isPostingCommand(body)) {
       const yn = this.yesNoOf(body);
-      if (yn === "yes") {
+      const corrected = !waiting.close && postingDetailsChanged(body, waiting);
+      if (waiting.ready && yn === "yes" && !corrected) {
         clear();
         const prev = waiting.id ? this.storedPosting(m.id, waiting.id) : undefined;
+        const current = waiting.revision !== undefined
+          ? prev?.status === "active" && postingRevision(prev) === waiting.revision
+          : !prev && !waiting.close;
+        if (!confirmPosting(waiting.ready, true, corrected, current)) return reply(POSTING_COPY.dropped);
         const posting = postingFromDraft(waiting, m.id, this.now(), prev);
         if (!posting) return reply(POSTING_COPY.dropped);
         const r = this.applyPosting(posting, m.id);
         if (!r.ok) return reply(r.reason === "adults_only" ? POSTING_COPY.adultsOnly : r.reason === "opt_in" ? POSTING_COPY.optIn : POSTING_COPY.notReady);
         return reply(posting.status !== "active" ? POSTING_COPY.closed(posting.title) : prev ? POSTING_COPY.updated(posting.title) : POSTING_COPY.saved(posting.title));
       }
-      if (yn === "no" && !/\d|\$/.test(body)) { clear(); return reply(POSTING_COPY.dropped); }
+      if (yn === "no" && !corrected) { clear(); return reply(POSTING_COPY.dropped); }
     }
-    const step = readPostingText(body, { ...(waiting ? { draft: waiting } : {}), postings: postingsOf(this.snapshotCached(), m.id), newId: `${m.id.replace(/[^A-Za-z0-9_.-]/g, "")}-job-${this.now().toString(36)}` });
+    const step = readPostingText(body, { ...(waiting ? { draft: waiting } : {}), postings: postingsOf(this.snapshotCached(), m.id), storedPosting: id => this.storedPosting(m.id, id), newId: `${m.id.replace(/[^A-Za-z0-9_.-]/g, "")}-job-${this.now().toString(36)}` });
     if (!step) { if (waiting) clear(); return false; }
     const why = this.managerProblem(m.id);
     if (why && !step.draft?.close) { clear(); return reply(why === "adults_only" ? POSTING_COPY.adultsOnly : why === "opt_in" ? POSTING_COPY.optIn : POSTING_COPY.notReady); }
     if (!step.draft) { clear(); return reply(step.text); }
-    const asks = (waiting?.asks ?? 0) + (step.ready ? 0 : 1);
+    const asks = (step.draft.asks ?? 0) + (step.ready ? 0 : 1);
     // Two questions without the missing field: the draft is dropped (one question at a time, never a loop).
     if (asks > 2) { clear(); return reply(POSTING_COPY.dropped); }
     m.posting = { ...step.draft, asks, ready: step.ready };

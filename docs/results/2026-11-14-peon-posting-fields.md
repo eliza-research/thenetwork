@@ -22,7 +22,7 @@ implementation, the service asks for a pay range after the manager specified
 it (0 pass, 1 fail). With the fixes, the same journey saves the exact offer,
 preserves one skill row, closes the seat and restores its headcount on a
 staff reopen (1 pass, 0 fail). The Peon seat simulation passed 9/9 gates with
-its pinned world (seed 9). The fixtures are fictional and sends are dry-run.
+its pinned world (seed 7). The fixtures are fictional and sends are dry-run.
 The posting reader is deterministic. There are no model calls in either arm
 and no change to an MCP or hosted agent transport.
 

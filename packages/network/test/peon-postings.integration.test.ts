@@ -138,5 +138,40 @@ describe.skipIf(!pgAvailable)("peon postings: text intake, restart, staff API (N
     expect(reopened.body.posting.closedReason).toBeUndefined();
     snap = await loadSnapshot(sql, clock.now(), { app: "peon", city: "nyc" });
     expect(snap.facets.find(f => f.id === `${seat}:openings`)?.tags).toEqual(["peon:openings:2"]);
+
+    // A direct title answer completes a draft. Starting this new draft uses its own ask limit.
+    await text(s, clock, ROWAN, "We're hiring a coordinator");
+    expect(await last(rowan)).toBe(POSTING_COPY.askPay);
+    await text(s, clock, ROWAN, "Title: office coordinator");
+    expect(await last(rowan)).toBe(POSTING_COPY.askPay);
+    await text(s, clock, ROWAN, "Job posting: $65k-$75k");
+    expect(await last(rowan)).toBe(POSTING_COPY.askTitle);
+    await text(s, clock, ROWAN, "Data analyst");
+    expect(await last(rowan)).toMatch(/Data analyst, 1 opening, \$65k-\$75k/);
+    await text(s, clock, ROWAN, "yes");
+    expect(await last(rowan)).toMatch(/^Posted: data analyst\./);
+
+    // Selecting an existing offering keeps the edits and recognizes overlapping job titles.
+    await text(s, clock, ROWAN, "Update my job post: 3 openings");
+    expect(await last(rowan)).toContain("Which post should I update");
+    await text(s, clock, ROWAN, "Senior data analyst");
+    expect(await last(rowan)).toMatch(/Senior data analyst, 3 openings, \$90\.5k-\$120\.75k/);
+
+    // A yes with another correction needs another read-back. A stale yes cannot reopen a filled job.
+    await text(s, clock, ROWAN, "Yes, 4 openings");
+    expect(await last(rowan)).toMatch(/Senior data analyst, 4 openings, \$90\.5k-\$120\.75k/);
+    expect((await call("GET", `/postings?managerId=${rowan}`)).body.postings.find((x: { id: string }) => x.id === p.id).openings).toBe(2);
+    await call("POST", `/postings/${p.id}/close`, { reason: "filled" });
+    await text(s, clock, ROWAN, "yes");
+    expect(await last(rowan)).toBe(POSTING_COPY.dropped);
+    expect((await call("GET", `/postings?managerId=${rowan}`)).body.postings.find((x: { id: string }) => x.id === p.id).status).toBe("closed");
+
+    // The documented short command still requires an explicit reply before the sole active offer closes.
+    await text(s, clock, ROWAN, "We filled it.");
+    expect(await last(rowan)).toBe(POSTING_COPY.readBackClose("data analyst"));
+    expect((await postings(rowan)).filter(x => x.status === "active")).toHaveLength(1);
+    await text(s, clock, ROWAN, "yes");
+    expect((await postings(rowan)).filter(x => x.status === "active")).toHaveLength(0);
+
   }, T);
 });
