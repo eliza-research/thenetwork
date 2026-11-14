@@ -241,11 +241,11 @@ export class World {
   }
 
   /** Persona sends a message to the Network (via the channel, so keywords apply). */
-  private personaSend(p: Persona, text: string, reaction?: Reaction): SimMessage | undefined {
+  private personaSend(p: Persona, text: string, reaction?: Reaction, inReplyTo?: string): SimMessage | undefined {
     const mem = this.memories.get(p.id)!;
     if (mem.optedOut && text.trim().toUpperCase() !== "START") return undefined;
     // A tapback is an inbound message too: it answers the Network (resets `unanswered` below).
-    const m = this.channel.receive(p.id, text, reaction ? { reaction } : {});
+    const m = this.channel.receive(p.id, text, { ...(reaction ? { reaction } : {}), ...(inReplyTo ? { inReplyTo } : {}) });
     this.logMessage(m);
     this.unanswered.set(p.id, 0);
     if (m.keyword === "STOP") { mem.optedOut = true; this.optedOut.add(p.id); this.rec({ type: "opt_out", memberId: p.id }); }
@@ -305,7 +305,7 @@ export class World {
 
     s.on<{ personaId: MemberId }>("join", ev => this.onJoin(ev.data.personaId));
     s.on<{ msg: SimMessage }>("deliver", ev => this.onDeliver(ev.data.msg));
-    s.on<{ personaId: MemberId; text: string; reaction?: Reaction }>("persona_send", ev => { this.personaSend(this.personas.get(ev.data.personaId)!, ev.data.text, ev.data.reaction); });
+    s.on<{ personaId: MemberId; text: string; reaction?: Reaction; inReplyTo?: string }>("persona_send", ev => { this.personaSend(this.personas.get(ev.data.personaId)!, ev.data.text, ev.data.reaction, ev.data.inReplyTo); });
     s.on<{ msg: SimMessage }>("network_inbound", async ev => {
       const m = ev.data.msg;
       const inbound: InboundMessage = { id: m.id, memberId: m.memberId, body: m.body, ts: m.ts, channel: m.channel, keyword: m.keyword };
@@ -330,6 +330,7 @@ export class World {
     this.rec({ type: "run_start", runId: this.runId, seed: this.opts.seed, start: this.start, config: {
       days, personas: this.opts.personas.length, network: network.name, engine: this.opts.engine?.name ?? null,
       agent: this.agent.mode, mode: this.opts.mode ?? "discrete", tickMinutes: this.opts.tickMinutes ?? 60,
+      replyTracking: true,
     } });
     for (const p of this.opts.personas) {
       this.rec({ type: "persona", persona: {
@@ -412,7 +413,7 @@ export class World {
     // Messages the persona sends on its own after this one (plans: "WEEKLY" to the check-in offer).
     for (const f of reply.followUps ?? []) this.scheduler.after(f.delayMs, "persona_send", { personaId: p.id, text: f.text });
     if (reply.action === "reply" && reply.text) {
-      this.scheduler.after(reply.delayMs, "persona_send", { personaId: p.id, text: reply.text, ...(reply.reaction ? { reaction: reply.reaction } : {}) });
+      this.scheduler.after(reply.delayMs, "persona_send", { personaId: p.id, text: reply.text, inReplyTo: msg.id, ...(reply.reaction ? { reaction: reply.reaction } : {}) });
       if (reply.block?.length) {
         for (const b of reply.block) {
           const other = this.personas.get(b);
