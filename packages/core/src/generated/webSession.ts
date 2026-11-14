@@ -2,16 +2,18 @@
 //@ backend dafny
 
 /** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md:31) */
-export type SessionPhase = "Beginning" | "LookingUp" | "Refused" | "Usable" | "RevokingOld" | "IssuingReplacement" | "Rotated";
+export type SessionPhase = "Beginning" | "LookingUp" | "Refused" | "CheckingAdmission" | "Usable" | "RevokingOld" | "IssuingReplacement" | "Rotated" | "RevokingBanned";
 /** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md:31) */
 export interface SessionFlow { phase: SessionPhase; revokeAt: number }
 
 /** One variant per transition in the spec. */
 export type Event =
   | { type: "readToken"; tokenPresent: boolean; tokenLength: number }
-  | { type: "readRow"; sameAppRow: boolean; expired: boolean; hasRevocation: boolean; revocationDue: boolean; rotationRequested: boolean; oldEnough: boolean; at: number }
+  | { type: "readRow"; sameAppRow: boolean; expired: boolean; revocationDue: boolean }
   | { type: "recordRevocation" }
-  | { type: "recordReplacement" };
+  | { type: "recordReplacement" }
+  | { type: "admit"; banned: boolean; rotationRequested: boolean; hasRevocation: boolean; oldEnough: boolean; at: number }
+  | { type: "recordBanRevocation" };
 
 /** Story: Stay signed in to the app where I proved my phone / A session has an absolute limit from sign-in (spec/webSession.md:9) */
 export const sessionRotateMs: number = 24 * 3600000;
@@ -58,6 +60,7 @@ export function canReadToken(flow: SessionFlow): boolean {
 //@ pure
 export function readToken(flow: SessionFlow, tokenPresent: boolean, tokenLength: number): SessionFlow {
   //@ ensures (inv(flow) && canReadToken(flow)) ==> stepRotationRequiresAReplacement(flow, "readToken", \result)
+  //@ ensures (inv(flow) && canReadToken(flow)) ==> stepABannedCookieIsNotRotated(flow, "readToken", \result)
   return { ...flow, phase: tokenPresent && tokenLength <= 128 ? "LookingUp" : "Refused" };
 }
 
@@ -69,9 +72,10 @@ export function canReadRow(flow: SessionFlow): boolean {
 
 /** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md:31) */
 //@ pure
-export function readRow(flow: SessionFlow, sameAppRow: boolean, expired: boolean, hasRevocation: boolean, revocationDue: boolean, rotationRequested: boolean, oldEnough: boolean, at: number): SessionFlow {
+export function readRow(flow: SessionFlow, sameAppRow: boolean, expired: boolean, revocationDue: boolean): SessionFlow {
   //@ ensures (inv(flow) && canReadRow(flow)) ==> stepRotationRequiresAReplacement(flow, "readRow", \result)
-  return !sameAppRow || expired || revocationDue ? ({ ...flow, phase: "Refused" } as SessionFlow) : (!rotationRequested || hasRevocation || !oldEnough ? ({ ...flow, phase: "Usable" } as SessionFlow) : ({ phase: "RevokingOld", revokeAt: at + sessionGraceMs } as SessionFlow));
+  //@ ensures (inv(flow) && canReadRow(flow)) ==> stepABannedCookieIsNotRotated(flow, "readRow", \result)
+  return { ...flow, phase: !sameAppRow || expired || revocationDue ? "Refused" : "CheckingAdmission" };
 }
 
 /** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md:31) */
@@ -84,6 +88,7 @@ export function canRecordRevocation(flow: SessionFlow): boolean {
 //@ pure
 export function recordRevocation(flow: SessionFlow): SessionFlow {
   //@ ensures (inv(flow) && canRecordRevocation(flow)) ==> stepRotationRequiresAReplacement(flow, "recordRevocation", \result)
+  //@ ensures (inv(flow) && canRecordRevocation(flow)) ==> stepABannedCookieIsNotRotated(flow, "recordRevocation", \result)
   return { ...flow, phase: "IssuingReplacement" };
 }
 
@@ -97,6 +102,7 @@ export function canRecordReplacement(flow: SessionFlow): boolean {
 //@ pure
 export function recordReplacement(flow: SessionFlow): SessionFlow {
   //@ ensures (inv(flow) && canRecordReplacement(flow)) ==> stepRotationRequiresAReplacement(flow, "recordReplacement", \result)
+  //@ ensures (inv(flow) && canRecordReplacement(flow)) ==> stepABannedCookieIsNotRotated(flow, "recordReplacement", \result)
   return { ...flow, phase: "Rotated" };
 }
 
@@ -112,7 +118,89 @@ export function sometimesRotates(flow: SessionFlow): boolean {
   return flow.phase === "Rotated";
 }
 
-/** Story: Stay signed in to the app where I proved my phone / Sensitive account changes require a fresh sign-in (spec/webSession.md:64) */
+/** Story: A staff ban ends a cookie I already hold / A banned phone or person is not admitted (spec/webSession.md:65) */
+//@ pure
+export function canAdmit(flow: SessionFlow): boolean {
+  return flow.phase === "CheckingAdmission";
+}
+
+/** Story: A staff ban ends a cookie I already hold / A banned phone or person is not admitted (spec/webSession.md:65) */
+//@ pure
+export function admit(flow: SessionFlow, banned: boolean, rotationRequested: boolean, hasRevocation: boolean, oldEnough: boolean, at: number): SessionFlow {
+  //@ ensures (inv(flow) && canAdmit(flow)) ==> stepRotationRequiresAReplacement(flow, "admit", \result)
+  //@ ensures (inv(flow) && canAdmit(flow)) ==> stepABannedCookieIsNotRotated(flow, "admit", \result)
+  return banned ? ({ phase: "RevokingBanned", revokeAt: at } as SessionFlow) : (!rotationRequested || hasRevocation || !oldEnough ? ({ ...flow, phase: "Usable" } as SessionFlow) : ({ phase: "RevokingOld", revokeAt: at + sessionGraceMs } as SessionFlow));
+}
+
+/** Story: A staff ban ends a cookie I already hold / A banned phone or person is not admitted (spec/webSession.md:65) */
+//@ pure
+export function canRecordBanRevocation(flow: SessionFlow): boolean {
+  return flow.phase === "RevokingBanned";
+}
+
+/** Story: A staff ban ends a cookie I already hold / A banned phone or person is not admitted (spec/webSession.md:65) */
+//@ pure
+export function recordBanRevocation(flow: SessionFlow): SessionFlow {
+  //@ ensures (inv(flow) && canRecordBanRevocation(flow)) ==> stepRotationRequiresAReplacement(flow, "recordBanRevocation", \result)
+  //@ ensures (inv(flow) && canRecordBanRevocation(flow)) ==> stepABannedCookieIsNotRotated(flow, "recordBanRevocation", \result)
+  return { ...flow, phase: "Refused" };
+}
+
+/** Story: A staff ban ends a cookie I already hold / A banned phone or person is not admitted (spec/webSession.md:65) */
+//@ pure
+export function stepABannedCookieIsNotRotated(before: SessionFlow, via: string, after: SessionFlow): boolean {
+  return !(before.phase === "RevokingBanned") || ((via === "recordBanRevocation" && after.phase === "Refused") || (!(via === "recordBanRevocation") && after.phase === before.phase));
+}
+
+/** Story: A staff ban ends a cookie I already hold / A banned phone or person is not admitted (spec/webSession.md:65) */
+//@ pure
+export function sometimesRefusesABannedCookie(flow: SessionFlow): boolean {
+  return flow.phase === "RevokingBanned";
+}
+
+/** Story: A staff ban ends a cookie I already hold / A banned phone or person is not admitted (spec/webSession.md:65) */
+//@ pure
+export function lawABanNeverAdmits(banned: boolean, rotationRequested: boolean, hasRevocation: boolean, oldEnough: boolean, at: number): boolean {
+  //@ ensures \result === true
+  return !banned || admit(({ phase: "CheckingAdmission", revokeAt: 0 } as SessionFlow), banned, rotationRequested, hasRevocation, oldEnough, at).phase === "RevokingBanned";
+}
+
+/** Story: A staff ban ends a cookie I already hold / A banned phone or person is not admitted (spec/webSession.md:65) */
+//@ pure
+export function lawOnlyABanRevokesAtAdmission(banned: boolean, rotationRequested: boolean, hasRevocation: boolean, oldEnough: boolean, at: number): boolean {
+  //@ ensures \result === true
+  return !(admit(({ phase: "CheckingAdmission", revokeAt: 0 } as SessionFlow), banned, rotationRequested, hasRevocation, oldEnough, at).phase === "RevokingBanned") || banned;
+}
+
+/** Story: A staff ban ends a cookie I already hold / A banned phone or person is not admitted (spec/webSession.md:65) */
+//@ pure
+export function lawABanRevokesImmediately(at: number): boolean {
+  //@ ensures \result === true
+  return admit(({ phase: "CheckingAdmission", revokeAt: 0 } as SessionFlow), true, false, false, false, at).revokeAt === at;
+}
+
+/** Story: A staff ban ends a cookie I already hold / A banned phone or person is not admitted (spec/webSession.md:65) */
+//@ pure
+export function lawBanRevocationDoesNotReplaceTheCookie(at: number): boolean {
+  //@ ensures \result === true
+  return recordBanRevocation(({ phase: "RevokingBanned", revokeAt: at } as SessionFlow)).phase === "Refused";
+}
+
+/** Story: A staff ban ends a cookie I already hold / A banned phone or person is not admitted (spec/webSession.md:65) */
+//@ pure
+export function lawAFreshCookieStaysUsable(at: number): boolean {
+  //@ ensures \result === true
+  return admit(({ phase: "CheckingAdmission", revokeAt: 0 } as SessionFlow), false, true, false, false, at).phase === "Usable";
+}
+
+/** Story: A staff ban ends a cookie I already hold / A banned phone or person is not admitted (spec/webSession.md:65) */
+//@ pure
+export function lawAnOldCookieRotates(at: number): boolean {
+  //@ ensures \result === true
+  return admit(({ phase: "CheckingAdmission", revokeAt: 0 } as SessionFlow), false, true, false, true, at).phase === "RevokingOld" && admit(({ phase: "CheckingAdmission", revokeAt: 0 } as SessionFlow), false, true, false, true, at).revokeAt === at + sessionGraceMs;
+}
+
+/** Story: A staff ban ends a cookie I already hold / Sensitive account changes require a fresh sign-in (spec/webSession.md:106) */
 //@ pure
 export function freshSignIn(elapsed: number): boolean {
   return elapsed <= sessionStepUpMs;
@@ -125,6 +213,8 @@ export function enabled(current: SessionFlow, event: Event): boolean {
   if (event.type === "readRow") return canReadRow(current);
   if (event.type === "recordRevocation") return canRecordRevocation(current);
   if (event.type === "recordReplacement") return canRecordReplacement(current);
+  if (event.type === "admit") return canAdmit(current);
+  if (event.type === "recordBanRevocation") return canRecordBanRevocation(current);
   return false;
 }
 
@@ -134,9 +224,11 @@ export function step(current: SessionFlow, event: Event): SessionFlow {
   //@ requires inv(current)
   //@ ensures inv(\result)
   if (event.type === "readToken" && canReadToken(current)) return readToken(current, event.tokenPresent, event.tokenLength);
-  if (event.type === "readRow" && canReadRow(current)) return readRow(current, event.sameAppRow, event.expired, event.hasRevocation, event.revocationDue, event.rotationRequested, event.oldEnough, event.at);
+  if (event.type === "readRow" && canReadRow(current)) return readRow(current, event.sameAppRow, event.expired, event.revocationDue);
   if (event.type === "recordRevocation" && canRecordRevocation(current)) return recordRevocation(current);
   if (event.type === "recordReplacement" && canRecordReplacement(current)) return recordReplacement(current);
+  if (event.type === "admit" && canAdmit(current)) return admit(current, event.banned, event.rotationRequested, event.hasRevocation, event.oldEnough, event.at);
+  if (event.type === "recordBanRevocation" && canRecordBanRevocation(current)) return recordBanRevocation(current);
   return current;
 }
 
@@ -155,9 +247,11 @@ export function parseEvent(x: unknown): Event | undefined {
   }
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "readToken" && typeof raw.tokenPresent === "boolean" && Number.isSafeInteger(raw.tokenLength)) return { type: "readToken", tokenPresent: raw.tokenPresent, tokenLength: raw.tokenLength };
-  if (raw.type === "readRow" && typeof raw.sameAppRow === "boolean" && typeof raw.expired === "boolean" && typeof raw.hasRevocation === "boolean" && typeof raw.revocationDue === "boolean" && typeof raw.rotationRequested === "boolean" && typeof raw.oldEnough === "boolean" && Number.isSafeInteger(raw.at)) return { type: "readRow", sameAppRow: raw.sameAppRow, expired: raw.expired, hasRevocation: raw.hasRevocation, revocationDue: raw.revocationDue, rotationRequested: raw.rotationRequested, oldEnough: raw.oldEnough, at: raw.at };
+  if (raw.type === "readRow" && typeof raw.sameAppRow === "boolean" && typeof raw.expired === "boolean" && typeof raw.revocationDue === "boolean") return { type: "readRow", sameAppRow: raw.sameAppRow, expired: raw.expired, revocationDue: raw.revocationDue };
   if (raw.type === "recordRevocation") return { type: "recordRevocation" };
   if (raw.type === "recordReplacement") return { type: "recordReplacement" };
+  if (raw.type === "admit" && typeof raw.banned === "boolean" && typeof raw.rotationRequested === "boolean" && typeof raw.hasRevocation === "boolean" && typeof raw.oldEnough === "boolean" && Number.isSafeInteger(raw.at)) return { type: "admit", banned: raw.banned, rotationRequested: raw.rotationRequested, hasRevocation: raw.hasRevocation, oldEnough: raw.oldEnough, at: raw.at };
+  if (raw.type === "recordBanRevocation") return { type: "recordBanRevocation" };
   return undefined;
 }
 
@@ -175,7 +269,7 @@ export function parseState(x: unknown): SessionFlow | undefined {
   } catch {
     return undefined;
   }
-  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "Beginning" || raw.phase === "LookingUp" || raw.phase === "Refused" || raw.phase === "Usable" || raw.phase === "RevokingOld" || raw.phase === "IssuingReplacement" || raw.phase === "Rotated") && Number.isSafeInteger(raw.revokeAt) && Object.keys(raw).length === 2)) return undefined;
+  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "Beginning" || raw.phase === "LookingUp" || raw.phase === "Refused" || raw.phase === "CheckingAdmission" || raw.phase === "Usable" || raw.phase === "RevokingOld" || raw.phase === "IssuingReplacement" || raw.phase === "Rotated" || raw.phase === "RevokingBanned") && Number.isSafeInteger(raw.revokeAt) && Object.keys(raw).length === 2)) return undefined;
   const parsed: SessionFlow = ({ phase: raw.phase, revokeAt: raw.revokeAt });
   return inv(parsed) ? parsed : undefined;
 }

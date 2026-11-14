@@ -10,6 +10,7 @@ import {
   freshSignIn, initial, sessionDeadline, sessionGraceMs, sessionMaxMs, sessionRotateMs, sessionStepUpMs, sessionTtlMs, step,
 } from "../../core/src/generated/webSession.ts";
 import type { AppId } from "./apps.ts";
+import { keyedHash } from "./phone.ts";
 import type { PeopleStore, Session } from "./store.ts";
 
 export const SESSION_TTL_MS = sessionTtlMs;
@@ -29,9 +30,13 @@ export const tokenHash = (token: string, secret: string) => createHmac("sha256",
 export const signupAccountView = (app: string, phoneKey: string) => createHash("sha256").update(`signup-view:${app}:${phoneKey}`).digest("hex");
 
 export class SessionService {
-  constructor(private readonly store: PeopleStore, private readonly opts: { secret: string; now?: () => number; ttlMs?: number; rotateMs?: number; maxMs?: number }) {}
+  constructor(private readonly store: PeopleStore, private readonly opts: { secret: string; /** Keyed phone hash for the per-request ban admission. Unset only on dev and test harnesses that do not serve site cookies. */ hashKey?: string; now?: () => number; ttlMs?: number; rotateMs?: number; maxMs?: number }) {}
   private now() { return (this.opts.now ?? Date.now)(); }
   private hash(token: string) { return tokenHash(token, this.opts.secret); }
+  /** Phone-scope matches the keyed hash. Person-scope matches the session's person, including a ban row whose phone hash is empty. */
+  private banned(s: Session) {
+    return this.opts.hashKey ? this.store.isBanned(keyedHash(this.opts.hashKey, `phone:${s.e164}`), s.personId) : Promise.resolve(false);
+  }
 
   /** A new session. `startedAt` is the OTP login time (a rotation keeps it). */
   async create(app: AppId, e164: string, personId: string | null, rotatedFrom: string | null = null, startedAt?: number, expiresBefore?: number, delegatedCloud?: true): Promise<{ token: string; session: Session }> {
@@ -54,9 +59,17 @@ export class SessionService {
     const at = this.now();
     const s = await this.store.getSession(this.hash(token));
     flow = step(flow, { type: "readRow", sameAppRow: s?.app === app, expired: !!s && s.expiresAt <= at,
-      hasRevocation: s?.revokedAt != null, revocationDue: s?.revokedAt != null && s.revokedAt <= at,
-      rotationRequested: rotate, oldEnough: !!s && !(at - s.createdAt < (this.opts.rotateMs ?? SESSION_ROTATE_MS)), at });
-    if (!s || flow.phase === "Refused") return undefined;
+      revocationDue: s?.revokedAt != null && s.revokedAt <= at });
+    if (!s || flow.phase !== "CheckingAdmission") return undefined;
+    // spec/webSession.md, "A banned phone or person is not admitted"
+    flow = step(flow, { type: "admit", banned: await this.banned(s), rotationRequested: rotate,
+      hasRevocation: s.revokedAt != null, oldEnough: !(at - s.createdAt < (this.opts.rotateMs ?? SESSION_ROTATE_MS)), at });
+    if (flow.phase === "RevokingBanned") {
+      await this.store.revokeSession(s.tokenHash, flow.revokeAt);
+      // Recording the refusal keeps the shell on the spec transition. The cookie is not rotated.
+      step(flow, { type: "recordBanRevocation" });
+      return undefined;
+    }
     if (flow.phase === "Usable") return { session: s, token, rotated: false };
     if (flow.phase !== "RevokingOld") return undefined;
     await this.store.revokeSession(s.tokenHash, flow.revokeAt);
