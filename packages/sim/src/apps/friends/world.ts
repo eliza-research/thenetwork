@@ -120,6 +120,8 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
   for (let week = 0; week < world.weeks; week++) {
     state.week = week;
     state.now = weekTime(week, 0, 9); // Monday 09:00 local: the weekly planner run
+    // A crew that graduates during this round starts independent sessions next week.
+    const independentCrews = state.crews.filter(c => c.handedOff);
     // 0. check-ins
     state.checkIns = new Map();
     for (const p of world.personas) {
@@ -263,12 +265,14 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
     });
 
     // Handed-off crews keep meeting on their own (decaying); members still count it as time together.
-    for (const c of state.crews) {
-      if (!c.handedOff) continue;
+    for (const c of independentCrews) {
       const age = week - c.formedWeek;
       const slot = SLOTS.indexOf(slotOfCrew(c));
-      const came = c.members.filter(id => !state.safetyHolds.some(h => h.memberId === id) && oracle.u("crewself", c.id, id, week) < 0.75 * Math.pow(0.97, age) * (1 - oracle.p(id).hidden.flakiness) && (booked.get(id) ?? 0) < bookCap);
-      if (came.length < 2 || slot < 0) continue;
+      if (slot < 0) continue;
+      const came = c.members.filter(id => !state.safetyHolds.some(h => h.memberId === id) && oracle.u("crewself", c.id, id, week) < 0.75 * Math.pow(0.97, age) * (1 - oracle.p(id).hidden.flakiness) && canBook(id, slot));
+      if (came.length < 2) continue;
+      // Independent crew sessions use the same time and capacity as platform bookings.
+      for (const id of came) { booked.set(id, (booked.get(id) ?? 0) + 1); bookedSlots.add(`${id}|${slot}`); }
       held(`self:${c.id}:w${week}`, "crew_self", came, c.activityId, hoodOfVenue(c.venueId) ?? oracle.p(c.members[0]!).hidden.home, week, slotDay(week, slot), c.id);
     }
     // Hidden hangouts between pairs who both want more.
