@@ -38,7 +38,7 @@ describe.skipIf(!pgAvailable)("the dev Postgres startup (Postgres)", () => {
       const port = probe.port;
       probe.stop();
       if (port === 54329 || port === 54339) throw new Error("Expected an isolated PostgreSQL port");
-      const env = { ...Bun.env, OBSERVATORY_PG_DIR: dir, OBSERVATORY_PG_PORT: String(port) };
+      const env: Record<string, string | undefined> = { ...Bun.env, OBSERVATORY_PG_DIR: dir, OBSERVATORY_PG_PORT: String(port) };
       if (user === undefined) delete env.USER;
       else env.USER = user;
       const run = (command: string) => Bun.spawn(["bun", "--no-env-file", "packages/observatory/db/dev-pg.ts", command], {
