@@ -9,7 +9,7 @@
 import { devShortcutsAllowed, ipBucket, signupAccountView, type Env } from "@thenetwork/platform";
 import { verifyProxyHeaders } from "@thenetwork/platform/src/proxy.ts";
 import { readCappedText } from "@thenetwork/platform/src/body.ts";
-import { initial as issuanceInitial, requestIsLive, step as stepIssuance } from "../../core/src/generated/oauthGrantIssuance.ts";
+import { grantAdmission, initial as issuanceInitial, requestIsLive, step as stepIssuance, type AuthorityResult } from "../../core/src/generated/oauthGrantIssuance.ts";
 import { defaultApps, defaultHostMap, type McpApp, type McpAppId, type Surface } from "./apps.ts";
 import type { AssistantKind, PlatformHooks } from "./hooks.ts";
 import { codePage, consentPage, consentsPage, messagePage, phonePage } from "./pages.ts";
@@ -255,6 +255,39 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     return !!personId && customSlopPeople!.has(personId) && await o.platform.customChatGptSlopEligible!(personId, phoneKey);
   }
 
+  function authorityOf(cloud: "valid" | "invalid" | "unavailable"): AuthorityResult {
+    switch (cloud) {
+      case "valid": return "AuthorityValid";
+      case "unavailable": return "AuthorityUnavailable";
+      case "invalid": return "AuthorityInvalid";
+      default: {
+        const unreachable: never = cloud;
+        return unreachable;
+      }
+    }
+  }
+
+  /** spec/oauthGrantIssuance.md, "A staff ban refuses grant admission" */
+  async function admittedAuthority(phoneKey: string, personId: string | null, cloud: "valid" | "invalid" | "unavailable"): Promise<AuthorityResult> {
+    const authority = authorityOf(cloud);
+    try {
+      return grantAdmission(true, await o.platform.bannedKey(phoneKey, personId), authority);
+    } catch {
+      return grantAdmission(false, false, authority);
+    }
+  }
+
+  function admissionStop(authority: AuthorityResult): "invalid" | "unavailable" | undefined {
+    switch (authority) {
+      case "AuthorityValid": return undefined;
+      case "AuthorityUnavailable": return "unavailable";
+      case "AuthorityInvalid": return "invalid";
+      default: {
+        const unreachable: never = authority;
+        return unreachable;
+      }
+    }
+  }
 
   async function getClient(id: string, c: Ctx): Promise<OAuthClient | undefined> {
     if (id.length > 512) return undefined;
@@ -532,7 +565,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const cloudStatus = await cloudGrantCurrent(grant);
     const checked = stepIssuance(began, {
       type: "checkGrantAuthority",
-      authority: cloudStatus === "valid" ? "AuthorityValid" : cloudStatus === "unavailable" ? "AuthorityUnavailable" : "AuthorityInvalid",
+      authority: await admittedAuthority(grant.phoneKey, grant.personId, cloudStatus),
     });
     if (checked.phase === "RetryAuthority") return consentUnavailable(c, r, client);
     if (checked.phase !== "AwaitingConsumption") return messagePage(c.app, "Connect again", "This connection is no longer valid. Return to your agent or text conversation and connect again.", 403);
@@ -602,9 +635,10 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       if (!grant || grant.revokedAt !== null || grant.expiresAt <= at) return bad("invalid_grant");
       if (!(await customSlopEligible(c, client, grant.personId, grant.phoneKey))) return bad("invalid_grant");
       const cloudStatus=await cloudGrantCurrent(grant);
+      const codeStop = admissionStop(await admittedAuthority(grant.phoneKey, grant.personId, cloudStatus));
       if(ac.expiresAt<=now())return bad("invalid_grant");
-      if(cloudStatus==="unavailable")return temporarilyUnavailable();
-      if(cloudStatus!=="valid")return bad("invalid_grant");
+      if(codeStop==="unavailable")return temporarilyUnavailable();
+      if(codeStop==="invalid")return bad("invalid_grant");
       // The Cloud check may be slow: recheck expiry and atomically consume only after it succeeds.
       if(ac.expiresAt<=now() || grant.expiresAt<=now())return bad("invalid_grant");
       const consumed=await store.takeCode(ac.hash,now());
@@ -629,9 +663,10 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       if (!grant || grant.revokedAt !== null || grant.expiresAt <= at) return bad("invalid_grant");
       if (!(await customSlopEligible(c, client, grant.personId, grant.phoneKey))) return bad("invalid_grant");
       const cloudStatus=await cloudGrantCurrent(grant);
+      const refreshStop = admissionStop(await admittedAuthority(grant.phoneKey, grant.personId, cloudStatus));
       if(t.expiresAt<=now())return bad("invalid_grant");
-      if(cloudStatus==="unavailable")return temporarilyUnavailable();
-      if(cloudStatus!=="valid")return bad("invalid_grant");
+      if(refreshStop==="unavailable")return temporarilyUnavailable();
+      if(refreshStop==="invalid")return bad("invalid_grant");
       const asked = form.get("scope") === null ? t.scopes : parseScopes(form.get("scope"));
       if (!asked || !asked.every(s => t.scopes.includes(s))) return bad("invalid_scope");
       const res = form.get("resource");
@@ -742,7 +777,8 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!grant || grant.revokedAt !== null || grant.expiresAt <= at || !client) return "invalid";
     const cloudStatus=await cloudGrantCurrent(grant);
     if(t.expiresAt<=now())return "invalid";
-    if(cloudStatus!=="valid")return cloudStatus;
+    const bearerStop = admissionStop(await admittedAuthority(grant.phoneKey, grant.personId, cloudStatus));
+    if(bearerStop)return bearerStop;
     return { token: t, grant, client };
   }
 

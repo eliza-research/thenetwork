@@ -7,7 +7,7 @@ export type AuthorityResult = "AuthorityValid" | "AuthorityInvalid" | "Authority
 export type IssuancePhase = "StartApproval" | "AwaitingAuthority" | "RetryAuthority" | "DeniedAuthority" | "ExpiredApproval" | "AwaitingConsumption" | "AwaitingPersistence" | "GrantIssued";
 /** Story: Connect my agent after I approve access / An expired request cannot begin issuance (spec/oauthGrantIssuance.md:9) */
 export interface Issuance { phase: IssuancePhase; authorityAccepted: boolean; sameOwner: boolean; requestLive: boolean; grantLive: boolean }
-/** Story: Connect my agent after I approve access / Consumed approval must still match the owner and both deadlines (spec/oauthGrantIssuance.md:47) */
+/** Story: Connect my agent after I approve access / Consumed approval must still match the owner and both deadlines (spec/oauthGrantIssuance.md:67) */
 export interface ConsumedApproval { ownerMatches: boolean; consumedRequestLive: boolean; pendingGrantLive: boolean }
 
 /** One variant per transition in the spec. */
@@ -17,7 +17,7 @@ export type Event =
   | { type: "checkConsumption"; consumption: ConsumedApproval }
   | { type: "recordIssuance" };
 
-/** Story: Connect my agent after I approve access / Consumed approval must still match the owner and both deadlines (spec/oauthGrantIssuance.md:47) */
+/** Story: Connect my agent after I approve access / Consumed approval must still match the owner and both deadlines (spec/oauthGrantIssuance.md:67) */
 export const validConsumption: ConsumedApproval = { ownerMatches: true, consumedRequestLive: true, pendingGrantLive: true };
 /** Story: Connect my agent after I approve access / An expired request cannot begin issuance (spec/oauthGrantIssuance.md:9) */
 export const initial: Issuance = { phase: "StartApproval", authorityAccepted: false, sameOwner: false, requestLive: false, grantLive: false };
@@ -67,13 +67,40 @@ export function checkGrantAuthority(issuance: Issuance, authority: AuthorityResu
   return { ...issuance, authorityAccepted: authority === "AuthorityValid", phase: authority === "AuthorityValid" ? "AwaitingConsumption" : (authority === "AuthorityUnavailable" ? "RetryAuthority" : "DeniedAuthority") };
 }
 
-/** Story: Connect my agent after I approve access / Consumed approval must still match the owner and both deadlines (spec/oauthGrantIssuance.md:47) */
+/** Story: Connect my agent after I approve access / A staff ban refuses grant admission (spec/oauthGrantIssuance.md:47) */
+//@ pure
+export function grantAdmission(banKnown: boolean, banned: boolean, authority: AuthorityResult): AuthorityResult {
+  return !banKnown ? "AuthorityUnavailable" : (banned ? "AuthorityInvalid" : authority);
+}
+
+/** Story: Connect my agent after I approve access / A staff ban refuses grant admission (spec/oauthGrantIssuance.md:47) */
+//@ pure
+export function lawUnknownBanDoesNotAdmit(authority: AuthorityResult): boolean {
+  //@ ensures \result === true
+  return grantAdmission(false, false, authority) === "AuthorityUnavailable";
+}
+
+/** Story: Connect my agent after I approve access / A staff ban refuses grant admission (spec/oauthGrantIssuance.md:47) */
+//@ pure
+export function lawBannedGrantIsInvalid(authority: AuthorityResult): boolean {
+  //@ ensures \result === true
+  return grantAdmission(true, true, authority) === "AuthorityInvalid";
+}
+
+/** Story: Connect my agent after I approve access / A staff ban refuses grant admission (spec/oauthGrantIssuance.md:47) */
+//@ pure
+export function lawClearBanKeepsAuthority(authority: AuthorityResult): boolean {
+  //@ ensures \result === true
+  return grantAdmission(true, false, authority) === authority;
+}
+
+/** Story: Connect my agent after I approve access / Consumed approval must still match the owner and both deadlines (spec/oauthGrantIssuance.md:67) */
 //@ pure
 export function canCheckConsumption(issuance: Issuance): boolean {
   return issuance.phase === "AwaitingConsumption" && issuance.authorityAccepted && issuance.requestLive;
 }
 
-/** Story: Connect my agent after I approve access / Consumed approval must still match the owner and both deadlines (spec/oauthGrantIssuance.md:47) */
+/** Story: Connect my agent after I approve access / Consumed approval must still match the owner and both deadlines (spec/oauthGrantIssuance.md:67) */
 //@ pure
 export function checkConsumption(issuance: Issuance, consumption: ConsumedApproval): Issuance {
   //@ ensures (inv(issuance) && canCheckConsumption(issuance)) ==> alwaysIssuanceRequiresCurrentApproval(\result)
@@ -81,44 +108,44 @@ export function checkConsumption(issuance: Issuance, consumption: ConsumedApprov
   return { ...issuance, sameOwner: consumption.ownerMatches, requestLive: consumption.consumedRequestLive, grantLive: consumption.pendingGrantLive, phase: eligible ? "AwaitingPersistence" : "ExpiredApproval" };
 }
 
-/** Story: Connect my agent after I approve access / A successful response follows grant and code persistence (spec/oauthGrantIssuance.md:68) */
+/** Story: Connect my agent after I approve access / A successful response follows grant and code persistence (spec/oauthGrantIssuance.md:88) */
 //@ pure
 export function canRecordIssuance(issuance: Issuance): boolean {
   return issuance.phase === "AwaitingPersistence" && issuance.authorityAccepted && issuance.sameOwner && issuance.requestLive && issuance.grantLive;
 }
 
-/** Story: Connect my agent after I approve access / A successful response follows grant and code persistence (spec/oauthGrantIssuance.md:68) */
+/** Story: Connect my agent after I approve access / A successful response follows grant and code persistence (spec/oauthGrantIssuance.md:88) */
 //@ pure
 export function recordIssuance(issuance: Issuance): Issuance {
   //@ ensures (inv(issuance) && canRecordIssuance(issuance)) ==> alwaysIssuanceRequiresCurrentApproval(\result)
   return { ...issuance, phase: "GrantIssued" };
 }
 
-/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:80) */
+/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:100) */
 //@ pure
 export function alwaysIssuanceRequiresCurrentApproval(issuance: Issuance): boolean {
   return !(issuance.phase === "AwaitingPersistence" || issuance.phase === "GrantIssued") || (issuance.authorityAccepted && issuance.sameOwner && issuance.requestLive && issuance.grantLive);
 }
 
-/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:80) */
+/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:100) */
 //@ pure
 export function sometimesIssuesGrant(issuance: Issuance): boolean {
   return issuance.phase === "GrantIssued";
 }
 
-/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:80) */
+/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:100) */
 //@ pure
 export function sometimesRetriesAuthority(issuance: Issuance): boolean {
   return issuance.phase === "RetryAuthority";
 }
 
-/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:80) */
+/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:100) */
 //@ pure
 export function sometimesDeniesAuthority(issuance: Issuance): boolean {
   return issuance.phase === "DeniedAuthority";
 }
 
-/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:80) */
+/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:100) */
 //@ pure
 export function sometimesExpiresApproval(issuance: Issuance): boolean {
   return issuance.phase === "ExpiredApproval";
