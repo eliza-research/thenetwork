@@ -123,6 +123,14 @@ export interface PeopleStore {
 
   /** Record a ban (never changed or removed by the service). */
   ban(b: Ban): Promise<void>;
+  /**
+   * Write these ban rows, suppress the phone hashes, and end live web sessions and open
+   * login codes for the person, in one step. When a matching ban is already on file, write
+   * no second ban row and return "already_banned". Session and code cleanup still runs, so
+   * a repeat ends anything the first cleanup left behind. A failure rolls the step back:
+   * a ban row is never kept without that cleanup.
+   */
+  applyBan(rows: Ban[], hashes: string[], personId: string, at: number, by: "phone" | "person"): Promise<"banned" | "already_banned">;
   /** True when this phone hash, or this person (a person-scope ban), is banned. */
   isBanned(phoneHash: string, personId?: string | null): Promise<boolean>;
   /** The phone hashes of a person's verified phones (a person ban covers each). */
@@ -144,10 +152,10 @@ export interface PeopleStore {
   getSession(tokenHash: string): Promise<Session | undefined>;
   revokeSession(tokenHash: string, at: number): Promise<void>;
   /**
-   * A staff ban ends every live web session and open OTP challenge for this person
-   * (PRD 40.3 / go-live-handoff: a banned number cannot keep acting with a cookie, and a
-   * code sent before the ban cannot finish a login). Mirrors the phone-change path that
-   * ends the old number's sessions.
+   * End every live web session and open OTP challenge for this person (PRD 40.3: a banned
+   * number cannot keep acting with a cookie, and a code sent before the ban cannot finish
+   * a login). Safe to call again: a session keeps the earliest revocation, and a challenge
+   * that is already gone stays gone.
    */
   endAuthForBan(personId: string, at: number): Promise<void>;
   /** Sessions of a verified phone that had no person get the person after a join. */
@@ -285,6 +293,29 @@ export class MemoryPeopleStore implements PeopleStore {
 
   readonly bans: Ban[] = [];
   async ban(b: Ban) { if (!this.bans.some(x => x.id === b.id)) this.bans.push({ ...b }); }
+  async applyBan(rows: Ban[], hashes: string[], personId: string, at: number, by: "phone" | "person"): Promise<"banned" | "already_banned"> {
+    // One turn of the event loop: the check and the writes do not yield, so a second call
+    // cannot pass the check before these rows exist.
+    const already = this.banOnFile(by, personId, hashes);
+    if (!already) {
+      for (const b of rows) if (!this.bans.some(x => x.id === b.id)) this.bans.push({ ...b });
+      for (const h of hashes) if (!this.suppression.has(h)) this.suppression.set(h, { reason: "banned", at });
+    }
+    await this.endAuthForBan(personId, at);
+    return already ? "already_banned" : "banned";
+  }
+  private banOnFile(by: "phone" | "person", personId: string, hashes: string[]): boolean {
+    switch (by) {
+      case "person":
+        return this.bans.some(b => b.scope === "person" && b.personId === personId);
+      case "phone":
+        return hashes.length > 0 && hashes.every(h => this.bans.some(b => b.phoneHash !== null && b.phoneHash === h));
+      default: {
+        const unexpected: never = by;
+        throw new Error(`unexpected ban scope ${unexpected}`);
+      }
+    }
+  }
   async isBanned(phoneHash: string, personId?: string | null) {
     return this.bans.some(b => (b.phoneHash !== null && b.phoneHash === phoneHash) || (b.scope === "person" && !!personId && b.personId === personId));
   }

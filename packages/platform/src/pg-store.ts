@@ -37,6 +37,39 @@ const session = (r: Row): Session => ({
   rotatedFrom: r.rotated_from ?? null, revokedAt: ms(r.revoked_at),
 });
 
+/** True when this ban is already on file: a person-scope row, or every phone hash. */
+async function banOnFile(q: SQL, by: "phone" | "person", personId: string, hashes: string[]): Promise<boolean> {
+  switch (by) {
+    case "person": {
+      const [r] = await q`select 1 as x from platform.bans where scope = 'person' and person_id = ${personId}::uuid limit 1`;
+      return !!r;
+    }
+    case "phone": {
+      for (const h of hashes) {
+        const [r] = await q`select 1 as x from platform.bans where phone_hash = ${h} limit 1`;
+        if (!r) return false;
+      }
+      return hashes.length > 0;
+    }
+    default: {
+      const unexpected: never = by;
+      throw new Error(`unexpected ban scope ${unexpected}`);
+    }
+  }
+}
+
+/** Revoke live sessions and delete open login codes for this person. Idempotent. */
+async function endAuthRows(q: SQL, personId: string, at: number) {
+  await q`
+    update platform.sessions
+    set revoked_at = least(coalesce(revoked_at, ${ts(at)}), ${ts(at)})
+    where person_id = ${personId}::uuid
+       or e164 in (select e164 from platform.phone_identities where person_id = ${personId}::uuid)`;
+  await q`
+    delete from platform.otp_challenges
+    where e164 in (select e164 from platform.phone_identities where person_id = ${personId}::uuid)`;
+}
+
 export class PgPeopleStore implements PeopleStore {
   readonly sql: SQL;
   private readonly owned: boolean;
@@ -171,6 +204,24 @@ export class PgPeopleStore implements PeopleStore {
     await this.sql`insert into platform.bans (id, scope, person_id, phone_hash, reason, report_id, banned_by, at)
       values (${b.id}, ${b.scope}, ${b.personId}, ${b.phoneHash}, ${b.reason}, ${b.reportId}, ${b.bannedBy}, ${ts(b.at)}) on conflict (id) do nothing`;
   }
+  async applyBan(rows: Ban[], hashes: string[], personId: string, at: number, by: "phone" | "person"): Promise<"banned" | "already_banned"> {
+    return this.sql.begin(async tx => {
+      // One writer at a time for this person, so two bans cannot both insert.
+      await tx`select id from platform.people where id = ${personId}::uuid for update`;
+      const already = await banOnFile(tx, by, personId, hashes);
+      if (!already) {
+        for (const b of rows) {
+          await tx`insert into platform.bans (id, scope, person_id, phone_hash, reason, report_id, banned_by, at)
+            values (${b.id}, ${b.scope}, ${b.personId}, ${b.phoneHash}, ${b.reason}, ${b.reportId}, ${b.bannedBy}, ${ts(b.at)}) on conflict (id) do nothing`;
+        }
+        for (const h of hashes) {
+          await tx`insert into platform.suppression (phone_hash, reason, at) values (${h}, 'banned', ${ts(at)}) on conflict do nothing`;
+        }
+      }
+      await endAuthRows(tx, personId, at);
+      return already ? "already_banned" : "banned";
+    });
+  }
   async isBanned(phoneHash: string, personId?: string | null) {
     const [r] = await this.sql`select 1 from platform.bans where phone_hash = ${phoneHash} or (scope = 'person' and ${personId ?? null}::uuid is not null and person_id = ${personId ?? null}::uuid) limit 1`;
     return !!r;
@@ -224,14 +275,10 @@ export class PgPeopleStore implements PeopleStore {
     await this.sql`update platform.sessions set revoked_at = least(coalesce(revoked_at, ${ts(at)}), ${ts(at)}) where token_hash = ${tokenHash}`;
   }
   async endAuthForBan(personId: string, at: number) {
-    await this.sql`
-      update platform.sessions
-      set revoked_at = least(coalesce(revoked_at, ${ts(at)}), ${ts(at)})
-      where person_id = ${personId}::uuid
-         or e164 in (select e164 from platform.phone_identities where person_id = ${personId}::uuid)`;
-    await this.sql`
-      delete from platform.otp_challenges
-      where e164 in (select e164 from platform.phone_identities where person_id = ${personId}::uuid)`;
+    await this.sql.begin(async tx => {
+      await tx`select id from platform.people where id = ${personId}::uuid for update`;
+      await endAuthRows(tx, personId, at);
+    });
   }
   async attachPerson(e164: string, personId: string) {
     await this.sql`update platform.sessions set person_id = ${personId} where e164 = ${e164} and person_id is null`;
