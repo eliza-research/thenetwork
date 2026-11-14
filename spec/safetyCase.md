@@ -94,6 +94,16 @@ pure def lawDismissedReportStaysDismissed(decision: ReportDecision, sameMember: 
   reportAfterDecision(ReportDismissed, decision, sameMember, reportMatches) == ReportDismissed
 ```
 
+### A ban allows only carrier commands and app leave
+
+A banned person cannot start or continue ordinary work on the text line. STOP and HELP still work. The person can leave an existing app. The shell records a ban and removes access to shared profile fields in one database transaction.
+
+```quint
+pure def inboundAllowedAfterBan(banned: bool, compliance: bool): bool = not(banned) or compliance
+pure def lawBanBlocksOrdinaryInbound(compliance: bool): bool =
+  inboundAllowedAfterBan(true, compliance) == compliance
+```
+
 ## Story: Clear a mistaken minor signal after checking ages
 
 > As a staff member, I want to clear a false signal only when the record confirms an adult and the member never stated a lower age.

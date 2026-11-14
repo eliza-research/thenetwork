@@ -48,6 +48,7 @@ import {
   networkEnrollmentAllowed, noticeAllowed, otherAppAllowed, otherAppEnrollment, pendingMatchesApp, shouldReadLookingFor,
   shouldReadPendingAnswer, step as stepTextJoin,
 } from "../../core/src/generated/textEnrollment.ts";
+import { inboundAllowedAfterBan } from "../../core/src/generated/safetyCase.ts";
 import { Inbox, type CollectedReply } from "./inbox.ts";
 import { networkRoutePolicy, routeEnvelopeAllowed, sameNetworkAuthority, type NetworkRoutePolicy } from "./route-authority.ts";
 import { TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH, RELAY_PHOTO_RESOLVE_PATH, parseApprovedRelayPhotos, type SetStateRequest, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
@@ -1037,13 +1038,18 @@ export class NetworkService implements RuntimeHost {
         this.log(`[safety] ${ev.type} action=${ev.action ?? "-"}`);
         return "safety";
       case "reaction":
-        await this.lineAdapter()?.engaged?.(ev.from);
+        {
+          const phone = normalizePhone(ev.from);
+          if (!phone || !(await this.accounts.banned(phone))) await this.lineAdapter()?.engaged?.(ev.from);
+        }
         return "reaction";
       case "message": break;
     }
     if (ev.isGroup) return "ignored_group";
+    const e164 = normalizePhone(ev.from);
+    const banned = !!e164 && await this.accounts.banned(e164);
     // Legacy webhooks own transport engagement. A signed turn admits its canonical member after policy processing.
-    if (!this.inboundTurn()) await this.lineAdapter()?.engaged?.(ev.from);
+    if (!banned && !this.inboundTurn()) await this.lineAdapter()?.engaged?.(ev.from);
     const route = await this.route(ev, o.app);
     const app = this.apps[route.app];
     const joinedMember = (await this.memberApps(ev.from)).find(m => m.app === route.app);
@@ -1062,7 +1068,6 @@ export class NetworkService implements RuntimeHost {
     const memberId = rt.memberOf(ev.from);
     const turn = this.inboundTurn();
     if (turn) { turn.app = app.id; turn.memberId = memberId; }
-    const e164 = normalizePhone(ev.from);
     const t = this.clock.now();
     const rowId = `in:${ev.channel}:${ev.messageId}`;
     const kw = platformKeyword(ev.text);
@@ -1074,10 +1079,16 @@ export class NetworkService implements RuntimeHost {
       const scope: StopScope = kw === "stop_all" || route.shared ? "global" : stopScope(this.env);
       return this.stop(kw, ev.from, app, rt, scope, rowId, line, ev);
     }
+    const leavingId = leaveTarget(ev.text, this.apps);
+    if (banned && kw === "help") {
+      await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`, "compliance");
+      return "held";
+    }
+    if (!inboundAllowedAfterBan(banned, !!leavingId)) return "held";
 
     // A number not seen for 12 months may have a new owner: on hold for staff review. Nothing is
     // answered or stored until staff decide (STOP above always works; HELP still answers).
-    if (e164 && (await this.accounts.seen(e164)) === "held") {
+    if (!banned && e164 && (await this.accounts.seen(e164)) === "held") {
       this.log(`[inbound] a number on hold for review (${rt.id}): not handled`);
       if (kw === "help") await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`, "compliance");
       return "held";
@@ -1086,8 +1097,8 @@ export class NetworkService implements RuntimeHost {
     // Photos by text (photoIntake.ts): the answer to the photo consent ask, then any attachment. A photo
     // from a minor, an unknown age, a banned person or a non-member of slop is dropped before it is fetched.
     // Only an explicit YES PHOTOS / NO PHOTOS routed to slop: a bare yes or no goes on to the Network (a probe, a date ask, another app).
-    if (e164 && !kw && !profileRead && (await this.photoIntake.consentAnswer(e164, ev.text, rowId, route.app))) return "handled";
-    if (e164 && ev.mediaUrls?.length && !profileRead) {
+    if (!banned && e164 && !kw && !profileRead && (await this.photoIntake.consentAnswer(e164, ev.text, rowId, route.app))) return "handled";
+    if (!banned && e164 && ev.mediaUrls?.length && !profileRead) {
       // A provider retry of the same message takes no photo twice.
       const first = (await this.people.hit(`photo_msg:${rowId}`, DAY, t)).count === 1;
       const r = first ? await this.photoIntake.photosIn(e164, ev.mediaUrls, rowId) : { outcome: "duplicate" as const };
@@ -1095,7 +1106,6 @@ export class NetworkService implements RuntimeHost {
     }
 
     // "leave <app>": that app only, on any line.
-    const leavingId = leaveTarget(ev.text, this.apps);
     const leaving = leavingId ? this.apps[leavingId] : undefined;
     if (leaving && e164) {
       const leaveMember = (await this.memberApps(ev.from)).find(m => m.app === leaving.id);
@@ -1111,6 +1121,7 @@ export class NetworkService implements RuntimeHost {
         return "left";
       }
     }
+    if (banned) return "held";
 
     // A read request is never an instruction to join, opt in or create a person.
     if (!memberId && profileRead) return "handled";

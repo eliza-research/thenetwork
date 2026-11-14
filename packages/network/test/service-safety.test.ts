@@ -142,6 +142,10 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     // Ben is on friends too (the hold and the ban reach every app).
     await web.login("friends", ben);
     expect((await web.join("friends", 32, "Ben")).status).toBe(200);
+    const benPerson = (await s.accounts.personFor(ben))!;
+    expect(await s.accounts.share(APPS.friends, { e164: ben, personId: benPerson.id }, "slop", ["city"])).toBe(true);
+    const benKey = s.accounts.phoneHash(ben);
+    await s.people.putPending({ phoneHash: benKey, kind: "share", app: "slop", name: null, age: null, at: clock.now() });
     const a = (await memberOf("slop", ana))!.id, b = (await memberOf("slop", ben))!.id, bf = (await memberOf("friends", ben))!.id;
     expect(await text(s, clock, ana, "report Ben, he was rude and kept texting me")).toBe("handled");
 
@@ -177,6 +181,16 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect([(await memberOf("slop", ben))!.account_status, (await memberOf("friends", ben))!.account_status]).toEqual(["restricted", "restricted"]);
     const after = await (await staff(s, "saf-tok", "GET", "/apps/slop/safety/reports")).json() as any;
     expect(after.reports[0].status).toBe("banned");
+    // spec/safetyCase.md, "A ban allows only carrier commands and app leave"
+    expect(await s.people.shareGrants(benPerson.id)).toEqual([
+      expect.objectContaining({ fromApp: "slop", toApp: "friends", revokedAt: expect.any(Number) }),
+    ]);
+    expect(await s.people.getPending(benKey, "share", "slop")).toBeUndefined();
+    const replies = directs.length;
+    expect(await text(s, clock, ben, "SHARE")).toBe("held");
+    expect(directs).toHaveLength(replies);
+    expect(await text(s, clock, ben, "HELP")).toBe("held");
+    expect(directs.slice(replies)).toEqual([expect.objectContaining({ to: ben })]);
 
     // The banned number cannot join any other app, by text or on the web; nothing is stored and nothing is answered.
     const before = directs.length;
