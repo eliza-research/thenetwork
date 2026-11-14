@@ -75,4 +75,65 @@ describe("block and report targets in a group plan", () => {
     await w.say("a", "Ben");
     expect(w.net.safetyReports().map(r => [r.reporterId, r.subjectId])).toEqual([["a", "b"]]);
   });
+
+  test("affirming 'Who do you mean: Ben?' with 'yes' files the report", async () => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    await w.onboard("a", "b");
+    w.propose(["a", "b"]);
+    await w.answerProbes(["a", "b"]);
+    await w.run(5 * DAY);
+    let from = w.mark();
+    await w.say("a", "report him, he was creepy");
+    expect(w.to("a", from).map(s => s.body)).toEqual([expect.stringMatching(/^Who do you mean: Ben\?/)]);
+    expect(w.net.safetyReports()).toHaveLength(0);
+    from = w.mark();
+    await w.say("a", "yes");
+    expect(w.net.safetyReports().map(r => [r.reporterId, r.subjectId])).toEqual([["a", "b"]]);
+  });
+
+  test("a member with no counterparts can block someone by name after answering 'Who do you mean?'", async () => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    await w.onboard("a", "b");
+    let from = w.mark();
+    await w.say("a", "block him");
+    expect(w.to("a", from).map(s => s.body)).toEqual([expect.stringMatching(/^Who do you mean\?/)]);
+    from = w.mark();
+    await w.say("a", "Ben");
+    expect((w.net as any).blocks.has("a|b")).toBe(true);
+  });
+
+  test("active probe reply 'yes' is not hijacked by pendingSafety", async () => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")], { review: "auto" });
+    await w.onboard("a", "b", "c");
+    // 'a' triggers a safety clarification question
+    let from = w.mark();
+    await w.say("a", "block him");
+    expect(w.to("a", from).map(s => s.body)).toEqual([expect.stringMatching(/^Who do you mean\?/)]);
+    
+    // Now a probe arrives for 'a'
+    w.propose(["a", "c"]);
+    await w.runUntil(() => w.probed("a"), 2 * DAY);
+    expect(w.probed("a")).toBe(true);
+    
+    // Answering 'yes' answers the probe rather than executing pendingSafety
+    from = w.mark();
+    await w.say("a", "yes");
+    // Verify probe was answered and not hijacked to block
+    expect(w.probed("a")).toBe(false);
+    expect((w.net as any).blocks.has("a|b")).toBe(false);
+  });
+
+  test("reporting someone not a counterpart after 'Who do you mean?' does not file a report", async () => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    await w.onboard("a", "b");
+    let from = w.mark();
+    await w.say("a", "report him, he was creepy");
+    expect(w.to("a", from).map(s => s.body)).toEqual([expect.stringMatching(/^Who do you mean\?/)]);
+    from = w.mark();
+    await w.say("a", "Ben");
+    // Report is not filed because 'b' was never a counterpart of 'a'
+    expect(w.net.safetyReports()).toHaveLength(0);
+    expect(w.to("a", from).map(s => s.body)).toEqual([expect.stringMatching(/couldn't tell who you mean/i)]);
+  });
 });
+
