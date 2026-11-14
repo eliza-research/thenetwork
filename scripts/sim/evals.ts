@@ -1,12 +1,12 @@
 // The evals block: hand-written corpora (evals/, append-only) scored against the offline parsers.
 // Every row was written by hand in members' own words, never by the simulator's templates. A misread
 // found in the wild is added to the corpus, then fixed; never delete a row to make a change pass.
-//   network/*      the Network's understanding rules (consent replies, abuse, teen ages, wants, areas, negations)
+//   network/*      the Network's understanding rules (consent replies, abuse, teen ages, wants, areas, negations, feedback)
 //   replies.jsonl  core parseReply (yes / no / unsure)
 //   opt-out*.jsonl the opt-out readers (core parseOptOut; the platform consent ledger's detectKeyword)
 //   guard/         the shared leak guard (contacts in disguise, private facts, homoglyphs, benign text)
 import { classifyYesNo, findLeaks, parseOptOut, parseReply, type ReplyAnswer } from "../../packages/core/src/index.ts";
-import { classify, extractProfile, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
+import { classify, extractProfile, feedbackOf, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
 import { detectKeyword, leaveTarget, optOutPhrase } from "../../packages/platform/src/consent.ts";
 import { createPublicApi } from "../../packages/platform/src/api.ts";
 import { APPS, type AppId } from "../../packages/platform/src/apps.ts";
@@ -104,6 +104,11 @@ export async function evalsBlock(b: Block): Promise<void> {
   b.gate(`areas: recall >= 0.9 (n ${areas.length})`, areas.length >= 190 && areaRecall >= 0.9, areaRecall.toFixed(3));
   const defaulted = unknown.filter(l => extractProfile(l.text).area !== undefined).map(l => l.text);
   b.gate("areas: an unknown place is never defaulted", defaulted.length === 0 && extractProfile("I live in Hoboken").areaUnknown === true, defaulted.slice(0, 5).join(" | "));
+
+  const fb = await jsonl<{ text: string; sentiment: "positive" | "neutral" | "negative"; again: boolean }>("network/feedback.jsonl");
+  const fbMiss = fb.filter(l => { const f = feedbackOf(l.text); return f.sentiment !== l.sentiment || f.again !== l.again; })
+    .map(l => { const f = feedbackOf(l.text); return `${JSON.stringify(l.text)} -> ${f.sentiment}${f.again ? " again" : ""}`; });
+  b.gate(`feedback (n ${fb.length}): every row read as labelled (sentiment and meet again)`, fb.length >= 25 && fbMiss.length === 0, fbMiss.slice(0, 5).join("; "));
 
   const neg = await jsonl<{ text: string }>("network/negations.jsonl");
   const negBad = neg.filter(l => { const x = extractProfile(l.text); return x.desireIds.length || x.interests.length || classify(l.text).kind === "people_request"; }).map(l => l.text);
