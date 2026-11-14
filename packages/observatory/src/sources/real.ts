@@ -546,15 +546,18 @@ export class RealSource implements DataSource {
       extra: service ? serviceAlerts(service, Date.now()) : [],
     });
     // Scorecard and growth.
-    const optOutAt = new Map<string, number>();
-    for (const e of all) if (e.type === "member_opted_out" && e.actor_id) optOutAt.set(e.actor_id, ms(e.at) ?? 0);
+    const optOutTimes = new Map<string, number[]>();
+    for (const e of all) if (e.type === "member_opted_out" && e.actor_id) {
+      const times = optOutTimes.get(e.actor_id) ?? [];
+      times.push(ms(e.at) ?? 0); optOutTimes.set(e.actor_id, times);
+    }
     const inviteRows = all.filter(e => e.type === "invite");
     const inviters = new Set(inviteRows.map(e => e.inviter).filter(Boolean)).size;
     const invitees = new Set<string>(inviteRows.length ? inviteRows.map(e => e.invitee).filter(Boolean) : [...s.members.values()].filter(m => m.invitedBy).map(m => m.id));
     const members = [...s.members.values()];
     const messages: MsgMeta[] = (msgs as any[]).map(m => ({ memberId: m.member_id, ts: ms(m.ts) ?? 0, direction: m.direction, proactive: m.proactive, status: m.status }));
     const card = scorecard({
-      now, start: this.store.clock.start, members, opps, messages, requests, optOutAt, invites: s.counts.invites, accepts: s.counts.accepts,
+      now, start: this.store.clock.start, members, opps, messages, requests, optOutTimes, invites: s.counts.invites, accepts: s.counts.accepts,
       reviewSeconds: opps.reduce((a, o) => a + (o.review?.secondsSpent ?? 0), 0), sentProposals: opps.filter(o => o.review?.decision === "approve" && !o.review.invalidated && o.review.reviewer !== SIM_AUTO_REVIEWER).length,
       inviters, minorContacts, leaks,
     });
