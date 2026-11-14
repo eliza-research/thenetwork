@@ -304,14 +304,22 @@ export class World {
       });
     }
     this.ids = [...this.members.keys()].sort();
-    // Inviter cluster (fairness cohort): follow invitedBy to the root.
+    // Inviter cluster (fairness cohort, PRD 33.8): follow invitedBy to the root.
+    // The stored id may be an alias (ME-006). Stop when the next canonical id was already
+    // visited. The old check compared the raw alias, so an alias cycle never matched and
+    // the walk did not finish. A canonical cycle keeps the same stop (the member before
+    // the repeat). Never follow a chain into a minor.
     for (const id of this.ids) {
-      let cur = id; const seen = new Set<string>();
+      let cur = id;
+      const seen = new Set<MemberId>();
       while (true) {
-        const inv = this.members.get(cur)?.m.invitedBy;
+        seen.add(cur);
+        const raw = this.members.get(cur)?.m.invitedBy;
+        if (!raw) break;
+        const next = C(raw);
         // Never follow an invite chain into a minor: their id must not surface as a fairness cohort key.
-        if (!inv || seen.has(inv) || !this.members.has(C(inv)) || this.minors.has(C(inv))) break;
-        seen.add(cur); cur = C(inv);
+        if (!this.members.has(next) || this.minors.has(next) || seen.has(next)) break;
+        cur = next;
       }
       this.members.get(id)!.inviterRoot = cur;
     }
