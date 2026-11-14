@@ -257,7 +257,11 @@ export async function runPeonWorld(o: PeonRunOptions): Promise<PeonRunResult> {
       const offered = held(jid) ? [] : passers.slice(0, left);
       for (const f of fs) {
         f.offered = offered.includes(f);
-        if (!f.offered) { f.rec!.outcome = "declined"; f.rec!.declinedBy = [jid]; }
+        if (!f.offered) {
+          // A passing candidate lost the role, not the employer's approval, when it closed.
+          if (f.passed && !state.hired.has(f.cand) && left <= 0) { f.roleClosed = true; f.rec!.outcome = "cancelled"; }
+          else { f.rec!.outcome = "declined"; f.rec!.declinedBy = [jid]; }
+        }
         else { if (!offersByCand.has(f.cand)) offersByCand.set(f.cand, []); offersByCand.get(f.cand)!.push(f); }
       }
       void j;
@@ -289,7 +293,10 @@ export async function runPeonWorld(o: PeonRunOptions): Promise<PeonRunResult> {
     for (const f of flows) {
       if (f.interviewWeek !== week || f.interviewed !== undefined) continue;
       const c = oracle.cand.get(f.cand)!, j = oracle.job.get(f.job)!;
-      if (state.hired.has(c.id) || (state.openings.get(j.id) ?? 0) <= 0 || held(j.id)) { f.interviewed = false; f.withdrawn = true; f.rec!.outcome = "cancelled"; continue; }
+      if (state.hired.has(c.id) || (state.openings.get(j.id) ?? 0) <= 0 || held(j.id)) {
+        if (!state.hired.has(c.id) && (state.openings.get(j.id) ?? 0) <= 0) f.roleClosed = true;
+        f.interviewed = false; f.withdrawn = true; f.rec!.outcome = "cancelled"; continue;
+      }
       f.interviewed = u01(seed, "show", c.id, j.id) < oracle.P.showUp * Math.max(0.6, c.truth.replyProb);
       if (!f.interviewed) { f.rec!.outcome = "no_show"; continue; }
       f.passed = u01(seed, "pass", c.id, j.id) < oracle.pPass(c, j);
