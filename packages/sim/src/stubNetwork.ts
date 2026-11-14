@@ -8,7 +8,7 @@
 // minors get single-player value only: onboarding plus concierge answers and public suggestions.
 import { DAY, HOUR, MINUTE, type City, type MemberId, type Proposal, type ScoreComponents, type WorldSnapshot } from "@thenetwork/core";
 // Engine availability helpers (pure; their import chain does not reach the simulator, so no cycle).
-import { availabilityProb, candidateSlots, standingFromFacets, type AvailabilityEvidence, type TimeSlot } from "../../engine/src/attention.ts";
+import { availabilityProb, candidateSlots, standingFromFacets, type AvailabilityEvidence } from "../../engine/src/attention.ts";
 import { parseYesNo } from "./agent/policy.ts";
 import type { SimMeta } from "./channel.ts";
 import type { InboundMessage, NetworkContext, NetworkUnderTest } from "./network.ts";
@@ -294,9 +294,10 @@ export class StubNetwork implements NetworkUnderTest {
 
   private schedule(opp: Opp, now: number) {
     const going = [...opp.invites].filter(([, i]) => i.status === "yes").map(([id]) => id);
+    const at = this.opts.timeAware ? this.pickSlot(opp.p, going, now) : nextLocalHour(now + 2 * DAY, opp.p.city, 19);
+    if (at === undefined) { this.cancel(opp, "no_available_slot"); return; }
     opp.stage = "scheduled";
     for (const inv of opp.invites.values()) if (inv.status === "pending") inv.status = "dropped";
-    const at = this.opts.timeAware ? this.pickSlot(opp.p, going, now) : nextLocalHour(now + 2 * DAY, opp.p.city, 19);
     opp.meetingAt = at;
     const area = this.member(going[0]!).area;
     this.ctx.recordMeeting({ proposalId: opp.p.id, participants: going, at, city: opp.p.city, kind: opp.p.kind });
@@ -387,16 +388,18 @@ export class StubNetwork implements NetworkUnderTest {
 
   // ------------------------------------------------------------------ helpers
   /** StubOptions.timeAware: the meeting slot from the members' stated availability (see StubOptions). */
-  private pickSlot(p: Proposal, going: MemberId[], now: number): number {
+  private pickSlot(p: Proposal, going: MemberId[], now: number): number | undefined {
     const tz = CITY_TZ[p.city];
     const snap = this.ctx.snapshot();
     const ev = going.map(id => this.statedAvailability(snap, id, p.city, tz, now));
-    let cands: TimeSlot[] = p.window ? candidateSlots(tz, now, { window: p.window }) : [];
-    if (!cands.length) cands = candidateSlots(tz, now);
+    const cands = candidateSlots(tz, now, { window: p.window });
     const scored = cands.map(slot => ({ slot, joint: ev.reduce((acc, e) => acc * availabilityProb(e, slot, now), 1) }));
     const best = Math.max(0, ...scored.map(x => x.joint));
     const near = scored.filter(x => x.joint > 0 && x.joint >= 0.8 * best);
-    if (!near.length) return nextLocalHour(now + 2 * DAY, p.city, 19);
+    if (!near.length) {
+      const fallback = nextLocalHour(now + 2 * DAY, p.city, 19);
+      return !p.window || (fallback >= p.window.start && fallback <= p.window.end) ? fallback : undefined;
+    }
     return near[hash32(p.id) % near.length]!.slot.start;
   }
 
