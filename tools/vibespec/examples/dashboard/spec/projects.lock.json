@@ -1,0 +1,9 @@
+{
+  "Domain / A project entry": ["e3b0c44298fc","3b828fee5632"],
+  "Domain / What the simulator tries": ["5f9b034276f5","9ef0b2a4248b"],
+  "Story: Connect a sheet as a project / A sheet is connected as at most one project": ["eb5dd7efb26f","17aa7f06468d"],
+  "Story: Connect a sheet as a project / A project can be disconnected": ["e3b0c44298fc","cb7eeff9534b"],
+  "Story: Know which project a channel means / The admin screen never gives two projects the same channel": ["e3b0c44298fc","4cd05c8c1ee2"],
+  "Story: Know which project a channel means / A channel typed into a sheet by hand is accepted, even if another project has it": ["e4ff15fea71a","f676e2708b9f"],
+  "Story: Know which project a channel means / The app never guesses which project a shared channel means": ["d55551b82803","d6cfce922a34"]
+}

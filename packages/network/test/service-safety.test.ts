@@ -93,9 +93,17 @@ function site(s: NetworkService, clock: SimClock, otp: FakeOtp) {
     expect((await json(app, "POST", "/api/auth/otp/start", { phone })).status).toBe(200);
     expect((await json(app, "POST", "/api/auth/otp/verify", { phone, code: otp.codes.get(phone) })).status).toBe(200);
   };
+  /** A banned number: the same start answer, no code sent, and no session from any code. */
+  const loginRefused = async (app: AppId, phone: string) => {
+    clock.advance(31_000);
+    const sent = otp.sent;
+    expect((await json(app, "POST", "/api/auth/otp/start", { phone })).status).toBe(200);
+    expect(otp.sent).toBe(sent);
+    expect((await json(app, "POST", "/api/auth/otp/verify", { phone, code: otp.codes.get(phone) })).body).toEqual({ ok: false, error: "invalid_code" });
+  };
   const join = (app: AppId, age: number, firstName = "Rae") => json(app, "POST", "/api/join", { firstName, age, consent: { sms: true, wording: APPS[app].consent.text } });
   const forget = (app: AppId) => jar.delete(app);
-  return { call, json, login, join, forget };
+  return { call, json, login, loginRefused, join, forget };
 }
 
 /** A small JPEG with an EXIF block carrying GPS. */
@@ -174,14 +182,14 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const before = directs.length;
     expect(await text(s, clock, ben, "peon")).toBe("held");
     expect(directs.length).toBe(before);
-    await web.login("peon", ben);
-    expect((await web.join("peon", 32, "Ben")).body).toMatchObject({ ok: false, error: "review" });
+    // OTP login: no code is sent to the banned number and no session is issued (PRD 40.3).
+    await web.loginRefused("peon", ben);
+    expect((await web.join("peon", 32, "Ben")).body).toMatchObject({ ok: false });
     expect(await memberOf("peon", ben)).toBeUndefined();
-    // Delete everything does not lift a ban: the same number still cannot join.
+    // Later attempts stay refused; the banned number never gets a web session to act with.
     clock.advance(MINUTE);
-    expect((await web.json("peon", "POST", "/api/me/delete", { scope: "all" })).status).toBe(200);
-    await web.login("peon", ben);
-    expect((await web.join("peon", 32, "Ben")).body).toMatchObject({ ok: false, error: "review" });
+    await web.loginRefused("peon", ben);
+    expect((await web.join("peon", 32, "Ben")).body).toMatchObject({ ok: false });
     expect((await sql`select count(*)::int as n from platform.bans`)[0].n).toBe(1);
 
     // Audit: requested before result, for the hold and the ban.

@@ -20,6 +20,7 @@
 //   4. the platform stores the result with `appearanceFacet` (agent_private) and never shows it.
 //
 // The question bank asks nothing about race, ethnicity, age, gender or disability.
+import { ratingMaxBytes, ratingMaxPhotos } from "../../../../core/src/generated/photoPolicy.ts";
 import { canRatePhotos, adultsOnly, BODY_TYPES, type AppearanceRater, type AppearanceScore, type BodyType, type PhotoRef, type RatingSubject } from "./appearance.ts";
 import { DEFAULT_CLEF_WEIGHTS, validateClefWeights, type ClefWeights } from "./clefWeights.ts";
 
@@ -179,7 +180,6 @@ function sniffType(bytes: Uint8Array): string {
   if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[8] === 0x57) return "image/webp";
   return "image/jpeg";
 }
-const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 
 export class WorkersAIClefRater implements AppearanceRater {
   readonly id: string;
@@ -198,7 +198,7 @@ export class WorkersAIClefRater implements AppearanceRater {
 
   /** One Clef call on one photo (raw answers). Exposed for feature extraction when fitting weights. */
   async ask(image: { bytes: Uint8Array; contentType?: string }): Promise<ClefResult> {
-    if (image.bytes.byteLength > MAX_IMAGE_BYTES) throw new ClefError("photo over Clef's 4 MiB limit: resize before rating");
+    if (image.bytes.byteLength > ratingMaxBytes) throw new ClefError("photo over Clef's 4 MiB limit: resize before rating");
     return clefRun({ ...this.o, model: this.o.model ?? "clef" }, { state: CLEF_STATE, questions: CLEF_QUESTIONS, images: [`data:${image.contentType ?? sniffType(image.bytes)};base64,${b64(image.bytes)}`] });
   }
 
@@ -206,7 +206,7 @@ export class WorkersAIClefRater implements AppearanceRater {
   async features(subject: RatingSubject, photos: readonly PhotoRef[]): Promise<{ photoId: string; x: Record<string, number>; confidence: number }[]> {
     if (!canRatePhotos(subject)) return []; // adults only, before any photo is read
     const out: { photoId: string; x: Record<string, number>; confidence: number }[] = [];
-    for (const p of photos.slice(0, this.o.maxPhotos ?? 4)) {
+    for (const p of photos.slice(0, this.o.maxPhotos ?? ratingMaxPhotos)) {
       const img = p.bytes ? { bytes: p.bytes } : (await this.o.loadPhoto?.(p)) ?? null;
       if (!img) continue;
       const r = await this.ask(img);

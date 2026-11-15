@@ -31,13 +31,18 @@
 //  - Delivery receipts (Blooio webhooks) move a row to delivered, read or failed. Statuses never go back.
 //  - A row to someone who is not a member keeps the address and the text only until it ends.
 import { createHash } from "node:crypto";
+import {
+  consentPolicy, conversationPolicy, duePolicy, lineCaps, linePolicy, livePolicy, personPolicy, quietPolicy,
+  recipientPolicy, replyPolicy, textPolicy,
+} from "../../core/src/generated/outboundAdmission.ts";
+import { initial as initialReceipt, step as stepReceipt, type FailureKind, type ReceiptPhase } from "../../core/src/generated/outboundReceipt.ts";
 import { parseApprovedRelayPhotos, type ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import type { SQL } from "bun";
 import { DAY, HOUR, MINUTE } from "../../core/src/clock.ts";
 import { LeakGuard } from "../../core/src/guard.ts";
 import { normalizeAddress } from "./phone.ts";
 import { DEFAULT_QUIET, isQuietAt, isValidTimeZone, nextAllowedAt, resolveTimeZone, type QuietWindow } from "./quiet-hours.ts";
-import { ChannelSendError, type ChannelAdapter, type Clock, type StatusUpdate, type SendRequest, type SendReceipt } from "./types.ts";
+import { ChannelSendError, type ChannelAdapter, type Clock, type FailureClass, type StatusUpdate, type SendRequest, type SendReceipt } from "./types.ts";
 
 export type MessageKind =
   | "reply"          // the answer to the member's own message; quiet-hours exempt
@@ -165,8 +170,9 @@ export interface QueueOptions {
   leaseMs?: number;
   /**
    * A row whose provider acceptance stays unknown (unknown_acceptance: the worker stopped mid-call, or the
-   * provider timed out) and that no receipt lookup resolves within this long after it was created ends as
-   * failed_unknown, with an alert. Default 6 hours.
+   * provider timed out) and that no receipt lookup resolves within this long after it became unknown ends as
+   * failed_unknown, with an alert. Default 6 hours. The clock starts at the failed call (next_attempt_at),
+   * not at enqueue: a text that waited out quiet hours still gets its lookups.
    */
   unknownTtlMs?: number;
   /** A proactive row older than this is never sent (expired). Default 24 h. Any other row: 3 days. */
@@ -187,10 +193,27 @@ export class IdempotencyConflictError extends Error {
 
 /** Statuses that still wait for the worker (the console's backlog). */
 export const WAITING = ["pending", "retry_scheduled", "deferred_quiet_hours", "held_awaiting_reply", "sending", "unknown_acceptance"];
-/** Statuses the provider accepted; a receipt ends them. */
-const IN_FLIGHT = ["accepted", "sent"];
 const DUE = ["pending", "retry_scheduled", "deferred_quiet_hours"];
-const PROVIDER_RANK: Record<string, number> = { accepted: 1, queued: 1, sent: 2, delivered: 3, read: 4 };
+const FAILURE_KIND = {
+  unknown: "UnknownResult", retryable: "Retryable", await_recipient: "NeedReply", blocked: "BlockedNumber",
+  invalid: "TerminalError", auth: "TerminalError",
+} as const satisfies Record<FailureClass, FailureKind>;
+function receiptPhase(status: string): ReceiptPhase {
+  switch (status) {
+    case "sending": return "Sending";
+    case "accepted": return "ProviderAccepted";
+    case "queued": return "LegacyQueued";
+    case "sent": return "ProviderSent";
+    case "delivered": return "ProviderDelivered";
+    case "read": return "ProviderRead";
+    case "failed": return "ProviderFailed";
+    case "unknown_acceptance": return "AcceptanceUnknown";
+    default: return "OutsideReceipt";
+  }
+}
+const ACCEPTED_STATUS = {
+  ProviderAccepted: "accepted", ProviderSent: "sent", ProviderDelivered: "delivered", ProviderRead: "read", ProviderFailed: "failed",
+} as const;
 /** Statuses that did not go out: their person-cap slot goes back. */
 export const NOT_SENT = /^(refused|suppressed|blocked|parked|failed|expired|dropped)/;
 
@@ -367,71 +390,68 @@ export class OutboundQueue {
     const agent = isAgentInitiated(row.kind);
     const compliance = row.kind === "compliance";
 
-    // 0. Too old, or about something that closed.
-    if (this.tooOld(row) || (await this.guarded(() => c.stale?.(row) ?? false, false))) return this.end(row, "expired");
-    // 1. The live flags (founder approval), checked again at send time.
-    if (!(await this.guarded(() => c.live(), false))) return this.end(row, "refused_not_approved");
+    // spec/outboundAdmission.md, "A current row needs live approval and the recipient's eligibility"
+    const stale = this.tooOld(row) || await this.guarded(() => c.stale?.(row) ?? false, false);
+    if (duePolicy(stale) === "Expired") return this.end(row, "expired");
+    if (livePolicy(await this.guarded(() => c.live(), false)) === "ApprovalMissing") return this.end(row, "refused_not_approved");
     if (!compliance) {
-      // 2. Consent: the ledger and the member's own flag, read now (a STOP that came while the row waited wins).
-      if (await this.guarded(() => c.optedOut?.(row) ?? false, true)) return this.end(row, "refused_opted_out");
-      // 3. The recipient at send time.
+      if (consentPolicy(compliance, await this.guarded(() => c.optedOut?.(row) ?? false, true)) === "OptedOut") return this.end(row, "refused_opted_out");
       const check = await this.guarded<RecipientCheck>(() => c.recipient?.(row, agent) ?? { ok: true }, { ok: false, reason: "recipient_check_error" });
-      if (!check.ok) return this.end(row, "suppressed_ineligible", check.reason);
+      if (recipientPolicy(compliance, check.ok) === "RecipientIneligible") return this.end(row, "suppressed_ineligible", check.ok ? undefined : check.reason);
     }
     const conv = await this.conversation(row.to);
-    // 4. A reply answers something the person sent in the last hour (the caller's word alone does not skip quiet hours).
-    if (row.kind === "reply") {
-      const last = ms(conv?.last_inbound_at);
-      if (last === undefined || now - last > this.opt("replyWindowMs", HOUR)) {
-        this.o.onAlert?.(row.id, "reply_without_recent_inbound");
-        return this.end(row, "suppressed_ineligible", "reply without a recent inbound");
-      }
+    // spec/outboundAdmission.md, "Replies, quiet hours and unanswered messages limit when a send can go out"
+    const last = ms(conv?.last_inbound_at);
+    if (replyPolicy(row.kind === "reply", last !== undefined && !(now - last > this.opt("replyWindowMs", HOUR))) === "ReplyTooOld") {
+      this.o.onAlert?.(row.id, "reply_without_recent_inbound");
+      return this.end(row, "suppressed_ineligible", "reply without a recent inbound");
     }
-    // 5. Quiet hours in the recipient's zone.
     if (agent) {
-      if (!isValidTimeZone(row.timeZone)) return this.end(row, "parked_invalid_timezone");
+      const validZone = isValidTimeZone(row.timeZone);
       const quiet = this.o.quiet ?? DEFAULT_QUIET;
-      if (isQuietAt(now, row.timeZone, quiet)) return this.wait(row, "deferred_quiet_hours", nextAllowedAt(now, row.timeZone, quiet), "quiet hours");
+      const decision = quietPolicy(agent, validZone, validZone && isQuietAt(now, row.timeZone, quiet));
+      if (decision === "InvalidZone") return this.end(row, "parked_invalid_timezone");
+      if (decision === "QuietHours") return this.wait(row, "deferred_quiet_hours", nextAllowedAt(now, row.timeZone, quiet), "quiet hours");
     }
-    // 6. Apple line safety: the unanswered streak and the one re-engagement.
-    let reengagement = false;
-    if (!compliance && conv && conv.unanswered >= this.opt("maxUnanswered", 3)) {
-      const quietFor = now - (ms(conv.last_outbound_at) ?? -Infinity);
-      if (agent && !conv.reengagement_used && quietFor >= this.opt("reengageAfterMs", 14 * DAY)) reengagement = true;
-      else return this.wait(row, "held_awaiting_reply", now, conv.reengagement_used ? "unanswered cap: re-engagement used" : "unanswered cap");
+    const quietFor = now - (ms(conv?.last_outbound_at) ?? -Infinity);
+    const conversation = conversationPolicy(compliance, !!conv && conv.unanswered >= this.opt("maxUnanswered", 3),
+      agent, !!conv?.reengagement_used, quietFor >= this.opt("reengageAfterMs", 14 * DAY));
+    if (conversation.decision === "AwaitingReply") {
+      return this.wait(row, "held_awaiting_reply", now, conv?.reengagement_used ? "unanswered cap: re-engagement used" : "unanswered cap");
     }
-    // 7. Blooio's safety state of the line.
+    // spec/outboundAdmission.md, "Apply line controls and sending caps before checking the text"
     const isNew = !conv;
     const [safety] = await this.sql`select action from platform.line_safety where line = ${this.line}`;
     const action = safety?.action as string | undefined;
-    if (action === "review" || (action === "reply_only" && (agent || isNew)) || (action === "pause_new" && isNew)) {
+    if (linePolicy(action ?? "", agent, isNew) === "LinePaused") {
       this.o.onAlert?.(row.id, `line_safety_${action}`);
       return this.wait(row, "retry_scheduled", now + HOUR, `line safety ${action}`);
     }
-    // 8. The caps of the line and the recipient (compliance texts always go).
     if (!compliance) {
       const [counts] = await this.sql`select
         count(*) filter (where to_address = ${row.to} and sent_at > ${new Date(now - HOUR)})::int as recipient,
         count(*) filter (where kind in ('proactive', 'transactional') and sent_at > ${new Date(now - DAY)})::int as line,
         count(*) filter (where new_conversation and sent_at > ${new Date(now - DAY)})::int as new_chats
         from platform.outbound where line = ${this.line} and sent_at > ${new Date(now - DAY)}`;
-      if (counts.recipient >= this.opt("perRecipientPerHour", 10)) return this.wait(row, "retry_scheduled", now + 5 * MINUTE, "per-recipient hourly cap");
-      if (agent && counts.line >= this.opt("perLinePerDay", 200)) return this.wait(row, "retry_scheduled", now + HOUR, "per-line daily cap");
-      if (agent && isNew && counts.new_chats >= this.opt("newChatsPerLinePerDay", 20)) return this.wait(row, "retry_scheduled", now + HOUR, "per-line new conversation cap");
+      const decision = lineCaps(compliance, agent, isNew, counts.recipient >= this.opt("perRecipientPerHour", 10),
+        counts.line >= this.opt("perLinePerDay", 200), counts.new_chats >= this.opt("newChatsPerLinePerDay", 20));
+      if (decision === "RecipientCap") return this.wait(row, "retry_scheduled", now + 5 * MINUTE, "per-recipient hourly cap");
+      if (decision === "LineCap") return this.wait(row, "retry_scheduled", now + HOUR, "per-line daily cap");
+      if (decision === "NewConversationCap") return this.wait(row, "retry_scheduled", now + HOUR, "per-line new conversation cap");
     }
     // 9. The person cap (proactive only, at send time; a redelivered id is never counted twice).
     if (row.kind === "proactive" && c.capTake) {
-      if (!(await this.guarded(() => c.capTake!(row), false))) return this.end(row, "refused_person_cap");
+      if (personPolicy(await this.guarded(() => c.capTake!(row), false)) === "PersonCap") return this.end(row, "refused_person_cap");
       if (!row.personCap) { row.personCap = true; await this.sql`update platform.outbound set person_cap = true where id = ${row.id}`; }
     }
     // 10. The leak guard, right before the send: only hashed labels are stored, never the text or the match.
     // A row staff released from leak review (releaseLeak) is not parked again for the same text.
     const leaks = row.leakReleased ? [] : await this.leakReasons(row);
-    if (leaks.length) {
+    if (textPolicy(leaks.length > 0) === "LeakReview") {
       this.o.onAlert?.(row.id, "leak_blocked");
       return this.end(row, "parked_leak_review", `leak: ${leaks.join(",")}`);
     }
-    return this.send(row, isNew, reengagement);
+    return this.send(row, isNew, conversation.reengage);
   }
 
   private async leakReasons(row: QueueRow, db: SQL = this.sql): Promise<string[]> {
@@ -509,22 +529,25 @@ export class OutboundQueue {
       const e = err instanceof ChannelSendError ? err : new ChannelSendError(err instanceof Error ? err.message : String(err), "retryable");
       const error = `${e.failure}${e.status ? ` ${e.status}` : ""}${e.code ? ` ${e.code}` : ""}: ${e.message}`.slice(0, 500);
       await this.sql`update platform.outbound set last_error = ${error} where id = ${row.id}`;
-      switch (e.failure) {
-        case "unknown":
-          return this.wait(row,"unknown_acceptance",this.now,"provider acceptance unresolved; receipt lookup only");
-        case "retryable": {
-          if (attempts >= this.opt("maxAttempts", 6)) { this.o.onAlert?.(row.id, "send_failed"); return this.end(row, "failed", "retries used up", error); }
+      // spec/outboundReceipt.md, "A provider failure either waits or ends the send"
+      const failure = stepReceipt(initialReceipt, {
+        type: "recordProviderError", failure: FAILURE_KIND[e.failure], hasAttemptsLeft: attempts < this.opt("maxAttempts", 6),
+      });
+      switch (failure.phase) {
+        case "AcceptanceUnknown":
+          return this.wait(row, "unknown_acceptance", this.now, "provider acceptance unresolved; receipt lookup only");
+        case "RetryScheduled": {
           const backoff = e.retryAfterMs ?? Math.min(this.opt("baseBackoffMs", 30_000) * 2 ** (attempts - 1), 30 * MINUTE);
           return this.wait(row, "retry_scheduled", this.now + backoff, e.code ?? "retry");
         }
-        case "await_recipient":
+        case "WaitingForReply":
           return this.wait(row, "held_awaiting_reply", this.now, e.code ?? "conversation limit");
-        case "blocked":
+        case "ProviderBlocked":
           this.o.onAlert?.(row.id, e.code ?? "blocked");
           return this.end(row, "blocked", e.code, error);
         default:
-          this.o.onAlert?.(row.id, `send_${e.failure}`);
-          return this.end(row, "failed", e.code, error);
+          this.o.onAlert?.(row.id, e.failure === "retryable" ? "send_failed" : `send_${e.failure}`);
+          return this.end(row, "failed", e.failure === "retryable" ? "retries used up" : e.code, error);
       }
     }
   }
@@ -536,10 +559,15 @@ export class OutboundQueue {
 
   /** Commit only an extant immutable row. The person lock is shared with canonical erasure. */
   private async acceptReceipt(row: QueueRow, receipt: SendReceipt): Promise<StatusChange> {
-    const status=receipt.status==="queued"?"accepted":receipt.status;
+    const from = { phase: row.status === "unknown_acceptance" ? "AcceptanceUnknown" : "Sending" } as const;
+    const providerPhase = receipt.status === "queued" ? "ProviderAccepted" : receiptPhase(receipt.status);
+    const accepted = stepReceipt(from, { type: "recordAcceptance", providerPhase });
+    const status = accepted.phase in ACCEPTED_STATUS ? ACCEPTED_STATUS[accepted.phase as keyof typeof ACCEPTED_STATUS] : undefined;
     const acceptedAt=receipt.acceptedAt??this.now;
-    if (!Number.isFinite(acceptedAt) || !receipt.providerMessageId) throw new ChannelSendError("Invalid acceptance receipt","unknown");
+    if (!status || !Number.isFinite(acceptedAt) || !receipt.providerMessageId) throw new ChannelSendError("Invalid acceptance receipt","unknown");
     const at=new Date(acceptedAt),providerIds=receipt.providerMessageIds??[receipt.providerMessageId];
+    const delivered = status === "delivered" || status === "read";
+    const terminal = delivered || status === "failed";
     const committed=await this.sql.begin(async tx=>{
       await tx`select set_config('app.app_id',${this.app},true)`;
       if (row.memberId) await tx`select person.id from platform.people person join network.members member on member.person_id=person.id
@@ -547,8 +575,10 @@ export class OutboundQueue {
       const wrote=await tx`update platform.outbound set status=${status},provider_message_id=${receipt.providerMessageId},
         provider_message_ids=${{ids:providerIds}}::jsonb->'ids',history_recorded=${receipt.historyRecorded??null},chat_id=${receipt.chatId??null},
         transport=${receipt.transport??null},sent_at=coalesce(sent_at,${at}),lease_owner=null,lease_until=null,updated_at=${new Date(this.now)},
-        note=${receipt.replayed?"idempotent replay":null},delivered_at=${status==="delivered"||status==="read"?at:null},
-        ended_at=${status==="delivered"||status==="read"||status==="failed"?at:null}
+        note=${status === "failed" ? "provider reported failure" : !terminal && receipt.replayed ? "idempotent replay" : null},
+        delivered_at=${delivered ? at : null}, ended_at=${terminal ? new Date(this.now) : null},
+        to_address=case when ${terminal} and member_id is null then null else to_address end,
+        body=case when ${terminal} and member_id is null then null else body end
         where id=${row.id} and app_id=${row.app} and line=${this.line} and status in ('sending','unknown_acceptance')
         and to_address=${row.to} and body=${row.text} and fingerprint=${fingerprint(row.to,row.text,row.mediaUrls,row.kind,row.approvedPhotos)} returning id`;
       if (!wrote.length) return false;
@@ -567,8 +597,7 @@ export class OutboundQueue {
       return true;
     });
     if (!committed) return {id:row.id,app:row.app,memberId:row.memberId,status:"dropped_forgotten"};
-    if (status==="failed") return this.end(row,"failed","provider reported failure");
-    if (status==="delivered"||status==="read") return this.end(row,status);
+    if (status === "failed" && row.personCap) await this.o.checks.capRelease?.(row).catch(() => {});
     return {id:row.id,app:row.app,memberId:row.memberId,status};
   }
 
@@ -582,10 +611,19 @@ export class OutboundQueue {
     const changes:StatusChange[]=[];
     const ttl=this.opt("unknownTtlMs",6*HOUR);
     for (const stored of await this.sql`select * from platform.outbound where app_id=${this.app} and line=${this.line}
-      and status='unknown_acceptance' and created_at<${new Date(this.now-ttl)} order by created_at,id limit 50`) {
+      and status='unknown_acceptance' and next_attempt_at<${new Date(this.now-ttl)} order by next_attempt_at,id limit 50`) {
       const row=this.rowOf(stored);
+      const expiry = stepReceipt({ phase: receiptPhase(row.status) }, { type: "expireUnknown", pastLimit: true });
+      if (expiry.phase !== "AcceptanceExpired") continue;
+      const at = new Date(this.now);
+      const expired = await this.sql`update platform.outbound set status = 'failed_unknown',
+        note = 'provider acceptance never resolved', ended_at = ${at}, updated_at = ${at}, lease_owner = null, lease_until = null,
+        to_address = case when member_id is null then null else to_address end, body = case when member_id is null then null else body end
+        where id = ${row.id} and status = 'unknown_acceptance' returning id`;
+      if (!expired.length) continue;
       this.o.onAlert?.(row.id,"unknown_acceptance_expired");
-      changes.push(await this.end(row,"failed_unknown","provider acceptance never resolved"));
+      if (row.personCap) await this.o.checks.capRelease?.(row).catch(() => {});
+      changes.push({ id: row.id, app: row.app, memberId: row.memberId, status: "failed_unknown" });
     }
     if (!this.o.provider.receipt) return changes;
     const rows=await this.sql`select * from platform.outbound where app_id=${this.app} and line=${this.line}
@@ -595,7 +633,10 @@ export class OutboundQueue {
       await this.sql`update platform.outbound set updated_at=${new Date(this.now)} where id=${row.id} and status='unknown_acceptance'`;
       try {changes.push(await this.acceptReceipt(row,await this.o.provider.receipt(this.request(row))));}
       catch (e) {
-        if (e instanceof ChannelSendError && e.code==="not_found") {
+        const disposition = stepReceipt({ phase: "AcceptanceUnknown" }, {
+          type: "confirmNeverAdmitted", neverAdmitted: e instanceof ChannelSendError && e.code === "not_found",
+        });
+        if (disposition.phase === "RetryScheduled") {
           // The provider never admitted this id: safe to send again with the same key.
           const moved=await this.sql`update platform.outbound set status='retry_scheduled',next_attempt_at=${new Date(this.now)},updated_at=${new Date(this.now)},
             note='receipt lookup: never admitted' where id=${row.id} and status='unknown_acceptance' returning id`;
@@ -614,20 +655,29 @@ export class OutboundQueue {
     if (!r) return undefined;
     const row = this.rowOf(r);
     const at = new Date(this.now);
-    if (u.status === "failed") {
-      if (!IN_FLIGHT.includes(row.status)) return undefined; // a late failure after delivery
-      await this.sql`update platform.outbound set transport = coalesce(${u.transport ?? null}, transport) where id = ${row.id}`;
-      return this.end(row, "failed", "receipt: failed", `${u.errorCode ?? ""} ${u.errorMessage ?? ""}`.trim() || "failed");
+    // spec/outboundReceipt.md, "A provider receipt advances through acceptance, send, delivery, and read"
+    const from = { phase: receiptPhase(row.status) };
+    const next = stepReceipt(from, { type: "applyReceipt", providerPhase: receiptPhase(u.status) });
+    if (next === from) return undefined;
+    if (next.phase === "ProviderFailed") {
+      const error = `${u.errorCode ?? ""} ${u.errorMessage ?? ""}`.trim() || "failed";
+      const rows = await this.sql`update platform.outbound set status = 'failed',
+        transport = coalesce(${u.transport ?? null}, transport), note = 'receipt: failed', last_error = ${error},
+        ended_at = ${at}, updated_at = ${at}, lease_owner = null, lease_until = null,
+        to_address = case when member_id is null then null else to_address end, body = case when member_id is null then null else body end
+        where id = ${row.id} and status = ${row.status} returning id`;
+      if (!rows.length) return this.applyStatus(u);
+      if (row.personCap) await this.o.checks.capRelease?.(row).catch(() => {});
+      return { id: row.id, app: row.app, memberId: row.memberId, status: "failed" };
     }
-    const cur = PROVIDER_RANK[row.status];
-    if (cur === undefined || (PROVIDER_RANK[u.status] ?? 0) <= cur) return undefined; // a row that did not go out, or a status that would go back
     const final = u.status === "delivered" || u.status === "read";
-    await this.sql`update platform.outbound set status = ${u.status}, transport = coalesce(${u.transport ?? null}, transport), updated_at = ${at},
+    const rows = await this.sql`update platform.outbound set status = ${u.status}, transport = coalesce(${u.transport ?? null}, transport), updated_at = ${at},
       delivered_at = case when ${final} then coalesce(delivered_at, ${at}) else delivered_at end,
       read_at = case when ${u.status === "read"} then ${at} else read_at end,
       ended_at = case when ${final} then coalesce(ended_at, ${at}) else ended_at end,
       to_address = case when ${final} and member_id is null then null else to_address end, body = case when ${final} and member_id is null then null else body end
-      where id = ${row.id}`;
+      where id = ${row.id} and status = ${row.status} returning id`;
+    if (!rows.length) return this.applyStatus(u);
     return { id: row.id, app: row.app, memberId: row.memberId, status: u.status };
   }
 

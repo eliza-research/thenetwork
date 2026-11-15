@@ -34,7 +34,7 @@ test("photo review waits for successful image load and acknowledgment, keeps Rej
   const button=(label:string)=>[...box.querySelectorAll("button")].find(b=>b.textContent===label)!;
   try{
     const {store}=await import("../web/store.ts"),{SafetyCases}=await import("../web/admin.tsx");
-    store.mode="real";store.app="slop";store.me={id:"fixture",roles:["safety"],grants:[{role:"safety",app:"*"}],via:"token"};
+    store.mode="real";store.app="slop";store.setToken("fixture-safety-token");store.me={id:"fixture",roles:["safety"],grants:[{role:"safety",app:"*"}],via:"token"};
     await act(async()=>{root.render(createElement(SafetyCases));});await wait(()=>!!button("Held relay"));
     await act(async()=>{button("Held relay").click();});await wait(()=>!!button("Load selected photo"));
     const reason=[...box.querySelectorAll("input")].find(input=>input.placeholder.startsWith("Reason"))!;

@@ -3,7 +3,8 @@
 // Keyboard (Review tab open, no input focused): j/k move, a approve, r then 1-8 reject with a
 // reason, e edit what each person is told, s then 1-n re-roll (swap that person), n note, x score,
 // Enter open, Esc leaves the current mode. The time from opening a card to the decision is sent with it.
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { initial as initialReview, ownsReviewResponse, selectedReviewCard, step as stepReview, type ReviewCtl as ReviewState, type ReviewMode } from "../../core/src/generated/staffReview.ts";
 import type { ReviewReason } from "../src/types.ts";
 import { VENUES } from "@thenetwork/network/geo";
 import { OPEN, originLabel, originOf, REVIEW_REASONS, store, useStore, type DecideOpts, type Opp } from "./store.ts";
@@ -53,28 +54,66 @@ export function wantsOf(o: Opp, id: string): string | undefined {
 export const swappable = (o: Opp) => o.participants.filter((id, i) => !(originOf(o) === "request" && i === 0));
 
 // ---------------------------------------------------------------- actions
-type ReviewMode = "none" | "reject" | "edit" | "reroll";
 type ReviewError = { code?: string; text: string; oppId?: string };
 interface ReviewCtl {
-  mode: ReviewMode; setMode(v: ReviewMode): void;
+  mode: ReviewMode; setMode(v: ReviewMode, toggle?: boolean): ReviewMode;
   note: string; setNote(v: string): void;
-  awaitingOther: boolean; setAwaitingOther(v: boolean): void;
+  awaitingOther: boolean; requireNote(): void;
   noteRef: RefObject<HTMLInputElement | null>;
   /** Edit drafts: participant id -> what they are told; "" key = the plan (objective). */
   drafts: Record<string, string>; setDrafts(v: Record<string, string>): void;
   /** Last refusal, shown under the card it came from (guard errors from an edit, a blocked approve). */
   error: ReviewError | null; setError(v: ReviewError | null): void;
-  reset(): void;
+  response(): { current(): boolean; settle(): void };
 }
-function useReviewCtl(): ReviewCtl {
-  const [mode, setMode] = useState<ReviewMode>("none");
+const reviewKey = (o: Opp | undefined) => o ? JSON.stringify([store.app, store.mode, store.authEpoch, o.id, o.review?.deadline, o.review?.rerolls, o.participants]) : "";
+
+function useReviewCtl(cardKey: string): ReviewCtl {
+  const [model, setModel] = useState<ReviewState>(initialReview);
   const [note, setNote] = useState("");
-  const [awaitingOther, setAwaitingOther] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [error, setError] = useState<ReviewError | null>(null);
   const noteRef = useRef<HTMLInputElement>(null);
-  const reset = () => { setMode("none"); setNote(""); setAwaitingOther(false); setDrafts({}); setError(null); };
-  return { mode, setMode, note, setNote, awaitingOther, setAwaitingOther, noteRef, drafts, setDrafts, error, setError, reset };
+  const bound = stepReview(model, { type: "bindCard", cardKey });
+  const live = useRef(bound);
+  const mounted = useRef(false);
+  const clearDraft = () => { setNote(""); setDrafts({}); setError(null); };
+  const save = (next: ReviewState) => { live.current = next; setModel(next); };
+
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  useLayoutEffect(() => {
+    if (bound === model) return;
+    save(bound);
+    clearDraft();
+  }, [bound, model]);
+
+  const setMode = (requestedMode: ReviewMode, togglePanel = false) => {
+    const next = stepReview(live.current, { type: "changeReviewMode", requestedMode, togglePanel });
+    save(next);
+    return next.mode;
+  };
+  const requireNote = () => save(stepReview(live.current, { type: "requireReviewNote" }));
+  const response = () => {
+    const scope = [store.app, store.mode, store.authEpoch] as const;
+    const { cardKey, revision } = live.current;
+    const current = () => mounted.current && scope[0] === store.app && scope[1] === store.mode && scope[2] === store.authEpoch &&
+      ownsReviewResponse(live.current, cardKey, revision);
+    return {
+      current,
+      settle() {
+        save(stepReview(live.current, { type: "settleReview", cardKey, revision }));
+        clearDraft();
+      },
+    };
+  };
+  const changed = bound !== model;
+  return {
+    mode: bound.mode, setMode, note: changed ? "" : note, setNote, awaitingOther: bound.noteNeeded, requireNote,
+    noteRef, drafts: changed ? {} : drafts, setDrafts, error: changed ? null : error, setError, response,
+  };
 }
 
 /** Why approval is blocked for this opportunity, if it is. */
@@ -97,9 +136,11 @@ function editsOf(o: Opp, drafts: Record<string, string>): Pick<DecideOpts, "expl
 
 /** Send a decision with the controller's note and edits; errors stay on the card. */
 async function act(o: Opp, c: ReviewCtl, decision: "approve" | "reject" | "reroll", extra: DecideOpts = {}): Promise<boolean> {
-  const edits = decision === "approve" && c.mode === "edit" ? editsOf(o, c.drafts) : undefined;
+  const response = c.response();
+  const edits = decision === "approve" && c.mode === "EditReview" ? editsOf(o, c.drafts) : undefined;
   const r = await store.decide(o, edits ? "edit" : decision, { ...extra, ...edits, note: c.note }, true);
-  if (r.ok) { c.reset(); return true; }
+  if (!response.current()) return false;
+  if (r.ok) { response.settle(); return true; }
   // A second press while the first is on its way: nothing was sent.
   if (r.code !== "in_flight") c.setError({ code: r.code, text: r.error ?? "refused", oppId: o.id });
   return false;
@@ -107,21 +148,19 @@ async function act(o: Opp, c: ReviewCtl, decision: "approve" | "reject" | "rerol
 
 /** Approve, edit, re-roll and reject with one of the app's reason codes. Shared by the queue and the opportunity view. */
 export function ReviewActions({ o, ctl, onDone }: { o: Opp; ctl?: ReviewCtl; onDone?: () => void }) {
-  const local = useReviewCtl();
+  const local = useReviewCtl(ctl ? "" : reviewKey(o));
   const c = ctl ?? local;
   useEffect(() => { store.reviewOpen(o.id); }, [o.id]);
   if (!store.canReview()) return null;
   const block = approveBlock(o);
-  const edits = c.mode === "edit" ? editsOf(o, c.drafts) : undefined;
+  const edits = c.mode === "EditReview" ? editsOf(o, c.drafts) : undefined;
   const swap = swappable(o);
   const toggle = (m: ReviewMode) => {
-    c.setError(null); c.setAwaitingOther(false);
-    if (c.mode === m) { c.setMode("none"); return; }
-    if (m === "edit") c.setDrafts({ ...Object.fromEntries(o.participants.map(id => [id, o.explanations[id] ?? ""])), "": o.objective });
-    c.setMode(m);
+    c.setError(null);
+    if (c.setMode(m, true) === "EditReview") c.setDrafts({ ...Object.fromEntries(o.participants.map(id => [id, o.explanations[id] ?? ""])), "": o.objective });
   };
   const reject = async (reason: ReviewReason) => {
-    if (reason === "other" && !c.note.trim()) { c.setAwaitingOther(true); c.noteRef.current?.focus(); return; }
+    if (reason === "other" && !c.note.trim()) { c.requireNote(); c.noteRef.current?.focus(); return; }
     if (await act(o, c, "reject", { reason })) onDone?.();
   };
   const approve = async () => { if (!block && await act(o, c, "approve")) onDone?.(); };
@@ -129,7 +168,7 @@ export function ReviewActions({ o, ctl, onDone }: { o: Opp; ctl?: ReviewCtl; onD
   const reroll = (out: string) => act(o, c, "reroll", { swapOut: out });
   return (
     <div className="review-act">
-      {c.mode === "edit" && (
+      {c.mode === "EditReview" && (
         <div className="review-edit">
           {o.participants.map(id => (
             <label key={id} className="edit-row">
@@ -143,19 +182,19 @@ export function ReviewActions({ o, ctl, onDone }: { o: Opp; ctl?: ReviewCtl; onD
           </label>
         </div>
       )}
-      {c.mode === "reroll" && (
+      {c.mode === "RerollReview" && (
         <div className="review-actions">
           <span className="muted small">Swap out</span>
           {swap.map((id, i) => <button key={id} className="chip" onClick={() => reroll(id)}><kbd>{i + 1}</kbd> {store.firstName(id)}</button>)}
           <span className="muted small">{o.alternates.length ? `${o.alternates.length} alternate${o.alternates.length > 1 ? "s" : ""}` : "No alternates: it closes and the engine composes again"}</span>
         </div>
       )}
-      <div className={`review-actions ${c.mode === "reject" ? "rejecting" : ""}`}>
+      <div className={`review-actions ${c.mode === "RejectReview" ? "rejecting" : ""}`}>
         <button className="btn primary" disabled={!!block} title={block ?? "Approve (a)"} onClick={approve}>{edits ? "Approve with edits" : "Approve"}</button>
-        <button className={c.mode === "edit" ? "btn active" : "btn"} title="Edit what each person is told (e)" onClick={() => toggle("edit")}>Edit</button>
-        <button className={c.mode === "reroll" ? "btn active" : "btn"} disabled={!swap.length} title={swap.length ? "Swap a participant for an alternate (s)" : "Nobody can be swapped"} onClick={() => toggle("reroll")}>Re-roll</button>
-        <button className={c.mode === "reject" ? "btn active" : "btn"} title="Reject with a reason (r)" onClick={() => toggle("reject")}>Reject ▾</button>
-        {c.mode === "reject" && (
+        <button className={c.mode === "EditReview" ? "btn active" : "btn"} title="Edit what each person is told (e)" onClick={() => toggle("EditReview")}>Edit</button>
+        <button className={c.mode === "RerollReview" ? "btn active" : "btn"} disabled={!swap.length} title={swap.length ? "Swap a participant for an alternate (s)" : "Nobody can be swapped"} onClick={() => toggle("RerollReview")}>Re-roll</button>
+        <button className={c.mode === "RejectReview" ? "btn active" : "btn"} title="Reject with a reason (r)" onClick={() => toggle("RejectReview")}>Reject ▾</button>
+        {c.mode === "RejectReview" && (
           <span className="reasons">
             {store.reasons().map(([k, label], i) => (
               <button key={k} className={c.awaitingOther && k === "other" ? "chip active" : "chip"} onClick={() => reject(k as ReviewReason)}><kbd>{i + 1}</kbd> {label}</button>
@@ -167,7 +206,7 @@ export function ReviewActions({ o, ctl, onDone }: { o: Opp; ctl?: ReviewCtl; onD
           onChange={e => c.setNote(e.target.value)}
           onKeyDown={e => {
             if (e.key === "Enter") { e.preventDefault(); if (c.awaitingOther && c.note.trim()) reject("other"); }
-            if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); (e.target as HTMLInputElement).blur(); if (c.mode !== "none") { c.setMode("none"); c.setAwaitingOther(false); } }
+            if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); (e.target as HTMLInputElement).blur(); if (c.mode !== "IdleReview") c.setMode("IdleReview"); }
           }}
         />
       </div>
@@ -186,22 +225,22 @@ export function ReviewQueue() {
   const f = s.ui.focus;
   const [selId, setSelId] = useState<string>();
   const [scoreOpen, setScoreOpen] = useState(false);
-  const ctl = useReviewCtl();
-  const sel = (f?.kind === "opportunity" && pending.find(o => o.id === f.id)) || pending.find(o => o.id === selId) || pending[0];
+  const selectedId = selectedReviewCard(pending.map(o => o.id), f?.kind === "opportunity" ? f.id : "", selId ?? "");
+  const sel = pending.find(o => o.id === selectedId);
+  const ctl = useReviewCtl(view === "pending" ? reviewKey(sel) : "");
   const counts = s.network?.review ?? countDecisions();
 
   const select = (o: Opp | undefined, mapFocus = true) => {
     if (!o) return;
-    if (o.id !== sel?.id) ctl.reset();
     setSelId(o.id); setScoreOpen(false);
     if (mapFocus) store.focus({ kind: "opportunity", id: o.id }, { replace: store.ui.focus?.kind === "opportunity" });
   };
   const next = () => { const i = sel ? pending.indexOf(sel) : -1; return pending[i + 1] ?? pending[i - 1]; };
-  const afterDecision = () => { const n = next(); if (n) select(n); else setSelId(undefined); };
+  const afterDecision = () => { const n = live.current.next(); if (n) live.current.select(n); else setSelId(undefined); };
 
   // The queue owns its keyboard while mounted (capture phase, so Esc leaves a mode before the global chain).
-  const live = useRef({ pending, sel, ctl, view, select, afterDecision });
-  live.current = { pending, sel, ctl, view, select, afterDecision };
+  const live = useRef({ pending, sel, ctl, view, select, next, afterDecision });
+  useLayoutEffect(() => { live.current = { pending, sel, ctl, view, select, next, afterDecision }; });
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -209,29 +248,29 @@ export function ReviewQueue() {
       const { pending, sel, ctl, view, select, afterDecision } = live.current;
       if (view !== "pending") return;
       const handled = () => { e.preventDefault(); e.stopImmediatePropagation(); };
-      if (e.key === "Escape" && ctl.mode !== "none") { handled(); ctl.setMode("none"); ctl.setAwaitingOther(false); return; }
+      if (e.key === "Escape" && ctl.mode !== "IdleReview") { handled(); ctl.setMode("IdleReview"); return; }
       if (!sel) return;
       const i = pending.indexOf(sel);
       const canAct = store.canReview();
       if (e.key === "j") { handled(); select(pending[Math.min(pending.length - 1, i + 1)]); }
       else if (e.key === "k") { handled(); select(pending[Math.max(0, i - 1)]); }
       else if (e.key === "a" && canAct) { handled(); if (!approveBlock(sel)) act(sel, ctl, "approve").then(ok => { if (ok) afterDecision(); }); }
-      else if (e.key === "r" && canAct) { handled(); ctl.setError(null); ctl.setMode("reject"); ctl.setAwaitingOther(false); }
-      else if (e.key === "s" && canAct && swappable(sel).length) { handled(); ctl.setError(null); ctl.setMode("reroll"); }
+      else if (e.key === "r" && canAct) { handled(); ctl.setError(null); ctl.setMode("RejectReview"); }
+      else if (e.key === "s" && canAct && swappable(sel).length) { handled(); ctl.setError(null); ctl.setMode("RerollReview"); }
       else if (e.key === "e" && canAct) {
         handled(); ctl.setError(null);
         ctl.setDrafts({ ...Object.fromEntries(sel.participants.map(id => [id, sel.explanations[id] ?? ""])), "": sel.objective });
-        ctl.setMode("edit");
+        ctl.setMode("EditReview");
       }
-      else if (ctl.mode === "reject" && /^[1-8]$/.test(e.key)) {
+      else if (ctl.mode === "RejectReview" && /^[1-8]$/.test(e.key)) {
         handled();
         const pick = store.reasons()[Number(e.key) - 1];
         if (!pick) return;
         const reason = pick[0] as ReviewReason;
-        if (reason === "other" && !ctl.note.trim()) { ctl.setAwaitingOther(true); ctl.noteRef.current?.focus(); return; }
+        if (reason === "other" && !ctl.note.trim()) { ctl.requireNote(); ctl.noteRef.current?.focus(); return; }
         act(sel, ctl, "reject", { reason }).then(ok => { if (ok) afterDecision(); });
       }
-      else if (ctl.mode === "reroll" && /^[1-6]$/.test(e.key)) {
+      else if (ctl.mode === "RerollReview" && /^[1-6]$/.test(e.key)) {
         const out = swappable(sel)[Number(e.key) - 1];
         if (out) { handled(); act(sel, ctl, "reroll", { swapOut: out }); }
       }
@@ -305,9 +344,9 @@ function ReviewCard({ o, selected, onSelect, ctl, scoreOpen, setScoreOpen, onDon
   // A re-roll gives a new deadline and moves the card: follow it.
   useEffect(() => { if (selected) ref.current?.scrollIntoView({ block: "nearest" }); }, [selected, o.review?.deadline]);
   const hist = selected ? historyBetween(o) : [];
-  const editing = selected && ctl.mode === "edit";
+  const editing = selected && ctl.mode === "EditReview";
   return (
-    <div ref={ref} className={`review-card ${selected ? "selected" : ""} ${selected && ctl.mode === "reject" ? "rejecting" : ""}`}>
+    <div ref={ref} className={`review-card ${selected ? "selected" : ""} ${selected && ctl.mode === "RejectReview" ? "rejecting" : ""}`}>
       <button type="button" className="review-head" onClick={onSelect}>
         {o.review ? <Countdown deadline={o.review.deadline} /> : <span className="countdown">–</span>}
         <span className="review-title">{s.oppTitle(o)}</span>

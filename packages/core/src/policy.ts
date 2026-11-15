@@ -5,23 +5,24 @@
 //  - 18+: full membership (romance and other adult-only features stay 18+).
 // Missing or invalid ages fail closed: they cannot join and cannot be matched.
 
-export const MIN_MEMBER_AGE = 13;
-export const ADULT_AGE = 18;
+import { adultAge, ageInRange, joinableAge, matchableAge, maxAge, minMemberAge } from "./generated/memberAge.ts";
 
-/** Oldest plausible human age. Anything above is a data error, treated as unknown (fail closed). */
-export const MAX_AGE = 120;
+// spec/memberAge.md, "Age data outside the human range is unusable"
+export const MIN_MEMBER_AGE = minMemberAge;
+export const ADULT_AGE = adultAge;
+export const MAX_AGE = maxAge;
 
-/** True for a usable age: a finite number from 0 to MAX_AGE. Anything else is treated as unknown (fail closed). */
-export const validAge = (age: unknown): age is number => typeof age === "number" && Number.isFinite(age) && age >= 0 && age <= MAX_AGE;
+/** True for a usable age. Unknown or invalid input fails closed. */
+export const validAge = (age: unknown): age is number => typeof age === "number" && ageInRange(age);
 
-/** True if someone of this age may join The Network (13 or older). */
-export const canJoin = (age: unknown): boolean => validAge(age) && age >= MIN_MEMBER_AGE;
+/** True if someone of this age may join The Network. */
+export const canJoin = (age: unknown): boolean => typeof age === "number" && joinableAge(age);
 
-/** True if this age is under 18, or unknown/invalid (fail closed). */
-export const isMinor = (age: unknown): boolean => !(validAge(age) && age >= ADULT_AGE);
+/** True if this age is under 18, or unknown or invalid. */
+export const isMinor = (age: unknown): boolean => !canBeMatched(age);
 
-/** True if a member of this age may be matched with or connected to other people (18 or older). */
-export const canBeMatched = (age: unknown): boolean => !isMinor(age);
+/** True if a member of this age may be matched with or connected to other people. */
+export const canBeMatched = (age: unknown): boolean => typeof age === "number" && matchableAge(age);
 
 /** The kind decline sent to someone under 13. Never says why in more detail than needed; stores nothing. */
 export const UNDER_MIN_AGE_DECLINE =

@@ -168,6 +168,7 @@ A member who asked for something still hears "On it" at once. The opportunity it
 |---|---|---|
 | The item is not waiting for review | all | `not_in_review` |
 | Reason "other" without a note | all | `note_required` |
+| The clock reached the review deadline | all | `review_expired` |
 | A participant was declined at join | approve, edit | `participant_declined` |
 | A participant is a minor, has an unknown age, or is not a known member | approve, edit | `participant_minor` |
 | Proactive matching is off (2.4) | approve, edit | `matching_paused` |

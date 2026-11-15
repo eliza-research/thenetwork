@@ -8,6 +8,7 @@
 // The rules were rebuilt against hand-written corpora (test/fixtures), not the simulator's own
 // sentences (audit 2026-10-08, network-consent-1, -2, -8, -9, -10, matching-e2e-1, -M1).
 import { parseReply, type Category } from "@thenetwork/core";
+import { reportsAbsence } from "./reports.ts";
 import type { TimeOption } from "@thenetwork/core";
 import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { NEIGHBORHOODS } from "./geo.ts";
@@ -104,7 +105,8 @@ export function sentencesOf(t: string): { text: string; at: number }[] {
 }
 
 export function classify(body: string): Classified {
-  const t = body.trim();
+  // The RX patterns spell an apostrophe as "'": a phone's curly one ("can’t", "what’s") must match too.
+  const t = body.trim().replace(/[‘’ʼ`´]/g, "'");
   const low = normText(t);
   const abuse: Abuse[] = [];
   const disclosed: Abuse[] = [];
@@ -184,6 +186,8 @@ const AGE_END = `(?=\\s*(?:${CLAUSE_END}|${YEARS_OLD}))`;
 // "I'm 2 years in nyc now" must never decline an adult (a decline deletes the member's data).
 // Also "actually", "tbh", "honestly", "fyi" and "last week": "I'm 15 actually", "I turned 13 last week".
 const AGE_END_LOOSE = `(?=\\s*(?:${CLAUSE_END}|${YEARS_OLD}|and\\b|now\\b|too\\b|turning\\b|actually\\b|tbh\\b|honestly\\b|fyi\\b|last (?:week|month|year)\\b|yesterday\\b|recently\\b|in (?:high|middle) school\\b))`;
+const IDENTITY_WORD = "person|guy|girl|boy|man|woman|kid|teen";
+const SELF_AGE_TAIL = "here\\b|from\\b|looking for\\b|in (?:high|middle) school\\b";
 /** "15f", "16 m", "15/f": an age and a sex, the way teens introduce themselves. Never "15m away" or "raised 15m". */
 const AGE_SEX_END = "(?=\\s*(?:$|[.,!?;:)]|here\\b|lol\\b|btw\\b|from\\b|in\\b|looking\\b|nyc\\b|bk\\b))";
 const atLeast13 = (n: number) => (n >= 13 ? n : NaN);
@@ -193,13 +197,19 @@ const SCHOOL_YEAR: Record<string, number> = { freshman: 14, sophomore: 15, junio
 /**
  * Words just before "I'm 12" that make it not a statement of the sender's age today: "I act like
  * I'm 12", "when I was 12", "if I'm 12", "she said I'm 12" (network-service-1).
+ * A quote is not one of these words. An age inside a quote that is still open is dropped in
+ * `agesStated`. A quote that has already closed does not drop the next statement
+ * (`he said "hi" I'm 15`, `"Hey" I'm 15`).
  */
-const NOT_NOW = /(?:\blike|\bas if|\bas though|\bpretend(?:ing)?(?: that)?|\bwhen|\bif|\bimagine|\bsays?|\bsaid|\bfeel(?:s|ing)? like|\bacts?|\bacting|\bthink|\bthinks|\bthought|"|')\s*$/;
+const NOT_NOW = /(?:\blike|\bas if|\bas though|\bpretend(?:ing)?(?: that)?|\bwhen|\bif|\bimagine|\bsays?|\bsaid|\bfeel(?:s|ing)? like|\bacts?|\bacting|\bthink|\bthinks|\bthought)\s*$/;
+/** A clause break. The words before it do not apply to an age after it. */
+const CLAUSE_BREAK = /[.,;!?\n]|\b(?:but|though|however|although)\b/g;
 type AgeRule = { rx: RegExp; age: (m: RegExpExecArray) => number; explicit?: boolean };
 const AGE_RX: AgeRule[] = [
   // Explicit: "I am 12 years old", "im 15 y/o", "my age is 12", "15 y/o here", "age: 15".
   { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|my age is\\s+)(\\d{1,2})\\s*${YEARS_OLD}`), age: m => Number(m[1]), explicit: true },
   { rx: new RegExp(`\\b${ME}\\s+${SAME}(one|two|three|four|five|six|seven|eight|nine|${NUM_WORD})[\\s-]+${YEARS_OLD}`), age: m => AGE_WORDS[m[1]!]!, explicit: true },
+  { rx: new RegExp(`\\b${ME}\\s+${SAME}an?\\s+(\\d{1,2}|one|two|three|four|five|six|seven|eight|nine|${NUM_WORD})[\\s-]+(?:year|yr)[\\s-]+old\\b(?:\\s+(?:${IDENTITY_WORD}))?(?=\\s*(?:${CLAUSE_END}|${SELF_AGE_TAIL}))`), age: m => /^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!, explicit: true },
   { rx: new RegExp(`\\bmy age is\\s+(\\d{1,2})${AGE_END}`), age: m => Number(m[1]), explicit: true },
   { rx: new RegExp(`^\\W*(?:(?:hi|hey|hello|yo)\\W+)?(?:my )?age\\s*[:=-]?\\s*(\\d{1,2})${AGE_END}`), age: m => Number(m[1]), explicit: true },
   // Leading "15 y/o here", "12yo." (only when it is about the sender: "12 yo whisky is great" is not).
@@ -209,6 +219,7 @@ const AGE_RX: AgeRule[] = [
   { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(\\d{1,2})${AGE_END_LOOSE}`), age: m => atLeast13(Number(m[1])) },
   { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(${NUM_WORD})${AGE_END}`), age: m => AGE_WORDS[m[1]!]! },
   { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|i (?:just )?turned\\s+)(${NUM_WORD})${AGE_END_LOOSE}`), age: m => atLeast13(AGE_WORDS[m[1]!]!) },
+  { rx: new RegExp(`\\b${ME}\\s+${SAME}(1[3-7])\\s+(?:from\\b|looking for\\b)`), age: m => Number(m[1]) },
   // "I'm almost 16", "I'm turning 16", "I'll be 16 in May", "I turn 16 next month": one less.
   { rx: new RegExp(`\\b${ME}\\s+${LESS}(\\d{1,2}|${NUM_WORD})\\b(?!\\s*(?:minutes|mins?|hours|hrs|blocks|miles|km|percent|%|feet|ft|times|for\\b|of\\b))`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1) },
   { rx: new RegExp(`\\bi(?:'ll| will) be\\s+(\\d{1,2}|${NUM_WORD})\\s+(?:in|on|next|this|soon)\\b`), age: m => teenOrAdult((/^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) - 1) },
@@ -237,22 +248,106 @@ const AGE_RX: AgeRule[] = [
   { rx: new RegExp(`\\b${ME}\\s+a\\s+(?:high schooler|hs student|high school student)\\b`), age: () => 15 },
 ];
 
+// These messages omit the pronoun. Read the whole message so a quote, question, or an
+// account of school years does not lower the sender's age.
+const SHORT_AGE_START = "^\\s*(?:(?:hi|hey|hello|yo)[\\s,!]+)?";
+const SHORT_AGE_END = "(?:\\s*,?\\s+(?:lol|lmao|haha|here|btw|rn|now|tho|fyi))*(?:\\s*,?\\s+(?:hbu|wbu)\\s*\\??)?\\s*[.!]*\\s*$";
+const shortAge = (s: string) => /^\d/.test(s) ? Number(s) : AGE_WORDS[s]!;
+const shortAgeRule = (form: string, age: AgeRule["age"]): AgeRule => (
+  { rx: new RegExp(`${SHORT_AGE_START}(?:${form})${SHORT_AGE_END}`), age }
+);
+const SHORT_AGE_RX = [
+  shortAgeRule(`(?:just |only )?turned\\s+(\\d{1,2}|${NUM_WORD})(?:\\s+(?:last (?:week|month)|yesterday|recently|today))?`, m => atLeast13(shortAge(m[1]!))),
+  shortAgeRule(`(?:just |only )?(?:an?\\s+)?(\\d{1,2}|${NUM_WORD})[\\s-]*${YEARS_OLD}(?:\\s+(?:${IDENTITY_WORD}|dude|female|male|[fm]))?`, m => atLeast13(shortAge(m[1]!))),
+  shortAgeRule("(1[3-7]|thirteen|fourteen|fifteen|sixteen|seventeen)\\s+(?:here|lol|btw|haha|rn)", m => shortAge(m[1]!)),
+  shortAgeRule("(?:still\\s+)?(?:not 18 yet|under 18|a minor|underage)", () => 17),
+  shortAgeRule("(?:almost|nearly|turning)\\s+(?:18|eighteen)(?:\\s+(?:in \\w+|next \\w+|this \\w+|soon))?|(?:18|eighteen)\\s+(?:next (?:week|month|year)|in (?:a few )?(?:weeks|months))", () => 17),
+  shortAgeRule("(?:still\\s+)?in\\s+(?:the\\s+)?(6|7|8|9|10|11|12)(?:st|nd|rd|th)?\\s+grade|(?:an?\\s+)?(6|7|8|9|10|11|12)(?:st|nd|rd|th)\\s+grader", m => Math.max(13, Number(m[1] ?? m[2]) + 5)),
+  shortAgeRule("(?:an?\\s+)?(freshman|sophomore|junior|senior)\\s+(?:in|at)\\s+(?:high school|hs)|(?:an?\\s+)?(?:high school|hs)\\s+(freshman|sophomore|junior|senior)", m => SCHOOL_YEAR[(m[1] ?? m[2])!]!),
+  shortAgeRule("(?:still\\s+)?in (middle|high) school", m => m[1] === "middle" ? 13 : 15),
+];
+
+/** Every match of one rule. A rule can match more than once in one message. */
+function allMatches(rx: RegExp, text: string): RegExpExecArray[] {
+  const re = new RegExp(rx.source, rx.flags.includes("g") ? rx.flags : `${rx.flags}g`);
+  const out: RegExpExecArray[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    out.push(m);
+    if (m[0].length === 0) re.lastIndex++;
+  }
+  return out;
+}
+
+/**
+ * True when `prefix` (the text before an age) leaves a quotation open, so the age is inside it
+ * (`she said "I'm 15"`, `"I'm 15"`). Apostrophes in "I'm" and "don't", and a foot mark (`5'6`, `5'`),
+ * are not quotes. A quote that has closed is not open: `he said "hi" I'm 15` is a real age.
+ */
+function quoteStillOpen(prefix: string): boolean {
+  let double = false, single = false;
+  for (let i = 0; i < prefix.length; i++) {
+    const c = prefix[i]!;
+    const prev = i > 0 ? prefix[i - 1]! : "";
+    const next = i + 1 < prefix.length ? prefix[i + 1]! : "";
+    if (c === "\"") {
+      // 6" is inches, unless this mark closes a quote that is already open.
+      if (!double && /[0-9]/.test(prev)) continue;
+      double = !double;
+      continue;
+    }
+    if (c !== "'") continue;
+    if (/[a-z0-9]/.test(prev) && /[a-z0-9]/.test(next)) continue;
+    if (!single && (/[0-9]/.test(prev) || /[a-z]/.test(prev))) continue;
+    single = !single;
+  }
+  return double || single;
+}
+
+/**
+ * The age is not the sender's age today when a not-now word sits immediately before it in the same
+ * clause, or when the age is still inside a quote. Quote state is read from the whole message, so
+ * a period inside quotes (`"Hey." I'm 15.`) does not turn the closing quote into a new opener.
+ * The word lookbehind stops at the previous clause, so that closer cannot cancel the next statement.
+ */
+function notNowBefore(text: string, at: number): boolean {
+  const before = text.slice(0, at);
+  if (quoteStillOpen(before)) return true;
+  let from = 0;
+  CLAUSE_BREAK.lastIndex = 0;
+  for (const m of before.matchAll(CLAUSE_BREAK)) from = m.index! + m[0].length;
+  return NOT_NOW.test(before.slice(from).slice(-24));
+}
+
 /**
  * The youngest age the sender states about themselves, and the youngest they state in the explicit
- * form ("I am 12 years old"). First person and present tense only, so "my son is 12", "I teach
- * middle school" or "I act like I'm 12" never change the member's age.
+ * form ("I am 12 years old"). Every occurrence counts, in every sentence: "I'm 30. I'm 15." is 15,
+ * "I'm 30. Age: 15." is 15, and "I am 40 years old. I am 12 years old." is 12. First person and
+ * present tense only, so "my son is 12", "I teach middle school" or "I act like I'm 12" never
+ * change the member's age. An age inside a quote that is still open is not theirs; a quote that
+ * has closed does not hide the next statement (`he said "hi" I'm 15`).
  */
 export function agesStated(body: string): { age?: number; explicit?: number } {
   const t = normText(body);
   const out: { age?: number; explicit?: number } = {};
-  for (const { rx, age, explicit } of AGE_RX) {
+  // Rules that start at the beginning of the text ("age: 15", "15 y/o here", "15f", "f15", "15 here")
+  // are read on each sentence. On the whole message they would see only the first sentence.
+  for (const s of sentencesOf(t)) {
+    for (const { rx, age, explicit } of AGE_RX) {
+      for (const m of allMatches(rx, s.text)) {
+        if (notNowBefore(t, s.at + m.index)) continue;
+        const a = age(m);
+        if (!Number.isFinite(a)) continue;
+        if (out.age === undefined || a < out.age) out.age = a;
+        if (explicit && (out.explicit === undefined || a < out.explicit)) out.explicit = a;
+      }
+    }
+  }
+  for (const { rx, age } of SHORT_AGE_RX) {
     const m = rx.exec(t);
     if (!m) continue;
-    if (NOT_NOW.test(t.slice(Math.max(0, m.index - 24), m.index))) continue;
     const a = age(m);
-    if (!Number.isFinite(a)) continue;
-    if (out.age === undefined || a < out.age) out.age = a;
-    if (explicit && (out.explicit === undefined || a < out.explicit)) out.explicit = a;
+    if (Number.isFinite(a) && (out.age === undefined || a < out.age)) out.age = a;
   }
   return out;
 }
@@ -268,28 +363,35 @@ const OTHER_AGE_RX: AgeRule[] = [
   { rx: /\b(?:he|she|they) (?:said|told me|says|mentioned) (?:he|she|they)(?:'s|'re| is| are| was| were) (?:only |just )?(\d{1,2})\b/, age: m => Number(m[1]) },
 ];
 
-/** An age the sender states about someone else ("he's only 15", "she's in high school"); under 18 only. */
+/** The youngest age the sender states about someone else ("he's 20. She's 14." is 14). Under 18 only. */
 export function otherAgeStated(body: string): number | undefined {
   const t = normText(body);
   let best: number | undefined;
   for (const { rx, age } of OTHER_AGE_RX) {
-    const m = rx.exec(t);
-    if (!m) continue;
-    const a = age(m);
-    if (Number.isFinite(a) && a < 18 && a > 0 && (best === undefined || a < best)) best = a;
+    for (const m of allMatches(rx, t)) {
+      const a = age(m);
+      if (Number.isFinite(a) && a < 18 && a > 0 && (best === undefined || a < best)) best = a;
+    }
   }
   return best;
 }
 
+/** Spelled-out ages from 20 to 99 ("thirty", "twenty-five", "forty one"); the teens are in AGE_WORDS. */
+const TENS: Record<string, number> = { twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
+const TENS_WORD = Object.keys(TENS).join("|");
+const UNIT_WORD = "one|two|three|four|five|six|seven|eight|nine";
+
 /**
  * The answer to "How old are you?": the whole message is an age ("34", "I'm 34.", "15 years old",
- * "fifteen"). Anything more is not read as an answer here (classify() reads ages in sentences).
+ * "fifteen", "thirty-two"). Anything more is not read as an answer here (classify() reads ages in
+ * sentences).
  */
 export function ageAnswer(body: string): number | undefined {
   const t = normText(body).trim();
-  const m = new RegExp(`^(?:${ME}\\s+)?(\\d{1,3}|${Object.keys(AGE_WORDS).join("|")})(?:\\s*${YEARS_OLD})?\\s*[.!]*$`).exec(t);
+  const m = new RegExp(`^(?:${ME}\\s+)?(\\d{1,3}|(?:${TENS_WORD})(?:[\\s-]+(?:${UNIT_WORD}))?|${Object.keys(AGE_WORDS).join("|")})(?:\\s*${YEARS_OLD})?\\s*[.!]*$`).exec(t);
   if (!m) return undefined;
-  const n = /^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!;
+  const [w, unit] = m[1]!.split(/[\s-]+/);
+  const n = /^\d/.test(w!) ? Number(w) : (TENS[w!] ?? AGE_WORDS[w!]!) + (unit ? AGE_WORDS[unit]! : 0);
   return n > 0 && n < 120 ? n : undefined;
 }
 
@@ -389,8 +491,8 @@ const AREA_ALIASES: [RegExp, string][] = [
 const AREA_NAMES = new Set(NEIGHBORHOODS.map(n => n.name));
 /** Words that say where the sender is based ("I live in", "based in", "I'm around"). */
 const HOME_CTX = /\b(i live|i'?m living|living in|live in|based (in|out of)|i'?m (in|around|near|over in|up in|out in|down in|by)|im (in|around|near)|i'?m from|my (place|apartment|apt|neighborhood|hood) is|home is|i stay in|my area is|i'?m mostly (in|around)|around .* most of the week)\b/;
-/** Where a neighborhood is not home: "used to live in", "work in", "moved from". */
-const NOT_HOME = /\b(used to live(?: in)?(?: the)?|moved (?:away )?from(?: the)?|grew up in(?: the)?|work(ing)? in|office (is )?in|commute to|visiting|not in|never been to|far from)\s*$/;
+/** Where a neighborhood is not home: "used to live in", "work in the", "moved from". Each can take "the". */
+const NOT_HOME = /\b(used to live(?: in)?|moved (?:away )?from|grew up in|work(ing)? in|office (is )?in|commute to|visiting|not in|never been to|far from)(?: the)?\s*$/;
 
 export interface Profile {
   interests: string[]; skills: string[]; desireIds: string[];
@@ -461,6 +563,11 @@ export function extractProfile(body: string): Profile {
         if (SEEKING.test(before.slice(-40))) continue;
         skills.add(tag);
       }
+      // Taxonomy labels also occur in short profile answers such as "Senior product designer."
+      for (const k of SKILLS) {
+        const at = part.indexOf(k.label.toLowerCase());
+        if (at >= 0 && at < negAt && !SEEKING.test(part.slice(Math.max(0, at - 40), at))) skills.add(k.tag);
+      }
     }
   }
   // The message-level pass for activity wants (the activity and the ask in different sentences).
@@ -470,7 +577,6 @@ export function extractProfile(body: string): Profile {
   const plain = kept.join(" ");
   for (const d of DESIRES) if (plain.includes(d.text.toLowerCase()) && !notWanted.has(d.id)) desires.add(d.id);
   for (const i of INTERESTS) if (plain.includes(i.label.toLowerCase())) interests.add(i.tag);
-  for (const k of SKILLS) if (plain.includes(k.label.toLowerCase())) skills.add(k.tag);
   // A negated like is not an interest ("not into running"): drop interests named only after a negation.
   const where = areaOf(body);
   return {
@@ -490,7 +596,7 @@ export function extractProfile(body: string): Profile {
 export function feedbackOf(body: string): { sentiment: "positive" | "neutral" | "negative"; selfNoShow: boolean; otherNoShow: boolean; again: boolean } {
   const t = body.toLowerCase().replace(/[\u2018\u2019\u02bc]/g, "'");
   const selfNoShow = /couldn'?t make it|didn'?t make it|had to bail/.test(t);
-  const otherNoShow = /\b(never|didn'?t|did not) (show(ed)?( up)?|turn(ed)? up|come)\b(?! (me|us|you|him|her|them|off|around|any|much))|\bno[- ]show\b|\bstood (me|us) up\b/.test(t);
+  const otherNoShow = reportsAbsence(t);
   const negative = otherNoShow || NEGATIVE_FEEDBACK.test(t);
   const sentiment = negative ? "negative" : /great|clicked|loved|amazing|nice|easy to talk/.test(t) ? "positive" : "neutral";
   const again = !negative && /again|clicked/.test(t) && !/\b(wouldn'?t|won'?t|not|never)\b[^.!?]*\bagain\b/.test(t);
@@ -721,6 +827,8 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   return unclear;
 }
 
+const AVAILABILITY_TIME = new RegExp(`^(?:on\\s+)?(?:${DAY_WORDS.map(([re]) => re.source).join("|")}|\\b(?:weekdays?|weekends?|weeknights?|mornings?|afternoons?|lunch|evenings?|nights?|after work)\\b)`);
+
 /**
  * When a member says they are free ("Tue and Thu evenings", "weekends", "Saturday morning"), as
  * availability-pattern tags ("evening:Tue") that the engine's standingFromFacets reads.
@@ -730,19 +838,35 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
  * default (a weekend day: the whole day; a weekday: the evening). Days and parts are never crossed.
  */
 export function availabilityTags(body: string): string[] {
-  const t = body.toLowerCase();
+  // These exclusions have the same scope as "except". Require a time expression next so
+  // "barring emergencies" does not refuse a later day; keep this out of booking consent.
+  const t = body.toLowerCase().replace(/\b(?:other than|apart from|aside from|barring)\s+/g,
+    (cue: string, at: number, text: string) => !/\bnothing(?:\s+at all)?\s+$/.test(text.slice(0, at))
+      && AVAILABILITY_TIME.test(text.slice(at + cue.length)) ? "except " : cue);
   const DAYS3 = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  type Tok = { at: number; days?: number[]; part?: string };
+  type Tok = { at: number; days?: number[]; part?: string; refused?: boolean };
   const toks: Tok[] = [];
-  DAY_WORDS.forEach(([re], i) => { for (const m of t.matchAll(re)) if (!negatedAt(t, m.index!, m[0].length)) toks.push({ at: m.index!, days: [i] }); });
-  for (const m of t.matchAll(/\bweekends?\b/g)) toks.push({ at: m.index!, days: [0, 6] });
-  for (const m of t.matchAll(/\bweekdays?\b/g)) toks.push({ at: m.index!, days: [1, 2, 3, 4, 5] });
-  for (const m of t.matchAll(/\bweeknights?\b/g)) toks.push({ at: m.index!, days: [1, 2, 3, 4, 5] }, { at: m.index!, part: "evening" });
+  // A named refusal must not be restored when an offered day group is expanded.
+  const refusedDays = new Set<number>();
+  const refusedDayEnds: number[] = [];
+  DAY_WORDS.forEach(([re], i) => { for (const m of t.matchAll(re)) {
+    if (negatedAt(t, m.index!, m[0].length)) { refusedDays.add(i); refusedDayEnds.push(m.index! + m[0].length); }
+    else toks.push({ at: m.index!, days: [i] });
+  } });
+  for (const m of t.matchAll(/\bweekends?\b/g)) if (!negatedAt(t, m.index!, m[0].length)) toks.push({ at: m.index!, days: [0, 6].filter(d => !refusedDays.has(d)) });
+  for (const m of t.matchAll(/\bweekdays?\b/g)) if (!negatedAt(t, m.index!, m[0].length)) toks.push({ at: m.index!, days: [1, 2, 3, 4, 5].filter(d => !refusedDays.has(d)) });
+  for (const m of t.matchAll(/\bweeknights?\b/g)) if (!negatedAt(t, m.index!, m[0].length)) toks.push({ at: m.index!, days: [1, 2, 3, 4, 5].filter(d => !refusedDays.has(d)) }, { at: m.index!, part: "evening" });
   for (const [re, part] of [[/\bmornings?\b/g, "morning"], [/\bafternoons?\b|\blunch\b/g, "afternoon"], [/\b(?:evenings?|nights?|after work)\b/g, "evening"]] as const) {
-    for (const m of t.matchAll(re)) toks.push({ at: m.index!, part });
+    for (const m of t.matchAll(re)) {
+      // "Except Sunday mornings" qualifies the named-day exception, not every morning.
+      const namedException = refusedDayEnds.some(end => end <= m.index! && /^\s*$/.test(t.slice(end, m.index!)));
+      toks.push({ at: m.index!, part, refused: !namedException && negatedAt(t, m.index!, m[0].length) });
+    }
   }
   toks.sort((a, b) => a.at - b.at || (a.days ? -1 : 1));
   const out = new Map<number, Set<string>>();
+  const refused = new Map<number, Set<string>>(), refusedLead = new Set<string>();
+  const defaults = new Set<number>();
   const give = (ds: number[], p: string) => ds.forEach(d => (out.get(d) ?? out.set(d, new Set()).get(d)!).add(p));
   let pending: number[] = [], group: number[] = [], prevPart = false;
   const lead: string[] = [];
@@ -752,32 +876,52 @@ export function availabilityTags(body: string): string[] {
       pending.push(...k.days);
       prevPart = false;
     } else if (k.part) {
-      if (pending.length) { give(pending, k.part); group = pending; pending = []; }
-      else if (prevPart && group.length) give(group, k.part); // "Saturday morning and afternoon"
+      const ds = pending.length ? pending : prevPart ? group : [];
+      if (ds.length) {
+        group = ds; pending = [];
+        if (k.refused) for (const d of ds) {
+          (refused.get(d) ?? refused.set(d, new Set()).get(d)!).add(k.part);
+          defaults.add(d);
+        }
+        else give(ds, k.part);
+      } else if (k.refused) refusedLead.add(k.part);
       else lead.push(k.part);
       prevPart = true;
     }
   }
   // Days at the end with no part after them: a part said first ("evenings, Tue or Thu"), else the default.
-  if (pending.length) {
-    if (lead.length) lead.forEach(p => give(pending, p));
-    else for (const d of pending) (d === 0 || d === 6 ? ["morning", "afternoon", "evening"] : ["evening"]).forEach(p => give([d], p));
+  for (const d of pending) defaults.add(d);
+  for (const d of defaults) if (pending.includes(d) || !out.has(d)) {
+    const parts = lead.length ? lead : d === 0 || d === 6 ? ["morning", "afternoon", "evening"] : ["evening"];
+    parts.forEach(p => give([d], p));
   }
-  if (!out.size && lead.includes("evening") && /\b(most|any|all|every)\b/.test(t)) give([1, 2, 3, 4, 5], "evening");
+  // Do not replace an explicitly offered but fully refused group with default weekdays.
+  // The default also must not restore a weekday or group the member just refused.
+  if (!out.size && !toks.some(k => k.days) && lead.includes("evening") && /\b(most|any|all|every)\b/.test(t)) {
+    const weekdayWords = [/\b(?:weekdays?|weeknights?)\b/g, ...DAY_WORDS.slice(1, 6).map(([re]) => re)];
+    if (!weekdayWords.some(re => [...t.matchAll(re)].some(m => negatedAt(t, m.index!, m[0].length)))) give([1, 2, 3, 4, 5], "evening");
+  }
+  // Subtract refusals after defaults, so an omitted part cannot restore a refused window.
+  for (const [d, parts] of out) for (const p of [...refusedLead, ...(refused.get(d) ?? [])]) parts.delete(p);
   const ORDER = ["morning", "afternoon", "evening"];
   return [...out.keys()].sort().flatMap(d => ORDER.filter(p => out.get(d)!.has(p)).map(p => `${p}:${DAYS3[d]}`));
 }
 
+/** Idioms with a no-word that do not say no: "yes, no doubt", "no complaints", "wouldn't miss it". */
+const AGAIN_YES_IDIOM = /\b(no (?:doubt|question|hesitation|complaints?|regrets?|notes)|(?:wouldn'?t|won'?t|would not|will not) (?:miss|change|hesitate|say no)|(?:don'?t|do not) (?:want|wanna) to miss|not gonna lie|not to lie)\b/g;
+
 /**
  * The answer to "Would you do it again with this group?" after a plan (plans ask 8): yes, no, or
  * unclear. Facts about attendance come first ("couldn't make it", "nobody else came"): those are
- * not an answer about the group.
+ * not an answer about the group. A no-word inside a yes idiom is removed first; a negation before
+ * "again" ("I would not do it again") is a no.
  */
 export function planAgainOf(body: string): "yes" | "no" | "unclear" {
   const t = body.toLowerCase().replace(/[‘’ʼ]/g, "'");
   if (/\b(couldn'?t make it|didn'?t (go|make it)|nobody else|no one else|never showed|didn'?t show)\b/.test(t)) return "unclear";
-  if (/\b(probably not|not really|no\b|nah|nope|wouldn'?t|won'?t|not again|never again)\b/.test(t)) return "no";
-  if (/\b(yes|yeah|yep|definitely|absolutely|for sure|again|count me in)\b/.test(t)) return "yes";
+  const s = t.replace(AGAIN_YES_IDIOM, " ");
+  if (/\b(probably not|not really|no\b|nah|nope|wouldn'?t|won'?t|would not|will not|not again|never again|don'?t think|(?:don'?t|do not) (?:really )?(?:want|wanna)|(?:never|not) (?:\w+ ){0,4}again|once was enough|i'?ll pass|not for me|rather not|not with (?:this|that|the|these|those|them)|(?:wasn'?t|not) (?:really )?my (?:thing|crowd|scene|vibe))\b/.test(s)) return "no";
+  if (/\b(yes|yeah|yep|definitely|absolutely|for sure|again|count me in|(?:wouldn'?t|would not) say no)\b/.test(t)) return "yes";
   return "unclear";
 }
 

@@ -186,7 +186,7 @@ export class PgNotifyStore implements NotifyStore {
   async touch(personId: string, surface: Surface, at: number) {
     await this.sql`
       insert into notify.surface_signals (person_id, surface, last_used_at) values (${personId}, ${surface}, ${new Date(at)})
-      on conflict (person_id, surface) do update set last_used_at = excluded.last_used_at`;
+      on conflict (person_id, surface) do update set last_used_at = excluded.last_used_at, ignored_streak = 0`;
   }
 
   async recordOutcome(personId: string, surface: Surface, outcome: "acted" | "ignored", at: number) {

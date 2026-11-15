@@ -3,15 +3,21 @@
 // over 21 days; every NYC scenario; every sim/scenarios/*.json at pass^3 against the push stub; the
 // attention and plans invariants on the consent arms; and the shared conformance rules for networkPack.
 import { readdirSync } from "node:fs";
-import { DAY, HOUR, MINUTE, type MemberId } from "../../packages/core/src/index.ts";
+import { DAY, HOUR, MINUTE, SimClock, type MemberId, type NetworkContext, type SimMessage } from "../../packages/core/src/index.ts";
+import { resolveConfig } from "../../packages/engine/src/config.ts";
+import { availabilityProb, standingFromFacets } from "../../packages/engine/src/attention.ts";
+import { localEmbed } from "../../packages/engine/src/embed.ts";
 import { DEFAULT_ATTENTION } from "../../packages/engine/src/index.ts";
 import { networkPack } from "../../packages/engine/src/packs/network/index.ts";
+import { baseMember, emptyInput, randomWorld } from "../../packages/engine/src/testkit.ts";
+import { World as EngineWorld } from "../../packages/engine/src/world.ts";
 import type { RunRecord } from "../../packages/core/src/index.ts";
 import { computeMetrics } from "../../packages/sim/src/judge/metrics.ts";
 import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, loadScenario, runScenario as runSimScenario, runScenarioPassK } from "../../packages/sim/src/index.ts";
 import { friendFactory, nycPersonas, runArm, runScenario, SCENARIOS, type ArmResult } from "../../packages/network/harness/index.ts";
 import { allowedAt, ConsentNetwork, NY, OUTREACH, SIM_AUTO_REVIEWER, VENUES, type NetworkOptions } from "../../packages/network/src/index.ts";
 import { styleViolations } from "../../packages/network/src/copy.ts";
+import { Mini, START } from "../../packages/network/test/mini.ts";
 import { DATA_DIR } from "../synthetic/common.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
@@ -35,7 +41,127 @@ async function world(days: number, seed = 3, network: NetworkOptions = { review:
   return { w, net, records, start, personas: new Map(w.personaList().map(p => [p.id, p])) };
 }
 
+/**
+ * Invite chains may be stored under alias ids (ME-006). The walk must finish.
+ * A repeated canonical id stops the walk. A chain stops before a minor (PRD 33.8).
+ * Seed 1. The input is fixed. The walk does not use the model.
+ */
+export async function inviteRootGate(b: Block): Promise<void> {
+  await b.run("inviter cohort resolves alias invite chains and stops on a repeated canonical id", () => {
+    const now = Date.UTC(2026, 9, 5, 16);
+    const input = emptyInput(now);
+    input.members = [
+      baseMember("a", { invitedBy: "phone:b" }),
+      baseMember("b", { invitedBy: "phone:a" }),
+      baseMember("c", { invitedBy: "phone:a" }),
+      baseMember("d", { invitedBy: "phone:e" }),
+      baseMember("e", { invitedBy: "f" }),
+      baseMember("f"),
+      baseMember("g", { invitedBy: "phone:teen" }),
+      baseMember("p", { invitedBy: "q" }),
+      baseMember("q", { invitedBy: "p" }),
+      baseMember("s", { invitedBy: "phone:s" }),
+      baseMember("teen", { age: 16 }),
+    ];
+    input.idAliases = { "phone:a": "a", "phone:b": "b", "phone:e": "e", "phone:s": "s", "phone:teen": "teen" };
+    const w = new EngineWorld(input, resolveConfig({ seed: 1 }), localEmbed);
+    const root = (id: string) => w.get(id)!.inviterRoot;
+    // a <-> b through aliases. Stop on the repeated canonical id, as a direct id cycle does.
+    expect(root("a")).toBe("b");
+    expect(root("b")).toBe("a");
+    expect(root("c")).toBe("b");
+    expect(root("d")).toBe("f");
+    expect(root("e")).toBe("f");
+    expect(root("f")).toBe("f");
+    expect(root("g")).toBe("g");
+    expect(root("p")).toBe("q");
+    expect(root("q")).toBe("p");
+    expect(root("s")).toBe("s");
+    expect(root("teen")).toBe("teen");
+    expect(w.minors.has("teen")).toBe(true);
+  });
+}
+
+export async function scenarioRepetitionGate(b: Block): Promise<void> {
+  await b.run("scenario CLI: repetitions must be a positive integer; default and one run execute checks", () => {
+    const root = `${import.meta.dir}/../..`;
+    const run = (k?: string) => Bun.spawnSync([
+      process.execPath, "run", "--conditions", "eliza-source", "packages/sim/src/cli.ts", "--scenario", "packages/sim/scenarios/band-week-apart.json", "--no-log",
+      ...(k === undefined ? [] : [`--k=${k}`]),
+    ], { cwd: root, stdout: "pipe", stderr: "pipe" });
+    for (const k of ["0", "-1", "1.5", "invalid"]) {
+      const result = run(k);
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr.toString()).toContain("positive integer");
+      expect(result.stdout.toString()).not.toContain("pass^");
+    }
+    for (const k of [undefined, "1"]) {
+      const result = run(k);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.toString()).toContain("pass^1: PASS (1/1)");
+      expect(result.stdout.toString()).toMatch(/\n\s+pass\s+metric:/);
+    }
+  });
+}
+
 export async function networkBlock(b: Block, o: { quick: boolean }): Promise<void> {
+  await scenarioRepetitionGate(b);
+  await inviteRootGate(b);
+  await b.run("judge: a time counter requires agreement before a name can be revealed", () => {
+    const person = (id: MemberId, name: string): RunRecord => ({ t: 0, type: "persona", persona: {
+      id, name, archetype: "regular", homeCity: "nyc", joinDay: 0, trueAge: 30, claimedAge: 30, quietHours: [23, 7], romanceOptIn: false,
+    } });
+    const run = (decision: "accept" | "counter" | "decline", intent: string = decision) => computeMetrics([
+      person("ada", "Ada"), person("bev", "Bev"),
+      { t: 1000, type: "message", msg: { id: "p1", ts: 1000, memberId: "ada", direction: "outbound", status: "delivered",
+        body: "Want to meet someone for coffee this week?", meta: { type: "probe", probe: { key: "opp-1", participants: ["ada", "bev"] } } } },
+      { t: 2000, type: "decision", memberId: "ada", messageId: "p1", messageType: "proposal", intent, decision, proposalId: "opp-1", delayMs: 1000 },
+      { t: 3000, type: "message", msg: { id: "c1", ts: 3000, memberId: "bev", direction: "outbound", status: "delivered",
+        body: "Ada is free Thursday.", meta: { type: "scheduling", proposalId: "opp-1" } } },
+    ]);
+    const counter = run("counter");
+    const named = (m: ReturnType<typeof run>) => m.invariants.byRule.name_before_reveal ?? 0;
+    expect([named(run("accept")), named(counter), named(run("decline")), named(run("counter", "confirm_schedule"))]).toEqual([0, 1, 1, 0]);
+    expect(counter.responses).toMatchObject({ accepted: 0, countered: 1, acceptRate: 0 });
+  });
+  await b.run("availability: reviewed probes ignore inactive facets and retain active or undated patterns", async () => {
+    const states = ["none", "future", "expired", "active", "starts_now", "ends_now", "onboarding"] as const;
+    const failures: string[] = [];
+    for (const seed of [1, 2, 3]) {
+      const offered = new Map<string, unknown>();
+      for (const state of states) {
+        const w = new Mini([
+          { id: "a", name: "Alex", age: 30, interests: ["climbing"], shareable: true },
+          { id: "b", name: "Blair", age: 29, interests: ["climbing"], shareable: true },
+        ], { seed, review: "human" });
+        for (const id of ["a", "b"]) for (const answer of ["hi!", "More time outdoors.", state === "onboarding" ? "Tuesday evenings." : "My schedule varies.", "One-on-one is good."]) await w.say(id, answer);
+        // The first reviewed probe is sent one tick after submission. Both validity endpoints are inclusive.
+        if (state !== "none" && state !== "onboarding") for (const id of ["a", "b"]) w.facets.push({
+          id: `${id}-availability`, memberId: id, kind: "availability_pattern", value: "Usually free Tuesday evening", tags: ["evening:Tue"],
+          scope: "agent_private", provenance: "said", confidence: 1, confirmedByMember: true, observedAt: START,
+          validFrom: state === "future" ? START + 30 * DAY : state === "starts_now" ? START + HOUR : START - DAY,
+          validTo: state === "expired" ? START - 1 : state === "ends_now" ? START + HOUR : START + 60 * DAY,
+        });
+        w.restart();
+        const opp = w.propose(["a", "b"]);
+        expect(await w.runUntil(() => w.net.reviewQueue().some(x => x.oppId === opp))).toBe(true);
+        expect(w.sent.some(x => x.meta.probe?.key === opp)).toBe(false);
+        w.net.review(opp, "approve", { reviewer: "sim" });
+        expect(await w.runUntil(() => w.probed("a") || w.probed("b"))).toBe(true);
+        const probe = w.sent.find(x => x.meta.probe?.key === opp && x.meta.timeOptions?.length);
+        expect(probe?.t).toBe(START + HOUR);
+        expect(probe!.meta.timeOptions!.length).toBeGreaterThanOrEqual(2);
+        offered.set(state, probe!.meta.timeOptions);
+      }
+      expect(offered.get("active")).not.toEqual(offered.get("none"));
+      for (const state of states.slice(1)) {
+        const control = state === "future" || state === "expired" ? "none" : "active";
+        if (!Bun.deepEquals(offered.get(state), offered.get(control))) failures.push(`${seed}:${state}`);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
   // ---- invariants: NYC, 10 days, seed 3, simulated reviewer ---------------------------------------
   const run = await world(10);
   await run.w.advanceTo(run.w.end);
@@ -313,6 +439,132 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
     b.gate("negative control: the canary check fails against a leaky network", r.results.find(x => x.expectation.check === "canary_not_leaked")?.status === "fail");
   }
 
-  // ---- conformance rules for networkPack (engine level) ---------------------------------------------------
+  await b.run("recurring availability: refused day groups are not saved as free time", async () => {
+    const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri"].map(d => `evening:${d}`);
+    const weekends = ["Sun", "Sat"].flatMap(d => ["morning", "afternoon", "evening"].map(p => `${p}:${d}`));
+    const cases: [string, string[], number | undefined, number?][] = [
+      ["Usually free Tuesday evenings, not weekends", ["evening:Tue"], Date.UTC(2026, 9, 10, 14)],
+      ["Usually free Saturday mornings, not weekdays", ["morning:Sat"], Date.UTC(2026, 9, 6, 23)],
+      ["Usually free Sunday afternoons, not weeknights", ["afternoon:Sun"], Date.UTC(2026, 9, 6, 23)],
+      ["Usually free Tuesday evenings, weekends don't work", ["evening:Tue"], Date.UTC(2026, 9, 10, 14)],
+      ["Usually free Saturday mornings, weekdays are busy", ["morning:Sat"], Date.UTC(2026, 9, 6, 23)],
+      ["Usually free Sunday afternoons, weeknights are out", ["afternoon:Sun"], Date.UTC(2026, 9, 6, 23)],
+      ["Usually free weekends", weekends, undefined],
+      ["Usually free weekdays", weekdays, undefined],
+      ["Usually free weeknights", weekdays, undefined],
+      ["Usually free Tuesday evenings, not Saturday", ["evening:Tue"], Date.UTC(2026, 9, 10, 14)],
+      ["free most evenings, not weeknights", [], Date.UTC(2026, 9, 6, 23)],
+      ["Usually free any evenings, not weekdays", [], Date.UTC(2026, 9, 6, 23)],
+      ["Usually free all evenings, weeknights don't work", [], Date.UTC(2026, 9, 6, 23)],
+      ["Usually free every evening, weekdays are busy", [], Date.UTC(2026, 9, 6, 23)],
+      ["free most evenings", weekdays, undefined],
+      ["free most evenings, not weekends", weekdays, undefined],
+      ["Free every evening, not Tuesday", [], Date.UTC(2026, 9, 6, 23)],
+      ["Free all evenings, Friday is out", [], Date.UTC(2026, 9, 9, 23)],
+      ["Free most evenings, not Sunday", weekdays, undefined],
+      ["I'm free on weekdays except Tuesday", weekdays.filter(t => t !== "evening:Tue"), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["I'm free weekdays, not Tuesday", weekdays.filter(t => t !== "evening:Tue"), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["I can do weekdays but Tuesday is out", weekdays.filter(t => t !== "evening:Tue"), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["Usually free weekdays, Tuesdays are busy", weekdays.filter(t => t !== "evening:Tue"), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["Usually free weeknights but not Friday", weekdays.filter(t => t !== "evening:Fri"), Date.UTC(2026, 9, 9, 23), Date.UTC(2026, 9, 12, 23)],
+      ["Usually free weeknights except Friday", weekdays.filter(t => t !== "evening:Fri"), Date.UTC(2026, 9, 9, 23), Date.UTC(2026, 9, 12, 23)],
+      ["I'm free on weekends except Sunday", weekends.filter(t => t.endsWith(":Sat")), Date.UTC(2026, 9, 11, 14), Date.UTC(2026, 9, 10, 14)],
+      ["Free weekends, not Saturday", weekends.filter(t => t.endsWith(":Sun")), Date.UTC(2026, 9, 10, 14), Date.UTC(2026, 9, 11, 14)],
+      ["Free on weekends except Sunday mornings", ["morning:Sat"], Date.UTC(2026, 9, 11, 14), Date.UTC(2026, 9, 10, 14)],
+      ["Free weekday evenings except Tuesday and Friday", weekdays.filter(t => !["evening:Tue", "evening:Fri"].includes(t)), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["Free most weekend evenings except Saturday and Sunday", [], Date.UTC(2026, 9, 10, 23)],
+      ["Usually free weekdays, not Sunday", weekdays, undefined],
+      ["Usually free weekends, not Tuesday", weekends, undefined],
+      ["Usually free Tuesdays", ["evening:Tue"], undefined],
+      ["Usually free weekday mornings, not Tuesday", ["Mon", "Wed", "Thu", "Fri"].map(d => `morning:${d}`), Date.UTC(2026, 9, 13, 14), Date.UTC(2026, 9, 12, 14)],
+      ["Free weekday evenings except Monday and Tuesday and Wednesday and Thursday and Friday", [], Date.UTC(2026, 9, 13, 23)],
+      ["Usually free weekday mornings, not evenings", ["Mon", "Tue", "Wed", "Thu", "Fri"].map(d => `morning:${d}`), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 14)],
+      ["Usually free weekday afternoons, not evenings", ["Mon", "Tue", "Wed", "Thu", "Fri"].map(d => `afternoon:${d}`), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 18)],
+      ["Usually free weekends, not mornings", weekends.filter(t => !t.startsWith("morning:")), Date.UTC(2026, 9, 11, 14), Date.UTC(2026, 9, 10, 18)],
+      ["Usually free weekend mornings, not afternoons", ["morning:Sun", "morning:Sat"], Date.UTC(2026, 9, 11, 18), Date.UTC(2026, 9, 10, 14)],
+      ["Usually free weekdays, not evenings", [], Date.UTC(2026, 9, 13, 23)],
+      ["Free most evenings, not after work", [], Date.UTC(2026, 9, 13, 23)],
+      ["Usually free weekday mornings, evenings don't work", ["Mon", "Tue", "Wed", "Thu", "Fri"].map(d => `morning:${d}`), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 14)],
+      ["Usually free weekday mornings, no nights", ["Mon", "Tue", "Wed", "Thu", "Fri"].map(d => `morning:${d}`), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 14)],
+      ["Free Tuesday morning and afternoon, not evening", ["morning:Tue", "afternoon:Tue"], Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 13, 14)],
+      ["Free mornings on weekdays, not evenings", ["Mon", "Tue", "Wed", "Thu", "Fri"].map(d => `morning:${d}`), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 14)],
+      ["Not evenings, free Saturday afternoons", ["afternoon:Sat"], Date.UTC(2026, 9, 10, 23), Date.UTC(2026, 9, 10, 18)],
+      ["Usually free weekday mornings, not after work", ["Mon", "Tue", "Wed", "Thu", "Fri"].map(d => `morning:${d}`), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 14)],
+      ["Free weekend mornings but not afternoons", ["morning:Sun", "morning:Sat"], Date.UTC(2026, 9, 11, 18), Date.UTC(2026, 9, 10, 14)],
+      ["Free Tuesday evenings and Saturday mornings", ["evening:Tue", "morning:Sat"], undefined],
+      ["Usually free weekdays, not mornings", weekdays, Date.UTC(2026, 9, 13, 14), Date.UTC(2026, 9, 12, 23)],
+      ["Free Saturday mornings and afternoons", ["morning:Sat", "afternoon:Sat"], undefined],
+      ["Free most evenings, not mornings", weekdays, undefined],
+      ["Free mornings on weekdays", ["Mon", "Tue", "Wed", "Thu", "Fri"].map(d => `morning:${d}`), undefined],
+      ["I'm free on weekdays other than Tuesday", weekdays.filter(t => t !== "evening:Tue"), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["I'm free on weekdays apart from Tuesday", weekdays.filter(t => t !== "evening:Tue"), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["I'm free on weekdays aside from Tuesday", weekdays.filter(t => t !== "evening:Tue"), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["I'm free on weekdays barring Tuesday", weekdays.filter(t => t !== "evening:Tue"), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["Free weekends other than Sunday mornings", ["morning:Sat"], Date.UTC(2026, 9, 11, 14), Date.UTC(2026, 9, 10, 14)],
+      ["Free weekends apart from Sunday", weekends.filter(t => t.endsWith(":Sat")), Date.UTC(2026, 9, 11, 14), Date.UTC(2026, 9, 10, 14)],
+      ["Free weekday evenings aside from Tuesday and Friday", weekdays.filter(t => !["evening:Tue", "evening:Fri"].includes(t)), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["Free Tuesday evenings, other than weekends", ["evening:Tue"], Date.UTC(2026, 9, 10, 14), Date.UTC(2026, 9, 13, 23)],
+      ["Free Tuesday evenings apart from weekends", ["evening:Tue"], Date.UTC(2026, 9, 10, 14), Date.UTC(2026, 9, 13, 23)],
+      ["Free most evenings apart from weeknights", [], Date.UTC(2026, 9, 13, 23)],
+      ["Free weekday mornings other than evenings", ["Mon", "Tue", "Wed", "Thu", "Fri"].map(d => `morning:${d}`), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 14)],
+      ["Free weekends apart from mornings", weekends.filter(t => !t.startsWith("morning:")), Date.UTC(2026, 9, 11, 14), Date.UTC(2026, 9, 10, 18)],
+      ["Apart from mornings, free Saturday afternoons", ["afternoon:Sat"], Date.UTC(2026, 9, 10, 14), Date.UTC(2026, 9, 10, 18)],
+      ["Free weekdays other than on Tuesday", weekdays.filter(t => t !== "evening:Tue"), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["Free weekdays other than Tue", weekdays.filter(t => t !== "evening:Tue"), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["Free most evenings other than Friday", [], Date.UTC(2026, 9, 9, 23)],
+      ["Barring emergencies, Tuesday evenings work", ["evening:Tue"], undefined],
+      ["Apart from hiking, I'm free Tuesday evenings", ["evening:Tue"], undefined],
+      ["Other than work, Saturday mornings are free", ["morning:Sat"], undefined],
+      ["Aside from book club, I'm free Sunday afternoons", ["afternoon:Sun"], undefined],
+      ["Free Tuesday evenings at the bar", ["evening:Tue"], undefined],
+      ["Sorry, but Tuesday evenings work", ["evening:Tue"], undefined],
+    ];
+    const results: { seed: number; body: string; tags: string[]; expected: string[]; p?: number; prior?: number; allowedP?: number; allowedPrior?: number; hasStanding: boolean; hasAvailability: boolean }[] = [];
+    for (const seed of [1, 2, 3]) for (const [body, expected, refusedAt, allowedAt] of cases) {
+      const input = randomWorld({ seed, members: 120, minors: false });
+      const member = input.members.find(m => m.homeCity === "nyc" && m.state === "normal")!;
+      const clock = new SimClock(input.now);
+      let seq = 0;
+      const ctx: NetworkContext = {
+        clock, snapshot: () => input,
+        send: (memberId, body, options) => ({ id: `availability:${++seq}`, ts: clock.now(), direction: "outbound", channel: "sms", from: "network", to: memberId, memberId, body, status: "delivered", meta: options?.meta } satisfies SimMessage),
+        recordProposal: () => {}, recordMeeting: () => "unused", recordBlock: () => {}, log: () => {},
+      };
+      const opts = { seed, review: "human" as const, matchingEnabled: false };
+      let net = new ConsentNetwork(opts);
+      net.init(ctx);
+      await net.onInbound({ id: "join", memberId: member.id, body: "Hi", ts: clock.now(), channel: "sms" });
+      await net.onInbound({ id: "availability", memberId: member.id, body, ts: clock.now(), channel: "sms" });
+      // Reload persisted state into a fresh instance before the scheduler reads it.
+      const state = JSON.parse(JSON.stringify(net.exportState()));
+      net = new ConsentNetwork(opts); net.init(ctx); net.importState(state);
+      const reloaded = net.memberList().find(m => m.id === member.id)!;
+      const saved = reloaded.standing;
+      const standing = standingFromFacets(saved ? [{ kind: "availability_pattern", tags: saved.tags, observedAt: saved.at }] : [], clock.now());
+      const p = refusedAt === undefined ? undefined : availabilityProb({ memberId: member.id, tz: NY, standing }, { start: refusedAt, end: refusedAt + 2 * HOUR }, clock.now());
+      const prior = refusedAt === undefined ? undefined : availabilityProb({ memberId: member.id, tz: NY }, { start: refusedAt, end: refusedAt + 2 * HOUR }, clock.now());
+      const allowedP = allowedAt === undefined ? undefined : availabilityProb({ memberId: member.id, tz: NY, standing }, { start: allowedAt, end: allowedAt + 2 * HOUR }, clock.now());
+      const allowedPrior = allowedAt === undefined ? undefined : availabilityProb({ memberId: member.id, tz: NY }, { start: allowedAt, end: allowedAt + 2 * HOUR }, clock.now());
+      results.push({ seed, body, tags: saved?.tags ?? [], expected, hasStanding: saved !== undefined, hasAvailability: reloaded.availability !== undefined, ...(p === undefined ? {} : { p, prior }), ...(allowedP === undefined ? {} : { allowedP, allowedPrior }) });
+    }
+    const mismatches = results.filter(r => !Bun.deepEquals(r.tags, r.expected));
+    expect(mismatches.map(({ seed, body, tags }) => [seed, body, tags]).slice(0, 8)).toEqual([]);
+    for (const r of results) {
+      if (r.p !== undefined && r.expected.length) expect(r.p).toBeLessThan(r.prior!);
+      if (r.allowedP !== undefined) expect(r.allowedP).toBeGreaterThan(r.allowedPrior!);
+      if (!r.expected.length) {
+        expect(r.hasStanding).toBe(false);
+        expect(r.hasAvailability).toBe(false);
+        expect(r.p).toBe(r.prior);
+      }
+    }
+  });  // ---- conformance rules for networkPack (engine level) ---------------------------------------------------
   await conformance(b, networkPack, { seeds: o.quick ? [1, 2] : [1, 2, 3, 4] });
+}
+
+if (import.meta.main) {
+  const b = new Block("network");
+  await inviteRootGate(b);
+  const failed = b.gates.some(g => g.blocking && !g.pass);
+  process.exit(failed ? 1 : 0);
 }

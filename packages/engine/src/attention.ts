@@ -21,11 +21,12 @@
 // Everything here is a deterministic pure function of its inputs (no clock reads, no randomness,
 // no LLM calls). The Network runtime owns the state (hold queues, ledger, conversation streaks)
 // and calls these functions; see docs/results/2026-10-07-attention-budget.md for the integration note.
-import type { Category, MemberId, ParticipationState } from "@thenetwork/core";
-import { canBeMatched, DAY, fromLocal, HOUR, inQuietHours, localParts, MINUTE } from "@thenetwork/core";
+import type { Category, Facet, MemberId, ParticipationState } from "@thenetwork/core";
+import { canBeMatched, DAY, fromLocal, HOUR, inQuietHours, localParts, MINUTE, withinQuietHours } from "@thenetwork/core";
 import { DEFAULT_ATTENTION, type AttentionConfig } from "./config.ts";
 import { tokenize } from "./embed.ts";
 import { privateVocabulary } from "./explain.ts";
+import { validityIncludes } from "./interval.ts";
 import { checkMemberFacing } from "./judgeCommon.ts";
 import type {
   AttentionItem, AttentionLedgerEntry, CadencePrefs, Effort, EngineProposal, HeldItem, HoldReason, ItemKind, LedgerKind, Role,
@@ -337,8 +338,6 @@ export function inSendWindow(m: MemberAttention, now: number, cfg: AttentionConf
 // ------------------------------------------------------------------------------------------------
 // Send time learned from replies (founder decision 1)
 
-const hourInQuiet = (h: number, [s, e]: [number, number]) => (s === e ? false : s < e ? h >= s && h < e : h >= s || h < e);
-
 export interface SendProfile {
   /** Local send hour on weekdays and on weekends. */
   weekday: number; weekend: number;
@@ -359,7 +358,7 @@ export function learnSendProfile(replies: readonly number[], tz: string, now: nu
   const T = cfg.sendTime;
   const slotOf = (h: number) => T.slots.findIndex(sl => h >= sl.start && h < sl.end);
   const def = slotOf(T.defaultHour);
-  const okHour = (h: number) => !quietHours || Array.from({ length: Math.max(1, T.minOpenHours) }, (_, i) => (h + i) % 24).every(x => !hourInQuiet(x, quietHours));
+  const okHour = (h: number) => !quietHours || Array.from({ length: Math.max(1, T.minOpenHours) }, (_, i) => (h + i) % 24).every(x => !withinQuietHours(x, ...quietHours));
   const learn = (weekend: boolean) => {
     const w = T.slots.map(() => 0);
     let n = 0;
@@ -998,7 +997,7 @@ export function availabilityProb(ev: AvailabilityEvidence, slot: TimeSlot, now: 
   const lp = localParts(slot.start, ev.tz);
   const day = (lp.weekday + 1) % 7;
   const weekend = cfg.sendTime.weekendDays.includes(day);
-  if (ev.quietHours && hourInQuiet(lp.hour, ev.quietHours)) return 0;
+  if (ev.quietHours && withinQuietHours(lp.hour, ...ev.quietHours)) return 0;
   if (ev.away?.some(a => a.start < slot.end && a.end > slot.start)) return 0;
   const part = daypart(lp.hour);
   let p = weekend ? (part === "day" ? A.prior.weekendDay : A.prior.weekendEvening) : (part === "day" ? A.prior.weekdayDay : A.prior.weekdayEvening);
@@ -1102,12 +1101,12 @@ export function timeOptionsPhrase(slots: readonly TimeSlot[], tz: string): strin
 }
 
 /** Standing availability from `availability_pattern` facets ("calendar usually free Tue/Thu evenings": tags evening:Tue). */
-export function standingFromFacets(facets: readonly { kind: string; tags: string[]; inferred?: boolean; observedAt?: number; validFrom?: number }[], now: number): StandingAvailability[] {
+export function standingFromFacets(facets: readonly (Pick<Facet, "inferred" | "observedAt" | "validFrom" | "validTo"> & { kind: string; tags: string[] })[], now: number): StandingAvailability[] {
   const DAYS3 = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const PARTS: Record<string, [number, number]> = { morning: [7, 12], afternoon: [12, 17], evening: [17, 22] };
   const out: StandingAvailability[] = [];
   for (const f of facets) {
-    if (f.kind !== "availability_pattern") continue;
+    if (f.kind !== "availability_pattern" || !validityIncludes(f, now)) continue;
     const by = new Map<string, number[]>();
     for (const t of f.tags) {
       const [rawPart, rawDay] = t.split(":");

@@ -18,6 +18,7 @@
 //               no new item is proposed for it
 import { DAY, HOUR, SimClock, type Facet, type Intent, type Member, type MemberId, type NetworkContext, type Presence, type SimMessage, type SimMeta } from "../../packages/core/src/index.ts";
 import { PEON_ENGINE_CONFIG } from "../../packages/engine/src/packs/peon/index.ts";
+import { runEngine } from "../../packages/engine/src/engine.ts";
 import { peonSeats, seatIdOf } from "../../packages/engine/src/packs/peon/seats.ts";
 import { ConsentNetwork, type NetworkOptions } from "../../packages/network/src/network.ts";
 import { parsePosting, postingFacts, POSTING_COPY, readPostingText, SEAT_COPY, type JobPosting } from "../../packages/network/src/jobs.ts";
@@ -44,10 +45,10 @@ class SeatWorld {
   private seq = 0;
   private readonly opts: NetworkOptions;
 
-  constructor() {
+  constructor(seed = 7) {
     const w = appWiring("peon");
     this.opts = {
-      app: APPS.peon, seed: 7, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
+      app: APPS.peon, seed, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
       pack: w.pack!, hooks: w.hooks!, engine: { ...PEON_ENGINE_CONFIG, cities: ["nyc"] },
       onPosting: p => this.write(p),
     };
@@ -128,6 +129,71 @@ const startsWith = (body: string, re: RegExp) => re.test(body.replace(ACK, ""));
 const POST = "We're hiring a data analyst (level 2), 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL";
 
 export async function peonSeatsBlock(b: Block): Promise<void> {
+  // A manager may look for work while hiring. Their own seat must not win the sole opening
+  // and then disappear in seatRoute, which correctly refuses to route a person to themself.
+  const ownerRows = [];
+  for (const seed of [1, 2, 3]) for (const scenario of ["qualified-owner", "ineligible-owner", "other-employer", "candidate-declines"] as const) {
+    const w = new SeatWorld(seed);
+    w.add("hm1", "Harper Abbott", 35, { candidate: true, verified: "Acme" });
+    w.add("c1", "Casey Lee", 30, { candidate: true });
+    w.facets.find(f => f.id === "hm1-s")!.tags = [`peon:skill:sql:${scenario === "ineligible-owner" ? 1 : 5}`];
+    if (scenario === "other-employer") w.add("hm2", "Rowan Park", 40, { verified: "Elsewhere" });
+    for (const m of w.members) for (const answer of ["hi", "Work", "Weekends mostly", "One-on-one"]) await w.say(m.id, answer);
+    const post = "We're hiring a data analyst (level 2), 1 opening, $90k-$120k, hybrid in Brooklyn, must have SQL 3";
+    await w.say("hm1", post);
+    await w.say("hm1", "yes");
+    if (scenario === "other-employer") {
+      // Keep hm1's own posting in the snapshot, but closed. They can still seek another job.
+      await w.say("hm1", "Close my data analyst post");
+      await w.say("hm1", "yes");
+      await w.say("hm2", post.replace("SQL 3", "SQL 5"));
+      await w.say("hm2", "yes");
+    }
+    w.restart();
+    const manager = scenario === "other-employer" ? "hm2" : "hm1";
+    const candidate = scenario === "other-employer" ? "hm1" : "c1";
+    const posting = w.saved.find(p => p.managerId === manager)!;
+    const seat = seatIdOf(posting.id);
+    const run = await runEngine(w.net.packInput(w.clock.now()), { ...PEON_ENGINE_CONFIG, cities: ["nyc"], seed }, { pack: appWiring("peon").pack! });
+    const selectedOwn = run.proposals.filter(p => p.participants.includes(seat) && p.participants.includes(manager)).length;
+    const selectedExpected = run.proposals.filter(p => p.participants.includes(seat) && p.participants.includes(candidate)).length;
+    await w.runUntil(() => w.net.reviewQueue().some(i => w.opp(i.oppId)?.seat?.id === seat));
+    const items = w.net.reviewQueue().filter(i => w.opp(i.oppId)?.seat?.id === seat);
+    const item = items[0];
+    let beforeReview = false, candidateFirst = false, managerAfterYes = false, result = false, restored = false;
+    if (item) {
+      const id = item.oppId;
+      beforeReview = w.about(id).length === 0 && items.length === 1 && item.proposal.participants.includes(candidate);
+      w.net.review(id, "approve", { reviewer: "sim_staff" });
+      await w.runUntil(() => w.probedFor(candidate, id));
+      candidateFirst = w.probedFor(candidate, id) && !w.about(id).some(s => s.to === manager) && w.opp(id)?.stage !== "scheduled";
+      w.restart();
+      await w.say(candidate, scenario === "candidate-declines" ? "no" : "yes");
+      if (scenario === "candidate-declines") {
+        await w.run(DAY);
+        result = w.opp(id)?.stage === "closed" && !w.about(id).some(s => s.to === manager);
+        managerAfterYes = !w.probedFor(manager, id);
+      } else {
+        await w.runUntil(() => w.probedFor(manager, id));
+        managerAfterYes = w.probedFor(manager, id) && w.opp(id)?.stage !== "scheduled";
+        w.restart();
+        await w.say(manager, "yes");
+        await w.runUntil(() => w.about(id).filter(s => /Intro:|Good news:/.test(s.body)).length === 2, DAY);
+        const input = w.net.packInput(w.clock.now());
+        result = w.opp(id)?.stage === "scheduled"
+          && w.about(id).filter(s => /Intro:|Good news:/.test(s.body)).length === 2
+          && input.interactions?.some(x => x.id === `${id}:seat` && x.outcome === "accepted" && x.participants.includes(candidate)) === true
+          && input.facets.find(f => f.id === `${seat}:openings`)?.tags.includes("peon:openings:0") === true;
+      }
+      const state = JSON.stringify(w.opp(id));
+      w.restart();
+      restored = JSON.stringify(w.opp(id)) === state;
+    }
+    ownerRows.push({ seed, scenario, selectedOwn, selectedExpected, queued: items.length, beforeReview, candidateFirst, managerAfterYes, result, restored });
+  }
+  b.gate("a hiring candidate never consumes their own opening and can still join another employer", ownerRows.every(r =>
+    r.selectedOwn === 0 && r.selectedExpected === 1 && r.queued === 1 && r.beforeReview && r.candidateFirst && r.managerAfterYes && r.result && r.restored), JSON.stringify({ rows: ownerRows }));
+
   await b.run("intake rules: a job post is read from text, read back, and needs a title and a pay range", () => {
     const d = parsePosting(POST);
     expect(d).toMatchObject({ title: "data analyst", openings: 2, payMin: 90, payMax: 120, mode: "hybrid", area: "brooklyn", seniority: 2, must: [{ skill: "sql", level: 2 }] });

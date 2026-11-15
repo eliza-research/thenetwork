@@ -10,3 +10,9 @@ runs/
 __pycache__/
 .wrangler/
 .dev.vars
+/gen/
+.spec-cache/
+.studio/
+.lemmascript/
+_apalache-out/
+.claude/worktrees/
