@@ -458,13 +458,15 @@ export function secondEncounter(ctx: GenCtx): Candidate[] {
         const s = Math.min(w.bestFacet(ma, q, "desires").sim, w.bestFacet(mb, q, "desires").sim);
         if (s > bs) { bs = s; bestEv = ev; }
       }
-      const category: Category = bestEv?.category ?? "social";
+      const useEvent = Boolean(bestEv && bs >= w.cfg.retrieval.minSim * 0.8);
+      const category: Category = useEvent ? (bestEv!.category ?? "social") : "social";
+      const format: Format = useEvent ? "event" : "one_to_one";
       const role: Role = "peer";
-      if (memberReason(w, a, { category, role, format: bestEv ? "event" : "one_to_one", timeSensitive: false }) ||
-          memberReason(w, b, { category, role, format: bestEv ? "event" : "one_to_one", timeSensitive: false })) continue;
+      if (!w.canMeet([a, b]) || pairReason(w, a, b, category)) continue;
+      if (memberReason(w, a, { category, role, format, timeSensitive: false }) ||
+          memberReason(w, b, { category, role, format, timeSensitive: false })) continue;
       const shared = ma.share.find(f => f.tags.some(t => mb.share.some(g => g.tags.includes(t))));
       const sim = cosine(ma.desireEmb, mb.desireEmb);
-      const useEvent = bestEv && bs >= w.cfg.retrieval.minSim * 0.8;
       out.push(makeCandidate({
         kind: "second_encounter", generator: "second_encounter", category,
         participants: [a, b], roles: { [a]: role, [b]: role }, format: useEvent ? "event" : "one_to_one",
