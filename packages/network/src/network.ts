@@ -304,7 +304,7 @@ interface MemberState {
   /** What the member's next message probably answers. `ask` names an engine question (EngineResult.asks). */
   awaiting?: { kind: "probe" | "booked" | "feedback" | "growth" | "interview" | "age" | "checkin" | "crew" | "posting"; oppId?: string; ask?: AskRecord; at: number; crewId?: string; clarified?: boolean };
   /** A block or report waiting for "Who do you mean?" (ids and kinds only; what they said is not kept). */
-  pendingSafety?: { verb: "block" | "report"; kind: ReportKind; at: number };
+  pendingSafety?: { verb: "block" | "report"; kind: ReportKind; at: number; targets?: MemberId[] };
   invitedBy?: MemberId; invites: number[]; invitesBlockedUntil: number; lastGrowthAsk: number;
   /** What the member told us. Desires carry when they were stated: they expire and can be withdrawn. */
   learned: { interests: Set<string>; skills: Set<string>; desires: Map<string, number>; area?: string; eveningsOpen?: boolean; groups?: boolean };
@@ -991,6 +991,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     // Texts kept for other members (a deferred send, the last message, an acknowledgement still to fold in) never name them again.
     for (const d of this.deferred) d.body = scrub(d.body);
     for (const x of this.members.values()) {
+      if (x.pendingSafety?.targets?.includes(id)) x.pendingSafety = undefined;
       if (x.lastSent) x.lastSent = { ...x.lastSent, body: scrub(x.lastSent.body) };
       if (x.pendingAck) x.pendingAck = { ...x.pendingAck, text: scrub(x.pendingAck.text) };
     }
@@ -1468,7 +1469,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const r = this.resolveTarget(m, c.target ?? "", verb === "report");
     if (r.ask) {
       // Ids and kinds only: what they said is not kept while we wait for the name.
-      m.pendingSafety = { verb, kind, at: this.now() };
+      m.pendingSafety = { verb, kind, at: this.now(), targets: r.ask.map(x => x.id) };
       this.ctx.log(`${verb}_ambiguous`, { memberId: m.id, options: r.ask.length });
       this.send(m, copy.whoDoYouMean(this.namesFor(r.ask)), { type: "question", proactive: false }, "reply");
       return;
@@ -1579,23 +1580,31 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   /**
-   * The member's answer to "Who do you mean?" (within a day). A name or pronoun that resolves to a
-   * counterpart applies the block or report; "never mind" drops it; a short answer that still names
-   * nobody they met gets one plain reply. False: the message is about something else (the question
-   * is dropped and the message is handled as usual).
+   * The member's answer to "Who do you mean?" (within a day). A bare yes can confirm the one
+   * person named in the question if another action is not also waiting for a reply.
    */
   private answerWho(m: MemberState, body: string): boolean {
     const p = m.pendingSafety!;
     m.pendingSafety = undefined;
     if (this.now() - p.at > DAY) return false;
     const text = body.trim();
-    const r = this.resolveTarget(m, text);
-    if (r.target && this.counterparts(m.id).some(x => x.m.id === r.target!.id)) { this.applyBlock(m, p.verb, p.kind, r.target); return true; }
-    // A probe (1:1 or plan), the booked date, a crew or a check-in is also waiting: a short "no", "yes"
-    // or "can't make it" is its answer, not this one (the question is dropped; they can block or report again).
-    if (m.awaiting && ["probe", "booked", "crew", "checkin"].includes(m.awaiting.kind)) return false;
+    const nameOf = (s: string) => s.normalize("NFKC").toLowerCase().replace(/[‘’]/g, "'").replace(/\s+/g, " ").trim().replace(/[.!?,;:]+$/, "");
+    const name = nameOf(text.replace(/^(?:i (?:mean|meant)|it'?s)\s+/i, ""));
+    const exact = this.resolveTarget(m, name, p.verb === "report").target;
+    const named = exact && [this.fullNames.get(exact.id), exact.display, exact.first].some(value => value && nameOf(value) === name) ? exact : undefined;
+    const competing = m.awaiting && ["probe", "booked", "crew", "checkin"].includes(m.awaiting.kind);
+    const confirmed = !competing && p.targets?.length === 1
+      && /^(?:yes|yeah|yep|yup|correct|that's (?:him|her|them))[.!,\s]*$/i.test(text)
+      ? this.members.get(p.targets[0]!) : undefined;
+    const target = named ?? confirmed;
+    if (target && (p.verb === "block" || this.counterparts(m.id).some(x => x.m.id === target.id))) {
+      this.applyBlock(m, p.verb, p.kind, target);
+      return true;
+    }
+    if (competing) return false;
     if (NEVER_MIND.test(text)) { this.ack(m, "Okay."); return true; }
     if (text.split(/\s+/).length > 4) return false;
+    if (p.verb === "block") { this.applyBlock(m, p.verb, p.kind, undefined); return true; }
     this.ctx.log(`${p.verb}_unresolved`, { memberId: m.id });
     this.send(m, copy.whoUnresolved, { type: "info" }, "reply");
     return true;
