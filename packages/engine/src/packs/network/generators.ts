@@ -593,7 +593,7 @@ export function expansion(ctx: GenCtx): Candidate[] {
     if (memberReason(w, a, { category, role: "seeker", format: "one_to_one", timeSensitive: false })) continue;
     const d = outside[0]!;
     const q = ma.facetEmb.get(d.id)!;
-    const pool = eligibleMembers(ctx, category, "provider", "one_to_one", false, new Set([a])).filter(id => w.get(id)!.cluster !== ma.cluster && w.canMeet([a, id]));
+    const pool = eligibleMembers(ctx, category, "provider", "one_to_one", false, new Set([a])).filter(id => w.get(id)!.cluster !== ma.cluster && w.canMeet([a, id]) && !pairReason(w, a, id, category));
     let best: { id: MemberId; sim: number; facet?: Facet } | undefined;
     for (const id of pool) {
       const r = w.bestFacet(w.get(id)!, q, "caps");
