@@ -433,7 +433,8 @@ async function simGates(b: Block, o: { quick: boolean }, read: (text: string, as
 async function llmMergeGate(b: Block): Promise<void> {
   const scripted = (reply: object) => llmSlopReader({ chat: async () => JSON.stringify(reply) });
   await b.run("LLM hook (scripted reader, no model): flag-gated, quoted, fills only gaps, age only marks a minor", async () => {
-    const run = (text: string, reply: object, enabled = true) => extractSlopProfileLLM([text], undefined, { llm: { enabled, reader: scripted(reply) } });
+    const run = (text: string, reply: object, enabled = true, options?: { market?: "nyc" | "sf" | "la" }) =>
+      extractSlopProfileLLM([text], undefined, { market: options?.market, llm: { enabled, reader: scripted(reply) } });
     const filled = await run("into fellas mostly", { seeks: { value: ["man"], quote: "into fellas" } });
     if (!same(filled.seeks?.value, ["man"]) || filled.seeks?.source !== "llm" || filled.seeks.evidence.text !== "into fellas") throw new Error(`fill: ${JSON.stringify(filled.seeks)}`);
     if ((await run("into fellas mostly", { seeks: { value: ["man"], quote: "into fellas" } }, false)).seeks) throw new Error("ran with the flag off");
@@ -443,7 +444,23 @@ async function llmMergeGate(b: Block): Promise<void> {
     const teen = await run("sophomore year lol", { selfAge: { value: 15, quote: "sophomore year" } });
     if (!teen.minor || teen.declined) throw new Error("an LLM age must mark a minor and never decline");
     if ((await run("im 30 lol", { selfAge: { value: 45, quote: "im 30" } })).age?.value !== 30) throw new Error("an LLM age raised the age");
+    const fidiSf = await run("office is in FiDi", { location: { value: { area: "FiDi" }, quote: "FiDi" } }, true, { market: "sf" });
+    if (fidiSf.location?.value.zip !== "94104" || fidiSf.location?.value.area !== "Financial District") throw new Error(`fidi sf location: ${JSON.stringify(fidiSf.location)}`);
+    const fidiNyc = await run("office is in FiDi", { location: { value: { area: "FiDi" }, quote: "FiDi" } }, true, { market: "nyc" });
+    if (fidiNyc.location?.value.zip !== "10004" || fidiNyc.location?.value.area !== "Financial District") throw new Error(`fidi nyc location: ${JSON.stringify(fidiNyc.location)}`);
+    const unindexed = await extractSlopProfileLLM(["just moved to River North"], undefined, {
+      market: "sf",
+      llm: { enabled: true, reader: async () => ({ location: { value: { area: "River North" as any }, quote: "River North" } } as any) },
+    });
+    if (unindexed.location) throw new Error("unindexed area should not set location");
+    const priorConfirmed = await run("im 25 and living in 94110", {});
+    priorConfirmed.confirmed = true;
+    const withInterest = await extractSlopProfileLLM(["into running mostly"], priorConfirmed, {
+      llm: { enabled: true, reader: scripted({ interests: { value: ["running"], quote: "running" } }) },
+    });
+    if (!withInterest.confirmed) throw new Error("adding soft fields should not reset confirmation");
   });
+
 }
 
 export async function onboardBlock(b: Block, o: { quick: boolean; llm?: boolean }): Promise<void> {
