@@ -37,7 +37,7 @@ consent replies (yes / no / no thanks / ok fine yes / mixed / conditional) all r
 ## Results
 
 - `bun run sim --quick`: 298/298 blocking gates pass; teen ages recall 100.0% (n 258), 0 adults read as minors.
-- `bun run sim` (full): see PR description (exit 0, blocking gates pass).
+- `bun run sim` (full): PASS, 329/329 blocking gates, 20 tracked off target, 629.5s, exit 0.
 - `bun run typecheck`: pass.
 - `bun test ... classify-age.test.ts`: 7 pass, 0 fail.
 - Real-LLM evidence: N/A — the fix and its gate are in the deterministic offline parser (`classify.ts`), which by design (PRD 32.14) never depends on a model.
