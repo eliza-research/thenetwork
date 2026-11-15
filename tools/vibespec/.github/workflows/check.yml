@@ -1,0 +1,58 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [".", "examples/dashboard", "examples/assistant", "examples/fullstack"]
+    steps:
+      - uses: actions/checkout@v4
+      # Dafny's action installs Node 16 for itself, so Node 24 must come after it.
+      - uses: dafny-lang/setup-dafny-action@v1
+        with:
+          dafny-version: "4.11.0"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: node "$GITHUB_WORKSPACE/tools/spec.ts" check
+        working-directory: ${{ matrix.project }}
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proof-${{ strategy.job-index }}
+          path: ${{ matrix.project }}/gen/proof/
+          if-no-files-found: ignore
+
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: changed
+        with:
+          filters: |
+            tools:
+              - "tools/**"
+              - "package*.json"
+      - if: steps.changed.outputs.tools == 'true'
+        uses: dafny-lang/setup-dafny-action@v1
+        with:
+          dafny-version: "4.11.0"
+      - if: steps.changed.outputs.tools == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - if: steps.changed.outputs.tools == 'true'
+        run: npm ci
+      - if: steps.changed.outputs.tools == 'true'
+        run: npm run selftest

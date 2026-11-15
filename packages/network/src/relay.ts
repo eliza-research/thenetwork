@@ -24,6 +24,7 @@
 //    the stored state and in network.relay_records (PgStore), and survives a restart.
 // Everything here is plain JSON (exportState). Deterministic: the host passes the time.
 import type { MemberId, Owned } from "@thenetwork/core";
+import { initial as initialRelay, step as stepRelay, storedHold, type DeliveryResult, type RelayVerdict } from "../../core/src/generated/relayLifecycle.ts";
 import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import {
   relayGuard, relayItem, relayItemAsync, RELAY_LIMITS, RELAY_WORDING, threadMessage,
@@ -42,6 +43,8 @@ export const RELAY_SWAP_TTL_MS = RELAY_LIMITS.consentTtlMs;
 /** Log rows kept in the state (the rate limits look back one day; staff and ban notices further). */
 export const RELAY_LOG_MAX = 5000;
 const THREAD_MAX = 50;
+const VERDICT = { block: "Block", hold: "Hold", pass: "Pass" } as const satisfies Record<RelayResult["decision"], RelayVerdict>;
+const DELIVERY_RESULT = { sent: "Delivered", deferred: "Queued", refused: "Refused" } as const satisfies Record<ReturnType<RelayHost["send"]>, DeliveryResult>;
 
 /** What the desk needs to know about a member (the Network's view; never hidden persona truth). */
 export interface RelayMember {
@@ -96,13 +99,20 @@ export interface RelayThreadState { id: string; app: string; members: [MemberId,
 export interface RelaySwap { itemId: string; matchId: string; from: MemberId; to: MemberId; at: number }
 
 /**
- * "Don't send my number", "cancel the number swap", "never mind about my number": the member takes
- * back a pending swap request. A negation or a cancel word together with their number.
+ * A negation that is not a no to the swap ("I don't mind, send them my number", "don't wait",
+ * "stop asking", "never had to wait this long"). Blanked before withdrawsSwap reads the message, so
+ * any other negation or cancel word in it still withdraws: the reader errs toward withdrawing, because
+ * a swap left pending after a no would share the number.
+ */
+const NOT_A_NO = /\b(?:don'?t|dont|do not) (?:mind|care|wait|worry)\b|\bstop asking\b|\bnever had\b|\bno (?:problem|worries|prob|rush|hurry)\b|\bnot a problem\b/g;
+/**
+ * "Don't send my number", "cancel the number swap", "no, not my number": the member takes back a
+ * pending swap request. A negation, a cancel word or "keep" together with their number.
  */
 export function withdrawsSwap(text: string): boolean {
-  const t = text.replace(/[\u2019\u2018`\u00b4]/g, "'").toLowerCase();
-  return /\b(?:don'?t|dont|do not|never|stop|cancel|hold off|rather not|changed my mind|never ?mind|nvm|take back|scratch)\b/.test(t)
-    && /\b(?:my (?:phone number|number|phone|digits|cell|contact(?: info)?)|(?:number|numbers) swap|swap(?:ping)? numbers)\b/.test(t);
+  const t = text.replace(/[\u2019\u2018`\u00b4]/g, "'").toLowerCase().replace(NOT_A_NO, " ");
+  return /\b(?:no|not|don'?t|dont|do not|never|stop|cancel|hold off|rather|keep|changed my mind|never ?mind|nvm|take back|scratch)\b/.test(t)
+    && /\b(?:my (?:phone number|number|phone|digits|cell|contact(?: info)?)|(?:number|numbers) swap|(?:the|that|our) swap|swap(?:ping)? numbers)\b/.test(t);
 }
 export interface RelayState { threads: RelayThreadState[]; log: RelayRecord[]; held: RelayHeld[]; swaps: RelaySwap[] }
 export const emptyRelayState = (): RelayState => ({ threads: [], log: [], held: [], swaps: [] });
@@ -231,21 +241,23 @@ export class RelayDesk {
   /** Log the decision, deliver a pass, queue a hold; the answer for the sender. */
   private apply(res: RelayResult, match: RelayMatch, item: RelayItem, o: RelayCallOptions, contact?: string): RelayOutcome {
     this.log(res.record);
-    if (res.decision === "block") return { itemId: item.id, decision: "refused", reason: res.senderNotice };
-    if (res.decision === "hold") {
-      // A hold that is only the rate limit or consent is answered, not queued: the member can try again.
-      const fam = (r: string) => r.split(":")[0]!;
-      if (res.reasons.every(r => fam(r) === "rate")) return { itemId: item.id, decision: "held", reason: res.senderNotice };
-      this.s.held.push({
-        itemId: item.id, matchId: match.id, app: this.host.app, kind: item.kind, from: item.from, to: item.to, at: item.at, reasons: res.reasons, status: "held",
-        // The text waits for staff only from an adult sender with no age signal (never a minor's words).
-        ...(item.text && !res.record.ageSignal ? { text: item.text } : {}), ...(item.photoIds?.length ? { photoIds: [...item.photoIds] } : {}),
-      });
-      return { itemId: item.id, decision: "held", reason: res.senderNotice };
-    }
+    // spec/relayLifecycle.md, "A first decision can block, hold, or admit an item"
+    const decision = stepRelay(initialRelay, {
+      type: "recordVerdict", verdict: VERDICT[res.decision],
+      rateOnly: res.decision === "hold" && res.reasons.every(r => r.startsWith("rate:") || r === "rate"),
+      hasText: !!item.text, ageSignal: res.record.ageSignal,
+    });
+    if (decision.phase === "Blocked") return { itemId: item.id, decision: "refused", reason: res.senderNotice };
+    if (decision.phase === "Held") this.s.held.push({
+      itemId: item.id, matchId: match.id, app: this.host.app, kind: item.kind, from: item.from, to: item.to, at: item.at, reasons: res.reasons, status: "held",
+      ...(decision.retainsText ? { text: item.text } : {}), ...(item.photoIds?.length ? { photoIds: [...item.photoIds] } : {}),
+    });
+    if (decision.phase !== "ReadyToSend") return { itemId: item.id, decision: "held", reason: res.senderNotice };
+
     const sent = this.deliver(res, match, item, o, contact);
-    if (sent === "refused") { this.undelivered(res.record); return { itemId: item.id, decision: "refused", reason: NOTICE.undelivered }; }
-    return { itemId: item.id, decision: "sent", reason: sent === "deferred" ? NOTICE.late : res.senderNotice };
+    const delivery = stepRelay(decision, { type: "recordDelivery", delivery: DELIVERY_RESULT[sent] });
+    if (delivery.phase === "SendRefused") { this.undelivered(res.record); return { itemId: item.id, decision: "refused", reason: NOTICE.undelivered }; }
+    return { itemId: item.id, decision: "sent", reason: delivery.phase === "Deferred" ? NOTICE.late : res.senderNotice };
   }
 
   /** The send path refused a passed item: the log says it was not delivered (and no number was shared), so a replay never answers "Sent." */
@@ -347,7 +359,7 @@ export class RelayDesk {
   release(itemId: string, actor: string, o: RelayCallOptions = {}): { ok: true; delivered: boolean } | { ok: false; reason: string } {
     const h = this.s.held.find(x => x.itemId === itemId && x.status === "held");
     if (!h) return { ok: false, reason: "not_held" };
-    const decided = () => { h.status = "released"; h.decidedBy = actor; h.decidedAt = this.host.now(); delete h.text; };
+    const decided = () => this.decideHold(h, actor, true);
     const match = this.host.matchesOf(h.from).find(m => m.id === h.matchId);
     const item: RelayItem | undefined = h.kind === "photo"
       ? { id: h.itemId, kind: "photo", from: h.from, to: h.to, at: h.at, photoIds: h.photoIds ?? [], ...(h.text ? { text: h.text } : {}), consent: { kind: "photo", by: h.from, itemId: h.itemId, at: h.at, photoIds: h.photoIds ?? [] } }
@@ -357,22 +369,34 @@ export class RelayDesk {
     const again = relayItem(item, this.context(item, match, o, h.at));
     const first = (this.host.member(h.from)?.firstName ?? "").trim().split(/\s+/)[0] || "Your match";
     const rendered = again.decision === "pass" ? again.rendered : again.decision === "hold" && item.kind === "text" ? RELAY_WORDING.text(first, item.text!) : "";
-    decided();
+    const released = decided();
     if (!rendered) return { ok: true, delivered: false };
     const res: RelayResult = { ...again, decision: "pass", rendered, photos: again.photos, record: { ...again.record, decision: "pass", reasons: [...again.record.reasons, "staff:released"].sort() } };
     const sent = this.deliver(res, match, item, o);
-    if (sent !== "refused") this.log(res.record);
-    return { ok: true, delivered: sent !== "refused" };
+    const result = stepRelay(released, { type: "recordDelivery", delivery: DELIVERY_RESULT[sent] });
+    const delivered = result.phase === "Sent" || result.phase === "Deferred";
+    if (delivered) this.log(res.record);
+    return { ok: true, delivered };
   }
 
   /** Staff reject a held item: it is never delivered; the text is dropped. */
   reject(itemId: string, actor: string): { ok: true } | { ok: false; reason: string } {
     const h = this.s.held.find(x => x.itemId === itemId && x.status === "held");
     if (!h) return { ok: false, reason: "not_held" };
-    h.status = "rejected"; h.decidedBy = actor; h.decidedAt = this.host.now(); delete h.text;
+    this.decideHold(h, actor, false);
     const r = this.s.log.find(x => x.itemId === itemId);
     if (r) this.log({ ...r, reasons: [...new Set([...r.reasons, "staff:rejected"])].sort() });
     return { ok: true };
+  }
+
+  private decideHold(h: RelayHeld, actor: string, released: boolean) {
+    // spec/relayLifecycle.md, "Staff review clears the held text"
+    const result = stepRelay({ ...storedHold, retainsText: !!h.text }, { type: "reviewHold", released });
+    h.status = result.phase === "Released" ? "released" : "rejected";
+    h.decidedBy = actor;
+    h.decidedAt = this.host.now();
+    if (!result.retainsText) delete h.text;
+    return result;
   }
 
   /** The relay log (no bodies, no contact values). */
@@ -396,7 +420,7 @@ export class RelayDesk {
 
   /** Forget a member (delete, under-13 decline): their held texts and pending swaps go; the log keeps ids only. */
   forget(id: MemberId) {
-    for (const h of this.s.held) if ((h.from === id || h.to === id) && h.status === "held") { h.status = "rejected"; h.decidedBy = "system:forget"; h.decidedAt = this.host.now(); delete h.text; }
+    for (const h of this.s.held) if ((h.from === id || h.to === id) && h.status === "held") this.decideHold(h, "system:forget", false);
     this.s.swaps = this.s.swaps.filter(x => x.from !== id && x.to !== id);
     for (const t of this.s.threads) if (t.members.includes(id)) t.messages = [];
   }

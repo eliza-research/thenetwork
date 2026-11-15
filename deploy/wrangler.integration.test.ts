@@ -6,18 +6,25 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 test("Wrangler OS-session opt-in preserves context and account/deploy guards", () => {
-  const root = mkdtempSync(join(tmpdir(), "ntwrk-wrangler-cli-"));
+  const bash = Bun.which("bash");
+  if (!bash) throw new Error("This integration test needs Bash on PATH (Git Bash on Windows).");
+  const root = mkdtempSync(join(tmpdir(), "ntwrk wrangler cli-"));
+  const home = "/synthetic-wrangler-home";
   try {
     const cli = join(root, "bunx");
     writeFileSync(cli, '#!/bin/bash\nprintf \'context=%s\\naccount=%s\\n\' "${XDG_CONFIG_HOME-UNSET}" "$CLOUDFLARE_ACCOUNT_ID"\nprintf \'arg=%s\\n\' "$@"\n');
     chmodSync(cli, 0o700);
+    // Let Bash derive its own PATH from cwd: native Windows drive letters cannot
+    // be inserted into a colon-separated POSIX PATH. Keep only the recording CLI
+    // and shell tools, with no inherited login files, provider env or real bunx.
     const invoke = (extra: Record<string, string>, args = ["whoami"]) => Bun.spawnSync(
-      ["/bin/bash", join(import.meta.dir, "../scripts/wrangler.sh"), ...args],
-      { env: { PATH: root + ":/usr/bin:/bin", HOME: process.env.HOME!, CLOUDFLARE_ACCOUNT_ID: "synthetic-account", ...extra } },
+      [bash, "--noprofile", "--norc", "-c", 'export PATH="$PWD:/usr/bin:/bin"; exec bash "$@"', "wrangler-test",
+        join(import.meta.dir, "../scripts/wrangler.sh").replaceAll("\\", "/"), ...args],
+      { cwd: root, env: { HOME: home, CLOUDFLARE_ACCOUNT_ID: "synthetic-account", ...extra } },
     );
     const normal = invoke({});
     expect(normal.exitCode).toBe(0);
-    expect(normal.stdout.toString()).toContain(`context=${process.env.HOME}/.config/wrangler-ntwrk`);
+    expect(normal.stdout.toString()).toContain(`context=${home}/.config/wrangler-ntwrk`);
     const os = invoke({ NTWRK_WRANGLER_USE_OS_SESSION: "1" });
     expect(os.exitCode).toBe(0);
     expect(os.stdout.toString()).toContain("context=UNSET");

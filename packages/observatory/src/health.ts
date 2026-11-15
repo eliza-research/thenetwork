@@ -1,6 +1,8 @@
 // Health alerts (admin-console 3.10), the PRD 28.2 scorecard and growth, computed the same way in
 // both modes. Each source gathers the inputs (game: run records and the Network; real: rows and
 // events) and these functions do the arithmetic, so the two modes cannot drift apart.
+import { matcherHeartbeatMillis, millisPerHour, missedMatcherHeartbeat, nearReviewDeadline, safetyDueAt, safetyOverdue, waitExceedsSla } from "../../core/src/generated/operationsTiming.ts";
+import { reviewLate } from "../../core/src/generated/reviewDeadline.ts";
 import { DAY, HOUR, type MemberId } from "@thenetwork/core";
 import { SIM_AUTO_REVIEWER, URGENT_REPORTS } from "@thenetwork/network";
 import { ENJOYED } from "./projector.ts";
@@ -10,9 +12,9 @@ import type { AppHealth, CohortActivation, GrowthStats, HealthAlert, ObsMember, 
 /** Alerts look at the last 24 hours (sim time in game mode) unless they say otherwise. */
 export const ALERT_WINDOW = DAY;
 /** An open review item due within this long is "near its SLA". */
-export const NEAR_SLA = HOUR;
+export const NEAR_SLA = millisPerHour;
 /** The engine runs once a day; no run for longer than this is a missed heartbeat. */
-export const HEARTBEAT = 26 * HOUR;
+export const HEARTBEAT = matcherHeartbeatMillis;
 /** Deferred sends waiting for their window: warn at this many. */
 export const DEFERRED_WARN = 25;
 
@@ -50,11 +52,11 @@ export function healthAlerts(x: AlertInput): HealthAlert[] {
   const out: HealthAlert[] = [];
   const add = (level: HealthAlert["level"], key: string, count: number, text: string) => out.push({ level, key, count, text });
   if (x.reviewExpired > 0) add("bad", "review_sla_missed", x.reviewExpired, `${x.reviewExpired} review item(s) expired unsent in the last 24 h (SLA missed)`);
-  const overdue = x.reviewOpen.filter(r => r.deadline <= x.now).length;
-  const near = x.reviewOpen.filter(r => r.deadline > x.now && r.deadline - x.now <= NEAR_SLA).length;
+  const overdue = x.reviewOpen.filter(r => reviewLate(x.now, r.deadline)).length;
+  const near = x.reviewOpen.filter(r => nearReviewDeadline(x.now, r.deadline)).length;
   if (overdue) add("bad", "review_overdue", overdue, `${overdue} review item(s) past the SLA and not yet expired`);
   const slaMs = x.sla ? x.sla.hours * HOUR : Infinity;
-  const late = x.reviewOpen.filter(r => r.queuedAt !== undefined && x.now - r.queuedAt > slaMs && r.deadline > x.now).length;
+  const late = x.reviewOpen.filter(r => r.queuedAt !== undefined && waitExceedsSla(x.now, r.queuedAt, slaMs) && r.deadline > x.now).length;
   if (late && x.sla) add("bad", "review_app_sla", late, `${late} review item(s) waiting longer than the ${x.sla.app} SLA (${x.sla.hours} h)`);
   if (near) add("warn", "review_near_sla", near, `${near} review item(s) due within 1 hour`);
   if (x.reviewOpen.length) add("info", "review_queue", x.reviewOpen.length, `${x.reviewOpen.length} item(s) waiting for review`);
@@ -66,8 +68,8 @@ export function healthAlerts(x: AlertInput): HealthAlert[] {
   if (x.expectEngine) {
     if (x.matchingLocked) add("info", "matching_off", 0, "Proactive matching is off until this app's engine pack ships: joins, onboarding and safety only");
     else if (!x.matchingEnabled) add("info", "matching_off", 0, "Proactive matching is off (admin switch): no engine runs");
-    else if (x.lastEngineRun === undefined) { if (x.now - x.start > HEARTBEAT) add("bad", "matcher_heartbeat", 0, "No engine run yet"); }
-    else if (x.now - x.lastEngineRun > HEARTBEAT) {
+    else if (x.lastEngineRun === undefined) { if (missedMatcherHeartbeat(x.now, x.start)) add("bad", "matcher_heartbeat", 0, "No engine run yet"); }
+    else if (missedMatcherHeartbeat(x.now, x.lastEngineRun)) {
       const h = Math.round((x.now - x.lastEngineRun) / HOUR);
       add("bad", "matcher_heartbeat", h, `Last engine run was ${h} h ago (expected daily)`);
     }
@@ -283,9 +285,9 @@ export function reportsFromCases(cases: SafetyInput["cases"], opps: ObsOpportuni
 export function reportQueue(now: number, rows: NonNullable<SafetyInput["reports"]>): SafetyReport[] {
   const out = rows.map((r): SafetyReport => {
     const urgent = URGENT_REPORTS.has(r.kind);
-    const dueAt = r.at + (urgent ? HOUR : DAY);
+    const dueAt = safetyDueAt(r.at, urgent);
     const priorReports = rows.filter(x => x.subjectId === r.subjectId && x.id !== r.id && x.at < r.at).length;
-    return { ...r, urgent, dueAt, overdue: r.status === "open" && now > dueAt, priorReports };
+    return { ...r, urgent, dueAt, overdue: safetyOverdue(now, dueAt, r.status === "open"), priorReports };
   });
   const rank = (r: SafetyReport) => (r.status !== "open" ? 2 : r.urgent ? 0 : 1);
   return out.sort((a, b) => rank(a) - rank(b) || a.at - b.at);
@@ -295,12 +297,12 @@ export function safetyInfo(x: SafetyInput): SafetyInfo {
   const name = new Map(x.members.map(m => [m.id, m.name]));
   const cases = x.cases.map((c): ObsSafetyCase => {
     const urgent = c.level === "hold" || c.events.some(e => URGENT.has(e.kind));
-    const dueAt = c.opened + (urgent ? HOUR : DAY);
+    const dueAt = safetyDueAt(c.opened, urgent);
     return {
       id: c.id, memberId: c.memberId, memberName: name.get(c.memberId) ?? c.memberId, level: c.level, status: c.status, opened: c.opened,
       ...(c.closedAt !== undefined ? { closedAt: c.closedAt } : {}), ...(c.closedBy ? { closedBy: c.closedBy } : {}),
       events: c.events.map(e => ({ at: e.at, kind: e.kind, points: e.points, ...(e.by ? { by: e.by } : {}) })),
-      urgent, dueAt, overdue: (c.status === "open" || c.status === "held") && x.now > dueAt,
+      urgent, dueAt, overdue: safetyOverdue(x.now, dueAt, c.status === "open" || c.status === "held"),
     };
   });
   const rank = (c: ObsSafetyCase) => (c.status === "closed" ? 2 : c.urgent ? 0 : 1);
@@ -324,7 +326,7 @@ export function safetyInfo(x: SafetyInput): SafetyInfo {
 export function appHealth(app: AppId, st: ObsState, slaHours: number): AppHealth {
   const now = st.clock.now, alerts = st.stats.alerts ?? [];
   const open = st.opportunities.filter(o => o.state === "IN_REVIEW" && o.source !== "shadow");
-  const late = open.filter(o => o.review && now - o.review.queuedAt > slaHours * HOUR).length;
+  const late = open.filter(o => o.review && waitExceedsSla(now, o.review.queuedAt, slaHours * HOUR)).length;
   const expired = alerts.find(a => a.key === "review_sla_missed")?.count ?? 0;
   const failures = alerts.filter(a => a.key.startsWith("send_refused:") || a.key.startsWith("service_channel:") || a.key === "guard_blocked").reduce((n, a) => n + a.count, 0);
   const worst = alerts.map(a => a.level).sort((a, b) => LEVEL[a] - LEVEL[b])[0];

@@ -66,6 +66,14 @@ export interface PhoneChange {
 export interface PhoneMove { personId: string; changeId: string; oldE164: string; newE164: string; oldHash: string; newHash: string; at: number }
 export type PhoneMoveResult = "ok" | "number_in_use" | "no_phone";
 
+/**
+ * Rate counters that look back further than the retention purge (2 days): the bucket kind (the text
+ * before the first ":") and its window. purge() keeps these rows until the window has passed, so a
+ * rule such as "at most once in 30 days" (service.ts stopHint) still holds after a purge.
+ */
+export const LONG_RATE_WINDOWS: Readonly<Record<string, number>> = { stop_hint: 30 * 24 * 3_600_000 };
+const rateKind = (bucket: string) => bucket.split(":", 1)[0]!;
+
 /** A rate-limit rule for hit(): a hit over `limit` in the window, or within `minGapMs` of the last counted hit, is refused and not counted. */
 export interface HitRule { limit?: number; minGapMs?: number }
 export interface HitResult { count: number; prevAt: number | null; ok: boolean }
@@ -153,7 +161,7 @@ export interface PeopleStore {
   putPending(p: PendingText): Promise<void>;
   deletePending(phoneHash: string, kind?: PendingKind, app?: AppId): Promise<void>;
 
-  /** Retention: drop expired OTP challenges, sessions, rate windows and pending flows older than `before`. Returns rows removed. */
+  /** Retention: drop expired OTP challenges, sessions, rate windows (LONG_RATE_WINDOWS kinds once their window has passed too) and pending flows older than `before`. Returns rows removed. */
   purge(before: number): Promise<number>;
 
   /** Leave one app: the membership is set to removed and its name and profile are cleared; grants that involve the app are revoked. */
@@ -338,7 +346,7 @@ export class MemoryPeopleStore implements PeopleStore {
     let n = 0;
     for (const [k, c] of this.challenges) if (c.expiresAt < before) { this.challenges.delete(k); n++; }
     for (const [k, s] of this.sessions) if (s.expiresAt < before || (s.revokedAt !== null && s.revokedAt < before)) { this.sessions.delete(k); n++; }
-    for (const [k, l] of this.limits) if (l.lastAt < before) { this.limits.delete(k); n++; }
+    for (const [k, l] of this.limits) if (l.lastAt < before - (LONG_RATE_WINDOWS[rateKind(k)] ?? 0)) { this.limits.delete(k); n++; }
     for (const [k, p] of this.pending) if (p.at < before) { this.pending.delete(k); n++; }
     for (const [k, c] of this.phoneChanges) if (c.confirmedAt === null && c.requestedAt < before) { this.phoneChanges.delete(k); n++; }
     return n;

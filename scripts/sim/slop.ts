@@ -43,7 +43,8 @@ import { generateSlopPersonas, type SlopPersona } from "../../packages/sim/src/a
 import { buildSlopSnapshot, RATER_DEFAULTS, SLOP_WORLD_START, type SlopNetworkState } from "../../packages/sim/src/apps/slop/snapshot.ts";
 import { BASELINES } from "../../packages/sim/src/apps/slop/baselines.ts";
 import { slopMetrics } from "../../packages/sim/src/apps/slop/metrics.ts";
-import { runSlopWorld, runSlopWorldAsync } from "../../packages/sim/src/apps/slop/world.ts";
+import { isSafe } from "../../packages/sim/src/apps/slop/oracle.ts";
+import { createSlopWorld, runSlopWorld, runSlopWorldAsync, type FlowRecord } from "../../packages/sim/src/apps/slop/world.ts";
 import { mergeRelayStats } from "../../packages/sim/src/apps/slop/relay.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
@@ -165,6 +166,23 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
     });
     expect(viaCheckin).toBeGreaterThan(0);
     for (const id of firstReport.keys()) expect(r.world.state.safetyHolds.some(x => x.memberId === id)).toBe(true);
+  });
+  await b.run("metrics: time-to-first-date median averages the two middle days for an even cohort (not the upper-middle)", () => {
+    const world = createSlopWorld({ seed: 1, perCity: 20, weeks: 4 });
+    const real = world.personas.filter(isSafe);
+    expect(real.length).toBeGreaterThanOrEqual(4);
+    const [r0, r1, r2, r3] = real;
+    const date = (key: string, a: MemberId, b: MemberId, day: number): FlowRecord => ({
+      key, week: 1, first: a, partner: b, city: "nyc", activity: "coffee", options: [],
+      stage: "date", firstYes: true, partnerYes: true, mutualYes: true, revealed: true, filterViolation: false,
+      outcome: { ea: 0.5, eb: 0.5, quality: 0.5, good: false, wantsSecondA: false, wantsSecondB: false, bothWantSecond: false },
+      good: false, secondDate: false, harms: [], declaredMinor: false, day,
+    });
+    // Four real members reach a first date; their first-date days sort to [10, 10, 30, 30].
+    const flows: FlowRecord[] = [date("k1", r0!.id, r1!.id, 10), date("k2", r2!.id, r3!.id, 30)];
+    const m = slopMetrics({ world, flows, matcher: "median-even" });
+    // The true median of [10, 10, 30, 30] is (10 + 30) / 2 = 20, not the upper-middle element 30.
+    expect(m.timeToFirstDate.medianDays).toBe(20);
   });
 
   // ---- conformance: core rules, then the stated filters and the never-shared rating -------------------

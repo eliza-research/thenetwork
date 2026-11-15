@@ -2,13 +2,13 @@
 // No production policy is supplied by default: uploading privately does not authorize item review.
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { SQL } from "bun";
+import { canClaimAction, permitsIntentBinding, photoDeliveryStillLive, photoFetchAllowed, providerFetchTtlMs, step as stepPhotoDelivery, type PhotoDelivery } from "../../core/src/generated/photoRelayItem.ts";
 import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import type { AppId } from "./apps.ts";
 import type { PhotoService, PhotoRow, PhotoType } from "./photos.ts";
 import { readCapped } from "./body.ts";
 
 export const PHOTO_RELAY_TTL = 15 * 60_000;
-const FETCH_TTL = 60_000;
 const opaque = () => { for (;;) { const id = randomBytes(16).toString("hex"); if (!/\d{7}/.test(id)) return id; } };
 export interface PhotoRelayParties {
   threadId: string; senderPersonId: string; recipientPersonId: string;
@@ -20,6 +20,14 @@ export interface PhotoRelayItem extends PhotoRelayParties {
   state: "pending" | "approved" | "rejected" | "revoked";
   reviewId: string | null; reviewedAt: number | null; reviewerId: string | null;
   actionId: string | null; deliveryIntent: string | null; deliveryExpiresAt: number | null;
+}
+function deliveryState(item: PhotoRelayItem): PhotoDelivery {
+  return {
+    phase: item.state === "approved" ? "PhotoApproved" : "PhotoWaiting", expiresAt: item.expiresAt,
+    boundAction: item.actionId !== null, actionKey: item.actionId ?? "",
+    boundIntent: item.deliveryIntent !== null, intentKey: item.deliveryIntent ?? "",
+    hasDeadline: item.deliveryExpiresAt !== null, deliveryUntil: item.deliveryExpiresAt ?? 0,
+  };
 }
 export interface PhotoRelayStore {
   create(item: PhotoRelayItem, requestId: string, requestHash: string): Promise<{ item?: PhotoRelayItem; conflict?: true }>;
@@ -187,8 +195,12 @@ export class PhotoRelayService {
   async claimForAction(tx: SQL, id: string, app: AppId, threadId: string, senderMemberId: string, actionId: string): Promise<ApprovedRelayPhoto | undefined> {
     if (!actionId || actionId.length > 200) return;
     return this.o.store.locked(id, async (r, save, context) => {
-      if (!r || r.app !== app || r.threadId !== threadId || r.senderMemberId !== senderMemberId || r.state !== "approved" || (r.actionId !== null && r.actionId !== actionId) || !(await this.current(r, context))) return;
-      await save({ ...r, actionId });
+      if (!r || r.app !== app || r.threadId !== threadId || r.senderMemberId !== senderMemberId) return;
+      const item = deliveryState(r);
+      if (!canClaimAction(item, actionId, true)) return;
+      const next = stepPhotoDelivery(item, { type: "claimAction", actionKey: actionId, currentItem: !!(await this.current(r, context)) });
+      if (next === item) return;
+      await save({ ...r, actionId: next.actionKey });
       return descriptor(r);
     }, tx);
   }
@@ -198,14 +210,18 @@ export class PhotoRelayService {
     const base = new URL(origin);
     if (base.protocol !== "https:" || base.username || base.password || base.pathname !== "/" || base.search || base.hash) return;
     return this.o.store.locked(d.itemId, async (r, save, context) => {
-      if (!r || !r.actionId || r.state !== "approved" || recipientMemberId !== r.recipientMemberId || (r.deliveryIntent !== null && r.deliveryIntent !== providerIntentKey) || !sameDescriptor(d, descriptor(r)) || !(await this.current(r, context))) return;
+      if (!r || recipientMemberId !== r.recipientMemberId) return;
+      const item = deliveryState(r);
+      if (!permitsIntentBinding(item, providerIntentKey) || !sameDescriptor(d, descriptor(r)) || !(await this.current(r, context))) return;
       // First resolve fixes the deadline durably. Receipt recovery must precede any retry;
       // the same intent can neither extend nor resurrect an expired capability.
-      const exp = r.deliveryExpiresAt ?? Math.min(r.expiresAt, this.now() + FETCH_TTL);
-      if (exp <= this.now()) return;
-      const bound = { ...r, deliveryIntent: providerIntentKey, deliveryExpiresAt: exp };
+      const issueAt = item.hasDeadline ? 0 : this.now();
+      const next = stepPhotoDelivery(item, { type: "issueDelivery", intentKey: providerIntentKey, currentItem: true, issueAt, checkedAt: this.now() });
+      if (next === item) return;
+      const exp = next.deliveryUntil;
+      const bound = { ...r, deliveryIntent: next.intentKey, deliveryExpiresAt: exp };
       if (r.deliveryIntent === null) await save(bound);
-      if (exp <= this.now() || r.expiresAt <= this.now()) return;
+      if (!photoDeliveryStillLive(next, exp, this.now())) return;
       const sig = this.sign(bound, exp);
       return { photoId: d.photoId, sha256: d.sha256, bytes: d.bytes, contentType: d.contentType,
         url: `${base.origin}/api/relay-photos/deliver/${r.id}?exp=${exp}&sig=${sig}` };
@@ -213,13 +229,15 @@ export class PhotoRelayService {
   }
   private sign(r: PhotoRelayItem, exp: number) { return createHmac("sha256", `selected-photo-delivery:${this.o.signingKey}`).update(JSON.stringify({ d: descriptor(r), action: r.actionId, intent: r.deliveryIntent, exp })).digest("base64url"); }
   async delivery(app: AppId | undefined, id: string, exp: number, sig: string) {
-    if (!Number.isSafeInteger(exp) || exp <= this.now() || exp > this.now() + FETCH_TTL || sig.length > 100) return;
+    if (!Number.isSafeInteger(exp) || exp <= this.now() || exp > this.now() + providerFetchTtlMs || sig.length > 100) return;
     return this.o.store.locked(id, async (r, _save, context) => {
-      if (!r || (app !== undefined && r.app !== app) || !r.actionId || !r.deliveryIntent || r.state !== "approved" || exp <= this.now() || exp !== r.deliveryExpiresAt || exp > r.expiresAt) return;
+      if (!r || (app !== undefined && r.app !== app)) return;
+      const item = deliveryState(r);
+      if (!photoFetchAllowed(item, exp, this.now())) return;
       const want = Buffer.from(this.sign(r, exp)), got = Buffer.from(sig);
       if (want.length !== got.length || !timingSafeEqual(want, got) || !(await this.current(r, context)) || exp <= this.now()) return;
       const bytes = await this.o.photos.relayBytes(r.senderPersonId, r.app, r.photoId, r, context);
-      return exp > this.now() && r.expiresAt > this.now() ? bytes : undefined;
+      return photoDeliveryStillLive(item, exp, this.now()) ? bytes : undefined;
     });
   }
   /** Provider fetch capability: no browser session or cross-app gallery authority is accepted here. */

@@ -23,11 +23,10 @@
 //
 // Engine-visible inputs only (the World, availability evidence, the Network's own outcome records).
 import type { MemberId } from "@thenetwork/core";
-import { DAY, HOUR } from "@thenetwork/core";
+import { CITY_TZ, DAY, HOUR, MINUTE, fromLocal, localParts } from "@thenetwork/core";
 import { candidateSlots, type TimeSlot } from "../../attention.ts";
 import { DEFAULT_ATTENTION, DEFAULT_PLANS, type AttentionConfig, type PlansConfig } from "../../config.ts";
 import { isMinor, memberReason } from "../../filters.ts";
-import { localParts } from "@thenetwork/core";
 import {
   activityFit, crewSessionPlan, daypartOf, detectCrews, hasWindow, planFreeProb, planMemberReason, planProposals, scorePlanGroup,
   type Crew, type Plan, type PlanEvidence, type PlanMemberInput, type PlanOutcomeRecord,
@@ -178,10 +177,24 @@ export function zoneHub(zone: string): Neighborhood {
   return h;
 }
 
-export function nextSameSlot(at: number, now: number, pcfg: PlansConfig): number {
-  let t = at;
-  while (t < now + pcfg.minLeadHours * HOUR) t += 7 * DAY;
+export function nextSameSlot(at: number, now: number, pcfg: PlansConfig, tz = CITY_TZ.nyc): number {
+  const lp = localParts(at, tz);
+  let t = at, weeks = 0;
+  // A local week can be 167 or 169 hours across DST. Keep the original wall-clock slot.
+  while (t < now + pcfg.minLeadHours * HOUR) {
+    const d = new Date(Date.UTC(lp.year, lp.month - 1, lp.day + ++weeks * 7));
+    t = fromLocal(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), lp.hour, tz) + lp.minute * MINUTE + at % MINUTE;
+  }
   return t;
+}
+
+/** Keep the crew's turn order, skipping hosts removed by eligibility or travel limits. */
+function retainedCrewHost(crew: Crew, invited: readonly MemberId[]): MemberId {
+  for (let i = 0; i < crew.hostRotation.length; i++) {
+    const host = crew.hostRotation[(crew.sessions.length + i) % crew.hostRotation.length]!;
+    if (invited.includes(host)) return host;
+  }
+  return invited[crew.sessions.length % invited.length]!;
 }
 
 export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPolicy = DEFAULT_FRIENDS_POLICY, pcfg: PlansConfig = FRIENDS_PLANS, att: AttentionConfig = DEFAULT_ATTENTION): FriendsWeek {
@@ -205,6 +218,8 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       const best = chooseVenue(inp.venues, inv, v => v.city === p.city && v.activities.includes(a.id) && v.ageMin <= Math.min(...p.invited.map(id => w.get(id)!.m.age)) && venueOpen(v, p.window, a.durationMin, tz, att));
       if (best) venue = best.venue;
     }
+    // A recurring plan's previous venue must still be open for this session.
+    if (venue && !venueOpen(venue, p.window, a.durationMin, tz, att)) return null;
     const at = hood(venue?.area ?? p.place.area);
     const minutes: Record<MemberId, number> = {};
     for (const [id, h] of homes) minutes[id] = at ? transitMinutes(h, at) : 45;
@@ -250,7 +265,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
     if (!p) continue;
     const fp = finish({ ...p, quorum: Math.min(3, members.length) }, "crew_session");
     if (!fp) continue;
-    out.sessions.push(fp);
+    out.sessions.push({ ...fp, hostId: retainedCrewHost(crew, fp.invited) });
     for (const id of fp.invited) taken.add(id);
   }
 
@@ -274,7 +289,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       if (!p) continue;
       const fp = finish({ ...p, quorum: Math.min(3, members.length) }, "crew_offer");
       if (!fp) continue;
-      out.offers.push({ crew: c2, first: fp });
+      out.offers.push({ crew: c2, first: { ...fp, hostId: retainedCrewHost(c2, fp.invited) } });
       for (const id of fp.invited) taken.add(id);
     }
   }
@@ -288,7 +303,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       if (ids.some((x, i) => ids.slice(i + 1).some(y => w.blocked.has(x < y ? `${x}|${y}` : `${y}|${x}`)))) continue;
       const a = activityById.get(o.activityId);
       if (!a) continue;
-      const start = nextSameSlot(o.at, now, pcfg);
+      const start = nextSameSlot(o.at, now, pcfg, tz);
       if (start > now + pcfg.horizonDays * DAY + DAY) continue;
       const v = o.venueId ? venueById.get(o.venueId) : undefined;
       const partner = ids.length === 2;
@@ -332,7 +347,8 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       return [id, f] as const;
     }));
     const acts = [...(w.pack.plans?.activities ?? [])].map(a => ({ a, n: pool.filter(id => (fits.get(id)!.get(a.id) ?? 0) >= cfg.minFit).length }))
-      .filter(x => x.n >= minInvite).sort((x, y) => (y.n - x.n) || (x.a.id < y.a.id ? -1 : 1));
+      .filter(x => x.n >= minInvite && inp.venues.some(v => v.city === "nyc" && v.activities.includes(x.a.id)))
+      .sort((x, y) => (y.n - x.n) || (x.a.id < y.a.id ? -1 : 1));
     for (const { a } of acts) {
       const cand = pool.filter(id => !used.has(id) && (fits.get(id)!.get(a.id) ?? 0) >= cfg.minFit && (w.get(id)!.m.age ?? 0) >= a.ageMin);
       if (cand.length < minInvite) continue;
@@ -384,7 +400,9 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       // Venue: minimize the longest trip (finish() always re-picks for new plans), then the options.
       const fp = finish(plan, "new", true);
       if (!fp) continue;
-      fp.options = opts.map(o => ({ start: o.start, end: o.start + a.durationMin * 60_000 }));
+      const venue = fp.venueId ? venueById.get(fp.venueId) : undefined;
+      fp.options = opts.filter(o => !venue || venueOpen(venue, o, a.durationMin, tz, att))
+        .map(o => ({ start: o.start, end: o.start + a.durationMin * 60_000 }));
       out.plans.push(fp);
       for (const id of [...fp.invited, ...fp.alternates]) used.add(id);
     }
@@ -468,8 +486,10 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       };
       const fp = finish(plan, "partner", true);
       if (!fp) continue;
+      const venue = fp.venueId ? venueById.get(fp.venueId) : undefined;
       const days = new Set<string>();
-      fp.options = slots.filter(x => { const d = dayKey(x.sl.start); if (days.has(d)) return false; days.add(d); return true; }).slice(0, 3).map(x => ({ start: x.sl.start, end: x.sl.start + act.durationMin * 60_000 })).sort((x, y) => x.start - y.start);
+      fp.options = slots.filter(x => !venue || venueOpen(venue, x.sl, act.durationMin, tz, att))
+        .filter(x => { const d = dayKey(x.sl.start); if (days.has(d)) return false; days.add(d); return true; }).slice(0, 3).map(x => ({ start: x.sl.start, end: x.sl.start + act.durationMin * 60_000 })).sort((x, y) => x.start - y.start);
       out.partners.push(fp);
       for (const id of [a, b]) count.set(id, (count.get(id) ?? 0) + 1);
     }

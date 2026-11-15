@@ -5,14 +5,15 @@
 //   replies.jsonl  core parseReply (yes / no / unsure)
 //   opt-out*.jsonl the opt-out readers (core parseOptOut; the platform consent ledger's detectKeyword)
 //   guard/         the shared leak guard (contacts in disguise, private facts, homoglyphs, benign text)
-import { classifyYesNo, findLeaks, parseOptOut, parseReply, type ReplyAnswer } from "../../packages/core/src/index.ts";
-import { classify, extractProfile, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
+import { classifyYesNo, findLeaks, maskPii, parseOptOut, parseReply, type ReplyAnswer } from "../../packages/core/src/index.ts";
+import { ageAnswer, classify, extractProfile, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
 import { detectKeyword, leaveTarget, optOutPhrase } from "../../packages/platform/src/consent.ts";
 import { createPublicApi } from "../../packages/platform/src/api.ts";
 import { APPS, type AppId } from "../../packages/platform/src/apps.ts";
 import { MemoryPeopleStore } from "../../packages/platform/src/store.ts";
 import { outputLeaks } from "../../packages/mcp/src/leaks.ts";
 import { Block, expect } from "./gate.ts";
+import { planAgainOf } from "../../packages/network/src/classify.ts";
 
 const ROOT = `${import.meta.dir}/../../evals`;
 const jsonl = async <T>(name: string): Promise<T[]> => (await Bun.file(`${ROOT}/${name}`).text()).trim().split("\n").filter(Boolean).map(l => JSON.parse(l) as T);
@@ -77,8 +78,15 @@ export async function evalsBlock(b: Block): Promise<void> {
   const wrongKind = abuse.filter(l => classify(l.text).abuse.length && !classify(l.text).abuse.includes(l.kind as never));
   b.gate(`abuse: recall >= 95% (n ${abuse.length})`, abuse.length >= 100 && caught.length / abuse.length >= 0.95, pct(caught.length / abuse.length));
   b.gate("abuse: wrong kind <= 5%", wrongKind.length / abuse.length <= 0.05, pct(wrongKind.length / abuse.length));
+  // Phones type a curly apostrophe by default ("can’t", "what’s"): every row reads the same with it.
+  const readAs = (t: string) => { const c = classify(t); return JSON.stringify([c.kind, [...c.abuse].sort(), c.minorSignal, c.statedAge ?? null, c.desireId ?? null, c.target ?? null]); };
+  const benignLines = benign.map(text => ({ text }));
+  const replyLines = await jsonl<{ text: string }>("replies.jsonl");
+  const apos = [...abuse, ...benignLines, ...replyLines].filter(l => l.text.includes("'"));
+  const curlyMiss = apos.filter(l => readAs(l.text.replace(/'/g, "’")) !== readAs(l.text)).map(l => `${JSON.stringify(l.text.replace(/'/g, "’"))} -> ${readAs(l.text.replace(/'/g, "’"))}`);
+  b.gate(`curly apostrophes (n ${apos.length} rows with '): classify reads every row the same with ’`, apos.length >= 100 && curlyMiss.length === 0, curlyMiss.slice(0, 5).join("; "));
 
-  const teen = await jsonl<{ text: string; teen?: boolean; other?: number | null }>("network/teen-age.jsonl");
+  const teen = await jsonl<{ text: string; teen?: boolean; other?: number | null; age?: number }>("network/teen-age.jsonl");
   const minor = (t: string) => { const c = classify(t); return c.minorSignal || (c.statedAge !== undefined && c.statedAge < 18); };
   const teens = teen.filter(l => l.teen === true), adults = teen.filter(l => l.teen === false);
   b.gate(`teen ages: recall >= 95% (n ${teen.length})`, teen.length >= 150 && teens.filter(l => minor(l.text)).length / teens.length >= 0.95, pct(teens.filter(l => minor(l.text)).length / teens.length));
@@ -86,6 +94,13 @@ export async function evalsBlock(b: Block): Promise<void> {
   b.gate("teen ages: 0 adults (or teachers) read as minors", adultAsMinor.length === 0, adultAsMinor.slice(0, 5).join(" | "));
   const thirdParty = teen.filter(l => l.other !== undefined && (otherAgeStated(l.text) ?? null) !== (l.other ?? null)).map(l => l.text);
   b.gate("third-party ages are read exactly", thirdParty.length === 0, thirdParty.slice(0, 5).join(" | "));
+  const statedMiss = teen.filter(l => l.age !== undefined && classify(l.text).statedAge !== l.age).map(l => `${JSON.stringify(l.text)} -> ${classify(l.text).statedAge ?? "none"} (want ${l.age})`);
+  b.gate("stated ages: the youngest real age in the message", statedMiss.length === 0, statedMiss.slice(0, 5).join(" | "));
+
+  const ageAnswers = await jsonl<{ text: string; age: number | null }>("network/age-answers.jsonl");
+  const wrongAgeAnswers = ageAnswers.filter(row => (ageAnswer(row.text) ?? null) !== row.age);
+  b.gate(`the age question accepts spelled-out answers (n ${ageAnswers.length})`, wrongAgeAnswers.length === 0,
+    wrongAgeAnswers.slice(0, 5).map(row => row.text).join("; "));
 
   const para = await jsonl<{ text: string; desire: string | null }>("network/paraphrases.jsonl");
   const ids = [...new Set(para.map(l => l.desire).filter((x): x is string => !!x))];
@@ -108,6 +123,10 @@ export async function evalsBlock(b: Block): Promise<void> {
   const neg = await jsonl<{ text: string }>("network/negations.jsonl");
   const negBad = neg.filter(l => { const x = extractProfile(l.text); return x.desireIds.length || x.interests.length || classify(l.text).kind === "people_request"; }).map(l => l.text);
   b.gate(`negated wants (n ${neg.length}): 0 read as a want, interest or request`, neg.length >= 100 && negBad.length === 0, negBad.slice(0, 5).join(" | "));
+
+  const again = await jsonl<{ text: string; label: "yes" | "no" | "unclear" }>("network/plan-again.jsonl");
+  const againMiss = again.filter(l => planAgainOf(l.text) !== l.label).map(l => `${JSON.stringify(l.text)} -> ${planAgainOf(l.text)} (want ${l.label})`);
+  b.gate(`plan again answers (n ${again.length}): every row read as labelled`, again.length >= 40 && againMiss.length === 0, againMiss.slice(0, 5).join("; "));
 
   // ---- core reply parser -------------------------------------------------------------------------
   const replies = await jsonl<{ text: string; label: ReplyAnswer }>("replies.jsonl");
@@ -138,10 +157,13 @@ export async function evalsBlock(b: Block): Promise<void> {
   b.gate(`platform opt-out (n ${optOut.length}, en + es): every opt-out line is a STOP, no other line is`,
     optOut.length >= 80 && optOut.filter(c => c.lang === "es" && c.label === "stop").length >= 15 && wrong.length === 0, wrong.slice(0, 5).join("; "));
   await b.run("platform: leave <app> is that app only; a sentence about stopping is not an opt-out", () => {
-    for (const [t, app] of [["stop slop", "slop"], ["quit slop", "slop"], ["Stop slop.date", "slop"], ["unsubscribe from peon", "peon"], ["cancel friends.help", "friends"], ["exit peon.biz", "peon"], ["leave the network", "ntwrk"]] as const) {
+    for (const [t, app] of [["stop slop", "slop"], ["quit slop", "slop"], ["Stop slop.date", "slop"], ["unsubscribe from peon", "peon"], ["cancel friends.help", "friends"], ["exit peon.biz", "peon"], ["leave the network", "ntwrk"],
+      // A courtesy or urgency word at the end does not change which app the person asked to leave, and it
+      // must never turn "leave one app" into a stop of every app ("unsubscribe from slop now" used to read as STOP).
+      ["leave slop now", "slop"], ["unsubscribe from slop now", "slop"], ["quit peon now", "peon"], ["exit friends now", "friends"], ["leave the network now", "ntwrk"], ["leave slop asap", "slop"], ["leave slop now please", "slop"], ["leave slop thanks", "slop"]] as const) {
       expect([t, detectKeyword(t) ?? null, leaveTarget(t) ?? null]).toEqual([t, null, app]);
     }
-    for (const t of ["cancel the date", "stop by at 7", "quit my job", "I have to leave early", "leave slop alone lol"]) expect([t, leaveTarget(t) ?? null]).toEqual([t, null]);
+    for (const t of ["cancel the date", "stop by at 7", "quit my job", "I have to leave early", "leave slop alone lol", "leave the party now", "quit smoking now", "exit the building now"]) expect([t, leaveTarget(t) ?? null]).toEqual([t, null]);
     expect(optOutPhrase(`${"I had a long day at work and the train was late again. ".repeat(3)}stop texting me`)).toBe(false);
   });
 
@@ -153,6 +175,13 @@ export async function evalsBlock(b: Block): Promise<void> {
     return want === "contact" ? !r.some(x => x.startsWith("contact:")) : want === "leak" ? r.length === 0 : r.length > 0;
   }).map(r => `${r.want}: ${JSON.stringify(r.text)} (${r.note})`);
   b.gate(`leak guard (n ${guard.length}): evasions caught, benign text clean`, guardMiss.length === 0, guardMiss.slice(0, 5).join("; "));
+
+  const contactRows = guard.filter(row => row.want === "contact");
+  const unmasked = contactRows.filter(row => findLeaks(maskPii(row.text)).some(reason => reason.startsWith("contact:")));
+  const profile = maskPii("I am 31 and I like climbing. My email is m a y a at g m a i l dot c o m.");
+  b.gate(`model input privacy (n ${contactRows.length}): contact hidden, nearby profile facts kept`,
+    unmasked.length === 0 && /i am 31 and i like climbing/i.test(profile) && !findLeaks(profile).some(reason => reason.startsWith("contact:")),
+    `${unmasked.length} contact rows unmasked`);
 
   await b.run("MCP output gate: update summaries with a phone, email, internal id or timestamp are withheld; plain ones pass", () => {
     for (const t of ["call me at (415) 555-0102", "maya [at] example [dot] test", "your match is mem_8f2k1", "meeting at 2026-10-08T19:30", "sam@example.com"]) expect(outputLeaks(t).length).toBeGreaterThan(0);

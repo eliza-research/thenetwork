@@ -285,6 +285,7 @@ export function factLeaked(fact: string, text: string): boolean {
 
 /** pass^k: run with seeds seed, seed+1, ..., seed+k-1; passes only if every run passes. */
 export async function runScenarioPassK(s: Scenario, k: number, o: ScenarioRunOptions): Promise<{ passK: boolean; passes: number; k: number; runs: ScenarioResult[] }> {
+  if (!Number.isInteger(k) || k < 1) throw new Error("scenario repetitions (k) must be a positive integer");
   const runs: ScenarioResult[] = [];
   for (let i = 0; i < k; i++) runs.push(await runScenario(s, { ...o, seed: (o.seed ?? s.seed) + i }));
   const passes = runs.filter(r => r.pass).length;

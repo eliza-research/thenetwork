@@ -12,8 +12,9 @@ FROM postgres:${PG_MAJOR}-bookworm
 ARG PG_MAJOR
 COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
 WORKDIR /app
-# Only the scripts: they import nothing but Bun and each other.
+# The backup scripts and the generated restore policy.
 COPY deploy/backup ./deploy/backup
+COPY packages/core/src/generated/databaseRestore.ts ./packages/core/src/generated/databaseRestore.ts
 # Never root; the postgres user ships with the image and never runs a server here.
 USER postgres
 ENV PG_BIN_DIR=/usr/lib/postgresql/${PG_MAJOR}/bin
