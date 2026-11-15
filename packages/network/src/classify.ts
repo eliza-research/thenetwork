@@ -108,14 +108,16 @@ export function sentencesOf(t: string): { text: string; at: number }[] {
   const re = /[!?;\n]|[.](?![a-z])/g;
   let start = 0;
   let m: RegExpExecArray | null;
+  // any letter or digit, any script — an all-caps or abbreviation-only sentence is still a sentence
+  const hasContent = (s: string) => /[\p{L}\p{Nd}]/u.test(s);
   while ((m = re.exec(t)) !== null) {
     const end = m.index + m[0].length;
     const text = t.slice(start, end);
-    if (/[0-9a-z]/.test(text)) out.push({ text, at: start });
+    if (hasContent(text)) out.push({ text, at: start });
     start = end;
   }
   const tail = t.slice(start);
-  if (/[0-9a-z]/.test(tail)) out.push({ text: tail, at: start });
+  if (hasContent(tail)) out.push({ text: tail, at: start });
   return out.length ? out : [{ text: t, at: 0 }];
 }
 

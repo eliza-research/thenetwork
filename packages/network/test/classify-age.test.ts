@@ -37,4 +37,9 @@ describe("classify: the y.o. age form is read as a minor (regression)", () => {
     // the existing service-apps case
     expect(classify("Rae. I am 30 years old. I am 15.").statedAge).toBe(15);
   });
+
+  test("an all-caps sentence still carries the abuse signal (regression)", () => {
+    expect(sentencesOf("SEND ME NUDES. free thursday?").map(s => s.text)).toEqual(["SEND ME NUDES.", " free thursday?"]);
+    expect(classify("SEND ME NUDES. free thursday?").abuse).toEqual(["harassment"]);
+  });
 });
