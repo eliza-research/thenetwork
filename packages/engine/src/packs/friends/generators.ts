@@ -35,18 +35,24 @@ export function sameTableAgain(ctx: GenCtx): Candidate[] {
   for (const r of recent) {
     // Attendees with a mutual "see again" with at least one other attendee.
     const ids = r.participants.filter(a => r.participants.some(b => b !== a && positiveAbout(ctx, a, b, r.id) && positiveAbout(ctx, b, a, r.id)));
-    const ok = ids.filter(id => !memberReason(w, id, { category: "social", role: "peer", format: ids.length >= 3 ? "small_group" : "one_to_one", timeSensitive: false }));
+    let ok = ids.filter(id => !memberReason(w, id, { category: "social", role: "peer", format: ids.length >= 3 ? "small_group" : "one_to_one", timeSensitive: false }));
     if (ok.length < 2) continue;
+    if (ok.length === 2 && ids.length >= 3) {
+      ok = ok.filter(id => !memberReason(w, id, { category: "social", role: "peer", format: "one_to_one", timeSensitive: false }));
+      if (ok.length < 2) continue;
+    }
     if (ok.some((a, i) => ok.slice(i + 1).some(b => pairReason(w, a, b, "social")))) continue;
-    const k = [...ok].sort().join(",");
+    const parts = ok.slice(0, 6);
+    if (!w.canMeet(parts)) continue;
+    const k = [...parts].sort().join(",");
     if (seen.has(k)) continue;
     seen.add(k);
-    const group = ok.length >= 3;
+    const group = parts.length >= 3;
     out.push(makeCandidate({
       kind: group ? "group" : "second_encounter", generator: "same_table_again", category: "social",
-      participants: ok.slice(0, 6), roles: Object.fromEntries(ok.slice(0, 6).map(id => [id, "peer" as Role])), format: group ? "small_group" : "one_to_one",
+      participants: parts, roles: Object.fromEntries(parts.map(id => [id, "peer" as Role])), format: group ? "small_group" : "one_to_one",
       objective: "Same table again", anchor: { type: "interaction", id: r.id }, preferredCity: "nyc", channels: new Set(["history"]),
-      evidence: Object.fromEntries(ok.map(id => [id, []])), fit: 0.8, benefit: Object.fromEntries(ok.map(id => [id, 0.8])), warm: 1, confidenceHint: 0.9,
+      evidence: Object.fromEntries(parts.map(id => [id, []])), fit: 0.8, benefit: Object.fromEntries(parts.map(id => [id, 0.8])), warm: 1, confidenceHint: 0.9,
       riskText: "same group again",
     }));
   }
@@ -109,7 +115,7 @@ export function activityPartner(ctx: GenCtx): Candidate[] {
       const hb = info.get(b)?.home;
       if (!hb) continue;
       const tag = mine.find(t => w.get(b)!.tags.has(t));
-      if (!tag || pairReason(w, a, b, category)) continue;
+      if (!tag || pairReason(w, a, b, category) || !w.canMeet([a, b])) continue;
       const min = transitMinutes(ha, hb);
       if (!best || min < best.min || (min === best.min && b < best.id)) best = { id: b, tag, min };
     }
