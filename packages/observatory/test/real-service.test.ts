@@ -19,6 +19,7 @@ const REVIEWER = "rev@example.org";
 describe.skipIf(!pgAvailable)("real mode: staff actions through the Network service", () => {
   let url: string;
   let svc: NetworkService;
+  let clock: SimClock;
   let http: ReturnType<typeof Bun.serve>;
   let real: RealSource;
   const seen: { path: string; staff: string | null; body: unknown }[] = [];
@@ -28,12 +29,14 @@ describe.skipIf(!pgAvailable)("real mode: staff actions through the Network serv
     const g = new GameSource({ pushMs: 3_600_000, tickMs: 3_600_000, seed: 1, review: "human", scenario: "spam_wave" });
     await g.init();
     await g.control({ type: "step", ms: 2 * DAY });
+    // The service continues at the run's simulated time, so its review items are still inside their SLA.
+    clock = new SimClock(g.state().clock.now);
     const sql = new SQL(url);
     await writeRows(sql, rowsFromGame(g), { truncate: true });
     await sql.close();
     await g.dispose();
     // The console's own token: only it may name the reviewer of record (X-Network-Staff-Id).
-    svc = new NetworkService({ url, clock: new SimClock(Date.now()), tokens: `admin:${SERVICE_TOKEN}`, consoleToken: SERVICE_TOKEN, log: () => {} });
+    svc = new NetworkService({ url, clock, tokens: `admin:${SERVICE_TOKEN}`, consoleToken: SERVICE_TOKEN, log: () => {} });
     http = Bun.serve({
       port: 0, hostname: "127.0.0.1",
       async fetch(req) {
@@ -98,6 +101,8 @@ describe.skipIf(!pgAvailable)("real mode: staff actions through the Network serv
 
   test("health: the service's state is in the alerts strip; a service that does not answer is a bad alert and actions refuse", async () => {
     const keys = () => (real.state().stats.alerts ?? []).map(a => `${a.level}:${a.key}`);
+    // Health reads the last tick against the wall clock: the service catches up to it first.
+    clock.set(Date.now());
     await svc.tick();
     await real.control({ type: "refresh" });
     expect(keys()).toContain("info:service_ok");

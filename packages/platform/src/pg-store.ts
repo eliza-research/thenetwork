@@ -3,6 +3,7 @@
 import { SQL } from "bun";
 import type { AppId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
+import { LONG_RATE_WINDOWS } from "./store.ts";
 import type { Ban, HitResult, HitRule, Membership, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneChange, PhoneHold, PhoneIdentity, PhoneMethod, PhoneMove, PhoneMoveResult, Session, ShareGrant } from "./store.ts";
 
 type Row = Record<string, any>;
@@ -283,7 +284,11 @@ export class PgPeopleStore implements PeopleStore {
       let n = 0;
       n += (await tx`delete from platform.otp_challenges where expires_at < ${b} returning 1`).length;
       n += (await tx`delete from platform.sessions where expires_at < ${b} or revoked_at < ${b} returning 1`).length;
-      n += (await tx`delete from platform.rate_limits where last_at < ${b} returning 1`).length;
+      const long = Object.keys(LONG_RATE_WINDOWS);
+      n += (await tx`delete from platform.rate_limits where last_at < ${b} and not (split_part(bucket, ':', 1) = any(${this.sql.array(long, "TEXT")})) returning 1`).length;
+      for (const kind of long) {
+        n += (await tx`delete from platform.rate_limits where split_part(bucket, ':', 1) = ${kind} and last_at < ${ts(before - LONG_RATE_WINDOWS[kind]!)} returning 1`).length;
+      }
       n += (await tx`delete from platform.pending_texts where at < ${b} returning 1`).length;
       n += (await tx`delete from platform.phone_changes where confirmed_at is null and requested_at < ${b} returning 1`).length;
       return n;

@@ -2,7 +2,10 @@
 // millisecond value read from a Clock (clock.ts); these helpers only interpret it. The one home for
 // local-time parts, local-to-UTC conversion and quiet hours (engine, network, sim and worlds).
 import { MINUTE } from "./clock.ts";
+import { withinQuietHours } from "./generated/quietHours.ts";
 import type { City } from "./types.ts";
+
+export { withinQuietHours };
 
 export const CITY_TZ: Record<City, string> = { sf: "America/Los_Angeles", nyc: "America/New_York", la: "America/Los_Angeles" };
 
@@ -36,6 +39,5 @@ export function fromLocal(y: number, mo: number, d: number, h: number, tz: strin
 /** True if `ts` falls in local quiet hours [s, e) (wrapping past midnight); s === e means none. */
 export function inQuietHours(ts: number, tz: string, [s, e]: [number, number]): boolean {
   if (s === e) return false;
-  const h = localParts(ts, tz).hour;
-  return s < e ? h >= s && h < e : h >= s || h < e;
+  return withinQuietHours(localParts(ts, tz).hour, s, e);
 }

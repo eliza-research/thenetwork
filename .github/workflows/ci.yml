@@ -38,7 +38,7 @@ env:
 jobs:
   offline:
     # "offline" means no network calls and no secrets. The simulations get the same pinned Postgres as
-    # the integration job, so the Postgres blocks (pipeline, safety, ops, audit) run and block.
+    # the integration job, so the Postgres blocks (pipeline, pipeline-slop, safety, ops, audit) run and block.
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     services:
@@ -95,7 +95,7 @@ jobs:
         # A Postgres block that cannot reach Postgres records a tracked "skipped" gate. With REQUIRE_PG=1
         # that is a failure.
         run: |
-          skipped="$(jq -r '.gates[] | select((.blocking | not) and (.block | IN("pipeline", "safety", "ops", "audit")) and (((.name + " " + (.detail // "")) | test("skipped"; "i")))) | "[\(.block)] \(.name)"' sim-gates.json)"
+          skipped="$(jq -r '.gates[] | select((.blocking | not) and (.block | IN("pipeline", "pipeline-slop", "safety", "ops", "audit")) and (((.name + " " + (.detail // "")) | test("skipped"; "i")))) | "[\(.block)] \(.name)"' sim-gates.json)"
           if [ -n "$skipped" ]; then echo "Postgres gates skipped with REQUIRE_PG=1:"; echo "$skipped"; exit 1; fi
       - name: Plugin packages match their sources (OpenAI and Claude manifests, SKILL.md snapshots)
         run: bun run plugins/build.ts --check

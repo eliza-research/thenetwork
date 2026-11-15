@@ -4,6 +4,9 @@
 // Produces a primary group plus ranked alternates for quorum backfill.
 import type { Category, City, MemberId } from "@thenetwork/core";
 import { HOUR } from "@thenetwork/core";
+import {
+  alternateAllowed, extensionAllowed, groupFitAllowed, groupLocationAllowed, initial, poolEligible, primaryAllowed, step,
+} from "../../core/src/generated/groupFormation.ts";
 import { cosine } from "./embed.ts";
 import { isMinor, memberReason, pairReason } from "./filters.ts";
 import type { GroupStats, Role } from "./types.ts";
@@ -60,10 +63,10 @@ export function evaluateGroup(w: World, ids: MemberId[], opts: ComposeOptions, c
     best.set(ids[j]!, Math.max(best.get(ids[j]!) ?? -1, c));
   }
   const ov = w.overlap(ids, opts.window.start, opts.window.end, opts.preferredCity);
-  if (!ov) return null;
-  if (opts.requireCity && opts.preferredCity && ov.city !== opts.preferredCity) return null;
+  if (!groupLocationAllowed(!!ov, !!(opts.requireCity && opts.preferredCity), ov?.city === opts.preferredCity)) return null;
+  const overlap = ov!;
   const minBest = ids.length > 1 ? Math.min(...ids.map(id => best.get(id) ?? 0)) : 1;
-  if (ids.length > 1 && minBest < opts.minPairwise) return null;
+  if (!groupFitAllowed(ids.length > 1, minBest < opts.minPairwise)) return null;
   const avgPairwise = n ? sum / n : 0.5;
   const hasHost = ids.some(id => w.get(id)!.isHost);
   const roleCoverage = opts.needHost ? (hasHost ? 1 : 0) : (hasHost ? 1 : 0.7);
@@ -71,19 +74,20 @@ export function evaluateGroup(w: World, ids: MemberId[], opts: ComposeOptions, c
   const clusters = new Set(ids.map(id => w.get(id)!.cluster));
   const clusterDiversity = clusters.size / ids.length;
   const windowHours = Math.max(1, (opts.window.end - opts.window.start) / HOUR);
-  const availability = Math.min(1, ov.hours / Math.min(windowHours, 24));
+  const availability = Math.min(1, overlap.hours / Math.min(windowHours, 24));
   const aff = ids.reduce((s, id) => s + (affinity.get(id) ?? 0), 0) / ids.length;
   const score = 0.3 * avgPairwise + 0.15 * minBest + 0.15 * roleCoverage + 0.15 * warmScore + 0.1 * clusterDiversity + 0.25 * aff + 0.1 * availability;
-  return { score, city: ov.city, stats: { avgPairwise, minBest, roleCoverage, warmTies: warm, clusterDiversity, overlapHours: ov.hours } };
+  return { score, city: overlap.city, stats: { avgPairwise, minBest, roleCoverage, warmTies: warm, clusterDiversity, overlapHours: overlap.hours } };
 }
 
 export function composeGroup(w: World, opts: ComposeOptions): ComposedGroup | null {
-  // Minors policy: never a member, host, or alternate of any group. A forced minor means no group.
-  if ((opts.forced ?? []).some(id => isMinor(w, id))) return null;
-  opts = { ...opts, pool: opts.pool.filter(p => !isMinor(w, p.id)) };
+  // spec/groupFormation.md, "Only eligible adults enter the group search"
+  const forced = opts.forced ?? [];
+  let formation = step(initial, { type: "startSearch", forcedEligible: forced.every(id => !isMinor(w, id)), hostRequired: opts.needHost });
+  if (formation.phase !== "Forming") return null;
+  opts = { ...opts, pool: opts.pool.filter(p => poolEligible(!isMinor(w, p.id))) };
   const compat = makeCompat(w, opts.category);
   const affinity = new Map(opts.pool.map(p => [p.id, p.affinity]));
-  const forced = opts.forced ?? [];
   for (const f of forced) if (!affinity.has(f)) affinity.set(f, 0.5);
   const poolIds = opts.pool.map(p => p.id).filter(id => !forced.includes(id));
   const key = (ids: MemberId[]) => [...ids].sort().join(",");
@@ -107,9 +111,8 @@ export function composeGroup(w: World, opts: ComposeOptions): ComposedGroup | nu
     const next: State[] = [];
     for (const st of beam) {
       for (const id of poolIds) {
-        if (st.ids.includes(id)) continue;
-        // Cheap prune: incompatible with someone already in the group.
-        if (st.ids.some(x => compat(x, id) === -Infinity)) continue;
+        const alreadyIncluded = st.ids.includes(id);
+        if (!extensionAllowed(alreadyIncluded, !alreadyIncluded && st.ids.every(x => compat(x, id) !== -Infinity))) continue;
         const ids = [...st.ids, id];
         const k = key(ids);
         if (seen.has(k)) continue;
@@ -126,25 +129,32 @@ export function composeGroup(w: World, opts: ComposeOptions): ComposedGroup | nu
   if (!complete.length) return null;
   // Small preference for fuller groups (quorum resilience), capped by maxSize.
   complete.sort((a, b) => ((b.score + 0.015 * b.ids.length) - (a.score + 0.015 * a.ids.length)) || (key(a.ids) < key(b.ids) ? -1 : 1));
-  const bestState = complete[0]!;
-  if (opts.needHost && bestState.stats.roleCoverage < 1) {
-    const withHost = complete.find(s => s.stats.roleCoverage >= 1);
-    if (!withHost) return null;
-    Object.assign(bestState, withHost);
-  }
-  const primary = bestState.ids;
+  // spec/groupFormation.md, "A primary group has a common place and meets its requirements"
+  const bestState = complete.find(s => primaryAllowed(formation, s.ids.length >= opts.minSize, s.stats.roleCoverage >= 1));
+  if (!bestState) return null;
+  formation = step(formation, { type: "choosePrimary", members: bestState.ids,
+    meetsMinimum: bestState.ids.length >= opts.minSize, hasHost: bestState.stats.roleCoverage >= 1 });
+  const primary = formation.primary;
   // Alternates: compatible with everyone, available, ranked by fit to the group + anchor.
-  const alts = poolIds.filter(id => !primary.includes(id))
+  // spec/groupFormation.md, "An alternate can join the primary group in its city"
+  const ranked = poolIds.filter(id => !primary.includes(id))
     .map(id => {
       const cs = primary.map(p => compat(p, id));
-      if (cs.some(c => c === -Infinity)) return null;
-      const ov = w.overlap([...primary, id], opts.window.start, opts.window.end, bestState.city);
-      if (!ov || ov.city !== bestState.city) return null;
+      const compatible = cs.every(c => c !== -Infinity);
+      const ov = compatible ? w.overlap([...primary, id], opts.window.start, opts.window.end, bestState.city) : null;
+      if (!alternateAllowed(false, compatible, !!ov && ov.city === bestState.city)) return null;
       return { id, s: cs.reduce((a, b) => a + b, 0) / cs.length + (affinity.get(id) ?? 0) };
     })
     .filter((x): x is { id: MemberId; s: number } => !!x)
-    .sort((a, b) => (b.s - a.s) || (a.id < b.id ? -1 : 1))
-    .slice(0, opts.alternates).map(x => x.id);
+    .sort((a, b) => (b.s - a.s) || (a.id < b.id ? -1 : 1));
+  // Preserve Array.slice's negative and fractional limit behavior for custom engine configs.
+  const limit = opts.alternates === undefined ? ranked.length : Math.trunc(opts.alternates) || 0;
+  const alternateLimit = limit < 0 ? Math.max(0, ranked.length + limit) : Math.min(limit, ranked.length);
+  formation = step(formation, { type: "openAlternates", alternateLimit });
+  for (let i = 0; i < alternateLimit; i++) {
+    formation = step(formation, { type: "reserveAlternate", member: ranked[i]!.id });
+  }
+  formation = step(formation, { type: "finishGroup" });
   const roles: Record<MemberId, Role> = {};
   let hostAssigned = false;
   for (const id of primary) {
@@ -154,5 +164,5 @@ export function composeGroup(w: World, opts: ComposeOptions): ComposedGroup | nu
     }
     else roles[id] = "guest";
   }
-  return { primary, alternates: alts, roles, stats: bestState.stats, score: bestState.score, city: bestState.city };
+  return { primary, alternates: formation.alternates, roles, stats: bestState.stats, score: bestState.score, city: bestState.city };
 }

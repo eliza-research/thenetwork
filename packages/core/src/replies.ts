@@ -273,25 +273,35 @@ const EXACT_ES = /^(?:para|parar|alto|baja|cancelar|detener|basta|no mas)$/;
 const LIKELY_EN = /\b(?:stop (?:texting|messaging|sending|contacting|writing|bothering)|don't (?:text|message|contact|send me)|do not (?:text|message|contact|send)|no more (?:texts|messages|msgs)|take me off|remove me|unsubscribe me|leave me alone|opt (?:me )?out|i want out|delete my (?:number|account)|lose my number|wrong number|stop (?:it|this|pls|please)|please stop|pls stop|stop already)\b/;
 const LIKELY_ES = /\b(?:no me (?:escribas|mandes|envies|contactes|mensajees)|deja de (?:escribirme|mandarme|enviarme|mensajearme)|dejen de (?:escribirme|mandarme|enviarme)|no (?:mas|quiero) mensajes|ya no (?:quiero|me) (?:mensajes|escriban|manden)|darme de baja|dame de baja|me quiero dar de baja|quitame de|borrame de|sacame de|numero equivocado)\b/;
 
+// A negated STOP applies to its own clause. It must not suppress another explicit STOP.
+const NEGATED_OPT_OUT = /\b(?:(?:don't|dont|do not|never|won't|wont|can't|cant|cannot|not)\s+(?:want (?:you )?to\s+)?)\b(?:stop|unsubscribe|remove|opt)\b|\bstop (?:by|at|in|over|for|on by)\b/;
+const OPT_OUT_CLAUSE = /[,;.!?]+|\b(?:but|however|though)\b/i;
+
+function optOutClauses(text: string, norm: (value: string) => string): string[] {
+  const t = norm(text);
+  if (!NEGATED_OPT_OUT.test(t)) return [t];
+  return text.split(OPT_OUT_CLAUSE).map(norm).filter(clause => clause && !NEGATED_OPT_OUT.test(clause));
+}
+
 /**
  * Does `text` ask us to stop messaging? Exact keywords as the whole message are "exact"; free-text
  * requests ("please stop texting me", "no me escribas más") are "likely". Quoted or reported speech
  * ("my friend said stop") and questions about stopping ("how do I stop?") are "none".
  */
 export function parseOptOut(text: string, o: { apps?: readonly string[] } = {}): OptOutReading {
-  const t = normalize(text ?? "").replace(/[^a-z0-9.' -]/g, " ").replace(/\s+/g, " ").replace(/[. ]+$/, "").trim();
+  const norm = (s: string) => normalize(s).replace(/[^a-z0-9.' -]/g, " ").replace(/\s+/g, " ").replace(/[. ]+$/, "").trim();
+  const t = norm(text ?? "");
   const lang: "en" | "es" = LIKELY_ES.test(t) || EXACT_ES.test(t) ? "es" : "en";
   if (EXACT_EN.test(t) || EXACT_ES.test(t)) return { match: "exact", scope: "all", lang };
   // Reported speech and how-to questions do not opt out.
   if (/\b(?:said|says|told|asked) (?:me )?(?:to )?["']?stop\b/.test(t) || /\bhow (?:do|can) i (?:stop|unsubscribe|opt out)\b/.test(t)) return { match: "none", scope: "all", lang };
-  // "don't stop", "can't stop laughing", "stop by later", "stop it, I love this": not opt-outs.
-  if (/\b(?:don't|dont|do not|never|won't|wont|can't|cant|cannot|not)\s+stop\b/.test(t) || /\bstop (?:by|at|in|over|for|on by)\b/.test(t)
-    || /^stop (?:it|this)\b.*\b(?:love|lol|haha|lmao|omg|amazing|cute|funny|so good|too good)\b/.test(t)) return { match: "none", scope: "all", lang };
+  if (/^stop (?:it|this)\b.*\b(?:love|lol|haha|lmao|omg|amazing|cute|funny|so good|too good)\b/.test(t)) return { match: "none", scope: "all", lang };
   // "leave slop" / "stop slop": one app only (when the caller names its apps).
   const app = t.match(/^(?:leave|stop|quit|salir de|dejar) ([a-z0-9.]+)$/)?.[1];
   if (app && o.apps?.some(a => a.toLowerCase() === app || a.toLowerCase().split(".")[0] === app.split(".")[0])) return { match: "likely", scope: "app", lang };
-  if (LIKELY_EN.test(t) || LIKELY_ES.test(t)) return { match: "likely", scope: "all", lang };
-  if ((/^(?:stop|unsubscribe|para|basta)\b/.test(t) || /\b(?:stop|unsubscribe)$/.test(t)) && !/\?\s*$/.test(text.trim())) return { match: "likely", scope: "all", lang };
+  const clauses = optOutClauses(text, norm);
+  if (clauses.some(clause => LIKELY_EN.test(clause) || LIKELY_ES.test(clause) || /\bleave me alone\b/.test(clause))) return { match: "likely", scope: "all", lang };
+  if (clauses.length === 1 && clauses[0] === t && (/^(?:stop|unsubscribe|para|basta)\b/.test(t) || /\b(?:stop|unsubscribe)$/.test(t)) && !/\?\s*$/.test(text.trim())) return { match: "likely", scope: "all", lang };
   return { match: "none", scope: "all", lang };
 }
 
@@ -308,6 +318,8 @@ export const KEYWORDS = {
   stop: ["STOP", "UNSUBSCRIBE", "CANCEL", "END", "QUIT", "REVOKE", "OPTOUT", "OPT OUT"],
   /** "STOP PLEASE", "PLEASE STOP": a stop with a courtesy word (the platform ledger). */
   stopPolite: ["STOP PLEASE", "PLEASE STOP"],
+  /** Courtesy and urgency words a whole-message STOP or STOP ALL may carry around it ("PLS STOP NOW", "STOP RN", "STOP ALL PLS"). */
+  stopTail: ["PLEASE", "PLS", "PLZ", "NOW", "OK", "OKAY", "JUST", "ALREADY", "THANKS", "THANK YOU", "THX", "TY", "RN", "ASAP", "RIGHT NOW", "IMMEDIATELY", "FOR REAL"],
   /** Spanish whole-message opt-outs, accents folded. */
   stopEs: ["PARA", "PARAR", "ALTO", "BASTA", "BAJA", "CANCELAR", "DETENER", "NO MAS", "NO MAS MENSAJES"],
   start: ["START", "UNSTOP", "SUBSCRIBE", "RESUME"],
@@ -358,7 +370,6 @@ const OPT_OUT_ES: RegExp[] = [
   /\bno mas mensajes\b/,
   /\bnumero equivocado\b/,
 ];
-const NOT_OPT_OUT = /\b(?:don't|do not|dont|never|please don't) (?:stop|unsubscribe|remove|opt)\b|\bstop by\b|\bcan'?t stop\b|\bstop (?:at|on) \d/;
 
 /**
  * True when a short message asks, in the person's own words, to stop getting texts. `isLeave`: a
@@ -366,8 +377,8 @@ const NOT_OPT_OUT = /\b(?:don't|do not|dont|never|please don't) (?:stop|unsubscr
  * only, never a stop of everything.
  */
 export function optOutPhrase(text: string, isLeave: (text: string) => boolean = () => false): boolean {
-  const t = foldKeywordText(text).toLowerCase().replace(/[^\p{L}\p{N}' ]+/gu, " ").replace(/\s+/g, " ").trim();
-  if (!t || t.length > 160 || NOT_OPT_OUT.test(t)) return false;
-  if (isLeave(text)) return false;
-  return OPT_OUT_EN.some(r => r.test(t)) || OPT_OUT_ES.some(r => r.test(t));
+  const norm = (s: string) => foldKeywordText(s).toLowerCase().replace(/[^\p{L}\p{N}' ]+/gu, " ").replace(/\s+/g, " ").trim();
+  const t = norm(text);
+  if (!t || t.length > 160 || isLeave(text)) return false;
+  return optOutClauses(text, norm).some(clause => OPT_OUT_EN.some(r => r.test(clause)) || OPT_OUT_ES.some(r => r.test(clause)));
 }
