@@ -131,3 +131,26 @@
 {"text": "pls stop all now", "label": "stop_all", "lang": "en"}
 {"text": "stop it now please", "label": "not_stop", "lang": "en"}
 {"text": "cancel please", "label": "not_stop", "lang": "en"}
+{"text":"Don't stop emailing me, but please stop texting me.","label":"stop","lang":"en"}
+{"text":"I can't stop getting these texts, please stop texting me","label":"stop","lang":"en"}
+{"text":"Don't stop texting me, I like the updates.","label":"not_stop","lang":"en"}
+{"text":"Please stop by later but keep sending these.","label":"not_stop","lang":"en"}
+{"text":"You never stop texting me, leave me alone","label":"stop","lang":"en"}
+{"text":"STOP ALL RIGHT NOW","label":"stop_all","lang":"en"}
+{"text":"STOP ALL TY","label":"stop_all","lang":"en"}
+{"text":"stopall now","label":"stop_all","lang":"en"}
+{"text":"STOP FOR NOW","label":"not_stop","lang":"en"}
+{"text":"please don't stop all","label":"not_stop","lang":"en"}
+{"text":"STOP. STOP.","label":"stop","lang":"en"}
+{"text":"stop please stop please","label":"stop","lang":"en"}
+{"text":"STOP ALL STOP ALL","label":"stop_all","lang":"en"}
+{"text":"PARA PARA","label":"stop","lang":"es"}
+{"text":"basta basta basta","label":"stop","lang":"es"}
+{"text":"I already said STOP","label":"stop","lang":"en"}
+{"text":"STOP I SAID","label":"stop","lang":"en"}
+{"text":"I said STOP. STOP.","label":"stop","lang":"en"}
+{"text":"stop stop, you're making me laugh","label":"not_stop","lang":"en"}
+{"text":"my friend said stop","label":"not_stop","lang":"en"}
+{"text":"I said stop by at 7","label":"not_stop","lang":"en"}
+{"text":"I said cancel","label":"not_stop","lang":"en"}
+{"text":"stop slop stop slop","label":"not_stop","lang":"en"}
