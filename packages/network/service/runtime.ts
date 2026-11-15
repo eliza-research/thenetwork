@@ -176,6 +176,11 @@ export class NetworkRuntime {
   get db(): SQL { return this.host.sql; }
   /** This instance's name (the queue's lease owner). */
   get instance(): string { return this.host.instance; }
+  /** The keyed hash of a recipient address (PLATFORM_HASH_KEY): the queue's hourly cap window keeps only this. */
+  recipientKey(address: string): string {
+    if (!this.host.accounts) throw new Error("the outbound queue needs the platform accounts for its keyed recipient hash");
+    return this.host.accounts.phoneHash(address);
+  }
 
   // ------------------------------------------------------------------ send-time checks of the persisted queue
   async notificationCurrent(id: string): Promise<boolean> {

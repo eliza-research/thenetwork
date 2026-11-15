@@ -18,6 +18,7 @@ import { SQL } from "bun";
 import { DAY, HOUR, MINUTE, SimClock } from "../../packages/core/src/index.ts";
 import { NOT_SENT, OutboundQueue, WAITING } from "../../packages/blooio/src/outbound-queue.ts";
 import { BlooioAdapter, liveSendAllowed } from "../../packages/network/service/channel.ts";
+import { keyedHash } from "../../packages/platform/src/phone.ts";
 import type { NetworkService } from "../../packages/network/service/service.ts";
 import { Block, expect } from "./gate.ts";
 import * as H from "./pipeline/harness.ts";
@@ -407,7 +408,8 @@ async function lineCaps(b: Block, w: World) {
   const fake = new H.FakeBlooio(w.clock, "sim_caps");
   w.clock.set(nyAt(7, 12));
   const q = new OutboundQueue({ sql: w.sql, clock: w.clock, provider: fake, line, app: "friends", instance: "sim-caps",
-    checks: { live: () => true }, perLinePerDay: 3, newChatsPerLinePerDay: 2, baseBackoffMs: 30_000 });
+    checks: { live: () => true }, perLinePerDay: 3, newChatsPerLinePerDay: 2, baseBackoffMs: 30_000,
+    recipientKey: address => keyedHash("sim-caps-hash-key", `phone:${address}`) });
   // Transactional texts (3-day lifetime): a proactive text that waits a full day for the cap expires instead (24 h).
   const put = (id: string, p: string, kind: "transactional" | "compliance" = "transactional") =>
     w.sql.begin(tx => q.enqueue(tx as never, [{ id, to: p, kind, text: `friends.help: note ${id}`, timeZone: "America/New_York" }]));

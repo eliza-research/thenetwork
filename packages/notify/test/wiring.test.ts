@@ -8,6 +8,7 @@ import { SimClock } from "../../core/src/clock.ts";
 import { applySchema, devPgUp, DEV_PG_PORT } from "../../observatory/db/dev-pg.ts";
 import { pgAvailable } from "../../observatory/test/pg.ts";
 import { OutboundQueue } from "../../blooio/src/outbound-queue.ts";
+import { keyedHash } from "../../platform/src/phone.ts";
 import type { ChannelAdapter, SendRequest } from "../../blooio/src/types.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { Notifier, queuePolicy, queueSink, threadHooks, type Recipient } from "../src/index.ts";
@@ -40,7 +41,7 @@ async function setup(prefs: Recipient["prefs"] = { channel: "imessage" }) {
   const r: Recipient = { personId: person.id, to, timeZone: NY, prefs, proactiveAllowed: true };
   const notifier = new Notifier(store, { get: id => (id === r.personId ? r : undefined) }, { isQuiet: () => false });
   const queue = new OutboundQueue({
-    sql, clock, provider, line: "+12125550100", app: "friends",
+    sql, clock, provider, line: "+12125550100", app: "friends", recipientKey: address => keyedHash("test-hash-key", `phone:${address}`),
     checks: { live: () => true, recipient: queuePolicy(notifier, clock) },
     leakAllow: Object.values(APPS).flatMap(a => [`https://${a.domain}`, a.domain]),
   });
@@ -104,6 +105,31 @@ describe.skipIf(!pgAvailable)("notify + the Postgres outbound queue", () => {
     await queue.drain();
     expect(calls).toHaveLength(0);
     expect(await queue.statusOf(sent[0]!.deliveryId)).toBe("suppressed_ineligible");
+  });
+
+  test("an assistant whose links went unused twice is pointed at again once the member uses it", async () => {
+    const { clock, now, notifier, sink, r } = await setup({ channel: "imessage", explicit: "claude" });
+    await notifier.setActive(r.personId, "claude", true);
+    const send = async (subject: string) => {
+      await notifier.add(req(r.personId, subject), now());
+      const { sent } = await notifier.dispatch(now(), sink);
+      expect(sent).toHaveLength(1);
+      return sent[0]!;
+    };
+    // Two Claude links nobody tapped: each closes as ignored after the outcome window, so Claude drops out.
+    for (const subject of ["u1", "u2"]) {
+      expect((await send(subject)).delivery).toMatchObject({ mode: "deeplink", assistant: "claude" });
+      clock.advance(notifier.cfg.outcomeWindowMs + 60_000);
+      await notifier.sweep(now());
+    }
+    expect((await send("u3")).delivery).toMatchObject({ mode: "thread", reason: "explicit_link_unused" });
+    // The member opens Claude and asks for their updates there (get_updates through the grant).
+    clock.advance(60_000);
+    await notifier.readUpdates(r.personId, "claude", now());
+    // Claude is in use again: the next update points there.
+    const next = await send("u4");
+    expect(next.delivery).toMatchObject({ mode: "deeplink", assistant: "claude" });
+    expect(next.text).toContain("https://claude.ai/new?q=");
   });
 
   test("thread hooks: readUpdates clears the inbox; an inbound message counts as acting", async () => {

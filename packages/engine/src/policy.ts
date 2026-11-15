@@ -4,13 +4,14 @@
 // penalty and an amortized exposure-debt lift; an exposure-floor pass first; then a seeded
 // 10-15% exploration slice, logged with selection probabilities for off-policy evaluation.
 import { gini } from "@thenetwork/core";
+import { canReserveSelection, initial, proactiveUsed, selectedBefore, step, type SelectionChoice } from "../../core/src/generated/selectionRun.ts";
 export { gini };
-import type { City, MemberId } from "@thenetwork/core";
+import type { MemberId } from "@thenetwork/core";
 import { isMinor } from "./filters.ts";
 import { sha256 } from "./hash.ts";
 import type { EngineRng as Rng } from "@thenetwork/core";
 import { explorationBar, type Scored } from "./scoring.ts";
-import type { AskReason, EngineAsk, EngineInput, FairnessMetrics } from "./types.ts";
+import type { AskReason, Candidate, EngineAsk, EngineInput, FairnessMetrics } from "./types.ts";
 import { ASK_QUESTIONS as NETWORK_ASK_QUESTIONS } from "./packs/network/copy.ts";
 import { pairKey, type World } from "./world.ts";
 
@@ -80,53 +81,56 @@ export function selectProposals(w: World, scored: Scored[], rng: Rng, debt: Reco
 
 function selectOnce(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId, number>, explorationSlots: number, opts: SelectOptions = {}): SelectionResult {
   const cfg = w.cfg;
-  const proactive = new Map<MemberId, number>();
-  const contribution = new Map<MemberId, number>();
-  const timesSelected = new Map<MemberId, number>();
-  const usedPairs = new Set<string>();
+  let run = initial;
   const fixedSlots = new Map<MemberId, [number, number][]>();
-  const perCity = new Map<City, number>();
-  const taken = new Set<string>();
   const selected: Selected[] = [];
   let budgetSkips = 0;
 
-  const canTake = (x: Scored): boolean => {
+  const choices = new Map<Scored, SelectionChoice>();
+  const choiceFor = (x: Scored): SelectionChoice => {
+    const known = choices.get(x);
+    if (known) return known;
     const c = x.c;
-    if (taken.has(c.key)) return false;
-    if ((perCity.get(c.city!) ?? 0) >= cfg.selection.maxProposalsPerCity) return false;
-    for (const id of c.participants) {
+    const members = c.participants.map(id => {
       const mi = w.get(id)!;
-      if (mi.recentProactive + (opts.extraProactive?.get(id) ?? 0) + (proactive.get(id) ?? 0) + 1 > cfg.budgets[mi.m.state].limit) return false;
-      // v1.2: never propose someone already in a sent, still-open opportunity (the Network would
-      // skip it) or someone the engine is asking a question first.
-      if (mi.inOpenOpportunity || opts.exclude?.has(id)) return false;
       const role = c.roles[id];
-      if (role && w.pack.ontology.contributorRoles.has(role) && mi.recentContribution + (contribution.get(id) ?? 0) + 1 > cfg.contribution.limit) return false;
-      if (c.fixedWindow && c.window) {
-        for (const [s, e] of fixedSlots.get(id) ?? []) if (c.window.start < e && s < c.window.end) return false;
-      }
-    }
+      return {
+        id, unavailable: Boolean(mi.inOpenOpportunity || opts.exclude?.has(id)),
+        priorProactive: mi.recentProactive + (opts.extraProactive?.get(id) ?? 0),
+        proactiveLimit: cfg.budgets[mi.m.state].limit,
+        contributor: !!role && w.pack.ontology.contributorRoles.has(role),
+        priorContribution: mi.recentContribution, contributionLimit: cfg.contribution.limit,
+      };
+    });
+    const pairKeys: string[] = [];
     for (let i = 0; i < c.participants.length; i++) for (let j = i + 1; j < c.participants.length; j++) {
-      if (usedPairs.has(pairKey(c.participants[i]!, c.participants[j]!))) return false;
+      pairKeys.push(pairKey(c.participants[i]!, c.participants[j]!));
     }
-    return true;
+    const choice = { candidateKey: c.key, city: c.city!, cityLimit: cfg.selection.maxProposalsPerCity, members, pairKeys };
+    choices.set(x, choice);
+    return choice;
   };
+  const timeFree = (c: Candidate) => {
+    const window = c.fixedWindow ? c.window : undefined;
+    return !window || c.participants.every(id => !(fixedSlots.get(id) ?? []).some(([s, e]) => window.start < e && s < window.end));
+  };
+  // spec/selectionRun.md, "Each reservation checks the city, pair, and member limits"
+  const wasSelected = (x: Scored) => selectedBefore(run, x.c.key);
+  const canTake = (x: Scored, exploring = false) =>
+    canReserveSelection(run, choiceFor(x), timeFree(x.c), exploring);
   const take = (x: Scored, exploration: boolean, probability: number) => {
     const c = x.c;
-    taken.add(c.key);
-    perCity.set(c.city!, (perCity.get(c.city!) ?? 0) + 1);
-    for (const id of c.participants) {
-      proactive.set(id, (proactive.get(id) ?? 0) + 1);
-      timesSelected.set(id, (timesSelected.get(id) ?? 0) + 1);
-      const role = c.roles[id];
-      if (role && w.pack.ontology.contributorRoles.has(role)) contribution.set(id, (contribution.get(id) ?? 0) + 1);
-      if (c.fixedWindow && c.window) {
+    // spec/selectionRun.md, "Reserving a proposal consumes its slots together"
+    const next = step(run, { type: "reserveSelection", choice: choiceFor(x), timeFree: timeFree(c), exploring: exploration });
+    if (next === run) throw new Error(`Selection reservation refused for ${c.key}`);
+    run = next;
+    if (c.fixedWindow && c.window) {
+      for (const id of c.participants) {
         if (!fixedSlots.has(id)) fixedSlots.set(id, []);
         fixedSlots.get(id)!.push([c.window.start, c.window.end]);
       }
     }
-    for (let i = 0; i < c.participants.length; i++) for (let j = i + 1; j < c.participants.length; j++) usedPairs.add(pairKey(c.participants[i]!, c.participants[j]!));
-    selected.push({ s: x, exploration, rank: selected.length, probability });
+    selected.push({ s: x, exploration, rank: run.selectedCount - 1, probability });
   };
   const debtLift = (x: Scored) => {
     const ids = x.c.participants;
@@ -135,11 +139,11 @@ function selectOnce(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId,
   };
   const adjusted = (x: Scored) => {
     const ids = x.c.participants;
-    const load = ids.reduce((s, id) => s + (timesSelected.get(id) ?? 0), 0) / ids.length;
+    const load = ids.reduce((s, id) => s + proactiveUsed(run, id), 0) / ids.length;
     const v = x.score - cfg.selection.runLoadPenalty * load + debtLift(x);
     // Pack lift (slopPack: exposure fairness). Absent for networkPack: the value is unchanged.
     const adjust = w.pack.selection.adjust;
-    return adjust ? adjust(w, x.c, v, id => timesSelected.get(id) ?? 0) : v;
+    return adjust ? adjust(w, x.c, v, id => proactiveUsed(run, id)) : v;
   };
 
   const main = scored.filter(x => x.eligible && !x.c.exploration)
@@ -160,17 +164,19 @@ function selectOnce(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId,
     if (best) { take(best, false, 1); floorTaken++; }
   }
 
+  // spec/selectionRun.md, "Exposure selection precedes exploration and greedy selection"
+  run = step(run, { type: "beginExploration" });
   // 2. Exploration slice (10-15% of the total), weighted by novelty x score, seeded; expansion picks favoured.
   const slots = explorationSlots;
   const explore = rng.fork("explore");
   // Allow-list: only eligible or merely below-threshold configurations. Anything a judge pass,
   // a floor, a dealbreaker or a hard gate rejected (judge_reject, screen_reject, deep_reject,
   // deep_insufficient, hard_gate:*) never enters the slice, nor does any pass-2 "no" verdict.
-  const pool = scored.filter(x => !taken.has(x.c.key) && (!x.reason || x.reason === "below_threshold") && x.verdict?.verdict !== "no"
+  const pool = scored.filter(x => !wasSelected(x) && (!x.reason || x.reason === "below_threshold") && x.verdict?.verdict !== "no"
     && x.score >= explorationBar(w, x.c, x.threshold))
     .sort((a, b) => (a.c.key < b.c.key ? -1 : 1));
   for (let k = 0; k < slots; k++) {
-    let avail = pool.filter(x => !taken.has(x.c.key) && canTake(x));
+    let avail = pool.filter(x => !wasSelected(x) && canTake(x, true));
     // Alternate draws between dedicated expansion picks (33.4) and the general novelty pool.
     const expansionOnly = avail.filter(x => x.c.exploration);
     if (k % 2 === 0 && expansionOnly.length) avail = expansionOnly;
@@ -182,11 +188,12 @@ function selectOnce(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId,
     take(avail[idx]!, true, weights[idx]! / total);
   }
   // 3. Greedy global selection with in-run load penalty and exposure-debt lift.
-  const remaining = main.filter(x => !taken.has(x.c.key));
+  run = step(run, { type: "beginGreedy" });
+  const remaining = main.filter(x => !wasSelected(x));
   while (true) {
     let best: Scored | undefined; let bestV = -Infinity;
     for (const x of remaining) {
-      if (taken.has(x.c.key)) continue;
+      if (wasSelected(x)) continue;
       const v = adjusted(x);
       if (v < x.threshold) continue; // the adjusted score must still clear the bar
       if (v > bestV && canTake(x)) { best = x; bestV = v; }
@@ -194,7 +201,8 @@ function selectOnce(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId,
     if (!best) break;
     take(best, false, 1);
   }
-  budgetSkips = main.filter(x => !taken.has(x.c.key)).length;
+  run = step(run, { type: "completeRun" });
+  budgetSkips = main.filter(x => !wasSelected(x)).length;
 
   return { selected, budgetSkips };
 }

@@ -1,6 +1,10 @@
 // Interval helpers (moved verbatim from world.ts). A leaf module.
 export type Interval = [number, number];
 
+export function validityIncludes({ validFrom, validTo }: { validFrom?: number; validTo?: number }, now: number): boolean {
+  return (validFrom === undefined || validFrom <= now) && (validTo === undefined || now <= validTo);
+}
+
 export function union(ivs: Interval[]): Interval[] {
   const s = [...ivs].sort((a, b) => a[0] - b[0]);
   const out: Interval[] = [];

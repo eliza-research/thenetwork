@@ -40,6 +40,7 @@ export function planFirstDate(first: SlopProfile, partner: SlopProfile, markets:
   const activity = dateActivity(first, partner);
   const v = PUBLIC_VENUE[activity] ?? PUBLIC_VENUE.coffee!;
   const ranked = SLOTS.map((_, s) => ({ s, p: freeScore(first, s) * freeScore(partner, s) }))
+    .filter(({ s }) => activity !== "hike" || SLOTS[s]!.endsWith("_day"))
     .sort((x, y) => (y.p - x.p) || (x.s - y.s));
   const options = ranked.slice(0, 3).map(x => x.s);
   return {

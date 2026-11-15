@@ -10,9 +10,16 @@ import { SQL } from "bun";
 import { migrate } from "./migrate.ts";
 
 const REPO = resolve(import.meta.dir, "../../..");
-export const DEV_PG_DIR = process.env.OBSERVATORY_PG_DIR ?? join(REPO, "runs", "pg");
-export const DEV_PG_PORT = Number(process.env.OBSERVATORY_PG_PORT ?? 54339);
-export const DEV_PG_URL = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/network`;
+// CONTRIBUTING.md section 4 copies .env.example, whose optional values are empty lines
+// (OBSERVATORY_PG_PORT=, OBSERVATORY_PG_DIR=): an empty value means "leave the default", so only a
+// value with text overrides. ?? read "" as a value, and a copied .env broke `up` (mkdir of "" throws
+// ENOENT; Number("") is port 0, which the server refuses). deploy/backup/lib.ts already picks its
+// PG_BIN_DIR the same way (filter(Boolean)).
+export const DEV_PG_DIR = process.env.OBSERVATORY_PG_DIR?.trim() || join(REPO, "runs", "pg");
+export const DEV_PG_PORT = Number(process.env.OBSERVATORY_PG_PORT?.trim() || 54339);
+const DEV_PG_USER = process.env.USER?.trim() || "postgres";
+const DEV_PG_SERVER = `postgres://${encodeURIComponent(DEV_PG_USER)}@localhost:${DEV_PG_PORT}`;
+export const DEV_PG_URL = `${DEV_PG_SERVER}/network`;
 
 function pgBin(name: string): string {
   for (const v of ["16", "17", "18"]) {
@@ -34,15 +41,15 @@ async function sh(cmd: string[], quiet = false) {
 export async function devPgUp(): Promise<string> {
   if (!existsSync(join(DEV_PG_DIR, "PG_VERSION"))) {
     mkdirSync(DEV_PG_DIR, { recursive: true });
-    const code = await sh([pgBin("initdb"), "-D", DEV_PG_DIR, "-A", "trust", "-E", "UTF8", "--no-locale"], true);
+    const code = await sh([pgBin("initdb"), "-D", DEV_PG_DIR, "-U", DEV_PG_USER, "-A", "trust", "-E", "UTF8", "--no-locale"], true);
     if (code !== 0) throw new Error("initdb failed");
   }
-  const ready = await sh([pgBin("pg_isready"), "-h", "localhost", "-p", String(DEV_PG_PORT)], true);
+  const ready = await sh([pgBin("pg_isready"), "-h", "localhost", "-p", String(DEV_PG_PORT), "-U", DEV_PG_USER], true);
   if (ready !== 0) {
     const code = await sh([pgBin("pg_ctl"), "-D", DEV_PG_DIR, "-o", `-p ${DEV_PG_PORT} -k /tmp`, "-l", join(DEV_PG_DIR, "server.log"), "-w", "start"], true);
     if (code !== 0) throw new Error(`pg_ctl start failed (see ${join(DEV_PG_DIR, "server.log")})`);
   }
-  const admin = new SQL(`postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/postgres`);
+  const admin = new SQL(`${DEV_PG_SERVER}/postgres`);
   const exists = await admin`select 1 from pg_database where datname = 'network'`;
   if (!exists.length) await admin.unsafe("create database network");
   await admin.close();

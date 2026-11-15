@@ -20,6 +20,10 @@
 import { randomUUID } from "node:crypto";
 import type { City } from "../../core/src/types.ts";
 import { DAY } from "../../core/src/clock.ts";
+import {
+  initial as phoneChangeInitial, phoneChangesPerDay, phoneChangeLifetimeMs, step as stepPhoneChange, type PhoneChangeFailure,
+} from "../../core/src/generated/phoneChange.ts";
+import { step as stepEnrollment, typedJoinEntry, type Enrollment } from "../../core/src/generated/siteEnrollment.ts";
 import { validAge } from "../../core/src/policy.ts";
 import { canJoinApp, joinAgeCheck, lowestAge } from "./age.ts";
 import type { AppId, AppInfo } from "./apps.ts";
@@ -29,10 +33,22 @@ import type { Membership, PeopleStore, Person, PhoneIdentity, PhoneMethod } from
 
 export const RECYCLED_AFTER_MS = 365 * 24 * 3_600_000;
 /** A started number change must be confirmed with the code from the new number within this time. */
-export const NUMBER_CHANGE_MS = 15 * 60_000;
+export const NUMBER_CHANGE_MS = phoneChangeLifetimeMs;
 /** Number changes a person may start in a day (each sends a code). */
-export const NUMBER_CHANGES_PER_DAY = 3;
+export const NUMBER_CHANGES_PER_DAY = phoneChangesPerDay;
 export type NumberChangeError = "same_number" | "review" | "no_person" | "rate_limited" | "no_pending_change" | "invalid_code" | "number_in_use";
+const NUMBER_CHANGE_ERRORS: Record<Exclude<PhoneChangeFailure, "NoFailure">, NumberChangeError> = {
+  SameNumber: "same_number",
+  ReviewNeeded: "review",
+  NoPerson: "no_person",
+  RateLimited: "rate_limited",
+  NoPendingChange: "no_pending_change",
+  InvalidCode: "invalid_code",
+  NumberInUse: "number_in_use",
+};
+const numberChangeRefused = (failure: PhoneChangeFailure): { ok: false; error: NumberChangeError } => ({
+  ok: false, error: failure === "NoFailure" ? "review" : NUMBER_CHANGE_ERRORS[failure],
+});
 /** Base-profile fields a person may share from one app to another. Sensitive classes are not in this list and never will be. */
 export const SHAREABLE_FIELDS = ["first_name", "city", "age_band", "interests"] as const;
 
@@ -84,7 +100,7 @@ export function parseJoin(body: unknown): JoinInput | undefined {
   const b = body as Record<string, unknown>;
   const str = (v: unknown, max: number) => (typeof v === "string" && v.trim().length > 0 && v.trim().length <= max ? v.trim() : undefined);
   const firstName = str(b.firstName, 50);
-  if (!firstName || !validAge(b.age) || !Number.isInteger(b.age) || (b.age as number) > 120) return undefined;
+  if (!firstName || !validAge(b.age) || !Number.isInteger(b.age)) return undefined;
   const c = b.consent as Record<string, unknown> | undefined;
   const wording = str(c?.wording, 2000), version = str(c?.version, 40);
   if (!c || c.sms !== true || (!wording && !version)) return undefined;
@@ -218,6 +234,14 @@ export class Accounts {
    */
   onPhoneChanged(fn: (ctx: { personId: string }) => Promise<unknown> | unknown) { this.phoneListeners.push(fn); }
 
+  private async currentPhoneForChange(who: Who, at?: number) {
+    const own = await this.store.findPhone(who.e164);
+    if (!own || own.hold !== null || this.stale(own, at ?? this.now())) return { ownership: "UnavailablePhone" as const };
+    const person = await this.personFor(who.e164);
+    if (!person || person.id !== own.personId || (who.personId !== null && who.personId !== person.id)) return { ownership: "WrongPerson" as const };
+    return { ownership: "OwnedPhone" as const, person };
+  }
+
   /**
    * Step 1 of a member's own number change: the caller checked that the login is fresh (a code to the
    * current number in the last minutes: PRD F25 "confirmation from the existing number"). `sendCode`
@@ -226,17 +250,22 @@ export class Accounts {
    */
   async startNumberChange(app: AppInfo, who: Who, newE164: string, sendCode: () => Promise<boolean>): Promise<{ ok: true } | { ok: false; error: NumberChangeError }> {
     const at = this.now();
-    if (newE164 === who.e164) return { ok: false, error: "same_number" };
-    const own = await this.store.findPhone(who.e164);
-    if (!own || own.hold !== null || this.stale(own, at)) return { ok: false, error: "review" };
-    const person = await this.personFor(who.e164);
-    if (!person || person.id !== own.personId || (who.personId !== null && who.personId !== person.id)) return { ok: false, error: "no_person" };
+    const request = stepPhoneChange(phoneChangeInitial, { type: "requestChallenge", sameNumber: newE164 === who.e164 });
+    if (request.phase !== "CheckingStartOwner") return numberChangeRefused(request.failure);
+    const { ownership, person } = await this.currentPhoneForChange(who, at);
+    const current = stepPhoneChange(request, { type: "checkCurrentPhone", ownership });
+    if (current.phase !== "CheckingStartPolicy" || !person) return numberChangeRefused(current.failure);
     // A banned person or number never moves: a new number would escape a ban by phone.
-    if (await this.banned(who.e164, person)) return { ok: false, error: "review" };
-    if (!(await this.store.hit(`phone-change:${this.phoneHash(`person:${person.id}`)}`, DAY, at, { limit: NUMBER_CHANGES_PER_DAY })).ok) return { ok: false, error: "rate_limited" };
-    if (!(await sendCode())) return { ok: false, error: "rate_limited" };
+    const policy = stepPhoneChange(current, { type: "checkStartPolicy", oldNumberAllowed: !await this.banned(who.e164, person) });
+    if (policy.phase !== "AwaitingRateLimit") return numberChangeRefused(policy.failure);
+    const slot = await this.store.hit(`phone-change:${this.phoneHash(`person:${person.id}`)}`, DAY, at, { limit: NUMBER_CHANGES_PER_DAY });
+    const rated = stepPhoneChange(policy, { type: "checkStartRate", slotGranted: slot.ok });
+    if (rated.phase !== "AwaitingCodeSend") return numberChangeRefused(rated.failure);
+    const sent = stepPhoneChange(rated, { type: "recordCodeSend", sendAccepted: await sendCode() });
+    if (sent.phase !== "AwaitingPendingWrite") return numberChangeRefused(sent.failure);
     await this.store.putPhoneChange({ id: randomUUID(), personId: person.id, app: app.id, newE164, requestedBy: "member", requestedAt: at, confirmedAt: null });
-    return { ok: true };
+    const pending = stepPhoneChange(sent, { type: "recordPendingWrite" });
+    return pending.phase === "PendingRecorded" ? { ok: true } : numberChangeRefused(pending.failure);
   }
 
   /**
@@ -247,21 +276,29 @@ export class Accounts {
    * age either number ever stated becomes the person's (every app follows a lower age).
    */
   async confirmNumberChange(who: Who, verify: (app: AppId, e164: string) => Promise<boolean>): Promise<{ ok: true; e164: string; personId: string } | { ok: false; error: NumberChangeError }> {
-    const own = await this.store.findPhone(who.e164);
-    if (!own || own.hold !== null || this.stale(own, this.now())) return { ok: false, error: "review" };
-    const person = await this.personFor(who.e164);
-    if (!person || person.id !== own.personId || (who.personId !== null && who.personId !== person.id)) return { ok: false, error: "no_person" };
+    const request = stepPhoneChange(phoneChangeInitial, { type: "beginConfirmation" });
+    const { ownership, person } = await this.currentPhoneForChange(who);
+    const current = stepPhoneChange(request, { type: "checkCurrentPhone", ownership });
+    if (current.phase !== "AwaitingPendingRead" || !person) return numberChangeRefused(current.failure);
     const change = await this.store.pendingPhoneChange(person.id);
-    if (!change?.newE164 || this.now() - change.requestedAt > NUMBER_CHANGE_MS) return { ok: false, error: "no_pending_change" };
+    const pending = stepPhoneChange(current, {
+      type: "readPending", hasTarget: !!change?.newE164, elapsedMs: change?.newE164 ? this.now() - change.requestedAt : 0,
+    });
+    if (pending.phase !== "AwaitingVerification" || !change?.newE164) return numberChangeRefused(pending.failure);
     const newE164 = change.newE164;
-    if (!(await verify(change.app, newE164))) return { ok: false, error: "invalid_code" };
+    const verified = stepPhoneChange(pending, { type: "recordVerification", otpVerified: await verify(change.app, newE164) });
+    if (verified.phase !== "AwaitingMovePolicy") return numberChangeRefused(verified.failure);
     // One lock, on the new number (a join of that number waits): withLock never nests.
     const r = await this.store.withLock(`join:${newE164}`, async (): Promise<{ ok: true } | { ok: false; error: NumberChangeError }> => {
-      if (await this.banned(who.e164, person)) return { ok: false, error: "review" };
-      if (await this.store.isBanned(this.phoneHash(newE164))) return { ok: false, error: "review" };
-      if (await this.store.findPhone(newE164)) return { ok: false, error: "number_in_use" };
+      const blocked = await this.banned(who.e164, person) || await this.store.isBanned(this.phoneHash(newE164));
+      const policy = blocked ? "MoveBlocked" : await this.store.findPhone(newE164) ? "NumberTaken" : "MoveAllowed";
+      const allowed = stepPhoneChange(verified, { type: "checkMovePolicy", policy });
+      if (allowed.phase !== "AwaitingMove") return numberChangeRefused(allowed.failure);
       const moved = await this.store.movePhone({ personId: person.id, changeId: change.id, oldE164: who.e164, newE164, oldHash: this.phoneHash(who.e164), newHash: this.phoneHash(newE164), at: this.now() });
-      if (moved !== "ok") return { ok: false, error: moved === "number_in_use" ? "number_in_use" : "review" };
+      const result = stepPhoneChange(allowed, {
+        type: "recordMove", outcome: moved === "ok" ? "MoveApplied" : moved === "number_in_use" ? "MoveNumberTaken" : "MoveMissingPhone",
+      });
+      if (result.phase !== "Moved") return numberChangeRefused(result.failure);
       await this.store.unsuppress(this.phoneHash(newE164));
       return { ok: true };
     });
@@ -342,39 +379,48 @@ export class Accounts {
     return m;
   }
 
-  async join(app: AppInfo, who: Who, input: JoinInput): Promise<{ ok: true; membership: Membership } | { ok: false; error: JoinError }> {
-    if (!consentMatches(app, input.consent)) return { ok: false, error: "consent_wording" };
+  async join(app: AppInfo, who: Who, input: JoinInput, enrollment: Enrollment = typedJoinEntry): Promise<{ ok: true; membership: Membership } | { ok: false; error: JoinError }> {
+    if (enrollment.phase !== "AwaitingConsent") return { ok: false, error: "invalid" };
+    const consent = stepEnrollment(enrollment, { type: "confirmConsent", consentMatches: consentMatches(app, input.consent) });
+    if (consent.phase !== "AwaitingEligibility") return { ok: false, error: "consent_wording" };
     // One join per phone at a time: parallel requests see the first one's person and membership.
-    return this.store.withLock(`join:${who.e164}`, () => this.joinLocked(app, who, input));
+    return this.store.withLock(`join:${who.e164}`, () => this.joinLocked(app, who, input, consent));
   }
 
-  private async joinLocked(app: AppInfo, who: Who, input: JoinInput): Promise<{ ok: true; membership: Membership } | { ok: false; error: JoinError }> {
+  private async joinLocked(app: AppInfo, who: Who, input: JoinInput, consent: Enrollment): Promise<{ ok: true; membership: Membership } | { ok: false; error: JoinError }> {
     const at = this.now();
-    if ((await this.seen(who.e164)) === "held") return { ok: false, error: "review" };
-    let person = await this.personFor(who.e164);
-    if (await this.banned(who.e164, person)) return { ok: false, error: "review" };
+    const held = (await this.seen(who.e164)) === "held";
+    let person = held ? undefined : await this.personFor(who.e164);
+    const eligibility = stepEnrollment(consent, { type: "checkEligibility", eligible: !held && !await this.banned(who.e164, person) });
+    if (eligibility.phase !== "AwaitingMembership") return { ok: false, error: "review" };
     const existing = person && (await this.store.getMembership(person.id, app.id));
-    if (existing && existing.state !== "removed" && existing.state !== "invited") {
-      // A repeated join is still an age statement. Keep the membership and consent unchanged,
-      // but propagate a lower age before returning the existing membership.
-      await this.recordAge(who.e164, person, input.age);
-      if (!joinAgeCheck(input.age, await this.lowestAge(who.e164, person), app).ok) return { ok: false, error: "under_age" };
-      return { ok: true, membership: existing };
-    }
-    if (app.joinMode === "invite" && existing?.state !== "invited") return { ok: false, error: "invite_only" };
+    const membershipCheck = stepEnrollment(eligibility, {
+      type: "checkMembership",
+      membershipFacts: {
+        existingMember: !!existing && existing.state !== "removed" && existing.state !== "invited",
+        inviteRequired: app.joinMode === "invite",
+        hasInvite: existing?.state === "invited",
+      },
+    });
+    if (membershipCheck.phase === "NeedsInvite") return { ok: false, error: "invite_only" };
+    // A repeated join propagates a lower age and keeps the membership and consent.
+    if (membershipCheck.rejoin) await this.recordAge(who.e164, person, input.age);
     const age = joinAgeCheck(input.age, await this.lowestAge(who.e164, person), app);
-    if (!age.ok) {
+    const ageCheck = stepEnrollment(membershipCheck, { type: "checkJoinAge", ageEligible: age.ok });
+    if (ageCheck.phase === "BelowJoinAge") {
       // Nothing is stored for this app: only the age, on the phone's age floor (and the person, if any).
-      await this.recordAge(who.e164, person, input.age);
+      if (!membershipCheck.rejoin) await this.recordAge(who.e164, person, input.age);
       return { ok: false, error: "under_age" };
     }
+    if (ageCheck.phase === "ReturnExisting" && existing) return { ok: true, membership: existing };
+    if (ageCheck.phase !== "AwaitingPersistence") return { ok: false, error: "invalid" };
     if (!person) person = await this.createPerson(who.e164, "otp_sms", age.effective ?? input.age);
     await this.recordAge(who.e164, person, input.age);
     // A new opt-in by the person: a delete of everything no longer suppresses the number.
     await this.store.unsuppress(this.phoneHash(who.e164));
     const membership: Membership = {
       // An invited membership keeps its member id (the invite may already name it).
-      app: app.id, personId: person.id, memberId: existing?.state === "invited" ? existing.memberId : `${app.id}_${randomUUID()}`,
+      app: app.id, personId: person.id, memberId: membershipCheck.invited && existing ? existing.memberId : `${app.id}_${randomUUID()}`,
       state: app.joinMode === "waitlist" ? "onboarding" : "active", review: null,
       firstName: input.firstName,
       profile: Object.fromEntries(Object.entries({ homeCity: input.homeCity, neighborhood: input.neighborhood, zip: input.zip, interests: input.interests, about: input.about }).filter(([, v]) => v !== undefined)),
@@ -383,14 +429,21 @@ export class Accounts {
     await this.store.putMembership(membership);
     await this.store.addConsent({ e164: who.e164, app: app.id, state: "opted_in", source: "web_form", wording: app.consent.text, wordingVersion: app.consent.version, at });
     await this.store.attachPerson(who.e164, person.id);
+    let hook: { ok: true } | { ok: false; error: unknown };
     try {
       // The network member gets the person's lowest age, not the one typed now (a minor anywhere is a minor here).
       await this.hooks.onJoin?.({ app, person, membership, e164: who.e164, age: age.effective ?? input.age, input });
+      hook = { ok: true };
     } catch (e) {
+      hook = { ok: false, error: e };
+    }
+    const result = stepEnrollment(ageCheck, { type: "finishJoin", hookSucceeded: hook.ok });
+    if (result.phase === "JoinHookFailed" && !hook.ok) {
       await this.store.forgetMembership(person.id, app.id, at);
       await this.store.addConsent({ e164: who.e164, app: app.id, state: "opted_out", source: "join_failed", at });
-      throw e;
+      throw hook.error;
     }
+    if (result.phase !== "Created") return { ok: false, error: "invalid" };
     return { ok: true, membership };
   }
 
