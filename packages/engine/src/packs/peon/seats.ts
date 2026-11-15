@@ -67,6 +67,7 @@ export function peonSeats<S extends SnapshotLike>(snap: S): S {
     const id = seatIdOf(p.id);
     if (byId.has(id)) continue;
     members.push({ ...owner, id, age: 18, joinedAt: p.createdAt, seatOwner: owner.id } as Member);
+    edges.push({ from: owner.id, to: id, type: "avoid", strength: 1, explicit: false, createdAt: p.createdAt });
     let posted: number | undefined;
     for (const f of snap.facets) {
       if (f.memberId !== owner.id) continue;
