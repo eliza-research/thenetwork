@@ -1,7 +1,7 @@
 // Engine configuration. Every number here is a hand-tuned v1 default (Section 33.11) and is
 // covered by the config hash logged with each run (ME-004). Thresholds are applied (ME-009).
 import type { Category, City, ParticipationState } from "@thenetwork/core";
-import { DAY, HOUR } from "@thenetwork/core";
+import { DAY, HOUR, initialInviteBudget, minorInitialInviteBudget, planInviteBudget } from "@thenetwork/core";
 import { sha256, stableStringify } from "./hash.ts";
 import type { Effort, ItemKind } from "./types.ts";
 
@@ -111,6 +111,16 @@ export interface EngineConfig {
   homeEntryTerms: string[];
 }
 
+function defaultParticipationBudgets(): EngineConfig["budgets"] {
+  return {
+    open: initialInviteBudget("open"),
+    normal: initialInviteBudget("normal"),
+    quiet: initialInviteBudget("quiet"),
+    receiving: initialInviteBudget("receiving"),
+    paused: initialInviteBudget("paused"),
+  };
+}
+
 export const DEFAULT_CONFIG: EngineConfig = {
   seed: 1,
   cities: ["sf", "nyc"],
@@ -118,13 +128,7 @@ export const DEFAULT_CONFIG: EngineConfig = {
   windowDays: 7,
   minOverlapHours: 3,
   ageMin: 18,
-  budgets: {
-    open: { limit: 4, periodDays: 7 },
-    normal: { limit: 2, periodDays: 7 },
-    quiet: { limit: 1, periodDays: 30 },
-    receiving: { limit: 2, periodDays: 7 },
-    paused: { limit: 0, periodDays: 7 },
-  },
+  budgets: defaultParticipationBudgets(),
   contribution: { limit: 2, periodDays: 14 },
   cooldowns: { pairDeclinedDays: 30, negativeFeedbackDays: 90, categoryDeclineDays: 7, activeProposalDays: 7 },
   askedRecencyDays: 3,
@@ -318,7 +322,7 @@ const perState = <T>(open: T, normal: T, quiet: T, receiving: T, paused: T): Rec
 
 export const DEFAULT_ATTENTION: AttentionConfig = {
   version: "attention-v1.2.0",
-  caps: perState({ limit: 4, periodDays: 7 }, { limit: 2, periodDays: 7 }, { limit: 1, periodDays: 30 }, { limit: 2, periodDays: 7 }, { limit: 0, periodDays: 7 }),
+  caps: defaultParticipationBudgets(),
   breakIns: perState({ limit: 2, periodDays: 7 }, { limit: 1, periodDays: 7 }, { limit: 0, periodDays: 30 }, { limit: 1, periodDays: 7 }, { limit: 0, periodDays: 7 }),
   lambda: perState(0.15, 0.25, 0.5, 0.25, Infinity),
   maxItems: perState(3, 3, 2, 2, 0),
@@ -340,7 +344,7 @@ export const DEFAULT_ATTENTION: AttentionConfig = {
   expiry: { introProbeDays: 14, partnerProbeDays: 2, groupProbeDays: 14, profilingDays: 30, placeDays: 7, eventLeadHours: 24 },
   annoyance: { min: 0.5, max: 3, less: 1.5, unanswered: 1.25, positive: 0.8, halfLifeDays: 30, fastPickHours: 2, unansweredHours: 72 },
   minors: {
-    cap: { limit: 1, periodDays: 7 }, maxItems: 2, breakIns: 0, quietHours: [20, 8],
+    cap: { ...minorInitialInviteBudget }, maxItems: 2, breakIns: 0, quietHours: [20, 8],
     // Evenings before a school day: Sunday-Thursday (the morning after is Monday-Friday).
     schoolNights: [0, 1, 2, 3, 4],
     allowedKinds: ["event_suggestion", "place_suggestion", "plan_probe"],
@@ -506,7 +510,7 @@ export const DEFAULT_PLANS: PlansConfig = {
   maxPlansPerCityRun: 6,
   stated: { confidence: 0.8, inside: 0.85, outsideFactor: 0.5 },
   fallback: { smaller: true, soloEvent: true, nextWeek: true, carryBonus: 0.1, carryDays: 10 },
-  allowance: { enabled: true, limit: 1, periodDays: 7 },
+  allowance: { enabled: true, ...planInviteBudget },
   // Founder decision (2026-10-08): a crew is offered after ONE great plan (>= 3 attendees would do it again); each person opts in.
   crews: { enabled: true, minMembers: 3, minPlans: 1, cadenceDays: 7, handOffAfterSessions: 3 },
   enjoyIntercept: 0.1, enjoySlope: 1,

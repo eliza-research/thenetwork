@@ -35,6 +35,8 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { S3Client, type SQL } from "bun";
+import { ratingMaxBytes, ratingMaxPhotos, uploadMaxBytes, uploadMaxPerPerson, photoSlotsFull } from "../../core/src/generated/photoPolicy.ts";
+import { canBeMatched } from "../../core/src/policy.ts";
 import { PgPeopleStore } from "./pg-store.ts";
 import type { AppId } from "./apps.ts";
 import { readCapped } from "./body.ts";
@@ -87,8 +89,8 @@ export type PhotoType = "image/jpeg" | "image/png" | "image/webp";
 export const PHOTO_TYPES: readonly PhotoType[] = ["image/jpeg", "image/png", "image/webp"];
 /** Apps that take photos. */
 export const PHOTO_APPS: readonly AppId[] = ["slop"];
-export const PHOTO_MAX_BYTES = 8 * 1024 * 1024;
-export const PHOTO_MAX_PER_PERSON = 6;
+export const PHOTO_MAX_BYTES = uploadMaxBytes;
+export const PHOTO_MAX_PER_PERSON = uploadMaxPerPerson;
 /** A staff link to one photo works this long. */
 export const PHOTO_VIEW_TTL_MS = 5 * 60_000;
 /** The photo consent a site shows next to the upload button (draft copy: needs the founder's approval and the CONTRIBUTING 3.5 videos). */
@@ -116,8 +118,8 @@ export interface PhotoRow {
 /** The rater: the engine's member-level AppearanceRater (production: makeClefRaterFromEnv). */
 export type PhotoRater = AppearanceRater;
 /** Photos one rating reads (Clef takes at most 4 images, each at most 4 MiB, as base64). */
-export const RATER_MAX_PHOTOS = 4;
-export const RATER_MAX_BYTES = 4 * 1024 * 1024;
+export const RATER_MAX_PHOTOS = ratingMaxPhotos;
+export const RATER_MAX_BYTES = ratingMaxBytes;
 
 /** An error worth another try: a network failure, a timeout, or an API answer of 429 or 5xx (ClefError carries the status). */
 export function retryable(e: unknown): boolean {
@@ -438,7 +440,7 @@ export class PhotoService {
   /** An adult on this app: lowest age 18+ (an unknown age fails) and the app's own check (slop: no failed staff age check). */
   async adult(personId: string, app: AppId, tx?: SQL): Promise<PhotoRefusal | undefined> {
     const p = await (tx ? new PgPeopleStore(tx) : this.o.people).getPerson(personId);
-    if (!p || p.deletedAt !== null || p.lowestAge === null || p.lowestAge < 18) return "adults_only";
+    if (!p || p.deletedAt !== null || !canBeMatched(p.lowestAge)) return "adults_only";
     if (!(await (this.o.eligible?.(personId, app, tx) ?? Promise.resolve(false)))) return "not_verified";
     return undefined;
   }
@@ -463,7 +465,7 @@ export class PhotoService {
     if (input.length > PHOTO_MAX_BYTES) return { ok: false, reason: "too_large" };
     const type = sniffType(input);
     if (!type) return { ok: false, reason: "bad_type" };
-    if ((await this.o.meta.list(personId)).length >= PHOTO_MAX_PER_PERSON) return { ok: false, reason: "too_many" };
+    if (photoSlotsFull((await this.o.meta.list(personId)).length)) return { ok: false, reason: "too_many" };
     let bytes: Uint8Array;
     try { bytes = stripMetadata(input, type); } catch { return { ok: false, reason: "bad_image" }; }
     const id = newPhotoId();

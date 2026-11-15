@@ -16,6 +16,10 @@
 // Engine-visible inputs only. Nothing here reads hidden truth.
 import type { Category, City, MemberId, ScoreComponents } from "@thenetwork/core";
 import { DAY, HOUR } from "@thenetwork/core";
+import {
+  canApplyPlanReply, crewBelowMinimum, crewHostOrder, crewMembersWhoOptedIn, hasCrewQuorum, planFallbackShape, planProbeExpired,
+  planReplyChoice, qualifiesForPlanAllowance, singlePlanSeedsCrew, unmetPlanQuorum, type PlanStage,
+} from "../../core/src/generated/planDecision.ts";
 import { activitiesForTags, activityById, type ActivityType, type Daypart, type Venue } from "./packs/network/activities.ts";
 import { availabilityProb, candidateSlots, timeOptionsPhrase, type AvailabilityEvidence, type TimeSlot } from "./attention.ts";
 import { DEFAULT_ATTENTION, DEFAULT_CONFIG, DEFAULT_PLANS, type AttentionConfig, type PlansConfig } from "./config.ts";
@@ -93,9 +97,12 @@ export function hasWindow(ev: PlanEvidence, slot: TimeSlot, now: number, pcfg: P
  * week, a standing window, a learned (accepted or attended) time, or the opt-in weekly check-in.
  */
 export function planAllowanceEligible(ev: PlanEvidence | undefined, checkInOptIn: boolean, now: number): boolean {
-  if (checkInOptIn) return true;
-  if (!ev) return false;
-  return !!(ev.stated && ev.stated.until > now) || !!ev.standing?.length || !!ev.history?.some(h => h.outcome !== "declined_time" && h.at <= now);
+  return qualifiesForPlanAllowance(
+    checkInOptIn,
+    !!(ev?.stated && ev.stated.until > now),
+    !!ev?.standing?.length,
+    ev?.history?.some(h => h.outcome !== "declined_time" && h.at <= now) ?? false,
+  );
 }
 
 /**
@@ -304,15 +311,17 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
       const pool = [...avail.keys()].filter(id => (fits.get(id)!.get(a.id) ?? 0) >= pcfg.minFit && ageOk(id, a.ageMin))
         .sort((x, y) => (fits.get(y)!.get(a.id)! * avail.get(y)! - fits.get(x)!.get(a.id)! * avail.get(x)!) || byTie(x, y)).slice(0, pcfg.poolSize);
       if (pool.length < 2) continue;
-      // Place: the event itself, or the open public venue covering the most pool members' areas.
-      let place: { name: string; area?: string; venueId?: string; ageMin: number; priceTier: number };
+      const minG = Math.max(pcfg.size.min, a.groupSize[0]);
+      // Use the event site or an open venue. Prefer venues that can host a full group before comparing area coverage.
+      let place: { name: string; area?: string; venueId?: string; ageMin: number; priceTier: number; capacity?: number };
       if (wh.event) place = { name: wh.event.title, area: wh.event.area, ageMin: a.ageMin, priceTier: a.costTier };
       else {
-        const vs = inp.venues.filter(v => v.public && v.city === city && v.activities.includes(a.id) && openAt(v, wh.slot, a.durationMin, tz, att));
+        const vs = inp.venues.filter(v => v.public && v.city === city && v.activities.includes(a.id) && (v.capacity === undefined || v.capacity >= 2) && openAt(v, wh.slot, a.durationMin, tz, att));
         if (!vs.length) continue;
         const cover = (v: Venue) => pool.filter(id => areas.get(id)!.has(v.area.toLowerCase())).length;
-        const v = [...vs].sort((x, y) => (cover(y) - cover(x)) || (x.id < y.id ? -1 : 1))[0]!;
-        place = { name: v.name, area: v.area, venueId: v.id, ageMin: Math.max(v.ageMin, a.ageMin), priceTier: v.priceTier };
+        const groupFits = (v: Venue) => (v.capacity ?? Infinity) >= minG && pool.filter(id => ageOk(id, v.ageMin)).length >= minG;
+        const v = vs.sort((x, y) => Number(groupFits(y)) - Number(groupFits(x)) || cover(y) - cover(x) || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0))[0]!;
+        place = { name: v.name, area: v.area, venueId: v.id, ageMin: Math.max(v.ageMin, a.ageMin), priceTier: v.priceTier, capacity: v.capacity };
       }
       let pool2 = pool.filter(id => ageOk(id, place.ageMin));
       const input = (id: MemberId): PlanMemberInput => ({
@@ -321,9 +330,9 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
       });
       const score = (ids: MemberId[]) => scorePlanGroup(ids.map(input), compat, familiar, pcfg);
       const passes = (s: PlanScore | null): s is PlanScore => !!s && s.min >= pcfg.minMemberU && s.score >= pcfg.threshold;
-      // An event's capacity bounds the group (engine-attention-plans-13).
-      const cap = wh.event?.capacity ?? Infinity;
-      const minG = Math.max(pcfg.size.min, a.groupSize[0]), maxG = Math.min(pcfg.size.max, a.groupSize[1], pcfg.size.target, cap);
+      // The chosen public place's capacity bounds both groups and partner fallbacks.
+      const cap = wh.event?.capacity ?? place.capacity ?? Infinity;
+      const maxG = Math.min(pcfg.size.max, a.groupSize[1], pcfg.size.target, cap);
       if (maxG < Math.min(minG, 2)) continue;
       const minInvite = Math.min(maxG, Math.max(minG, pcfg.minInvite));
       // Disjoint k-best (engine-attention-plans-12): after the best group, the next best group from
@@ -557,6 +566,7 @@ function nextOnBench(r: PlanRun, opts: PlanRunOpts): MemberId | undefined {
 }
 export const yesOf = (r: PlanRun) => Object.keys(r.answers).filter(x => r.answers[x] === "yes");
 export const pendingOf = (r: PlanRun) => Object.keys(r.answers).filter(x => r.answers[x] === "pending");
+const planStage: Record<PlanRun["stage"], PlanStage> = { probing: "Probing", booked: "Booked", closed: "Closed" };
 
 /**
  * Record a probe answer. Yes: quorum reached -> "book" (the reveal is the booked plan); after
@@ -565,34 +575,49 @@ export const pendingOf = (r: PlanRun) => Object.keys(r.answers).filter(x => r.an
  * when nobody is pending and quorum can no longer be reached -> "fallback". Never says who declined.
  */
 export function recordPlanAnswer(run: PlanRun, member: MemberId, yes: boolean, now: number, pcfg: PlansConfig = DEFAULT_PLANS, opts: PlanRunOpts = {}): { run: PlanRun; action: PlanAction } {
-  if (run.stage === "closed" || run.answers[member] !== "pending") return { run, action: { kind: "none" } };
+  const phase = planStage[run.stage];
+  const pendingMember = run.answers[member] === "pending";
+  if (!canApplyPlanReply(phase, pendingMember)) return { run, action: { kind: "none" } };
   const r: PlanRun = { ...run, answers: { ...run.answers, [member]: yes ? "yes" : "no" }, bench: [...run.bench] };
-  const p = r.plan;
-  if (yes) {
-    if (r.stage === "booked") {
-      if (now <= p.window.start - pcfg.lateJoinHours * HOUR) return { run: r, action: { kind: "join", member } };
+  const p = run.plan;
+  const going = yesOf(r);
+  const choice = planReplyChoice({
+    phase, pendingMember, accepted: yes, yesAfter: going.length,
+    needed: p.quorum, partnerPlan: p.partner, firstMember: member === p.invited[0],
+    beforeDeadline: now < p.probeDeadline, lateJoinOpen: now <= p.window.start - pcfg.lateJoinHours * HOUR,
+  });
+  switch (choice) {
+    case "AddMember":
+      return { run: r, action: { kind: "join", member } };
+    case "RecordLate":
       r.answers[member] = "late";
       return { run: r, action: { kind: "none" } };
+    case "BookPlan":
+      r.stage = "booked";
+      return { run: r, action: { kind: "book", going } };
+    case "ClosePlan":
+      r.stage = "closed";
+      return { run: r, action: { kind: "fallback" } };
+    case "AskPartner":
+    case "AskAlternate": {
+      const next = nextOnBench(r, opts);
+      if (next) {
+        r.answers[next] = "pending";
+        return { run: r, action: { kind: choice === "AskPartner" ? "probe_partner" : "backfill", member: next } };
+      }
+      break;
     }
-    const y = yesOf(r);
-    if (y.length >= p.quorum) { r.stage = "booked"; return { run: r, action: { kind: "book", going: y } }; }
-    if (p.partner && now < p.probeDeadline) { const nx = nextOnBench(r, opts); if (nx) { r.answers[nx] = "pending"; return { run: r, action: { kind: "probe_partner", member: nx } }; } }
-    return { run: r, action: { kind: "none" } };
   }
-  if (r.stage === "booked") return { run: r, action: { kind: "none" } };
-  // Partner plan: a no from the first ends it (one-to-one rules: no swap without re-review); a no from the partner tries the next.
-  if (p.partner && member === p.invited[0]) { r.stage = "closed"; return { run: r, action: { kind: "fallback" } }; }
-  if (now < p.probeDeadline) {
-    const nx = nextOnBench(r, opts);
-    if (nx) { r.answers[nx] = "pending"; return { run: r, action: { kind: "backfill", member: nx } }; }
+  if (!yes && r.stage === "probing" && unmetPlanQuorum(pendingOf(r).length, going.length, p.quorum)) {
+    r.stage = "closed";
+    return { run: r, action: { kind: "fallback" } };
   }
-  if (!pendingOf(r).length && yesOf(r).length < p.quorum) { r.stage = "closed"; return { run: r, action: { kind: "fallback" } }; }
   return { run: r, action: { kind: "none" } };
 }
 
 /** At the probe deadline without quorum: close and fall back. */
 export function checkPlanDeadline(run: PlanRun, now: number): { run: PlanRun; action: PlanAction } {
-  if (run.stage !== "probing" || now < run.plan.probeDeadline) return { run, action: { kind: "none" } };
+  if (!planProbeExpired(planStage[run.stage], !(now < run.plan.probeDeadline))) return { run, action: { kind: "none" } };
   return { run: { ...run, stage: "closed" }, action: { kind: "fallback" } };
 }
 
@@ -642,10 +667,9 @@ export function planFallback(run: PlanRun, now: number, events: readonly Network
   const a = activityById.get(p.activityId)!;
   const carry = pcfg.fallback.nextWeek ? yes.map(memberId => ({ memberId, activityId: p.activityId, until: now + pcfg.fallback.carryDays * DAY })) : [];
   if (!yes.length) return { fallback: { kind: "none" }, carry };
-  if (pcfg.fallback.smaller && yes.length >= 2 && a.groupSize[0] <= 2 && p.window.start - now > pcfg.lateJoinHours * HOUR) {
-    if (yes.length === 2) return { fallback: { kind: "smaller", members: yes, partnerPlan: partnerPlanFor(p, [yes[0]!, yes[1]!], now, pcfg) }, carry: [] };
-    return { fallback: { kind: "smaller", members: yes }, carry: [] };
-  }
+  const shape = planFallbackShape(yes.length, pcfg.fallback.smaller, a.groupSize[0], p.window.start - now > pcfg.lateJoinHours * HOUR);
+  if (shape === "FreshPartnerPlan") return { fallback: { kind: "smaller", members: yes, partnerPlan: partnerPlanFor(p, [yes[0]!, yes[1]!], now, pcfg) }, carry: [] };
+  if (shape === "SmallerGroup") return { fallback: { kind: "smaller", members: yes }, carry: [] };
   if (pcfg.fallback.soloEvent) {
     const ev = events.find(e => e.city === p.city && !e.riskTags?.length && e.start > now + 24 * HOUR && e.start < now + 7 * DAY && e.tags.some(t => a.tags.includes(t)));
     if (ev) return { fallback: { kind: "solo_event", members: yes, eventId: ev.id }, carry };
@@ -683,11 +707,11 @@ export function detectCrews(history: readonly PlanOutcomeRecord[], existing: rea
     for (let i = 0; i < sorted.length; i++) {
       const pos = new Set(sorted[i]!.positive.filter(m => !inCrew.has(`${act}|${m}`)));
       const groups: MemberId[][] = [];
-      if (pos.size >= pcfg.crews.minMembers && (pcfg.crews.minPlans <= 1 || sorted[i]!.recurringWant.some(m => pos.has(m)))) groups.push([...pos]);
+      if (singlePlanSeedsCrew(pos.size, pcfg.crews.minMembers, pcfg.crews.minPlans, sorted[i]!.recurringWant.some(m => pos.has(m)))) groups.push([...pos]);
       // minPlans = 2: the same members positive at a later plan of the same activity.
       for (let j = i + 1; j < sorted.length && pcfg.crews.minPlans === 2; j++) {
         const both = [...pos].filter(m => sorted[j]!.positive.includes(m));
-        if (both.length >= pcfg.crews.minMembers) groups.push(both);
+        if (hasCrewQuorum(both.length, pcfg.crews.minMembers)) groups.push(both);
       }
       const g = groups.sort((a, b) => b.length - a.length)[0];
       if (!g) continue;
@@ -707,10 +731,9 @@ export function detectCrews(history: readonly PlanOutcomeRecord[], existing: rea
  * said yes; below minMembers there is no crew. Hosts rotate among the members who stayed.
  */
 export function crewOptIn(crew: Crew, optedIn: readonly MemberId[], pcfg: PlansConfig = DEFAULT_PLANS): Crew | null {
-  const members = crew.members.filter(m => optedIn.includes(m));
-  if (members.length < pcfg.crews.minMembers) return null;
-  const hosts = crew.hostRotation.filter(m => members.includes(m));
-  return { ...crew, members, hostRotation: hosts.length ? hosts : members };
+  const members = crewMembersWhoOptedIn(crew.members, [...optedIn]);
+  if (crewBelowMinimum(members.length, pcfg.crews.minMembers)) return null;
+  return { ...crew, members, hostRotation: crewHostOrder(members, crew.hostRotation) };
 }
 
 /** The crew's next session (same weekday and time, `cadenceDays` after the last), as a plan; each session is opt-in. Hosts rotate. */

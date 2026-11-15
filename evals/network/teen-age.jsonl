@@ -162,3 +162,91 @@
 {"text":"Kit here, I'm 15 actually, I like drawing and chess.","teen":true}
 {"text":"I turned 13 last week","teen":true}
 {"text":"I'm 30 actually, just look young","teen":false}
+{"text":"I'm 30. I'm 15.","teen":true}
+{"text":"I'm 25. Actually I'm 17.","teen":true}
+{"text":"I'm 40 but I'm 16.","teen":true}
+{"text":"I am 40 years old. I am 12 years old.","teen":true}
+{"text":"I'm 30. I just turned 17.","teen":true}
+{"text":"my age is 28. my age is 13.","teen":true}
+{"text":"I'm 21. I'm only 15.","teen":true}
+{"text":"Hi I'm 32. Sorry I'm 15.","teen":true}
+{"text":"I'm 16. I'm 40.","teen":true}
+{"text":"I'm 30. I'm 15 minutes away.","teen":false}
+{"text":"I'm 40. I'm 12 years into this job.","teen":false}
+{"text":"I'm 30. I'm 15 blocks from the park.","teen":false}
+{"text":"He's 20. She's 14.","other":14}
+{"text":"He's 16. She's 12.","other":12}
+{"text":"Alex is 30. Sam is 13.","other":13}
+{"text":"I'm 30. Age: 15.","teen":true,"age":15}
+{"text":"30 y/o here. 15 y/o here.","teen":true,"age":15}
+{"text":"I'm 30. 15f here.","teen":true,"age":15}
+{"text":"30m. f15.","teen":true,"age":15}
+{"text":"I'm 30. 15 here.","teen":true,"age":15}
+{"text":"He said \"hi\" I'm 15","teen":true,"age":15}
+{"text":"\"Hey\" I'm 15","teen":true,"age":15}
+{"text":"\"Hey.\" I'm 15.","teen":true,"age":15}
+{"text":"I'm 28. I'm 15 minutes away.","teen":false,"age":28}
+{"text":"I'm 40. I'm 12 years into this career.","teen":false,"age":40}
+{"text":"she said \"I'm 15\"","teen":false}
+{"text":"\"I'm 15\"","teen":false}
+{"text":"I'm 30. \"I'm 15\"","teen":false,"age":30}
+{"text":"He said \"I'm 12\" but I'm 30","teen":false,"age":30}
+{"text":"I act like I'm 12","teen":false}
+{"text":"I think I'm 16","teen":false}
+{"text":"I am a 12-year-old girl","teen":true,"age":12}
+{"text":"I am a 12-year-old at heart","teen":false}
+{"text":"I am a 12-year-old whisky fan","teen":false}
+{"text":"I am 16 from Queens","teen":true,"age":16}
+{"text":"I am 15 looking for friends","teen":true,"age":15}
+{"text": "sixteen here", "teen": true}
+{"text": "turned 17 last week", "teen": true}
+{"text": "just turned 16", "teen": true}
+{"text": "turned 16 yesterday", "teen": true}
+{"text": "just a 15 year old", "teen": true}
+{"text": "only a 16 year old", "teen": true}
+{"text": "a 15 yr old", "teen": true}
+{"text": "sixteen years old", "teen": true}
+{"text": "im a 16 year old guy", "teen": true}
+{"text": "15 year old girl here", "teen": true}
+{"text": "in 11th grade lol", "teen": true}
+{"text": "junior in high school here", "teen": true}
+{"text": "freshman in high school", "teen": true}
+{"text": "in 9th grade", "teen": true}
+{"text": "9th grader here", "teen": true}
+{"text": "8th grader", "teen": true}
+{"text": "still in middle school", "teen": true}
+{"text": "17 btw", "teen": true}
+{"text": "seventeen lol", "teen": true}
+{"text": "turning 18 in june", "teen": true}
+{"text": "18 next month", "teen": true}
+{"text": "not 18 yet", "teen": true}
+{"text": "under 18", "teen": true}
+{"text": "almost 18", "teen": true}
+{"text": "nearly 18", "teen": true}
+{"text": "turned 30 last week", "teen": false}
+{"text": "just turned 21", "teen": false}
+{"text": "25 year old guy here", "teen": false}
+{"text": "a 15 year old scotch", "teen": false}
+{"text": "in 9th grade, I had a crush", "teen": false}
+{"text": "still in high school?", "teen": false}
+{"text": "under 18 can join?", "teen": false}
+{"text": "almost 30", "teen": false}
+{"text": "turning 40 next month", "teen": false}
+{"text": "senior in college here", "teen": false}
+{"text": "12th grade teacher here", "teen": false}
+{"text": "my kid is in 9th grade", "teen": false}
+{"text": "almost 18 years married", "teen": false}
+{"text": "18 months in nyc", "teen": false}
+{"text": "im 18 yrs old", "teen": false}
+{"text": "turned 16, hbu", "teen": true}
+{"text": "15 year old girl here lol", "teen": true}
+{"text": "17 rn", "teen": true}
+{"text": "sixteen here lol", "teen": true}
+{"text": "still in high school? lol", "teen": false}
+{"text": "in 9th grade, I had a crush lol", "teen": false}
+{"text": "25 year old guy here, hbu?", "teen": false}
+{"text":"My son said this: turned 16 yesterday.","teen":false}
+{"text":"“In 9th grade.” That is what the note said.","teen":false}
+{"text":"In 9th grade. I did competitive swimming then.","teen":false}
+{"text":"12th grade teacher, here.","teen":false}
+{"text":"Hey, turned 16, hbu?","teen":true,"age":16}
