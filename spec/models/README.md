@@ -52,7 +52,7 @@ entire imported model.
 | [photos_rating](photos_rating.md) | Photo storage and private ratings | [Photo eligibility and limits](../photoPolicy.md), [upload and retention](../photoRetention.md), [asynchronous rating lifecycle](../photoRating.md) |
 | [plan_crew](plan_crew.md) | Crew invitations and sessions | [Crew offer state machine](../crewOffer.md), [formation rules](../planDecision.md), [Friends weekly pass reservations](../friendsWeek.md) |
 | [plan_run](plan_run.md) | Group plans and fallback | [Single-slot plan formation](../planFormation.md), [plan reply, fallback and allowance](../planDecision.md), [plan dispatch](../planDispatch.md), [Friends weekly pass reservations](../friendsWeek.md), [booked meeting settlement](../meetingSettlement.md) |
-| [profile_learning](profile_learning.md) | Suggestions from connected sources | [Suggestion review state machine](../profileSuggestionReview.md) |
+| [profile_learning](profile_learning.md) | Suggestions from connected sources | [Source collection and cleanup](../profileSuggestionSource.md), [suggestion review state machine](../profileSuggestionReview.md) |
 | [profile_read](profile_read.md) | Read a saved profile | [Saved-profile read](../savedProfileRead.md) and [suggestion review](../profileSuggestionReview.md) state machines |
 | [relay](relay.md) | Relay between matched members | [Consent timing and verdict](../relayDecision.md), [item lifecycle](../relayLifecycle.md) |
 | [review_desk](review_desk.md) | Staff review desk | [Staff review interaction](../staffReview.md), [server review deadline](../reviewDeadline.md) |
