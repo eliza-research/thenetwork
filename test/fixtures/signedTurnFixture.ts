@@ -12,7 +12,7 @@ import { APPS } from "../../packages/platform/src/apps.ts";
 
 export type FixtureApp = "slop" | "friends";
 export type FixtureMember = { phone: string; personId: string };
-type FixtureTurn = Pick<TurnRequest, "app" | "receivedAt">;
+type FixtureTurn = Pick<TurnRequest, "app" | "receivedAt"> & { observeDryRunSideEffects?: boolean };
 type FixtureSignup = { firstName?: string; apps?: readonly FixtureApp[]; interests?: string[]; neighborhood?: string };
 
 export type SignedTurnFixture = {
@@ -106,12 +106,12 @@ export async function withSignedTurnFixture(run: (fixture: SignedTurnFixture) =>
         receivedAt: options.receivedAt ?? clock.now(),
         ...(options.app ? { app: options.app } : {}),
       };
-      const response = await postSigned(TURN_PATH, input.messageId, input);
+      const response = await postSigned(TURN_PATH, input.messageId, input, options.observeDryRunSideEffects);
       if (!response.ok) throw new Error(`Signed turn returned ${response.status}: ${await response.text()}`);
       return { response: await response.json() as TurnResponse, receivedAt: input.receivedAt, messageId: input.messageId };
     }
 
-    async function postSigned(path: string, id: string, input: TurnRequest | TurnReceiptRequest) {
+    async function postSigned(path: string, id: string, input: TurnRequest | TurnReceiptRequest, observeDryRunSideEffects = false) {
       const body = JSON.stringify(input);
       const sent = adapterCalls;
       const response = await fetch(new URL(path, http.url), {
@@ -123,7 +123,7 @@ export async function withSignedTurnFixture(run: (fixture: SignedTurnFixture) =>
           }),
         },
       });
-      if (adapterCalls !== sent) throw new Error(`${path} called the delivery adapter`);
+      if (!observeDryRunSideEffects && adapterCalls !== sent) throw new Error(`${path} called the delivery adapter`);
       return response;
     }
 

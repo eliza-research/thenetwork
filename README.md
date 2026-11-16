@@ -140,7 +140,10 @@ signed HTTP and isolated local Postgres databases on port 54339. Run
 `savedProfileJourney`, or `turnReceiptJourney`. Run
 `pnpm run spec:conformance reviewContactJourney` to compare a signed
 Friends request, scoped staff review, and dry-run probe records against
-the [review-to-contact rules](spec/reviewContactJourney.md). Run
+the [review-to-contact rules](spec/reviewContactJourney.md). The
+[mutual-consent journey](spec/mutualConsentJourney.md) extends that flow
+from separate yes replies through booking and the gateway receipt. Run it
+with `pnpm run spec:conformance mutualConsentJourney`. Run
 `pnpm run spec:conformance memberRequestJourney` to compare the request
 and review flow through the dry-run ConsentNetwork harness. The checker saves
 a minimal failing trace under `test/counterexamples/` and replays it on
