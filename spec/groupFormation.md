@@ -129,7 +129,7 @@ pure def lawCliqueShareIsHighest(neighbours: int, circleSize: int): bool =
 
 ### An alternate can join the primary group in its city
 
-An alternate must be outside the primary group, compatible with each primary participant, and available in the group's city. The shell ranks the eligible rows before it supplies them for reservation. The engine checks an alternate against the primary group. The service applies its own checks across alternates before using them.
+An alternate must be outside the primary group and available in its city. Consider alternates by rank. The engine keeps a candidate only when it has a pair value with every primary participant and previously reserved alternate that the lane pairs them with. Skip a candidate who fails that check and keep looking until the alternate limit is reached. The service checks current eligibility when it uses a replacement.
 
 ```quint
 pure val memberValues = Set("c", "d", "e")

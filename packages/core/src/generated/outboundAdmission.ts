@@ -9,6 +9,12 @@ export interface ConversationAdmission { decision: Admission; reengage: boolean 
 
 /** Story: Recheck a queued message at send time / A current row needs live approval and the recipient's eligibility (spec/outboundAdmission.md) */
 //@ pure
+export function closedOpportunityRowStale(closed: boolean, acceptanceRelease: boolean): boolean {
+  return closed && !acceptanceRelease;
+}
+
+/** Story: Recheck a queued message at send time / A current row needs live approval and the recipient's eligibility (spec/outboundAdmission.md) */
+//@ pure
 export function livePolicy(live: boolean): Admission {
   return live ? "Proceed" : "ApprovalMissing";
 }
@@ -36,6 +42,19 @@ export function duePolicy(stale: boolean): Admission {
 export function lawOptedOutOnlyGetsCompliance(compliance: boolean): boolean {
   //@ ensures \result === true
   return !(consentPolicy(compliance, true) === "Proceed") || compliance;
+}
+
+/** Story: Recheck a queued message at send time / A queued match invitation still needs the member's current settings (spec/outboundAdmission.md) */
+//@ pure
+export function queuedProbePolicy(proactiveProbe: boolean, paused: boolean, categoryAllowed: boolean): Admission {
+  return proactiveProbe && (paused || !categoryAllowed) ? "RecipientIneligible" : "Proceed";
+}
+
+/** Story: Recheck a queued message at send time / A queued match invitation still needs the member's current settings (spec/outboundAdmission.md) */
+//@ pure
+export function lawPausedProbeCannotProceed(categoryAllowed: boolean): boolean {
+  //@ ensures \result === true
+  return queuedProbePolicy(true, true, categoryAllowed) === "RecipientIneligible";
 }
 
 /** Story: Recheck a queued message at send time / Replies, quiet hours and unanswered messages limit when a send can go out (spec/outboundAdmission.md) */

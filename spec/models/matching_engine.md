@@ -14,12 +14,12 @@ The [candidate screening spec](../candidateScreening.md) generates the ordered h
 
 The [matching question spec](../engineAsks.md) generates Network and Slop question eligibility, per-question timing and caps, and the engine's proactive reservations before proposal selection.
 
-The match core decides which pairs exist. A pair is proposed only when it has a value from the one pair gate ([reciprocal pair value](../pairValue.md), [relationship lanes](../matchLane.md), [private member standing](../memberStanding.md)), and only after a [bounded candidate search](../candidateSearch.md) kept it. This model keeps the Date and Hire pair values as fixed oracles; the [candidate pool model](candidate_pool.md) follows the search, the screening, the circles and the [global selection](../selectionRun.md) step by step.
+In the Date and Hire engine runs, a pair must pass the [pair value gate](../pairValue.md) for its [lane](../matchLane.md) and be kept by a [bounded candidate search](../candidateSearch.md). This model abstracts the scores and the search result. The [candidate pool model](candidate_pool.md) follows search, screening, circles and [global selection](../selectionRun.md).
 
 [Standing intent freshness](../standingIntent.md) governs matching
 evidence, judgment views, probe order, and cached matching profiles. The [repeat encounter rules](../repeatEncounter.md) require consent tied to the same completed meeting before a repeat candidate exists.
 
-Imported from `quint/matching_engine.qnt` at `30d950e`. The matching parts (the daily runs, the engine pair and member checks, the assignment, the peon engine run) were compared again with branch `vibestack-matching`. See [model index](README.md) for scope and commands.
+Imported from `quint/matching_engine.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
 // -*- mode: Bluespec; -*-
@@ -29,9 +29,8 @@ Imported from `quint/matching_engine.qnt` at `30d950e`. The matching parts (the 
 // docs/research/2026-11-07-state-machines.md section 6.16). Machines: engine-pipeline, hard-filter-chain,
 // slop-onboarding, probe-flow, global-selection, judge-passes-and-cache, slop-assignment, job-posting,
 // job-seat-item, peon-candidate-onboarded, peon-employer-verified, slop-time-venue-booking,
-// slop-pair-reprobe. The model followed the code of branch wave2/matching_engine (base ad67275 plus the
-// defect fixes listed in docs/research/quint-findings/matching_engine.md). Its matching parts follow
-// branch vibestack-matching:
+// slop-pair-reprobe. See docs/research/quint-findings/matching_engine.md for the original defect fixes.
+// The engine runs use the following pack rules.
 //   - slop.date: one Date membership per dating market of a member that memberReason accepts
 //     (packs/slop/generators.ts slopVectors.memberships), with the capacity laneLimits(Date).weeklyCapacity
 //     minus recentProactive. The one generator turns the Date lane's search edges into candidates
@@ -40,13 +39,12 @@ Imported from `quint/matching_engine.qnt` at `30d950e`. The matching parts (the 
 //     the lane floor and the private rating standings within the band plus the uncertainties. Screening
 //     refuses a candidate without a lane or a pair value (filters.ts laneReason). slopAssign
 //     (packs/slop/assign.ts) is one greedy pass per round over the edges in value order, each member once
-//     per round and never past the capacity left (hasRoom); the stable-roommates assignment is gone.
+//     per round and never past the capacity left (hasRoom).
 //   - peon.biz: a job seat is a Hire entity on the Offering side owned by its manager; the level fit is the
-//     Hire lane's parity band (the seniority_band rule is gone); the pack refusal is
-//     packs/peon/selection.ts peonAllows (a slate cap per job, the Hire weekly capacity per candidate), which
+//     Hire lane's parity band. The pack refusal is packs/peon/selection.ts peonAllows (a slate cap per
+//     job and the Hire weekly capacity per candidate), which
 //     policy.ts honors in every selection phase.
-// The onboarding and posting parts keep the code locations of 30d950e; on this branch they are anchored by
-// function name only (see the README known-drift note).
+// The onboarding and posting parts retain earlier line references. Use the function names to find them.
 //
 // Abstractions (quint/README.md rule 7):
 //   - Scores, the orientation check and the readers (extract.ts readMessage, jobs.ts parsePosting) are
@@ -87,7 +85,7 @@ module matching_engine {
   pure val SWEEP_DAYS = 3          // network.ts awaiting cleared after 3 days
   pure val SILENT_DAYS = 7         // packs/slop/profile.ts SILENT_AFTER_DAYS
   pure val BASICS_EVERY = 21       // packs/slop/index.ts:139
-  pure val JUDGE_TTL = 7           // config.ts judge.ttlMs = 7 days
+  pure val JUDGE_TTL = 7           // config.ts judge.ttlMs = 7 days for a reused cache
   pure val HORIZON = 90            // jobs.ts intent horizonDays 90; world.ts live intents only
   pure val MAX_NOW = 150
   pure val POSTINGS = Set("A", "B")
@@ -108,7 +106,7 @@ module matching_engine {
     opp: (str, str) -> Opp, netDeclAt: (str, str) -> int, engDeclAt: (str, str) -> int,
     // sentTimes: invites sent (the Network budget); billed: per pair, the proposals the engine counts.
     sentTimes: str -> List[int], billed: (str, str) -> List[int],
-    judgeOn: bool, judgeLast: (str, str) -> int
+    judgeOn: bool, judgeLast: (str, str) -> int, judgeCalls: int
   }
   type SlopHist = {
     lostAnswer: bool, matchedUnconfirmed: bool, matchedUnlocated: bool, matchedUnasked: bool,
@@ -228,8 +226,8 @@ module matching_engine {
   pure def storedOpenings(p: Posting): int = if (p.status == "active") p.openings else 1
   def seatDeclined(id: str): bool = now - peon.declAt.get(id) < GATE_DAYS
   // peon/profile.ts p.open, world.ts live intent, peon/rules.ts (job_closed, employer_unverified,
-  // locationOk) and the Hire pair value (`seniority`: the levels fit the Hire band, spec/matchLane.md; the
-  // seniority_band rule is gone), peon_not_onboarded for the candidate. packInput holds the seat with its
+  // locationOk), the Hire level fit (`seniority` abstracts the standing band, spec/matchLane.md), and
+  // peon_not_onboarded for the candidate. packInput holds the seat with its
   // manager (d2921d3, SD-296), and the (candidate, seat) avoid edge keeps a declined seat out (c05b9b2,
   // SD-439; network.ts markDeclined and gateReason).
   def engineSeatOk(id: str): bool = all {
@@ -265,7 +263,7 @@ module matching_engine {
       opp: PAIRS.mapBy(p => { stage: "none", at: NONE, everBooked: false }),
       netDeclAt: PAIRS.mapBy(p => NONE), engDeclAt: PAIRS.mapBy(p => NONE),
       sentTimes: SLOP_MEMBERS.mapBy(m => []), billed: PAIRS.mapBy(p => []),
-      judgeOn: judgeOn, judgeLast: PAIRS.mapBy(p => NONE),
+      judgeOn: judgeOn, judgeLast: PAIRS.mapBy(p => NONE), judgeCalls: 0,
     },
     sh' = {
       lostAnswer: false, matchedUnconfirmed: false, matchedUnlocated: false, matchedUnasked: false,
@@ -400,18 +398,20 @@ module matching_engine {
   // network.ts runMatching: runEngine on packInput, then gateReason per proposal, then submit to review.
   // The engine's pick among the eligible pairs with a pair value is the score oracle (the Date lane's
   // search edges, then slopAssign in value order).
-  action slopDailyRun(p: (str, str)): bool = all {
+  action slopRunWithPrompt(p: (str, str), unchangedPrompt: Set[(str, str)]): bool = all {
     enginePairs.contains(p),
     val gateOk = netMemberOk(p._1) and netMemberOk(p._2) and not(pairHistory(p))
-    // The judge reads every candidate pair of the run. Fixed (cdce14f, SD-420): the judge caches live
-    // across daily runs, so a pair judged within the TTL is a cache hit. KNOWN DRIFT on this branch:
-    // network.ts runMatching passes no judgeCache, screenCache or deepCache to runEngine (see README).
-    val judged = if (slop.judgeOn) enginePairs.filter(q => now - slop.judgeLast.get(q) >= JUDGE_TTL) else Set()
+    // The shell compares the exact prepared request and reference bindings. The model gets that
+    // comparison as an input. An eligible pair with different evidence can need a fresh judgment.
+    val reusable = enginePairs.filter(q => unchangedPrompt.contains(q) and slop.judgeLast.get(q) != NONE
+      and now >= slop.judgeLast.get(q) and now - slop.judgeLast.get(q) < JUDGE_TTL)
+    val judged = if (slop.judgeOn) enginePairs.exclude(reusable) else Set()
     all {
       slop' = { ...slop,
         opp: if (gateOk) slop.opp.set(p, { ...slop.opp.get(p), stage: "review", at: now }) else slop.opp,
         billed: if (gateOk) slop.billed.setBy(p, l => l.append(now)) else slop.billed,
         judgeLast: PAIRS.mapBy(q => if (judged.contains(q)) now else slop.judgeLast.get(q)),
+        judgeCalls: slop.judgeCalls + judged.size(),
       },
       sh' = { ...sh,
         matchedUnconfirmed: sh.matchedUnconfirmed or (gateOk and not(slop.ob.get(p._1).confirmed and slop.ob.get(p._2).confirmed)),
@@ -422,11 +422,12 @@ module matching_engine {
         matchedNoValue: sh.matchedNoValue or (gateOk and DATE_UNVALUED.contains(p)),
         gateDisagree: sh.gateDisagree or pairHistory(p),
         selectedOverBudget: sh.selectedOverBudget or engineCount(p._1) >= BUDGET_N or engineCount(p._2) >= BUDGET_N,
-        judgeRepeat: sh.judgeRepeat or judged.exists(q => now - slop.judgeLast.get(q) < JUDGE_TTL),
+        judgeRepeat: sh.judgeRepeat or judged.exists(q => reusable.contains(q)),
       },
     },
     keepPeon, keepOther, now' = now, lastAction' = "slopDailyRun",
   }
+  action slopDailyRun(p: (str, str)): bool = slopRunWithPrompt(p, Set())
 
   // network.ts review: approve begins the probe (the first member's invite counts on the budget,
   // outreach.ts:14-17); reject or SLA expiry closes it unsent and marks the pair declined (an avoid edge
@@ -729,8 +730,6 @@ module matching_engine {
   // PRD 40.3 caps; the Date lane's weekly capacity (2) per member, minus recent proactive sends
   // (slopVectors.memberships capacity, slopAssign hasRoom). SD-207.
   val budgetAcrossAssign = not(sh.selectedOverBudget)
-  // config.ts:183 judge ttlMs: a verdict is reused within its TTL. SD-420.
-  val judgeCacheReused = not(sh.judgeRepeat)
   // service/packs.ts:152 "a daytime hike"; packs/slop/plan.ts:20 PUBLIC_VENUE trailhead daytime. SD-443.
   val activityFitsSlot = not(sh.hikeAtNight)
 
@@ -756,14 +755,15 @@ module matching_engine {
   val probeFlowProgresses = (flow.stage == "probing_first" or flow.stage == "probing_partners") implies toProbe(flow).size() > 0
   // plans.ts:141-144 "minors, paused, safety holds, ... and the reliability hold-out all exclude". SD-206.
   val planSeatHonorsHoldout = (plan.minor implies planReason(plan) == "underage") and (plan.reliabilityHold implies planReason(plan) != "")
+  val judgeCacheReused = not(sh.judgeRepeat)
 
   val safety = all {
     minorNeverCandidate, heldNeverCandidate, proposedPairValued, locatedBeforeMatch, deletedFieldClearsTag,
     answersReachLoop, askTerminates, engineAgreesWithGate, unsentNotBilled, budgetAcrossAssign,
-    judgeCacheReused, activityFitsSlot,
+    activityFitsSlot,
     closedTerminal, openingsPreserved, confirmedInOwnThread, filledRecorded, acceptedPostingPersists,
     declineScopedToJob, engineNeverSelectsHeld, seatCapacity,
-    probeFlowProgresses, planSeatHonorsHoldout,
+    probeFlowProgresses, planSeatHonorsHoldout, judgeCacheReused,
   }
 
   // ================================================================== known open defects (not in `safety`)
@@ -912,23 +912,27 @@ module matching_engine {
     .expect(engineCount("a") == 2 and not(inOpen("a")) and not(engineMemberOk("a")) and budgetAcrossAssign)
     .then(tick(7)).expect(engineCount("a") == 0 and engineMemberOk("a"))
 
-  // SD-420 fixed (engine-judge-cache.test.ts): the judge is on; a second daily run inside the TTL reuses the verdict.
-  // The first run judges (a,b) and (a,c) on day 0 ((b,c) has no pair value, so it is no candidate); the run
-  // on day 1 finds (a,c) in the cache.
-  run judgeCacheTest = initWith("prod", true, "slop")
+  // An equivalent request reuses a verdict. With no Date pair value, (b,c) never reaches judgment.
+  run judgeCacheReuseTest = initWith("prod", true, "slop")
     .then(hardFields("a")).then(hardFields("b")).then(hardFields("c"))
     .then(slopDailyRun(("a", "b"))).then(slopReview(("a", "b"), false))
-    .expect(slop.judgeLast.get(("a", "c")) == 0 and slop.judgeLast.get(("b", "c")) == NONE)
+    .expect(slop.judgeLast.get(("a", "c")) == 0 and slop.judgeLast.get(("b", "c")) == NONE and slop.judgeCalls == 2)
+    .then(slopRunWithPrompt(("a", "c"), PAIRS))
+    .expect(slop.judgeLast.get(("a", "c")) == 0 and slop.judgeCalls == 2 and safety)
+
+  // Changed evidence requires a fresh judgment even when the previous verdict is still within its TTL.
+  run judgeCacheChangedPromptTest = initWith("prod", true, "slop")
+    .then(hardFields("a")).then(hardFields("b")).then(hardFields("c"))
+    .then(slopDailyRun(("a", "b"))).then(slopReview(("a", "b"), false))
+    .expect(slop.judgeLast.get(("a", "c")) == 0 and slop.judgeCalls == 2)
     .then(tick(1)).then(slopDailyRun(("a", "c")))
-    .expect(slop.judgeLast.get(("a", "c")) == 0 and judgeCacheReused)
+    .expect(slop.judgeLast.get(("a", "c")) == 1 and slop.judgeCalls > 2 and safety)
 
   // The one pair gate: b and c both onboarded, but their pair has no Date pair value, so it is never proposed.
   run noPairValueTest = initWith("prod", false, "slop")
     .then(hardFields("b")).then(hardFields("c"))
     .expect(engineMemberOk("b") and engineMemberOk("c") and not(enginePairs.contains(("b", "c"))))
     .then(slopDailyRun(("b", "c"))).fail()
-
-
   // SD-443 fixed (slop-hike-slot.integration.test.ts): a booked hike has a day slot only.
   run hikeSlotTest = initWith("prod", false, "slop")
     .then(hardFields("a")).then(hardFields("b"))

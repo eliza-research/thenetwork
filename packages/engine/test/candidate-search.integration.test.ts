@@ -10,29 +10,26 @@ import { World } from "../src/world.ts";
 
 test("candidate search can finish exactly with untagged pairs and still checks blocks", () => {
   // spec/candidateSearch.md, "The posting walk covers or bounds every partner in the window"
-  // Date is the one lane without lawNoSharedTagStaysBelowFloor (spec/matchLane.md): both custom
-  // scoring terms reach its floor without any shared tags, so the shell walks the whole window.
+  // Both custom scoring terms make the existing Friend floor reachable without any shared tags.
   const input = emptyInput();
-  const dating = { prefs: { romanceOptIn: true, categoriesOptIn: ["romance" as const] } };
-  input.members.push(baseMember("owner", dating), baseMember("adult-b", dating), baseMember("adult-a", dating), baseMember("blocked", dating), baseMember("minor", { age: 17, ...dating }));
+  input.members.push(baseMember("owner"), baseMember("adult-b"), baseMember("adult-a"), baseMember("blocked"), baseMember("minor", { age: 17 }));
   input.edges.push({ from: "owner", to: "blocked", type: "blocked", strength: 1, explicit: true, createdAt: input.now });
   const vectors: PackVectors = {
-    memberships: (_w, id) => [{ id, lane: "Date", side: "Peer", market: "sf", capacity: 3 }],
+    memberships: (_w, id) => [{ id, lane: "Friend", side: "Peer", market: "sf", capacity: 3 }],
     tags: () => ({ interests: [], seeks: [], offers: [] }),
     standing: () => ({ standing: 50, uncertainty: 0 }),
     traits: { costs: [10], of: () => [0] },
     packValue: () => 1000,
   };
-  // The members opted in to romance and stated no constraints (networkPack romance_incompatible).
-  const world = new World(input, resolveConfig({ romance: { requireStatedPrefs: false } }), localEmbed, { ...networkPack, id: "slop", vectors });
-  const profile = world.match.profileIn("owner", "Date");
-  if (!profile) throw new Error("missing Date profile");
+  const world = new World(input, resolveConfig({}), localEmbed, { ...networkPack, vectors });
+  const profile = world.match.profileIn("owner", "Friend");
+  if (!profile) throw new Error("missing Friend profile");
 
   const result = world.match.candidates(profile);
   expect(result.exact).toBe(true);
   expect(result.kept).toEqual(bruteForceCandidates(world, world.match.index, profile));
-  expect(result.kept.map(candidate => [candidate.profile.memberId, candidate.value])).toEqual([["adult-a", 500], ["adult-b", 500]]);
-  expect(world.match.profileIn("minor", "Date")).toBeUndefined();
+  expect(result.kept.map(candidate => [candidate.profile.memberId, candidate.value])).toEqual([["adult-a", 300], ["adult-b", 300]]);
+  expect(world.match.profileIn("minor", "Friend")).toBeUndefined();
   expect(world.match.tally()).toMatchObject({ members: 1, exact: 1, checks: 3, touches: 4, empty: 0 });
 });
 

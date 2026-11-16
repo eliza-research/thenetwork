@@ -10,7 +10,7 @@
 // evals' historical replay, in packages/evals/src/historicalPrompts.ts.
 import type { ChatMessage, LLM, MemberId } from "@thenetwork/core";
 import { standingIntentLive } from "../../core/src/standing-intent.ts";
-import { attendingRefs, passMessages, ReplyFields, runPass, str, type CitedFact, type PassVerdict } from "./judgeCommon.ts";
+import { attendingRefs, passMessages, ReplyFields, runPass, str, type CitedFact, type JudgeRequest, type PassVerdict } from "./judgeCommon.ts";
 import { buildPublicView, screenConfigOf, type PublicView } from "./packs/network/judgeContext.ts";
 import type { Candidate } from "./types.ts";
 import { judgePackOf } from "./pack.ts";
@@ -81,8 +81,15 @@ export function screenSnapshot(w: World): World["input"] {
   };
 }
 
-export async function screenOne(w: World, c: Candidate, llm: LLM, maxTokens: number): Promise<{ verdict: ScreenVerdict; refs: Record<string, MemberId> }> {
-  const view = buildPublicView(screenSnapshot(w), screenConfigOf(w, c));
+export function prepareScreen(w: World, c: Candidate, maxTokens: number, snapshot = screenSnapshot(w)): JudgeRequest<ScreenVerdict> {
+  const view = buildPublicView(snapshot, screenConfigOf(w, c));
   const attending = attendingRefs(view.refs, c);
-  return { verdict: await runPass(llm, screenMessages(view, judgePackOf(w).screen!.system), raw => parseScreenVerdict(raw, attending), maxTokens), refs: view.refs };
+  const screen = judgePackOf(w).screen!;
+  return { pass: "screen", version: screen.version, messages: screenMessages(view, screen.system), refs: view.refs,
+    settings: { maxTokens }, parse: raw => parseScreenVerdict(raw, attending) };
+}
+
+export async function screenOne(w: World, c: Candidate, llm: LLM, maxTokens: number): Promise<{ verdict: ScreenVerdict; refs: Record<string, MemberId> }> {
+  const request = prepareScreen(w, c, maxTokens);
+  return { verdict: await runPass(llm, request), refs: request.refs };
 }

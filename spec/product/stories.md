@@ -240,7 +240,9 @@ Models: [repeat encounters](../repeatEncounter.md), [opportunity](../models/oppo
 
 Interpret plain-language categories, quiet hours, pause and resume. Confirm the new setting briefly. STOP and STOP ALL stop the shared line across apps. Leave removes one app. START and HELP have their own consent-aware path. Preserve the member's control across channels and prevent ordinary sends during an opt-out.
 
-Models: [shared-line consent journey](../sharedLineConsentJourney.md), [turn consent](../models/turn_consent.md), [outbound queue](../models/outbound_queue.md), [safety and trust](../models/safety_trust.md).
+Commands such as “pause matching”, “quiet hours 10 pm to 8 am”, and “turn off hobby suggestions” apply to the app that receives the signed text.
+
+Models: [participation controls](../participationControls.md), [shared-line consent journey](../sharedLineConsentJourney.md), [turn consent](../models/turn_consent.md), [outbound queue](../models/outbound_queue.md), [safety and trust](../models/safety_trust.md).
 
 ## Story F21 — Hear when nothing fits
 

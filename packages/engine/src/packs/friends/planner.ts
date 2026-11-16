@@ -24,7 +24,7 @@
 //   likely free; the probe carries them and the group books the option most yes-sayers picked.
 //
 // Engine-visible inputs only (the World, availability evidence, the Network's own outcome records).
-import type { MemberId } from "@thenetwork/core";
+import type { Category, MemberId } from "@thenetwork/core";
 import { CITY_TZ, DAY, HOUR, MINUTE, fromLocal, localParts } from "@thenetwork/core";
 import {
   canReservePartner, type Event as WeekEvent, initial as initialWeek, newPlanAlternateCanRemain, newPlanAvailable,
@@ -149,7 +149,12 @@ function retainedCrewHost(crew: Crew, invited: readonly MemberId[]): MemberId {
   return invited[crew.sessions.length % invited.length]!;
 }
 
-const ONE_TO_ONE = { category: "hobby", role: "peer", format: "one_to_one", timeSensitive: false } as const;
+/** Current pack eligibility for an activity partner, including prior group attendance on both sides. */
+export function friendsPartnerEligible(w: World, first: MemberId, second: MemberId, category: Category = "hobby"): boolean {
+  const check = { category, role: "peer", format: "one_to_one", timeSensitive: false } as const;
+  return memberReason(w, first, check) === null && memberReason(w, second, check) === null
+    && pairReason(w, first, second, category) === null;
+}
 
 /** The mean pair value of a circle over 1 (a plan's score). */
 const circleScore = (circle: Circle) => Math.round((1e4 * circle.evidence.pairValueTotal) / (circle.evidence.pairCount * pairValueScale)) / 1e4;
@@ -220,8 +225,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
     const fits = (id: MemberId) => (minutes[id] ?? 99) <= tolOf(id) * pol.toleranceSlack;
     const invited = p.invited.filter(fits);
     const alternates = p.alternates.filter(fits);
-    // Moving an already compatible alternate into a seat preserves every pair at the table
-    // (spec/models/candidate_pool.md blockedApart, everyPairValued).
+    // Moving an already compatible alternate into a seat preserves every pair at the table.
     while (!p.partner && invited.length < p.invited.length && alternates.length) invited.push(alternates.shift()!);
     if (invited.length < (p.partner ? 2 : Math.min(p.quorum, 3))) return null;
     if (!p.partner && invited.length < pcfg.size.min && source === "new") return null;
@@ -343,11 +347,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
     return best;
   };
 
-  /**
-   * Members the circle's own searches kept, who fit the activity, in order (most links, then value,
-   * then id). Each one kept has a pair value with every invitee and every alternate kept before it, so
-   * any seating of the table values every pair (blocks win).
-   */
+  /** Members the circle's own searches kept, who fit the activity and pair with every invitee (blocks win): most links, then value, then id. */
   const circleAlternates = (circle: Circle, invited: readonly MemberId[], a: ActivityType): MemberId[] => {
     const inCircle = new Set(circle.members);
     const links = new Map<MemberId, { count: number; total: number }>();
@@ -416,7 +416,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
     if (!a || !b || !inp.evidence.has(a) || !inp.evidence.has(b)) continue;
     const pair = { first: a, second: b };
     if (!canReservePartner(week, pair, pol.partnerIntros)) continue;
-    if (memberReason(w, a, ONE_TO_ONE) !== null || memberReason(w, b, ONE_TO_ONE) !== null || pairReason(w, a, b, ONE_TO_ONE.category) !== null) continue;
+    if (!friendsPartnerEligible(w, a, b)) continue;
     const act = pairActivity(w, a, b, pcfg);
     if (!act) continue;
     const slots = slotsAll.filter(sl => (act.dayparts as string[]).includes(daypartOf(sl.start, tz, att)))

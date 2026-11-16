@@ -104,7 +104,7 @@ export const friendsPack: AppPack = {
   plans: { lane: "social", activities: ACTIVITIES.filter(a => !FRIENDS_EXCLUDED_ACTIVITIES.has(a.id)) },
 };
 
-export { FRIENDS_PLANS, DEFAULT_FRIENDS_POLICY, planFriendsWeek, nextSameSlot, type FriendsPolicy, type FriendsPlan, type FriendsWeek, type FriendsWeekInput } from "./planner.ts";
+export { FRIENDS_PLANS, DEFAULT_FRIENDS_POLICY, friendsPartnerEligible, planFriendsWeek, nextSameSlot, type FriendsPolicy, type FriendsPlan, type FriendsWeek, type FriendsWeekInput } from "./planner.ts";
 export * from "./geo.ts";
 export * from "./info.ts";
 export { ROMANCE_FRAMING, friendsProbeText } from "./copy.ts";

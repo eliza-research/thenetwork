@@ -134,6 +134,12 @@ export function forgetCrewInvitee(offer: CrewOfferState, memberId: string): Crew
   return { ...offer, offered: offer.offered.filter((id: string) => id !== memberId), yes: offer.yes.filter((id: string) => id !== memberId), no: offer.no.filter((id: string) => id !== memberId) };
 }
 
+/** Story: Take over the recurring crew / Handoff counts booked sessions that reached feedback (spec/crewOffer.md) */
+//@ pure
+export function crewHandoffDue(openSession: boolean, completedCount: number, requiredCount: number): boolean {
+  return !openSession && completedCount >= requiredCount;
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: CrewOfferState, event: Event): boolean {

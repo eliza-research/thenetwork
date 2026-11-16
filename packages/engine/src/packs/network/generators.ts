@@ -77,9 +77,7 @@ const anchoredRuns = new WeakMap<World, AnchoredRun>();
 /**
  * For each profile, its searched partners, each anchored to the profile's intent in that lane that
  * the partner's offers cover best (first intent by id on a tie). At most maxPerIntent pairs per
- * intent, best value first, and one pair per two members. Intro is the fallback lane of every
- * professional want (vectors.ts wantRoles), so its profiles come last: the profiles are sorted by
- * lane name, and Intro before Invest and Mentor would spend each intent's pairs in the fallback lane.
+ * intent, best value first, and one pair per two members.
  */
 function anchoredPairs(ctx: GenCtx): AnchoredRun {
   const { w } = ctx;
@@ -89,8 +87,7 @@ function anchoredPairs(ctx: GenCtx): AnchoredRun {
   const paired = new Set<string>();
   const perIntent = new Map<string, number>();
   const requestedIntents = w.input.standingIntentSearch && new Set(w.input.standingIntentSearch);
-  const fallbackLast = [...w.match.profiles].sort((x, y) => Number(x.lane === "Intro") - Number(y.lane === "Intro"));
-  for (const profile of fallbackLast) {
+  for (const profile of w.match.profiles) {
     const cofounder = profile.lane === "Cofounder";
     const signed = cofounder ? networkCofounderIntentOf(w, profile.memberId) : undefined;
     const intents = cofounder ? (signed ? [signed] : []) : (w.get(profile.memberId)?.intents ?? [])

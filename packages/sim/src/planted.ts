@@ -8,30 +8,24 @@
 //     every circle. Each circle has a few topics; each member draws an interest from the circle's
 //     topics with probability `purity`, else from the whole vocabulary (p_in >> p_out).
 //   - Each circle has a base standing 0..100 per lane; members spread around it by `standingSpread`.
-//   - Offers and seeks come from a circle pool. In a peer lane they rotate, so exchange inside a
-//     circle is balanced; in a two-sided lane the Offering side offers what the Seeking side seeks
-//     and the reverse. Levels follow standing, so exchange across a standing gap is lopsided.
-//   - Small circle traits (friends.help free slots and social energy, slop.date wants_kids) follow
-//     the circle with probability `purity`, else a random value, like interests and skills.
+//   - Offers and seeks rotate over a circle skill pool, so exchange inside a circle is balanced.
+//     Levels follow standing, so exchange across a standing gap is lopsided (the higher side gets less).
 //   - Directed utility = interest fit and exchange received, plus a same-circle bonus, minus a
 //     standing-gap penalty. A pair is judged by its worse side.
-// Each app sees the same hidden structure through its own member inputs (plantedEngineInput).
 // Seeded and deterministic (Rng forks only). Work is linear in members: no step compares all pairs.
-import type { AppId, Facet, Intent, Member, MemberId, Presence } from "@thenetwork/core";
+import type { AppId, Category, City, Facet, Intent, Member, MemberId, Presence } from "@thenetwork/core";
 import { DAY, Rng, canBeMatched, hash32 } from "@thenetwork/core";
-import { laneCategory } from "@thenetwork/engine/src/match/profile.ts";
+import type { EngineInput } from "@thenetwork/engine/src/types.ts";
 import { NEIGHBORHOODS as FRIENDS_NEIGHBORHOODS } from "@thenetwork/engine/src/packs/friends/geo.ts";
-import { FT, FRIENDS_SLOTS, VERIFY_PASS } from "@thenetwork/engine/src/packs/friends/info.ts";
+import { FRIENDS_SLOTS, FT, VERIFY_PASS } from "@thenetwork/engine/src/packs/friends/info.ts";
 import { FRIENDS_ACTIVITY_TAGS } from "@thenetwork/engine/src/packs/friends/vectors.ts";
-import { NEIGHBORHOODS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
-import { JOB_INTENT, SEARCH_INTENT, T as PEON } from "@thenetwork/engine/src/packs/peon/schema.ts";
 import { appearanceFacet } from "@thenetwork/engine/src/packs/slop/appearance.ts";
 import { SLOTS as DATE_SLOTS } from "@thenetwork/engine/src/packs/slop/profile.ts";
 import { ZIPS } from "@thenetwork/engine/src/packs/slop/zips.ts";
-import type { EngineInput } from "@thenetwork/engine/src/types.ts";
 import { cofounderIntentDetails, cofounderIntentObjective } from "../../core/src/generated/cofounderIntent.ts";
-import { laneLimits, laneOffered, laneShape } from "../../core/src/generated/matchLane.ts";
-import { FIRST_NAMES } from "./taxonomy.ts";
+import { laneOffered } from "../../core/src/generated/matchLane.ts";
+import { FIRST_NAMES, NEIGHBORHOODS } from "./taxonomy.ts";
+import { plantedPeonHire } from "./planted-peon.ts";
 
 // ------------------------------------------------------------------------------------------------
 // Latent layer (shared with the persona generators' opt-in `planted` option)
@@ -146,31 +140,30 @@ export function plantLatent(spec: PlantedSpec, seats: readonly PlantedSeat[], vo
 }
 
 // ------------------------------------------------------------------------------------------------
-// Engine-only planted world: one app, one lane, the member inputs that app reads
+// Engine-only planted world
 
 /** Relationship lanes (spec/matchLane.md names). Hire, Mentor and Invest are two-sided. */
 export const PLANTED_LANES = ["Friend", "Date", "Cofounder", "Intro", "Hire", "Mentor", "Invest"] as const;
 export type PlantedLane = (typeof PLANTED_LANES)[number];
 export type PlantedSide = "Peer" | "Offering" | "Seeking";
-export type PlantedGender = "woman" | "man";
-/** The one market of a planted world (friends.help serves only NYC). */
-const MARKET = "nyc" as const;
-/** What a member of ntwrk says they want in each lane and side (the pack reads lane and side from these). */
-const NTWRK_OBJECTIVE: Record<PlantedLane, Record<PlantedSide, string>> = {
+export type PlantedCity = Exclude<City, "la">;
+const TWO_SIDED: ReadonlySet<PlantedLane> = new Set<PlantedLane>(["Hire", "Mentor", "Invest"]);
+const APP_OF_LANE: Record<PlantedLane, AppId> = { Friend: "friends", Date: "slop", Cofounder: "peon", Hire: "peon", Intro: "ntwrk", Mentor: "ntwrk", Invest: "ntwrk" };
+const LANE_CATEGORY: Record<PlantedLane, Category> = { Friend: "social", Date: "romance", Cofounder: "professional", Intro: "professional", Hire: "professional", Mentor: "professional", Invest: "professional" };
+const FRIENDS_TOPICS = [...FRIENDS_ACTIVITY_TAGS].sort();
+const FRIENDS_ENERGY = ["low", "mid", "high"];
+const DATE_ACTIVITIES = ["coffee", "drinks", "walk", "museum", "dinner", "live_music", "comedy", "climbing", "cooking_class", "hike"];
+const DATE_PLANS = [...DATE_ACTIVITIES.map(a => `activity:${a}`), ...DATE_SLOTS.map(s => `free:${s}`)];
+const DATE_ZIPS = { nyc: ZIPS.filter(z => z.market === "nyc"), sf: ZIPS.filter(z => z.market === "sf") };
+const LANE_OBJECTIVE: Record<PlantedLane, Record<PlantedSide, string>> = {
   Friend: { Peer: "meet a few new friends who share my interests", Offering: "", Seeking: "" },
-  Date: { Peer: "", Offering: "", Seeking: "" },
-  Cofounder: { Peer: "find a cofounder", Offering: "", Seeking: "" },
+  Date: { Peer: "meet someone to date", Offering: "", Seeking: "" },
+  Cofounder: { Peer: cofounderIntentObjective, Offering: "", Seeking: "" },
   Intro: { Peer: "meet people who work on what I work on", Offering: "", Seeking: "" },
-  Hire: { Peer: "", Offering: "", Seeking: "" },
+  Hire: { Peer: "", Offering: "hire for an open role", Seeking: "find a new job" },
   Mentor: { Peer: "", Offering: "mentor someone earlier in their career", Seeking: "find a mentor" },
-  Invest: { Peer: "", Offering: "invest in early-stage companies", Seeking: "raise money for my company" },
+  Invest: { Peer: "", Offering: "meet founders to invest in", Seeking: "raise money for my company" },
 };
-/** First-date activities slop.date plans around (packs/slop/score.ts dateActivity). */
-const DATE_ACTIVITIES = ["coffee", "drinks", "walk", "museum", "dinner", "live_music", "comedy", "climbing", "cooking_class", "hike"] as const;
-const DATE_PLANS: readonly string[] = [...DATE_ACTIVITIES.map(a => `activity:${a}`), ...DATE_SLOTS.map(s => `free:${s}`)];
-const FRIENDS_ACTIVITIES: readonly string[] = [...FRIENDS_ACTIVITY_TAGS].sort();
-const FRIENDS_ENERGY = ["low", "mid", "high"] as const;
-const NYC_ZIPS: readonly string[] = ZIPS.filter(z => z.market === MARKET).map(z => z.zip);
 /** Observation noise of standing evidence by reviewed item count (0 = newcomer). */
 const OBSERVATION_SD = [10, 6, 4, 3] as const;
 /** Sim epoch (world.ts DEFAULT_START is 2026-10-05; the engine testkit uses 16:00 UTC). */
@@ -189,13 +182,17 @@ export interface PlantedWorldOptions extends Omit<PlantedSpec, "seed" | "dimensi
   seed: number | string;
   /** Members (50 to 100,000 in the gates; any n >= 1 works). */
   n: number;
-  /** The app, and the one lane of it that every member joins. */
-  app: AppId;
-  lane: PlantedLane;
+  /** Lanes every member joins (default ["Friend"]). */
+  lanes?: readonly PlantedLane[];
+  cities?: readonly PlantedCity[];
+  /** App every membership belongs to (default: each lane's own app; it must offer every lane). */
+  app?: AppId;
   /** Share of members aged 13-17 (default 0.02). They join circles never. */
   minorShare?: number;
-  /** Share of adults on the Offering side of a two-sided lane (default 0.5). Minors are always Seeking. */
+  /** Share of a two-sided lane on the Offering side (default 0.5). */
   offeringShare?: number;
+  /** Intended standing offset of Offering above Seeking per lane (default Mentor 25, others 0). */
+  laneOffset?: Partial<Record<PlantedLane, number>>;
   /** Share of members with no reviewed evidence, joined in the last 14 days (default 0.15). */
   newcomerShare?: number;
   utility?: Partial<PlantedUtilityParams>;
@@ -207,26 +204,21 @@ export interface PlantedMembership {
   side: PlantedSide;
   /** Hidden standing 0..100. */
   standing: number;
-  /** The standing the member's evidence implies (noisy; never shown to members). */
+  /** The standing the evidence facets imply (noisy; never shown to members). */
   observed: number;
   /** Reviewed evidence items (0 = newcomer). */
   reviewed: number;
 }
 export interface PlantedMember {
-  id: MemberId; ordinal: number; adult: boolean;
+  id: MemberId; ordinal: number; market: PlantedCity; adult: boolean;
   /** Planted circle index, -1 when none. */
   circle: number;
-  /** Hidden truth: interests, what the member offers and seeks (hidden levels). */
   topics: readonly string[]; offers: readonly PlantedSkill[]; seeks: readonly PlantedSkill[];
-  /** The lane membership; none for a minor in Date (dating is adults only). */
-  membership?: PlantedMembership;
-  /** Date only: who the member is and who they seek (a mutual hard rule). */
-  gender?: PlantedGender; seeksGender?: PlantedGender;
+  lanes: Partial<Record<PlantedLane, PlantedMembership>>;
 }
 export interface PlantedTruth {
-  app: AppId; lane: PlantedLane;
-  /** Intended standing of Offering above Seeking (the lane's standingOffset). */
-  offset: number;
+  lanes: readonly PlantedLane[];
+  laneOffset: Readonly<Record<PlantedLane, number>>;
   utility: PlantedUtilityParams;
   members: readonly PlantedMember[];
   ordinalOf: ReadonlyMap<MemberId, number>;
@@ -239,248 +231,179 @@ const names = (prefix: string, count: number) => {
   const width = String(count - 1).length;
   return Array.from({ length: count }, (_, k) => `${prefix}-${String(k).padStart(width, "0")}`);
 };
-const other = (g: PlantedGender): PlantedGender => (g === "woman" ? "man" : "woman");
-
-/** Planted tags of one member: interests and the skill indices they offer and seek. */
-interface Plan { topics: readonly string[]; offers: readonly number[]; seeks: readonly number[] }
-/** One member as an app's input writer needs it. */
-interface Seated {
-  id: MemberId; age: number; adult: boolean;
-  r: Rng; area: string; m?: PlantedMembership; truth: PlantedMember;
-  /** Stated skills: the planted skills at the level the member's evidence implies. */
-  offers: readonly PlantedSkill[]; seeks: readonly PlantedSkill[];
-}
-type Add = (kind: Facet["kind"], value: string, tags: readonly string[], scope: Facet["scope"], provenance?: Facet["provenance"]) => void;
 
 /**
- * A planted EngineInput snapshot for one app and lane, and its hidden truth. The snapshot carries
- * only the inputs a real member of that app would give (see the writers below); the hidden labels
- * (circle, standing, the planted pools) stay in the truth.
+ * A planted EngineInput snapshot and its hidden truth. The snapshot carries only facets a real
+ * member would have: interests, offers, seeks, lane goals and evidence opted into matching.
+ *
+ * Facet conventions (the engine's lane extraction reads these):
+ *   goal   tags [`lane:<Lane>`, `side:<Side>`]                       scope matchable
+ *   offer  tags [`<skill>`, `level:<1..5>`]                           scope shareable
+ *   desire tags [`<skill>`, `level:<1..5>`]                           scope matchable
+ *   fact   tags [`lane:<Lane>`, `evidence:<points>`, `reviewed`|`unreviewed`]  scope matchable
+ * Evidence points sum to the observed standing, with unreviewed points counted at 50%
+ * (spec/memberStanding.md `standingFromEvidence`).
  */
 export function plantedEngineInput(o: PlantedWorldOptions): { input: EngineInput; truth: PlantedTruth } {
   if (!(Number.isInteger(o.n) && o.n >= 1)) throw new RangeError(`planted: n ${o.n}`);
-  const { app, lane } = o;
-  // spec/matchLane.md, "laneOffered": a world tests a lane its app offers.
-  if (!laneOffered(app, lane)) throw new RangeError(`planted: app ${app} does not offer lane ${lane}`);
-  const twoSided = laneShape(lane) === "TwoSided";
-  const offset = laneLimits(lane).standingOffset;
+  const lanes = o.lanes ?? ["Friend"];
+  if (!lanes.length || new Set(lanes).size !== lanes.length) throw new RangeError("planted: lanes must be non-empty and distinct");
+  const cities = o.cities ?? ["nyc"];
+  if (!cities.length) throw new RangeError("planted: no cities");
+  // spec/matchLane.md, "laneOffered": the engine drops a membership whose app does not offer its lane.
+  const appOf = (lane: PlantedLane): AppId => o.app ?? APP_OF_LANE[lane];
+  for (const lane of lanes)
+    if (!laneOffered(appOf(lane), lane)) throw new RangeError(`planted: app ${appOf(lane)} does not offer lane ${lane}`);
+  const apps = [...new Set(lanes.map(appOf))];
+  const app = apps[0]!;
   const now = o.now ?? PLANTED_EPOCH;
   const minorShare = o.minorShare ?? 0.02, offeringShare = o.offeringShare ?? 0.5, newcomerShare = o.newcomerShare ?? 0.15;
   const utility = { ...PLANTED_UTILITY, ...o.utility };
   if (utility.interestWeight < 0 || utility.exchangeWeight < 0 || utility.interestWeight + utility.exchangeWeight <= 0) throw new RangeError("planted: utility weights");
+  const laneOffset = Object.fromEntries(PLANTED_LANES.map(l => [l, o.laneOffset?.[l] ?? (l === "Mentor" ? 25 : 0)])) as Record<PlantedLane, number>;
   const purity = o.purity ?? PLANTED_DEFAULTS.purity;
-  const root = new Rng(hash32("planted-world", o.seed, app, lane));
+  const root = new Rng(hash32("planted-world", o.seed));
 
-  // Seats: id and age. Minors never join a circle.
+  // Seats: id, market, age. Minors never join a circle.
   const width = Math.max(4, String(o.n - 1).length);
-  const seats: (PlantedSeat & { age: number })[] = [];
+  const seats: (PlantedSeat & { market: PlantedCity; age: number })[] = [];
   for (let i = 0; i < o.n; i++) {
     const r = root.fork("seat", i);
+    const market = cities.length === 1 ? cities[0]! : r.pick(cities);
     const age = r.bool(minorShare) ? r.int(13, 17) : clampInt(r.normal(33, 8), 18, 70);
-    seats.push({ id: `p${String(i).padStart(width, "0")}`, market: MARKET, age, eligible: canBeMatched(age) });
+    seats.push({ id: `p${String(i).padStart(width, "0")}`, market, age, eligible: canBeMatched(age) });
   }
-  // Interests: friends.help's activity tags; a peon role family (one per member); else topic names,
-  // about two circles per topic so that circles rarely share a topic set.
-  const spec: PlantedSpec = app === "peon" ? { ...o, topicsPerCircle: 1, interestsPerMember: [1, 1] } : o;
-  const topicsPerCircle = spec.topicsPerCircle ?? PLANTED_DEFAULTS.topicsPerCircle;
+  const topicsPerCircle = o.topicsPerCircle ?? PLANTED_DEFAULTS.topicsPerCircle;
+  // About two topics per circle in the vocabulary: circles rarely share a topic set.
   const vocabSize = Math.max(48, Math.ceil((o.n * topicsPerCircle) / 9));
-  const topicVocab = app === "friends" ? FRIENDS_ACTIVITIES : names(app === "peon" ? "family" : "topic", vocabSize);
-  const skillVocab = app === "friends" ? FRIENDS_ACTIVITIES : app === "slop" ? DATE_PLANS : names("skill", vocabSize);
-  const latent = plantLatent({ ...spec, seed: o.seed, dimensions: 1 }, seats, topicVocab, `${o.seed}`);
-  const areas = app === "friends" ? FRIENDS_NEIGHBORHOODS.map(h => h.name) : app === "slop" ? NYC_ZIPS : NEIGHBORHOODS[MARKET];
+  const topics = app === "friends" ? FRIENDS_TOPICS : names("topic", vocabSize);
+  const latent = plantLatent({ ...o, seed: o.seed, dimensions: lanes.length }, seats, topics, o.seed);
 
-  const pools = latent.circles.map((ids, c) => distinctIndices(root.fork("skills", c), Math.max(4, ids.length), skillVocab.length));
-  const position = new Map<MemberId, number>();
-  latent.circles.forEach(ids => ids.forEach((id, j) => position.set(id, j)));
-  const circleArea = latent.circles.map((_, c) => root.fork("area", c).pick(areas));
+  // Peers rotate through a cohort's pool. For a single two-sided lane, the Seeking side and
+  // Offering side receive complementary roles. Dates share the same cohort plans.
+  const skills = app === "friends" ? FRIENDS_TOPICS : app === "slop" ? DATE_PLANS : names("skill", vocabSize);
+  const twoSided = lanes.length === 1 && TWO_SIDED.has(lanes[0]!) ? lanes[0] : undefined;
+  const planned = new Map<MemberId, { pool: readonly number[]; position: number }>();
+  latent.circles.forEach((ids, c) => {
+    const pool = distinctIndices(root.fork("skills", c), Math.max(4, ids.length), skills.length);
+    ids.forEach((id, position) => planned.set(id, { pool, position }));
+  });
+  const marketOf = new Map(seats.map(s => [s.id, s.market]));
+  const circleArea = latent.circles.map((ids, c) => root.fork("area", c).pick(NEIGHBORHOODS[marketOf.get(ids[0]!)!]));
 
   const members: Member[] = [], facets: Facet[] = [], intents: Intent[] = [], presence: Presence[] = [];
   const truthMembers: PlantedMember[] = [];
   const ordinalOf = new Map<MemberId, number>();
-  const write = WRITERS[app];
   for (let i = 0; i < seats.length; i++) {
     const seat = seats[i]!, id = seat.id, adult = seat.eligible;
     const r = root.fork("member", i);
     const mark = latent.marks.get(id)!;
     const newcomer = r.bool(newcomerShare);
-    const side: PlantedSide = !twoSided ? "Peer" : adult && r.bool(offeringShare) ? "Offering" : "Seeking";
-    const up = Math.ceil(offset / 2);
-    const standing = clampStanding(mark.standing[0]! + (side === "Offering" ? up : side === "Seeking" ? up - offset : 0));
-    const reviewed = newcomer ? 0 : r.int(1, 3);
-    const observed = clampStanding(r.normal(standing, OBSERVATION_SD[reviewed]!));
-    const m: PlantedMembership | undefined = lane === "Date" && !adult ? undefined : { side, standing, observed, reviewed };
-
-    // Planned skills: a peer rotates over the circle pool (position j offers j, j+1 and seeks j+2,
-    // j+3); in a two-sided lane Offering offers pool 0, 1 and seeks 2, 3, and Seeking the reverse;
-    // a date plan is the circle's four plans (offered and sought alike). Each planned tag is replaced
-    // by a random one with P = 1 - purity; a member outside every circle draws them all.
-    const pool = mark.circle >= 0 ? pools[mark.circle]! : undefined;
-    const j = position.get(id) ?? 0;
-    const at = (k: number) => (pool ? pool[k % pool.length] : undefined);
-    const plannedOffers = side === "Offering" ? [at(0), at(1)] : side === "Seeking" ? [at(2), at(3)] : [at(j), at(j + 1)];
-    const plannedSeeks = side === "Offering" ? [at(2), at(3)] : side === "Seeking" ? [at(0), at(1)] : [at(j + 2), at(j + 3)];
+    const memberships: Partial<Record<PlantedLane, PlantedMembership>> = {};
+    lanes.forEach((lane, d) => {
+      if (lane === "Date" && !adult) return; // dating is adults only; minors never hold a Date membership
+      const side: PlantedSide = TWO_SIDED.has(lane) ? (r.bool(offeringShare) ? "Offering" : "Seeking") : "Peer";
+      const off = laneOffset[lane], up = Math.ceil(off / 2);
+      const standing = clampStanding(mark.standing[d]! + (side === "Offering" ? up : side === "Seeking" ? up - off : 0));
+      const reviewed = newcomer ? 0 : r.int(1, 3);
+      const observed = clampStanding(r.normal(standing, OBSERVATION_SD[reviewed]!));
+      memberships[lane] = { side, standing, observed, reviewed };
+    });
+    // Noise: each planned tag is replaced by a random skill with P = 1 - purity; unplanted members draw all four.
+    const plan = planned.get(id);
     const taken = new Set<number>();
-    const pickSkill = (planned: number | undefined) => {
-      const k = planned !== undefined && !taken.has(planned) && r.bool(purity) ? planned : freshIndex(r, skillVocab.length, taken);
+    const pickSkill = (plannedSkill: number | undefined) => {
+      const k = plannedSkill !== undefined && !taken.has(plannedSkill) && r.bool(purity) ? plannedSkill : freshIndex(r, skills.length, taken);
       taken.add(k);
       return k;
     };
-    const plan: Plan = app === "slop"
-      ? (() => { const plans = [0, 1, 2, 3].map(k => pickSkill(at(k))); return { topics: mark.topics, offers: plans, seeks: plans }; })()
-      : { topics: mark.topics, offers: plannedOffers.map(pickSkill), seeks: plannedSeeks.map(pickSkill) };
-    const hidden = plantedLevel(standing), stated = plantedLevel(observed);
-    const skillsAt = (ks: readonly number[], level: number) => ks.map(k => ({ skill: skillVocab[k]!, level }));
-    // Date: within a circle positions alternate woman / man (so a circle can pair up); seeking the other.
-    const gender: PlantedGender | undefined = lane !== "Date" ? undefined
-      : mark.circle >= 0 ? (j % 2 === 0 ? "woman" : "man") : r.bool(0.5) ? "woman" : "man";
-    // peon: a seat offers its role family and seeks skills; a candidate the reverse.
-    const family = { skill: mark.topics[0]!, level: 1 };
-    const truthOffers = app === "peon" && side === "Offering" ? [family] : skillsAt(plan.offers, app === "slop" ? 1 : hidden);
-    const truthSeeks = app === "peon" && side === "Seeking" ? [family] : skillsAt(plan.seeks, app === "slop" ? 1 : hidden);
-    const truth: PlantedMember = {
-      id, ordinal: i, adult, circle: mark.circle, topics: plan.topics, offers: truthOffers, seeks: truthSeeks,
-      ...(m ? { membership: m } : {}), ...(gender ? { gender, seeksGender: other(gender) } : {}),
-    };
-    const area = mark.circle >= 0 && r.bool(0.7) ? circleArea[mark.circle]! : r.pick(areas);
+    const side = twoSided ? memberships[twoSided]?.side : undefined;
+    const position = app === "slop" || side === "Offering" ? 0 : side === "Seeking" ? 2 : plan?.position ?? 0;
+    const drawSkill = (offset: number) => pickSkill(plan ? plan.pool[(position + offset) % plan.pool.length] : undefined);
+    const offerIdx = [drawSkill(0), drawSkill(1)];
+    const seekIdx = [drawSkill(2), drawSkill(3)];
+    const planIdx = [...offerIdx, ...seekIdx];
+    const level = app === "slop" ? 1 : plantedLevel(twoSided ? memberships[twoSided]!.standing : mark.standing[0]!);
+    const offers = (app === "slop" ? planIdx : offerIdx).map(k => ({ skill: skills[k]!, level }));
+    const seeks = (app === "slop" ? planIdx : seekIdx).map(k => ({ skill: skills[k]!, level }));
+
+    const area = mark.circle >= 0 && r.bool(0.7) ? circleArea[mark.circle]! : r.pick(NEIGHBORHOODS[seat.market]);
     const joinedAt = now - (newcomer ? r.int(0, 13) : r.int(14, 400)) * DAY;
-    const romance = lane === "Date" && adult;
+    const categories = [...new Set(lanes.map(l => LANE_CATEGORY[l]))].filter(c => adult || c !== "romance");
     // Some cohorts are actively seeking an introduction this week. Keep the other cohorts on normal participation.
     const activeSearch = adult && mark.circle >= 0 && hash32("planted-open", o.seed, mark.circle) % 3 === 0
-      && (lane === "Cofounder" || lane === "Invest");
+      && lanes.some(lane => lane === "Cofounder" || lane === "Invest");
     members.push({
-      id, name: `${r.pick(FIRST_NAMES)} ${i}`, homeCity: MARKET, state: activeSearch ? "open" : "normal",
+      id, name: `${r.pick(FIRST_NAMES)} ${i}`, homeCity: seat.market, state: activeSearch ? "open" : "normal",
       prefs: {
-        categoriesOptIn: lane === "Date" && !adult ? [] : [laneCategory(lane)], quietHours: [22, 8], romanceOptIn: romance,
+        categoriesOptIn: categories, quietHours: [22, 8], romanceOptIn: adult && lanes.includes("Date"),
         formats: ["one_to_one", "small_group"], maxTravelMinutes: 45, onlyWhenAsked: false,
       },
-      // A peon snapshot carries 18 for every confirmed adult (packs/peon/schema.ts, "AGE").
-      joinedAt, age: app === "peon" && adult ? 18 : seat.age, unansweredProactive: 0, apps: [app],
+      joinedAt, age: seat.age, unansweredProactive: 0, apps: [...apps],
     });
+    const friendsArea = FRIENDS_NEIGHBORHOODS[hash32("friends-home", mark.circle < 0 ? id : mark.circle) % FRIENDS_NEIGHBORHOODS.length]!.id;
+    presence.push({ memberId: id, city: seat.market, type: "home", areas: [app === "friends" ? friendsArea : area] });
     let f = 0;
-    const add: Add = (kind, value, tags, scope, provenance = "said") =>
-      facets.push({ id: `${id}-f${String(f++).padStart(2, "0")}`, memberId: id, kind, value, tags: [...tags], scope, provenance, confidence: 0.9, app });
-    const seatedMember: Seated = {
-      id, age: seat.age, adult, r, area, m, truth,
-      offers: app === "peon" && side === "Offering" ? [family] : skillsAt(plan.offers, stated),
-      seeks: app === "peon" && side === "Seeking" ? [family] : skillsAt(plan.seeks, stated),
+    const add = (kind: Facet["kind"], value: string, tags: string[], scope: Facet["scope"], provenance: Facet["provenance"] = "said", facetApp: AppId = app) =>
+      facets.push({ id: `${id}-f${f++}`, memberId: id, kind, value, tags, scope, provenance, confidence: 0.9, app: facetApp });
+    const trait = (label: string, count: number) => {
+      const draw = r.fork("trait", label);
+      return mark.circle >= 0 && draw.bool(purity)
+        ? hash32("planted-trait", o.seed, mark.circle, label) % count
+        : draw.int(0, count - 1);
     };
-    // A circle trait: value k of the circle (index c) with P = purity, else a random value.
-    const trait = (size: number, k = 0) => (mark.circle >= 0 && r.bool(purity) ? mark.circle + k : r.int(0, size - 1)) % size;
-    const objective = write({ lane, now, add, s: seatedMember, gender, trait });
-    presence.push({ memberId: id, city: MARKET, type: "home", areas: [area] });
-    if (objective) intents.push({ id: `${id}-i`, memberId: id, app, ...objective, horizonDays: 60, status: "active", createdAt: Math.max(joinedAt, now - r.int(0, 20) * DAY) });
+    add("interest", `into ${mark.topics.join(", ")}`, [...mark.topics], "shareable");
+    for (const s of offers) add("offer", `can help with ${s.skill}`, [s.skill, `level:${s.level}`], "shareable");
+    for (const s of seeks) add("desire", `looking for help with ${s.skill}`, [s.skill, `level:${s.level}`], "matchable");
+    const plantedMember: PlantedMember = { id, ordinal: i, market: seat.market, adult, circle: mark.circle, topics: mark.topics, offers, seeks, lanes: memberships };
+    for (const lane of lanes) {
+      const m = memberships[lane];
+      if (!m) continue;
+      add("goal", LANE_OBJECTIVE[lane][m.side], [`lane:${lane}`, `side:${m.side}`], "matchable", "said", appOf(lane));
+      for (const e of evidenceItems(m.observed, m.reviewed))
+        add("fact", "track record", [`lane:${lane}`, `evidence:${e.points}`, e.reviewed ? "reviewed" : "unreviewed"], "matchable", e.reviewed ? "vouched" : "said", appOf(lane));
+      const intent: Intent = { id: `${id}-i-${lane}`, memberId: id, app: appOf(lane), objective: LANE_OBJECTIVE[lane][m.side],
+        category: LANE_CATEGORY[lane], horizonDays: 60, status: "active", createdAt: Math.max(joinedAt, now - r.int(0, 20) * DAY),
+        ...(lane === "Cofounder" ? { details: cofounderIntentDetails } : {}) };
+      if (adult && app === "peon" && lane === "Hire") {
+        const hire = plantedPeonHire(plantedMember, intent, area);
+        intents.push(hire.intent);
+        facets.push(...hire.facets);
+      } else {
+        intents.push(intent);
+      }
+    }
+    if (adult && app === "friends") {
+      const slots = new Set([FRIENDS_SLOTS[trait("free first", FRIENDS_SLOTS.length)]!, FRIENDS_SLOTS[trait("free second", FRIENDS_SLOTS.length)]!]);
+      add("availability_pattern", "Usually free", [...slots].map(slot => `${FT.free}${slot}`), "agent_private");
+      add("preference", "Social energy", [`${FT.energy}${FRIENDS_ENERGY[trait("energy", FRIENDS_ENERGY.length)]!}`], "agent_private");
+      add("fact", "Verified by the service", [`${FT.liveness}${VERIFY_PASS}`, `${FT.age}${VERIFY_PASS}`], "agent_private", "connected_source");
+    }
+    if (adult && app === "slop" && memberships.Date) {
+      const genders = ["woman", "man", "nonbinary"] as const;
+      const zips = DATE_ZIPS[seat.market];
+      add("preference", "Dating preferences", [`romance:is:${genders[i % genders.length]}`, ...genders.map(gender => `romance:seeks:${gender}`), `romance:age:${Math.max(18, seat.age - 8)}-${seat.age + 8}`, "slop:scope:city", "slop:max_miles:25"], "agent_private");
+      add("fact", "Home ZIP", [`slop:zip:${zips[trait("zip", zips.length)]!.zip}`], "agent_private");
+      add("goal", "Long-term dating", ["slop:goal:long_term"], "matchable");
+      const wantsKids = trait("wants kids", 2) === 0 ? "yes" : "no";
+      add("fact", "Lifestyle", ["slop:smoking:never", "slop:drinking:sometimes", `slop:wants_kids:${wantsKids}`, "slop:religion_importance:1", "slop:politics:moderate"], "matchable");
+      for (const plan of offers) {
+        add(plan.skill.startsWith("free:") ? "availability_pattern" : "preference", plan.skill.split(":")[1]!, [`slop:${plan.skill}`], "matchable");
+      }
+      const { observed, reviewed } = memberships.Date;
+      if (reviewed > 0) {
+        const overall = Math.min(1000, observed * 10 + 5) * 6 / 1000 - 3;
+        facets.push({ ...appearanceFacet(id, { age: seat.age }, { face: overall, body: overall, overall, confidence: 0.9, photos: reviewed, model: "planted" }, joinedAt), app: "slop" });
+      }
+    }
     ordinalOf.set(id, i);
-    truthMembers.push(truth);
+    truthMembers.push(plantedMember);
   }
   return {
     input: { now, members, facets, intents, presence, edges: [], recentProposals: [], events: [] },
-    truth: { app, lane, offset, utility, members: truthMembers, ordinalOf, circles: latent.circles },
+    truth: { lanes, laneOffset, utility, members: truthMembers, ordinalOf, circles: latent.circles },
   };
 }
-
-/** The intent a writer states (objective, category and, for peon, the posting or search detail). */
-type Objective = Pick<Intent, "objective" | "category" | "details">;
-interface WriteCtx {
-  lane: PlantedLane; now: number; add: Add; s: Seated; gender?: PlantedGender;
-  /** A circle trait in 0..size-1: the circle's value (shifted by k) with P = purity, else random. */
-  trait: (size: number, k?: number) => number;
-}
-
-/**
- * ntwrk: interests, offers and seeks, the lane goal (`lane:<Lane>`, `side:<Side>`) and matchable
- * evidence facts whose points sum to the observed standing (packs/network/vectors.ts standing;
- * spec/memberStanding.md `standingFacetReadable`). A Cofounder goal carries the member's own
- * confirmation (spec/cofounderIntent.md `cofounderIntentDetails`).
- */
-function writeNtwrk({ lane, add, s }: WriteCtx): Objective | undefined {
-  add("interest", `into ${s.truth.topics.join(", ")}`, s.truth.topics, "shareable");
-  for (const k of s.offers) add("offer", `can help with ${k.skill}`, [k.skill, `level:${k.level}`], "shareable");
-  for (const k of s.seeks) add("desire", `looking for help with ${k.skill}`, [k.skill, `level:${k.level}`], "matchable");
-  const m = s.m!;
-  const objective = NTWRK_OBJECTIVE[lane][m.side];
-  add("goal", objective, [`lane:${lane}`, `side:${m.side}`], "matchable");
-  for (const e of evidenceItems(m.observed, m.reviewed))
-    add("fact", "track record", [`lane:${lane}`, `evidence:${e.points}`, e.reviewed ? "reviewed" : "unreviewed"], "matchable", e.reviewed ? "vouched" : "said");
-  return { objective, category: laneCategory(lane), ...(lane === "Cofounder" ? { details: cofounderIntentDetails } : {}) };
-}
-
-/**
- * slop.date (packs/slop/profile.ts tag schema): orientation and age range, a known zip, a distance
- * limit, the goal and lifestyle, interests, date plans (activities and free slots) and, once the
- * member has photos, the private appearance rating as the platform stores it. Adults only.
- */
-function writeSlop({ now, add, s, gender, trait }: WriteCtx): Objective | undefined {
-  if (!s.adult || !s.m || !gender) return undefined;
-  add("preference", "dating preferences", [`romance:is:${gender}`, `romance:seeks:${other(gender)}`, `romance:age:${Math.max(18, s.age - 8)}-${s.age + 8}`], "matchable");
-  add("fact", "home zip", [`slop:zip:${s.area}`], "agent_private");
-  add("preference", "distance", ["slop:max_miles:25"], "matchable");
-  add("goal", "looking for something long term", ["slop:goal:long_term"], "matchable");
-  const kids = trait(2) === 0 ? "yes" : "no";
-  add("fact", "lifestyle", ["slop:smoking:never", "slop:drinking:sometimes", `slop:wants_kids:${kids}`, "slop:religion_importance:1", "slop:politics:moderate"], "matchable");
-  for (const t of s.truth.topics) add("interest", t, [t], "shareable");
-  for (const k of s.offers) {
-    const [kind, value] = k.skill.split(":") as [string, string];
-    add(kind === "free" ? "availability_pattern" : "preference", value, [`slop:${kind}:${value}`], "matchable");
-  }
-  // spec/memberStanding.md, "A private photo rating maps onto the standing scale for dating": the
-  // overall score whose permille rating lands in the middle of the observed standing point.
-  if (s.m.reviewed > 0) {
-    const z = Number((((s.m.observed * 10 + 5) * 6) / 1000 - 3).toFixed(3));
-    add("fact", "photo rating (internal)", appearanceFacet(s.id, { age: s.age }, { face: z, body: z, overall: z, confidence: 0.8, photos: s.m.reviewed, model: "planted" }, now).tags, "agent_private", "inferred");
-  }
-  return { objective: "meet someone to date", category: laneCategory("Date") };
-}
-
-/**
- * friends.help (packs/friends/info.ts): a home neighborhood (presence), liveness and age checks
- * passed, activity interests, what the member wants a partner for and brings, free slots and social
- * energy shared with their circle.
- */
-function writeFriends({ add, s, trait }: WriteCtx): Objective | undefined {
-  add("interest", `into ${s.truth.topics.join(", ")}`, s.truth.topics, "shareable");
-  for (const k of s.seeks) add("desire", `looking for someone to do ${k.skill} with`, [k.skill], "matchable");
-  for (const k of s.offers) add("offer", `can show people ${k.skill}`, [k.skill], "shareable");
-  add("fact", "verification", [`${FT.liveness}${VERIFY_PASS}`, `${FT.age}${VERIFY_PASS}`], "agent_private", "connected_source");
-  const slots = [...new Set([trait(FRIENDS_SLOTS.length), trait(FRIENDS_SLOTS.length, 3)])].map(k => `${FT.free}${FRIENDS_SLOTS[k]!}`);
-  add("availability_pattern", "usually free", slots, "agent_private");
-  add("preference", "social energy", [`${FT.energy}${FRIENDS_ENERGY[trait(FRIENDS_ENERGY.length)]!}`], "agent_private");
-  return { objective: "meet a few new friends who share my interests", category: laneCategory("Friend") };
-}
-
-/**
- * peon.biz (packs/peon/schema.ts): an Offering member is a verified employer's open job seat with a
- * role family, level, pay range, hybrid site and must-have skills at the level; a Seeking member is
- * a candidate with the family, level and skills (reviewed by a connected source unless a newcomer),
- * a pay floor, hybrid commute areas and work authorization. A Cofounder member is a candidate who
- * confirms they want a cofounder and states plain interests, skills and wants: the Cofounder lane
- * reads only those, never the peon: job tags (packs/peon/cofounder.ts peonCofounderTags).
- */
-function writePeon({ lane, add, s }: WriteCtx): Objective | undefined {
-  const m = s.m!, level = plantedLevel(m.observed), family = s.truth.topics[0]!;
-  const base = 50 + 25 * level;
-  const proof = m.reviewed > 0 ? "connected_source" : "said";
-  if (m.side === "Offering") {
-    add("fact", "Hiring role", [`${PEON.entity}job`, PEON.verified, `${PEON.company}${s.id}`, `${PEON.family}${family}`, `${PEON.seniority}${level}`,
-      `${PEON.pay}${base}-${base + 30}`, `${PEON.mode}hybrid`, `${PEON.market}${MARKET}`, `${PEON.area}${s.area}`, `${PEON.openings}${s.r.int(1, 3)}`], "matchable");
-    add("fact", "must-have skills", s.seeks.map(k => `${PEON.must}${k.skill}:${k.level}`), "shareable");
-    return { objective: `Hire: ${family} level ${level}`, category: "professional", details: JOB_INTENT };
-  }
-  // A candidate commutes to their own area and names two more.
-  const commute = [...new Set([s.area, s.r.pick(NEIGHBORHOODS[MARKET]), s.r.pick(NEIGHBORHOODS[MARKET])])].map(a => `${PEON.area}${a}`);
-  add("fact", "candidate", [`${PEON.entity}candidate`, `${PEON.family}${family}`, `${PEON.floor}${base + s.r.int(-5, 15)}`, `${PEON.mode}hybrid`, ...commute, `${PEON.auth}yes`], "matchable");
-  add("fact", "level", [`${PEON.seniority}${level}`], "matchable", proof);
-  for (const k of s.offers) add("skill", k.skill, [`${PEON.skill}${k.skill}:${k.level}`], "shareable", proof);
-  if (lane === "Cofounder") {
-    add("interest", `into ${s.truth.topics.join(", ")}`, s.truth.topics, "shareable");
-    for (const k of s.offers) add("offer", `can help with ${k.skill}`, [k.skill], "shareable");
-    for (const k of s.seeks) add("desire", `looking for help with ${k.skill}`, [k.skill], "matchable");
-  }
-  return lane === "Cofounder"
-    ? { objective: cofounderIntentObjective, category: "professional", details: cofounderIntentDetails }
-    : { objective: "find a new job", category: "professional", details: SEARCH_INTENT };
-}
-
-const WRITERS: Record<AppId, (c: WriteCtx) => Objective | undefined> = { ntwrk: writeNtwrk, slop: writeSlop, friends: writeFriends, peon: writePeon };
 
 /**
  * Evidence items whose weighted sum is `observed` (0..100). Each item is clamped to 100 before the
@@ -523,26 +446,22 @@ function exchangePermille(seeks: readonly PlantedSkill[], offers: readonly Plant
   return Math.floor(sum / seeks.length);
 }
 
-/**
- * Hidden directed utility of `to` for `from`, 0..1000. 0 for a minor, a missing membership,
- * incompatible sides or (Date) a member who does not seek the other's gender.
- */
-export function plantedUtility(truth: PlantedTruth, from: MemberId, to: MemberId): number {
+/** Hidden directed utility of `to` for `from` in `lane`, 0..1000. 0 for a minor, a missing membership or incompatible sides. */
+export function plantedUtility(truth: PlantedTruth, lane: PlantedLane, from: MemberId, to: MemberId): number {
   const a = memberOf(truth, from), b = memberOf(truth, to);
-  const ma = a.membership, mb = b.membership;
+  const ma = a.lanes[lane], mb = b.lanes[lane];
   if (a === b || !a.adult || !b.adult || !ma || !mb || !sidesFit(ma.side, mb.side)) return 0;
-  if (a.seeksGender !== b.gender || b.seeksGender !== a.gender) return 0;
   const u = truth.utility;
   const base = Math.floor((u.interestWeight * overlapPermille(a.topics, b.topics) + u.exchangeWeight * exchangePermille(a.seeks, b.offers)) / (u.interestWeight + u.exchangeWeight));
-  const offset = ma.side === "Offering" ? truth.offset : ma.side === "Seeking" ? -truth.offset : 0;
+  const offset = ma.side === "Offering" ? truth.laneOffset[lane] : ma.side === "Seeking" ? -truth.laneOffset[lane] : 0;
   const gap = Math.abs(ma.standing - mb.standing - offset);
   const bonus = a.circle >= 0 && a.circle === b.circle ? u.sameCircleBonus : 0;
   return clampInt(base + bonus - u.gapPenaltyPerPoint * Math.max(0, gap - u.freeGap), 0, 1000);
 }
 
 /** Reciprocal ground truth: the worse side's directed utility. */
-export function plantedPairTruth(truth: PlantedTruth, a: MemberId, b: MemberId): number {
-  return Math.min(plantedUtility(truth, a, b), plantedUtility(truth, b, a));
+export function plantedPairTruth(truth: PlantedTruth, lane: PlantedLane, a: MemberId, b: MemberId): number {
+  return Math.min(plantedUtility(truth, lane, a, b), plantedUtility(truth, lane, b, a));
 }
 
 /** Planted circle per member (-1 = none). */
@@ -648,27 +567,17 @@ export function spearman(xs: readonly number[], ys: readonly number[]): number {
   return pearson(ranks(xs.slice(0, n)), ranks(ys.slice(0, n)));
 }
 
-/** Hidden standing with the lane offset removed from the Offering side; undefined without a membership. */
-export function levelStanding(truth: PlantedTruth, id: MemberId): number | undefined {
-  const m = memberOf(truth, id).membership;
-  return m && m.standing - (m.side === "Offering" ? truth.offset : 0);
-}
-
 /**
- * Correlation of hidden standing across matched pairs of the world's lane, after the lane offset is
- * removed from the Offering side (so a two-sided pair at the intended offset counts as level). Each
- * pair counts in both orders, so the result does not depend on who is listed first. Pairs without a
- * membership are skipped; NaN with fewer than two pairs.
+ * Correlation of hidden standing across matched pairs in `lane`. Each pair counts in both orders,
+ * so the result does not depend on who is listed first. Pairs without the lane are skipped.
  */
-export function matchedStandingCorrelation(truth: PlantedTruth, pairs: readonly (readonly [MemberId, MemberId])[], method: "pearson" | "spearman" = "spearman"): number {
+export function matchedStandingCorrelation(truth: PlantedTruth, lane: PlantedLane, pairs: readonly (readonly [MemberId, MemberId])[], method: "pearson" | "spearman" = "spearman"): number {
   const xs: number[] = [], ys: number[] = [];
   for (const [a, b] of pairs) {
-    const sa = levelStanding(truth, a), sb = levelStanding(truth, b);
+    const sa = memberOf(truth, a).lanes[lane]?.standing, sb = memberOf(truth, b).lanes[lane]?.standing;
     if (sa === undefined || sb === undefined) continue;
     xs.push(sa, sb); ys.push(sb, sa);
   }
-  // One pair in both orders always gives -1: the correlation needs two pairs.
-  if (xs.length < 4) return NaN;
   return method === "pearson" ? pearson(xs, ys) : spearman(xs, ys);
 }
 

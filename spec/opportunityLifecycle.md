@@ -47,6 +47,18 @@ pure def lawAGroupNeedsAtLeastThree(remaining: int): bool =
   groupCanContinue(remaining) implies remaining >= 3
 ```
 
+### A closed booking releases its pending replies
+
+When a booked opportunity closes after a participant drops, clear each pending reply for that opportunity. Keep each reply slot for another opportunity. A booked reply can change or confirm a plan only while its opportunity is scheduled and the member still accepts it. Discard a stale booked reply slot before routing the member's message.
+
+```quint
+pure def bookedReplyCurrent(proposal: OpportunityLifecycle, accepted: bool): bool =
+  proposal.phase == Scheduled and proposal.approved and accepted
+
+pure def lawBookedReplyRequiresCurrentConsent(proposal: OpportunityLifecycle, accepted: bool): bool =
+  bookedReplyCurrent(proposal, accepted) implies (proposal.phase == Scheduled and accepted)
+```
+
 ### A new minor signal closes an unbooked opportunity involving that person
 
 Close an opportunity still in review or probing when a person involved becomes known to be a minor. This applies to current members, alternates, and someone who received a probe and was already replaced. A booked opportunity uses the existing cancellation path if the minor is on the booked roster.
@@ -82,4 +94,18 @@ pure def stepTerminalOpportunityCannotReopen(before: OpportunityLifecycle, after
 pure def sometimesCanBook(proposal: OpportunityLifecycle): bool = proposal.phase == Scheduled
 pure def sometimesCanComplete(proposal: OpportunityLifecycle): bool = proposal.phase == Done
 pure def sometimesCanCloseBeforeContact(proposal: OpportunityLifecycle): bool = proposal.phase == Closed and not(proposal.approved)
+```
+
+### Closing an underfilled proposal releases the members who accepted
+
+If a system proposal expires or cannot book enough members at a common time, send one neutral closing notice to each member who received its invitation and still accepts it. Use the ordinary safety and timing checks for cancellation messages. Do not disclose the other members or anyone's response. Member requests and group plans keep their own closing paths.
+
+```quint
+pure def releasesPartialAcceptance(before: OpportunityLifecycle, unresolved: bool, systemProposal: bool,
+    contacted: bool, accepted: bool): bool =
+  before.phase == Probing and before.approved and unresolved and systemProposal and contacted and accepted
+
+pure def lawReleaseNeedsAContactedAcceptor(before: OpportunityLifecycle, unresolved: bool, systemProposal: bool,
+    contacted: bool, accepted: bool): bool =
+  releasesPartialAcceptance(before, unresolved, systemProposal, contacted, accepted) implies (contacted and accepted)
 ```

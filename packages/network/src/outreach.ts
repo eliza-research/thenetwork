@@ -8,6 +8,7 @@ import {
   withinQuietHours, type OutreachBudget, type ParticipationState,
 } from "@thenetwork/core";
 import { DEFAULT_ATTENTION } from "@thenetwork/engine";
+import { unansweredInviteLimit, unansweredInviteWaitMs } from "../../core/src/generated/outreachPolicy.ts";
 
 export const NY = "America/New_York";
 
@@ -31,10 +32,8 @@ export const OUTREACH = {
   } as Record<string, { n: number; days: number }>,
   /** The most initial invites any member can get in a rolling 7 days (the judge's weeklyBudget). */
   maxPerWeek: initialInviteBudget("open").limit,
-  /** An initial invite counts as unanswered after this long without any inbound message. */
-  unansweredAfterMs: 72 * HOUR,
-  /** At this many unanswered initial invites the member moves to "only when I ask". */
-  unansweredLimit: 2,
+  unansweredAfterMs: unansweredInviteWaitMs,
+  unansweredLimit: unansweredInviteLimit,
   /** One re-engagement message is allowed after this much silence (founder default D6)... */
   reengageAfterMs: 30 * DAY,
   /** ...and only when something we're holding for them scored in the top quartile of its engine run (D6). */

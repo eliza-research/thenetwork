@@ -2,6 +2,7 @@
 // was only probed (no names) is no counterpart, and a member who only got the probe is shown no names.
 import { describe, expect, test } from "vitest";
 import { DAY } from "@thenetwork/core";
+import { copy } from "../src/copy.ts";
 import { Mini } from "./mini.ts";
 
 const climber = (id: string, name: string) => ({ id, name, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"], skills: ["belaying"], wants: [{ objective: "find a regular climbing partner", category: "hobby" as const }] });
@@ -52,11 +53,29 @@ describe("block and report targets in a group plan", () => {
     }
     const opportunity = () => w.net.exportState().opps.find(o => o.id === id);
     expect(opportunity()?.stage).toBe("scheduled");
+    const bookedReply = w.net.memberList().find(m => m.id === "a")?.awaiting;
+    expect(bookedReply).toMatchObject({ kind: "booked", oppId: id });
     const from = w.mark();
     await w.say("c", "sorry, I can't make it anymore");
-    // spec/opportunityLifecycle.md, "Only an approved proposal with enough consent can book"
+    // spec/opportunityLifecycle.md, "A closed booking releases its pending replies"
     expect(opportunity()?.stage).toBe("closed");
     for (const id of ["a", "b"]) expect(w.to(id, from).map(s => s.body)).toEqual([expect.stringMatching(/this one is off now/i)]);
+    expect(w.net.memberList().filter(m => m.awaiting?.oppId === id).map(m => m.id)).toEqual([]);
+
+    // An older saved runtime can still carry the released booked slot.
+    const saved = w.net.exportState();
+    const prior = saved.members.find(m => m.id === "a");
+    if (!prior || !bookedReply) throw new Error("missing restored booking fixture");
+    prior.awaiting = bookedReply;
+    w.net.importState(saved);
+    w.restart();
+    const afterRestart = w.mark();
+    await w.say("a", "yes");
+    expect(opportunity()?.stage).toBe("closed");
+    const restored = w.net.exportState().members.find(m => m.id === "a");
+    expect(restored?.awaiting).toBeUndefined();
+    expect(restored?.pendingAck?.text).not.toBe(copy.bookedThanks);
+    expect(w.to("a", afterRestart).some(s => s.body.includes(copy.bookedThanks))).toBe(false);
   });
 
   test("a report by pronoun with no date ahead asks who first; the name then files it", async () => {

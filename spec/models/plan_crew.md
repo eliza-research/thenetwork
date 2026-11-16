@@ -9,8 +9,8 @@ A member needs to opt in before joining a crew and get at most one crew session 
 Check opt-in, unique session slots, and handoff counts. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
 Imported from `quint/plan_crew.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
-Production offer transitions use [Recurring crew offers](../crewOffer.md). This standalone model keeps its abstract time and eligibility changes from the source branch.
-The [Friends weekly planner](../friendsWeek.md) reserves prospective crew sessions and offers before repeats and new plans. A crew session passes the one pair gate: `crewSessionPlan` returns no session unless every pair of the seated members has a pair value in the plans lane ([reciprocal pair value](../pairValue.md)). The [candidate pool model](candidate_pool.md) checks that gate on the members; this model keeps it as one environment fact.
+Production offer transitions and the handoff decision use [Recurring crew offers](../crewOffer.md). This standalone model keeps its abstract time and eligibility changes from the source branch. The model's held outcome represents a booked session that reached the feedback step.
+The [Friends weekly planner](../friendsWeek.md) reserves prospective crew sessions and offers before repeats and new plans.
 
 ```quint
 // -*- mode: Bluespec; -*-
@@ -29,12 +29,7 @@ The [Friends weekly planner](../friendsWeek.md) reserves prospective crew sessio
 //
 // Abstractions: one crew offer to a, b, c, then sessions by abstract week slot. A session opportunity is
 // reviewed like any plan; here it ends "held" (its time passed) or "failed" (rejected, expired in review, or no
-// quorum). `valued` is the pair gate of plans.ts crewSessionPlan on branch vibestack-matching (every pair of the
-// seated members has a pair value, requiredPairValues); a block, a hold or a pair below the lane rules makes
-// it false, and the actor event `pairGate` changes it.
-//
-// Code anchors on branch vibestack-matching: plans.ts crewOptIn and crewSessionPlan; network.ts crewSessions,
-// resolveCrew, onCrewAnswer and planSeatOk (the line numbers below are those of formal-main).
+// quorum).
 //
 // The model follows the code after the fixes for SD-144 and SD-444 (counting). The notice part of SD-444 is
 // skipped (a founder decision): its invariant stays out of `safety`.
@@ -70,7 +65,6 @@ module plan_crew {
   var crewWeek: int            // the next free slot (time)
   var crewHandedOff: bool
   var crewEndTold: bool        // members heard that the weekly crew ended
-  var valued: bool             // every pair of the seated crew members has a pair value (crewSessionPlan)
 
   /** planSeatOk (network.ts:2888) with busyOk: an adult, not opted out, trust ok. */
   def seatOk(m: str): bool = not(minors.contains(m)) and not(optedOut.contains(m)) and not(watch.contains(m))
@@ -79,13 +73,13 @@ module plan_crew {
   // Init
 
   action init = all {
-    now' = 0, optedOut' = Set(), watch' = Set(), minors' = Set(), valued' = true,
+    now' = 0, optedOut' = Set(), watch' = Set(), minors' = Set(),
     crewStage' = "offered", crewYes' = Set(), crewNo' = Set(), crewMembers' = CREW0, crewTold' = Set(),
     crewSessions' = List(), crewOpps' = Map(), crewOppSlot' = Map(), crewWeek' = 0, crewHandedOff' = false,
     crewEndTold' = false,
   }
 
-  action keepEnv = all { now' = now, optedOut' = optedOut, watch' = watch, minors' = minors, valued' = valued }
+  action keepEnv = all { now' = now, optedOut' = optedOut, watch' = watch, minors' = minors }
   action keepCrew = all {
     crewStage' = crewStage, crewYes' = crewYes, crewNo' = crewNo, crewMembers' = crewMembers, crewTold' = crewTold,
     crewSessions' = crewSessions, crewOpps' = crewOpps, crewOppSlot' = crewOppSlot, crewWeek' = crewWeek,
@@ -95,26 +89,21 @@ module plan_crew {
   // ------------------------------------------------------------------------------------------------
   // Actor events that the crew reads (the plan run model has the same events)
 
-  action clock = all { now < MAXT, now' = now + 1, optedOut' = optedOut, watch' = watch, minors' = minors, valued' = valued, keepCrew }
+  action clock = all { now < MAXT, now' = now + 1, optedOut' = optedOut, watch' = watch, minors' = minors, keepCrew }
   /** STOP (network.ts:675). */
   action stop(m: str): bool = all {
     not(optedOut.contains(m)), optedOut' = optedOut.union(Set(m)),
-    now' = now, watch' = watch, minors' = minors, valued' = valued, keepCrew,
+    now' = now, watch' = watch, minors' = minors, keepCrew,
   }
   /** Trust goes to watch (onTrustChange, network.ts:1188). */
   action goWatch(m: str): bool = all {
     not(watch.contains(m)), watch' = watch.union(Set(m)),
-    now' = now, optedOut' = optedOut, minors' = minors, valued' = valued, keepCrew,
+    now' = now, optedOut' = optedOut, minors' = minors, keepCrew,
   }
   /** A minor signal (network.ts:721). */
   action minorSignal(m: str): bool = all {
     not(minors.contains(m)), minors' = minors.union(Set(m)),
-    now' = now, optedOut' = optedOut, watch' = watch, valued' = valued, keepCrew,
-  }
-  /** A block, a hold or a changed pair value between crew members (the pair gate of crewSessionPlan). */
-  action pairGate(v: bool): bool = all {
-    valued != v, valued' = v,
-    now' = now, optedOut' = optedOut, watch' = watch, minors' = minors, keepCrew,
+    now' = now, optedOut' = optedOut, watch' = watch, keepCrew,
   }
 
   // ------------------------------------------------------------------------------------------------
@@ -171,7 +160,6 @@ module plan_crew {
       crewSessions' = crewSessions, crewOpps' = crewOpps, crewOppSlot' = crewOppSlot, crewHandedOff' = true,
     } else all {
       crewMembers.filter(id => seatOk(id)).size() >= CREW_MIN,
-      valued,                  // plans.ts crewSessionPlan: null when a pair of the seated members has no pair value
       not(dup),
       crewSessions' = crewSessions.append(planId),
       crewOpps' = crewOpps.put(oppId, "review"),
@@ -210,7 +198,7 @@ module plan_crew {
     nondet roll = 0.to(9).oneOf()
     any {
       crewAnswer(m, yes), crewTimeout, crewTick, crewSessionEnd(99 + crewSessions.length(), yes), crewWeekPass,
-      clock, all { roll == 0, any { stop(m), goWatch(m), minorSignal(m), pairGate(yes) } },
+      clock, all { roll == 0, any { stop(m), goWatch(m), minorSignal(m) } },
     }
   }
 
@@ -284,14 +272,6 @@ module plan_crew {
       .expect(not(crewHandedOff) and crewSessions.length() == 5)
       .then(crewTick)
       .expect(crewHandedOff and crewSessions.length() == 5 and handoffCountsSessions and not(crewEndHeard) and safety)
-
-  /** Two crew members blocked each other: crewSessionPlan refuses, and no session is proposed. */
-  run crewPairGateTest =
-    init
-      .then(crewAnswer("a", true)).then(crewAnswer("b", true)).then(crewAnswer("c", true))
-      .then(pairGate(false))
-      .then(crewTick)
-      .fail()
 
   /** A member who goes on watch leaves the crew short of seats: no session is proposed. */
   run crewSeatsTest =

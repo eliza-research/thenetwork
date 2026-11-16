@@ -40,7 +40,7 @@ export function lawLaneSidesSymmetric(lane: MatchLane, laneNearRole: LaneSide, l
 /** Story: Peers meet as equals / Every lane keeps its rules and bounds in one table (spec/matchLane.md) */
 //@ pure
 export function laneLimits(lane: MatchLane): LaneLimits {
-  return lane === "Friend" ? ({ rules: ({ utilityFloor: 310, parityBand: 100, parityFreeGap: 100, parityPenaltyPerPoint: 0, balanceRequired: false, exchangeFloor: 0, balanceTolerancePercent: 100 } as pairValue_PairRules), standingOffset: 0, weeklyCapacity: 3, searchLimit: 12, searchBudget: 600, circleMinimum: 3, circleMaximum: 6, circlePairFloor: 350 } as LaneLimits) : lane === "Date" ? ({ rules: ({ utilityFloor: 350, parityBand: 15, parityFreeGap: 5, parityPenaltyPerPoint: 10, balanceRequired: false, exchangeFloor: 0, balanceTolerancePercent: 100 } as pairValue_PairRules), standingOffset: 0, weeklyCapacity: 2, searchLimit: 10, searchBudget: 600, circleMinimum: 0, circleMaximum: 0, circlePairFloor: 0 } as LaneLimits) : lane === "Cofounder" ? ({ rules: ({ utilityFloor: 400, parityBand: 20, parityFreeGap: 8, parityPenaltyPerPoint: 10, balanceRequired: true, exchangeFloor: 200, balanceTolerancePercent: 50 } as pairValue_PairRules), standingOffset: 0, weeklyCapacity: 2, searchLimit: 10, searchBudget: 600, circleMinimum: 0, circleMaximum: 0, circlePairFloor: 0 } as LaneLimits) : lane === "Intro" ? ({ rules: ({ utilityFloor: 350, parityBand: 20, parityFreeGap: 8, parityPenaltyPerPoint: 10, balanceRequired: true, exchangeFloor: 200, balanceTolerancePercent: 50 } as pairValue_PairRules), standingOffset: 0, weeklyCapacity: 3, searchLimit: 12, searchBudget: 600, circleMinimum: 3, circleMaximum: 6, circlePairFloor: 400 } as LaneLimits) : lane === "Hire" ? ({ rules: ({ utilityFloor: 400, parityBand: 15, parityFreeGap: 5, parityPenaltyPerPoint: 15, balanceRequired: false, exchangeFloor: 0, balanceTolerancePercent: 100 } as pairValue_PairRules), standingOffset: 0, weeklyCapacity: 3, searchLimit: 10, searchBudget: 600, circleMinimum: 0, circleMaximum: 0, circlePairFloor: 0 } as LaneLimits) : lane === "Mentor" ? ({ rules: ({ utilityFloor: 350, parityBand: 15, parityFreeGap: 5, parityPenaltyPerPoint: 10, balanceRequired: false, exchangeFloor: 0, balanceTolerancePercent: 100 } as pairValue_PairRules), standingOffset: 25, weeklyCapacity: 2, searchLimit: 8, searchBudget: 400, circleMinimum: 0, circleMaximum: 0, circlePairFloor: 0 } as LaneLimits) : ({ rules: ({ utilityFloor: 400, parityBand: 15, parityFreeGap: 5, parityPenaltyPerPoint: 15, balanceRequired: false, exchangeFloor: 0, balanceTolerancePercent: 100 } as pairValue_PairRules), standingOffset: 0, weeklyCapacity: 2, searchLimit: 8, searchBudget: 400, circleMinimum: 0, circleMaximum: 0, circlePairFloor: 0 } as LaneLimits);
+  return lane === "Friend" ? ({ rules: ({ utilityFloor: 300, parityBand: 100, parityFreeGap: 100, parityPenaltyPerPoint: 0, balanceRequired: false, exchangeFloor: 0, balanceTolerancePercent: 100 } as pairValue_PairRules), standingOffset: 0, weeklyCapacity: 3, searchLimit: 12, searchBudget: 600, circleMinimum: 3, circleMaximum: 6, circlePairFloor: 350 } as LaneLimits) : lane === "Date" ? ({ rules: ({ utilityFloor: 350, parityBand: 15, parityFreeGap: 5, parityPenaltyPerPoint: 10, balanceRequired: false, exchangeFloor: 0, balanceTolerancePercent: 100 } as pairValue_PairRules), standingOffset: 0, weeklyCapacity: 2, searchLimit: 10, searchBudget: 600, circleMinimum: 0, circleMaximum: 0, circlePairFloor: 0 } as LaneLimits) : lane === "Cofounder" ? ({ rules: ({ utilityFloor: 400, parityBand: 20, parityFreeGap: 8, parityPenaltyPerPoint: 10, balanceRequired: true, exchangeFloor: 200, balanceTolerancePercent: 50 } as pairValue_PairRules), standingOffset: 0, weeklyCapacity: 2, searchLimit: 10, searchBudget: 600, circleMinimum: 0, circleMaximum: 0, circlePairFloor: 0 } as LaneLimits) : lane === "Intro" ? ({ rules: ({ utilityFloor: 350, parityBand: 20, parityFreeGap: 8, parityPenaltyPerPoint: 10, balanceRequired: true, exchangeFloor: 200, balanceTolerancePercent: 50 } as pairValue_PairRules), standingOffset: 0, weeklyCapacity: 3, searchLimit: 12, searchBudget: 600, circleMinimum: 3, circleMaximum: 6, circlePairFloor: 400 } as LaneLimits) : lane === "Hire" ? ({ rules: ({ utilityFloor: 400, parityBand: 15, parityFreeGap: 5, parityPenaltyPerPoint: 15, balanceRequired: false, exchangeFloor: 0, balanceTolerancePercent: 100 } as pairValue_PairRules), standingOffset: 0, weeklyCapacity: 3, searchLimit: 10, searchBudget: 600, circleMinimum: 0, circleMaximum: 0, circlePairFloor: 0 } as LaneLimits) : lane === "Mentor" ? ({ rules: ({ utilityFloor: 350, parityBand: 15, parityFreeGap: 5, parityPenaltyPerPoint: 10, balanceRequired: false, exchangeFloor: 0, balanceTolerancePercent: 100 } as pairValue_PairRules), standingOffset: 25, weeklyCapacity: 2, searchLimit: 8, searchBudget: 400, circleMinimum: 0, circleMaximum: 0, circlePairFloor: 0 } as LaneLimits) : ({ rules: ({ utilityFloor: 400, parityBand: 15, parityFreeGap: 5, parityPenaltyPerPoint: 15, balanceRequired: false, exchangeFloor: 0, balanceTolerancePercent: 100 } as pairValue_PairRules), standingOffset: 0, weeklyCapacity: 2, searchLimit: 8, searchBudget: 400, circleMinimum: 0, circleMaximum: 0, circlePairFloor: 0 } as LaneLimits);
 }
 
 /** Story: Peers meet as equals / Every lane keeps its rules and bounds in one table (spec/matchLane.md) */
@@ -66,35 +66,11 @@ export function lawLaneWeightsWellFormed(lane: MatchLane): boolean {
   return 0 <= local_2.complement && 0 <= local_2.affinity && 0 <= local_2.closeness && 0 <= local_2.pack && exact_matchLane(exact_matchLane(exact_matchLane(local_2.complement + local_2.affinity) + local_2.closeness) + local_2.pack) > 0;
 }
 
-/** Story: Peers meet as equals / A pair without a shared tag stays below the floor (spec/matchLane.md) */
-//@ pure
-export function laneSharedTagRequired(lane: MatchLane): boolean {
-  const local_3: LaneWeights = laneWeights(lane);
-  const local_4 = exact_matchLane(exact_matchLane(exact_matchLane(local_3.complement + local_3.affinity) + local_3.closeness) + local_3.pack);
-  return exact_matchLane(pairValue_pairValueScale * exact_matchLane(local_3.closeness + local_3.pack)) < exact_matchLane(laneLimits(lane).rules.utilityFloor * local_4);
-}
-
-/** Story: Peers meet as equals / A pair without a shared tag stays below the floor (spec/matchLane.md) */
-//@ pure
-export function lawNoSharedTagStaysBelowFloor(lane: MatchLane, closeness: number, pack: number): boolean {
-  //@ ensures \result === true
-  const local_5: LaneWeights = laneWeights(lane);
-  const local_6 = pairValue_directedUtility(([({ weight: local_5.complement, value: 0 } as pairValue_UtilityTerm), ({ weight: local_5.affinity, value: 0 } as pairValue_UtilityTerm), ({ weight: local_5.closeness, value: closeness } as pairValue_UtilityTerm), ({ weight: local_5.pack, value: pack } as pairValue_UtilityTerm)] as pairValue_UtilityTerm[]));
-  return !laneSharedTagRequired(lane) || local_6 < laneLimits(lane).rules.utilityFloor;
-}
-
-/** Story: Peers meet as equals / A pair without a shared tag stays below the floor (spec/matchLane.md) */
-//@ pure
-export function lawOnlyDateNeedsNoSharedTag(lane: MatchLane): boolean {
-  //@ ensures \result === true
-  return laneSharedTagRequired(lane) === (lane !== "Date");
-}
-
 /** Story: Two sides meet across a role / The offering side sits above the seeking side by the lane's offset (spec/matchLane.md) */
 //@ pure
 export function laneOffset(lane: MatchLane, side: LaneSide): number {
-  const local_7 = laneLimits(lane).standingOffset;
-  return side === "Offering" ? local_7 : (side === "Seeking" ? exact_matchLane(0 - local_7) : 0);
+  const local_3 = laneLimits(lane).standingOffset;
+  return side === "Offering" ? local_3 : (side === "Seeking" ? exact_matchLane(0 - local_3) : 0);
 }
 
 /** Story: Two sides meet across a role / The offering side sits above the seeking side by the lane's offset (spec/matchLane.md) */

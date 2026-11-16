@@ -12,16 +12,55 @@ import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { MemberId } from "@thenetwork/core";
 import { blooioRecipientPolicy, forbiddenProvider } from "../src/network.ts";
-import { OutboundQueue, WAITING, type AppChecks, type MessageKind } from "../../blooio/src/outbound-queue.ts";
+import { OutboundQueue, WAITING, type AppChecks, type MessageKind, type QueueRow, type RecipientCheck } from "../../blooio/src/outbound-queue.ts";
 import type { Clock, ChannelAdapter as ProviderAdapter, StatusUpdate } from "../../blooio/src/types.ts";
 import type { NetworkRuntime } from "./runtime.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { isMemberInvitationLink } from "../src/invitation.ts";
 import { EXPECTED_INVITATION_PREFIX } from "./expected-invitation-store.ts";
 import { cofounderDeliveryIdPrefix } from "../../core/src/generated/cofounderDispatch.ts";
+import { closedOpportunityRowStale, queuedProbePolicy } from "../../core/src/generated/outboundAdmission.ts";
+import { effectiveParticipation } from "./snapshot.ts";
 
 /** The apps' own domains: the Network's fixed copy names them ("you're in friends.help and peon.biz"), so the contact check allows them. */
 const OWN_DOMAINS = Object.values(APPS).flatMap(a => [`https://${a.domain}`, `www.${a.domain}`, a.domain]);
+
+function acceptanceRelease(row: QueueRow): boolean {
+  return !!row.oppId && !!row.memberId && (row.kind === "transactional" || row.kind === "reply")
+    && row.id === `opportunity-release:${row.oppId}:${row.memberId}`;
+}
+
+/** The exact outbound record and accepted seat authorize a closed outcome notice. */
+async function releaseAdmission(tx: SQL, row: QueueRow): Promise<RecipientCheck> {
+  const [release] = await tx`select 1 from network.messages msg
+    join network.opportunities opp on opp.app_id=msg.app_id and opp.id=msg.opportunity_id
+    join network.participations seat on seat.app_id=msg.app_id and seat.opportunity_id=opp.id and seat.member_id=msg.member_id
+    where msg.app_id=${row.app} and msg.id=${row.id} and msg.member_id=${row.memberId!} and msg.opportunity_id=${row.oppId!}
+      and msg.direction='outbound' and msg.type='cancellation' and msg.body=${row.text} and opp.state='SKIPPED'
+      and seat.role='participant' and seat.status='available'`;
+  return release ? { ok: true } : { ok: false, reason: "opportunity_release_changed" };
+}
+
+type QueuedProbe = Parameters<typeof effectiveParticipation>[0] & {
+  type: string | null;
+  category: string | null;
+  prefs: { categoriesOptIn?: unknown; romanceOptIn?: unknown } | null;
+};
+
+/** Called after the queue locks the member row that owns these settings. */
+async function probeAdmission(tx: SQL, row: QueueRow, now: number): Promise<RecipientCheck> {
+  if (row.kind !== "proactive" || !row.memberId) return { ok: true };
+  const [probe] = await tx<QueuedProbe[]>`select msg.type,opp.category,member.prefs,member.participation_state,member.participation_window,member.opted_out
+    from network.messages msg join network.members member on member.app_id=msg.app_id and member.id=msg.member_id
+    left join network.opportunities opp on opp.app_id=msg.app_id and opp.id=msg.opportunity_id and opp.id=${row.oppId ?? null}
+    where msg.app_id=${row.app} and msg.id=${row.id} and msg.member_id=${row.memberId} and msg.direction='outbound'`;
+  if (probe?.type !== "probe" && probe?.type !== "plan_probe") return { ok: true };
+  const paused = effectiveParticipation(probe, now).state === "paused";
+  const categories = probe.prefs?.categoriesOptIn;
+  const categoryAllowed = probe.category !== null && Array.isArray(categories) && categories.includes(probe.category)
+    && (probe.category !== "romance" || probe.prefs?.romanceOptIn === true);
+  return queuedProbePolicy(true, paused, categoryAllowed) === "Proceed" ? { ok: true } : { ok: false, reason: "matching_settings_changed" };
+}
 
 /** One message the Network sent in a unit of work. `id` is the Network's idempotency key and the network.messages id. */
 export interface Outbound {
@@ -182,13 +221,14 @@ export class BlooioAdapter implements ChannelAdapter {
       live: () => this.live,
       // A relayed item still goes after the date (the thread stays open for a week); a closed match stops it.
       stale: async row => row.id.startsWith("ntf_") ? !await rt.notificationCurrent(row.id)
-        : !!row.oppId && (row.id.startsWith("relay:") ? (rt.net.opps.get(row.oppId)?.stage ?? "closed") === "closed" : CLOSED_STAGES.has(rt.net.opps.get(row.oppId)?.stage ?? "")),
+        : !!row.oppId && (row.id.startsWith("relay:") ? (rt.net.opps.get(row.oppId)?.stage ?? "closed") === "closed"
+          : closedOpportunityRowStale(CLOSED_STAGES.has(rt.net.opps.get(row.oppId)?.stage ?? ""), acceptanceRelease(row))),
       optedOut: row => rt.optedOut(row.id, row.memberId as MemberId | undefined, row.to),
       privatePayload: row => row.id.startsWith(EXPECTED_INVITATION_PREFIX),
       // A direct text to someone who is not a member of this app (no member on the row, none at the address)
       // is fixed copy: the member policy has nobody to check. Consent, quiet hours, caps and the leak guard still apply.
       recipient: (row, agentInitiated) => !row.memberId && !rt.memberOf(row.to) ? { ok: true }
-        : policy(row.to, { kind: row.kind, ...(row.oppId ? { briefId: row.oppId } : {}), agentInitiated }),
+        : policy(row.to, { kind: row.kind, ...(row.oppId && !acceptanceRelease(row) ? { briefId: row.oppId } : {}), agentInitiated }),
       // A relayed item may carry its sender's own private facts, as the Network's guard allows (guardCheck
       // relayFrom): the queue excludes the sender's facts too, so it never parks what the Network passed.
       // Allow only this row's mutually approved number or its exact public booking link.
@@ -222,7 +262,8 @@ export class BlooioAdapter implements ChannelAdapter {
           ? { ok: true } : { ok: false, reason: "home_help_consent_changed" };
         if (row.id.startsWith(EXPECTED_INVITATION_PREFIX)) return !row.memberId && row.kind === "transactional" && await rt.expectedInvitationAdmission(tx, row)
           ? { ok: true } : { ok: false, reason: "expected_invitation_changed" };
-        return { ok: true };
+        if (acceptanceRelease(row)) return releaseAdmission(tx, row);
+        return probeAdmission(tx, row, this.o.clock.now());
       },
       claimed: async (row, tx) => {
         if (row.id.startsWith(EXPECTED_INVITATION_PREFIX)) await rt.expectedInvitationClaimed(tx, row);

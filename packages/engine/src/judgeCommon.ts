@@ -7,11 +7,11 @@
 // This module holds what the passes share: the runner (one call with retry, core chatJson), the
 // verdict cache and the cached, bounded-concurrency pass loop, the parser base (field readers that
 // collect schema errors), the leak gate, evidence helpers and the shared prompt fragments.
-import type { ChatMessage, LLM, MemberId } from "@thenetwork/core";
+import type { ChatJsonOptions, ChatMessage, LLM, MemberId } from "@thenetwork/core";
 import { chatJson, labelHash, LeakGuard, textVariants } from "@thenetwork/core";
 import { cacheEntryExpired, initial as initialJudgmentAttempt, step as stepJudgmentAttempt } from "../../core/src/generated/judgmentAttempt.ts";
 import { tokenize } from "./embed.ts";
-import { sha256 } from "./hash.ts";
+import { sha256, stableStringify } from "./hash.ts";
 import type { Candidate, JudgeVerdict } from "./types.ts";
 import type { World } from "./world.ts";
 
@@ -27,86 +27,111 @@ import { HYPOTHESIS_CONFIDENCE, STALE_DAYS } from "./judgeConstants.ts";
 export const passMessages = (system: string, context: unknown): ChatMessage[] =>
   [{ role: "system", content: system }, { role: "user", content: JSON.stringify(context) }];
 
-/** One pass call: ask for JSON, validate with `parse`, one retry (the engine's budget for every pass). */
-export function runPass<V>(llm: LLM, messages: ChatMessage[], parse: (raw: unknown) => V, maxTokens: number, temperature?: number): Promise<V> {
-  return chatJson(llm, messages, parse, { attempts: 2, maxTokens, temperature });
+export interface JudgeRequest<V> {
+  pass: "screen" | "rubric" | "deep";
+  version: string;
+  messages: ChatMessage[];
+  refs: Record<string, MemberId>;
+  settings: Pick<ChatJsonOptions, "maxTokens" | "temperature">;
+  parse(raw: unknown): V;
+}
+
+/** The same prepared messages and settings are used for the key and the provider call. */
+export function runPass<V>(llm: LLM, request: JudgeRequest<V>): Promise<V> {
+  return chatJson(llm, request.messages, request.parse, { attempts: 2, ...request.settings });
 }
 
 export class JudgeCache<V = JudgeVerdict> {
-  private m = new Map<string, { verdict: V; at: number }>();
+  private readonly entries = new Map<string, { verdict: V; at: number; llm?: LLM }>();
   constructor(public ttlMs: number) {}
-  get(key: string, now: number): V | undefined {
-    const e = this.m.get(key);
-    if (!e) return undefined;
-    if (cacheEntryExpired(now - e.at, this.ttlMs, now < e.at)) { this.m.delete(key); return undefined; }
-    return e.verdict;
+  get(key: string, now: number, llm?: LLM): V | undefined {
+    const entry = this.entries.get(key);
+    if (!entry) return undefined;
+    const rewound = now < entry.at;
+    if (cacheEntryExpired(now - entry.at, this.ttlMs, rewound)) {
+      if (!rewound) this.entries.delete(key);
+      return undefined;
+    }
+    if (entry.llm === llm) return structuredClone(entry.verdict);
   }
-  set(key: string, verdict: V, now: number) { this.m.set(key, { verdict, at: now }); }
-  get size() { return this.m.size; }
-  /** Drop every entry involving a member whose profile changed (keys also embed revisions). */
-  clear() { this.m.clear(); }
+  set(key: string, verdict: V, now: number, llm?: LLM): void {
+    const current = this.entries.get(key);
+    // An older asynchronous run cannot overwrite a verdict from a later run.
+    if (current && current.at > now) return;
+    this.entries.set(key, { verdict: structuredClone(verdict), at: now, llm });
+  }
+  prune(now: number): void {
+    for (const [key, entry] of this.entries) {
+      if (now >= entry.at && cacheEntryExpired(now - entry.at, this.ttlMs, false)) this.entries.delete(key);
+    }
+  }
+  get size() { return this.entries.size; }
+  clear() { this.entries.clear(); }
 }
 
-/**
- * Cache key: prompt version, configuration shape, every participant's profile revision, and what
- * else the judge sees (engine-pipeline-19): the connector (via) and their revision, the city, a
- * fixed time window, and the pass-2 context setting.
- */
-export function passCacheKey(w: World, c: Candidate, version: string): string {
-  const parts = [...c.participants].sort().map(id => `${id}@${w.get(id)?.revision ?? "?"}`);
-  const via = c.via ? `${c.via}@${w.get(c.via)?.revision ?? "?"}` : "-";
-  // Only a fixed time is part of the key: an open window starts at "now" and would never hit.
-  const when = `${c.city ?? "-"}:${c.fixedWindow ? `${c.window?.start ?? c.fixedWindow.start}-${c.window?.end ?? c.fixedWindow.end}` : "-"}`;
-  return sha256(`${version}|${c.kind}|${c.category}|${c.anchor?.type}:${c.anchor?.id}|${parts.join(",")}|${via}|${when}|${w.cfg.judge.pass2Context}`).slice(0, 24);
+/** Prompt text stays out of the cache and run log. Ref and entity bindings stay out of the prompt. */
+export function passCacheKey(w: World, c: Candidate, request: JudgeRequest<unknown>, model?: string): string {
+  return sha256(stableStringify({
+    app: w.pack.id, pack: w.pack.version, model, pass: request.pass, version: request.version,
+    messages: request.messages, settings: request.settings, refs: Object.entries(request.refs),
+    participants: c.participants, via: c.via, lane: c.lane, entities: c.entities,
+    anchor: c.anchor && { type: c.anchor.type, id: c.anchor.id }, cofounderIntents: c.cofounderIntents,
+  }));
 }
 
 export interface JudgeRunStats { calls: number; cacheHits: number; failures: number }
+interface LoggedVerdict<V> { key: string; cacheKey: string; verdict: V | null; cached: boolean }
 
 /**
  * Run one judgment pass over candidates with caching and bounded concurrency (shared by all three
  * passes). Returns key -> verdict (null on failure). Failures are never cached (ME-008).
  */
-export async function runCachedPass<V>(w: World, cands: Candidate[], version: string, cache: JudgeCache<V>, stats: JudgeRunStats,
-  judge: (c: Candidate) => Promise<V>, log: { key: string; cacheKey: string; verdict: V | null; cached: boolean }[]): Promise<Map<string, V | null>> {
-  const out = new Map<string, V | null>();
-  const hits = new Set<string>();
+export async function runCachedPass<V>(w: World, cands: Candidate[], llm: LLM, cache: JudgeCache<V>, stats: JudgeRunStats,
+  prepare: (c: Candidate) => JudgeRequest<V>, log: LoggedVerdict<V>[], model?: string): Promise<Map<string, V | null>> {
+  cache.prune(w.now);
+  const judge = async (c: Candidate): Promise<LoggedVerdict<V>> => {
+    const row: LoggedVerdict<V> = { key: c.key, cacheKey: "", verdict: null, cached: false };
+    let request: JudgeRequest<V>;
+    try {
+      request = prepare(c);
+      row.cacheKey = passCacheKey(w, c, request, model);
+    } catch {
+      stats.calls++;
+      stats.failures++;
+      return row;
+    }
+    const hit = cache.get(row.cacheKey, w.now, llm);
+    let attempt = stepJudgmentAttempt(initialJudgmentAttempt, { type: "readCache", available: hit !== undefined });
+    if (attempt.phase === "ReuseVerdict" && hit !== undefined) {
+      stats.cacheHits++;
+      return { ...row, verdict: hit, cached: true };
+    }
+    stats.calls++;
+    try {
+      const verdict = await runPass(llm, request);
+      attempt = stepJudgmentAttempt(attempt, { type: "receiveVerdict" });
+      if (attempt.phase === "StoreVerdict") {
+        cache.set(row.cacheKey, verdict, w.now, llm);
+        attempt = stepJudgmentAttempt(attempt, { type: "completeWrite" });
+      }
+      if (attempt.phase === "NewVerdict") row.verdict = verdict;
+    } catch {
+      attempt = stepJudgmentAttempt(attempt, { type: "failAttempt" });
+    }
+    if (attempt.phase === "AttemptFailed") stats.failures++;
+    return row;
+  };
+  const rows = new Map<string, LoggedVerdict<V>>();
   const queue = [...cands];
   const worker = async () => {
     while (queue.length) {
-      const c = queue.shift()!;
-      const ck = passCacheKey(w, c, version);
-      const hit = cache.get(ck, w.now);
-      let attempt = stepJudgmentAttempt(initialJudgmentAttempt, { type: "readCache", available: Boolean(hit) });
-      if (attempt.phase === "ReuseVerdict") {
-        stats.cacheHits++;
-        hits.add(c.key);
-        out.set(c.key, hit!);
-        continue;
-      }
-      if (attempt.phase !== "RequestVerdict") continue;
-      stats.calls++;
-      let verdict: V | null = null;
-      try {
-        const v = await judge(c);
-        attempt = stepJudgmentAttempt(attempt, { type: "receiveVerdict" });
-        if (attempt.phase === "StoreVerdict") {
-          cache.set(ck, v, w.now);
-          attempt = stepJudgmentAttempt(attempt, { type: "completeWrite" });
-          verdict = v;
-        }
-      } catch {
-        attempt = stepJudgmentAttempt(attempt, { type: "failAttempt" });
-      }
-      if (attempt.phase === "AttemptFailed") stats.failures++;
-      out.set(c.key, attempt.phase === "NewVerdict" ? verdict : null);
+      const candidate = queue.shift()!;
+      rows.set(candidate.key, await judge(candidate));
     }
   };
   await Promise.all(Array.from({ length: Math.max(1, w.cfg.judge.concurrency) }, worker));
-  // Deterministic log order.
-  for (const c of [...cands].sort((a, b) => (a.key < b.key ? -1 : 1))) {
-    log.push({ key: c.key, cacheKey: passCacheKey(w, c, version), verdict: out.get(c.key) ?? null, cached: hits.has(c.key) });
-  }
-  return out;
+  log.push(...[...rows.values()].sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  return new Map([...rows].map(([key, row]) => [key, row.verdict]));
 }
 
 /** Attending refs (participants, not the connector) of a ref map. */

@@ -10,6 +10,8 @@ Check quorum, group size, deadlines, alternatives, and contact eligibility. The 
 
 The [single-slot planner](../planFormation.md) checks public venue capacity and reserves invitations before review. The [Friends weekly planner](../friendsWeek.md) assigns its weekly reservations before proposal review, replies, and booking. The [plan dispatch spec](../planDispatch.md) generates invitation eligibility, deferral, and send decisions for approved plans.
 
+The [candidate pool model](candidate_pool.md) covers the formation of a compatible circle and its alternates. This model starts with the resulting roster and follows changes to its eligibility through review, contact and booking.
+
 The [booked meeting settlement](../meetingSettlement.md) governs confirmation, feedback deadlines, and how the Network classifies attendance. The [reviewed group journey](../reviewedGroupJourney.md) compares a three-person hike with the running planner, from approval through quorum, expiry, or cancellation.
 
 Imported from `quint/plan_run.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
@@ -43,12 +45,10 @@ Imported from `quint/plan_run.qnt` at `30d950e`. See [model index](README.md) fo
 // Abstractions:
 //  - One group plan: invited a, b, c, d; alternate e (the engine bench); quorum 3 (DEFAULT_PLANS
 //    quorum.group). The activity's smallest group (groupSize[0]) is 2 or 3, chosen at init.
-//  - The plan's formation is outside this model. On branch vibestack-matching, plans.ts planProposals forms
-//    the primary group as a circle of the plans lane's search edges admitted by groupFormation
-//    circleCoherent (group.ts poolCircles and chooseCircle), and an alternate has a pair value with every
-//    primary member and passes the pair gate with every earlier alternate. candidate_pool models the circle
-//    admission and the friends planner's tables. This model starts from the formed plan, so a block made
-//    after formation is an actor event here.
+//  - The planner supplies the initial roster. plans.ts planProposals builds primary circles from its
+//    lane's search edges and admits them through groupFormation. The Friends planner checks pair values
+//    before selecting replacement seats. A block made after formation is an actor event here. The local
+//    roster fixture has one alternate, so compatibility across alternates is covered in candidate_pool.
 //  - Partner plans are not modelled: the planner's partner path is not in any register defect of this module,
 //    and the network never runs the fallback's partnerPlan (that is SD-008).
 //  - Hours are small integers: probe deadline D, late-join cutoff CUTOFF (start - lateJoinHours), start S,

@@ -10,7 +10,7 @@ Check send budgets, cooldowns, adult mutual romance opt-in, and mutual travel ra
 
 The [matching budgets spec](../matchingBudgets.md) generates the engine’s budget and cooldown predicates. The [dating radius spec](../datingRadius.md) generates the market and distance predicates.
 
-Imported from `quint/engine_rules.qnt` at `30d950e` and compared again with branch `vibestack-matching` (the match core). See [model index](README.md) for scope and commands.
+Imported from `quint/engine_rules.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
 // -*- mode: Bluespec; -*-
@@ -27,13 +27,13 @@ Imported from `quint/engine_rules.qnt` at `30d950e` and compared again with bran
 //     - spec/datingRadius.md sharedDatingMarket and withinAdjustedRadius (withinMutualRadius in
 //       packages/core/src/dating-radius.ts adds the margin), called by packs/slop/geo.ts mutualMarkets;
 //     - the romance rule packs/network/rules.ts romance_incompatible with romanceCompatible both ways. It is
-//       hand code, not a generated core, and it does not read ages: the minors check is the core prefix of
+//       hand code. It checks both stated age ranges. The adult requirement is the core prefix of
 //       filters.ts pairReason ("underage", before every pack rule), which this model includes.
 //   The shell reads the counts and the latest decline from the world, then asks the predicates. Here the
 //   actions do the same: a proactive send asks the member rules, a proposal asks the pair rules.
 //   Declines (of a send or of a pair) are the environment and can come at any time after the item.
 //
-// WHERE THE RULES SIT IN MATCHING (branch vibestack-matching)
+// WHERE THE RULES SIT IN MATCHING
 //   pairReason is the inner part of the one pair gate (match/pair.ts eligiblePair: the same lane with
 //   compatible sides, the same market, then pairReason with the lane's category). A pair has a value only
 //   through that gate (pairValueOf), and the match profiles exist only for members that pass
@@ -94,7 +94,7 @@ module engine_rules {
   pure def inCooldown(now: int, has: bool, at: int, window: int): bool = has and now - at < window
   // spec/matchingBudgets.md pairInteractionCooling for a declined (cooling) outcome.
   pure def pairInteractionCooling(now: int, at: int, window: int): bool = inCooldown(now, true, at, window)
-  // packs/network/rules.ts romance_incompatible: true when the rule returns null. It reads no age.
+  // packs/network/rules.ts romance_incompatible, with stated age-range compatibility in each direction.
   pure def romanceRuleOk(lane: str, aOpt: bool, bOpt: bool, ab: bool, ba: bool): bool =
     lane != "romance" or (aOpt and bOpt and ab and ba)
   // spec/datingRadius.md sharedDatingMarket and withinAdjustedRadius (dating-radius.ts withinMutualRadius).
@@ -231,9 +231,9 @@ module engine_rules {
   val pairCooldownHeld = proposals.forall(p => pairDeclines.forall(pd =>
     (samePair(p.a, p.b, pd.a, pd.b) and pd.n < p.n) implies p.day - pd.day >= PAIR_COOL))
 
-  // Core policy (packages/core/src/policy.ts, minors never matched): the core prefix of filters.ts
-  // pairReason refuses a minor before any pack rule, in every lane, romance included.
-  val romanceAdultsOnly = proposals.forall(p => p.lane == "romance" implies (not(minor.get(p.a)) and not(minor.get(p.b))))
+  // The core prefix of filters.ts pairReason refuses duplicate members and minors in every lane.
+  val pairAdultsOnly = proposals.forall(p => not(minor.get(p.a)) and not(minor.get(p.b)))
+  val pairDistinct = proposals.forall(p => p.a != p.b)
 
   // packs/network/rules.ts romance_incompatible: both opted in and each admits the other (romanceCompatible).
   val romanceMutual = proposals.forall(p => p.lane == "romance" implies
@@ -249,7 +249,7 @@ module engine_rules {
   val pairDecisionSymmetric = MEMBERS.forall(a => MEMBERS.forall(b => CATS.forall(c => pairOk(a, b, c) == pairOk(b, a, c))))
 
   val safety = and {
-    budgetHeld, categoryCooldownHeld, pairCooldownHeld, romanceAdultsOnly, romanceMutual, radiusMutual,
+    budgetHeld, categoryCooldownHeld, pairCooldownHeld, pairAdultsOnly, pairDistinct, romanceMutual, radiusMutual,
     pairDecisionSymmetric,
   }
 
@@ -280,10 +280,11 @@ module engine_rules {
     .then(tick).then(send("A", "social"))
     .expect(safety)
 
-  // A minor is never in a romance proposal, even with every fact in favor; adults are.
+  // Duplicate members and minors fail before the pack's eligibility checks, even outside romance.
   run romanceMinorTest = initWith(ALL_IN, ALL_ADMIT, NEAR, WIDE)
     .expect(not(pairOk("A", "K", "romance")))
     .expect(not(pairOk("K", "B", "romance")))
+    .expect(not(pairOk("A", "K", "social")) and not(pairOk("A", "A", "social")))
     .then(propose("A", "B", "romance"))
     .expect(safety)
 

@@ -1,6 +1,6 @@
 # Matching judgment cache and attempts
 
-The [matching engine flow model](models/matching_engine.md) tracks reuse within the judge cache lifetime. Each of the [judgment passes](judgmentRun.md) runs this decision for each candidate. The engine computes the existing profile and prompt cache key, runs the model call, and keeps a deterministic log order.
+The [matching engine flow model](models/matching_engine.md) tracks reuse within the judge cache lifetime. Each of the [judgment passes](judgmentRun.md) runs this decision for each candidate. The app and city runtime keeps one in-memory cache per pass and replaces the set when the lifetime changes.
 
 ## Story: Reuse recent judgments and retry failures on a later run
 
@@ -8,7 +8,9 @@ The [matching engine flow model](models/matching_engine.md) tracks reuse within 
 
 ### An expired entry or a backward clock reading forces a request
 
-A stored result is stale when its elapsed time reaches the configured lifetime, or when the current time is earlier than the stored time. The shell supplies elapsed milliseconds without rounding and removes a stale entry. An available cache hit completes the attempt without requesting a new judgment. An empty cache starts a request.
+Reuse a result only for the exact sanitized messages, request settings, provider client, model, pass version, and member, entity, and reference bindings. The engine builds these inputs once per attempt. It stores their fingerprint and the returned verdict, and keeps prompt text out of the cache and run log.
+
+A stored result expires when its elapsed time reaches the configured lifetime. A time earlier than the stored time also forces a request, and leaves the later entry available to later runs. The shell supplies elapsed milliseconds without rounding and removes expired entries. An available cache hit completes the attempt without requesting a new judgment. An empty cache starts a request.
 
 ```quint
 type AttemptPhase = LookupCache | ReuseVerdict | RequestVerdict | StoreVerdict | NewVerdict | AttemptFailed

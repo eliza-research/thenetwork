@@ -12,6 +12,37 @@ The Network uses one default limit per person across apps. The send path takes a
 pure val personDailyCap: int = 3
 ```
 
+## Story: Pause new offers after two unanswered invitations
+
+> As a member, I want the agent to stop inviting me when I leave two invitations unanswered.
+
+### Count a sent invitation at terminal expiry or after 72 hours
+
+Keep one entry for the initial invitation to a member for an opportunity. A follow-up question, an unsent probe or a dispatch that the channel has yet to confirm does not count. A channel acceptance starts the clock. A terminal probe or plan deadline can mature the same entry earlier. A current inbound message clears the member's unanswered entries. The existing one-time re-engagement retains its ordinary time limit. A stored entry from before delivery tracking uses its original recorded time.
+
+```quint
+pure val unansweredInviteWaitMs: int = 72 * 3600000
+pure val unansweredInviteLimit: int = 2
+
+pure def unansweredInviteCounts(accepted: bool, acceptedAt: int, expired: bool, expiredAt: int, now: int): bool =
+  accepted and acceptedAt <= now and
+    ((expired and acceptedAt <= expiredAt and expiredAt <= now) or now - acceptedAt >= unansweredInviteWaitMs)
+
+pure def unansweredInvitePause(count: int): bool = count >= unansweredInviteLimit
+
+pure def lawUnacceptedInvitationDoesNotCount(acceptedAt: int, expired: bool, expiredAt: int, now: int): bool =
+  not(unansweredInviteCounts(false, acceptedAt, expired, expiredAt, now))
+
+pure def lawInvitationCountsAtTerminalExpiry(acceptedAt: int, expiredAt: int): bool =
+  acceptedAt <= expiredAt implies unansweredInviteCounts(true, acceptedAt, true, expiredAt, expiredAt)
+
+pure def lawInvitationCountsAtWait(acceptedAt: int): bool =
+  unansweredInviteCounts(true, acceptedAt, false, 0, acceptedAt + unansweredInviteWaitMs)
+
+pure def lawTooFewInvitationsDoNotPause(count: int): bool =
+  count < unansweredInviteLimit implies not(unansweredInvitePause(count))
+```
+
 ## Story: Keep minors out of introductions and recruiting
 
 > As a member under 18, I want help for myself without being asked to meet or recruit other people.
