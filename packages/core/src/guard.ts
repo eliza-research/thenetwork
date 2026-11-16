@@ -554,7 +554,7 @@ export class LeakGuard {
   }
 
   /** Reasons the text must not be sent (empty = clean). */
-  check(text: string, o: { exceptOwner?: string } = {}): string[] {
+  check(text: string, o: { exceptOwner?: string; contactAllow?: readonly string[] } = {}): string[] {
     if (text.length > this.maxLength) return ["too_long"];
     const reasons = new Set<string>();
     if (BIDI.test(text)) reasons.add("format:bidi");
@@ -604,9 +604,10 @@ export class LeakGuard {
       for (const e of candidates) if (!reasons.has(e.label) && counts(e) && factMatches(e.fact, toks, squashed)) reasons.add(e.label);
     }
     if (this.contacts) {
+      const allow = o.contactAllow?.length ? [...this.allow, ...o.contactAllow.map(a => plain(a)).filter(Boolean)] : this.allow;
       for (const p of contactVariants(text)) {
         let c = p;
-        for (const a of this.allow) c = c.split(a).join(" ");
+        for (const a of allow) c = c.split(a).join(" ");
         for (const { name, re } of CONTACT_PATTERNS) {
           if (reasons.has(`contact:${name}`)) continue;
           if (re.global) {

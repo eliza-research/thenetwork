@@ -47,6 +47,8 @@ import { standingIntentReplayAllowed } from "../../core/src/generated/standingIn
 import { ageAnswer, agesStated } from "../src/classify.ts";
 import { standingIntentCommand } from "../src/standing-intents.ts";
 import { saveTravelPresence, travelOwner, travelPresenceCommand } from "./travel-presence.ts";
+import { soloReplyReplayAllowed } from "../../core/src/generated/soloConcierge.ts";
+import { soloConciergeReply, soloConciergeRequest } from "./solo-concierge.ts";
 import { NetworkRuntime, type RuntimeHost } from "./runtime.ts";
 import { effectiveParticipation, automatedFacetPredicate } from "./snapshot.ts";
 import { ProfileSuggestions, type SuggestionAuthorization } from "./profile-suggestions.ts";
@@ -242,7 +244,7 @@ const NOTIFY_SUMMARY_MAX = 500;
 
 export type InboundOutcome =
   | "open" | "handled" | "duplicate" | "unknown_sender" | "ignored" | "ignored_group" | "status" | "reaction" | "safety"
-  | "invite_only" | "join_asked" | "joined" | "under_age" | "stopped" | "left" | "no_network" | "held" | "standing_intents" | "travel_presence";
+  | "invite_only" | "join_asked" | "joined" | "under_age" | "stopped" | "left" | "no_network" | "held" | "standing_intents" | "travel_presence" | "solo_events";
 
 interface Route { app: AppId; shared: boolean }
 
@@ -1070,6 +1072,7 @@ export class NetworkService implements RuntimeHost {
     const kw = platformKeyword(ev.text);
     const intentCommand = !kw ? standingIntentCommand(ev.text) : undefined;
     const travel = !kw && this.inboundTurn() ? travelPresenceCommand(ev.text) : undefined;
+    const soloEvents = !kw && this.inboundTurn() ? soloConciergeRequest(ev.text) : undefined;
     // Legacy webhooks own transport engagement. A signed turn admits its canonical member after policy processing.
     if (!this.inboundTurn() && !intentCommand) await this.lineAdapter()?.engaged?.(ev.from);
     const route = await this.route(ev, o.app);
@@ -1140,7 +1143,9 @@ export class NetworkService implements RuntimeHost {
     }
 
     // An account command never joins an app or opts the sender in.
-    if (!memberId && (profileRead || intentCommand || travel)) return travel ? "travel_presence" : "handled";
+    if (!memberId && (profileRead || intentCommand || travel || soloEvents)) {
+      return travel ? "travel_presence" : soloEvents ? "solo_events" : "handled";
+    }
 
     if (memberId) {
       if (kw === "start" && e164) {
@@ -1158,7 +1163,7 @@ export class NetworkService implements RuntimeHost {
       const reply = kw === "help" ? app.brand.help : undefined;
       if (!kw && e164 && /^\s*share\W*$/i.test(ev.text) && (await this.pendingOf(e164, "share", app.id))) return this.share(rt, app, memberId, e164, ev, rowId);
       // The answer to The Network's "what are you looking for?": enroll in the apps they named.
-      if (!intentCommand && !travel && shouldReadLookingFor(!!kw, !!profileRead, app.id === "ntwrk") && e164 && (await this.pendingOf(e164, "looking_for"))) {
+      if (!intentCommand && !travel && !soloEvents && shouldReadLookingFor(!!kw, !!profileRead, app.id === "ntwrk") && e164 && (await this.pendingOf(e164, "looking_for"))) {
         const wants = lookingFor(ev.text).filter(a => namedOtherApp(a, a !== "ntwrk" && !!this.runtimeFor(a)));
         if (wants.length) return this.enroll(rt, memberId, e164, wants, ev, rowId);
       }
@@ -1285,16 +1290,29 @@ export class NetworkService implements RuntimeHost {
       const t = this.clock.now();
       const channel = ev.transport === "sms" ? "sms" : "imessage";
       const inbound = { id: rowId, member_id: memberId, direction: "inbound", channel, body: ev.text, status: "received", type: null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
-      const travel = !keyword && !fromAssistant && this.inboundTurn() ? travelPresenceCommand(ev.text) : undefined;
-      if (travel) {
+      const signedDirect = !keyword && !fromAssistant && this.inboundTurn();
+      const travel = signedDirect ? travelPresenceCommand(ev.text) : undefined;
+      const soloEvents = signedDirect ? soloConciergeRequest(ev.text) : undefined;
+      if (travel || soloEvents) {
+        const reason = travel ? "travel_presence" : "solo_events";
         const e164 = normalizePhone(ev.from);
-        if (e164) rt.unit.travelPresence = async tx => {
-          const body = await saveTravelPresence(tx, this.accountsFor(tx), { app: rt.app, memberId, e164 }, travel, this.clock.now());
-          if (body === undefined) return;
-          rt.unit.inbound = inbound;
-          rt.system(memberId, `sys:${rowId}`, body, "reply", "travel_presence");
+        if (e164) rt.unit.memberCommand = async tx => {
+          const owner = { app: rt.app, memberId, e164 };
+          const accounts = this.accountsFor(tx);
+          const now = this.clock.now();
+          if (travel) {
+            const body = await saveTravelPresence(tx, accounts, owner, travel, now);
+            if (body === undefined) return;
+            rt.unit.inbound = inbound;
+            rt.system(memberId, `sys:${rowId}`, body, "reply", "travel_presence");
+          } else {
+            const reply = await soloConciergeReply(tx, accounts, owner, soloEvents!, now);
+            if (!reply) return;
+            rt.unit.inbound = inbound;
+            rt.soloEventReply(memberId, `sys:${rowId}`, reply.body, reply.publicLinks);
+          }
         };
-        return "travel_presence" as const;
+        return reason;
       }
       rt.unit.inbound = inbound;
       rt.replyingTo = memberId;
@@ -2211,7 +2229,7 @@ export class NetworkService implements RuntimeHost {
       const rt = turn.app ? (turn.memberId ? await this.runtimeOfMember(turn.app, turn.memberId) : this.runtimeFor(turn.app)) : undefined;
       const binding = rt && turn.memberId ? await this.accounts.activeMembership(rt.app, {e164: input.from, personId: person?.id ?? null}) : undefined;
       // Own-profile commands preserve send holds. The binding includes the known join-age check.
-      if (outcome !== "standing_intents" && outcome !== "travel_presence" && accountEligible && binding && binding.membership.memberId === turn.memberId) {
+      if (outcome !== "standing_intents" && outcome !== "travel_presence" && outcome !== "solo_events" && accountEligible && binding && binding.membership.memberId === turn.memberId) {
         await this.lineAdapter()?.engaged?.(input.from);
       }
       if (outcome === "open" && !collected.length && turn.app && turn.memberId) {
@@ -2243,6 +2261,17 @@ export class NetworkService implements RuntimeHost {
         const memberId = handled.memberId;
         const authorized = rt && memberId && await rt.scoped(tx => travelOwner(tx, this.accountsFor(tx), { app: rt.app, memberId, e164: input.from }));
         if (!authorized) return json({error: "turn_travel_account_changed", retryable: false}, 409);
+      }
+      if (handled.reason === "solo_events" && handled.replies.length) {
+        const rt = handled.app && handled.memberId ? await this.runtimeOfMember(handled.app, handled.memberId) : undefined;
+        const memberId = handled.memberId;
+        const period = soloConciergeRequest(input.text);
+        const live = rt && memberId && period && await rt.scoped(tx => soloConciergeReply(tx, this.accountsFor(tx), { app: rt.app, memberId, e164: input.from }, period, this.clock.now())).catch(() => null);
+        if (live === null) return json({error: "concierge_unavailable", retryable: true}, 503);
+        const available = typeof live === "object" && live !== null;
+        if (!soloReplyReplayAllowed(available, available && handled.replies.length === 1 && handled.replies[0] === live.body)) {
+          return json({error: "turn_concierge_changed", retryable: false}, 409);
+        }
       }
       if (handled.reason === "onboarding_asked") {
         const current = await admission(handled.app ?? undefined);

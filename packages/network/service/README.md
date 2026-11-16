@@ -23,6 +23,8 @@ Open context rechecks the canonical phone and app membership. It includes confir
 
 A member can say `I will be in San Francisco from YYYY-MM-DD until YYYY-MM-DD` in the signed conversation. New York City and Los Angeles also work. Use the destination's calendar dates. The end date is the first day outside the trip. The current app saves the statement and names itself in the confirmation. A trip does not change the person's home or open a new matching market.
 
+For a solo recommendation, a member can ask `Anything fun this weekend?` or `Show me public events tomorrow.` The current app checks the member's saved interests, availability, location and age against the [published NYC Parks catalog](../../../spec/publicEventCatalog.md). The reply includes up to three eligible listings with a venue, New York time and source link. Minors can receive only explicitly all-ages listings. The request creates no opportunity or booking. The catalog refresh runs separately from the request.
+
 A turn still processing after 2 minutes lost its worker and becomes unresolved. An unresolved turn is never rerun, and it holds the sender's later messages back for 10 minutes at most. STOP, START and HELP are never held back. Staff with `admin@*` can release a stuck turn with `POST /inbound/resolve {"id":"msg:<channel>:<messageId>"}`; the turn stays unresolved and a replay is still refused.
 
 A handled turn with no replies (a quiet acknowledgement, an under-13 decline) takes a receipt with empty `replyIds` and `providerMessageIds`. `accountEligible` is false for an unknown age, so Cloud eligibility never runs ahead of the join age check. An accepted receipt may carry `historyRecorded: false` (no Eliza account yet).

@@ -17,7 +17,7 @@
 //    network-service-2).
 //  - Nothing here reads another app's rows; the person cap across apps (service.ts) goes through a
 //    SECURITY DEFINER function that returns ids only.
-import { DAY } from "@thenetwork/core";
+import { DAY, LeakGuard } from "@thenetwork/core";
 import { randomUUID } from "node:crypto";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { City, Clock, MemberId, WorldSnapshot } from "@thenetwork/core";
@@ -60,8 +60,8 @@ type Row = Record<string, unknown>;
 export interface Unit {
   inbound?: Row;
   standingIntent?: StoredStandingIntentChange;
-  /** A signed travel declaration prepares its own reply inside the save transaction. */
-  travelPresence?: (tx: SQL) => Promise<void>;
+  /** A signed member command prepares its own reply inside the save transaction. */
+  memberCommand?: (tx: SQL) => Promise<void>;
   sends: Outbound[];
   events: EventRow[];
   blocks: [MemberId, MemberId][];
@@ -70,6 +70,8 @@ export interface Unit {
   optOut: Map<MemberId, boolean>;
   forget: Set<MemberId>;
   collected: Set<string>;
+  /** Exact source links for the signed public-event reply with this id. */
+  collectedPublicLinks?: Map<string, readonly string[]>;
   /** A signed agent action's receipt (relay-endpoint.ts), completed in this unit's save transaction with its rows. */
   completeAction?: (tx: SQL) => Promise<void>;
   /** peon job postings saved in this unit (a manager's confirmed text, or staff): their rows go in the save transaction. */
@@ -460,10 +462,24 @@ export class NetworkRuntime {
     this.unit.sends.push({ id, memberId, to: this.memberToAddr.get(memberId), body, ...(mediaUrls?.length ? { mediaUrls } : {}), kind, type, proactive: false, system: true, ts: this.clock.now() });
   }
 
+  /** A directly requested result for this signed member. Source links grant only a per-reply contact exception. */
+  soloEventReply(memberId: MemberId, id: string, body: string, publicLinks: readonly string[]) {
+    const turn = this.host.inboundTurn?.();
+    if (turn?.app !== this.app.id || turn.memberId !== memberId
+      || normalizeAddress(this.addressOf(memberId) ?? "") !== normalizeAddress(turn.from)) return;
+    const reasons = new LeakGuard({ ...this.net.leakSources([memberId]), canaryShapes: true }).check(body, { contactAllow: publicLinks });
+    if (reasons.length) {
+      this.host.log(`[alert] a solo event reply failed the leak guard (${this.id}, ${id})`);
+      return;
+    }
+    this.system(memberId, id, body, "reply", "solo_events");
+    (this.unit.collectedPublicLinks ??= new Map()).set(id, publicLinks);
+  }
+
   /** Everything the unit produced, inside the save transaction (app.app_id is set). Rows that name a member not in this app's network.members are skipped. */
   private async writeUnit(tx: SQL, u: Unit) {
     const app = this.app.id;
-    await u.travelPresence?.(tx);
+    await u.memberCommand?.(tx);
     const personIds = new Map<string, string>();
     if (u.forget.size) {
       const rows = await tx`select person.id,member.id as member_id from platform.people person
@@ -493,7 +509,7 @@ export class NetworkRuntime {
     // the queue like any other send, where the same guard parks it for staff (parked_leak_review).
     if (queue) for (const s of u.sends) {
       if (!u.collected.has(s.id) || !s.to) continue;
-      const reasons = await queue.collectedLeaks(tx, { id: s.id, ...(u.forget.has(s.memberId) ? {} : { memberId: s.memberId }), to: s.to, kind: s.kind, text: s.body });
+      const reasons = await queue.collectedLeaks(tx, { id: s.id, ...(u.forget.has(s.memberId) ? {} : { memberId: s.memberId }), to: s.to, kind: s.kind, text: s.body, contactAllow: u.collectedPublicLinks?.get(s.id) });
       if (reasons.length) { u.collected.delete(s.id); this.host.log(`[alert] a collected reply failed the leak guard and goes to the queue for review (${this.id}, ${s.id})`); }
     }
     const captured = u.sends.filter(s => u.collected.has(s.id) && (ok(s.memberId) || u.forget.has(s.memberId)));

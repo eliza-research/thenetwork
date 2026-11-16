@@ -3,13 +3,12 @@ import {
   decideTravelEntry, presenceWindowsOverlap, samePresenceWindow, travelEntryReplyAllowed, type PresenceWindow,
 } from "../../core/src/generated/travelPresence.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
-import type { AppInfo } from "../../platform/src/apps.ts";
 import { homeCityOf, type Accounts } from "../../platform/src/accounts.ts";
+import { memberCommandOwner, type MemberCommandOwner } from "./member-command.ts";
 import { presenceOf } from "./snapshot.ts";
 
 const CITY_NAME: Record<City, string> = { nyc: "New York City", sf: "San Francisco", la: "Los Angeles" };
 const EMPTY_WINDOW: PresenceWindow = { from: 0, to: 0 };
-type Owner = { app: AppInfo; memberId: string; e164: string };
 type TravelCommand = { city: City; dates?: { from: string; to: string; window: PresenceWindow } };
 
 function localMidnight(input: string, city: City): number | undefined {
@@ -34,18 +33,13 @@ export function travelPresenceCommand(text: string): TravelCommand | undefined {
 }
 
 /** Same canonical and app-local guard on the write and on any later reply replay. */
-export async function travelOwner(tx: SQL, accounts: Pick<Accounts, "activeMembership">, owner: Owner): Promise<boolean> {
-  const { app, memberId, e164 } = owner;
-  const binding = await accounts.activeMembership(app, { e164, personId: null });
-  const sameMember = binding?.membership.memberId === memberId;
-  if (!sameMember) return false;
-  const [row] = await tx`select id from network.members where app_id=${app.id} and id=${memberId}
-    and person_id=${binding.person.id} and account_status='active' and not opted_out for update`;
-  return travelEntryReplyAllowed(sameMember, !!row);
+export async function travelOwner(tx: SQL, accounts: Pick<Accounts, "activeMembership">, owner: MemberCommandOwner): Promise<boolean> {
+  const binding = await memberCommandOwner(tx, accounts, owner);
+  return travelEntryReplyAllowed(!!binding, !!binding?.member);
 }
 
 /** Returns copy for the canonical owner, inside the transaction that saves the reply. */
-export async function saveTravelPresence(tx: SQL, accounts: Pick<Accounts, "activeMembership">, owner: Owner, command: TravelCommand, now: number): Promise<string | undefined> {
+export async function saveTravelPresence(tx: SQL, accounts: Pick<Accounts, "activeMembership">, owner: MemberCommandOwner, command: TravelCommand, now: number): Promise<string | undefined> {
   const authorized = await travelOwner(tx, accounts, owner);
   const { city, dates } = command;
   const desired = dates?.window ?? EMPTY_WINDOW;

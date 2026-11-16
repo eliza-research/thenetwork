@@ -455,13 +455,13 @@ export class OutboundQueue {
     return this.send(row, isNew, conversation.reengage);
   }
 
-  private async leakReasons(row: QueueRow, db: SQL = this.sql): Promise<string[]> {
+  private async leakReasons(row: QueueRow, db: SQL = this.sql, contactAllow?: readonly string[]): Promise<string[]> {
     let src: LeakSources = {};
     if (this.o.checks.leaks) {
       try { src = await this.o.checks.leaks(row); } catch { return ["leak_check_error"]; }
     }
     const own = row.memberId ?? row.to;
-    const reasons = new LeakGuard({ ...src, canaryShapes: true, allow: [...(this.o.leakAllow ?? []), ...(src.allow ?? [])], contacts: row.kind !== "compliance" }).check(row.text, { exceptOwner: own });
+    const reasons = new LeakGuard({ ...src, canaryShapes: true, allow: [...(this.o.leakAllow ?? []), ...(src.allow ?? [])], contacts: row.kind !== "compliance" }).check(row.text, { exceptOwner: own, contactAllow });
     // core-14: the new text together with the recent thread to this address (any app on the line), so a
     // value split across messages ("212 555" then "0102") is caught. The generic contact patterns run on
     // the new text alone (two ordinary messages joined can look like a number); another member's own
@@ -723,12 +723,12 @@ export class OutboundQueue {
   // Cloud reports acceptance (collectedReceipt).
 
   /** The leak guard's reasons for one reply that another transport will deliver (empty: it may go). `db`: the caller's transaction. */
-  async collectedLeaks(db: SQL, i: { id: string; memberId?: string; to: string; kind: MessageKind; text: string }): Promise<string[]> {
+  async collectedLeaks(db: SQL, i: { id: string; memberId?: string; to: string; kind: MessageKind; text: string; contactAllow?: readonly string[] }): Promise<string[]> {
     const row: QueueRow = {
       id: i.id, app: this.app, ...(i.memberId ? { memberId: i.memberId } : {}), line: this.line, to: normalizeAddress(i.to), kind: i.kind, text: i.text, mediaUrls: [],
       timeZone: "UTC", status: "collected", attempts: 0, createdAt: this.now, inDoubt: false, personCap: false, newConversation: false, reengagement: false,
     };
-    return this.leakReasons(row, db);
+    return this.leakReasons(row, db, i.contactAllow);
   }
 
   /** Record collected replies to members (thread history for the leak guard) in the caller's transaction. A replay is a no-op. */

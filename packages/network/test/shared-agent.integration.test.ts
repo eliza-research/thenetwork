@@ -10,9 +10,10 @@ import {applySchema, DEV_PG_PORT} from "../../observatory/db/dev-pg.ts";
 import {APPS} from "../../platform/src/apps.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {TURN_PATH, TURN_RECEIPT_PATH, type TurnRequest, type TurnReceiptRequest} from "../../core/src/svc/contract.ts";
-import {DryRunAdapter} from "../service/channel.ts";
+import {BlooioAdapter, DryRunAdapter} from "../service/channel.ts";
 import {NetworkService} from "../service/service.ts";
 import {networkRoutePolicy, routeEnvelopeAllowed} from "../service/route-authority.ts";
+import { importPublicEvents } from "../service/import-public-events.ts";
 
 const db = `network_signed_turn_${randomUUID().replaceAll("-", "")}`;
 const admin = new SQL({url:`postgres://${process.env.USER ?? "postgres"}@127.0.0.1:${DEV_PG_PORT}/postgres`, max:1});
@@ -21,7 +22,7 @@ const secret = "synthetic-shared-agent-test-secret-20261009";
 const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
 let sql: SQL, service: NetworkService, server: HttpServer;
 let escaped = 0, code = "";
-const start = async (routePolicy?: Record<string, unknown>) => {
+const start = async (routePolicy?: Record<string, unknown>, collectedQueue = false) => {
   // Only this test's newly created database changes realm markers. The service's
   // normal staging/database mismatch guard stays intact.
   const [realm] = await sql`select current_database() as database,value from platform.settings where key='environment'`;
@@ -30,7 +31,14 @@ const start = async (routePolicy?: Record<string, unknown>) => {
   service = new NetworkService({url, clock, photoStorage:null, instance:"signed-turn-integration",
     env:{PLATFORM_ENV:routePolicy ? "staging" : "dev", PLATFORM_HASH_KEY:"synthetic-route-test-hash-key", CLEF_RATINGS:"off", SERVICE_TURN_SECRET:secret, ...(routePolicy ? {NETWORK_ROUTE_AUTHORITY_POLICY:JSON.stringify(routePolicy)} : {})}, networks:[{id:"ntwrk:nyc",matchingEnabled:false},{id:"slop:nyc",matchingEnabled:false},{id:"friends:nyc",matchingEnabled:false}],
     network:{seed:1}, publicApi:{minStartMs:0,minVerifyMs:0,otp:{name:"fixture",send:async () => {code="314159";return {code};}}},
-    adapter:() => {const a=new DryRunAdapter(()=>{});a.direct=async()=>{escaped++;return "dry_run";};a.deliver=async rows=>{escaped+=rows.length;return rows.map(r=>({id:r.id,status:"dry_run"}));};return a;},log:()=>{},
+    adapter:(_net, rt) => {
+      if (collectedQueue) return new BlooioAdapter({ app: rt.app.id, city: rt.city, from: "+12125550160", clock, env: {}, log: () => {},
+        provider: { kind: "sim", send: async () => { escaped++; throw new Error("The signed reply left its collector"); } } });
+      const a = new DryRunAdapter(() => {});
+      a.direct = async () => { escaped++; return "dry_run"; };
+      a.deliver = async rows => { escaped += rows.length; return rows.map(r => ({ id: r.id, status: "dry_run" })); };
+      return a;
+    },log:()=>{},
   });
   await service.start();
   server=await serveHttp({hostname:"127.0.0.1",port:0,fetch:req=>new URL(req.url).pathname.startsWith("/api/")?service.publicFetch(req):service.fetch(req)});
@@ -106,6 +114,78 @@ test("signed travel stores one coarse trip in the routed app and never guesses m
   const lockedReplay = await post(request);
   expect(lockedReplay.status).toBe(409);
   expect(await lockedReplay.json()).toEqual({ error: "turn_travel_account_changed", retryable: false });
+}, 60_000);
+
+// spec/soloConcierge.md, "Get ideas for my own time"
+test("signed solo concierge offers current public listings without recruiting another member", async () => {
+  await server.stop(true);
+  await service.close();
+  await start(undefined, true);
+  try {
+    const adult = "+12125550157", teen = "+12125550158";
+    for (const [phone, age] of [[adult, 20], [teen, 16]] as const) {
+      await service.accounts.invite(APPS.friends, phone);
+      const person = (await service.accounts.personFor(phone))!;
+      const joined = await service.accounts.join(APPS.friends, { e164: phone, personId: person.id }, {
+        firstName: "Ari", age, homeCity: "nyc", neighborhood: "Greenpoint", interests: ["nature"],
+        consent: { sms: true, wording: APPS.friends.consent.text },
+      });
+      if (!joined.ok) throw new Error("Concierge fixture join failed");
+      const member = joined.membership.memberId;
+      await sql`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, status, valid_from)
+        values ('friends', ${`${member}:available`}, ${member}, 'availability_pattern', 'Saturday afternoon', '{afternoon:Sat}', 'matchable', 'said', 'confirmed', ${new Date(clock.now())})`;
+    }
+
+    const listing = (guid: string, title: string, categories: string, from: string, to: string, location = "McCarren Park", coordinates = "40.7206,-73.9518") => ({
+      guid, title, categories, location, coordinates, starttime: from, endtime: to,
+      link: { url: `https://www.nycgovparks.org/events/2026/10/10/solo-event-${guid}` },
+    });
+    const event = (id: string, title: string, tags: string, start = "14", end = "15") => listing(id, title, tags, `2026-10-10T${start}:00:00`, `2026-10-10T${end}:00:00`);
+    const allAges = event("110", "Nature sketch walk", "Nature | All ages");
+    expect(await importPublicEvents(sql, clock, async () => Response.json([
+      allAges, event("111", "Public art tour", "Arts"), event("112", "Garden history tour", "History"), event("113", "Public chess group", "Chess"),
+      event("114", "Evening music 21+", "Music | All ages"), event("115", "Early garden tour", "Nature | All ages", "09", "10"),
+      listing("116", "Weekday walk", "Nature | All ages", "2026-10-12T14:00:00", "2026-10-12T15:00:00"),
+    ]))).toEqual({ published: true, events: 7 });
+
+    const before = escaped;
+    const request = (id: string, phone: string) => turn(id, phone, "Anything fun this weekend?", "friends");
+    const asked = request("adults-solo-events", adult);
+    const response = await post(asked);
+    expect(response.status).toBe(200);
+    const accepted = await response.json();
+    expect(accepted).toMatchObject({ outcome: "handled", app: "friends", reason: "solo_events", replyKind: "reply" });
+    const picks = accepted.replies[0].split("\n");
+    expect(picks).toHaveLength(3);
+    expect(picks[0]).toContain("Nature sketch walk");
+    expect(picks[0]).toContain("Fits one of your interests");
+    expect(picks[0]).toContain(allAges.link.url);
+    const [queued] = await sql`select status from platform.outbound where id = ${accepted.replyIds[0]}`;
+    expect(queued?.status).toBe("collected");
+    expect(picks.join(" ")).not.toMatch(/21\+|Early garden tour|Weekday walk/);
+    expect(await (await post(asked)).json()).toEqual(accepted);
+
+    const teenResponse = await post(request("all-ages-solo-events", teen));
+    expect(teenResponse.status).toBe(200);
+    const teenAnswer = (await teenResponse.json()).replies[0];
+    expect(teenAnswer.split("\n")).toHaveLength(1);
+    expect(teenAnswer).toContain("Nature sketch walk");
+    expect(await sql`select id from network.requests where app_id='friends'`).toHaveLength(0);
+    expect(await sql`select id from network.opportunities where app_id='friends'`).toHaveLength(0);
+
+    clock.advance(MINUTE);
+    expect(await importPublicEvents(sql, clock, async () => Response.json([]))).toEqual({ published: true, events: 0 });
+    const previous = await post(asked);
+    expect(previous.status).toBe(409);
+    expect(await previous.json()).toEqual({ error: "turn_concierge_changed", retryable: false });
+    const empty = await post(request("no-current-solo-events", adult));
+    expect((await empty.json()).replies[0]).toContain("couldn't find any current NYC Parks listings");
+    expect(escaped).toBe(before);
+  } finally {
+    await server.stop(true);
+    await service.close();
+    await start();
+  }
 }, 60_000);
 
 test("canonical membership STOP is collected atomically and cannot drain to a provider on restart",async()=>{
