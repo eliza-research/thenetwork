@@ -250,3 +250,14 @@
 {"text":"In 9th grade. I did competitive swimming then.","teen":false}
 {"text":"12th grade teacher, here.","teen":false}
 {"text":"Hey, turned 16, hbu?","teen":true,"age":16}
+{"text":"turning 16 next month","teen":true,"age":15}
+{"text":"turning 17 in June","teen":true,"age":16}
+{"text":"turning 16 soon","teen":true,"age":15}
+{"text":"almost 16","teen":true,"age":15}
+{"text":"nearly 17","teen":true,"age":16}
+{"text":"turning sixteen next month","teen":true,"age":15}
+{"text":"almost seventeen","teen":true,"age":16}
+{"text":"turning 17","teen":true,"age":16}
+{"text":"16 next month","teen":true,"age":15}
+{"text":"17 in a few weeks","teen":true,"age":16}
+{"text":"almost 16 years married","teen":false}
