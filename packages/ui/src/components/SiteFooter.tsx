@@ -12,7 +12,7 @@ export type SiteFooterProps = Omit<ComponentProps<"footer">, "children"> & {
 
 /**
  * The footer of every site page: the privacy policy and the terms.
- * @model spec/sitePages.md
+ * Its rules come from `spec/sitePages.md`, a spec of decisions with no state of its own.
  */
 export function SiteFooter({ pages = footerLinks, className, ...props }: SiteFooterProps) {
   return (
