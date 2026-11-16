@@ -345,3 +345,20 @@
 {"text":"a weeknight evening works","label":"yes","keys":["a"]}
 {"text":"any weeknight evening works","label":"yes","keys":["a"]}
 {"text":"weeknights work best","label":"yes","keys":["a"]}
+{"text":"during the week works","label":"yes","keys":["a"]}
+{"text":"any time during the week works","label":"yes","keys":["a"]}
+{"text":"during the week works for me","label":"yes","keys":["a"]}
+{"text":"I'm free during the week","label":"yes","keys":["a"]}
+{"text":"during the week is best","label":"yes","keys":["a"]}
+{"text":"during the week works best","label":"yes","keys":["a"]}
+{"text":"during the week is good for me","label":"yes","keys":["a"]}
+{"text":"during the week is perfect","label":"yes","keys":["a"]}
+{"text":"during the week sounds good","label":"yes","keys":["a"]}
+{"text":"during the week is fine","label":"yes","keys":["a"]}
+{"text":"any time during the week works for me","label":"yes","keys":["a"]}
+{"text":"during the week works well","label":"yes","keys":["a"]}
+{"text":"during the week works, Saturday too","label":"yes","keys":["a","b"]}
+{"text":"during the week works, Sunday too","label":"yes","keys":["a","c"]}
+{"text":"during the week is too early","label":"unclear"}
+{"text":"I work during the week","label":"unclear"}
+{"text":"during the week doesn't work","label":"unclear"}
