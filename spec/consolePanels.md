@@ -16,12 +16,12 @@ import consoleWorkspace as W from "./consoleWorkspace"
 type PanelMode = SimulatedPanels | RealActing | RealReadOnly
 type PanelStaff = { mode: PanelMode, analyst: bool, admin: bool, simRole: bool, realOnlyServer: bool }
 type LabPhase = LabWaiting | LabOff | LabReady | LabStarting | LabStartRefused
-type LabPanel = { phase: LabPhase, runCount: int, activeRuns: bool }
+type LabState = { phase: LabPhase, runCount: int, activeRuns: bool }
 type DiffPhase = NoDiff | DiffLoading | DiffShown | DiffFailed
 type RunCompare = { runTotal: int, comparing: bool, picked: int, diff: DiffPhase }
 type FeedSegment = AllEvents | PeopleEvents | SafetyEvents | SystemEvents | MineEvents
 type GamePanel = { present: bool, over: bool, levelPlaying: bool, resetSent: bool, levelChecked: bool }
-type ConsolePanels = { staff: PanelStaff, lab: LabPanel, runs: RunCompare, feedSegment: FeedSegment, game: GamePanel }
+type ConsolePanels = { staff: PanelStaff, lab: LabState, runs: RunCompare, feedSegment: FeedSegment, game: GamePanel }
 
 pure val initial: ConsolePanels = {
   staff: { mode: RealReadOnly, analyst: false, admin: false, simRole: false, realOnlyServer: false },
@@ -78,7 +78,7 @@ pure def lawRealOnlyServerOffersNoPanelWrite(panelStaff: PanelStaff): bool =
 
 ### The lab shows its runs, or says that it is off
 
-The [workspace spec](consoleWorkspace.md) decides the loading, refused and failed rows of the lab. After an answer, a server with the lab off shows that the lab is off. A lab with no runs shows the empty row. Otherwise the lab shows its runs, newest first, and the results of the run that staff chose, or of the newest run. While a run waits or runs, the lab reads its runs again every 3 seconds.
+The [workspace spec](consoleWorkspace.md) decides the loading, refused and failed rows of the lab. After an answer, a server with the lab off shows that the lab is off. The count of runs is never below zero. A lab with no runs shows the empty row. Otherwise the lab shows its runs, newest first, and the results of the run that staff chose, or of the newest run. While a run waits or runs, the lab reads its runs again every 3 seconds.
 
 ```quint
 type LabBody = LabOffView | LabEmptyView | LabRunsView
@@ -86,7 +86,7 @@ type LabBody = LabOffView | LabEmptyView | LabRunsView
 pure def labBody(labOn: bool, runCount: int): LabBody =
   if (not(labOn)) LabOffView else if (runCount <= 0) LabEmptyView else LabRunsView
 
-pure def labPolls(lab: LabPanel): bool = lab.activeRuns or lab.phase == LabStarting
+pure def labPolls(lab: LabState): bool = lab.activeRuns or lab.phase == LabStarting
 
 pure def canReceiveLab(p: ConsolePanels, runCount: int): bool =
   p.staff.analyst and p.lab.phase != LabStarting and runCount >= 0
@@ -97,6 +97,8 @@ pure def receiveLab(p: ConsolePanels, labOn: bool, runCount: int, activeRuns: bo
 pure def alwaysLabNeedsTheAnalystRole(p: ConsolePanels): bool = p.lab.phase != LabWaiting implies p.staff.analyst
 
 pure def alwaysActiveRunsAreRuns(p: ConsolePanels): bool = p.lab.activeRuns implies p.lab.runCount > 0
+
+pure def alwaysRunCountIsNeverNegative(p: ConsolePanels): bool = p.lab.runCount >= 0
 
 pure val weight_receiveLab = 3
 

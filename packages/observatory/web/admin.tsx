@@ -19,7 +19,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   type ConsolePanels,
   type CountMark,
-  type LabPanel,
+  type LabState,
   type RunsView,
   type ShareMark,
   biasAlert,
@@ -677,14 +677,14 @@ const ARMS: [LabArm, string][] = [["push_baseline", "Push baseline"], ["push_v2"
 export function Lab() {
   const s = useStore();
   const staff = panelStaffOf(s);
-  const [lab, setLab] = useState<LabPanel>(initialPanels.lab);
+  const [lab, setLab] = useState<LabState>(initialPanels.lab);
   const r = useFetch<{ enabled: boolean; running: number; runs: LabRun[] }>(() => store.lab(), "lab", labPolls(lab) ? 3000 : 0);
   const [arms, setArms] = useState<LabArm[]>(["consent"]);
   const [seeds, setSeeds] = useState("1");
   const [days, setDays] = useState(7);
   const [err, setErr] = useState("");
   const [sel, setSel] = useState<string>();
-  const panelsWith = (l: LabPanel): ConsolePanels => ({ ...initialPanels, staff, lab: l });
+  const panelsWith = (l: LabState): ConsolePanels => ({ ...initialPanels, staff, lab: l });
   const data = r.data;
   useEffect(() => {
     if (!data) return;

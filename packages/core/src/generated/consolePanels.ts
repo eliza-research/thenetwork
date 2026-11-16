@@ -1,6 +1,6 @@
 // GENERATED from spec/consolePanels.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type ReportStep as consoleWorkspace_ReportStep, type RequestSegment as consoleWorkspace_RequestSegment, type ConfigPhase as consoleWorkspace_ConfigPhase, type RequestOutcome as consoleWorkspace_RequestOutcome, type ConfigControl as consoleWorkspace_ConfigControl, type AuditPhase as consoleWorkspace_AuditPhase, type TrayPhase as consoleWorkspace_TrayPhase, type RevealPhase as consoleWorkspace_RevealPhase, type WorldEvent as consoleWorkspace_WorldEvent, type HeldStatus as consoleWorkspace_HeldStatus, type WorkMode as consoleWorkspace_WorkMode, type WorkPanel as consoleWorkspace_WorkPanel, type HeldChoice as consoleWorkspace_HeldChoice, type PanelAnswer as consoleWorkspace_PanelAnswer, type PanelView as consoleWorkspace_PanelView, type CaseRowStatus as consoleWorkspace_CaseRowStatus, type CaseStep as consoleWorkspace_CaseStep, type CaseRow as consoleWorkspace_CaseRow, type ConfigEditor as consoleWorkspace_ConfigEditor, type StaffView as consoleWorkspace_StaffView, type RevealForm as consoleWorkspace_RevealForm, type HeldRow as consoleWorkspace_HeldRow, type ReportRow as consoleWorkspace_ReportRow, type Workspace as consoleWorkspace_Workspace, minReasonChars as consoleWorkspace_minReasonChars, revealMinuteChoices as consoleWorkspace_revealMinuteChoices, maxRevealMinutes as consoleWorkspace_maxRevealMinutes, proposeAllowed as consoleWorkspace_proposeAllowed, heldReleasable as consoleWorkspace_heldReleasable, reportStepAllowed as consoleWorkspace_reportStepAllowed, reportDecision as consoleWorkspace_reportDecision, requestShown as consoleWorkspace_requestShown, configControl as consoleWorkspace_configControl, trayShown as consoleWorkspace_trayShown, lawMinorsAreNeverProposed as consoleWorkspace_lawMinorsAreNeverProposed, worldMenuShown as consoleWorkspace_worldMenuShown, revealOffered as consoleWorkspace_revealOffered, staffActs as consoleWorkspace_staffActs, panelView as consoleWorkspace_panelView, panelAllowed as consoleWorkspace_panelAllowed, reportOutcome as consoleWorkspace_reportOutcome, lawClearMinorNeedsAMinorReport as consoleWorkspace_lawClearMinorNeedsAMinorReport, lawReadOnlyDataTakesNoReportDecision as consoleWorkspace_lawReadOnlyDataTakesNoReportDecision, lawEveryOutcomeHasASegment as consoleWorkspace_lawEveryOutcomeHasASegment, lawAllShowsEveryOutcome as consoleWorkspace_lawAllShowsEveryOutcome, lawOnlyAdminsGetTheSwitch as consoleWorkspace_lawOnlyAdminsGetTheSwitch, lawRefusedPanelShowsNoRows as consoleWorkspace_lawRefusedPanelShowsNoRows, lawRowsNeedAnAnswer as consoleWorkspace_lawRowsNeedAnAnswer, lawAuditLogIsAdminOnly as consoleWorkspace_lawAuditLogIsAdminOnly, markPhotoReviewed as consoleWorkspace_markPhotoReviewed, canDecideHeld as consoleWorkspace_canDecideHeld, decideHeld as consoleWorkspace_decideHeld, canReceiveHeldAnswer as consoleWorkspace_canReceiveHeldAnswer, receiveHeldAnswer as consoleWorkspace_receiveHeldAnswer, alwaysReleaseWasReleasable as consoleWorkspace_alwaysReleaseWasReleasable, alwaysHiddenMinorTextIsNeverReleased as consoleWorkspace_alwaysHiddenMinorTextIsNeverReleased, sometimesHeldTextReleased as consoleWorkspace_sometimesHeldTextReleased, sometimesHeldPhotoReleased as consoleWorkspace_sometimesHeldPhotoReleased, sometimesHeldTextRejected as consoleWorkspace_sometimesHeldTextRejected, canReceiveCase as consoleWorkspace_canReceiveCase, receiveCase as consoleWorkspace_receiveCase, canToggleCaseRow as consoleWorkspace_canToggleCaseRow, toggleCaseRow as consoleWorkspace_toggleCaseRow, canActOnCase as consoleWorkspace_canActOnCase, actOnCase as consoleWorkspace_actOnCase, canReceiveCaseAnswer as consoleWorkspace_canReceiveCaseAnswer, receiveCaseAnswer as consoleWorkspace_receiveCaseAnswer, alwaysCaseActionNeedsAnActingSafetyViewer as consoleWorkspace_alwaysCaseActionNeedsAnActingSafetyViewer, sometimesCaseClosed as consoleWorkspace_sometimesCaseClosed, sometimesHoldLifted as consoleWorkspace_sometimesHoldLifted, canReceiveReport as consoleWorkspace_canReceiveReport, receiveReport as consoleWorkspace_receiveReport, reportOpen as consoleWorkspace_reportOpen, typeReportNote as consoleWorkspace_typeReportNote, actOnReport as consoleWorkspace_actOnReport, canReceiveReportAnswer as consoleWorkspace_canReceiveReportAnswer, receiveReportAnswer as consoleWorkspace_receiveReportAnswer, alwaysBanNeedsTheService as consoleWorkspace_alwaysBanNeedsTheService, alwaysReportDecisionNeedsANote as consoleWorkspace_alwaysReportDecisionNeedsANote, lawEveryReportStepLeavesTheOpenStatus as consoleWorkspace_lawEveryReportStepLeavesTheOpenStatus, sometimesReportBanned as consoleWorkspace_sometimesReportBanned, sometimesReportHeld as consoleWorkspace_sometimesReportHeld, sometimesReportDismissed as consoleWorkspace_sometimesReportDismissed, chooseRequestSegment as consoleWorkspace_chooseRequestSegment, sometimesAllRequests as consoleWorkspace_sometimesAllRequests, switchShown as consoleWorkspace_switchShown, canReceiveConfig as consoleWorkspace_canReceiveConfig, receiveConfig as consoleWorkspace_receiveConfig, pressMatchingSwitch as consoleWorkspace_pressMatchingSwitch, canEndConfirmation as consoleWorkspace_canEndConfirmation, endConfirmation as consoleWorkspace_endConfirmation, confirmMatchingSwitch as consoleWorkspace_confirmMatchingSwitch, canReceiveSwitchAnswer as consoleWorkspace_canReceiveSwitchAnswer, receiveSwitchAnswer as consoleWorkspace_receiveSwitchAnswer, alwaysConfigNeedsTheAnalystRole as consoleWorkspace_alwaysConfigNeedsTheAnalystRole, stepSwitchChangesOnlyAfterSaving as consoleWorkspace_stepSwitchChangesOnlyAfterSaving, alwaysSavedSwitchWasShown as consoleWorkspace_alwaysSavedSwitchWasShown, sometimesSwitchSaved as consoleWorkspace_sometimesSwitchSaved, sometimesSwitchRefused as consoleWorkspace_sometimesSwitchRefused, canLoadAudit as consoleWorkspace_canLoadAudit, loadAudit as consoleWorkspace_loadAudit, canReceiveAudit as consoleWorkspace_canReceiveAudit, receiveAudit as consoleWorkspace_receiveAudit, alwaysAuditLogNeedsAnAdmin as consoleWorkspace_alwaysAuditLogNeedsAnAdmin, sometimesAuditShown as consoleWorkspace_sometimesAuditShown, canSubmitProposal as consoleWorkspace_canSubmitProposal, submitProposal as consoleWorkspace_submitProposal, canReceiveProposalAnswer as consoleWorkspace_canReceiveProposalAnswer, receiveProposalAnswer as consoleWorkspace_receiveProposalAnswer, alwaysTrayWorkIsSimulated as consoleWorkspace_alwaysTrayWorkIsSimulated, sometimesProposed as consoleWorkspace_sometimesProposed, canOpenWorldMenu as consoleWorkspace_canOpenWorldMenu, openWorldMenu as consoleWorkspace_openWorldMenu, canCloseWorldMenu as consoleWorkspace_canCloseWorldMenu, closeWorldMenu as consoleWorkspace_closeWorldMenu, canSendWorldEvent as consoleWorkspace_canSendWorldEvent, sendWorldEvent as consoleWorkspace_sendWorldEvent, alwaysWorldMenuIsSimulated as consoleWorkspace_alwaysWorldMenuIsSimulated, sometimesWorldEventSent as consoleWorkspace_sometimesWorldEventSent, canStartReveal as consoleWorkspace_canStartReveal, startReveal as consoleWorkspace_startReveal, canTypeRevealReason as consoleWorkspace_canTypeRevealReason, typeRevealReason as consoleWorkspace_typeRevealReason, canChooseRevealMinutes as consoleWorkspace_canChooseRevealMinutes, chooseRevealMinutes as consoleWorkspace_chooseRevealMinutes, canCancelReveal as consoleWorkspace_canCancelReveal, cancelReveal as consoleWorkspace_cancelReveal, canSubmitReveal as consoleWorkspace_canSubmitReveal, submitReveal as consoleWorkspace_submitReveal, canReceiveRevealAnswer as consoleWorkspace_canReceiveRevealAnswer, receiveRevealAnswer as consoleWorkspace_receiveRevealAnswer, alwaysRevealHasAReasonAndALimit as consoleWorkspace_alwaysRevealHasAReasonAndALimit, stepRevealFollowsAGrant as consoleWorkspace_stepRevealFollowsAGrant, canEndReveal as consoleWorkspace_canEndReveal, endReveal as consoleWorkspace_endReveal, canExpireReveal as consoleWorkspace_canExpireReveal, expireReveal as consoleWorkspace_expireReveal, sometimesRevealGranted as consoleWorkspace_sometimesRevealGranted, initial as consoleWorkspace_initial, alwaysAdminHoldsEveryRole as consoleWorkspace_alwaysAdminHoldsEveryRole, alwaysSimulatedWorldShowsNoRealData as consoleWorkspace_alwaysSimulatedWorldShowsNoRealData, stepNewViewerClosesForms as consoleWorkspace_stepNewViewerClosesForms, canReceiveHeldText as consoleWorkspace_canReceiveHeldText, receiveHeldText as consoleWorkspace_receiveHeldText, canTypeHeldReason as consoleWorkspace_canTypeHeldReason, typeHeldReason as consoleWorkspace_typeHeldReason, canLoadHeldPhoto as consoleWorkspace_canLoadHeldPhoto, loadHeldPhoto as consoleWorkspace_loadHeldPhoto, canMarkPhotoReviewed as consoleWorkspace_canMarkPhotoReviewed, canTypeReportNote as consoleWorkspace_canTypeReportNote, canActOnReport as consoleWorkspace_canActOnReport, canPressMatchingSwitch as consoleWorkspace_canPressMatchingSwitch, canConfirmMatchingSwitch as consoleWorkspace_canConfirmMatchingSwitch, alwaysSavingNeedsTheSwitch as consoleWorkspace_alwaysSavingNeedsTheSwitch, receiveViewer as consoleWorkspace_receiveViewer } from "./consoleWorkspace.ts";
+import { type ReportStep as consoleWorkspace_ReportStep, type RequestSegment as consoleWorkspace_RequestSegment, type ConfigPhase as consoleWorkspace_ConfigPhase, type RequestOutcome as consoleWorkspace_RequestOutcome, type ConfigControl as consoleWorkspace_ConfigControl, type AuditPhase as consoleWorkspace_AuditPhase, type TrayPhase as consoleWorkspace_TrayPhase, type RevealPhase as consoleWorkspace_RevealPhase, type WorldEvent as consoleWorkspace_WorldEvent, type HeldStatus as consoleWorkspace_HeldStatus, type WorkMode as consoleWorkspace_WorkMode, type WorkPanel as consoleWorkspace_WorkPanel, type HeldChoice as consoleWorkspace_HeldChoice, type PanelAnswer as consoleWorkspace_PanelAnswer, type PanelView as consoleWorkspace_PanelView, type CaseRowStatus as consoleWorkspace_CaseRowStatus, type CaseStep as consoleWorkspace_CaseStep, type CaseRow as consoleWorkspace_CaseRow, type ConfigEditor as consoleWorkspace_ConfigEditor, type StaffView as consoleWorkspace_StaffView, type RevealForm as consoleWorkspace_RevealForm, type HeldRow as consoleWorkspace_HeldRow, type ReportRow as consoleWorkspace_ReportRow, type Workspace as consoleWorkspace_Workspace, minReasonChars as consoleWorkspace_minReasonChars, maxRevealMinutes as consoleWorkspace_maxRevealMinutes, revealMinuteChoices as consoleWorkspace_revealMinuteChoices, proposeAllowed as consoleWorkspace_proposeAllowed, heldReleasable as consoleWorkspace_heldReleasable, reportStepAllowed as consoleWorkspace_reportStepAllowed, reportDecision as consoleWorkspace_reportDecision, requestShown as consoleWorkspace_requestShown, configControl as consoleWorkspace_configControl, trayShown as consoleWorkspace_trayShown, lawMinorsAreNeverProposed as consoleWorkspace_lawMinorsAreNeverProposed, worldMenuShown as consoleWorkspace_worldMenuShown, revealOffered as consoleWorkspace_revealOffered, staffActs as consoleWorkspace_staffActs, panelView as consoleWorkspace_panelView, panelAllowed as consoleWorkspace_panelAllowed, reportOutcome as consoleWorkspace_reportOutcome, lawClearMinorNeedsAMinorReport as consoleWorkspace_lawClearMinorNeedsAMinorReport, lawReadOnlyDataTakesNoReportDecision as consoleWorkspace_lawReadOnlyDataTakesNoReportDecision, lawEveryOutcomeHasASegment as consoleWorkspace_lawEveryOutcomeHasASegment, lawAllShowsEveryOutcome as consoleWorkspace_lawAllShowsEveryOutcome, lawOnlyAdminsGetTheSwitch as consoleWorkspace_lawOnlyAdminsGetTheSwitch, lawRefusedPanelShowsNoRows as consoleWorkspace_lawRefusedPanelShowsNoRows, lawRowsNeedAnAnswer as consoleWorkspace_lawRowsNeedAnAnswer, lawAuditLogIsAdminOnly as consoleWorkspace_lawAuditLogIsAdminOnly, markPhotoReviewed as consoleWorkspace_markPhotoReviewed, canDecideHeld as consoleWorkspace_canDecideHeld, decideHeld as consoleWorkspace_decideHeld, canReceiveHeldAnswer as consoleWorkspace_canReceiveHeldAnswer, receiveHeldAnswer as consoleWorkspace_receiveHeldAnswer, alwaysReleaseWasReleasable as consoleWorkspace_alwaysReleaseWasReleasable, alwaysHiddenMinorTextIsNeverReleased as consoleWorkspace_alwaysHiddenMinorTextIsNeverReleased, sometimesHeldTextReleased as consoleWorkspace_sometimesHeldTextReleased, sometimesHeldPhotoReleased as consoleWorkspace_sometimesHeldPhotoReleased, sometimesHeldTextRejected as consoleWorkspace_sometimesHeldTextRejected, canReceiveCase as consoleWorkspace_canReceiveCase, receiveCase as consoleWorkspace_receiveCase, canToggleCaseRow as consoleWorkspace_canToggleCaseRow, toggleCaseRow as consoleWorkspace_toggleCaseRow, canActOnCase as consoleWorkspace_canActOnCase, actOnCase as consoleWorkspace_actOnCase, canReceiveCaseAnswer as consoleWorkspace_canReceiveCaseAnswer, receiveCaseAnswer as consoleWorkspace_receiveCaseAnswer, alwaysCaseActionNeedsAnActingSafetyViewer as consoleWorkspace_alwaysCaseActionNeedsAnActingSafetyViewer, sometimesCaseClosed as consoleWorkspace_sometimesCaseClosed, sometimesHoldLifted as consoleWorkspace_sometimesHoldLifted, canReceiveReport as consoleWorkspace_canReceiveReport, receiveReport as consoleWorkspace_receiveReport, reportOpen as consoleWorkspace_reportOpen, typeReportNote as consoleWorkspace_typeReportNote, actOnReport as consoleWorkspace_actOnReport, canReceiveReportAnswer as consoleWorkspace_canReceiveReportAnswer, receiveReportAnswer as consoleWorkspace_receiveReportAnswer, alwaysBanNeedsTheService as consoleWorkspace_alwaysBanNeedsTheService, alwaysASentReportDecisionIsAllowed as consoleWorkspace_alwaysASentReportDecisionIsAllowed, alwaysReportDecisionNeedsANote as consoleWorkspace_alwaysReportDecisionNeedsANote, lawEveryReportStepLeavesTheOpenStatus as consoleWorkspace_lawEveryReportStepLeavesTheOpenStatus, sometimesReportBanned as consoleWorkspace_sometimesReportBanned, sometimesReportHeld as consoleWorkspace_sometimesReportHeld, sometimesReportDismissed as consoleWorkspace_sometimesReportDismissed, chooseRequestSegment as consoleWorkspace_chooseRequestSegment, sometimesAllRequests as consoleWorkspace_sometimesAllRequests, switchShown as consoleWorkspace_switchShown, canReceiveConfig as consoleWorkspace_canReceiveConfig, receiveConfig as consoleWorkspace_receiveConfig, pressMatchingSwitch as consoleWorkspace_pressMatchingSwitch, canEndConfirmation as consoleWorkspace_canEndConfirmation, endConfirmation as consoleWorkspace_endConfirmation, confirmMatchingSwitch as consoleWorkspace_confirmMatchingSwitch, canReceiveSwitchAnswer as consoleWorkspace_canReceiveSwitchAnswer, receiveSwitchAnswer as consoleWorkspace_receiveSwitchAnswer, alwaysConfigNeedsTheAnalystRole as consoleWorkspace_alwaysConfigNeedsTheAnalystRole, stepSwitchChangesOnlyAfterSaving as consoleWorkspace_stepSwitchChangesOnlyAfterSaving, alwaysSavedSwitchWasShown as consoleWorkspace_alwaysSavedSwitchWasShown, sometimesSwitchSaved as consoleWorkspace_sometimesSwitchSaved, sometimesSwitchRefused as consoleWorkspace_sometimesSwitchRefused, canLoadAudit as consoleWorkspace_canLoadAudit, loadAudit as consoleWorkspace_loadAudit, canReceiveAudit as consoleWorkspace_canReceiveAudit, receiveAudit as consoleWorkspace_receiveAudit, alwaysAuditLogNeedsAnAdmin as consoleWorkspace_alwaysAuditLogNeedsAnAdmin, sometimesAuditShown as consoleWorkspace_sometimesAuditShown, canSubmitProposal as consoleWorkspace_canSubmitProposal, submitProposal as consoleWorkspace_submitProposal, canReceiveProposalAnswer as consoleWorkspace_canReceiveProposalAnswer, receiveProposalAnswer as consoleWorkspace_receiveProposalAnswer, alwaysTrayWorkIsSimulated as consoleWorkspace_alwaysTrayWorkIsSimulated, sometimesProposed as consoleWorkspace_sometimesProposed, canOpenWorldMenu as consoleWorkspace_canOpenWorldMenu, openWorldMenu as consoleWorkspace_openWorldMenu, canCloseWorldMenu as consoleWorkspace_canCloseWorldMenu, closeWorldMenu as consoleWorkspace_closeWorldMenu, canSendWorldEvent as consoleWorkspace_canSendWorldEvent, sendWorldEvent as consoleWorkspace_sendWorldEvent, alwaysWorldMenuIsSimulated as consoleWorkspace_alwaysWorldMenuIsSimulated, sometimesWorldEventSent as consoleWorkspace_sometimesWorldEventSent, canStartReveal as consoleWorkspace_canStartReveal, startReveal as consoleWorkspace_startReveal, canTypeRevealReason as consoleWorkspace_canTypeRevealReason, typeRevealReason as consoleWorkspace_typeRevealReason, canChooseRevealMinutes as consoleWorkspace_canChooseRevealMinutes, chooseRevealMinutes as consoleWorkspace_chooseRevealMinutes, canCancelReveal as consoleWorkspace_canCancelReveal, cancelReveal as consoleWorkspace_cancelReveal, canSubmitReveal as consoleWorkspace_canSubmitReveal, submitReveal as consoleWorkspace_submitReveal, canReceiveRevealAnswer as consoleWorkspace_canReceiveRevealAnswer, receiveRevealAnswer as consoleWorkspace_receiveRevealAnswer, alwaysRevealHasAReasonAndALimit as consoleWorkspace_alwaysRevealHasAReasonAndALimit, alwaysRevealLengthIsAChoice as consoleWorkspace_alwaysRevealLengthIsAChoice, stepRevealFollowsAGrant as consoleWorkspace_stepRevealFollowsAGrant, canEndReveal as consoleWorkspace_canEndReveal, endReveal as consoleWorkspace_endReveal, canExpireReveal as consoleWorkspace_canExpireReveal, expireReveal as consoleWorkspace_expireReveal, sometimesRevealGranted as consoleWorkspace_sometimesRevealGranted, initial as consoleWorkspace_initial, alwaysAdminHoldsEveryRole as consoleWorkspace_alwaysAdminHoldsEveryRole, alwaysSimulatedWorldShowsNoRealData as consoleWorkspace_alwaysSimulatedWorldShowsNoRealData, stepNewViewerClosesForms as consoleWorkspace_stepNewViewerClosesForms, canReceiveHeldText as consoleWorkspace_canReceiveHeldText, receiveHeldText as consoleWorkspace_receiveHeldText, canTypeHeldReason as consoleWorkspace_canTypeHeldReason, typeHeldReason as consoleWorkspace_typeHeldReason, canLoadHeldPhoto as consoleWorkspace_canLoadHeldPhoto, loadHeldPhoto as consoleWorkspace_loadHeldPhoto, canMarkPhotoReviewed as consoleWorkspace_canMarkPhotoReviewed, canTypeReportNote as consoleWorkspace_canTypeReportNote, canActOnReport as consoleWorkspace_canActOnReport, canPressMatchingSwitch as consoleWorkspace_canPressMatchingSwitch, canConfirmMatchingSwitch as consoleWorkspace_canConfirmMatchingSwitch, alwaysSavingNeedsTheSwitch as consoleWorkspace_alwaysSavingNeedsTheSwitch, receiveViewer as consoleWorkspace_receiveViewer } from "./consoleWorkspace.ts";
 import { type StaffActionResult as safetyCase_StaffActionResult, type ReportPhase as safetyCase_ReportPhase, type ReportDecision as safetyCase_ReportDecision, type CasePhase as safetyCase_CasePhase, type SafetyCase as safetyCase_SafetyCase } from "./safetyCase.ts";
 
 /** Story: Use the analysis panels only where my mode and role allow / A new viewer or mode starts every analysis panel again (spec/consolePanels.md) */
@@ -16,11 +16,11 @@ export type FeedSegment = "AllEvents" | "PeopleEvents" | "SafetyEvents" | "Syste
 /** Story: Use the analysis panels only where my mode and role allow / A new viewer or mode starts every analysis panel again (spec/consolePanels.md) */
 export interface PanelStaff { mode: PanelMode; analyst: boolean; admin: boolean; simRole: boolean; realOnlyServer: boolean }
 /** Story: Use the analysis panels only where my mode and role allow / A new viewer or mode starts every analysis panel again (spec/consolePanels.md) */
-export interface LabPanel { phase: LabPhase; runCount: number; activeRuns: boolean }
+export interface LabState { phase: LabPhase; runCount: number; activeRuns: boolean }
 /** Story: Use the analysis panels only where my mode and role allow / A new viewer or mode starts every analysis panel again (spec/consolePanels.md) */
 export interface RunCompare { runTotal: number; comparing: boolean; picked: number; diff: DiffPhase }
 /** Story: Use the analysis panels only where my mode and role allow / A new viewer or mode starts every analysis panel again (spec/consolePanels.md) */
-export interface ConsolePanels { staff: PanelStaff; lab: LabPanel; runs: RunCompare; feedSegment: FeedSegment; game: GamePanel }
+export interface ConsolePanels { staff: PanelStaff; lab: LabState; runs: RunCompare; feedSegment: FeedSegment; game: GamePanel }
 /** Story: Run simulation experiments in the lab / The lab shows its runs, or says that it is off (spec/consolePanels.md) */
 export type LabBody = "LabOffView" | "LabEmptyView" | "LabRunsView";
 /** Story: Run simulation experiments in the lab / A lab result marks each safety count (spec/consolePanels.md) */
@@ -63,6 +63,8 @@ export type Event =
   | { type: "resetWorld"; chooseLevel: boolean }
   | { type: "checkLevel" };
 
+/** Story: Compare two matching runs / Compare opens only with two runs, and a third pick drops the oldest (spec/consolePanels.md) */
+export const maxRunPicks: number = 2;
 /** Story: Read the health numbers of an app / The bias monitor alerts below 0.8 times the outcome of everyone (spec/consolePanels.md) */
 export const biasAlertBelow: number = 80;
 /** Story: Read the health numbers of an app / The proactive rate and the inviter share show their targets (spec/consolePanels.md) */
@@ -77,15 +79,13 @@ export const maxLabArms: number = 3;
 export const maxLabSeeds: number = 5;
 /** Story: Run simulation experiments in the lab / A lab run starts only in the simulated world with a valid request (spec/consolePanels.md) */
 export const maxLabDays: number = 60;
-/** Story: Compare two matching runs / Compare opens only with two runs, and a third pick drops the oldest (spec/consolePanels.md) */
-export const maxRunPicks: number = 2;
 /** Story: Use the analysis panels only where my mode and role allow / A new viewer or mode starts every analysis panel again (spec/consolePanels.md) */
-export const initial: ConsolePanels = { staff: ({ mode: "RealReadOnly", analyst: false, admin: false, simRole: false, realOnlyServer: false } as PanelStaff), lab: ({ phase: "LabWaiting", runCount: 0, activeRuns: false } as LabPanel), runs: ({ runTotal: 0, comparing: false, picked: 0, diff: "NoDiff" } as RunCompare), feedSegment: "AllEvents", game: ({ present: false, over: false, levelPlaying: false, resetSent: false, levelChecked: false } as GamePanel) };
+export const initial: ConsolePanels = { staff: ({ mode: "RealReadOnly", analyst: false, admin: false, simRole: false, realOnlyServer: false } as PanelStaff), lab: ({ phase: "LabWaiting", runCount: 0, activeRuns: false } as LabState), runs: ({ runTotal: 0, comparing: false, picked: 0, diff: "NoDiff" } as RunCompare), feedSegment: "AllEvents", game: ({ present: false, over: false, levelPlaying: false, resetSent: false, levelChecked: false } as GamePanel) };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current: ConsolePanels): boolean {
-  return alwaysAdminHoldsAnalystAndSimRole(current) && alwaysRealOnlyServerShowsRealData(current) && alwaysLabNeedsTheAnalystRole(current) && alwaysActiveRunsAreRuns(current) && alwaysLabStartIsSimulated(current) && alwaysPicksAreAtMostTwo(current) && alwaysCompareNeedsTwoRuns(current) && alwaysPicksNeedCompare(current) && alwaysDiffNeedsTwoPicks(current) && alwaysMineSegmentIsSimulated(current) && alwaysGameWorkIsSimulated(current) && alwaysResetNeedsAnAdmin(current) && alwaysLevelCheckNeedsALevel(current);
+  return alwaysAdminHoldsAnalystAndSimRole(current) && alwaysRealOnlyServerShowsRealData(current) && alwaysLabNeedsTheAnalystRole(current) && alwaysActiveRunsAreRuns(current) && alwaysRunCountIsNeverNegative(current) && alwaysLabStartIsSimulated(current) && alwaysPicksAreAtMostTwo(current) && alwaysCompareNeedsTwoRuns(current) && alwaysPicksNeedCompare(current) && alwaysDiffNeedsTwoPicks(current) && alwaysMineSegmentIsSimulated(current) && alwaysGameWorkIsSimulated(current) && alwaysResetNeedsAnAdmin(current) && alwaysLevelCheckNeedsALevel(current);
 }
 
 /** Story: Use the analysis panels only where my mode and role allow / A new viewer or mode starts every analysis panel again (spec/consolePanels.md) */
@@ -113,6 +113,7 @@ export function receiveViewer(p: ConsolePanels, viewMode: PanelMode, analystRole
   //@ ensures (inv(p) && canReceiveViewer(p, viewMode, realOnly)) ==> alwaysRealOnlyServerShowsRealData(\result)
   //@ ensures (inv(p) && canReceiveViewer(p, viewMode, realOnly)) ==> alwaysLabNeedsTheAnalystRole(\result)
   //@ ensures (inv(p) && canReceiveViewer(p, viewMode, realOnly)) ==> alwaysActiveRunsAreRuns(\result)
+  //@ ensures (inv(p) && canReceiveViewer(p, viewMode, realOnly)) ==> alwaysRunCountIsNeverNegative(\result)
   //@ ensures (inv(p) && canReceiveViewer(p, viewMode, realOnly)) ==> alwaysLabStartIsSimulated(\result)
   //@ ensures (inv(p) && canReceiveViewer(p, viewMode, realOnly)) ==> alwaysPicksAreAtMostTwo(\result)
   //@ ensures (inv(p) && canReceiveViewer(p, viewMode, realOnly)) ==> alwaysCompareNeedsTwoRuns(\result)
@@ -160,7 +161,7 @@ export function labBody(labOn: boolean, runCount: number): LabBody {
 
 /** Story: Run simulation experiments in the lab / The lab shows its runs, or says that it is off (spec/consolePanels.md) */
 //@ pure
-export function labPolls(lab: LabPanel): boolean {
+export function labPolls(lab: LabState): boolean {
   return lab.activeRuns || lab.phase === "LabStarting";
 }
 
@@ -177,6 +178,7 @@ export function receiveLab(p: ConsolePanels, labOn: boolean, runCount: number, a
   //@ ensures (inv(p) && canReceiveLab(p, runCount)) ==> alwaysRealOnlyServerShowsRealData(\result)
   //@ ensures (inv(p) && canReceiveLab(p, runCount)) ==> alwaysLabNeedsTheAnalystRole(\result)
   //@ ensures (inv(p) && canReceiveLab(p, runCount)) ==> alwaysActiveRunsAreRuns(\result)
+  //@ ensures (inv(p) && canReceiveLab(p, runCount)) ==> alwaysRunCountIsNeverNegative(\result)
   //@ ensures (inv(p) && canReceiveLab(p, runCount)) ==> alwaysLabStartIsSimulated(\result)
   //@ ensures (inv(p) && canReceiveLab(p, runCount)) ==> alwaysPicksAreAtMostTwo(\result)
   //@ ensures (inv(p) && canReceiveLab(p, runCount)) ==> alwaysCompareNeedsTwoRuns(\result)
@@ -187,7 +189,7 @@ export function receiveLab(p: ConsolePanels, labOn: boolean, runCount: number, a
   //@ ensures (inv(p) && canReceiveLab(p, runCount)) ==> alwaysResetNeedsAnAdmin(\result)
   //@ ensures (inv(p) && canReceiveLab(p, runCount)) ==> alwaysLevelCheckNeedsALevel(\result)
   //@ ensures (inv(p) && canReceiveLab(p, runCount)) ==> stepNewViewerStartsThePanelsAgain(p, "receiveLab", \result)
-  return { ...p, lab: ({ phase: labOn ? "LabReady" : "LabOff", runCount: runCount, activeRuns: labOn && activeRuns && runCount > 0 } as LabPanel) };
+  return { ...p, lab: ({ phase: labOn ? "LabReady" : "LabOff", runCount: runCount, activeRuns: labOn && activeRuns && runCount > 0 } as LabState) };
 }
 
 /** Story: Run simulation experiments in the lab / The lab shows its runs, or says that it is off (spec/consolePanels.md) */
@@ -200,6 +202,12 @@ export function alwaysLabNeedsTheAnalystRole(p: ConsolePanels): boolean {
 //@ pure
 export function alwaysActiveRunsAreRuns(p: ConsolePanels): boolean {
   return !p.lab.activeRuns || p.lab.runCount > 0;
+}
+
+/** Story: Run simulation experiments in the lab / The lab shows its runs, or says that it is off (spec/consolePanels.md) */
+//@ pure
+export function alwaysRunCountIsNeverNegative(p: ConsolePanels): boolean {
+  return p.lab.runCount >= 0;
 }
 
 /** Story: Run simulation experiments in the lab / The lab shows its runs, or says that it is off (spec/consolePanels.md) */
@@ -247,6 +255,7 @@ export function startLab(p: ConsolePanels, armCount: number, seedCount: number, 
   //@ ensures (inv(p) && canStartLab(p, armCount, seedCount, days)) ==> alwaysRealOnlyServerShowsRealData(\result)
   //@ ensures (inv(p) && canStartLab(p, armCount, seedCount, days)) ==> alwaysLabNeedsTheAnalystRole(\result)
   //@ ensures (inv(p) && canStartLab(p, armCount, seedCount, days)) ==> alwaysActiveRunsAreRuns(\result)
+  //@ ensures (inv(p) && canStartLab(p, armCount, seedCount, days)) ==> alwaysRunCountIsNeverNegative(\result)
   //@ ensures (inv(p) && canStartLab(p, armCount, seedCount, days)) ==> alwaysLabStartIsSimulated(\result)
   //@ ensures (inv(p) && canStartLab(p, armCount, seedCount, days)) ==> alwaysPicksAreAtMostTwo(\result)
   //@ ensures (inv(p) && canStartLab(p, armCount, seedCount, days)) ==> alwaysCompareNeedsTwoRuns(\result)
@@ -257,7 +266,7 @@ export function startLab(p: ConsolePanels, armCount: number, seedCount: number, 
   //@ ensures (inv(p) && canStartLab(p, armCount, seedCount, days)) ==> alwaysResetNeedsAnAdmin(\result)
   //@ ensures (inv(p) && canStartLab(p, armCount, seedCount, days)) ==> alwaysLevelCheckNeedsALevel(\result)
   //@ ensures (inv(p) && canStartLab(p, armCount, seedCount, days)) ==> stepNewViewerStartsThePanelsAgain(p, "startLab", \result)
-  return { ...p, lab: ({ ...p.lab, phase: "LabStarting" } as LabPanel) };
+  return { ...p, lab: ({ ...p.lab, phase: "LabStarting" } as LabState) };
 }
 
 /** Story: Run simulation experiments in the lab / A lab run starts only in the simulated world with a valid request (spec/consolePanels.md) */
@@ -273,6 +282,7 @@ export function receiveLabStart(p: ConsolePanels, accepted: boolean): ConsolePan
   //@ ensures (inv(p) && canReceiveLabStart(p)) ==> alwaysRealOnlyServerShowsRealData(\result)
   //@ ensures (inv(p) && canReceiveLabStart(p)) ==> alwaysLabNeedsTheAnalystRole(\result)
   //@ ensures (inv(p) && canReceiveLabStart(p)) ==> alwaysActiveRunsAreRuns(\result)
+  //@ ensures (inv(p) && canReceiveLabStart(p)) ==> alwaysRunCountIsNeverNegative(\result)
   //@ ensures (inv(p) && canReceiveLabStart(p)) ==> alwaysLabStartIsSimulated(\result)
   //@ ensures (inv(p) && canReceiveLabStart(p)) ==> alwaysPicksAreAtMostTwo(\result)
   //@ ensures (inv(p) && canReceiveLabStart(p)) ==> alwaysCompareNeedsTwoRuns(\result)
@@ -283,7 +293,7 @@ export function receiveLabStart(p: ConsolePanels, accepted: boolean): ConsolePan
   //@ ensures (inv(p) && canReceiveLabStart(p)) ==> alwaysResetNeedsAnAdmin(\result)
   //@ ensures (inv(p) && canReceiveLabStart(p)) ==> alwaysLevelCheckNeedsALevel(\result)
   //@ ensures (inv(p) && canReceiveLabStart(p)) ==> stepNewViewerStartsThePanelsAgain(p, "receiveLabStart", \result)
-  return accepted ? ({ ...p, lab: ({ phase: "LabReady", runCount: exact_consolePanels(p.lab.runCount + 1), activeRuns: true } as LabPanel) } as ConsolePanels) : ({ ...p, lab: ({ ...p.lab, phase: "LabStartRefused" } as LabPanel) } as ConsolePanels);
+  return accepted ? ({ ...p, lab: ({ phase: "LabReady", runCount: exact_consolePanels(p.lab.runCount + 1), activeRuns: true } as LabState) } as ConsolePanels) : ({ ...p, lab: ({ ...p.lab, phase: "LabStartRefused" } as LabState) } as ConsolePanels);
 }
 
 /** Story: Run simulation experiments in the lab / A lab run starts only in the simulated world with a valid request (spec/consolePanels.md) */
@@ -325,6 +335,12 @@ export function runsView(r: RunCompare): RunsView {
 
 /** Story: Compare two matching runs / The runs tab shows a run, asks for two runs, or shows their difference (spec/consolePanels.md) */
 //@ pure
+export function sometimesPickTwo(p: ConsolePanels): boolean {
+  return runsView(p.runs) === "PickTwoView";
+}
+
+/** Story: Compare two matching runs / The runs tab shows a run, asks for two runs, or shows their difference (spec/consolePanels.md) */
+//@ pure
 export function canReceiveRuns(p: ConsolePanels, runTotal: number): boolean {
   return runTotal >= 0;
 }
@@ -336,6 +352,7 @@ export function receiveRuns(p: ConsolePanels, runTotal: number): ConsolePanels {
   //@ ensures (inv(p) && canReceiveRuns(p, runTotal)) ==> alwaysRealOnlyServerShowsRealData(\result)
   //@ ensures (inv(p) && canReceiveRuns(p, runTotal)) ==> alwaysLabNeedsTheAnalystRole(\result)
   //@ ensures (inv(p) && canReceiveRuns(p, runTotal)) ==> alwaysActiveRunsAreRuns(\result)
+  //@ ensures (inv(p) && canReceiveRuns(p, runTotal)) ==> alwaysRunCountIsNeverNegative(\result)
   //@ ensures (inv(p) && canReceiveRuns(p, runTotal)) ==> alwaysLabStartIsSimulated(\result)
   //@ ensures (inv(p) && canReceiveRuns(p, runTotal)) ==> alwaysPicksAreAtMostTwo(\result)
   //@ ensures (inv(p) && canReceiveRuns(p, runTotal)) ==> alwaysCompareNeedsTwoRuns(\result)
@@ -355,12 +372,6 @@ export function sometimesRunDetail(p: ConsolePanels): boolean {
   return runsView(p.runs) === "RunDetailView";
 }
 
-/** Story: Compare two matching runs / The runs tab shows a run, asks for two runs, or shows their difference (spec/consolePanels.md) */
-//@ pure
-export function sometimesPickTwo(p: ConsolePanels): boolean {
-  return runsView(p.runs) === "PickTwoView";
-}
-
 /** Story: Compare two matching runs / Compare opens only with two runs, and a third pick drops the oldest (spec/consolePanels.md) */
 //@ pure
 export function compareShown(p: ConsolePanels): boolean {
@@ -374,6 +385,7 @@ export function toggleCompare(p: ConsolePanels): ConsolePanels {
   //@ ensures (inv(p) && canToggleCompare(p)) ==> alwaysRealOnlyServerShowsRealData(\result)
   //@ ensures (inv(p) && canToggleCompare(p)) ==> alwaysLabNeedsTheAnalystRole(\result)
   //@ ensures (inv(p) && canToggleCompare(p)) ==> alwaysActiveRunsAreRuns(\result)
+  //@ ensures (inv(p) && canToggleCompare(p)) ==> alwaysRunCountIsNeverNegative(\result)
   //@ ensures (inv(p) && canToggleCompare(p)) ==> alwaysLabStartIsSimulated(\result)
   //@ ensures (inv(p) && canToggleCompare(p)) ==> alwaysPicksAreAtMostTwo(\result)
   //@ ensures (inv(p) && canToggleCompare(p)) ==> alwaysCompareNeedsTwoRuns(\result)
@@ -400,6 +412,7 @@ export function pickRun(p: ConsolePanels, alreadyPicked: boolean): ConsolePanels
   //@ ensures (inv(p) && canPickRun(p, alreadyPicked)) ==> alwaysRealOnlyServerShowsRealData(\result)
   //@ ensures (inv(p) && canPickRun(p, alreadyPicked)) ==> alwaysLabNeedsTheAnalystRole(\result)
   //@ ensures (inv(p) && canPickRun(p, alreadyPicked)) ==> alwaysActiveRunsAreRuns(\result)
+  //@ ensures (inv(p) && canPickRun(p, alreadyPicked)) ==> alwaysRunCountIsNeverNegative(\result)
   //@ ensures (inv(p) && canPickRun(p, alreadyPicked)) ==> alwaysLabStartIsSimulated(\result)
   //@ ensures (inv(p) && canPickRun(p, alreadyPicked)) ==> alwaysPicksAreAtMostTwo(\result)
   //@ ensures (inv(p) && canPickRun(p, alreadyPicked)) ==> alwaysCompareNeedsTwoRuns(\result)
@@ -464,6 +477,7 @@ export function receiveDiff(p: ConsolePanels, loaded: boolean): ConsolePanels {
   //@ ensures (inv(p) && canReceiveDiff(p)) ==> alwaysRealOnlyServerShowsRealData(\result)
   //@ ensures (inv(p) && canReceiveDiff(p)) ==> alwaysLabNeedsTheAnalystRole(\result)
   //@ ensures (inv(p) && canReceiveDiff(p)) ==> alwaysActiveRunsAreRuns(\result)
+  //@ ensures (inv(p) && canReceiveDiff(p)) ==> alwaysRunCountIsNeverNegative(\result)
   //@ ensures (inv(p) && canReceiveDiff(p)) ==> alwaysLabStartIsSimulated(\result)
   //@ ensures (inv(p) && canReceiveDiff(p)) ==> alwaysPicksAreAtMostTwo(\result)
   //@ ensures (inv(p) && canReceiveDiff(p)) ==> alwaysCompareNeedsTwoRuns(\result)
@@ -655,6 +669,7 @@ export function chooseFeedSegment(p: ConsolePanels, segment: FeedSegment): Conso
   //@ ensures (inv(p) && canChooseFeedSegment(p, segment)) ==> alwaysRealOnlyServerShowsRealData(\result)
   //@ ensures (inv(p) && canChooseFeedSegment(p, segment)) ==> alwaysLabNeedsTheAnalystRole(\result)
   //@ ensures (inv(p) && canChooseFeedSegment(p, segment)) ==> alwaysActiveRunsAreRuns(\result)
+  //@ ensures (inv(p) && canChooseFeedSegment(p, segment)) ==> alwaysRunCountIsNeverNegative(\result)
   //@ ensures (inv(p) && canChooseFeedSegment(p, segment)) ==> alwaysLabStartIsSimulated(\result)
   //@ ensures (inv(p) && canChooseFeedSegment(p, segment)) ==> alwaysPicksAreAtMostTwo(\result)
   //@ ensures (inv(p) && canChooseFeedSegment(p, segment)) ==> alwaysCompareNeedsTwoRuns(\result)
@@ -732,6 +747,7 @@ export function receiveGame(p: ConsolePanels, present: boolean, over: boolean, l
   //@ ensures (inv(p) && canReceiveGame(p)) ==> alwaysRealOnlyServerShowsRealData(\result)
   //@ ensures (inv(p) && canReceiveGame(p)) ==> alwaysLabNeedsTheAnalystRole(\result)
   //@ ensures (inv(p) && canReceiveGame(p)) ==> alwaysActiveRunsAreRuns(\result)
+  //@ ensures (inv(p) && canReceiveGame(p)) ==> alwaysRunCountIsNeverNegative(\result)
   //@ ensures (inv(p) && canReceiveGame(p)) ==> alwaysLabStartIsSimulated(\result)
   //@ ensures (inv(p) && canReceiveGame(p)) ==> alwaysPicksAreAtMostTwo(\result)
   //@ ensures (inv(p) && canReceiveGame(p)) ==> alwaysCompareNeedsTwoRuns(\result)
@@ -776,6 +792,7 @@ export function resetWorld(p: ConsolePanels, chooseLevel: boolean): ConsolePanel
   //@ ensures (inv(p) && canResetWorld(p, chooseLevel)) ==> alwaysRealOnlyServerShowsRealData(\result)
   //@ ensures (inv(p) && canResetWorld(p, chooseLevel)) ==> alwaysLabNeedsTheAnalystRole(\result)
   //@ ensures (inv(p) && canResetWorld(p, chooseLevel)) ==> alwaysActiveRunsAreRuns(\result)
+  //@ ensures (inv(p) && canResetWorld(p, chooseLevel)) ==> alwaysRunCountIsNeverNegative(\result)
   //@ ensures (inv(p) && canResetWorld(p, chooseLevel)) ==> alwaysLabStartIsSimulated(\result)
   //@ ensures (inv(p) && canResetWorld(p, chooseLevel)) ==> alwaysPicksAreAtMostTwo(\result)
   //@ ensures (inv(p) && canResetWorld(p, chooseLevel)) ==> alwaysCompareNeedsTwoRuns(\result)
@@ -826,6 +843,7 @@ export function checkLevel(p: ConsolePanels): ConsolePanels {
   //@ ensures (inv(p) && canCheckLevel(p)) ==> alwaysRealOnlyServerShowsRealData(\result)
   //@ ensures (inv(p) && canCheckLevel(p)) ==> alwaysLabNeedsTheAnalystRole(\result)
   //@ ensures (inv(p) && canCheckLevel(p)) ==> alwaysActiveRunsAreRuns(\result)
+  //@ ensures (inv(p) && canCheckLevel(p)) ==> alwaysRunCountIsNeverNegative(\result)
   //@ ensures (inv(p) && canCheckLevel(p)) ==> alwaysLabStartIsSimulated(\result)
   //@ ensures (inv(p) && canCheckLevel(p)) ==> alwaysPicksAreAtMostTwo(\result)
   //@ ensures (inv(p) && canCheckLevel(p)) ==> alwaysCompareNeedsTwoRuns(\result)
