@@ -7,6 +7,8 @@ import { APPS } from "../../platform/src/apps.ts";
 import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
 import { DryRunAdapter } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";
+import { PLAN_VENUES } from "../src/plans.ts";
+import { localBookingStart } from "../src/rescheduling.ts";
 import { Mini } from "./mini.ts";
 
 test.skipIf(!pgAvailable)("a signed calendar request downloads the current booking with no participant details", async () => {
@@ -89,9 +91,24 @@ test.skipIf(!pgAvailable)("a signed calendar request downloads the current booki
     clock.advance(15 * MINUTE);
     expect((await download(timedLink)).status).toBe(404);
 
+    // The member's exact reschedule offer replays until their decline closes the draft.
+    const originalAt = Date.UTC(2026, 10, 21, 17);
+    const proposedAt = Date.UTC(2026, 10, 22, 18);
+    const venue = PLAN_VENUES.find(candidate => candidate.id === "mccarren-park")!;
+    await rt.unitOfWork(n => n.importState({ ...n.exportState(), members: world.net.exportState().members,
+      opps: [{ ...booked, meetingAt: originalAt, venue: venue.name, venueArea: venue.area }] }));
+    const propose = turn("calendar-reschedule", `RESCHEDULE ${localBookingStart(originalAt)} TO ${localBookingStart(proposedAt)}`);
+    const offered = await (await send(propose)).json();
+    const code = /RESCHEDULE NO [a-p]{16}/.exec(offered.replies.join(" "))?.[0];
+    expect(code).toBeDefined();
+    expect(await (await send(propose)).json()).toEqual(offered);
+    expect((await send(turn("calendar-reschedule-decline", code!))).status).toBe(200);
+    expect((await send(propose)).status).toBe(409);
+
     const stopped = turn("calendar-stop-target");
     const latest = await (await send(stopped)).json();
     const latestLink = latest.replies[0].split("\n")[1];
+    expect((await download(latestLink)).status).toBe(200);
     await send(turn("calendar-stop", "STOP"));
     expect((await download(latestLink)).status).toBe(404);
     expect((await send(stopped)).status).toBe(409);

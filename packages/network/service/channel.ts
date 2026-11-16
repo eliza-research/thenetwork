@@ -42,12 +42,12 @@ async function rescheduleAdmission(tx: SQL, row: QueueRow, runtimeId: string, no
     ? { ok: true } : refused;
 }
 
-async function originalBookingSuperseded(tx: SQL, row: QueueRow, runtimeId: string): Promise<boolean> {
-  if (!row.oppId) return false;
+export async function originalBookingSuperseded(tx: SQL, app: string, runtimeId: string, ids: string[]): Promise<boolean> {
+  if (!ids.length) return false;
   const [superseded] = await tx`select 1 from network.messages msg
     join network.network_state saved on saved.app_id=msg.app_id and saved.id=${runtimeId}
     join lateral jsonb_to_recordset(saved.state->'opps') as booking(id text,"scheduleRevision" int) on booking.id=msg.opportunity_id
-    where msg.app_id=${row.app} and msg.id=${row.id} and msg.opportunity_id=${row.oppId} and msg.type='proposal' and booking."scheduleRevision">0`;
+    where msg.app_id=${app} and msg.id in ${tx(ids)} and msg.type='proposal' and booking."scheduleRevision">0 limit 1`;
   return !!superseded;
 }
 
@@ -320,10 +320,16 @@ export class BlooioAdapter implements ChannelAdapter {
       // A relayed item: its match and both members are read again inside the admission transaction (runtime.ts).
       admit: async (row, tx) => {
         if (row.approvedPhotos?.length && this.name !== "eliza_cloud") return { ok: false, reason: "approved_photos_require_cloud" };
+        if (row.oppId && await originalBookingSuperseded(tx, row.app, rt.pg.id, [row.id])) return { ok: false, reason: "booking_time_changed" };
         if (row.id.startsWith(RESCHEDULE_QUEUE_PREFIX)) return rescheduleAdmission(tx, row, rt.pg.id, this.o.clock.now());
         if (row.id.startsWith("relay:")) return rt.relayAdmission(tx, row);
         if (row.id.startsWith(lateArrivalDeliveryPrefix)) return rt.groupLateArrivalAdmission(tx, row);
-        if (row.id.startsWith(cofounderDeliveryIdPrefix)) return rt.cofounderAdmission(tx, row);
+        if (row.id.startsWith(cofounderDeliveryIdPrefix)) {
+          const authority = await rt.cofounderAdmission(tx, row);
+          const prefix = `${cofounderDeliveryIdPrefix}reveal:`;
+          if (!authority.ok || !row.id.startsWith(`${prefix}${RESCHEDULE_QUEUE_PREFIX}`)) return authority;
+          return rescheduleAdmission(tx, { ...row, id: row.id.slice(prefix.length) }, rt.pg.id, this.o.clock.now());
+        }
         if (row.id.startsWith("invite-notice:")) return await rt.invitationNoticeAdmission(tx, row.id, row.memberId)
           ? { ok: true } : { ok: false, reason: "invitation_notice_changed" };
         if (row.id.startsWith("home-help-consent:")) return await rt.homeHelpConsentAdmission(tx, row)
@@ -335,7 +341,6 @@ export class BlooioAdapter implements ChannelAdapter {
         if (row.id.startsWith(bookedCancellationPrefix)) return { ok: false, reason: "opportunity_release_changed" };
         const reminder = bookedReminderKind(row.id);
         if (reminder) return bookedReminderAdmission(tx, row, reminder, rt.pg.id, this.o.clock.now());
-        if (await originalBookingSuperseded(tx, row, rt.pg.id)) return { ok: false, reason: "booking_time_changed" };
         return probeAdmission(tx, row, this.o.clock.now());
       },
       claimed: async (row, tx) => {

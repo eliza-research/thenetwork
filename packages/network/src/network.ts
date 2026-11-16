@@ -58,7 +58,7 @@ import { bookedCancellationAllowed, bookedCancellationPrefix } from "../../core/
 import { rescheduleDeadline, rescheduleDraftCurrent, rescheduleTimeEligible, rescheduleVote } from "../../core/src/generated/meetingReschedule.ts";
 import {
   describeBookingStart, localBookingStart, parseRescheduleCommand, rescheduleMemberRef, rescheduleNoticeCurrent, rescheduleOfferKey,
-  rescheduleUpdateKey, sameRescheduleRoster, type RescheduleCommand, type RescheduleDraft,
+  rescheduleUpdateKey, RESCHEDULE_QUEUE_PREFIX, sameRescheduleRoster, type RescheduleCommand, type RescheduleDraft,
 } from "./rescheduling.ts";
 import {
   bookedReplyCurrent, closesForMinor, groupCanContinue, initial as initialOpportunity, releasesPartialAcceptance, step as stepOpportunity,
@@ -1162,6 +1162,15 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   private rescheduleRoster(o: Opp): MemberId[] {
     return [...new Set(o.participants.filter(id => o.status.get(id) === "yes"))].sort();
+  }
+
+  /** A collected signed reply can be replayed only while its exact offer or changed time still applies. */
+  rescheduleReplyCurrent(memberId: MemberId, messageId: string): boolean {
+    return [...this.opps.values()].some(o => {
+      const roster = this.rescheduleRoster(o);
+      return rescheduleNoticeCurrent({ ...o, current: o.stage === "scheduled" }, roster, memberId, messageId, this.now())
+        && this.checkRecipient(memberId, "scheduling", { about: roster, reply: false }).ok;
+    });
   }
 
   private rescheduleSlotViable(o: Opp, roster: readonly MemberId[], start: number, now: number): boolean {
@@ -5260,7 +5269,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const now = this.now();
     const opportunity = this.opps.get(meta.proposalId ?? meta.probe?.key ?? "");
     if (opportunity?.lane === "Cofounder" && (meta.type === "probe" || meta.type === "scheduling" || meta.type === "proposal")) {
-      const revealing = meta.type === "proposal";
+      const revealing = meta.type === "proposal" || o.key?.startsWith(RESCHEDULE_QUEUE_PREFIX) === true;
       const accepted = opportunity.participants.every(id => opportunity.status.get(id) === "yes" && opportunity.contacted.has(id));
       if (!cofounderDeliveryAllowed(this.cofounderCurrent(opportunity), opportunity.review?.decision === "approve", revealing, accepted)) {
         return this.refuse(m.id, kind, "cofounder_intent_changed", this.hookFns(m, o.hook));

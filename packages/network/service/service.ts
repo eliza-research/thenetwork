@@ -96,7 +96,8 @@ import { SVC_MIN_SECRET, svcVerify } from "../../core/src/svc/svc-auth.ts";
 import { readCapped } from "../../platform/src/body.ts";
 import { ADULT_AGE, canBeMatched, canJoin } from "../../core/src/policy.ts";
 import { CostLedger, costRatesFromEnv, PgCostSink } from "./cost.ts";
-import { BlooioAdapter, type ChannelAdapter, type DirectKind, type Outbound } from "./channel.ts";
+import { BlooioAdapter, originalBookingSuperseded, type ChannelAdapter, type DirectKind, type Outbound } from "./channel.ts";
+import { RESCHEDULE_QUEUE_PREFIX } from "../src/rescheduling.ts";
 import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, stagingSiteOrigins, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { Accounts, homeCityOf, joinProfileText, type AccountHooks, type EnrollmentReferral, type HomeInput, type JoinHookContext, type MemberHookContext, type Who } from "../../platform/src/accounts.ts";
 import {
@@ -2986,6 +2987,22 @@ export class NetworkService implements RuntimeHost {
     }
     if (result.status===200 && result.body && typeof result.body==="object" && "outcome" in result.body && result.body.outcome==="handled") {
       const handled=result.body as Extract<TurnResponse,{outcome:"handled"}>;
+      if (handled.app && handled.memberId && handled.replyIds?.length) {
+        const memberId = handled.memberId;
+        const rt = await this.runtimeOfMember(handled.app, memberId);
+        const replyIds = handled.replyIds;
+        if (rt && await rt.scoped(tx => originalBookingSuperseded(tx, rt.app.id, rt.pg.id, replyIds))) {
+          return json({ error: "turn_booking_time_changed", retryable: false }, 409);
+        }
+        const schedulingIds = replyIds.filter(id => id.startsWith(RESCHEDULE_QUEUE_PREFIX));
+        if (schedulingIds.length) {
+          const current = await rt?.readState(async net => {
+            const binding = await this.accounts.activeMembership(rt.app, { e164: input.from, personId: null });
+            return binding?.membership.memberId === memberId && schedulingIds.every(id => net.rescheduleReplyCurrent(memberId, id));
+          });
+          if (!current) return json({ error: "turn_booking_time_changed", retryable: false }, 409);
+        }
+      }
       if (handled.reason === "calendar_invite" && handled.replies.length) {
         const memberId = handled.memberId;
         const rt = handled.app && memberId ? await this.runtimeOfMember(handled.app, memberId) : undefined;

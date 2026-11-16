@@ -44,6 +44,8 @@ test("only each participant's own answer to the exact offer commits a changed ti
   const draft = booking().reschedule!;
   const oldOfferKey = rescheduleOfferKey(draft, "c");
   expect(rescheduleNoticeCurrent({ ...booking(), current: true }, ids, "c", oldOfferKey, w.clock.now())).toBe(true);
+  expect(w.net.rescheduleReplyCurrent("c", oldOfferKey)).toBe(true);
+  expect(w.net.rescheduleReplyCurrent("b", oldOfferKey)).toBe(false);
 
   await w.say("b", yes.a!);
   await w.net.onInbound({ id: "profile-reschedule", memberId: "a", body: yes.a!, ts: w.clock.now(), channel: "sms", source: "mcp" });
@@ -59,6 +61,7 @@ test("only each participant's own answer to the exact offer commits a changed ti
   expect(committed).toMatchObject({ meetingAt: proposedAt, scheduleRevision: 1, confirmed: ids });
   expect(committed.reschedule).toBeUndefined();
   expect(rescheduleNoticeCurrent({ ...committed, current: true }, ids, "c", oldOfferKey, w.clock.now())).toBe(false);
+  expect(w.net.rescheduleReplyCurrent("c", oldOfferKey)).toBe(false);
   expect(rescheduleNoticeCurrent({ ...committed, current: true }, ids, "c", rescheduleUpdateKey(id, 1, "c"), w.clock.now())).toBe(true);
   expect(rescheduleNoticeCurrent({ ...committed, current: true }, ids, "c", rescheduleUpdateKey(id, 0, "c"), w.clock.now())).toBe(false);
   expect(w.meetings.at(-1)).toMatchObject({ proposalId: id, at: proposedAt, previousAt: originalAt });

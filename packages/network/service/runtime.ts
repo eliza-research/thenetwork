@@ -29,6 +29,7 @@ import { cofounderDeliveryAllowed, cofounderDeliveryIdPrefix, cofounderIntentEli
 import { cofounderIntentObjective } from "../../core/src/generated/cofounderIntent.ts";
 import { lateArrivalNotice } from "../../core/src/generated/groupLateArrival.ts";
 import { parseLateArrivalDeliveryId } from "../src/group-late-arrival.ts";
+import { RESCHEDULE_QUEUE_PREFIX } from "../src/rescheduling.ts";
 import { standingIntentLive } from "../../core/src/standing-intent.ts";
 import { standingEvidenceKey } from "@thenetwork/engine/src/match/standing.ts";
 import { inviteJoinNoticeLifetimeMs } from "../../core/src/generated/outreachPolicy.ts";
@@ -648,7 +649,7 @@ export class NetworkRuntime {
         const oppId = meta.proposalId ?? meta.probe?.key;
         const cofounderContact = !!oppId && this.net.opps.get(oppId)?.lane === "Cofounder"
           && (meta.type === "probe" || meta.type === "scheduling" || meta.type === "proposal");
-        const id = cofounderContact ? `${cofounderDeliveryIdPrefix}${meta.type === "proposal" ? "reveal" : "probe"}:${baseId}`
+        const id = cofounderContact ? `${cofounderDeliveryIdPrefix}${meta.type === "proposal" || baseId.startsWith(RESCHEDULE_QUEUE_PREFIX) ? "reveal" : "probe"}:${baseId}`
           : meta.privateInviteVouch && !meta.approvedInviteLink ? `invite-vouch:${baseId}` : baseId;
         const turn = this.host.inboundTurn?.();
         const causal = !cofounderContact && turn?.app === this.app.id && turn.memberId === memberId && o?.reply === true
