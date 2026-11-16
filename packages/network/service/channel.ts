@@ -20,26 +20,36 @@ import { isMemberInvitationLink } from "../src/invitation.ts";
 import { EXPECTED_INVITATION_PREFIX } from "./expected-invitation-store.ts";
 import { cofounderDeliveryIdPrefix } from "../../core/src/generated/cofounderDispatch.ts";
 import { dayBeforeReminderWindow } from "../../core/src/generated/meetingSettlement.ts";
-import { closedOpportunityRowStale, queuedProbePolicy } from "../../core/src/generated/outboundAdmission.ts";
+import { bookedCancellationAllowed, bookedCancellationPrefix, closedOpportunityRowStale, queuedProbePolicy } from "../../core/src/generated/outboundAdmission.ts";
 import { effectiveParticipation } from "./snapshot.ts";
 
 /** The apps' own domains: the Network's fixed copy names them ("you're in friends.help and peon.biz"), so the contact check allows them. */
 const OWN_DOMAINS = Object.values(APPS).flatMap(a => [`https://${a.domain}`, `www.${a.domain}`, a.domain]);
 
-function acceptanceRelease(row: QueueRow): boolean {
-  return !!row.oppId && !!row.memberId && (row.kind === "transactional" || row.kind === "reply")
-    && row.id === `opportunity-release:${row.oppId}:${row.memberId}`;
+type TerminalNotice = "acceptance" | "booking";
+
+function terminalNotice(row: QueueRow): TerminalNotice | undefined {
+  if (!row.oppId || !row.memberId || (row.kind !== "transactional" && row.kind !== "reply")) return;
+  const key = `${row.oppId}:${row.memberId}`;
+  if (row.id === `opportunity-release:${key}`) return "acceptance";
+  if (row.kind === "transactional" && row.id === `${bookedCancellationPrefix}${key}`) return "booking";
 }
 
 /** The exact outbound record and accepted seat authorize a closed outcome notice. */
-async function releaseAdmission(tx: SQL, row: QueueRow): Promise<RecipientCheck> {
-  const [release] = await tx`select 1 from network.messages msg
+async function releaseAdmission(tx: SQL, row: QueueRow, kind: TerminalNotice, runtimeId: string, now: number): Promise<RecipientCheck> {
+  const booked = kind === "booking";
+  const proof = [{ id: row.oppId, stage: "closed", closedFrom: "scheduled", bookedTold: [row.memberId] }];
+  const [release] = await tx<{ state: string; meeting_at: Date | null; status: string; told: boolean }[]>`select opp.state,opp.meeting_at,seat.status,
+    coalesce((saved.state->'opps') @> ${proof}::jsonb,false) as told from network.messages msg
     join network.opportunities opp on opp.app_id=msg.app_id and opp.id=msg.opportunity_id
     join network.participations seat on seat.app_id=msg.app_id and seat.opportunity_id=opp.id and seat.member_id=msg.member_id
+    left join network.network_state saved on ${booked} and saved.app_id=msg.app_id and saved.id=${runtimeId}
     where msg.app_id=${row.app} and msg.id=${row.id} and msg.member_id=${row.memberId!} and msg.opportunity_id=${row.oppId!}
-      and msg.direction='outbound' and msg.type='cancellation' and msg.body=${row.text} and opp.state='SKIPPED'
-      and seat.role='participant' and seat.status='available'`;
-  return release ? { ok: true } : { ok: false, reason: "opportunity_release_changed" };
+      and msg.direction='outbound' and msg.type='cancellation' and msg.body=${row.text} and seat.role='participant'`;
+  const allowed = release && (booked
+    ? bookedCancellationAllowed(release.state === "CANCELLED", release.status === "accepted", release.told, (release.meeting_at?.getTime() ?? now) - now)
+    : release.state === "SKIPPED" && release.status === "available");
+  return allowed ? { ok: true } : { ok: false, reason: "opportunity_release_changed" };
 }
 
 async function dayBeforeReminderAdmission(tx: SQL, row: QueueRow, now: number): Promise<RecipientCheck> {
@@ -237,13 +247,13 @@ export class BlooioAdapter implements ChannelAdapter {
       // A relayed item still goes after the date (the thread stays open for a week); a closed match stops it.
       stale: async row => row.id.startsWith("ntf_") ? !await rt.notificationCurrent(row.id)
         : !!row.oppId && (row.id.startsWith("relay:") ? (rt.net.opps.get(row.oppId)?.stage ?? "closed") === "closed"
-          : closedOpportunityRowStale(CLOSED_STAGES.has(rt.net.opps.get(row.oppId)?.stage ?? ""), acceptanceRelease(row))),
+          : closedOpportunityRowStale(CLOSED_STAGES.has(rt.net.opps.get(row.oppId)?.stage ?? ""), terminalNotice(row) !== undefined)),
       optedOut: row => rt.optedOut(row.id, row.memberId as MemberId | undefined, row.to),
       privatePayload: row => row.id.startsWith(EXPECTED_INVITATION_PREFIX),
       // A direct text to someone who is not a member of this app (no member on the row, none at the address)
       // is fixed copy: the member policy has nobody to check. Consent, quiet hours, caps and the leak guard still apply.
       recipient: (row, agentInitiated) => !row.memberId && !rt.memberOf(row.to) ? { ok: true }
-        : policy(row.to, { kind: row.kind, ...(row.oppId && !acceptanceRelease(row) ? { briefId: row.oppId } : {}), agentInitiated }),
+        : policy(row.to, { kind: row.kind, ...(row.oppId && !terminalNotice(row) ? { briefId: row.oppId } : {}), agentInitiated }),
       // A relayed item may carry its sender's own private facts, as the Network's guard allows (guardCheck
       // relayFrom): the queue excludes the sender's facts too, so it never parks what the Network passed.
       // Allow only this row's mutually approved number or its exact public booking link.
@@ -262,7 +272,7 @@ export class BlooioAdapter implements ChannelAdapter {
       // same order, then the existing admit check revalidates current parties.
       lockAdmission: async (row, tx) => {
         if (row.id.startsWith("relay:") || row.id.startsWith("invite-notice:") || row.id.startsWith(EXPECTED_INVITATION_PREFIX) || row.id.startsWith(cofounderDeliveryIdPrefix)
-          || row.id.startsWith("day-before-reminder:")) {
+          || row.id.startsWith("day-before-reminder:") || terminalNotice(row) === "booking") {
           await tx`select id from network.network_state where id=${rt.pg.id} for share`;
         }
         if (row.id.startsWith("home-help-consent:")) await rt.lockHomeHelpConsentAdmission(tx, row.id, row.memberId);
@@ -278,7 +288,9 @@ export class BlooioAdapter implements ChannelAdapter {
           ? { ok: true } : { ok: false, reason: "home_help_consent_changed" };
         if (row.id.startsWith(EXPECTED_INVITATION_PREFIX)) return !row.memberId && row.kind === "transactional" && await rt.expectedInvitationAdmission(tx, row)
           ? { ok: true } : { ok: false, reason: "expected_invitation_changed" };
-        if (acceptanceRelease(row)) return releaseAdmission(tx, row);
+        const notice = terminalNotice(row);
+        if (notice) return releaseAdmission(tx, row, notice, rt.pg.id, this.o.clock.now());
+        if (row.id.startsWith(bookedCancellationPrefix)) return { ok: false, reason: "opportunity_release_changed" };
         if (row.id.startsWith("day-before-reminder:")) return dayBeforeReminderAdmission(tx, row, this.o.clock.now());
         return probeAdmission(tx, row, this.o.clock.now());
       },

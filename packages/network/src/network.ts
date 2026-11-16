@@ -51,6 +51,7 @@ import {
   deliveredInvitee, feedbackDelayHours, initial as initialMeetingSettlement, organizerCanVerify, requestAttendanceSatisfied,
   dayBeforeReminderDue, dayBeforeReminderWindow, nearMeetingReminderLeadMs, restoreAttendance, settlementDelayDays, silentConfirmationDue, step as stepMeetingSettlement,
 } from "../../core/src/generated/meetingSettlement.ts";
+import { bookedCancellationAllowed, bookedCancellationPrefix } from "../../core/src/generated/outboundAdmission.ts";
 import {
   bookedReplyCurrent, closesForMinor, groupCanContinue, initial as initialOpportunity, releasesPartialAcceptance, step as stepOpportunity,
   type OpportunityLifecycle, type OpportunityPhase,
@@ -1703,15 +1704,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     // dropMember), which would close a shared booked date as "participant dropped" with no word to them.
     for (const o of [...this.opps.values()]) {
       if (!OPEN_STAGES.has(o.stage) || !o.participants.includes(m.id) || !o.participants.includes(target.id)) continue;
-      if (o.stage === "scheduled") {
-        // The other member hears it is off, never why or who (network-consent-18).
-        for (const id of o.participants) if (id !== m.id && o.status.get(id) === "yes" && o.bookedTold?.includes(id)) {
-          const x = this.members.get(id);
-          if (x) this.send(x, copy.declinedQuiet, { type: "cancellation", proposalId: o.id }, "cancellation");
-        }
-        this.ctx.log("meeting_cancelled", { proposalId: o.id, reason: "blocked" });
-      }
+      const booked = o.stage === "scheduled";
+      if (booked) this.ctx.log("meeting_cancelled", { proposalId: o.id, reason: "blocked" });
       this.close(o, "blocked");
+      // The other booked participants hear it is off without learning who acted.
+      if (booked) for (const id of o.participants) if (id !== m.id) this.sendBookedCancellation(o, id, copy.declinedQuiet);
     }
     if (verb === "report") {
       const points = this.trust.report(target.id, m.id, now, { met });
@@ -3057,9 +3054,6 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (m.awaiting?.oppId === o.id) m.awaiting = undefined;
     const still = o.participants.filter(p => o.status.get(p) === "yes");
     const keep = groupCanContinue(still.length);
-    // Only members who were told about the plan hear that it changed.
-    for (const id of still) if (o.bookedTold?.includes(id)) this.send(this.member(id), copy.dropNotice(m.first, keep), { type: "cancellation", proposalId: o.id }, "cancellation",
-      { hook: { t: "drop_notice", oppId: o.id } });
     if (!keep) {
       const next = stepOpportunity(opportunityLifecycle(o), { type: "close" });
       if (next.phase !== "Closed" || o.stage === "closed") return;
@@ -3073,7 +3067,22 @@ export class ConsentNetwork implements NetworkUnderTest {
         if (participant?.awaiting?.oppId === o.id) participant.awaiting = undefined;
       }
       this.ctx.log("opportunity_closed", { proposalId: o.id, reason: "participant dropped" });
+      for (const id of still) this.sendBookedCancellation(o, id, copy.dropNotice(m.first, false));
+      return;
     }
+    // Only members who were told about the plan hear that it changed.
+    for (const id of still) if (o.bookedTold?.includes(id)) this.send(this.member(id), copy.dropNotice(m.first, true), { type: "cancellation", proposalId: o.id }, "cancellation",
+      { hook: { t: "drop_notice", oppId: o.id } });
+  }
+
+  private sendBookedCancellation(o: Opp, id: MemberId, text: string) {
+    const member = this.members.get(id);
+    const now = this.now();
+    // spec/outboundAdmission.md, "A cancelled booking can notify a participant who received the booked plan"
+    if (!member || !bookedCancellationAllowed(o.stage === "closed" && o.closedFrom === "scheduled", o.status.get(id) === "yes",
+      o.bookedTold?.includes(id) === true, (o.meetingAt ?? now) - now)) return;
+    this.send(member, text, { type: "cancellation", proposalId: o.id }, "cancellation",
+      { key: `${bookedCancellationPrefix}${o.id}:${id}`, hook: { t: "drop_notice", oppId: o.id } });
   }
 
   /** Members the booked plan reached who neither confirmed nor dropped before it closed: an expired reveal. */

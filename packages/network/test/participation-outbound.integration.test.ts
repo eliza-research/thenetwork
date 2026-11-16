@@ -11,6 +11,7 @@ import { Mini } from "./mini.ts";
 test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the current member and opportunity", async () => {
   // spec/outboundAdmission.md, "A queued match invitation still needs the member's current settings"
   // spec/outboundAdmission.md, "A current row needs live approval and the recipient's eligibility"
+  // spec/outboundAdmission.md, "A cancelled booking can notify a participant who received the booked plan"
   const url = await migratedDb("participation_outbound");
   const sql = new SQL(url);
   const clock = new SimClock(Date.UTC(2026, 10, 16, 16));
@@ -108,6 +109,28 @@ test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the c
     await rt.deliver();
     expect(await adapter.queue.statusOf(delayedReminder)).toBe("suppressed_ineligible");
     expect(calls.some(call => call.idempotencyKey === `tn:${delayedReminder}`)).toBe(false);
+
+    for (const [suffix, text] of [["drop", "I can't make it."], ["block", "Block Blair"]] as const) {
+      const cancelledId = `${planId}-${suffix}`;
+      await adapter.engaged(phones[0]!);
+      await adapter.engaged(phones[1]!);
+      await rt.unitOfWork(async net => {
+        net.importState({ ...net.exportState(), opps: [{ ...booked, id: cancelledId }] });
+        await net.onInbound({ id: `cancel-${suffix}`, memberId: first!, body: text, ts: clock.now(), channel: "sms" });
+        rt.unit.sends.push({ id: `stale-${suffix}`, memberId: second!, to: phones[1], kind: "transactional",
+          body: "The previous meeting reminder.", type: "reminder", oppId: cancelledId, proactive: false, system: false, ts: clock.now() });
+      });
+      const cancellation = `booked-cancellation:${cancelledId}:${second}`;
+      expect(await sql`select state from network.opportunities where id=${cancelledId}`).toEqual([{ state: "CANCELLED" }]);
+      expect((await rt.pg.load())?.opps.find(o => o.id === cancelledId)).toMatchObject({ stage: "closed", closedFrom: "scheduled", bookedTold: expect.arrayContaining([second]) });
+      expect(await adapter.queue.statusOf(cancellation), suffix).toBe("sent");
+      expect(await adapter.queue.statusOf(`stale-${suffix}`)).toBe("expired");
+      await rt.deliver();
+      const delivered = calls.filter(call => call.idempotencyKey === `tn:${cancellation}`);
+      expect(delivered).toHaveLength(1);
+      expect(delivered[0]?.to).toBe(phones[1]);
+      expect(delivered[0]?.text).not.toMatch(/ari|blair|blocked|declined/i);
+    }
   } finally {
     await service.close();
     await sql.close();

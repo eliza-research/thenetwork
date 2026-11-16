@@ -6,11 +6,13 @@ export type Admission = "Proceed" | "Expired" | "ApprovalMissing" | "OptedOut" |
 /** Story: Recheck a queued message at send time / Replies, quiet hours and unanswered messages limit when a send can go out (spec/outboundAdmission.md) */
 export interface ConversationAdmission { decision: Admission; reengage: boolean }
 
+/** Story: Recheck a queued message at send time / A cancelled booking can notify a participant who received the booked plan (spec/outboundAdmission.md) */
+export const bookedCancellationPrefix: string = "booked-cancellation:";
 
 /** Story: Recheck a queued message at send time / A current row needs live approval and the recipient's eligibility (spec/outboundAdmission.md) */
 //@ pure
-export function closedOpportunityRowStale(closed: boolean, acceptanceRelease: boolean): boolean {
-  return closed && !acceptanceRelease;
+export function closedOpportunityRowStale(closed: boolean, terminalNotice: boolean): boolean {
+  return closed && !terminalNotice;
 }
 
 /** Story: Recheck a queued message at send time / A current row needs live approval and the recipient's eligibility (spec/outboundAdmission.md) */
@@ -42,6 +44,19 @@ export function duePolicy(stale: boolean): Admission {
 export function lawOptedOutOnlyGetsCompliance(compliance: boolean): boolean {
   //@ ensures \result === true
   return !(consentPolicy(compliance, true) === "Proceed") || compliance;
+}
+
+/** Story: Recheck a queued message at send time / A cancelled booking can notify a participant who received the booked plan (spec/outboundAdmission.md) */
+//@ pure
+export function bookedCancellationAllowed(cancelled: boolean, acceptedSeat: boolean, told: boolean, remainingMs: number): boolean {
+  return cancelled && acceptedSeat && told && remainingMs > 0;
+}
+
+/** Story: Recheck a queued message at send time / A cancelled booking can notify a participant who received the booked plan (spec/outboundAdmission.md) */
+//@ pure
+export function lawBookedCancellationNeedsPriorBooking(cancelled: boolean, acceptedSeat: boolean, told: boolean, remainingMs: number): boolean {
+  //@ ensures \result === true
+  return !bookedCancellationAllowed(cancelled, acceptedSeat, told, remainingMs) || (cancelled && acceptedSeat && told);
 }
 
 /** Story: Recheck a queued message at send time / A queued match invitation still needs the member's current settings (spec/outboundAdmission.md) */
