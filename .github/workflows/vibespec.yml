@@ -10,6 +10,12 @@ on:
       - 'scripts/spec-snapshots.ts'
       - 'tools/vibestack/**'
       - 'scripts/vibestack.ts'
+      - 'sites/**'
+      - 'deploy/router.ts'
+      - 'packages/platform/src/**'
+      - 'scripts/sites-dev.ts'
+      - 'test/bombadil.ts'
+      - 'test/fixtures/browserSignup.ts'
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
@@ -23,6 +29,12 @@ on:
       - 'scripts/spec-snapshots.ts'
       - 'tools/vibestack/**'
       - 'scripts/vibestack.ts'
+      - 'sites/**'
+      - 'deploy/router.ts'
+      - 'packages/platform/src/**'
+      - 'scripts/sites-dev.ts'
+      - 'test/bombadil.ts'
+      - 'test/fixtures/browserSignup.ts'
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
@@ -49,6 +61,22 @@ jobs:
         working-directory: tools/vibestack
       - if: hashFiles('spec/**/*.md', 'packages/core/src/generated/*.ts') != ''
         run: pnpm run spec:check-generated
+
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - run: npm install --global corepack@0.35.0 && corepack enable pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run spec:setup
+      - run: pnpm --dir tools/vibestack exec playwright install --with-deps chromium
+      - run: pnpm run spec:explore
 
   full-check:
     if: github.event_name == 'workflow_dispatch'

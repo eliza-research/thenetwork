@@ -128,6 +128,7 @@ from The Network root.
 | | `pnpm run spec:sync` | Generate the TypeScript snapshots and compile the serving VibeLang shells. |
 | | `pnpm run spec:check-generated` | Compare checked-in TypeScript and VibeLang output with fresh generation. |
 | | `pnpm run spec:conformance <module>` | Run one spec's simulation and compare it with the app through its driver or recorded trace. |
+| | `pnpm run spec:explore` | Explore the real Peon signup page in Chromium. |
 | | `pnpm run quint:check` | Exercise the action-based flows in `spec/models/`. |
 | | `pnpm run typecheck`, `pnpm run test:integration`, `pnpm run test:e2e`, `pnpm run sim` | Check the application and the live-code seams. |
 
@@ -159,10 +160,17 @@ models stay in `spec/product/` and `spec/models/`. The review ledger,
 `spec/lock.json`, records product owner approval and goes with the spec. See the [standalone stage definitions](SPEC.md#stages-of-pnpm-check)
 and the [Network test policy](docs/tests-policy.md).
 
-Vibestack includes [Bombadil browser exploration](SPEC.md#exploring-the-page)
-for locally served pages. The Network's current spec projection runs the
-journey drivers listed above. Application pages use the existing browser
-and end-to-end coverage while their Vibestack page properties are added.
+The [Bombadil browser check](SPEC.md#exploring-the-page) builds peon.biz and
+runs the actual signup page against the local platform API. A synthetic OTP
+provider opens the browser in a confirmed session without sending a text.
+Bombadil exercises consent, signup, and reloading the resulting membership.
+
+```bash
+pnpm --dir tools/vibestack exec playwright install chromium
+pnpm run spec:explore
+```
+
+A failed exploration is kept in `test/__traces__/bombadil` for the next run.
 
 ## What's here
 

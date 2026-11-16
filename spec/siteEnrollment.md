@@ -1,6 +1,6 @@
 # Enroll through the site API
 
-An agent uses the app's authenticated site session to submit a member-approved profile. The same account operation also accepts already validated, typed requests from internal callers. The browser Join form is retired. The API and storage shell still own authentication, input decoding, lock acquisition, persistence and the join hook.
+An agent uses the app's authenticated site session to submit a member-approved profile. The same account operation also accepts already validated, typed requests from internal callers. Peon still offers browser signup for its waitlist. Network, Slop and Friends retired their browser Join forms. The API and storage shell still own authentication, input decoding, lock acquisition, persistence and the join hook.
 
 ## Story: Save my approved profile in the app I asked for
 

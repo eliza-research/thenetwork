@@ -15,6 +15,7 @@
     "spec:sync": "node scripts/spec-snapshots.ts",
     "spec:check-generated": "node scripts/spec-snapshots.ts --check",
     "spec:conformance": "node scripts/vibestack.ts conformance",
+    "spec:explore": "node scripts/vibestack.ts explore",
     "quint:check": "node --import tsx --env-file-if-exists=.env scripts/quint-check.ts",
     "test:integration": "node --env-file-if-exists=.env node_modules/vitest/vitest.mjs run --project integration",
     "test:e2e": "node --env-file-if-exists=.env node_modules/vitest/vitest.mjs run --project e2e",

@@ -202,11 +202,46 @@ export async function runSpec(project: string, args: string[]): Promise<number> 
   });
 }
 
+async function checkBrowser(nightly: boolean): Promise<number> {
+  const { explore } = await import("../tools/vibestack/vibestack/explore.ts");
+  const { show } = await import("../tools/vibestack/vibestack/spec.ts");
+  const project = mkdtempSync(join(tmpdir(), "thenetwork-browser-"));
+  const saved = "test/__traces__/bombadil";
+  const retained = join(root, saved);
+  const projected = join(project, saved);
+  try {
+    const packageManager = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).packageManager;
+    writeFileSync(join(project, "package.json"), JSON.stringify({
+      name: "thenetwork-browser", private: true, type: "module", packageManager,
+      scripts: { start: "node --import tsx start-browser.mjs" },
+    }));
+    const fixture = pathToFileURL(join(root, "test/fixtures/browserSignup.ts")).href;
+    writeFileSync(join(project, "start-browser.mjs"), `import ${JSON.stringify(fixture)};\n`);
+    // The explorer detects a page at index.html. The fixture builds and serves the real /join.
+    copyFileSync(join(root, "sites/peon.biz/public/join.html"), join(project, "index.html"));
+    mkdirSync(join(project, "test"));
+    copyFileSync(join(root, "test/bombadil.ts"), join(project, "test/bombadil.ts"));
+    mkdirSync(join(project, "node_modules/@antithesishq"), { recursive: true });
+    symlinkSync(join(root, "node_modules/tsx"), join(project, "node_modules/tsx"), "junction");
+    symlinkSync(join(toolkit, "node_modules/@antithesishq/bombadil"), join(project, "node_modules/@antithesishq/bombadil"), "junction");
+    if (existsSync(retained)) cpSync(retained, projected, { recursive: true });
+    // The checked page uses source outside the projection, so do not cache a pass.
+    const results = await explore(project, async (_fingerprint, run) => run(), nightly ? "nightly" : "normal", root);
+    for (const [ok, stage, summary, detail = "", where] of results) console.log(show({ ok, stage, summary, detail, where }));
+    rmSync(retained, { recursive: true, force: true });
+    if (existsSync(projected)) cpSync(projected, retained, { recursive: true });
+    return results.length && results.every(([ok]) => ok) ? 0 : 1;
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+}
+
 async function main([command, ...args]: string[]) {
   const patterns: Record<string, string[][]> = {
     gen: [[]],
     check: [[], ["--json"], ["--nightly"], ["--json", "--nightly"], ["--nightly", "--json"]],
     conformance: [["*"], ["*", "--nightly"]],
+    explore: [[], ["--nightly"]],
     accept: [[], ["unproved"]],
     new: [[], ["*"]],
     studio: [[], ["--port", "*"]],
@@ -215,6 +250,7 @@ async function main([command, ...args]: string[]) {
   const valid = Object.hasOwn(patterns, command) && patterns[command].some((pattern) =>
     args.length === pattern.length && pattern.every((part, index) => part === "*" || part === args[index]));
   if (!valid) throw new Error(`Unsupported Vibestack command or arguments: ${[command, ...args].join(" ")}`);
+  if (command === "explore") return await checkBrowser(args[0] === "--nightly");
   const module = command === "conformance" ? args[0] : undefined;
   if (module !== undefined && !/^[a-z]\w*$/.test(module)) throw new Error(`Invalid Vibestack module name: ${module}`);
   const files = formalFiles();
