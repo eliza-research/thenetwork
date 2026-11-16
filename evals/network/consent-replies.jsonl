@@ -354,3 +354,14 @@
 {"text":"2 hours works, Saturday I'm at a wedding","label":"unclear","keys":[]}
 {"text":"2 hours works, Saturday 11am","label":"unclear","keys":[]}
 {"text":"2 hours works, Saturday 11am, too","label":"yes","keys":["b"]}
+{"text":"in 2 hours works","label":"unclear"}
+{"text":"in an hour works","label":"unclear"}
+{"text":"in 30 minutes works","label":"unclear"}
+{"text":"can do in 2 hours","label":"unclear"}
+{"text":"in 2 days works","label":"unclear"}
+{"text":"in a week works","label":"unclear"}
+{"text":"yes, in 2 hours","label":"unclear"}
+{"text":"in half an hour works","label":"unclear"}
+{"text":"in two hours works","label":"unclear"}
+{"text":"within 2 hours works","label":"unclear"}
+{"text":"Saturday works, and in 2 hours too","label":"yes","keys":["b"]}
