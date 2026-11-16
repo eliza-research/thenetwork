@@ -1,4 +1,4 @@
-// GENERATED from spec/cloudAuthority.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/cloudAuthority.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Keep site access tied to current Cloud authority / The app's authority and proof choose how a site session is checked (spec/cloudAuthority.md:9) */

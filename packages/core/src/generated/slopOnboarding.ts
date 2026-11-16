@@ -1,4 +1,4 @@
-// GENERATED from spec/slopOnboarding.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/slopOnboarding.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Review the information used for dating / Age restrictions stop dating onboarding before a prompt (spec/slopOnboarding.md:9) */
@@ -100,8 +100,8 @@ export function sometimesQuestion(p: PromptRun): boolean {
 export function chooseQuestion(p: PromptRun, facts: QuestionFacts, unavailable: string[]): PromptRun {
   //@ ensures (inv(p) && canChooseQuestion(p)) ==> alwaysReadyHasReason(\result)
   //@ ensures (inv(p) && canChooseQuestion(p)) ==> stepRestrictedStaysWithheld(p, \result)
-  const reason: string = nextQuestionReason(facts, unavailable);
-  return { phase: reason === "" ? "NoQuestion" : "QuestionReady", reason: reason };
+  const local_0 = nextQuestionReason(facts, unavailable);
+  return { phase: local_0 === "" ? "NoQuestion" : "QuestionReady", reason: local_0 };
 }
 
 /** Story: Review the information used for dating / A correction needs another confirmation (spec/slopOnboarding.md:91) */
@@ -113,7 +113,7 @@ export function confirmationAfterAnswer(changed: boolean, affirmative: boolean, 
 /** Story: Review the information used for dating / A correction needs another confirmation (spec/slopOnboarding.md:91) */
 //@ pure
 export function countAfterPrompt(previous: number): number {
-  return previous + 1;
+  return exact_slopOnboarding(previous + 1);
 }
 
 /** Story: Review the information used for dating / A correction needs another confirmation (spec/slopOnboarding.md:91) */
@@ -156,10 +156,11 @@ export function parseEvent(x: unknown): Event | undefined {
   } catch {
     return undefined;
   }
+  const is_QuestionFacts = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.ageMissing === "boolean" && typeof v.genderMissing === "boolean" && typeof v.seeksMissing === "boolean" && typeof v.ageRangeMissing === "boolean" && typeof v.distanceMissing === "boolean" && typeof v.locationMissing === "boolean" && typeof v.unknownZip === "boolean" && typeof v.dealbreakersMissing === "boolean" && typeof v.goalMissing === "boolean" && typeof v.interestsMissing === "boolean" && typeof v.activitiesMissing === "boolean" && typeof v.freeMissing === "boolean";
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "resolveReadback" && typeof raw.textAvailable === "boolean") return { type: "resolveReadback", textAvailable: raw.textAvailable };
   if (raw.type === "routeProfile" && typeof raw.restricted === "boolean" && typeof raw.wantsReadback === "boolean") return { type: "routeProfile", restricted: raw.restricted, wantsReadback: raw.wantsReadback };
-  if (raw.type === "chooseQuestion" && typeof raw.facts === "object" && raw.facts !== null && !Array.isArray(raw.facts) && typeof raw.facts.ageMissing === "boolean" && typeof raw.facts.genderMissing === "boolean" && typeof raw.facts.seeksMissing === "boolean" && typeof raw.facts.ageRangeMissing === "boolean" && typeof raw.facts.distanceMissing === "boolean" && typeof raw.facts.locationMissing === "boolean" && typeof raw.facts.unknownZip === "boolean" && typeof raw.facts.dealbreakersMissing === "boolean" && typeof raw.facts.goalMissing === "boolean" && typeof raw.facts.interestsMissing === "boolean" && typeof raw.facts.activitiesMissing === "boolean" && typeof raw.facts.freeMissing === "boolean" && Array.isArray(raw.unavailable) && raw.unavailable.every((x0: any) => typeof x0 === "string")) return { type: "chooseQuestion", facts: ({ ageMissing: raw.facts.ageMissing, genderMissing: raw.facts.genderMissing, seeksMissing: raw.facts.seeksMissing, ageRangeMissing: raw.facts.ageRangeMissing, distanceMissing: raw.facts.distanceMissing, locationMissing: raw.facts.locationMissing, unknownZip: raw.facts.unknownZip, dealbreakersMissing: raw.facts.dealbreakersMissing, goalMissing: raw.facts.goalMissing, interestsMissing: raw.facts.interestsMissing, activitiesMissing: raw.facts.activitiesMissing, freeMissing: raw.facts.freeMissing }), unavailable: raw.unavailable.map((x0: any) => x0) };
+  if (raw.type === "chooseQuestion" && is_QuestionFacts(raw.facts) && Array.isArray(raw.unavailable) && raw.unavailable.every((x0: any) => typeof x0 === "string")) return { type: "chooseQuestion", facts: ({ ageMissing: raw.facts.ageMissing, genderMissing: raw.facts.genderMissing, seeksMissing: raw.facts.seeksMissing, ageRangeMissing: raw.facts.ageRangeMissing, distanceMissing: raw.facts.distanceMissing, locationMissing: raw.facts.locationMissing, unknownZip: raw.facts.unknownZip, dealbreakersMissing: raw.facts.dealbreakersMissing, goalMissing: raw.facts.goalMissing, interestsMissing: raw.facts.interestsMissing, activitiesMissing: raw.facts.activitiesMissing, freeMissing: raw.facts.freeMissing }), unavailable: raw.unavailable.map((x0: any) => x0) };
   return undefined;
 }
 
@@ -186,4 +187,10 @@ export function parseState(x: unknown): PromptRun | undefined {
 export function initialHolds(): PromptRun {
   //@ ensures inv(\result)
   return initial;
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_slopOnboarding(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
 }

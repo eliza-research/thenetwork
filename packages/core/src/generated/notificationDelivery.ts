@@ -1,4 +1,4 @@
-// GENERATED from spec/notificationDelivery.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/notificationDelivery.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 
@@ -10,7 +10,7 @@ export const surfaceRecentMs: number = 1209600000;
 /** Story: Get a requested update when it is due / Requested updates are due at once (spec/notificationDelivery.md:9) */
 //@ pure
 export function inboxDueAt(createdAt: number, urgency: string, urgentDelay: number, digestDelay: number): number {
-  return urgency === "requested" ? createdAt : (urgency === "urgent" ? createdAt + urgentDelay : createdAt + digestDelay);
+  return urgency === "requested" ? createdAt : (urgency === "urgent" ? exact_notificationDelivery(createdAt + urgentDelay) : exact_notificationDelivery(createdAt + digestDelay));
 }
 
 /** Story: Get a requested update when it is due / Requested updates are due at once (spec/notificationDelivery.md:9) */
@@ -35,11 +35,17 @@ export function surfaceIsUsable(active: boolean, ignoredStreak: number): boolean
 /** Story: Receive updates on a surface I use / A useful assistant must lead the other surfaces (spec/notificationDelivery.md:47) */
 //@ pure
 export function deliverySurfaceScore(acted: number, ignored: number, recentUse: boolean, active: boolean): number {
-  return acted * 3 + (recentUse ? 2 : 0) + (active ? 1 : 0) - ignored * 2;
+  return exact_notificationDelivery(exact_notificationDelivery(exact_notificationDelivery(exact_notificationDelivery(acted * 3) + (recentUse ? 2 : 0)) + (active ? 1 : 0)) - exact_notificationDelivery(ignored * 2));
 }
 
 /** Story: Receive updates on a surface I use / A useful assistant must lead the other surfaces (spec/notificationDelivery.md:47) */
 //@ pure
 export function surfaceHasClearLead(bestScore: number, otherScore: number): boolean {
-  return bestScore >= 3 && bestScore - otherScore >= 2;
+  return bestScore >= 3 && exact_notificationDelivery(bestScore - otherScore) >= 2;
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_notificationDelivery(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
 }

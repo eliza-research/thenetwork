@@ -1,4 +1,4 @@
-// GENERATED from spec/profileSuggestionReview.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/profileSuggestionReview.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Review suggestions before they change my profile / A review starts with no authorized batch (spec/profileSuggestionReview.md:9) */
@@ -49,8 +49,8 @@ export function canCheckBatch(review: ReviewRequest): boolean {
 export function checkBatch(review: ReviewRequest, pending: boolean, ownerMatches: boolean, batchIdValid: boolean, revision: number, asOf: number, expiresAt: number): ReviewRequest {
   //@ ensures (inv(review) && canCheckBatch(review)) ==> alwaysReviewNeedsEligibleBatch(\result)
   //@ ensures (inv(review) && canCheckBatch(review)) ==> alwaysActionNeedsBoundCommand(\result)
-  const eligible: boolean = pending && ownerMatches && batchIdValid && revision > 0 && reviewBeforeExpiry(asOf, expiresAt);
-  return { ...review, metadataApproved: eligible, phase: eligible ? "NeedsItems" : "BatchUnavailable" };
+  const local_0 = pending && ownerMatches && batchIdValid && revision > 0 && reviewBeforeExpiry(asOf, expiresAt);
+  return { ...review, metadataApproved: local_0, phase: local_0 ? "NeedsItems" : "BatchUnavailable" };
 }
 
 /** Story: Review suggestions before they change my profile / Only a bounded batch of distinct, valid suggestions can be shown (spec/profileSuggestionReview.md:41) */
@@ -64,8 +64,8 @@ export function canCheckItems(review: ReviewRequest): boolean {
 export function checkItems(review: ReviewRequest, itemCount: number, distinctIds: boolean, allItemsValid: boolean): ReviewRequest {
   //@ ensures (inv(review) && canCheckItems(review)) ==> alwaysReviewNeedsEligibleBatch(\result)
   //@ ensures (inv(review) && canCheckItems(review)) ==> alwaysActionNeedsBoundCommand(\result)
-  const eligible: boolean = itemCount > 0 && itemCount <= maxSuggestions && distinctIds && allItemsValid;
-  return { ...review, itemsApproved: eligible, phase: eligible ? "ReadyToReview" : "BatchUnavailable" };
+  const local_1 = itemCount > 0 && itemCount <= maxSuggestions && distinctIds && allItemsValid;
+  return { ...review, itemsApproved: local_1, phase: local_1 ? "ReadyToReview" : "BatchUnavailable" };
 }
 
 /** Story: Review suggestions before they change my profile / A command targets this batch revision and one existing item (spec/profileSuggestionReview.md:57) */
@@ -79,9 +79,9 @@ export function canReadCommand(review: ReviewRequest): boolean {
 export function readCommand(review: ReviewRequest, verb: ReviewVerb, tokenMatches: boolean, itemExists: boolean, scopeGiven: boolean, wordingGiven: boolean, wordingValid: boolean): ReviewRequest {
   //@ ensures (inv(review) && canReadCommand(review)) ==> alwaysReviewNeedsEligibleBatch(\result)
   //@ ensures (inv(review) && canReadCommand(review)) ==> alwaysActionNeedsBoundCommand(\result)
-  const bound: boolean = tokenMatches && itemExists;
-  const outcome: ReviewPhase = !bound ? "CommandRefused" : (verb === "AcceptVerb" && scopeGiven && !wordingGiven ? "AcceptItem" : (verb === "RejectVerb" && !scopeGiven && !wordingGiven ? "RejectItem" : (verb === "EditVerb" && !scopeGiven && wordingGiven && wordingValid ? "PreviewEdit" : "CommandRefused")));
-  return { ...review, phase: outcome, commandBound: bound };
+  const local_2 = tokenMatches && itemExists;
+  const local_3: ReviewPhase = !local_2 ? "CommandRefused" : (verb === "AcceptVerb" && scopeGiven && !wordingGiven ? "AcceptItem" : (verb === "RejectVerb" && !scopeGiven && !wordingGiven ? "RejectItem" : (verb === "EditVerb" && !scopeGiven && wordingGiven && wordingValid ? "PreviewEdit" : "CommandRefused")));
+  return { ...review, phase: local_3, commandBound: local_2 };
 }
 
 /** Story: Review suggestions before they change my profile / A review action requires an eligible batch and a bound command (spec/profileSuggestionReview.md:77) */

@@ -1,4 +1,4 @@
-// GENERATED from spec/candidateScreening.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/candidateScreening.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Refuse an ineligible match before scoring it / Hard checks run in a fixed order (spec/candidateScreening.md:9) */

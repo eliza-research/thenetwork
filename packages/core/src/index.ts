@@ -17,4 +17,5 @@ export {
   availabilityCheckInBudget, initialInviteBudget, minorInitialInviteBudget, planInviteBudget, unsolicitedStateBudget,
   type OutreachBudget,
 } from "./generated/participationBudgets.ts";
-export { sharedDatingMarket, withinMutualRadius } from "./generated/datingRadius.ts";
+export { withinMutualRadius } from "./dating-radius.ts";
+export { sharedDatingMarket } from "./generated/datingRadius.ts";

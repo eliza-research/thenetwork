@@ -1,6 +1,6 @@
 # Dating radius
 
-The [engine flow model](models/engine_rules.md) checks `radiusMutual` and `pairDecisionSymmetric` with a small set of locations and whole distances. The runtime calculates distance from coarse cells in miles, including fractional miles, and supplies it to these comparisons without rounding.
+The [engine flow model](models/engine_rules.md) checks `radiusMutual` and `pairDecisionSymmetric` with a small set of locations and whole distances. The runtime calculates distance from coarse cells in miles, including fractional miles, adds the privacy margin, and supplies the adjusted distance to these comparisons without rounding.
 
 ## Story: Find a date within both travel limits
 
@@ -20,14 +20,14 @@ pure def sharedDatingMarket(inFirst: bool, inSecond: bool, listed: bool): bool =
 The engine adds the privacy margin to the distance between the two coarse cells. Equality with either limit is allowed. The engine handles an unknown limit separately and orders eligible markets by distance.
 
 ```quint
-pure def withinMutualRadius(miles: int, margin: int, firstLimit: int, secondLimit: int): bool =
-  miles + margin <= firstLimit and miles + margin <= secondLimit
+pure def withinAdjustedRadius(adjustedMiles: int, firstLimit: int, secondLimit: int): bool =
+  adjustedMiles <= firstLimit and adjustedMiles <= secondLimit
 
-pure def lawRadiusMutual(miles: int, margin: int, firstLimit: int, secondLimit: int): bool =
-  withinMutualRadius(miles, margin, firstLimit, secondLimit) implies
-    (miles + margin <= firstLimit and miles + margin <= secondLimit)
+pure def lawRadiusMutual(adjustedMiles: int, firstLimit: int, secondLimit: int): bool =
+  withinAdjustedRadius(adjustedMiles, firstLimit, secondLimit) implies
+    (adjustedMiles <= firstLimit and adjustedMiles <= secondLimit)
 
-pure def lawPairDecisionSymmetric(miles: int, margin: int, firstLimit: int, secondLimit: int): bool =
-  withinMutualRadius(miles, margin, firstLimit, secondLimit) ==
-    withinMutualRadius(miles, margin, secondLimit, firstLimit)
+pure def lawPairDecisionSymmetric(adjustedMiles: int, firstLimit: int, secondLimit: int): bool =
+  withinAdjustedRadius(adjustedMiles, firstLimit, secondLimit) ==
+    withinAdjustedRadius(adjustedMiles, secondLimit, firstLimit)
 ```

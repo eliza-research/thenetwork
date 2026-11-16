@@ -1,4 +1,4 @@
-// GENERATED from spec/chatRetry.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/chatRetry.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Finish a structured request within its budget / The configured attempt budget limits how many requests start (spec/chatRetry.md:9) */
@@ -89,13 +89,13 @@ export function preflight(r: RetryRun, cancelled: boolean, expired: boolean): Re
   //@ ensures (inv(r) && canPreflight(r)) ==> stepOnlyStartConsumesAnAttempt(r, "preflight", \result)
   //@ ensures (inv(r) && canPreflight(r)) ==> stepOkOnlyAfterValidation(r, "preflight", \result)
   //@ ensures (inv(r) && canPreflight(r)) ==> stepTerminalPhasesStayClosed(r, \result)
-  return cancelled ? ({ ...r, phase: "Aborted" } as RetryRun) : (expired ? ({ ...r, phase: "Expired" } as RetryRun) : ({ ...r, phase: "Requesting", attemptsStarted: r.attemptsStarted + 1 } as RetryRun));
+  return cancelled ? ({ ...r, phase: "Aborted" } as RetryRun) : (expired ? ({ ...r, phase: "Expired" } as RetryRun) : ({ ...r, phase: "Requesting", attemptsStarted: exact_chatRetry(r.attemptsStarted + 1) } as RetryRun));
 }
 
 /** Story: Finish a structured request within its budget / Caller cancellation wins over a deadline (spec/chatRetry.md:44) */
 //@ pure
 export function stepOnlyStartConsumesAnAttempt(before: RetryRun, via: string, after: RetryRun): boolean {
-  return via === "preflight" && after.phase === "Requesting" ? after.attemptsStarted === before.attemptsStarted + 1 : after.attemptsStarted === before.attemptsStarted;
+  return via === "preflight" && after.phase === "Requesting" ? after.attemptsStarted === exact_chatRetry(before.attemptsStarted + 1) : after.attemptsStarted === before.attemptsStarted;
 }
 
 /** Story: Finish a structured request within its budget / A validated reply completes the request (spec/chatRetry.md:63) */
@@ -243,4 +243,10 @@ export function parseState(x: unknown): RetryRun | undefined {
 export function initialHolds(): RetryRun {
   //@ ensures inv(\result)
   return initial;
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_chatRetry(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
 }

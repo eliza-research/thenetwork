@@ -1,4 +1,4 @@
-// GENERATED from spec/accountPrivacy.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/accountPrivacy.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md:9) */

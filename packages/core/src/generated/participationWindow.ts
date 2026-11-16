@@ -1,4 +1,4 @@
-// GENERATED from spec/participationWindow.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/participationWindow.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Set availability for a time window / STOP takes precedence over a participation setting (spec/participationWindow.md:22) */

@@ -1,4 +1,4 @@
-// GENERATED from spec/exposureFloor.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/exposureFloor.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Reserve exposure for eligible candidates with little history / Retrieval starts with a fixed allocation of slots (spec/exposureFloor.md:9) */
@@ -53,14 +53,14 @@ export function reserveSlot(f: FloorAllocation, alreadyIncluded: boolean, priori
   //@ ensures (inv(f) && canReserveSlot(f, alreadyIncluded, priority, similarityEligible)) ==> alwaysAllocationWithinLimit(\result)
   //@ ensures (inv(f) && canReserveSlot(f, alreadyIncluded, priority, similarityEligible)) ==> stepEachReservationUsesOneSlot(f, "reserveSlot", \result)
   //@ ensures (inv(f) && canReserveSlot(f, alreadyIncluded, priority, similarityEligible)) ==> stepFullStaysFull(f, \result)
-  const reserved: number = f.reserved + 1;
-  return { ...f, reserved: reserved, phase: reserved === f.slotLimit ? "Full" : "Open" };
+  const local_0 = exact_exposureFloor(f.reserved + 1);
+  return { ...f, reserved: local_0, phase: local_0 === f.slotLimit ? "Full" : "Open" };
 }
 
 /** Story: Reserve exposure for eligible candidates with little history / A slot goes to an eligible candidate outside the prior results (spec/exposureFloor.md:35) */
 //@ pure
 export function stepEachReservationUsesOneSlot(before: FloorAllocation, via: string, after: FloorAllocation): boolean {
-  return via === "reserveSlot" ? after.reserved === before.reserved + 1 : after.reserved === before.reserved;
+  return via === "reserveSlot" ? after.reserved === exact_exposureFloor(before.reserved + 1) : after.reserved === before.reserved;
 }
 
 /** Story: Reserve exposure for eligible candidates with little history / A slot goes to an eligible candidate outside the prior results (spec/exposureFloor.md:35) */
@@ -135,4 +135,10 @@ export function parseState(x: unknown): FloorAllocation | undefined {
 export function initialHolds(): FloorAllocation {
   //@ ensures inv(\result)
   return initial;
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_exposureFloor(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
 }

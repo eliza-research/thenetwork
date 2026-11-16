@@ -1,4 +1,4 @@
-// GENERATED from spec/opportunityLifecycle.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/opportunityLifecycle.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md:9) */

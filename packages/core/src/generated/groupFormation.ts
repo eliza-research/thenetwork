@@ -1,4 +1,4 @@
-// GENERATED from spec/groupFormation.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/groupFormation.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Form a compatible group and keep eligible backups / Only eligible adults enter the group search (spec/groupFormation.md:9) */
@@ -122,7 +122,7 @@ export function reserveAlternate(g: Formation, member: string): Formation {
   //@ ensures (inv(g) && canReserveAlternate(g, member)) ==> alwaysPrimaryRequiredAfterSearch(\result)
   //@ ensures (inv(g) && canReserveAlternate(g, member)) ==> alwaysAlternateLimitHolds(\result)
   //@ ensures (inv(g) && canReserveAlternate(g, member)) ==> stepFinishedStaysFinished(g, \result)
-  return { ...g, alternates: [...g.alternates, member] };
+  return { ...g, alternates: g.alternates.concat([member]) };
 }
 
 /** Story: Form a compatible group and keep eligible backups / An alternate can join the primary group in its city (spec/groupFormation.md:56) */

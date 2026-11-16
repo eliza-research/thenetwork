@@ -1,4 +1,4 @@
-// GENERATED from spec/savedProfileRead.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/savedProfileRead.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Read my saved profile / An ordinary turn starts without a profile read (spec/savedProfileRead.md:9) */
@@ -50,8 +50,8 @@ export function lawAChangeIsAnOrdinaryTurn(facts: ReadFacts): boolean {
 export function classifyRead(request: ProfileRead, facts: ReadFacts): ProfileRead {
   //@ ensures (inv(request) && canClassifyRead(request)) ==> alwaysOnlyOwnProfileShown(\result)
   //@ ensures (inv(request) && canClassifyRead(request)) ==> alwaysNoReadReplyWithoutAuthority(\result)
-  const intent: ReadIntent = readIntent(facts);
-  return { ...request, intent: intent, phase: intent === "OrdinaryTurn" ? "UseConversation" : "AwaitingAuthority" };
+  const local_0: ReadIntent = readIntent(facts);
+  return { ...request, intent: local_0, phase: local_0 === "OrdinaryTurn" ? "UseConversation" : "AwaitingAuthority" };
 }
 
 /** Story: Read my saved profile / Current membership and consent authorize a reply (spec/savedProfileRead.md:82) */
@@ -65,8 +65,8 @@ export function canResolveRead(request: ProfileRead): boolean {
 export function resolveRead(request: ProfileRead, sameMember: boolean, optedOut: boolean, requestedAppMatches: boolean): ProfileRead {
   //@ ensures (inv(request) && canResolveRead(request)) ==> alwaysOnlyOwnProfileShown(\result)
   //@ ensures (inv(request) && canResolveRead(request)) ==> alwaysNoReadReplyWithoutAuthority(\result)
-  const phase: ReadPhase = !sameMember || optedOut ? "StaySilent" : (request.intent === "OtherProfile" ? "RefuseOtherProfile" : (request.intent === "UnclearRead" ? "AskWhichApp" : (request.intent === "OwnRead" ? "ShowOwnProfile" : (request.intent === "NamedRead" ? (requestedAppMatches ? "ShowOwnProfile" : "DifferentAppLine") : "StaySilent"))));
-  return { ...request, phase: phase, sameMember: sameMember, optedOut: optedOut, requestedAppMatches: requestedAppMatches };
+  const local_1: ReadPhase = !sameMember || optedOut ? "StaySilent" : (request.intent === "OtherProfile" ? "RefuseOtherProfile" : (request.intent === "UnclearRead" ? "AskWhichApp" : (request.intent === "OwnRead" ? "ShowOwnProfile" : (request.intent === "NamedRead" ? (requestedAppMatches ? "ShowOwnProfile" : "DifferentAppLine") : "StaySilent"))));
+  return { ...request, phase: local_1, sameMember: sameMember, optedOut: optedOut, requestedAppMatches: requestedAppMatches };
 }
 
 /** Story: Read my saved profile / Only the sender's saved profile for the routed app is shown (spec/savedProfileRead.md:100) */
@@ -142,8 +142,9 @@ export function parseEvent(x: unknown): Event | undefined {
   } catch {
     return undefined;
   }
+  const is_ReadFacts = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.readForm === "boolean" && typeof v.namesProfile === "boolean" && typeof v.asksChange === "boolean" && typeof v.ownSubject === "boolean" && typeof v.endsWithProfile === "boolean" && typeof v.hasAppName === "boolean" && typeof v.appKnown === "boolean";
   if (typeof raw !== "object" || raw === null) return undefined;
-  if (raw.type === "classifyRead" && typeof raw.facts === "object" && raw.facts !== null && !Array.isArray(raw.facts) && typeof raw.facts.readForm === "boolean" && typeof raw.facts.namesProfile === "boolean" && typeof raw.facts.asksChange === "boolean" && typeof raw.facts.ownSubject === "boolean" && typeof raw.facts.endsWithProfile === "boolean" && typeof raw.facts.hasAppName === "boolean" && typeof raw.facts.appKnown === "boolean") return { type: "classifyRead", facts: ({ readForm: raw.facts.readForm, namesProfile: raw.facts.namesProfile, asksChange: raw.facts.asksChange, ownSubject: raw.facts.ownSubject, endsWithProfile: raw.facts.endsWithProfile, hasAppName: raw.facts.hasAppName, appKnown: raw.facts.appKnown }) };
+  if (raw.type === "classifyRead" && is_ReadFacts(raw.facts)) return { type: "classifyRead", facts: ({ readForm: raw.facts.readForm, namesProfile: raw.facts.namesProfile, asksChange: raw.facts.asksChange, ownSubject: raw.facts.ownSubject, endsWithProfile: raw.facts.endsWithProfile, hasAppName: raw.facts.hasAppName, appKnown: raw.facts.appKnown }) };
   if (raw.type === "resolveRead" && typeof raw.sameMember === "boolean" && typeof raw.optedOut === "boolean" && typeof raw.requestedAppMatches === "boolean") return { type: "resolveRead", sameMember: raw.sameMember, optedOut: raw.optedOut, requestedAppMatches: raw.requestedAppMatches };
   return undefined;
 }

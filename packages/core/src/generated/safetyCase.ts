@@ -1,4 +1,4 @@
-// GENERATED from spec/safetyCase.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/safetyCase.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Review a safety case without removing a hold by accident / An event opens a case or adds to its current record (spec/safetyCase.md:9) */

@@ -1,4 +1,4 @@
-// GENERATED from spec/textEnrollment.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/textEnrollment.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Text the Network to join an app / Dedicated lines and explicit app choices take priority (spec/textEnrollment.md:9) */
@@ -248,10 +248,11 @@ export function parseEvent(x: unknown): Event | undefined {
   } catch {
     return undefined;
   }
+  const is_JoinAnswerFacts = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.hasAge === "boolean" && typeof v.hasName === "boolean" && typeof v.invalidHome === "boolean";
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "checkJoinBan" && typeof raw.banned === "boolean") return { type: "checkJoinBan", banned: raw.banned };
   if (raw.type === "checkInvitation" && typeof raw.inviteOnly === "boolean" && typeof raw.invited === "boolean" && typeof raw.sharedNetwork === "boolean") return { type: "checkInvitation", inviteOnly: raw.inviteOnly, invited: raw.invited, sharedNetwork: raw.sharedNetwork };
-  if (raw.type === "readJoinAnswer" && typeof raw.answerFacts === "object" && raw.answerFacts !== null && !Array.isArray(raw.answerFacts) && typeof raw.answerFacts.hasAge === "boolean" && typeof raw.answerFacts.hasName === "boolean" && typeof raw.answerFacts.invalidHome === "boolean") return { type: "readJoinAnswer", answerFacts: ({ hasAge: raw.answerFacts.hasAge, hasName: raw.answerFacts.hasName, invalidHome: raw.answerFacts.invalidHome }) };
+  if (raw.type === "readJoinAnswer" && is_JoinAnswerFacts(raw.answerFacts)) return { type: "readJoinAnswer", answerFacts: ({ hasAge: raw.answerFacts.hasAge, hasName: raw.answerFacts.hasName, invalidHome: raw.answerFacts.invalidHome }) };
   if (raw.type === "checkTextJoinAge" && typeof raw.ageAllowed === "boolean") return { type: "checkTextJoinAge", ageAllowed: raw.ageAllowed };
   if (raw.type === "recordTextMembership" && typeof raw.membershipActive === "boolean") return { type: "recordTextMembership", membershipActive: raw.membershipActive };
   if (raw.type === "recordWelcome" && typeof raw.hasOtherApp === "boolean" && typeof raw.sharedNetwork === "boolean" && typeof raw.invited === "boolean") return { type: "recordWelcome", hasOtherApp: raw.hasOtherApp, sharedNetwork: raw.sharedNetwork, invited: raw.invited };

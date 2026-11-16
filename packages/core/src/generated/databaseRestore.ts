@@ -1,4 +1,4 @@
-// GENERATED from spec/databaseRestore.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/databaseRestore.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Check a backup by restoring it into a new database / The target must be a valid scratch database name (spec/databaseRestore.md:9) */
@@ -67,8 +67,8 @@ export function canCheckManifest(restore: Restore): boolean {
 //@ pure
 export function checkManifest(restore: Restore, manifest: ManifestFacts): Restore {
   //@ ensures (inv(restore) && canCheckManifest(restore)) ==> stepCountsFollowRestore(restore, "checkManifest", \result)
-  const source: boolean = !manifest.sourceKnown || manifest.sameServer;
-  return source && manifest.ownDatabase ? ({ ...restore, phase: "Refused", reason: "OwnDatabase" } as Restore) : (source && manifest.rolesRequested ? ({ ...restore, phase: "Refused", reason: "RolesOnSource" } as Restore) : (manifest.encrypted && !manifest.dumpPresent ? ({ ...restore, phase: "Refused", reason: "NeedsDecryption" } as Restore) : ({ ...restore, phase: "CheckingTarget", runRoles: manifest.rolesRequested, keepPrivileges: manifest.keepPrivileges } as Restore)));
+  const local_0 = !manifest.sourceKnown || manifest.sameServer;
+  return local_0 && manifest.ownDatabase ? ({ ...restore, phase: "Refused", reason: "OwnDatabase" } as Restore) : (local_0 && manifest.rolesRequested ? ({ ...restore, phase: "Refused", reason: "RolesOnSource" } as Restore) : (manifest.encrypted && !manifest.dumpPresent ? ({ ...restore, phase: "Refused", reason: "NeedsDecryption" } as Restore) : ({ ...restore, phase: "CheckingTarget", runRoles: manifest.rolesRequested, keepPrivileges: manifest.keepPrivileges } as Restore)));
 }
 
 /** Story: Check a backup by restoring it into a new database / Manifest admission refuses source writes and unavailable dump files (spec/databaseRestore.md:27) */
@@ -189,10 +189,11 @@ export function parseEvent(x: unknown): Event | undefined {
   } catch {
     return undefined;
   }
+  const is_ManifestFacts = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.sourceKnown === "boolean" && typeof v.sameServer === "boolean" && typeof v.ownDatabase === "boolean" && typeof v.rolesRequested === "boolean" && typeof v.encrypted === "boolean" && typeof v.dumpPresent === "boolean" && typeof v.keepPrivileges === "boolean";
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "checkName" && typeof raw.name === "string" && typeof raw.validName === "boolean") return { type: "checkName", name: raw.name, validName: raw.validName };
   if (raw.type === "checkVersion" && typeof raw.versionOne === "boolean") return { type: "checkVersion", versionOne: raw.versionOne };
-  if (raw.type === "checkManifest" && typeof raw.manifest === "object" && raw.manifest !== null && !Array.isArray(raw.manifest) && typeof raw.manifest.sourceKnown === "boolean" && typeof raw.manifest.sameServer === "boolean" && typeof raw.manifest.ownDatabase === "boolean" && typeof raw.manifest.rolesRequested === "boolean" && typeof raw.manifest.encrypted === "boolean" && typeof raw.manifest.dumpPresent === "boolean" && typeof raw.manifest.keepPrivileges === "boolean") return { type: "checkManifest", manifest: ({ sourceKnown: raw.manifest.sourceKnown, sameServer: raw.manifest.sameServer, ownDatabase: raw.manifest.ownDatabase, rolesRequested: raw.manifest.rolesRequested, encrypted: raw.manifest.encrypted, dumpPresent: raw.manifest.dumpPresent, keepPrivileges: raw.manifest.keepPrivileges }) };
+  if (raw.type === "checkManifest" && is_ManifestFacts(raw.manifest)) return { type: "checkManifest", manifest: ({ sourceKnown: raw.manifest.sourceKnown, sameServer: raw.manifest.sameServer, ownDatabase: raw.manifest.ownDatabase, rolesRequested: raw.manifest.rolesRequested, encrypted: raw.manifest.encrypted, dumpPresent: raw.manifest.dumpPresent, keepPrivileges: raw.manifest.keepPrivileges }) };
   if (raw.type === "checkTarget" && typeof raw.targetExists === "boolean") return { type: "checkTarget", targetExists: raw.targetExists };
   if (raw.type === "recordCreation") return { type: "recordCreation" };
   if (raw.type === "recordDump") return { type: "recordDump" };

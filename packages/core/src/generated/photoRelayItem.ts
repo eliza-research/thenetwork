@@ -1,4 +1,4 @@
-// GENERATED from spec/photoRelayItem.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/photoRelayItem.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Deliver only the approved selected photo / A current approved item binds to one action (spec/photoRelayItem.md:9) */
@@ -62,7 +62,7 @@ export function canClaimAction(photo: PhotoDelivery, actionKey: string, currentI
 /** Story: Deliver only the approved selected photo / Issuing a capability fixes the intent and deadline (spec/photoRelayItem.md:41) */
 //@ pure
 export function deadlineForDelivery(photo: PhotoDelivery, at: number): number {
-  return photo.hasDeadline ? photo.deliveryUntil : (photo.expiresAt < at + providerFetchTtlMs ? photo.expiresAt : at + providerFetchTtlMs);
+  return photo.hasDeadline ? photo.deliveryUntil : (photo.expiresAt < exact_photoRelayItem(at + providerFetchTtlMs) ? photo.expiresAt : exact_photoRelayItem(at + providerFetchTtlMs));
 }
 
 /** Story: Deliver only the approved selected photo / Issuing a capability fixes the intent and deadline (spec/photoRelayItem.md:41) */
@@ -179,4 +179,10 @@ export function parseState(x: unknown): PhotoDelivery | undefined {
 export function initialHolds(): PhotoDelivery {
   //@ ensures inv(\result)
   return initial;
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_photoRelayItem(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
 }

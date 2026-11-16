@@ -1,4 +1,4 @@
-// GENERATED from spec/webSession.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/webSession.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md:31) */
@@ -14,15 +14,15 @@ export type Event =
   | { type: "recordReplacement" };
 
 /** Story: Stay signed in to the app where I proved my phone / A session has an absolute limit from sign-in (spec/webSession.md:9) */
-export const sessionRotateMs: number = 24 * 3600000;
+export const sessionRotateMs: number = exact_webSession(24 * 3600000);
 /** Story: Stay signed in to the app where I proved my phone / A session has an absolute limit from sign-in (spec/webSession.md:9) */
-export const sessionMaxMs: number = 90 * 24 * 3600000;
+export const sessionMaxMs: number = exact_webSession(exact_webSession(90 * 24) * 3600000);
 /** Story: Stay signed in to the app where I proved my phone / A session has an absolute limit from sign-in (spec/webSession.md:9) */
 export const sessionGraceMs: number = 60000;
 /** Story: Stay signed in to the app where I proved my phone / A session has an absolute limit from sign-in (spec/webSession.md:9) */
-export const sessionStepUpMs: number = 10 * 60000;
+export const sessionStepUpMs: number = exact_webSession(10 * 60000);
 /** Story: Stay signed in to the app where I proved my phone / A session has an absolute limit from sign-in (spec/webSession.md:9) */
-export const sessionTtlMs: number = 30 * 24 * 3600000;
+export const sessionTtlMs: number = exact_webSession(exact_webSession(30 * 24) * 3600000);
 /** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md:31) */
 export const initial: SessionFlow = { phase: "Beginning", revokeAt: 0 };
 
@@ -35,10 +35,10 @@ export function inv(current: SessionFlow): boolean {
 /** Story: Stay signed in to the app where I proved my phone / A session has an absolute limit from sign-in (spec/webSession.md:9) */
 //@ pure
 export function sessionDeadline(createdAt: number, startedAt: number, ttl: number, maxAge: number, limited: boolean, expiresBefore: number): number {
-  const untilTtl: number = createdAt + ttl;
-  const untilMax: number = startedAt + maxAge;
-  const local: number = untilTtl < untilMax ? untilTtl : untilMax;
-  return limited && expiresBefore < local ? expiresBefore : local;
+  const local_0 = exact_webSession(createdAt + ttl);
+  const local_1 = exact_webSession(startedAt + maxAge);
+  const local_2 = local_0 < local_1 ? local_0 : local_1;
+  return limited && expiresBefore < local_2 ? expiresBefore : local_2;
 }
 
 /** Story: Stay signed in to the app where I proved my phone / A session has an absolute limit from sign-in (spec/webSession.md:9) */
@@ -71,7 +71,7 @@ export function canReadRow(flow: SessionFlow): boolean {
 //@ pure
 export function readRow(flow: SessionFlow, sameAppRow: boolean, expired: boolean, hasRevocation: boolean, revocationDue: boolean, rotationRequested: boolean, oldEnough: boolean, at: number): SessionFlow {
   //@ ensures (inv(flow) && canReadRow(flow)) ==> stepRotationRequiresAReplacement(flow, "readRow", \result)
-  return !sameAppRow || expired || revocationDue ? ({ ...flow, phase: "Refused" } as SessionFlow) : (!rotationRequested || hasRevocation || !oldEnough ? ({ ...flow, phase: "Usable" } as SessionFlow) : ({ phase: "RevokingOld", revokeAt: at + sessionGraceMs } as SessionFlow));
+  return !sameAppRow || expired || revocationDue ? ({ ...flow, phase: "Refused" } as SessionFlow) : (!rotationRequested || hasRevocation || !oldEnough ? ({ ...flow, phase: "Usable" } as SessionFlow) : ({ phase: "RevokingOld", revokeAt: exact_webSession(at + sessionGraceMs) } as SessionFlow));
 }
 
 /** Story: Stay signed in to the app where I proved my phone / Only a live token on the requested app can authenticate (spec/webSession.md:31) */
@@ -184,4 +184,10 @@ export function parseState(x: unknown): SessionFlow | undefined {
 export function initialHolds(): SessionFlow {
   //@ ensures inv(\result)
   return initial;
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_webSession(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
 }

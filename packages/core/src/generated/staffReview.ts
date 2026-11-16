@@ -1,4 +1,4 @@
-// GENERATED from spec/staffReview.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/staffReview.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Review the opportunity I selected / A changed card or revision starts a fresh draft (spec/staffReview.md:21) */
@@ -25,7 +25,7 @@ export function inv(current: ReviewCtl): boolean {
 /** Story: Review the opportunity I selected / The visible card follows focus and queue order (spec/staffReview.md:9) */
 //@ pure
 export function selectedReviewCard(pendingCards: string[], focusedCard: string, heldCard: string): string {
-  return pendingCards.includes(focusedCard) ? focusedCard : (pendingCards.includes(heldCard) ? heldCard : (pendingCards.length > 0 ? pendingCards[0] : ""));
+  return pendingCards.includes(focusedCard) ? focusedCard : (pendingCards.includes(heldCard) ? heldCard : (pendingCards.length > 0 ? nth_staffReview(pendingCards, 0) : ""));
 }
 
 /** Story: Review the opportunity I selected / A changed card or revision starts a fresh draft (spec/staffReview.md:21) */
@@ -33,7 +33,7 @@ export function selectedReviewCard(pendingCards: string[], focusedCard: string, 
 export function bindCard(ctl: ReviewCtl, cardKey: string): ReviewCtl {
   //@ ensures (inv(ctl) && canBindCard(ctl, cardKey)) ==> alwaysRequiredNoteBelongsToRejection(\result)
   //@ ensures (inv(ctl) && canBindCard(ctl, cardKey)) ==> stepRevisionNeverFalls(ctl, \result)
-  return { cardKey: cardKey, revision: ctl.revision + 1, mode: "IdleReview", noteNeeded: false };
+  return { cardKey: cardKey, revision: exact_staffReview(ctl.revision + 1), mode: "IdleReview", noteNeeded: false };
 }
 
 /** Story: Review the opportunity I selected / A changed card or revision starts a fresh draft (spec/staffReview.md:21) */
@@ -87,7 +87,7 @@ export function ownsReviewResponse(ctl: ReviewCtl, cardKey: string, revision: nu
 export function settleReview(ctl: ReviewCtl, cardKey: string, revision: number): ReviewCtl {
   //@ ensures (inv(ctl) && canSettleReview(ctl, cardKey, revision)) ==> alwaysRequiredNoteBelongsToRejection(\result)
   //@ ensures (inv(ctl) && canSettleReview(ctl, cardKey, revision)) ==> stepRevisionNeverFalls(ctl, \result)
-  return { ...ctl, revision: ctl.revision + 1, mode: "IdleReview", noteNeeded: false };
+  return { ...ctl, revision: exact_staffReview(ctl.revision + 1), mode: "IdleReview", noteNeeded: false };
 }
 
 /** Story: Review the opportunity I selected / An old response cannot clear or move a newer selection (spec/staffReview.md:51) */
@@ -174,4 +174,16 @@ export function parseState(x: unknown): ReviewCtl | undefined {
 export function initialHolds(): ReviewCtl {
   //@ ensures inv(\result)
   return initial;
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_staffReview(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
+}
+
+/** An element of a list, which must hold it. */
+export function nth_staffReview<T>(xs: T[], i: number): T {
+  if (!(0 <= i && i < xs.length)) throw new RangeError(`a list of ${xs.length} has no element ${i}`);
+  return xs[i];
 }

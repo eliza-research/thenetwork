@@ -1,4 +1,4 @@
-// GENERATED from spec/observatorySync.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/observatorySync.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: See the selected app and mode / Changing the view invalidates the old snapshot and pending reads (spec/observatorySync.md:9) */
@@ -36,7 +36,7 @@ export function canChangeView(s: ObservatorySync, appName: string, viewMode: str
 export function changeView(s: ObservatorySync, appName: string, viewMode: string): ObservatorySync {
   //@ ensures (inv(s) && canChangeView(s, appName, viewMode)) ==> stepReadGenerationNeverFalls(s, \result)
   //@ ensures (inv(s) && canChangeView(s, appName, viewMode)) ==> stepDeltasAdvanceOneVersion(s, "changeView", \result)
-  return { appName: appName, viewMode: viewMode, generation: s.generation + 1, phase: "Unsynced", version: 0 };
+  return { appName: appName, viewMode: viewMode, generation: exact_observatorySync(s.generation + 1), phase: "Unsynced", version: 0 };
 }
 
 /** Story: See the selected app and mode / Only the current load can publish or fail a snapshot (spec/observatorySync.md:30) */
@@ -78,7 +78,7 @@ export function sometimesSnapshotIsLive(s: ObservatorySync): boolean {
 export function startLoad(s: ObservatorySync): ObservatorySync {
   //@ ensures (inv(s)) ==> stepReadGenerationNeverFalls(s, \result)
   //@ ensures (inv(s)) ==> stepDeltasAdvanceOneVersion(s, "startLoad", \result)
-  return { ...s, generation: s.generation + 1, phase: "Loading" };
+  return { ...s, generation: exact_observatorySync(s.generation + 1), phase: "Loading" };
 }
 
 /** Story: See the selected app and mode / Only the current load can publish or fail a snapshot (spec/observatorySync.md:30) */
@@ -96,7 +96,7 @@ export function canFailLoad(s: ObservatorySync, generation: number): boolean {
 /** Story: Follow live updates without replaying changes / Only the next data version can change the view (spec/observatorySync.md:60) */
 //@ pure
 export function deltaAction(s: ObservatorySync, version: number, resetSignal: boolean): DeltaAction {
-  return resetSignal ? "ReloadSnapshot" : (s.phase === "Loading" ? "BufferDelta" : (s.phase === "Unsynced" ? "ReloadSnapshot" : (version < s.version ? "DropDelta" : (version === s.version ? "RefreshMetadata" : (version > s.version + 1 ? "ReloadSnapshot" : "ApplyData")))));
+  return resetSignal ? "ReloadSnapshot" : (s.phase === "Loading" ? "BufferDelta" : (s.phase === "Unsynced" ? "ReloadSnapshot" : (version < s.version ? "DropDelta" : (version === s.version ? "RefreshMetadata" : (version > exact_observatorySync(s.version + 1) ? "ReloadSnapshot" : "ApplyData")))));
 }
 
 /** Story: Follow live updates without replaying changes / Only the next data version can change the view (spec/observatorySync.md:60) */
@@ -110,7 +110,7 @@ export function acceptDelta(s: ObservatorySync, version: number): ObservatorySyn
 /** Story: Follow live updates without replaying changes / Only the next data version can change the view (spec/observatorySync.md:60) */
 //@ pure
 export function stepDeltasAdvanceOneVersion(before: ObservatorySync, via: string, after: ObservatorySync): boolean {
-  return !(via === "acceptDelta") || (before.phase === "Live" && after.version === before.version + 1);
+  return !(via === "acceptDelta") || (before.phase === "Live" && after.version === exact_observatorySync(before.version + 1));
 }
 
 /** Story: Follow live updates without replaying changes / Only the next data version can change the view (spec/observatorySync.md:60) */
@@ -194,4 +194,10 @@ export function parseState(x: unknown): ObservatorySync | undefined {
 export function initialHolds(): ObservatorySync {
   //@ ensures inv(\result)
   return initial;
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_observatorySync(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
 }

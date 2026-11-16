@@ -1,4 +1,4 @@
-// GENERATED from spec/participationBudgets.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/participationBudgets.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Set how often Eliza can offer opportunities / A member's state sets the default initial invite cap (spec/participationBudgets.md:7) */

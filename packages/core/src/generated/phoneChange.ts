@@ -1,4 +1,4 @@
-// GENERATED from spec/phoneChange.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/phoneChange.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md:9) */
@@ -26,12 +26,12 @@ export type Event =
   | { type: "readPending"; hasTarget: boolean; elapsedMs: number }
   | { type: "recordVerification"; otpVerified: boolean }
   | { type: "checkMovePolicy"; policy: MovePolicy }
-  | { type: "recordMove"; outcome: MoveOutcome };
+  | { type: "recordMove"; moveResult: MoveOutcome };
 
 /** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md:50) */
 export const phoneChangesPerDay: number = 3;
 /** Story: Keep my account when my phone changes / A live pending request needs a valid code (spec/phoneChange.md:71) */
-export const phoneChangeLifetimeMs: number = 15 * 60 * 1000;
+export const phoneChangeLifetimeMs: number = exact_phoneChange(exact_phoneChange(15 * 60) * 1000);
 /** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md:9) */
 export const initial: PhoneChange = { phase: "Beginning", failure: "NoFailure", codeVerified: false, moveAllowed: false };
 
@@ -192,9 +192,9 @@ export function canRecordMove(change: PhoneChange): boolean {
 
 /** Story: Keep my account when my phone changes / The verified request can move only when both numbers allow it (spec/phoneChange.md:94) */
 //@ pure
-export function recordMove(change: PhoneChange, outcome: MoveOutcome): PhoneChange {
+export function recordMove(change: PhoneChange, moveResult: MoveOutcome): PhoneChange {
   //@ ensures (inv(change) && canRecordMove(change)) ==> alwaysMoveRequiresProof(\result)
-  return outcome === "MoveApplied" ? ({ ...change, phase: "Moved" } as PhoneChange) : (outcome === "MoveNumberTaken" ? ({ ...change, phase: "Refused", failure: "NumberInUse" } as PhoneChange) : ({ ...change, phase: "Refused", failure: "ReviewNeeded" } as PhoneChange));
+  return moveResult === "MoveApplied" ? ({ ...change, phase: "Moved" } as PhoneChange) : (moveResult === "MoveNumberTaken" ? ({ ...change, phase: "Refused", failure: "NumberInUse" } as PhoneChange) : ({ ...change, phase: "Refused", failure: "ReviewNeeded" } as PhoneChange));
 }
 
 /** Story: Keep my account when my phone changes / Reporting a move requires both the new code and current move authority (spec/phoneChange.md:114) */
@@ -259,7 +259,7 @@ export function step(current: PhoneChange, event: Event): PhoneChange {
   if (event.type === "readPending" && canReadPending(current)) return readPending(current, event.hasTarget, event.elapsedMs);
   if (event.type === "recordVerification" && canRecordVerification(current)) return recordVerification(current, event.otpVerified);
   if (event.type === "checkMovePolicy" && canCheckMovePolicy(current)) return checkMovePolicy(current, event.policy);
-  if (event.type === "recordMove" && canRecordMove(current)) return recordMove(current, event.outcome);
+  if (event.type === "recordMove" && canRecordMove(current)) return recordMove(current, event.moveResult);
   return current;
 }
 
@@ -287,7 +287,7 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "readPending" && typeof raw.hasTarget === "boolean" && Number.isSafeInteger(raw.elapsedMs)) return { type: "readPending", hasTarget: raw.hasTarget, elapsedMs: raw.elapsedMs };
   if (raw.type === "recordVerification" && typeof raw.otpVerified === "boolean") return { type: "recordVerification", otpVerified: raw.otpVerified };
   if (raw.type === "checkMovePolicy" && (raw.policy === "MoveAllowed" || raw.policy === "MoveBlocked" || raw.policy === "NumberTaken")) return { type: "checkMovePolicy", policy: raw.policy };
-  if (raw.type === "recordMove" && (raw.outcome === "MoveApplied" || raw.outcome === "MoveNumberTaken" || raw.outcome === "MoveMissingPhone")) return { type: "recordMove", outcome: raw.outcome };
+  if (raw.type === "recordMove" && (raw.moveResult === "MoveApplied" || raw.moveResult === "MoveNumberTaken" || raw.moveResult === "MoveMissingPhone")) return { type: "recordMove", moveResult: raw.moveResult };
   return undefined;
 }
 
@@ -314,4 +314,10 @@ export function parseState(x: unknown): PhoneChange | undefined {
 export function initialHolds(): PhoneChange {
   //@ ensures inv(\result)
   return initial;
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_phoneChange(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
 }

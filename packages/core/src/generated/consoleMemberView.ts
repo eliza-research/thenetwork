@@ -1,4 +1,4 @@
-// GENERATED from spec/consoleMemberView.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/consoleMemberView.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Read details for the current subject / Only an outstanding read in the current view can publish (spec/consoleMemberView.md:9) */
@@ -38,7 +38,7 @@ export function sometimesADetailWaits(gate: DetailGate): boolean {
 export function beginDetail(gate: DetailGate): DetailGate {
   //@ ensures (inv(gate)) ==> alwaysTicketBounds(\result)
   //@ ensures (inv(gate)) ==> stepDetailBoundaryNeverFalls(gate, \result)
-  return { ...gate, lastTicket: gate.lastTicket + 1 };
+  return { ...gate, lastTicket: exact_consoleMemberView(gate.lastTicket + 1) };
 }
 
 /** Story: Read details for the current subject / Only an outstanding read in the current view can publish (spec/consoleMemberView.md:9) */
@@ -163,4 +163,10 @@ export function parseState(x: unknown): DetailGate | undefined {
 export function initialHolds(): DetailGate {
   //@ ensures inv(\result)
   return initial;
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_consoleMemberView(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
 }

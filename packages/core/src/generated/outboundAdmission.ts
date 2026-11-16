@@ -1,4 +1,4 @@
-// GENERATED from spec/outboundAdmission.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/outboundAdmission.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Recheck a queued message at send time / A current row needs live approval and the recipient's eligibility (spec/outboundAdmission.md:9) */

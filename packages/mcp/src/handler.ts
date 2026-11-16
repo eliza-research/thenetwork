@@ -641,7 +641,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       if (!codeCanBeConsumed(authorized, !(ac.expiresAt <= now()) && !(grant.expiresAt <= now()))) return refused(authorized);
       const consumed = await store.takeCode(ac.hash, now());
       const consumption = stepToken(authorized, {
-        type: "readConsumption", outcome: !consumed ? "NoCode" : consumed.usedAt !== null ? "PreviousUse" : "CodeConsumed",
+        type: "readConsumption", consumption: !consumed ? "NoCode" : consumed.usedAt !== null ? "PreviousUse" : "CodeConsumed",
         bothLive: !!consumed && consumed.usedAt === null && !(consumed.expiresAt <= now()) && !(grant.expiresAt <= now()),
       });
       if (consumption.phase === "RevokeGrant") {

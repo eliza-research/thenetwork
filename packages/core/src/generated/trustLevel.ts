@@ -1,4 +1,4 @@
-// GENERATED from spec/trustLevel.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/trustLevel.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Pause unsafe activity / Trust scores at three trigger watch and scores at six trigger hold (spec/trustLevel.md:9) */

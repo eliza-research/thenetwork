@@ -1,4 +1,4 @@
-// GENERATED from spec/planDecision.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/planDecision.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Confirm a plan after enough members accept / Only a pending member can change an open plan (spec/planDecision.md:9) */
@@ -27,8 +27,8 @@ export function planReplyChoice(reply: ReplyFacts): ReplyChoice {
 //@ pure
 export function lawBookingNeedsQuorum(phase: PlanStage, pendingMember: boolean, accepted: boolean, yesAfter: number, needed: number, partnerPlan: boolean, firstMember: boolean, beforeDeadline: boolean, lateJoinOpen: boolean): boolean {
   //@ ensures \result === true
-  const facts: ReplyFacts = { phase: phase, pendingMember: pendingMember, accepted: accepted, yesAfter: yesAfter, needed: needed, partnerPlan: partnerPlan, firstMember: firstMember, beforeDeadline: beforeDeadline, lateJoinOpen: lateJoinOpen };
-  return !(planReplyChoice(facts) === "BookPlan") || (phase === "Probing" && pendingMember && accepted && yesAfter >= needed);
+  const local_0 = { phase: phase, pendingMember: pendingMember, accepted: accepted, yesAfter: yesAfter, needed: needed, partnerPlan: partnerPlan, firstMember: firstMember, beforeDeadline: beforeDeadline, lateJoinOpen: lateJoinOpen };
+  return !(planReplyChoice(local_0) === "BookPlan") || (phase === "Probing" && pendingMember && accepted && yesAfter >= needed);
 }
 
 /** Story: Confirm a plan after enough members accept / An unanswered plan closes when its deadline passes (spec/planDecision.md:51) */
@@ -96,6 +96,6 @@ export function crewMembersWhoOptedIn(invitedMembers: string[], optIns: string[]
 /** Story: Turn a good plan into a recurring crew / Only accepting members join the recurring crew (spec/planDecision.md:115) */
 //@ pure
 export function crewHostOrder(members: string[], preferredHosts: string[]): string[] {
-  const hosts: string[] = crewMembersWhoOptedIn(preferredHosts, members);
-  return hosts.length > 0 ? hosts : members;
+  const local_1 = crewMembersWhoOptedIn(preferredHosts, members);
+  return local_1.length > 0 ? local_1 : members;
 }

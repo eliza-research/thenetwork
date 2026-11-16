@@ -1,4 +1,4 @@
-// GENERATED from spec/datingRadius.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/datingRadius.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 
@@ -11,20 +11,20 @@ export function sharedDatingMarket(inFirst: boolean, inSecond: boolean, listed: 
 
 /** Story: Find a date within both travel limits / The distance and margin must fit both members' limits (spec/datingRadius.md:18) */
 //@ pure
-export function withinMutualRadius(miles: number, margin: number, firstLimit: number, secondLimit: number): boolean {
-  return miles + margin <= firstLimit && miles + margin <= secondLimit;
+export function withinAdjustedRadius(adjustedMiles: number, firstLimit: number, secondLimit: number): boolean {
+  return adjustedMiles <= firstLimit && adjustedMiles <= secondLimit;
 }
 
 /** Story: Find a date within both travel limits / The distance and margin must fit both members' limits (spec/datingRadius.md:18) */
 //@ pure
-export function lawRadiusMutual(miles: number, margin: number, firstLimit: number, secondLimit: number): boolean {
+export function lawRadiusMutual(adjustedMiles: number, firstLimit: number, secondLimit: number): boolean {
   //@ ensures \result === true
-  return !withinMutualRadius(miles, margin, firstLimit, secondLimit) || (miles + margin <= firstLimit && miles + margin <= secondLimit);
+  return !withinAdjustedRadius(adjustedMiles, firstLimit, secondLimit) || (adjustedMiles <= firstLimit && adjustedMiles <= secondLimit);
 }
 
 /** Story: Find a date within both travel limits / The distance and margin must fit both members' limits (spec/datingRadius.md:18) */
 //@ pure
-export function lawPairDecisionSymmetric(miles: number, margin: number, firstLimit: number, secondLimit: number): boolean {
+export function lawPairDecisionSymmetric(adjustedMiles: number, firstLimit: number, secondLimit: number): boolean {
   //@ ensures \result === true
-  return withinMutualRadius(miles, margin, firstLimit, secondLimit) === withinMutualRadius(miles, margin, secondLimit, firstLimit);
+  return withinAdjustedRadius(adjustedMiles, firstLimit, secondLimit) === withinAdjustedRadius(adjustedMiles, secondLimit, firstLimit);
 }

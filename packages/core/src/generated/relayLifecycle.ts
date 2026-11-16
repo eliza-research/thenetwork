@@ -1,4 +1,4 @@
-// GENERATED from spec/relayLifecycle.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/relayLifecycle.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md:9) */

@@ -1,4 +1,4 @@
-// GENERATED from spec/probeReply.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/probeReply.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Make a choice about a proposed opportunity / A model reading cannot replace a definite or qualified answer (spec/probeReply.md:7) */

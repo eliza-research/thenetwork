@@ -65,13 +65,13 @@ pure def canReadCommand(review: ReviewRequest): bool =
 pure def readCommand(review: ReviewRequest, verb: ReviewVerb, tokenMatches: bool, itemExists: bool,
     scopeGiven: bool, wordingGiven: bool, wordingValid: bool): ReviewRequest =
   val bound = tokenMatches and itemExists
-  val outcome =
+  val resultingPhase =
     if (not(bound)) CommandRefused
     else if (verb == AcceptVerb and scopeGiven and not(wordingGiven)) AcceptItem
     else if (verb == RejectVerb and not(scopeGiven) and not(wordingGiven)) RejectItem
     else if (verb == EditVerb and not(scopeGiven) and wordingGiven and wordingValid) PreviewEdit
     else CommandRefused
-  { ...review, phase: outcome, commandBound: bound }
+  { ...review, phase: resultingPhase, commandBound: bound }
 ```
 
 ### A review action requires an eligible batch and a bound command

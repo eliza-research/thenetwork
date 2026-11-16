@@ -1,4 +1,4 @@
-// GENERATED from spec/capitalLevers.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/capitalLevers.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Use my past contributions without changing who can match with me / Effort uses four tiers (spec/capitalLevers.md:9) */
@@ -16,11 +16,11 @@ export function capitalEffortBand(balance: number, firstThreshold: number, secon
 /** Story: Use my past contributions without changing who can match with me / Vouch capacity stays within its configured limits (spec/capitalLevers.md:23) */
 //@ pure
 export function vouchCapacityFromCounts(good: number, lost: number, base: number, perGood: number, perLost: number, maxBonus: number, maximum: number): number {
-  const earned: number = good * perGood;
-  const bonus: number = earned < maxBonus ? earned : maxBonus;
-  const total: number = base + bonus - lost * perLost;
-  const capped: number = total < maximum ? total : maximum;
-  return capped > 0 ? capped : 0;
+  const local_0 = exact_capitalLevers(good * perGood);
+  const local_1 = local_0 < maxBonus ? local_0 : maxBonus;
+  const local_2 = exact_capitalLevers(exact_capitalLevers(base + local_1) - exact_capitalLevers(lost * perLost));
+  const local_3 = local_2 < maximum ? local_2 : maximum;
+  return local_3 > 0 ? local_3 : 0;
 }
 
 /** Story: Use my past contributions without changing who can match with me / Vouch capacity stays within its configured limits (spec/capitalLevers.md:23) */
@@ -33,7 +33,13 @@ export function lawVouchCapacityIsBounded(good: number, lost: number, base: numb
 /** Story: Use my past contributions without changing who can match with me / Earned organizing reach reserves the extra slots for low exposure (spec/capitalLevers.md:41) */
 //@ pure
 export function reachFromBands(bands: number, base: number, perBand: number, maximum: number): ReachAllowance {
-  const reach: number = base + bands * perBand;
-  const capped: number = reach < maximum ? reach : maximum;
-  return { max: capped, reservedForLowExposure: capped > base ? capped - base : 0 };
+  const local_4 = exact_capitalLevers(base + exact_capitalLevers(bands * perBand));
+  const local_5 = local_4 < maximum ? local_4 : maximum;
+  return { max: local_5, reservedForLowExposure: local_5 > base ? exact_capitalLevers(local_5 - base) : 0 };
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_capitalLevers(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
 }

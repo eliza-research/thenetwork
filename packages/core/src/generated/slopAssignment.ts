@@ -1,4 +1,4 @@
-// GENERATED from spec/slopAssignment.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/slopAssignment.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Assign a date proposal without filling a member’s inbox / Assignment opens each configured round once in order (spec/slopAssignment.md:9) */
@@ -47,7 +47,7 @@ export function openRound(s: AssignmentRun): AssignmentRun {
   //@ ensures (inv(s) && canOpenRound(s)) ==> stepOnlyOpeningAdvancesRound(s, "openRound", \result)
   //@ ensures (inv(s) && canOpenRound(s)) ==> stepOnlyReservationCountsProposal(s, "openRound", \result)
   //@ ensures (inv(s) && canOpenRound(s)) ==> stepFinishedStaysFinished(s, \result)
-  return { ...s, phase: "InRound", round: s.round + 1, usedInRound: ({} as Record<string, boolean>) };
+  return { ...s, phase: "InRound", round: exact_slopAssignment(s.round + 1), usedInRound: ({} as Record<string, boolean>) };
 }
 
 /** Story: Assign a date proposal without filling a member’s inbox / Assignment opens each configured round once in order (spec/slopAssignment.md:9) */
@@ -76,7 +76,7 @@ export function alwaysRoundWithinAllocation(s: AssignmentRun): boolean {
 /** Story: Assign a date proposal without filling a member’s inbox / Assignment opens each configured round once in order (spec/slopAssignment.md:9) */
 //@ pure
 export function stepOnlyOpeningAdvancesRound(before: AssignmentRun, via: string, after: AssignmentRun): boolean {
-  return via === "openRound" ? after.round === before.round + 1 : after.round === before.round;
+  return via === "openRound" ? after.round === exact_slopAssignment(before.round + 1) : after.round === before.round;
 }
 
 /** Story: Assign a date proposal without filling a member’s inbox / Assignment opens each configured round once in order (spec/slopAssignment.md:9) */
@@ -88,13 +88,13 @@ export function canConfigureAssignment(s: AssignmentRun, totalRounds: number, ba
 /** Story: Assign a date proposal without filling a member’s inbox / Each pair can be reserved once and each member can participate once per round (spec/slopAssignment.md:52) */
 //@ pure
 export function isMarked(flags: Record<string, boolean>, key: string): boolean {
-  return lookup0_slopAssignment(flags, key, false);
+  return ("$" + key) in flags ? get_slopAssignment(flags, "$" + key) : false;
 }
 
 /** Story: Assign a date proposal without filling a member’s inbox / Each pair can be reserved once and each member can participate once per round (spec/slopAssignment.md:52) */
 //@ pure
 export function memberCount(counts: Record<string, number>, member: string): number {
-  return lookup1_slopAssignment(counts, member, 0);
+  return ("$" + member) in counts ? get_slopAssignment(counts, "$" + member) : 0;
 }
 
 /** Story: Assign a date proposal without filling a member’s inbox / Each pair can be reserved once and each member can participate once per round (spec/slopAssignment.md:52) */
@@ -106,7 +106,7 @@ export function canReservePair(s: AssignmentRun, pairKey: string, memberA: strin
 /** Story: Assign a date proposal without filling a member’s inbox / Each pair can be reserved once and each member can participate once per round (spec/slopAssignment.md:52) */
 //@ pure
 export function incrementMember(counts: Record<string, number>, member: string): Record<string, number> {
-  return { ...counts, ["$" + member]: memberCount(counts, member) + 1 };
+  return ({ ...counts, ["$" + member]: exact_slopAssignment(memberCount(counts, member) + 1) } as Record<string, number>);
 }
 
 /** Story: Assign a date proposal without filling a member’s inbox / Each pair can be reserved once and each member can participate once per round (spec/slopAssignment.md:52) */
@@ -118,7 +118,7 @@ export function alwaysProposalCountIsNonnegative(s: AssignmentRun): boolean {
 /** Story: Assign a date proposal without filling a member’s inbox / Each pair can be reserved once and each member can participate once per round (spec/slopAssignment.md:52) */
 //@ pure
 export function stepOnlyReservationCountsProposal(before: AssignmentRun, via: string, after: AssignmentRun): boolean {
-  return via === "reservePair" ? after.proposed === before.proposed + 1 : after.proposed === before.proposed;
+  return via === "reservePair" ? after.proposed === exact_slopAssignment(before.proposed + 1) : after.proposed === before.proposed;
 }
 
 /** Story: Assign a date proposal without filling a member’s inbox / Each pair can be reserved once and each member can participate once per round (spec/slopAssignment.md:52) */
@@ -147,8 +147,8 @@ export function reservePair(s: AssignmentRun, pairKey: string, memberA: string, 
   //@ ensures (inv(s) && canReservePair(s, pairKey, memberA, memberB, withinBackupDegree)) ==> stepOnlyOpeningAdvancesRound(s, "reservePair", \result)
   //@ ensures (inv(s) && canReservePair(s, pairKey, memberA, memberB, withinBackupDegree)) ==> stepOnlyReservationCountsProposal(s, "reservePair", \result)
   //@ ensures (inv(s) && canReservePair(s, pairKey, memberA, memberB, withinBackupDegree)) ==> stepFinishedStaysFinished(s, \result)
-  const withFirst: Record<string, number> = incrementMember(s.memberCounts, memberA);
-  return { ...s, proposed: s.proposed + 1, usedPairs: { ...s.usedPairs, ["$" + pairKey]: true }, usedInRound: { ...{ ...s.usedInRound, ["$" + memberA]: true }, ["$" + memberB]: true }, memberCounts: incrementMember(withFirst, memberB) };
+  const local_0 = incrementMember(s.memberCounts, memberA);
+  return { ...s, proposed: exact_slopAssignment(s.proposed + 1), usedPairs: ({ ...s.usedPairs, ["$" + pairKey]: true } as Record<string, boolean>), usedInRound: ({ ...({ ...s.usedInRound, ["$" + memberA]: true } as Record<string, boolean>), ["$" + memberB]: true } as Record<string, boolean>), memberCounts: incrementMember(local_0, memberB) };
 }
 
 /** Do the rules allow this event in this state? */
@@ -219,16 +219,14 @@ export function initialHolds(): AssignmentRun {
   return initial;
 }
 
-/** What a map holds for a key, or `otherwise` if it holds nothing for it. */
-//@ pure
-export function lookup0_slopAssignment(m: Record<string, boolean>, k: string, otherwise: boolean): boolean {
-  const key = "$" + k;
-  return key in m ? m[key] : otherwise;
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_slopAssignment(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
 }
 
-/** What a map holds for a key, or `otherwise` if it holds nothing for it. */
-//@ pure
-export function lookup1_slopAssignment(m: Record<string, number>, k: string, otherwise: number): number {
-  const key = "$" + k;
-  return key in m ? m[key] : otherwise;
+/** What a map holds for a key, which it must hold. */
+export function get_slopAssignment<K extends string | number, T>(m: Record<K, T>, key: K): T {
+  if (!(key in m)) throw new RangeError(`a map holds nothing for ${key}`);
+  return m[key];
 }

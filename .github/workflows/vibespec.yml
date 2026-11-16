@@ -1,20 +1,26 @@
-name: Vibespec
+name: Vibestack
 
 on:
   push:
     branches: [main]
     paths:
-      - 'spec/*.md'
+      - 'spec/**'
       - 'packages/core/src/generated/**'
       - 'scripts/spec-snapshots.ts'
-      - 'tools/vibespec/**'
+      - 'tools/vibestack/**'
+      - 'scripts/vibestack.ts'
+      - 'package.json'
+      - '.nvmrc'
       - '.github/workflows/vibespec.yml'
   pull_request:
     paths:
-      - 'spec/*.md'
+      - 'spec/**'
       - 'packages/core/src/generated/**'
       - 'scripts/spec-snapshots.ts'
-      - 'tools/vibespec/**'
+      - 'tools/vibestack/**'
+      - 'scripts/vibestack.ts'
+      - 'package.json'
+      - '.nvmrc'
       - '.github/workflows/vibespec.yml'
   workflow_dispatch:
 
@@ -31,11 +37,11 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: tools/vibespec/package-lock.json
-      - run: npm run spec:setup
-      - if: hashFiles('spec/*.md', 'packages/core/src/generated/*.ts') != ''
+          node-version-file: .nvmrc
+      - run: npm install --global corepack@0.35.0
+      - run: corepack pnpm@10.24.0 --filter vibestack install --prod --frozen-lockfile --ignore-scripts
+        working-directory: tools/vibestack
+      - if: hashFiles('spec/**/*.md', 'packages/core/src/generated/*.ts') != ''
         run: npm run spec:check-generated
 
   full-check:
@@ -51,9 +57,8 @@ jobs:
           dafny-version: '4.11.0'
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: tools/vibespec/package-lock.json
+          node-version-file: .nvmrc
+      - run: npm install --global corepack@0.35.0
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.2

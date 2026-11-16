@@ -1,4 +1,4 @@
-// GENERATED from spec/oauthGrantIssuance.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/oauthGrantIssuance.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Connect my agent after I approve access / An expired request cannot begin issuance (spec/oauthGrantIssuance.md:9) */
@@ -77,8 +77,8 @@ export function canCheckConsumption(issuance: Issuance): boolean {
 //@ pure
 export function checkConsumption(issuance: Issuance, consumption: ConsumedApproval): Issuance {
   //@ ensures (inv(issuance) && canCheckConsumption(issuance)) ==> alwaysIssuanceRequiresCurrentApproval(\result)
-  const eligible: boolean = consumption.ownerMatches && consumption.consumedRequestLive && consumption.pendingGrantLive;
-  return { ...issuance, sameOwner: consumption.ownerMatches, requestLive: consumption.consumedRequestLive, grantLive: consumption.pendingGrantLive, phase: eligible ? "AwaitingPersistence" : "ExpiredApproval" };
+  const local_0 = consumption.ownerMatches && consumption.consumedRequestLive && consumption.pendingGrantLive;
+  return { ...issuance, sameOwner: consumption.ownerMatches, requestLive: consumption.consumedRequestLive, grantLive: consumption.pendingGrantLive, phase: local_0 ? "AwaitingPersistence" : "ExpiredApproval" };
 }
 
 /** Story: Connect my agent after I approve access / A successful response follows grant and code persistence (spec/oauthGrantIssuance.md:68) */
@@ -159,10 +159,11 @@ export function parseEvent(x: unknown): Event | undefined {
   } catch {
     return undefined;
   }
+  const is_ConsumedApproval = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.ownerMatches === "boolean" && typeof v.consumedRequestLive === "boolean" && typeof v.pendingGrantLive === "boolean";
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "beginApproval" && typeof raw.requestLive === "boolean") return { type: "beginApproval", requestLive: raw.requestLive };
   if (raw.type === "checkGrantAuthority" && (raw.authority === "AuthorityValid" || raw.authority === "AuthorityInvalid" || raw.authority === "AuthorityUnavailable")) return { type: "checkGrantAuthority", authority: raw.authority };
-  if (raw.type === "checkConsumption" && typeof raw.consumption === "object" && raw.consumption !== null && !Array.isArray(raw.consumption) && typeof raw.consumption.ownerMatches === "boolean" && typeof raw.consumption.consumedRequestLive === "boolean" && typeof raw.consumption.pendingGrantLive === "boolean") return { type: "checkConsumption", consumption: ({ ownerMatches: raw.consumption.ownerMatches, consumedRequestLive: raw.consumption.consumedRequestLive, pendingGrantLive: raw.consumption.pendingGrantLive }) };
+  if (raw.type === "checkConsumption" && is_ConsumedApproval(raw.consumption)) return { type: "checkConsumption", consumption: ({ ownerMatches: raw.consumption.ownerMatches, consumedRequestLive: raw.consumption.consumedRequestLive, pendingGrantLive: raw.consumption.pendingGrantLive }) };
   if (raw.type === "recordIssuance") return { type: "recordIssuance" };
   return undefined;
 }

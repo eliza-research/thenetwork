@@ -1,4 +1,4 @@
-// GENERATED from spec/cloudSignIn.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/cloudSignIn.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md:9) */
@@ -17,7 +17,7 @@ export type Event =
   | { type: "recordSession" };
 
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md:37) */
-export const cloudClockSkewMs: number = 30 * 1000;
+export const cloudClockSkewMs: number = exact_cloudSignIn(30 * 1000);
 /** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md:9) */
 export const validHandoff: HandoffFacts = { bindingValid: true, pendingLive: true, codeWellFormed: true };
 /** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md:9) */
@@ -45,8 +45,8 @@ export function canCheckHandoff(signIn: SignIn): boolean {
 //@ pure
 export function checkHandoff(signIn: SignIn, handoffFacts: HandoffFacts): SignIn {
   //@ ensures (inv(signIn) && canCheckHandoff(signIn)) ==> alwaysSessionRequiresAcceptedHandoff(\result)
-  const accepted: boolean = handoffFacts.bindingValid && handoffFacts.pendingLive && handoffFacts.codeWellFormed;
-  return { ...signIn, handoffAccepted: accepted, phase: accepted ? "AwaitingExchange" : "RejectCallback" };
+  const local_0 = handoffFacts.bindingValid && handoffFacts.pendingLive && handoffFacts.codeWellFormed;
+  return { ...signIn, handoffAccepted: local_0, phase: local_0 ? "AwaitingExchange" : "RejectCallback" };
 }
 
 /** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md:9) */
@@ -59,7 +59,7 @@ export function lawAnExpiredHandoffIsNeverLive(expiresAt: number): boolean {
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md:37) */
 //@ pure
 export function cloudIssuedAtWithinSkew(issuedAtMs: number, asOf: number): boolean {
-  return issuedAtMs <= asOf + cloudClockSkewMs;
+  return issuedAtMs <= exact_cloudSignIn(asOf + cloudClockSkewMs);
 }
 
 /** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md:37) */
@@ -188,8 +188,9 @@ export function parseEvent(x: unknown): Event | undefined {
   } catch {
     return undefined;
   }
+  const is_HandoffFacts = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.bindingValid === "boolean" && typeof v.pendingLive === "boolean" && typeof v.codeWellFormed === "boolean";
   if (typeof raw !== "object" || raw === null) return undefined;
-  if (raw.type === "checkHandoff" && typeof raw.handoffFacts === "object" && raw.handoffFacts !== null && !Array.isArray(raw.handoffFacts) && typeof raw.handoffFacts.bindingValid === "boolean" && typeof raw.handoffFacts.pendingLive === "boolean" && typeof raw.handoffFacts.codeWellFormed === "boolean") return { type: "checkHandoff", handoffFacts: ({ bindingValid: raw.handoffFacts.bindingValid, pendingLive: raw.handoffFacts.pendingLive, codeWellFormed: raw.handoffFacts.codeWellFormed }) };
+  if (raw.type === "checkHandoff" && is_HandoffFacts(raw.handoffFacts)) return { type: "checkHandoff", handoffFacts: ({ bindingValid: raw.handoffFacts.bindingValid, pendingLive: raw.handoffFacts.pendingLive, codeWellFormed: raw.handoffFacts.codeWellFormed }) };
   if (raw.type === "recordExchange" && typeof raw.exchangeAccepted === "boolean") return { type: "recordExchange", exchangeAccepted: raw.exchangeAccepted };
   if (raw.type === "checkIdentity" && typeof raw.identityValid === "boolean") return { type: "checkIdentity", identityValid: raw.identityValid };
   if (raw.type === "checkPhone" && typeof raw.phoneAllowed === "boolean") return { type: "checkPhone", phoneAllowed: raw.phoneAllowed };
@@ -220,4 +221,10 @@ export function parseState(x: unknown): SignIn | undefined {
 export function initialHolds(): SignIn {
   //@ ensures inv(\result)
   return initial;
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_cloudSignIn(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
 }

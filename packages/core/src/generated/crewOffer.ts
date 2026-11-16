@@ -1,4 +1,4 @@
-// GENERATED from spec/crewOffer.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/crewOffer.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Opt in to a recurring crew / An open offer records who was invited (spec/crewOffer.md:9) */
@@ -31,7 +31,7 @@ export function inv(current: CrewOfferState): boolean {
 export function extendOffer(offer: CrewOfferState, memberId: string, enjoyedPlan: boolean): CrewOfferState {
   //@ ensures (inv(offer) && canExtendOffer(offer, memberId, enjoyedPlan)) ==> alwaysAnswersComeFromInvitees(\result)
   //@ ensures (inv(offer) && canExtendOffer(offer, memberId, enjoyedPlan)) ==> stepResolvedOfferStaysClosed(offer, \result)
-  return { ...offer, offered: [...offer.offered, memberId] };
+  return { ...offer, offered: offer.offered.concat([memberId]) };
 }
 
 /** Story: Opt in to a recurring crew / An open offer records who was invited (spec/crewOffer.md:9) */
@@ -65,19 +65,19 @@ export function canRecordCrewAnswer(offer: CrewOfferState, memberId: string): bo
 export function recordCrewAnswer(offer: CrewOfferState, memberId: string, accepted: boolean): CrewOfferState {
   //@ ensures (inv(offer) && canRecordCrewAnswer(offer, memberId)) ==> alwaysAnswersComeFromInvitees(\result)
   //@ ensures (inv(offer) && canRecordCrewAnswer(offer, memberId)) ==> stepResolvedOfferStaysClosed(offer, \result)
-  return accepted ? ({ ...offer, yes: [...offer.yes, memberId] } as CrewOfferState) : ({ ...offer, no: [...offer.no, memberId] } as CrewOfferState);
+  return accepted ? ({ ...offer, yes: offer.yes.concat([memberId]) } as CrewOfferState) : ({ ...offer, no: offer.no.concat([memberId]) } as CrewOfferState);
 }
 
 /** Story: Opt in to a recurring crew / Each invited member can reply once (spec/crewOffer.md:30) */
 //@ pure
 export function alwaysAnswersComeFromInvitees(offer: CrewOfferState): boolean {
-  return offer.yes.every((id: string) => offer.offered.includes(id)) && offer.no.every((id: string) => offer.offered.includes(id));
+  return !offer.yes.some((id: string) => !offer.offered.includes(id)) && !offer.no.some((id: string) => !offer.offered.includes(id));
 }
 
 /** Story: Opt in to a recurring crew / An offer resolves after every reply or once more than three days pass (spec/crewOffer.md:47) */
 //@ pure
 export function canFinishCrewAnswers(offer: CrewOfferState): boolean {
-  return offer.phase === "Open" && offer.yes.length + offer.no.length >= offer.offered.length;
+  return offer.phase === "Open" && exact_crewOffer(offer.yes.length + offer.no.length) >= offer.offered.length;
 }
 
 /** Story: Opt in to a recurring crew / An offer resolves after every reply or once more than three days pass (spec/crewOffer.md:47) */
@@ -111,13 +111,13 @@ export function stepResolvedOfferStaysClosed(before: CrewOfferState, after: Crew
 /** Story: Opt in to a recurring crew / An offer resolves after every reply or once more than three days pass (spec/crewOffer.md:47) */
 //@ pure
 export function sometimesResolvedWithAllAnswers(offer: CrewOfferState): boolean {
-  return offer.phase === "Resolved" && offer.offered.length > 0 && offer.yes.length + offer.no.length === offer.offered.length;
+  return offer.phase === "Resolved" && offer.offered.length > 0 && exact_crewOffer(offer.yes.length + offer.no.length) === offer.offered.length;
 }
 
 /** Story: Opt in to a recurring crew / An offer resolves after every reply or once more than three days pass (spec/crewOffer.md:47) */
 //@ pure
 export function sometimesCrewOfferClosesWithRepliesMissing(offer: CrewOfferState): boolean {
-  return offer.phase === "Resolved" && offer.yes.length + offer.no.length < offer.offered.length;
+  return offer.phase === "Resolved" && exact_crewOffer(offer.yes.length + offer.no.length) < offer.offered.length;
 }
 
 /** Story: Opt in to a recurring crew / Erasing a member removes their invitation and answer (spec/crewOffer.md:76) */
@@ -206,4 +206,10 @@ export function parseState(x: unknown): CrewOfferState | undefined {
 export function initialHolds(): CrewOfferState {
   //@ ensures inv(\result)
   return initial;
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_crewOffer(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
 }

@@ -1,4 +1,4 @@
-// GENERATED from spec/otpLimits.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/otpLimits.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md:16) */
@@ -34,7 +34,7 @@ export const otpSendsPerPhoneDay: number = 6;
 /** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md:16) */
 export const otpSendsPerIpHour: number = 10;
 /** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md:16) */
-export const otpSendGapMs: number = 30 * 1000;
+export const otpSendGapMs: number = exact_otpLimits(30 * 1000);
 /** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md:16) */
 export const otpSendsGlobalHour: number = 500;
 /** Story: Prove ownership of my phone / Code checks also have limits shared across apps (spec/otpLimits.md:55) */
@@ -42,7 +42,7 @@ export const otpChecksPerPhoneHour: number = 10;
 /** Story: Prove ownership of my phone / Code checks also have limits shared across apps (spec/otpLimits.md:55) */
 export const otpChecksPerIpHour: number = 30;
 /** Story: Prove ownership of my phone / Verification codes expire and have a limited number of attempts (spec/otpLimits.md:7) */
-export const otpLifetimeMs: number = 10 * 60 * 1000;
+export const otpLifetimeMs: number = exact_otpLimits(exact_otpLimits(10 * 60) * 1000);
 /** Story: Prove ownership of my phone / Code sends have limits shared across apps (spec/otpLimits.md:16) */
 export const initial: ChallengeFlow = { phase: "Beginning", reason: "NoReason" };
 
@@ -348,4 +348,10 @@ export function parseState(x: unknown): ChallengeFlow | undefined {
 export function initialHolds(): ChallengeFlow {
   //@ ensures inv(\result)
   return initial;
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_otpLimits(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
 }

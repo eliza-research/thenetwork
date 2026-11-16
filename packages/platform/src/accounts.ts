@@ -299,7 +299,7 @@ export class Accounts {
       if (allowed.phase !== "AwaitingMove") return numberChangeRefused(allowed.failure);
       const moved = await this.store.movePhone({ personId: person.id, changeId: change.id, oldE164: who.e164, newE164, oldHash: this.phoneHash(who.e164), newHash: this.phoneHash(newE164), at: this.now() });
       const result = stepPhoneChange(allowed, {
-        type: "recordMove", outcome: moved === "ok" ? "MoveApplied" : moved === "number_in_use" ? "MoveNumberTaken" : "MoveMissingPhone",
+        type: "recordMove", moveResult: moved === "ok" ? "MoveApplied" : moved === "number_in_use" ? "MoveNumberTaken" : "MoveMissingPhone",
       });
       if (result.phase !== "Moved") return numberChangeRefused(result.failure);
       await this.store.unsuppress(this.phoneHash(newE164));

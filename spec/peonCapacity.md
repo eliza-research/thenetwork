@@ -16,8 +16,8 @@ type SeatLedger = { phase: LedgerPhase, occupied: Set[str] }
 
 pure val initial: SeatLedger = { phase: Collecting, occupied: Set() }
 
-pure def interactionOccupies(outcome: str): bool =
-  outcome == "pending" or outcome == "accepted" or outcome == "completed"
+pure def interactionOccupies(disposition: str): bool =
+  disposition == "pending" or disposition == "accepted" or disposition == "completed"
 
 pure def bookedOccupies(hasMeeting: bool, closed: bool): bool = hasMeeting and not(closed)
 

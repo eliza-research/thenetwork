@@ -1,4 +1,4 @@
-// GENERATED from spec/oauthTokenLifecycle.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/oauthTokenLifecycle.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Use and renew an approved connector grant / Each token request must match its own credential binding (spec/oauthTokenLifecycle.md:9) */
@@ -25,7 +25,7 @@ export type Event =
   | { type: "readRefreshBinding"; scopeAllowed: boolean; resourceMatches: boolean; bothLive: boolean }
   | { type: "recordTokens" }
   | { type: "recordRotation"; succeeded: boolean }
-  | { type: "readConsumption"; outcome: CodeConsumption; bothLive: boolean };
+  | { type: "readConsumption"; consumption: CodeConsumption; bothLive: boolean };
 
 /** Story: Use and renew an approved connector grant / Each token request must match its own credential binding (spec/oauthTokenLifecycle.md:9) */
 export const initial: TokenFlow = { phase: "Beginning", reason: "NoReason", refresh: false };
@@ -179,9 +179,9 @@ export function sometimesCanRefresh(flow: TokenFlow): boolean {
 
 /** Story: Use and renew an approved connector grant / Token issuance requires consumption or rotation in storage (spec/oauthTokenLifecycle.md:70) */
 //@ pure
-export function readConsumption(flow: TokenFlow, outcome: CodeConsumption, bothLive: boolean): TokenFlow {
+export function readConsumption(flow: TokenFlow, consumption: CodeConsumption, bothLive: boolean): TokenFlow {
   //@ ensures (inv(flow) && canReadConsumption(flow)) ==> stepTokensRequireStorage(flow, "readConsumption", \result)
-  return outcome === "PreviousUse" ? ({ ...flow, phase: "RevokeGrant" } as TokenFlow) : (outcome !== "CodeConsumed" || !bothLive ? refuse(flow, "InvalidGrant") : ({ ...flow, phase: "AwaitingTokenWrite" } as TokenFlow));
+  return consumption === "PreviousUse" ? ({ ...flow, phase: "RevokeGrant" } as TokenFlow) : (consumption !== "CodeConsumed" || !bothLive ? refuse(flow, "InvalidGrant") : ({ ...flow, phase: "AwaitingTokenWrite" } as TokenFlow));
 }
 
 /** Story: Use and renew an approved connector grant / Revocation affects credentials owned by the authenticated client (spec/oauthTokenLifecycle.md:98) */
@@ -220,7 +220,7 @@ export function step(current: TokenFlow, event: Event): TokenFlow {
   if (event.type === "readRefreshBinding" && canReadRefreshBinding(current)) return readRefreshBinding(current, event.scopeAllowed, event.resourceMatches, event.bothLive);
   if (event.type === "recordTokens" && canRecordTokens(current)) return recordTokens(current);
   if (event.type === "recordRotation" && canRecordRotation(current)) return recordRotation(current, event.succeeded);
-  if (event.type === "readConsumption" && canReadConsumption(current)) return readConsumption(current, event.outcome, event.bothLive);
+  if (event.type === "readConsumption" && canReadConsumption(current)) return readConsumption(current, event.consumption, event.bothLive);
   return current;
 }
 
@@ -247,7 +247,7 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "readRefreshBinding" && typeof raw.scopeAllowed === "boolean" && typeof raw.resourceMatches === "boolean" && typeof raw.bothLive === "boolean") return { type: "readRefreshBinding", scopeAllowed: raw.scopeAllowed, resourceMatches: raw.resourceMatches, bothLive: raw.bothLive };
   if (raw.type === "recordTokens") return { type: "recordTokens" };
   if (raw.type === "recordRotation" && typeof raw.succeeded === "boolean") return { type: "recordRotation", succeeded: raw.succeeded };
-  if (raw.type === "readConsumption" && (raw.outcome === "NoCode" || raw.outcome === "PreviousUse" || raw.outcome === "CodeConsumed") && typeof raw.bothLive === "boolean") return { type: "readConsumption", outcome: raw.outcome, bothLive: raw.bothLive };
+  if (raw.type === "readConsumption" && (raw.consumption === "NoCode" || raw.consumption === "PreviousUse" || raw.consumption === "CodeConsumed") && typeof raw.bothLive === "boolean") return { type: "readConsumption", consumption: raw.consumption, bothLive: raw.bothLive };
   return undefined;
 }
 

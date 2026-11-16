@@ -1,4 +1,4 @@
-// GENERATED from spec/bootPolicy.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/bootPolicy.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Start the service with its declared configuration / An explicit environment takes precedence and local shortcuts require dev (spec/bootPolicy.md:9) */
@@ -57,8 +57,8 @@ export function networkBoot(facts: NetworkBootFacts): NetworkBoot {
 /** Story: Start the service with its declared configuration / The combined backend entry checks its own database, provider and secret configuration (spec/bootPolicy.md:67) */
 //@ pure
 export function backendBoot(facts: BackendBootFacts): BackendBoot {
-  const deployed: boolean = deployedEnvironment(facts.environment);
-  return { deployed: deployed, databaseMissing: !facts.database, turnstileMissing: deployed && !facts.turnstile, proxyMissing: deployed && facts.proxyLength === 0, hashMissing: deployed && facts.hashLength === 0, proxyShort: facts.proxyLength > 0 && facts.proxyLength < minimumSecretLength, hashShort: deployed && facts.hashLength < minimumSecretLength, leakKeyShort: deployed && facts.leakKeyBytes < minimumSecretLength, migrationMissing: deployed && facts.migrate && !facts.migrationUrl, sharedLogin: deployed && facts.sameLoginUrl };
+  const local_0 = deployedEnvironment(facts.environment);
+  return { deployed: local_0, databaseMissing: !facts.database, turnstileMissing: local_0 && !facts.turnstile, proxyMissing: local_0 && facts.proxyLength === 0, hashMissing: local_0 && facts.hashLength === 0, proxyShort: facts.proxyLength > 0 && facts.proxyLength < minimumSecretLength, hashShort: local_0 && facts.hashLength < minimumSecretLength, leakKeyShort: local_0 && facts.leakKeyBytes < minimumSecretLength, migrationMissing: local_0 && facts.migrate && !facts.migrationUrl, sharedLogin: local_0 && facts.sameLoginUrl };
 }
 
 /** Story: Start the service with its declared configuration / A deployed service login must be a restricted database role (spec/bootPolicy.md:98) */

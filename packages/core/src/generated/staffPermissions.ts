@@ -1,4 +1,4 @@
-// GENERATED from spec/staffPermissions.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/staffPermissions.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Work within my assigned staff role / A grant applies only to its app and mode (spec/staffPermissions.md:9) */
@@ -109,8 +109,8 @@ export function sometimesRouteIsRefused(check: RouteCheck): boolean {
 export function authorizeRoute(check: RouteCheck, routeFacts: RouteFacts, roles: string[], requiredRoles: string[]): RouteCheck {
   //@ ensures (inv(check) && canAuthorizeRoute(check)) ==> alwaysRunningRouteWasAdmitted(\result)
   //@ ensures (inv(check) && canAuthorizeRoute(check)) ==> stepRefusedRouteStaysClosed(check, \result)
-  const decision: Admission = routeAdmission(routeFacts, roles, requiredRoles);
-  return { phase: decision === "AdmitRoute" ? "RouteAdmitted" : "RouteRefused", decision: decision };
+  const local_0: Admission = routeAdmission(routeFacts, roles, requiredRoles);
+  return { phase: local_0 === "AdmitRoute" ? "RouteAdmitted" : "RouteRefused", decision: local_0 };
 }
 
 /** Story: See only the detail my role permits / The analyst view shows counts and shapes rather than people (spec/staffPermissions.md:88) */
@@ -156,9 +156,10 @@ export function parseEvent(x: unknown): Event | undefined {
   } catch {
     return undefined;
   }
+  const is_RouteFacts = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.appRoute === "boolean" && typeof v.roleRestricted === "boolean" && typeof v.mutating === "boolean" && typeof v.hasModeHeader === "boolean" && typeof v.matchesMode === "boolean";
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "enterHandler") return { type: "enterHandler" };
-  if (raw.type === "authorizeRoute" && typeof raw.routeFacts === "object" && raw.routeFacts !== null && !Array.isArray(raw.routeFacts) && typeof raw.routeFacts.appRoute === "boolean" && typeof raw.routeFacts.roleRestricted === "boolean" && typeof raw.routeFacts.mutating === "boolean" && typeof raw.routeFacts.hasModeHeader === "boolean" && typeof raw.routeFacts.matchesMode === "boolean" && Array.isArray(raw.roles) && raw.roles.every((x0: any) => typeof x0 === "string") && Array.isArray(raw.requiredRoles) && raw.requiredRoles.every((x0: any) => typeof x0 === "string")) return { type: "authorizeRoute", routeFacts: ({ appRoute: raw.routeFacts.appRoute, roleRestricted: raw.routeFacts.roleRestricted, mutating: raw.routeFacts.mutating, hasModeHeader: raw.routeFacts.hasModeHeader, matchesMode: raw.routeFacts.matchesMode }), roles: raw.roles.map((x0: any) => x0), requiredRoles: raw.requiredRoles.map((x0: any) => x0) };
+  if (raw.type === "authorizeRoute" && is_RouteFacts(raw.routeFacts) && Array.isArray(raw.roles) && raw.roles.every((x0: any) => typeof x0 === "string") && Array.isArray(raw.requiredRoles) && raw.requiredRoles.every((x0: any) => typeof x0 === "string")) return { type: "authorizeRoute", routeFacts: ({ appRoute: raw.routeFacts.appRoute, roleRestricted: raw.routeFacts.roleRestricted, mutating: raw.routeFacts.mutating, hasModeHeader: raw.routeFacts.hasModeHeader, matchesMode: raw.routeFacts.matchesMode }), roles: raw.roles.map((x0: any) => x0), requiredRoles: raw.requiredRoles.map((x0: any) => x0) };
   return undefined;
 }
 

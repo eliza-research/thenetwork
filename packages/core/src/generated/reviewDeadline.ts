@@ -1,4 +1,4 @@
-// GENERATED from spec/reviewDeadline.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/reviewDeadline.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 

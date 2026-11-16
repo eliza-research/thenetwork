@@ -1,4 +1,4 @@
-// GENERATED from spec/outboundReceipt.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/outboundReceipt.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md:9) */
@@ -60,8 +60,8 @@ export function stepReceiptsDoNotRegress(before: ReceiptLifecycle, via: string, 
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md:9) */
 //@ pure
 export function canApplyReceipt(outbound: ReceiptLifecycle, providerPhase: ReceiptPhase): boolean {
-  const rank: number = receiptRank(outbound.phase);
-  return rank > 0 && (providerPhase === "ProviderFailed" ? outbound.phase === "ProviderAccepted" || outbound.phase === "ProviderSent" : receiptRank(providerPhase) > rank);
+  const local_0 = receiptRank(outbound.phase);
+  return local_0 > 0 && (providerPhase === "ProviderFailed" ? outbound.phase === "ProviderAccepted" || outbound.phase === "ProviderSent" : receiptRank(providerPhase) > local_0);
 }
 
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md:9) */

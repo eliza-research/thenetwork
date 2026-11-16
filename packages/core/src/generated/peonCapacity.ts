@@ -1,4 +1,4 @@
-// GENERATED from spec/peonCapacity.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/peonCapacity.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md:9) */
@@ -22,8 +22,8 @@ export function inv(current: SeatLedger): boolean {
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md:9) */
 //@ pure
-export function interactionOccupies(outcome: string): boolean {
-  return outcome === "pending" || outcome === "accepted" || outcome === "completed";
+export function interactionOccupies(disposition: string): boolean {
+  return disposition === "pending" || disposition === "accepted" || disposition === "completed";
 }
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / Only live or successful introductions occupy an opening (spec/peonCapacity.md:9) */
@@ -67,13 +67,13 @@ export function canObserveCandidate(l: SeatLedger, candidate: string, occupies: 
 //@ pure
 export function observeCandidate(l: SeatLedger, candidate: string, occupies: boolean): SeatLedger {
   //@ ensures (inv(l) && canObserveCandidate(l, candidate, occupies)) ==> stepPublishedOccupancyStaysFixed(l, \result)
-  return { ...l, occupied: [...l.occupied, ...[candidate].filter((set_x: string) => !l.occupied.includes(set_x))] };
+  return { ...l, occupied: l.occupied.concat([candidate].filter((set_x: string) => !l.occupied.includes(set_x))) };
 }
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / The next slate stays within remaining openings (spec/peonCapacity.md:39) */
 //@ pure
 export function remainingOpenings(posted: number, occupied: number): number {
-  return posted - occupied < 0 ? 0 : posted - occupied;
+  return exact_peonCapacity(posted - occupied) < 0 ? 0 : exact_peonCapacity(posted - occupied);
 }
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / The next slate stays within remaining openings (spec/peonCapacity.md:39) */
@@ -85,8 +85,8 @@ export function bookedCapacityReached(posted: number, occupied: number): boolean
 /** Story: Reserve one opening for each candidate still in the hiring flow / The next slate stays within remaining openings (spec/peonCapacity.md:39) */
 //@ pure
 export function capSlate(planned: number, remaining: number): number {
-  const room: number = remaining < 0 ? 0 : remaining;
-  return planned < room ? planned : room;
+  const local_0 = remaining < 0 ? 0 : remaining;
+  return planned < local_0 ? planned : local_0;
 }
 
 /** Story: Reserve one opening for each candidate still in the hiring flow / The next slate stays within remaining openings (spec/peonCapacity.md:39) */
@@ -163,4 +163,10 @@ export function parseState(x: unknown): SeatLedger | undefined {
 export function initialHolds(): SeatLedger {
   //@ ensures inv(\result)
   return initial;
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_peonCapacity(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
 }

@@ -75,9 +75,9 @@ After the store consumes the code, a previous use revokes the grant. Otherwise, 
 type CodeConsumption = NoCode | PreviousUse | CodeConsumed
 
 pure def canReadConsumption(flow: TokenFlow): bool = flow.phase == AwaitingConsumption
-pure def readConsumption(flow: TokenFlow, outcome: CodeConsumption, bothLive: bool): TokenFlow =
-  if (outcome == PreviousUse) { ...flow, phase: RevokeGrant }
-  else if (outcome != CodeConsumed or not(bothLive)) refuse(flow, InvalidGrant)
+pure def readConsumption(flow: TokenFlow, consumption: CodeConsumption, bothLive: bool): TokenFlow =
+  if (consumption == PreviousUse) { ...flow, phase: RevokeGrant }
+  else if (consumption != CodeConsumed or not(bothLive)) refuse(flow, InvalidGrant)
   else { ...flow, phase: AwaitingTokenWrite }
 
 pure def canRecordTokens(flow: TokenFlow): bool = flow.phase == AwaitingTokenWrite

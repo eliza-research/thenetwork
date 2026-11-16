@@ -41,8 +41,8 @@ pure def lawCooldownEndsAtWindow(now: int, at: int, window: int): bool =
 A pair can have several prior interactions. A cooldown applies if any prior interaction ended in one of these three outcomes within the configured window.
 
 ```quint
-pure def pairInteractionCooling(outcome: str, now: int, at: int, window: int): bool =
-  (outcome == "declined" or outcome == "expired" or outcome == "cancelled") and inCooldown(now, true, at, window)
+pure def pairInteractionCooling(disposition: str, now: int, at: int, window: int): bool =
+  (disposition == "declined" or disposition == "expired" or disposition == "cancelled") and inCooldown(now, true, at, window)
 
 pure def lawPairCooldownHeld(now: int, at: int, window: int): bool =
   now - at < window implies and {

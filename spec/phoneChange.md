@@ -105,9 +105,9 @@ pure def checkMovePolicy(change: PhoneChange, policy: MovePolicy): PhoneChange =
 pure def canRecordMove(change: PhoneChange): bool =
   change.phase == AwaitingMove and change.codeVerified and change.moveAllowed
 
-pure def recordMove(change: PhoneChange, outcome: MoveOutcome): PhoneChange =
-  if (outcome == MoveApplied) { ...change, phase: Moved }
-  else if (outcome == MoveNumberTaken) { ...change, phase: Refused, failure: NumberInUse }
+pure def recordMove(change: PhoneChange, moveResult: MoveOutcome): PhoneChange =
+  if (moveResult == MoveApplied) { ...change, phase: Moved }
+  else if (moveResult == MoveNumberTaken) { ...change, phase: Refused, failure: NumberInUse }
   else { ...change, phase: Refused, failure: ReviewNeeded }
 ```
 

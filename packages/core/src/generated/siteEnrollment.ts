@@ -1,4 +1,4 @@
-// GENERATED from spec/siteEnrollment.md by tools/spec.ts. Do not edit: change the spec and run `npm run gen`.
+// GENERATED from spec/siteEnrollment.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
 /** Story: Save my approved profile in the app I asked for / A submitted account marker must match the authenticated account (spec/siteEnrollment.md:9) */
@@ -96,8 +96,8 @@ export function canCheckMembership(joining: Enrollment): boolean {
 export function checkMembership(joining: Enrollment, membershipFacts: MembershipFacts): Enrollment {
   //@ ensures (inv(joining) && canCheckMembership(joining)) ==> alwaysSuccessUsesEligibleProfile(\result)
   //@ ensures (inv(joining) && canCheckMembership(joining)) ==> alwaysExistingMembershipStaysExisting(\result)
-  const missingInvite: boolean = membershipFacts.inviteRequired && !membershipFacts.existingMember && !membershipFacts.hasInvite;
-  return { ...joining, rejoin: membershipFacts.existingMember, invited: membershipFacts.hasInvite, phase: missingInvite ? "NeedsInvite" : "AwaitingAge" };
+  const local_0 = membershipFacts.inviteRequired && !membershipFacts.existingMember && !membershipFacts.hasInvite;
+  return { ...joining, rejoin: membershipFacts.existingMember, invited: membershipFacts.hasInvite, phase: local_0 ? "NeedsInvite" : "AwaitingAge" };
 }
 
 /** Story: Save my approved profile in the app I asked for / The effective age controls the result of a new or repeated join (spec/siteEnrollment.md:90) */
@@ -218,12 +218,13 @@ export function parseEvent(x: unknown): Event | undefined {
   } catch {
     return undefined;
   }
+  const is_MembershipFacts = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.existingMember === "boolean" && typeof v.inviteRequired === "boolean" && typeof v.hasInvite === "boolean";
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "checkAccountView" && typeof raw.viewMatches === "boolean") return { type: "checkAccountView", viewMatches: raw.viewMatches };
   if (raw.type === "decodeProfile" && typeof raw.decoded === "boolean") return { type: "decodeProfile", decoded: raw.decoded };
   if (raw.type === "confirmConsent" && typeof raw.consentMatches === "boolean") return { type: "confirmConsent", consentMatches: raw.consentMatches };
   if (raw.type === "checkEligibility" && typeof raw.eligible === "boolean") return { type: "checkEligibility", eligible: raw.eligible };
-  if (raw.type === "checkMembership" && typeof raw.membershipFacts === "object" && raw.membershipFacts !== null && !Array.isArray(raw.membershipFacts) && typeof raw.membershipFacts.existingMember === "boolean" && typeof raw.membershipFacts.inviteRequired === "boolean" && typeof raw.membershipFacts.hasInvite === "boolean") return { type: "checkMembership", membershipFacts: ({ existingMember: raw.membershipFacts.existingMember, inviteRequired: raw.membershipFacts.inviteRequired, hasInvite: raw.membershipFacts.hasInvite }) };
+  if (raw.type === "checkMembership" && is_MembershipFacts(raw.membershipFacts)) return { type: "checkMembership", membershipFacts: ({ existingMember: raw.membershipFacts.existingMember, inviteRequired: raw.membershipFacts.inviteRequired, hasInvite: raw.membershipFacts.hasInvite }) };
   if (raw.type === "checkJoinAge" && typeof raw.ageEligible === "boolean") return { type: "checkJoinAge", ageEligible: raw.ageEligible };
   if (raw.type === "finishJoin" && typeof raw.hookSucceeded === "boolean") return { type: "finishJoin", hookSucceeded: raw.hookSucceeded };
   return undefined;
