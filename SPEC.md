@@ -1,7 +1,7 @@
 # Spec reference
 
 This is the Vibestack spec-language reference at revision
-[`e6de8fa1`](https://github.com/lalalune/vibestack/blob/e6de8fa1f79ef66fb6849defcef050fbcd0dcc51/SPEC.md).
+[`26e59092`](https://github.com/lalalune/vibestack/blob/26e59092feb228811ea64360809e7ce8b1c08546/SPEC.md).
 Use [The Network command map](README.md#commands) when this reference uses
 standalone Vibestack commands. The Network keeps its product requirements in
 [`spec/product/`](spec/product/README.md) and the action-based Quint flow
@@ -120,6 +120,10 @@ from its name and signature:
 | `pure val fair_pay = "weak"` or `"strong"` | an assumption for `leadsTo` rules: a fair run does not put `pay` off for ever while its guard keeps allowing it (`"weak"`), or while it allows it again and again (`"strong"`) | nothing |
 | `pure val within_leadsToPaid = 3` | a bound for a `leadsTo` rule: every run meets it within 3 events, from 1 to 100 | a search of simulated traces for a run that does not ("Liveness", below) |
 | any other `pure val` or `pure def` | a constant or helper | the same constant or function |
+
+When a reachability search uses multiple trace lengths, it tries short,
+single-threaded batches before spending the full search budgets. A trace
+that reaches the goal or breaks a rule goes through the usual replay.
 
 A transition parameter named `by` identifies its sender. All such parameters
 use the same type. It is supplied separately as `enabled(current, event, by)`
@@ -500,7 +504,7 @@ change when read again, which must do what the clean event does. `options`
 are `view` (what of the state `observe` shows), `keys` (the entities walks
 interleave), `walks` (at most this many; `0` for a slow driver) and `steps`.
 The walks use the fixed normal or nightly profile
-([budgets](https://github.com/lalalune/vibestack/blob/e6de8fa1f79ef66fb6849defcef050fbcd0dcc51/CONTRIBUTING.md#seeds-and-budgets)).
+([budgets](https://github.com/lalalune/vibestack/blob/26e59092feb228811ea64360809e7ce8b1c08546/CONTRIBUTING.md#seeds-and-budgets)).
 
 - **A disagreement is saved.** A journey or walk that disagrees is shrunk
   and written to `test/counterexamples/<name>/<hash>.json`, which every
