@@ -5,23 +5,24 @@
 export type QueueChoice = "QueueEmpty" | "RunCompliance" | "WaitForSignedTurn" | "RunOldest";
 /** Story: Handle my pending messages in order while prioritizing consent / Dedupe a received message and choose the next pending turn (spec/webhookInbox.md:9) */
 export type ArrivalResult = "DrainSender" | "DuplicateWebhook";
-/** Story: Handle my pending messages in order while prioritizing consent / A completed STOP clears earlier ordinary rows and errors retry at most five times (spec/webhookInbox.md:30) */
-export type WebhookPhase = "RunningWebhook" | "CancelEarlier" | "WebhookDone" | "RetryWebhook" | "DropWebhook";
-/** Story: Handle my pending messages in order while prioritizing consent / A completed STOP clears earlier ordinary rows and errors retry at most five times (spec/webhookInbox.md:30) */
+/** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md:30) */
+export type WebhookPhase = "RunningWebhook" | "CompleteWebhook" | "CancelEarlier" | "WebhookDone" | "RetryWebhook" | "DropWebhook";
+/** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md:30) */
 export interface WebhookTurn { phase: WebhookPhase }
-/** Story: Handle my pending messages in order while prioritizing consent / Report the received row's stored result after draining (spec/webhookInbox.md:56) */
+/** Story: Handle my pending messages in order while prioritizing consent / Report the received row's stored result after draining (spec/webhookInbox.md:74) */
 export type WebhookAnswer = "StoredWebhookAnswer" | "StoredWebhookFailure" | "WaitForRetry";
 
 /** One variant per transition in the spec. */
 export type Event =
   | { type: "recordHandled"; stopCommand: boolean }
-  | { type: "recordFailure"; attempts: number };
+  | { type: "recordCompletion" }
+  | { type: "recordFailure"; attempts: number; stopCommand: boolean };
 
+/** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md:57) */
+export const webhookAttemptLimit: number = 5;
 /** Story: Handle my pending messages in order while prioritizing consent / Dedupe a received message and choose the next pending turn (spec/webhookInbox.md:9) */
 export const webhookScanLimit: number = 50;
-/** Story: Handle my pending messages in order while prioritizing consent / A completed STOP clears earlier ordinary rows and errors retry at most five times (spec/webhookInbox.md:30) */
-export const webhookAttemptLimit: number = 5;
-/** Story: Handle my pending messages in order while prioritizing consent / A completed STOP clears earlier ordinary rows and errors retry at most five times (spec/webhookInbox.md:30) */
+/** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md:30) */
 export const initial: WebhookTurn = { phase: "RunningWebhook" };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -49,50 +50,84 @@ export function lawComplianceGoesFirst(signedTurnBlocks: boolean): boolean {
   return chooseWebhook(true, true, signedTurnBlocks) === "RunCompliance";
 }
 
-/** Story: Handle my pending messages in order while prioritizing consent / A completed STOP clears earlier ordinary rows and errors retry at most five times (spec/webhookInbox.md:30) */
+/** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md:30) */
 //@ pure
 export function earlierWebhookCancellable(selectedTurn: boolean, compliance: boolean): boolean {
   return !selectedTurn && !compliance;
 }
 
-/** Story: Handle my pending messages in order while prioritizing consent / A completed STOP clears earlier ordinary rows and errors retry at most five times (spec/webhookInbox.md:30) */
+/** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md:30) */
 //@ pure
 export function canRecordHandled(turn: WebhookTurn): boolean {
   return turn.phase === "RunningWebhook";
 }
 
-/** Story: Handle my pending messages in order while prioritizing consent / A completed STOP clears earlier ordinary rows and errors retry at most five times (spec/webhookInbox.md:30) */
+/** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md:30) */
 //@ pure
 export function recordHandled(turn: WebhookTurn, stopCommand: boolean): WebhookTurn {
-  return { phase: stopCommand ? "CancelEarlier" : "WebhookDone" };
+  //@ ensures (inv(turn) && canRecordHandled(turn)) ==> stepDoneRequiresCompletion(turn, "recordHandled", \result)
+  return { phase: stopCommand ? "CancelEarlier" : "CompleteWebhook" };
 }
 
-/** Story: Handle my pending messages in order while prioritizing consent / A completed STOP clears earlier ordinary rows and errors retry at most five times (spec/webhookInbox.md:30) */
+/** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md:30) */
 //@ pure
-export function canRecordFailure(turn: WebhookTurn): boolean {
-  return turn.phase === "RunningWebhook";
+export function canRecordCompletion(turn: WebhookTurn): boolean {
+  return turn.phase === "CompleteWebhook" || turn.phase === "CancelEarlier";
 }
 
-/** Story: Handle my pending messages in order while prioritizing consent / A completed STOP clears earlier ordinary rows and errors retry at most five times (spec/webhookInbox.md:30) */
+/** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md:30) */
 //@ pure
-export function recordFailure(turn: WebhookTurn, attempts: number): WebhookTurn {
-  return { phase: attempts >= webhookAttemptLimit ? "DropWebhook" : "RetryWebhook" };
+export function recordCompletion(turn: WebhookTurn): WebhookTurn {
+  //@ ensures (inv(turn) && canRecordCompletion(turn)) ==> stepDoneRequiresCompletion(turn, "recordCompletion", \result)
+  return { phase: "WebhookDone" };
 }
 
-/** Story: Handle my pending messages in order while prioritizing consent / A completed STOP clears earlier ordinary rows and errors retry at most five times (spec/webhookInbox.md:30) */
+/** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md:30) */
+//@ pure
+export function sometimesCanCompleteWebhook(turn: WebhookTurn): boolean {
+  return turn.phase === "WebhookDone";
+}
+
+/** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md:30) */
 //@ pure
 export function lawNeverCancelCompliance(selectedTurn: boolean): boolean {
   //@ ensures \result === true
   return !earlierWebhookCancellable(selectedTurn, true);
 }
 
-/** Story: Handle my pending messages in order while prioritizing consent / A completed STOP clears earlier ordinary rows and errors retry at most five times (spec/webhookInbox.md:30) */
+/** Story: Handle my pending messages in order while prioritizing consent / Completing a STOP clears earlier ordinary rows in the same write (spec/webhookInbox.md:30) */
+//@ pure
+export function stepDoneRequiresCompletion(before: WebhookTurn, via: string, after: WebhookTurn): boolean {
+  return !(after.phase === "WebhookDone") || (via === "recordCompletion" && canRecordCompletion(before));
+}
+
+/** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md:57) */
+//@ pure
+export function recordFailure(turn: WebhookTurn, attempts: number, stopCommand: boolean): WebhookTurn {
+  //@ ensures (inv(turn) && canRecordFailure(turn)) ==> stepDoneRequiresCompletion(turn, "recordFailure", \result)
+  return { phase: attempts >= webhookAttemptLimit && !stopCommand ? "DropWebhook" : "RetryWebhook" };
+}
+
+/** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md:57) */
 //@ pure
 export function sometimesCanRetryWebhook(turn: WebhookTurn): boolean {
   return turn.phase === "RetryWebhook";
 }
 
-/** Story: Handle my pending messages in order while prioritizing consent / Report the received row's stored result after draining (spec/webhookInbox.md:56) */
+/** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md:57) */
+//@ pure
+export function canRecordFailure(turn: WebhookTurn): boolean {
+  return turn.phase === "RunningWebhook" || canRecordCompletion(turn);
+}
+
+/** Story: Handle my pending messages in order while prioritizing consent / A failed STOP stays pending and other rows can exhaust their attempts (spec/webhookInbox.md:57) */
+//@ pure
+export function lawStopNeverDrops(turn: WebhookTurn, attempts: number): boolean {
+  //@ ensures \result === true
+  return recordFailure(turn, attempts, true).phase === "RetryWebhook";
+}
+
+/** Story: Handle my pending messages in order while prioritizing consent / Report the received row's stored result after draining (spec/webhookInbox.md:74) */
 //@ pure
 export function webhookAnswer(done: boolean, failed: boolean): WebhookAnswer {
   return done ? "StoredWebhookAnswer" : (failed ? "StoredWebhookFailure" : "WaitForRetry");
@@ -102,6 +137,7 @@ export function webhookAnswer(done: boolean, failed: boolean): WebhookAnswer {
 //@ pure
 export function enabled(current: WebhookTurn, event: Event): boolean {
   if (event.type === "recordHandled") return canRecordHandled(current);
+  if (event.type === "recordCompletion") return canRecordCompletion(current);
   if (event.type === "recordFailure") return canRecordFailure(current);
   return false;
 }
@@ -112,7 +148,8 @@ export function step(current: WebhookTurn, event: Event): WebhookTurn {
   //@ requires inv(current)
   //@ ensures inv(\result)
   if (event.type === "recordHandled" && canRecordHandled(current)) return recordHandled(current, event.stopCommand);
-  if (event.type === "recordFailure" && canRecordFailure(current)) return recordFailure(current, event.attempts);
+  if (event.type === "recordCompletion" && canRecordCompletion(current)) return recordCompletion(current);
+  if (event.type === "recordFailure" && canRecordFailure(current)) return recordFailure(current, event.attempts, event.stopCommand);
   return current;
 }
 
@@ -131,7 +168,8 @@ export function parseEvent(x: unknown): Event | undefined {
   }
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "recordHandled" && typeof raw.stopCommand === "boolean") return { type: "recordHandled", stopCommand: raw.stopCommand };
-  if (raw.type === "recordFailure" && Number.isSafeInteger(raw.attempts)) return { type: "recordFailure", attempts: raw.attempts };
+  if (raw.type === "recordCompletion") return { type: "recordCompletion" };
+  if (raw.type === "recordFailure" && Number.isSafeInteger(raw.attempts) && typeof raw.stopCommand === "boolean") return { type: "recordFailure", attempts: raw.attempts, stopCommand: raw.stopCommand };
   return undefined;
 }
 
@@ -149,7 +187,7 @@ export function parseState(x: unknown): WebhookTurn | undefined {
   } catch {
     return undefined;
   }
-  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "RunningWebhook" || raw.phase === "CancelEarlier" || raw.phase === "WebhookDone" || raw.phase === "RetryWebhook" || raw.phase === "DropWebhook") && Object.keys(raw).length === 1)) return undefined;
+  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "RunningWebhook" || raw.phase === "CompleteWebhook" || raw.phase === "CancelEarlier" || raw.phase === "WebhookDone" || raw.phase === "RetryWebhook" || raw.phase === "DropWebhook") && Object.keys(raw).length === 1)) return undefined;
   const parsed: WebhookTurn = ({ phase: raw.phase });
   return inv(parsed) ? parsed : undefined;
 }

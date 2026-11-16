@@ -68,6 +68,35 @@ describe.skipIf(!pgAvailable)("inbox ordering: compliance keywords are never hel
     expect(handled).toEqual(["STOP", "hello again"]);
   });
 
+  // spec/webhookInbox.md, "Completing a STOP clears earlier ordinary rows in the same write"
+  test("a failed STOP cancellation keeps both rows pending until an atomic retry", async () => {
+    const from = "+12125557005";
+    const { box, handled } = inbox(new Set(["earlier message"]));
+    expect(await box.receive(msg(from, "atomic-older", "earlier message"))).toBe("retry_later");
+    clock.advance(1000);
+    await sql`alter table platform.inbound add constraint reject_one_cancellation
+      check (id <> 'msg:sim:atomic-older' or outcome is distinct from 'cancelled_by_stop')`;
+    try {
+      expect(await box.receive(msg(from, "atomic-stop", "STOP"))).toBe("retry_later");
+      // The STOP still owns the sender's next attempt after the ordinary retry limit.
+      for (let retry = 0; retry < 5; retry++) expect(await box.drain()).toBe(0);
+      expect(await sql`select id, status, attempts from platform.inbound
+          where id in ('msg:sim:atomic-older', 'msg:sim:atomic-stop') order by id`).toEqual([
+        { id: "msg:sim:atomic-older", status: "pending", attempts: 1 },
+        { id: "msg:sim:atomic-stop", status: "pending", attempts: 6 },
+      ]);
+    } finally {
+      await sql`alter table platform.inbound drop constraint reject_one_cancellation`;
+    }
+    expect(await box.drain()).toBe(2);
+    expect(handled).toEqual(Array.from({ length: 7 }, () => "STOP"));
+    expect(await sql`select id, status, outcome, event from platform.inbound
+        where id in ('msg:sim:atomic-older', 'msg:sim:atomic-stop') order by id`).toEqual([
+      { id: "msg:sim:atomic-older", status: "done", outcome: "cancelled_by_stop", event: null },
+      { id: "msg:sim:atomic-stop", status: "done", outcome: "handled", event: null },
+    ]);
+  });
+
   test("HELP and leave go ahead of a failing row; the failing row is not cancelled", async () => {
     const from = "+12125557002";
     const { box, handled } = inbox(new Set(["what time is dinner"]));
