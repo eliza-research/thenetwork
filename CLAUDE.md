@@ -360,9 +360,11 @@ Inventory the actions and information each story requires. Compare three
 directions and choose the clearest hierarchy with the fewest elements.
 Use visuals, position and weight where they carry the meaning. Give each
 view one main heading and keep the words required for actions, safety,
-consent, accessibility, and policy. Use shared tokens, a single type pairing,
-an accent and a spacing scale. Retain accessible names for visuals and WCAG
-AA contrast. Review the content and layout across two or three passes.
+consent, accessibility, and policy. Use shared tokens for colors, type, radii,
+shadows and focus. Keep color names distinct from text-size names. Use a
+single type pairing, an accent and a spacing scale. Retain accessible names
+for visuals and WCAG AA contrast, with at least 3:1 contrast for focus
+indicators. Review the content and layout across two or three passes.
 
 ## Tests
 

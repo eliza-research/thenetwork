@@ -1,7 +1,7 @@
 # Spec reference
 
 This is the Vibestack spec-language reference at revision
-[`fd4f7260`](https://github.com/lalalune/vibestack/blob/fd4f726016c0e2b465bc6dc7a02abebc0c2e0fb3/SPEC.md).
+[`593591b6`](https://github.com/lalalune/vibestack/blob/593591b67056e665c0ca4414357c7cd1bcaee365/SPEC.md).
 Use [The Network command map](README.md#commands) when this reference uses
 standalone Vibestack commands. The Network keeps its product requirements in
 [`spec/product/`](spec/product/README.md) and the action-based Quint flow
@@ -509,7 +509,7 @@ change when read again, which must do what the clean event does. `options`
 are `view` (what of the state `observe` shows), `keys` (the entities walks
 interleave), `walks` (at most this many; `0` for a slow driver) and `steps`.
 The walks use the fixed normal or nightly profile
-([budgets](https://github.com/lalalune/vibestack/blob/fd4f726016c0e2b465bc6dc7a02abebc0c2e0fb3/CONTRIBUTING.md#seeds-and-budgets)).
+([budgets](https://github.com/lalalune/vibestack/blob/593591b67056e665c0ca4414357c7cd1bcaee365/CONTRIBUTING.md#seeds-and-budgets)).
 
 - **A disagreement is saved.** A journey or walk that disagrees is shrunk
   and written to `test/counterexamples/<name>/<hash>.json`, which every
@@ -540,7 +540,7 @@ under `src/`.
   arm64 and on Apple silicon; elsewhere the stage prints a `-` line and CI
   explores the page.
 - **For a fixed time, from no seed.** The fixed profile's seconds, Chrome's
-  start included ([budgets](https://github.com/lalalune/vibestack/blob/fd4f726016c0e2b465bc6dc7a02abebc0c2e0fb3/CONTRIBUTING.md#seeds-and-budgets)). The
+  start included ([budgets](https://github.com/lalalune/vibestack/blob/593591b67056e665c0ca4414357c7cd1bcaee365/CONTRIBUTING.md#seeds-and-budgets)). The
   actions are random, so two runs explore differently.
 - **`test/bombadil.ts` says what must hold.** It is an ES module Bombadil
   bundles itself. Re-export `@antithesishq/bombadil/browser/defaults` (no
@@ -569,10 +569,16 @@ under `src/`.
 - **One tree for every package.** Each application or shared package keeps
   its specs in `spec/<its name>/` and its code in its own directory; the
   root's `check` covers them all ([One spec tree](#one-spec-tree)).
-- **Only what changed is checked again.** Each simulation result, a failing
-  one too (its seed is fixed), and each passing proof result is kept in
-  `.spec-cache/` under a fingerprint of the spec's Quint without its comments,
-  everything it imports and the versions of the tools. The specs are simulated at once.
+- **Only what changed is checked again.** Each run of Quint is kept in
+  `.spec-cache/` under what it reads, the Quint of the spec and of everything
+  it imports without its prose, comments and layout, and the Quint installed,
+  so a change to the prose or to the tools that leaves the Quint alone runs no
+  Quint again; each run of Dafny on a proof, likewise, under the Dafny it
+  checks and the Dafny and Z3 installed. Each
+  simulation result, a failing one too (its seed is fixed), and each passing
+  proof result is kept beside them, under a fingerprint of the spec's Quint
+  without its comments, everything it imports and the versions of the tools.
+  The specs are simulated at once.
 - **The spec covers the rules, not the plumbing.** Chat, HTTP and storage stay
   hand-written around the generated core, as `vibestack/examples/dashboard/src/notify.vibe`
   does for sending messages.
