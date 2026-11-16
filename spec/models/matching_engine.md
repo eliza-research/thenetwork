@@ -106,7 +106,7 @@ module matching_engine {
     opp: (str, str) -> Opp, netDeclAt: (str, str) -> int, engDeclAt: (str, str) -> int,
     // sentTimes: invites sent (the Network budget); billed: per pair, the proposals the engine counts.
     sentTimes: str -> List[int], billed: (str, str) -> List[int],
-    judgeOn: bool, judgeLast: (str, str) -> int
+    judgeOn: bool, judgeLast: (str, str) -> int, judgeCalls: int
   }
   type SlopHist = {
     lostAnswer: bool, matchedUnconfirmed: bool, matchedUnlocated: bool, matchedUnasked: bool,
@@ -263,7 +263,7 @@ module matching_engine {
       opp: PAIRS.mapBy(p => { stage: "none", at: NONE, everBooked: false }),
       netDeclAt: PAIRS.mapBy(p => NONE), engDeclAt: PAIRS.mapBy(p => NONE),
       sentTimes: SLOP_MEMBERS.mapBy(m => []), billed: PAIRS.mapBy(p => []),
-      judgeOn: judgeOn, judgeLast: PAIRS.mapBy(p => NONE),
+      judgeOn: judgeOn, judgeLast: PAIRS.mapBy(p => NONE), judgeCalls: 0,
     },
     sh' = {
       lostAnswer: false, matchedUnconfirmed: false, matchedUnlocated: false, matchedUnasked: false,
@@ -398,17 +398,20 @@ module matching_engine {
   // network.ts runMatching: runEngine on packInput, then gateReason per proposal, then submit to review.
   // The engine's pick among the eligible pairs with a pair value is the score oracle (the Date lane's
   // search edges, then slopAssign in value order).
-  action slopDailyRun(p: (str, str)): bool = all {
+  action slopRunWithPrompt(p: (str, str), unchangedPrompt: Set[(str, str)]): bool = all {
     enginePairs.contains(p),
     val gateOk = netMemberOk(p._1) and netMemberOk(p._2) and not(pairHistory(p))
-    // The model lets the judge see every eligible pair. network.ts runMatching supplies fresh engine
-    // dependencies, so an earlier run's verdict cannot stop a new judgment.
-    val judged = if (slop.judgeOn) enginePairs else Set()
+    // The shell compares the exact prepared request and reference bindings. The model gets that
+    // comparison as an input. An eligible pair with different evidence can need a fresh judgment.
+    val reusable = enginePairs.filter(q => unchangedPrompt.contains(q) and slop.judgeLast.get(q) != NONE
+      and now >= slop.judgeLast.get(q) and now - slop.judgeLast.get(q) < JUDGE_TTL)
+    val judged = if (slop.judgeOn) enginePairs.exclude(reusable) else Set()
     all {
       slop' = { ...slop,
         opp: if (gateOk) slop.opp.set(p, { ...slop.opp.get(p), stage: "review", at: now }) else slop.opp,
         billed: if (gateOk) slop.billed.setBy(p, l => l.append(now)) else slop.billed,
         judgeLast: PAIRS.mapBy(q => if (judged.contains(q)) now else slop.judgeLast.get(q)),
+        judgeCalls: slop.judgeCalls + judged.size(),
       },
       sh' = { ...sh,
         matchedUnconfirmed: sh.matchedUnconfirmed or (gateOk and not(slop.ob.get(p._1).confirmed and slop.ob.get(p._2).confirmed)),
@@ -419,11 +422,12 @@ module matching_engine {
         matchedNoValue: sh.matchedNoValue or (gateOk and DATE_UNVALUED.contains(p)),
         gateDisagree: sh.gateDisagree or pairHistory(p),
         selectedOverBudget: sh.selectedOverBudget or engineCount(p._1) >= BUDGET_N or engineCount(p._2) >= BUDGET_N,
-        judgeRepeat: sh.judgeRepeat or judged.exists(q => now - slop.judgeLast.get(q) < JUDGE_TTL),
+        judgeRepeat: sh.judgeRepeat or judged.exists(q => reusable.contains(q)),
       },
     },
     keepPeon, keepOther, now' = now, lastAction' = "slopDailyRun",
   }
+  action slopDailyRun(p: (str, str)): bool = slopRunWithPrompt(p, Set())
 
   // network.ts review: approve begins the probe (the first member's invite counts on the budget,
   // outreach.ts:14-17); reject or SLA expiry closes it unsent and marks the pair declined (an avoid edge
@@ -751,6 +755,7 @@ module matching_engine {
   val probeFlowProgresses = (flow.stage == "probing_first" or flow.stage == "probing_partners") implies toProbe(flow).size() > 0
   // plans.ts:141-144 "minors, paused, safety holds, ... and the reliability hold-out all exclude". SD-206.
   val planSeatHonorsHoldout = (plan.minor implies planReason(plan) == "underage") and (plan.reliabilityHold implies planReason(plan) != "")
+  val judgeCacheReused = not(sh.judgeRepeat)
 
   val safety = all {
     minorNeverCandidate, heldNeverCandidate, proposedPairValued, locatedBeforeMatch, deletedFieldClearsTag,
@@ -758,15 +763,11 @@ module matching_engine {
     activityFitsSlot,
     closedTerminal, openingsPreserved, confirmedInOwnThread, filledRecorded, acceptedPostingPersists,
     declineScopedToJob, engineNeverSelectsHeld, seatCapacity,
-    probeFlowProgresses, planSeatHonorsHoldout,
+    probeFlowProgresses, planSeatHonorsHoldout, judgeCacheReused,
   }
 
   // ================================================================== known open defects (not in `safety`)
   // Each value is violated on the current code. Each one is kept out of `safety` for the reason given.
-
-  // SD-420. runMatching does not pass the same judge caches across runs. See judgmentAttempt for the
-  // separate state machine for a judgment with a cache supplied by the caller.
-  val judgeCacheReused = not(sh.judgeRepeat)
 
   // SD-060 (skipped: founder decision). onboard.ts:1-4 and extract.ts:77: matchable needs the read-back.
   // Nothing on the match path reads SlopOnboarding.confirmed. Gating on it would lock out members who
@@ -911,14 +912,21 @@ module matching_engine {
     .expect(engineCount("a") == 2 and not(inOpen("a")) and not(engineMemberOk("a")) and budgetAcrossAssign)
     .then(tick(7)).expect(engineCount("a") == 0 and engineMemberOk("a"))
 
-  // SD-420. The first run judges (a,b) and (a,c). A second daily run judges (a,c) again inside the TTL.
-  // With no Date pair value, (b,c) never reaches either judgment pass.
-  run judgeCacheTest = initWith("prod", true, "slop")
+  // An equivalent request reuses a verdict. With no Date pair value, (b,c) never reaches judgment.
+  run judgeCacheReuseTest = initWith("prod", true, "slop")
     .then(hardFields("a")).then(hardFields("b")).then(hardFields("c"))
     .then(slopDailyRun(("a", "b"))).then(slopReview(("a", "b"), false))
-    .expect(slop.judgeLast.get(("a", "c")) == 0 and slop.judgeLast.get(("b", "c")) == NONE)
+    .expect(slop.judgeLast.get(("a", "c")) == 0 and slop.judgeLast.get(("b", "c")) == NONE and slop.judgeCalls == 2)
+    .then(slopRunWithPrompt(("a", "c"), PAIRS))
+    .expect(slop.judgeLast.get(("a", "c")) == 0 and slop.judgeCalls == 2 and safety)
+
+  // Changed evidence requires a fresh judgment even when the previous verdict is still within its TTL.
+  run judgeCacheChangedPromptTest = initWith("prod", true, "slop")
+    .then(hardFields("a")).then(hardFields("b")).then(hardFields("c"))
+    .then(slopDailyRun(("a", "b"))).then(slopReview(("a", "b"), false))
+    .expect(slop.judgeLast.get(("a", "c")) == 0 and slop.judgeCalls == 2)
     .then(tick(1)).then(slopDailyRun(("a", "c")))
-    .expect(slop.judgeLast.get(("a", "c")) == 1 and not(judgeCacheReused) and safety)
+    .expect(slop.judgeLast.get(("a", "c")) == 1 and slop.judgeCalls > 2 and safety)
 
   // The one pair gate: b and c both onboarded, but their pair has no Date pair value, so it is never proposed.
   run noPairValueTest = initWith("prod", false, "slop")

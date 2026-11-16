@@ -31,8 +31,8 @@ import {
   type Category, type Facet, type Intent, type LeakOptions, type LLM, type MemberId, type NetworkEvent, type ParticipationState, type Proposal, type ScoreComponents, type WorldSnapshot,
 } from "@thenetwork/core";
 import {
-  attention, CONTRIBUTOR_ROLES, DEFAULT_ATTENTION, existingFriendPlanPairValues, friendsKit, localEmbed, networkPack, plans, resolveConfig, resolvePlans, runEngine,
-  type AskRecord, type EngineAsk, type EngineConfigInput, type EngineInput, type EngineProposal, type FeedbackRecord, type InteractionRecord, type MatchingRunLog,
+  attention, CONTRIBUTOR_ROLES, DEFAULT_ATTENTION, existingFriendPlanPairValues, friendsKit, JudgeCache, localEmbed, networkPack, plans, resolveConfig, resolvePlans, runEngine,
+  type AskRecord, type EngineAsk, type EngineConfigInput, type EngineDeps, type EngineInput, type EngineProposal, type FeedbackRecord, type InteractionRecord, type MatchingRunLog,
   type AppPack, type PlansConfig, type PlansConfigInput, World as EngineWorld, DEFAULT_FRIENDS_POLICY, planFriendsWeek,
 } from "@thenetwork/engine";
 import { crewHandoffDue, initial as initialCrewOffer, step as stepCrewOffer, type CrewOfferState } from "../../core/src/generated/crewOffer.ts";
@@ -4370,9 +4370,19 @@ export class ConsentNetwork implements NetworkUnderTest {
     return { fingerprint: sha256(stableStringify(evidence)), intentIds: intents.map(i => i.id).sort() };
   }
 
+  // spec/judgmentAttempt.md: keep independent caches for this app and city process.
+  private matchingJudgeCaches?: { ttlMs: number; caches: Required<Pick<EngineDeps, "judgeCache" | "screenCache" | "deepCache">> };
+
   private async runMatching(input: EngineInput, now: number, allowance: number) {
-    const deps = { ...(this.opts.engineLLM ? { llm: this.opts.engineLLM } : {}), ...(this.opts.pack ? { pack: this.opts.pack } : {}) };
     const config = this.effectiveEngineConfig();
+    const { engineLLM: llm, pack } = this.opts;
+    if (llm && config.judge?.enabled) {
+      const ttlMs = resolveConfig(config).judge.ttlMs;
+      if (this.matchingJudgeCaches?.ttlMs !== ttlMs) {
+        this.matchingJudgeCaches = { ttlMs, caches: { judgeCache: new JudgeCache(ttlMs), screenCache: new JudgeCache(ttlMs), deepCache: new JudgeCache(ttlMs) } };
+      }
+    } else this.matchingJudgeCaches = undefined;
+    const deps: EngineDeps = { llm, pack, ...this.matchingJudgeCaches?.caches };
     const { proposals, asks, runLog, memberStanding } = await runEngine({ ...input, memberStanding: this.memberStanding }, config, deps);
     if (memberStanding?.length) {
       const rows = new Map(this.memberStanding.map(row => [standingKey(row), row]));
