@@ -70,8 +70,8 @@ pnpm run gen
 Use the [platform runbook](docs/runbook-platform.md) to start the four
 sites, API, and service against local Postgres with dry-run sends. Read
 [AGENTS.md](AGENTS.md) for the Network workflow. Canonical skills live in
-[`.claude/skills/`](.claude/skills/) and the tracked
-[`.agents/skills/`](.agents/skills/) aliases support agent discovery.
+[`.agents/skills/`](.agents/skills/). Claude Code uses the project-relative
+`.claude/skills` link.
 Clients without repository discovery can open the applicable `SKILL.md`
 and its referenced files directly.
 
@@ -93,7 +93,7 @@ describes those controls.
 2. **Write the rule and Quint.** Add one checkable sentence under its story.
    Put its type definitions, pure guards, transition, or property in the
    rule's `quint` block. Follow the [format reference](SPEC.md#writing-a-spec).
-3. **Sync.** Use the [sync skill](.claude/skills/sync/SKILL.md) and
+3. **Sync.** Use the [sync skill](.agents/skills/sync/SKILL.md) and
    `pnpm run check`. Run `pnpm run spec:sync` to publish the resulting
    TypeScript under `packages/core/src/generated/`.
 4. **Wire the decision.** Call the generated function from the app's

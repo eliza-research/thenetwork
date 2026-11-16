@@ -1,7 +1,7 @@
 # Spec reference
 
 This is the Vibestack spec-language reference at revision
-[`9901a846`](https://github.com/lalalune/vibestack/blob/9901a846b2d8f8c3330ea902112ce2efd6f087f7/SPEC.md).
+[`37c91550`](https://github.com/lalalune/vibestack/blob/37c91550451fa3c9a7b3f487b524757c3031e6e1/SPEC.md).
 Use [The Network command map](README.md#commands) when this reference uses
 standalone Vibestack commands. The Network keeps its product requirements in
 [`spec/product/`](spec/product/README.md) and the action-based Quint flow
@@ -12,13 +12,12 @@ TypeScript published under `packages/core/src/generated/`.
 The rest of this reference describes the standalone Vibestack layout.
 Paths starting with `vibestack/` refer to the pinned upstream checkout
 under [`tools/vibestack/`](tools/vibestack/). The Network applies a local
-Node 26 overlay to the vendored stack guidance, the runtime caveat in the
-research notes, the package manager detector's lockfile list, and the optional
-runtime metadata in the pnpm lockfiles. The dependency versions and integrity
-hashes follow upstream. The order example is
+Node 26 overlay to the vendored stack guidance, the package manager detector's
+lockfile list and the optional runtime metadata in the pnpm lockfiles.
+The dependency versions and integrity hashes follow upstream. The order example is
 `vibestack/examples/order/spec/index.md` and the tracker example is
 `vibestack/examples/dashboard/spec/tracker.md`. Read [AGENTS.md](AGENTS.md)
-and the [sync skill](.claude/skills/sync/SKILL.md) before changing a rule.
+and the [sync skill](.agents/skills/sync/SKILL.md) before changing a rule.
 
 ## Stages of `pnpm check`
 
@@ -31,7 +30,7 @@ with the reason.
 | `always` | `always` rules and laws hold on simulated traces; `leadsTo` rules on fair runs | the spec is not a valid model |
 | `sometimes` | each `sometimes` goal is reached, and each event happens in some simulated state | the model is invalid, or simulation stopped at an `always` failure |
 | `replay` | the generated TypeScript agrees with Quint on the simulated traces | as `sometimes` |
-| `types` | the `vibelang` compiler checks `src/`, the tests and `gen/` ([shell skill](.claude/skills/shell/SKILL.md)) | a stage above failed; without a `tsconfig.json` it passes as skipped only when there is no `src/` or `test/` |
+| `types` | the `vibelang` compiler checks `src/`, the tests and `gen/` ([shell skill](.agents/skills/shell/SKILL.md)) | a stage above failed; without a `tsconfig.json` it passes as skipped only when there is no `src/` or `test/` |
 | `proof` | Dafny proves each unit's obligations, or `spec/lock.json` records them as simulated only | a stage above `types` failed; it runs beside `types` |
 | `tests` | the package's [tests](AGENTS.md#tests) pass, each cites a story or rule the spec has and reaches past `gen/`, and its drivers import `gen/` as types only | a stage above failed |
 | `traces` | the application, through its drivers, `driver:` programs and recorded traces, agrees with the spec ([Conformance](#conformance)) | a stage above failed |
@@ -161,7 +160,7 @@ or another prefix the generated module uses for itself (`GENERATED` in
 and near-misses of the conventions above such as `alwayspaid` or `CanPay`.
 A state machine is also refused the names of its Effect adapter: `Rejected`,
 `NotAnEvent`, `NotAState`, `NotASender`, `Machine`, `machine`, `machineOver`,
-`stored`, `apply`, `decodeEvent`, `decodeState` and `decodeSender` ([shell skill](.claude/skills/shell/SKILL.md)).
+`stored`, `apply`, `decodeEvent`, `decodeState` and `decodeSender` ([shell skill](.agents/skills/shell/SKILL.md)).
 
 ### Using one spec from another
 
@@ -405,7 +404,7 @@ the state marked.
 
 `pnpm accept` records a fingerprint of everything a person has
 reconciled; `review` lists what differs. Each status, and what it
-asks of the agent, is in the [`sync` skill](.claude/skills/sync/SKILL.md).
+asks of the agent, is in the [`sync` skill](.agents/skills/sync/SKILL.md).
 
 | What | Recorded in, under | Fingerprint of |
 |---|---|---|
@@ -475,7 +474,7 @@ line.
   (`machineOver(start, keep)`), of the Effect adapter
   `gen/<name>.effect.vibe`, which use `enabled` and `step`; a React component
   goes through `useMachine` of `gen/<name>.react.ts`
-  ([shell skill](.claude/skills/shell/SKILL.md)).
+  ([shell skill](.agents/skills/shell/SKILL.md)).
 - `gen/` is rebuilt by `pnpm gen` and `pnpm check`, and by
   `pnpm install` when every spec is valid.
 
@@ -509,7 +508,7 @@ change when read again, which must do what the clean event does. `options`
 are `view` (what of the state `observe` shows), `keys` (the entities walks
 interleave), `walks` (at most this many; `0` for a slow driver) and `steps`.
 The walks use the fixed normal or nightly profile
-([budgets](https://github.com/lalalune/vibestack/blob/9901a846b2d8f8c3330ea902112ce2efd6f087f7/CONTRIBUTING.md#seeds-and-budgets)).
+([budgets](https://github.com/lalalune/vibestack/blob/37c91550451fa3c9a7b3f487b524757c3031e6e1/CONTRIBUTING.md#seeds-and-budgets)).
 
 - **A disagreement is saved.** A journey or walk that disagrees is shrunk
   and written to `test/counterexamples/<name>/<hash>.json`, which every
@@ -540,7 +539,7 @@ under `src/`.
   arm64 and on Apple silicon; elsewhere the stage prints a `-` line and CI
   explores the page.
 - **For a fixed time, from no seed.** The fixed profile's seconds, Chrome's
-  start included ([budgets](https://github.com/lalalune/vibestack/blob/9901a846b2d8f8c3330ea902112ce2efd6f087f7/CONTRIBUTING.md#seeds-and-budgets)). The
+  start included ([budgets](https://github.com/lalalune/vibestack/blob/37c91550451fa3c9a7b3f487b524757c3031e6e1/CONTRIBUTING.md#seeds-and-budgets)). The
   actions are random, so two runs explore differently.
 - **`test/bombadil.ts` says what must hold.** It is an ES module Bombadil
   bundles itself. Re-export `@antithesishq/bombadil/browser/defaults` (no
