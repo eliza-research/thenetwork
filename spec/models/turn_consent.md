@@ -8,7 +8,7 @@ A member needs STOP to take effect on every app that shares the line.
 
 Check turn claims, STOP and START, consent ordering, and gateway projections. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [turn receipt spec](../turnReceipt.md) generates the current gateway acknowledgment admission and reply status projection. The service still verifies the signed request and holds the transaction lock during validation and writes.
+The [signed inbox spec](../signedInbox.md) generates claim, replay, completion, and compliance recovery decisions. The [turn receipt spec](../turnReceipt.md) generates gateway acknowledgment admission and reply status projection. The service verifies signed requests and holds the appropriate transaction locks during validation and writes.
 
 Imported from `quint/turn_consent.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 

@@ -13,6 +13,9 @@
 //    with neither after OUTCOME_WINDOW_MS is "ignored" (`sweep`).
 
 import { createHash, randomInt } from "node:crypto";
+import {
+  appAllowsInboxItem, canRecordInboxSeen, initial as acknowledgementInitial, mayRedeemInboxToken, step as stepAcknowledgement,
+} from "../../core/src/generated/notificationAcknowledgement.ts";
 import { inboxDueAt, removeProactiveItems } from "../../core/src/generated/notificationDelivery.ts";
 import {
   canRecordDigest, inboxItemExpired, inboxItemStillPending, initial as digestInitial, step as stepDigest,
@@ -227,13 +230,17 @@ export class Notifier {
   }
 
   private async acted(deliveryId: string | undefined, on: Surface, personId: string, now: number) {
-    if (deliveryId && (await this.store.actOnDelivery(deliveryId, on, now))) await this.store.recordOutcome(personId, on, "acted", now);
+    const outcome = stepAcknowledgement(acknowledgementInitial, {
+      type: "readDeliveryClosure",
+      deliveryClosed: !!deliveryId && await this.store.actOnDelivery(deliveryId, on, now),
+    });
+    if (outcome.phase === "DeliveryActed") await this.store.recordOutcome(personId, on, "acted", now);
   }
 
   /** Resolve a token for its owner. null for unknown, expired or foreign tokens (shown as "no update"). */
   private async redeem(token: string, callerPersonId: string, surface: Surface, now: number): Promise<InboxItem[] | null> {
     const t = await this.store.getToken(token.trim().toUpperCase());
-    if (!t || t.personId !== callerPersonId || t.expiresAt <= now) return null;
+    if (!t || !mayRedeemInboxToken(t.personId === callerPersonId, t.expiresAt, now)) return null;
     await this.store.markTokenRedeemed(t.token, surface, now);
     const items = await this.store.getItems(t.itemIds);
     await this.acted(items.find(i => i.deliveryId)?.deliveryId, surface, callerPersonId, now);
@@ -248,15 +255,19 @@ export class Notifier {
   async readUpdates(callerPersonId: string, surface: Surface, now: number, token?: string, opts: { app?: string } = {}): Promise<InboxItem[]> {
     await this.store.touch(callerPersonId, surface, now);
     // A surface bound to one app (an MCP grant) never sees another app's items: cross-app privacy.
-    let items = (await this.store.unseen(callerPersonId, now)).filter(i => opts.app === undefined || i.app === opts.app);
-    if (token) {
+    let items = (await this.store.unseen(callerPersonId, now)).filter(i => appAllowsInboxItem(opts.app !== undefined, i.app === opts.app));
+    let read = stepAcknowledgement(acknowledgementInitial, { type: "selectInboxRead", withToken: !!token });
+    if (read.phase === "AwaitingReadToken" && token) {
       const own = await this.redeem(token, callerPersonId, surface, now);
-      if (!own) return [];
-      const wanted = new Set(own.map(i => i.id));
-      items = items.filter(i => wanted.has(i.id));
+      read = stepAcknowledgement(read, { type: "resolveInboxReadToken", valid: own !== null });
+      if (own) {
+        const wanted = new Set(own.map(i => i.id));
+        items = items.filter(i => wanted.has(i.id));
+      }
     }
+    if (!canRecordInboxSeen(read)) return [];
     await this.store.markSeen(callerPersonId, surface, now, items.map(i => i.id));
-    return items;
+    return stepAcknowledgement(read, { type: "recordInboxSeen" }).phase === "InboxSeen" ? items : [];
   }
 
   /** For a surface that lists its own items (the MCP connector): token to subject ids, or null. */
@@ -271,7 +282,10 @@ export class Notifier {
     await this.store.touch(personId, surface, now);
     const wanted = new Set(subjectIds);
     const ids = (await this.store.unseen(personId, now)).filter(i => wanted.has(i.subjectId)).map(i => i.id);
-    return ids.length ? this.store.markSeen(personId, surface, now, ids) : [];
+    const read = stepAcknowledgement(acknowledgementInitial, { type: "selectShownSubjects", hasVisibleItems: ids.length > 0 });
+    if (!canRecordInboxSeen(read)) return [];
+    const seen = await this.store.markSeen(personId, surface, now, ids);
+    return stepAcknowledgement(read, { type: "recordInboxSeen" }).phase === "InboxSeen" ? seen : [];
   }
 
   /** The member wrote in the thread: every pending delivery counts as acted on the channel. */

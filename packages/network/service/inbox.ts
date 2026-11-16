@@ -22,6 +22,10 @@
 //    sealed: when its consent change committed, it answers with the consent and the confirmation; when
 //    nothing committed, the claim is released and the gateway retries the same messageId (turn_failed).
 import { AsyncLocalStorage } from "node:async_hooks";
+import {
+  initial as initialSignedInbox, leaseRenewMs, mayStartClaimWrite, ordinaryTurnMustWait, processingLeaseMs,
+  signedAdmissionOpen, step as stepSignedInbox, turnTombstoneKeepMs, unresolvedBlockMs, type SignedInbox,
+} from "../../core/src/generated/signedInbox.ts";
 import type { NetworkAppId, TurnRequest, TurnResponse } from "../../core/src/svc/contract.ts";
 import type { SQL } from "bun";
 import type { Clock } from "@thenetwork/core";
@@ -38,14 +42,6 @@ export function isComplianceText(text: unknown): boolean {
   return typeof text === "string" && (detectKeyword(text) !== undefined || leaveTarget(text) !== undefined);
 }
 const isStopText = (text: unknown) => typeof text === "string" && ((k => k === "stop" || k === "stop_all")(detectKeyword(text)));
-/** A signed turn still "processing" this long after its last lease renewal lost its worker (a crash): it reads as unresolved. */
-const PROCESSING_LEASE_MS = 2 * 60_000;
-/** A running signed turn renews its lease this often (well inside PROCESSING_LEASE_MS). */
-const LEASE_RENEW_MS = 30_000;
-/** An unresolved signed turn holds the sender's later messages back only this long, so a sender is never stuck. */
-const UNRESOLVED_BLOCK_MS = 10 * 60_000;
-/** Turn tombstones (scrubbed, unresolved) are deleted after this much longer than the purge window. */
-const TOMBSTONE_KEEP_MS = 30 * 24 * 60 * 60_000;
 
 export interface InboxOptions {
   sql: SQL;
@@ -85,42 +81,51 @@ export class Inbox {
     const keyword = isComplianceText(input.text);
     const wrote = await this.o.sql.begin(async tx => {
       const [lock] = await tx`select pg_try_advisory_xact_lock(hashtext(${`inbox-sender:${normalizeAddress(input.from)}`})) as acquired`;
-      if (!lock.acquired) return [];
-      // Admission is checked again after acquiring the sender lock, before any write.
-      if (admitUntil !== undefined && this.o.clock.now() >= admitUntil) return [];
+      // spec/signedInbox.md, "A worker runs only a committed claim"
+      const admissionOpen = lock.acquired && (admitUntil === undefined || signedAdmissionOpen(true, this.o.clock.now(), admitUntil));
+      if (!mayStartClaimWrite(lock.acquired, admissionOpen)) return [];
       // A turn whose worker stopped (no completion within the lease) is unresolved, not processing forever.
       await tx`update platform.inbound set status='unresolved',event=null,sender=null
-        where sender_hash=${senderHash} and status='processing' and request_hash is not null and arrived_at<${new Date(now - PROCESSING_LEASE_MS)}`;
+        where sender_hash=${senderHash} and status='processing' and request_hash is not null and arrived_at<${new Date(now - processingLeaseMs)}`;
       return tx`insert into platform.inbound(id,line,sender,received_at,arrived_at,event,status,request_hash,sender_hash,network_authority)
       select ${id},null,null,${new Date(input.receivedAt)},${new Date(now)},null,'processing',${requestHash},${senderHash},${input.networkAuthority ?? null}::jsonb
-      where ${admitUntil === undefined || now < admitUntil} and not exists(select 1 from platform.inbound where sender_hash=${senderHash} and (status='processing'
-        or (not ${keyword} and (status='pending' or (status='unresolved' and arrived_at>${new Date(now - UNRESOLVED_BLOCK_MS)})))))
+      where ${signedAdmissionOpen(admitUntil !== undefined, now, admitUntil ?? 0)} and not exists(select 1 from platform.inbound where sender_hash=${senderHash} and (status='processing'
+        or (${ordinaryTurnMustWait(keyword)} and (status='pending' or (status='unresolved' and arrived_at>${new Date(now - unresolvedBlockMs)})))))
       on conflict do nothing returning id`;
     });
-    if (!wrote.length) {
+    const claimed = stepSignedInbox(initialSignedInbox, { type: "recordClaim", inserted: wrote.length > 0 });
+    if (claimed.phase === "CheckingPrior") {
+      // spec/signedInbox.md, "A replay must match a stored request"
       const [prior] = await this.o.sql`select request_hash,status,response from platform.inbound where id=${id}`;
-      if (!prior) return {status:409,body:{error:"turn_busy",retryable:true}};
-      if (prior.request_hash !== requestHash) return {status:409,body:{error:"turn_conflict",retryable:false}};
-      if (prior.status === "done" && prior.response) return {status:200,body:prior.response};
-      // The same turn is still running (a gateway timeout and its retry): the caller may try again; the worker's answer is kept for that replay.
-      if (prior.status === "processing") return {status:409,body:{error:"turn_busy",retryable:true}};
-      return {status:409,body:{error:"turn_unresolved",retryable:false}};
+      const replay = stepSignedInbox(claimed, {
+        type: "readPrior", rowPresent: !!prior, sameRequest: prior?.request_hash === requestHash,
+        responseAvailable: prior?.status === "done" && !!prior.response, processing: prior?.status === "processing",
+      });
+      switch (replay.phase) {
+        case "Busy": return {status:409,body:{error:"turn_busy",retryable:true}};
+        case "Conflict": return {status:409,body:{error:"turn_conflict",retryable:false}};
+        case "Replayed": return {status:200,body:prior!.response};
+        default: return {status:409,body:{error:"turn_unresolved",retryable:false}};
+      }
     }
     const turn: InboundTurn = {id,from:input.from};
     // Renew the lease while the turn runs, so a slow turn (an LLM read, lock waits) is never swept as abandoned after its effects committed.
     const renew = setInterval(() => {
       this.o.sql`update platform.inbound set arrived_at=${new Date(this.o.clock.now())} where id=${id} and status='processing'`.catch(() => {});
-    }, this.o.leaseRenewMs ?? LEASE_RENEW_MS);
+    }, this.o.leaseRenewMs ?? leaseRenewMs);
     (renew as {unref?: () => void}).unref?.();
     try {
       const body = await this.turns.run(turn, () => run(turn));
       const rows = await this.o.sql`update platform.inbound set status='done',response=${body}::jsonb,handled_at=${new Date(this.o.clock.now())},
         handled_order=nextval('platform.inbound_handled_seq'),event=null,sender=null,app_id=${turn.app ?? null},member_id=${turn.memberId ?? null} where id=${id} and status='processing' returning id`;
-      if (!rows.length) { this.o.log(`[alert] signed turn ${id} lost its claim before completion (swept or resolved by staff)`); throw new Error("Turn ownership changed before completion"); }
+      // spec/signedInbox.md, "Completion and compliance recovery depend on the stored row"
+      const completed = stepSignedInbox(claimed, { type: "recordCompletion", saved: rows.length > 0 });
+      if (completed.phase !== "Finished") { this.o.log(`[alert] signed turn ${id} lost its claim before completion (swept or resolved by staff)`); throw new Error("Turn ownership changed before completion"); }
       return {status:200,body};
     } catch (e) {
-      if (keyword) {
-        const rescued = await this.rescueCompliance(id, turn).catch(() => undefined);
+      const failed = stepSignedInbox(claimed, { type: "handleFailure", compliance: keyword });
+      if (failed.phase === "CheckingRescue") {
+        const rescued = await this.rescueCompliance(id, turn, failed).catch(() => undefined);
         if (rescued) { this.o.log(`[inbound] compliance turn ${id} failed after its consent change: ${(e as Error).message}`); return rescued; }
       }
       await this.o.sql`update platform.inbound set status='unresolved',event=null,sender=null where id=${id} and status='processing'`;
@@ -141,16 +146,20 @@ export class Inbox {
    * updates its send-time fence. If nothing committed, the claim is released and the gateway retries the
    * same messageId (the consent ledger and the member's unit are idempotent per message).
    */
-  private async rescueCompliance(id: string, turn: InboundTurn): Promise<{status: number; body: unknown} | undefined> {
+  private async rescueCompliance(id: string, turn: InboundTurn, failed: SignedInbox): Promise<{status: number; body: unknown} | undefined> {
     const [row] = await this.o.sql`select status,replies from platform.inbound where id=${id}`;
-    if (!row || row.status !== "processing") return undefined;
-    const collected = ((typeof row.replies === "string" ? JSON.parse(row.replies) : row.replies) ?? []) as CollectedReply[];
-    if (!turn.consent && !collected.length) {
+    const processing = row?.status === "processing";
+    const stored = processing ? row.replies : undefined;
+    const collected = ((typeof stored === "string" ? JSON.parse(stored) : stored) ?? []) as CollectedReply[];
+    const recovery = stepSignedInbox(failed, { type: "checkRescue", processing, effectCommitted: !!turn.consent || collected.length > 0 });
+    if (recovery.phase === "Unresolved") return undefined;
+    if (recovery.phase === "ReleasingClaim") {
       const released = await this.o.sql`delete from platform.inbound where id=${id} and status='processing' returning id`;
-      if (!released.length) return undefined;
+      if (stepSignedInbox(recovery, { type: "recordRescue", changed: released.length > 0 }).phase !== "RetryCompliance") return undefined;
       await this.undo(turn);
       return {status:409,body:{error:"turn_failed",retryable:true}};
     }
+    if (recovery.phase !== "PreservingCompliance") return undefined;
     const replies = [...collected];
     if (turn.confirmation && !replies.some(r => r.kind === "compliance")) replies.push({...turn.confirmation, kind: "compliance"});
     const body: TurnResponse = {outcome: "handled", replies: replies.map(r => r.body), replyIds: replies.map(r => r.id), delivery: "collected",
@@ -159,7 +168,7 @@ export class Inbox {
     const rows = await this.o.sql`update platform.inbound set status='done',response=${body}::jsonb,replies=(${{items: replies}}::jsonb->'items'),
       handled_at=${new Date(this.o.clock.now())},handled_order=nextval('platform.inbound_handled_seq'),event=null,sender=null,
       app_id=${turn.app ?? null},member_id=${turn.memberId ?? null} where id=${id} and status='processing' returning id`;
-    return rows.length ? {status: 200, body} : undefined;
+    return stepSignedInbox(recovery, { type: "recordRescue", changed: rows.length > 0 }).phase === "Finished" ? {status: 200, body} : undefined;
   }
 
   /** Persist only causal replies in the same transaction as their Network effects. */
@@ -200,7 +209,7 @@ export class Inbox {
       where request_hash is not null and status='done' and handled_at<${new Date(before)} returning id`;
     const removed = await this.o.sql`delete from platform.inbound where request_hash is null and status not in ('pending','processing','unresolved') and arrived_at < ${new Date(before)} returning id`;
     // Signed-turn tombstones keep replays refused for a while, then go: platform.inbound does not grow without bound.
-    const tombstones = await this.o.sql`delete from platform.inbound where request_hash is not null and status='unresolved' and arrived_at < ${new Date(before - TOMBSTONE_KEEP_MS)} returning id`;
+    const tombstones = await this.o.sql`delete from platform.inbound where request_hash is not null and status='unresolved' and arrived_at < ${new Date(before - turnTombstoneKeepMs)} returning id`;
     return sealed.length + removed.length + tombstones.length;
   }
 
@@ -251,8 +260,8 @@ export class Inbox {
       const compliance = parsed.find(w => isComplianceText(w.ev?.text));
       // A signed turn of this sender that is running (or ended unresolved a short while ago) holds back
       // their ordinary rows only: STOP, STOP ALL, leave, START and HELP are handled at once, as signed() does.
-      if (!compliance) {
-        const blockedSince = new Date(this.o.clock.now() - UNRESOLVED_BLOCK_MS), stale = new Date(this.o.clock.now() - PROCESSING_LEASE_MS);
+      if (ordinaryTurnMustWait(!!compliance)) {
+        const blockedSince = new Date(this.o.clock.now() - unresolvedBlockMs), stale = new Date(this.o.clock.now() - processingLeaseMs);
         if ((await this.o.sql`select 1 from platform.inbound where sender_hash=${this.o.senderKey(sender)} and request_hash is not null
           and ((status='processing' and arrived_at>${stale}) or (status='unresolved' and arrived_at>${blockedSince})) limit 1`).length) return n;
       }
