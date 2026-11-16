@@ -1,7 +1,6 @@
 /**
- * A <span> that shows `text` literally. Leaflet reads a tooltip string as HTML, so a name or area such as
- * "<img src=x onerror=...>" would run in a staff browser (audit observatory-1). Build every tooltip and popup with this
- * node: its text is set with textContent, so markup shows as text. No tooltip, popup or innerHTML in the web code takes a string.
+ * Builds a span for a Leaflet tooltip or popup. Leaflet interprets a string as HTML, so
+ * pass a DOM node with textContent to display member names and areas as literal text.
  */
 export function textNode(text: string, doc: Document = document): HTMLElement {
   const el = doc.createElement("span");
