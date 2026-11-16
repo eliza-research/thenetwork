@@ -2,6 +2,7 @@
 // creates what is missing, so it is safe to run at every start.
 import { join } from "node:path";
 import { SQL } from "bun";
+import { signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
 import type { McpAppId } from "./apps.ts";
 import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, type AuditRow, type AuthCode, type AuthRequest, type Grant, type OAuthClient, type OAuthStore, type Token } from "./store.ts";
 
@@ -48,14 +49,14 @@ export class PgOAuthStore implements OAuthStore {
     const started = performance.now();
     try { return await this.sql.begin(async tx => {
       const grants = await tx`select id from oauth.grants where id=${d.grantId} for update`;
-      if (grants.length !== 1) return false;
+      if (!signupDraftUnique(grants.length)) return false;
       const liveAt = at + Math.ceil(performance.now() - started);
       const rows = await tx`insert into oauth.signup_drafts(grant_id,app_id,phone_key,fields,expires_at,consumed_at)
         select id,app_id,phone_key,${d.fields}::jsonb,${new Date(d.expiresAt)},null from oauth.grants
         where id=${d.grantId} and app_id=${d.app} and phone_key=${d.phoneKey} and revoked_at is null and expires_at>${new Date(liveAt)}
         and ${new Date(d.expiresAt)}>${new Date(liveAt)} and 'profile:write'=any(scopes)
         on conflict(grant_id) do nothing returning grant_id`;
-      return rows.length === 1;
+      return signupDraftUnique(rows.length);
     }); } catch { throw new Error("Signup draft storage unavailable"); }
   }
   async claimSignupDraft(phoneKey: string, app: import("./apps.ts").McpAppId, personId: string | null, at: number) {
@@ -66,13 +67,13 @@ export class PgOAuthStore implements OAuthStore {
         where d.phone_key=${phoneKey} and d.app_id=${app} and d.consumed_at is null and d.expires_at>${new Date(at)}
         and g.app_id=${app} and g.phone_key=${phoneKey} and g.person_id is not distinct from ${personId}
         and g.revoked_at is null and g.expires_at>${new Date(at)} and 'profile:write'=any(g.scopes) order by g.id for update of g`;
-      if (grants.length !== 1) return undefined;
+      if (!signupDraftUnique(grants.length)) return undefined;
       const liveAt = at + Math.ceil(performance.now() - started);
       const rows = await tx`select d.grant_id,d.fields from oauth.signup_drafts d join oauth.grants g on g.id=d.grant_id
         where d.grant_id=${grants[0].id} and d.consumed_at is null and d.expires_at>${new Date(liveAt)}
         and g.app_id=${app} and g.phone_key=${phoneKey} and g.person_id is not distinct from ${personId}
         and g.revoked_at is null and g.expires_at>${new Date(liveAt)} and 'profile:write'=any(g.scopes) for update of d`;
-      if (rows.length !== 1) return undefined;
+      if (!signupDraftUnique(rows.length)) return undefined;
       return rows[0].fields as import("./store.ts").SignupDraftFields;
     }); } catch { throw new Error("Signup draft storage unavailable"); }
   }

@@ -9,6 +9,7 @@
 import { devShortcutsAllowed, ipBucket, signupAccountView, type Env } from "@thenetwork/platform";
 import { verifyProxyHeaders } from "@thenetwork/platform/src/proxy.ts";
 import { readCappedText } from "@thenetwork/platform/src/body.ts";
+import { signupDraftAppEnabled, signupDraftBrowserAction, signupDraftBrowserSource, signupDraftClaimRoute, signupDraftDiscardAllowed } from "../../core/src/generated/mcpSignupDraft.ts";
 import {
   type BrowserForm, type StoredPage, initial as browserInitial, mayCompareBrowserDigest,
   sessionMatchesConsent, step as stepBrowser,
@@ -997,23 +998,27 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       case "/oauth/signup-draft/discard": {
         if (req.method !== "POST") return json(405, { error: "method_not_allowed" });
         // Same-origin session only. No draft IDs, phone or facts in URLs or request bodies.
-        if (!originOk(c) || (req.headers.get("origin") === null && req.headers.get("sec-fetch-site") !== "same-origin") || url.search) return json(403, { error: "not_allowed" });
-        if (!["ntwrk", "friends"].includes(c.app.id)) return json(404, { error: "not_found" });
+        const browserConfirmed = req.headers.get("origin") !== null || req.headers.get("sec-fetch-site") === "same-origin";
+        if (!signupDraftBrowserSource(originOk(c), browserConfirmed, !!url.search)) return json(403, { error: "not_allowed" });
+        if (!signupDraftAppEnabled(c.app.id)) return json(404, { error: "not_found" });
         const who = await o.platform.session?.(c.app.id, req);
         if(who==="unavailable")return temporarilyUnavailable();
         if (!who) return json(401, { error: "sign_in_required" });
         const key = o.platform.phoneKey(who.e164);
-        if (who.personId !== await o.platform.personForKey(key)) return json(403, { error: "not_allowed" });
-        if (p.endsWith("/discard")) {
+        const action = signupDraftBrowserAction(who.personId === await o.platform.personForKey(key), p.endsWith("/discard"));
+        if (action === "RefuseBrowserAction") return json(403, { error: "not_allowed" });
+        if (action === "CheckDiscardView") {
           const body = await readJson(req);
-          if (!body || body.signupView !== signupAccountView(c.app.id, key)) return json(403, { error: "not_allowed" });
+          if (!signupDraftDiscardAllowed(action, !!body && body.signupView === signupAccountView(c.app.id, key))) return json(403, { error: "not_allowed" });
           await store.discardSignupDrafts(key, c.app.id, now());
           return json(200, { discarded: true }, who.setCookie ? { "set-cookie": who.setCookie } : {});
         }
         if (!o.platform.withSignupAgePolicy || !o.platform.setSignupAgeCleanup) return json(403, { error: "not_allowed" });
         return o.platform.withSignupAgePolicy(key, c.app.id, async allowed => {
-          if (who.personId !== null && !["not_joined", "invited"].includes(await o.platform.status(who.personId, c.app.id))) return json(403, { error: "not_allowed" });
-          const draft = allowed ? await store.claimSignupDraft(key, c.app.id, who.personId, now()) : undefined;
+          const status = who.personId === null ? "not_joined" : await o.platform.status(who.personId, c.app.id);
+          const decision = signupDraftClaimRoute(status, allowed);
+          if (decision === "RefuseClaim") return json(403, { error: "not_allowed" });
+          const draft = decision === "ReadDraft" ? await store.claimSignupDraft(key, c.app.id, who.personId, now()) : undefined;
           const response = json(200, { draft: draft ?? null, signupView: signupAccountView(c.app.id, key) }, { "cache-control": "no-store" });
           if (who.setCookie) response.headers.append("set-cookie", who.setCookie);
           return response;

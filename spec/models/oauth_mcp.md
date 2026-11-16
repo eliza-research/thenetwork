@@ -10,6 +10,10 @@ Check code use, refresh, ownership, ban and revocation, scoped tools, and reques
 
 The [connector browser authorization spec](../oauthBrowserAuthorization.md) generates the request binding, phone verification, and explicit consent decisions. The [connector grant issuance spec](../oauthGrantIssuance.md) generates the runtime steps from confirmed consent through authority, single-use request consumption and issuance. The [connector token spec](../oauthTokenLifecycle.md) generates token exchange, renewal, and client revocation decisions. This standalone model also covers persisted grant state and member tools.
 
+The [signup draft rules](../mcpSignupDraft.md) drive draft preparation,
+session-bound reads, discard, and expiry. The draft waits for the
+person's final Join submission.
+
 Imported from `quint/oauth_mcp.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint

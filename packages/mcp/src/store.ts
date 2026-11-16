@@ -3,6 +3,7 @@
 // Tokens and codes are stored only as sha256 hashes (they are 32 random bytes, so a plain hash is
 // enough). A client secret is stored the same way. The phone number of a grant stays on the server,
 // as platform.sessions keeps it; no tool and no response carries it.
+import { signupDraftExpired, signupDraftGrantAllowed, signupDraftRowReadable, signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
 import type { CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
 import type { McpAppId, Surface } from "./apps.ts";
 
@@ -173,15 +174,18 @@ export class MemoryOAuthStore implements OAuthStore {
 
   async putSignupDraft(d: SignupDraft, at: number) {
     const g = this.grants.get(d.grantId);
-    if (!g || g.revokedAt !== null || g.expiresAt <= at || !g.scopes.includes("profile:write") || g.app !== d.app || g.phoneKey !== d.phoneKey || this.signupDrafts.has(g.id)) return false;
+    if (!g || !signupDraftGrantAllowed(g.app === d.app && g.phoneKey === d.phoneKey, !(g.expiresAt <= at), g.revokedAt === null, g.scopes.includes("profile:write"))
+      || this.signupDrafts.has(g.id)) return false;
     this.signupDrafts.set(g.id, structuredClone(d)); return true;
   }
   async claimSignupDraft(phoneKey: string, app: McpAppId, personId: string | null, at: number) {
     const drafts = [...this.signupDrafts.values()].filter(d => {
+      if (!signupDraftRowReadable(d.phoneKey === phoneKey && d.app === app, d.consumedAt === null, d.expiresAt, at)) return false;
       const g = this.grants.get(d.grantId);
-      return d.phoneKey === phoneKey && d.app === app && d.consumedAt === null && d.expiresAt > at && g?.revokedAt === null && g.expiresAt > at && g.personId === personId && g.app === app && g.phoneKey === phoneKey && g.scopes.includes("profile:write");
+      return !!g && signupDraftGrantAllowed(g.personId === personId && g.app === app && g.phoneKey === phoneKey,
+        g.expiresAt > at, g.revokedAt === null, g.scopes.includes("profile:write"));
     });
-    if (drafts.length !== 1) return undefined;
+    if (!signupDraftUnique(drafts.length)) return undefined;
     return structuredClone(drafts[0].fields);
   }
   async discardSignupDrafts(phoneKey: string, app: McpAppId, at: number) {
@@ -258,7 +262,7 @@ export class MemoryOAuthStore implements OAuthStore {
   }
 
   async sweep(at: number) {
-    for (const d of this.signupDrafts.values()) if (d.expiresAt <= at) d.fields = { firstName: "" };
+    for (const d of this.signupDrafts.values()) if (signupDraftExpired(d.expiresAt, at)) d.fields = { firstName: "" };
     for (const [k, r] of this.requests) if (r.expiresAt <= at) this.requests.delete(k);
     for (const [k, c] of this.codes) if (c.expiresAt <= at) this.codes.delete(k);
     for (const [k, t] of this.tokens) if (t.expiresAt <= at) this.tokens.delete(k);

@@ -70,7 +70,7 @@ Models: [profile learning](../models/profile_learning.md), [outbound queue](../m
 
 Offer authorized Google Calendar free/busy, pasted LinkedIn profile text, an allowed X profile or approved connection, or a summary from the member's agent. Mark proposed facts with source, confidence and scope. Persist confirmed facts, remove raw pasted summaries after confirmation, and support revocation. Exclude sensitive inferences and other people's private details.
 
-Models: [OAuth and MCP](../models/oauth_mcp.md), [profile learning](../models/profile_learning.md), [generated suggestion review](../profileSuggestionReview.md).
+Models: [OAuth and MCP](../models/oauth_mcp.md), [profile learning](../models/profile_learning.md), [source collection and cleanup](../profileSuggestionSource.md), [suggestion review](../profileSuggestionReview.md).
 
 ## Story F8 — Ask for something
 
@@ -80,7 +80,7 @@ Models: [OAuth and MCP](../models/oauth_mcp.md), [profile learning](../models/pr
 
 Classify the request into an answer, a recommendation, a standing intent, or a draft member opportunity. Use available knowledge before spending a person's attention. Explain what will happen and give a likely time when creating a draft. Avoid promising a match. A draft that would contact a person passes review and consent.
 
-Models: [agent loop](../models/chatjson_loop.md), [opportunity](../models/opportunity.md), [review desk](../models/review_desk.md).
+Models: [agent loop](../models/chatjson_loop.md), [member request admission](../memberRequest.md), [opportunity](../models/opportunity.md), [review desk](../models/review_desk.md).
 
 ## Story F9 — Keep a standing intent
 
@@ -90,7 +90,7 @@ Models: [agent loop](../models/chatjson_loop.md), [opportunity](../models/opport
 
 Record the objective, essential constraints, source and time horizon. List, pause or close it on request. Re-evaluate when relevant evidence or supply changes. Expire or reconfirm at 60 days. A later suggestion still needs current eligibility and consent.
 
-Models: [profile learning](../models/profile_learning.md), [matching engine](../models/matching_engine.md).
+Models: [profile learning](../models/profile_learning.md), [request retry and withdrawal](../memberRequest.md), [matching engine](../models/matching_engine.md).
 
 ## Story F10 — Get concierge value
 
@@ -200,7 +200,7 @@ Models: [opportunity](../models/opportunity.md), [profile learning](../models/pr
 
 Interpret plain-language categories, quiet hours, pause and resume. Confirm the new setting briefly. STOP and STOP ALL stop the shared line across apps. Leave removes one app. START and HELP have their own consent-aware path. Preserve the member's control across channels and prevent ordinary sends during an opt-out.
 
-Models: [turn consent](../models/turn_consent.md), [outbound queue](../models/outbound_queue.md), [safety and trust](../models/safety_trust.md).
+Models: [shared-line consent journey](../sharedLineConsentJourney.md), [turn consent](../models/turn_consent.md), [outbound queue](../models/outbound_queue.md), [safety and trust](../models/safety_trust.md).
 
 ## Story F21 — Hear when nothing fits
 
@@ -300,7 +300,7 @@ Models: [opportunity](../models/opportunity.md), [plan run](../models/plan_run.m
 
 A named app or domain selects that app. A no-keyword text join starts at The Network and asks what the person seeks. Keep the invite boundary on app-bound Network signup. Check consent version and approved profile before submitting, then read back the app and the profile. Join mode, matching activation and send approval are separate states. A different app cannot see that the person already has another membership.
 
-Models: [generated site enrollment](../siteEnrollment.md), [Cloud authentication](../models/cloud_auth.md), [OAuth and MCP](../models/oauth_mcp.md), [turn consent](../models/turn_consent.md), [profile read](../models/profile_read.md).
+Models: [generated site enrollment](../siteEnrollment.md), [agent-assisted signup draft](../mcpSignupDraft.md), [Cloud authentication](../models/cloud_auth.md), [OAuth and MCP](../models/oauth_mcp.md), [turn consent](../models/turn_consent.md), [profile read](../models/profile_read.md).
 
 ## Story F31 — Add my adult dating photos privately
 
