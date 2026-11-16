@@ -11,8 +11,8 @@ Check stored writes, retention, ticks, alerts, backup recovery, and shutdown. Th
 The [runtime unit spec](../runtimeUnit.md) generates load, restore, action, save, and adapter follow-up decisions. The shell owns the queue, database advisory locks, and transaction commit.
 
 The [backend lifecycle spec](../backendLifecycle.md) drives worker
-reservations and shutdown decisions. The current backend starts the
-grace wait after listeners stop accepting work.
+reservations and shutdown decisions. The serving shell starts a single
+grace period for both listener drain and tracked work.
 
 The [backend health spec](../backendHealth.md) drives the public health
 check from serving admission through the database ping and tick freshness.

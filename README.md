@@ -47,9 +47,9 @@ Studio, examples, template setup and the packaged CLI.
 
 | Layer | Source and checks |
 |---|---|
-| Product | Stories and acceptance rules in [the product specification](spec/product/README.md). Product owner sign-off is recorded in `spec/lock.json`. |
+| Product | Stories and acceptance rules in [the product specification](spec/product/README.md). Product owners record approval in `spec/lock.json` with `pnpm run accept`. |
 | Decisions | Quint in the [executable specs](SPEC.md#writing-a-spec) generates TypeScript. The checker simulates the model, compares TypeScript traces, and runs Dafny proof obligations. |
-| Effects | The [backend health shell](packages/core/src/vibe/backendHealthShell.vibe) uses the generated Effect adapter with the backend's database and tick readers. `pnpm run spec:sync` compiles its deployment files with the vendored VibeLang compiler. |
+| Effects | The [backend health shell](packages/core/src/vibe/backendHealthShell.vibe) reads readiness and the [shutdown shell](packages/core/src/vibe/backendShutdownShell.vibe) drains listeners and tracked work. `pnpm run spec:sync` compiles both shells and their generated Effect adapters with the vendored VibeLang compiler. |
 | Application | Node 26 serves the backend and console. Each package owns its existing HTTP, storage, and UI integration. The [Network agent guide](AGENTS.md) applies the upstream design guidance to these packages. |
 | Conformance | The spec checker compares the app's observed state and effects with generated rules. The [command table](#commands) lists scoped journeys and the existing application test commands. |
 

@@ -133,8 +133,8 @@ async function main() {
   const stop = async (signal: string) => {
     log.info("shutdown", { signal });
     const { clean } = await backend.shutdown(servers);
-    await pool.close().catch(() => {});
-    await opsPool.close().catch(() => {});
+    const end = clean ? undefined : { timeout: 0 };
+    await Promise.allSettled([pool.end(end), opsPool.end(end)]);
     process.exit(clean ? 0 : 1);
   };
   process.on("SIGTERM", () => void stop("SIGTERM"));

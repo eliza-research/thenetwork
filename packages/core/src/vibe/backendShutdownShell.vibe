@@ -1,0 +1,28 @@
+import { shutdownWasClean } from "./generated/backendLifecycle.effect.js"
+import type { BackendLifecycle, Event } from "./generated/backendLifecycle.effect.js"
+
+interface ShutdownEffects {
+  record(event: Event): BackendLifecycle
+  stopListeners(force: boolean): Promise<void>
+  waitForWork(): Promise<void>
+  reportTimeout(): void
+  closeService(force: boolean): Promise<void>
+}
+
+export function finishBackendShutdown(graceMs: number, effects: ShutdownEffects): Promise<boolean> {
+  return runPromise(effect {
+    const drained = try timeoutOption(effect {
+      try promise(() => effects.stopListeners(false))
+      try sync(() => effects.record({ type: "recordListenerDrain" }))
+      try promise(() => effects.waitForWork())
+    }, Duration.millis(graceMs))
+
+    const outcome = try sync(() => effects.record({ type: "settleWorkDrain", timedOut: Option.isNone(drained) }))
+    const clean = shutdownWasClean(outcome)
+    if (!clean) try sync(() => effects.reportTimeout())
+    try promise(() => effects.stopListeners(true))
+    try promise(() => effects.closeService(!clean))
+    try sync(() => effects.record({ type: "recordBackendClose" }))
+    return clean
+  })
+}

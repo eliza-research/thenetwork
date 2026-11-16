@@ -2,6 +2,7 @@
 // shutdown, and one boot of the real process against a database of its own on the dev cluster.
 import { setTimeout as sleep } from "node:timers/promises";
 import { spawnProcess } from "../../packages/core/src/runtime/process.ts";
+import { serveHttp } from "../../packages/core/src/runtime/http.ts";
 import { afterAll, describe, expect, test } from "vitest";
 import { DEFAULT_HOST_MAP } from "../../packages/platform/src/apps.ts";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
@@ -380,6 +381,32 @@ describe("graceful shutdown", () => {
     await sleep(5);
     expect(await b.shutdown()).toEqual({ clean: false });
     expect(svc.closed).toBe(true);
+  });
+
+  // spec/backendLifecycle.md, "The grace period covers listener and work drain"
+  test("the shutdown grace period also bounds an in-flight HTTP response", async () => {
+    const { svc } = fakeService();
+    const entered = Promise.withResolvers<void>();
+    const response = Promise.withResolvers<Response>();
+    const closeMode: boolean[] = [];
+    svc.publicFetch = () => { entered.resolve(); return response.promise; };
+    svc.close = async (force = false) => { closeMode.push(force); };
+    const b = createBackend({ svc, config: cfg({ deployed: false, shutdownGraceMs: 30 }), log: silent, ping: async () => true });
+    const listener = await serveHttp({ hostname: "127.0.0.1", port: 0, fetch: b.publicFetch });
+    const client = fetch(new URL("/api/app", listener.url), { signal: AbortSignal.timeout(2000) })
+      .then(res => res.status, () => null);
+    const reachedService = await Promise.race([entered.promise.then(() => true), client.then(() => false)]);
+    try {
+      expect(reachedService).toBe(true);
+      const result = await Promise.race([b.shutdown([listener]), sleep(600, "still draining")]);
+      expect(result).toEqual({ clean: false });
+      expect(closeMode).toEqual([true]);
+      expect(await client).toBeNull();
+    } finally {
+      response.resolve(Response.json({ ok: true }));
+      await listener.stop(true);
+      await b.shutdown();
+    }
   });
 });
 

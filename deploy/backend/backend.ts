@@ -1,8 +1,9 @@
 import { backendBoot, databaseLogin, declaredEnvironment, minimumSecretLength } from "../../packages/core/src/generated/bootPolicy.ts";
 import {
-  backendAcceptsWork, canStartTimer, initial as lifecycleInitial, shutdownWasClean, step as stepBackendLifecycle,
+  backendAcceptsWork, canStartTimer, initial as lifecycleInitial, step as stepBackendLifecycle,
 } from "../../packages/core/src/generated/backendLifecycle.ts";
 import { checkBackendHealth } from "../../packages/core/src/vibe/backendHealthShell.js";
+import { finishBackendShutdown } from "../../packages/core/src/vibe/backendShutdownShell.js";
 import type { HealthStatus } from "../../packages/core/src/generated/backendHealth.ts";
 import { otpConfigProblems } from "../../packages/platform/src/otp-config.ts";
 // The shared backend as one deployable process (docs/deploy.md). It wraps the Network service
@@ -287,7 +288,7 @@ export interface ServiceLike {
   runtimes: Map<string, { id: string; tick(): Promise<boolean> }>;
   /** The single inbox's tick (packages/notify): outcome sweep, then due notifications. Optional. */
   notifyTick?(): Promise<void>;
-  close(): Promise<void>;
+  close(force?: boolean): Promise<void>;
 }
 
 export interface BackendDeps {
@@ -454,23 +455,28 @@ export function createBackend(d: BackendDeps) {
    * sessions and with them any lock they hold.
    */
   let stopping: Promise<{ clean: boolean }> | undefined;
-  const shutdown = (servers: { stop(force?: boolean): unknown }[] = []) => stopping ??= (async () => {
+  const shutdown = (servers: { stop(force?: boolean): unknown }[] = []) => {
+    if (stopping) return stopping;
     lifecycle = stepBackendLifecycle(lifecycle, { type: "beginShutdown" });
     if (timer) clearInterval(timer);
-    for (const s of servers) { try { await s.stop(false); } catch { /* already stopped */ } }
-    lifecycle = stepBackendLifecycle(lifecycle, { type: "recordListenerDrain" });
-    const wait = Promise.allSettled([...inFlight]);
-    const grace = new Promise<"timeout">(r => { const t = setTimeout(() => r("timeout"), c.shutdownGraceMs); (t as { unref?: () => void }).unref?.(); });
-    const timedOut = (await Promise.race([wait.then(() => "done" as const), grace])) === "timeout";
-    lifecycle = stepBackendLifecycle(lifecycle, { type: "settleWorkDrain", timedOut });
-    if (!shutdownWasClean(lifecycle)) log.warn("shutdown: work still running after the grace period", { inFlight: inFlight.size });
-    for (const s of servers) { try { await s.stop(true); } catch { /* already stopped */ } }
-    await svc.close().catch(e => log.error("shutdown: close failed", { error: (e as Error).message }));
-    lifecycle = stepBackendLifecycle(lifecycle, { type: "recordBackendClose" });
-    const clean = shutdownWasClean(lifecycle);
-    log.info("shutdown complete", { clean });
-    return { clean };
-  })();
+    stopping = Promise.resolve().then(async () => {
+      const clean = await finishBackendShutdown(c.shutdownGraceMs, {
+        record(event) {
+          lifecycle = stepBackendLifecycle(lifecycle, event);
+          return lifecycle;
+        },
+        async stopListeners(force) {
+          await Promise.allSettled(servers.map(async server => { await server.stop(force); }));
+        },
+        async waitForWork() { await Promise.allSettled([...inFlight]); },
+        reportTimeout: () => log.warn("shutdown: work still running after the grace period", { inFlight: inFlight.size }),
+        closeService: force => svc.close(force).catch(e => log.error("shutdown: close failed", { error: (e as Error).message })),
+      });
+      log.info("shutdown complete", { clean });
+      return { clean };
+    });
+    return stopping;
+  };
 
   return { publicFetch, staffFetch, tickAll, startTicks, shutdown, get draining() { return !backendAcceptsWork(lifecycle); }, get inFlight() { return inFlight.size; } };
 }

@@ -336,7 +336,7 @@ export interface AuditSink {
   /** Newest first. */
   /** `apps`: only rows about these apps (rows with no app are left out too). */
   list(q?: { limit?: number; actor?: string; targetType?: string; targetId?: string; actions?: string[]; apps?: string[] }): Promise<AuditEntry[]>;
-  close(): Promise<void>;
+  close(force?: boolean): Promise<void>;
 }
 
 /** Append-only JSONL file (runs/audit/audit.jsonl by default). */
@@ -411,7 +411,7 @@ export class PgAudit implements AuditSink {
       ...(r.mode ? { mode: r.mode } : {}), ...(r.app ? { app: r.app } : {}), ok: r.ok, ...(r.detail && Object.keys(r.detail).length ? { detail: r.detail } : {}),
     }));
   }
-  async close() { await this.sql.close(); }
+  async close(force = false) { await this.sql.end(force ? { timeout: 0 } : undefined); }
 }
 
 export function createAudit(o: { url?: string; dir?: string } = {}): AuditSink {

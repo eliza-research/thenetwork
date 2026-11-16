@@ -47,9 +47,9 @@ pure def sometimesTimerStarts(s: BackendLifecycle): bool = s.timerStarted
 
 > As an operator, I want shutdown to refuse new work, settle work already tracked by the process, and report when the grace limit cuts it short.
 
-### Shutdown drains listeners and then waits for tracked work
+### The grace period covers listener and work drain
 
-Mark the process as draining, clear the interval, and request a graceful stop from each listener. The current backend starts the grace wait after those listener stops return. The historical model starts it when shutdown begins. Keep the current backend order. The shell races the tracked promises against the grace timer. If the timer wins, record an unclean shutdown. Then force-close the listeners, close the service, and report that result. A repeat shutdown call receives the same result.
+Mark the process as draining, clear the tick timer, and start the grace period before waiting for the listeners. Request a graceful stop on both listeners. Once they finish, wait for the tracked requests and ticks to settle. Only completion of both steps can produce a clean result. When either step reaches the same deadline, record an unclean result, force-close remaining connections and terminate pending database sessions. Close the service and report the result. A repeat shutdown call receives the same result.
 
 ```quint
 pure def canBeginShutdown(s: BackendLifecycle): bool = backendAcceptsWork(s)
@@ -58,7 +58,8 @@ pure def beginShutdown(s: BackendLifecycle): BackendLifecycle = { ...s, phase: S
 pure def canRecordListenerDrain(s: BackendLifecycle): bool = s.phase == StoppingListeners
 pure def recordListenerDrain(s: BackendLifecycle): BackendLifecycle = { ...s, phase: WaitingForWork }
 
-pure def canSettleWorkDrain(s: BackendLifecycle): bool = s.phase == WaitingForWork
+pure def canSettleWorkDrain(s: BackendLifecycle, timedOut: bool): bool =
+  s.phase == WaitingForWork or (s.phase == StoppingListeners and timedOut)
 pure def settleWorkDrain(s: BackendLifecycle, timedOut: bool): BackendLifecycle =
   { ...s, phase: if (timedOut) ClosingTimedOut else ClosingClean }
 
@@ -70,6 +71,9 @@ pure def shutdownWasClean(s: BackendLifecycle): bool = s.phase == ClosingClean o
 
 pure def stepDrainNeverReopens(before: BackendLifecycle, after: BackendLifecycle): bool =
   not(backendAcceptsWork(before)) implies not(backendAcceptsWork(after))
+
+pure def stepCleanDrainWaitsForListeners(before: BackendLifecycle, after: BackendLifecycle): bool =
+  (before.phase != ClosingClean and after.phase == ClosingClean) implies before.phase == WaitingForWork
 
 pure def sometimesClosesCleanly(s: BackendLifecycle): bool = s.phase == ClosedClean
 pure def sometimesClosesAfterGrace(s: BackendLifecycle): bool = s.phase == ClosedTimedOut

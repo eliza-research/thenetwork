@@ -36,9 +36,9 @@ accepted merges and pays after maintainer review. There is no escrow.
 - `gen/` is disposable output. The production build imports generated
   TypeScript published by `pnpm run spec:sync` into
   `packages/core/src/generated/`. Commit those copies with their specs.
-  The same command compiles the serving health shell under
-  `packages/core/src/vibe/`. Commit its emitted JavaScript and declarations
-  with the shell and spec. Keep generated code free of manual edits.
+  The same command compiles the serving shells under
+  `packages/core/src/vibe/`. Commit emitted JavaScript and declarations
+  with each shell and spec. Keep generated code free of manual edits.
 - Change the model and implementation together. Compare their states, guards,
   writes, retries, leases, limits, and invariants. State which seams and proof
   obligations were checked, and which remain open.

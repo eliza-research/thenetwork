@@ -35,6 +35,7 @@ export function canReleaseTick(s: BackendLifecycle, tickKey: string): boolean {
 //@ pure
 export function releaseTick(s: BackendLifecycle, tickKey: string): BackendLifecycle {
   //@ ensures (inv(s) && canReleaseTick(s, tickKey)) ==> stepNewTicksRequireServing(s, "releaseTick", \result)
+  //@ ensures (inv(s) && canReleaseTick(s, tickKey)) ==> stepCleanDrainWaitsForListeners(s, \result)
   //@ ensures (inv(s) && canReleaseTick(s, tickKey)) ==> stepDrainNeverReopens(s, \result)
   return { ...s, ticking: s.ticking.filter((set_x: string) => ![tickKey].includes(set_x)) };
 }
@@ -55,6 +56,7 @@ export function backendAcceptsWork(s: BackendLifecycle): boolean {
 //@ pure
 export function reserveTick(s: BackendLifecycle, tickKey: string): BackendLifecycle {
   //@ ensures (inv(s) && canReserveTick(s, tickKey)) ==> stepNewTicksRequireServing(s, "reserveTick", \result)
+  //@ ensures (inv(s) && canReserveTick(s, tickKey)) ==> stepCleanDrainWaitsForListeners(s, \result)
   //@ ensures (inv(s) && canReserveTick(s, tickKey)) ==> stepDrainNeverReopens(s, \result)
   return { ...s, ticking: s.ticking.concat([tickKey].filter((set_x: string) => !s.ticking.includes(set_x))) };
 }
@@ -69,6 +71,7 @@ export function canReserveTick(s: BackendLifecycle, tickKey: string): boolean {
 //@ pure
 export function startTimer(s: BackendLifecycle, at: number): BackendLifecycle {
   //@ ensures (inv(s) && canStartTimer(s)) ==> stepNewTicksRequireServing(s, "startTimer", \result)
+  //@ ensures (inv(s) && canStartTimer(s)) ==> stepCleanDrainWaitsForListeners(s, \result)
   //@ ensures (inv(s) && canStartTimer(s)) ==> stepDrainNeverReopens(s, \result)
   return { ...s, timerStarted: true, ticksFrom: at };
 }
@@ -85,81 +88,91 @@ export function canStartTimer(s: BackendLifecycle): boolean {
   return backendAcceptsWork(s);
 }
 
-/** Story: Drain work before closing the backend / Shutdown drains listeners and then waits for tracked work (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
 //@ pure
 export function beginShutdown(s: BackendLifecycle): BackendLifecycle {
   //@ ensures (inv(s) && canBeginShutdown(s)) ==> stepNewTicksRequireServing(s, "beginShutdown", \result)
+  //@ ensures (inv(s) && canBeginShutdown(s)) ==> stepCleanDrainWaitsForListeners(s, \result)
   //@ ensures (inv(s) && canBeginShutdown(s)) ==> stepDrainNeverReopens(s, \result)
   return { ...s, phase: "StoppingListeners" };
 }
 
-/** Story: Drain work before closing the backend / Shutdown drains listeners and then waits for tracked work (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
 //@ pure
 export function canRecordListenerDrain(s: BackendLifecycle): boolean {
   return s.phase === "StoppingListeners";
 }
 
-/** Story: Drain work before closing the backend / Shutdown drains listeners and then waits for tracked work (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
 //@ pure
 export function recordListenerDrain(s: BackendLifecycle): BackendLifecycle {
   //@ ensures (inv(s) && canRecordListenerDrain(s)) ==> stepNewTicksRequireServing(s, "recordListenerDrain", \result)
+  //@ ensures (inv(s) && canRecordListenerDrain(s)) ==> stepCleanDrainWaitsForListeners(s, \result)
   //@ ensures (inv(s) && canRecordListenerDrain(s)) ==> stepDrainNeverReopens(s, \result)
   return { ...s, phase: "WaitingForWork" };
 }
 
-/** Story: Drain work before closing the backend / Shutdown drains listeners and then waits for tracked work (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
 //@ pure
-export function canSettleWorkDrain(s: BackendLifecycle): boolean {
-  return s.phase === "WaitingForWork";
+export function canSettleWorkDrain(s: BackendLifecycle, timedOut: boolean): boolean {
+  return s.phase === "WaitingForWork" || (s.phase === "StoppingListeners" && timedOut);
 }
 
-/** Story: Drain work before closing the backend / Shutdown drains listeners and then waits for tracked work (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
 //@ pure
 export function settleWorkDrain(s: BackendLifecycle, timedOut: boolean): BackendLifecycle {
-  //@ ensures (inv(s) && canSettleWorkDrain(s)) ==> stepNewTicksRequireServing(s, "settleWorkDrain", \result)
-  //@ ensures (inv(s) && canSettleWorkDrain(s)) ==> stepDrainNeverReopens(s, \result)
+  //@ ensures (inv(s) && canSettleWorkDrain(s, timedOut)) ==> stepNewTicksRequireServing(s, "settleWorkDrain", \result)
+  //@ ensures (inv(s) && canSettleWorkDrain(s, timedOut)) ==> stepCleanDrainWaitsForListeners(s, \result)
+  //@ ensures (inv(s) && canSettleWorkDrain(s, timedOut)) ==> stepDrainNeverReopens(s, \result)
   return { ...s, phase: timedOut ? "ClosingTimedOut" : "ClosingClean" };
 }
 
-/** Story: Drain work before closing the backend / Shutdown drains listeners and then waits for tracked work (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
 //@ pure
 export function canRecordBackendClose(s: BackendLifecycle): boolean {
   return s.phase === "ClosingClean" || s.phase === "ClosingTimedOut";
 }
 
-/** Story: Drain work before closing the backend / Shutdown drains listeners and then waits for tracked work (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
 //@ pure
 export function recordBackendClose(s: BackendLifecycle): BackendLifecycle {
   //@ ensures (inv(s) && canRecordBackendClose(s)) ==> stepNewTicksRequireServing(s, "recordBackendClose", \result)
+  //@ ensures (inv(s) && canRecordBackendClose(s)) ==> stepCleanDrainWaitsForListeners(s, \result)
   //@ ensures (inv(s) && canRecordBackendClose(s)) ==> stepDrainNeverReopens(s, \result)
   return { ...s, phase: s.phase === "ClosingClean" ? "ClosedClean" : "ClosedTimedOut" };
 }
 
-/** Story: Drain work before closing the backend / Shutdown drains listeners and then waits for tracked work (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
 //@ pure
 export function shutdownWasClean(s: BackendLifecycle): boolean {
   return s.phase === "ClosingClean" || s.phase === "ClosedClean";
 }
 
-/** Story: Drain work before closing the backend / Shutdown drains listeners and then waits for tracked work (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
+//@ pure
+export function stepCleanDrainWaitsForListeners(before: BackendLifecycle, after: BackendLifecycle): boolean {
+  return !(before.phase !== "ClosingClean" && after.phase === "ClosingClean") || before.phase === "WaitingForWork";
+}
+
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
 //@ pure
 export function sometimesClosesCleanly(s: BackendLifecycle): boolean {
   return s.phase === "ClosedClean";
 }
 
-/** Story: Drain work before closing the backend / Shutdown drains listeners and then waits for tracked work (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
 //@ pure
 export function sometimesClosesAfterGrace(s: BackendLifecycle): boolean {
   return s.phase === "ClosedTimedOut";
 }
 
-/** Story: Drain work before closing the backend / Shutdown drains listeners and then waits for tracked work (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
 //@ pure
 export function canBeginShutdown(s: BackendLifecycle): boolean {
   return backendAcceptsWork(s);
 }
 
-/** Story: Drain work before closing the backend / Shutdown drains listeners and then waits for tracked work (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
 //@ pure
 export function stepDrainNeverReopens(before: BackendLifecycle, after: BackendLifecycle): boolean {
   return !(!backendAcceptsWork(before)) || !backendAcceptsWork(after);
@@ -173,7 +186,7 @@ export function enabled(current: BackendLifecycle, event: Event): boolean {
   if (event.type === "startTimer") return canStartTimer(current);
   if (event.type === "beginShutdown") return canBeginShutdown(current);
   if (event.type === "recordListenerDrain") return canRecordListenerDrain(current);
-  if (event.type === "settleWorkDrain") return canSettleWorkDrain(current);
+  if (event.type === "settleWorkDrain") return canSettleWorkDrain(current, event.timedOut);
   if (event.type === "recordBackendClose") return canRecordBackendClose(current);
   return false;
 }
@@ -188,7 +201,7 @@ export function step(current: BackendLifecycle, event: Event): BackendLifecycle 
   if (event.type === "startTimer" && canStartTimer(current)) return startTimer(current, event.at);
   if (event.type === "beginShutdown" && canBeginShutdown(current)) return beginShutdown(current);
   if (event.type === "recordListenerDrain" && canRecordListenerDrain(current)) return recordListenerDrain(current);
-  if (event.type === "settleWorkDrain" && canSettleWorkDrain(current)) return settleWorkDrain(current, event.timedOut);
+  if (event.type === "settleWorkDrain" && canSettleWorkDrain(current, event.timedOut)) return settleWorkDrain(current, event.timedOut);
   if (event.type === "recordBackendClose" && canRecordBackendClose(current)) return recordBackendClose(current);
   return current;
 }

@@ -2642,9 +2642,11 @@ export class NetworkService implements RuntimeHost {
     }
   }
 
-  async close() {
-    await this.audit.close().catch(() => {});
-    await this.sql.close();
+  async close(force = false) {
+    await Promise.all([
+      this.audit.close(force).catch(() => {}),
+      this.sql.end(force ? { timeout: 0 } : undefined),
+    ]);
   }
 }
 

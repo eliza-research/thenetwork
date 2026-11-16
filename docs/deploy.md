@@ -91,10 +91,10 @@ How a site request reaches the backend:
 **On SIGTERM:**
 
 1. `/healthz` answers 503, and new work is refused.
-2. Both listeners stop accepting connections.
+2. The grace period starts and both listeners stop accepting connections.
 3. Every unit of work and tick in flight finishes: it commits, delivers, and releases its advisory lock.
 4. The pool closes.
-5. After `SHUTDOWN_GRACE_MS` (25 s) the pool closes anyway. That ends the database sessions, and with them any lock they still hold. The process then exits 1.
+5. If listener drain or tracked work reaches `SHUTDOWN_GRACE_MS` (25 s), the process closes open connections and terminates pending database sessions. That releases any locks they still hold. The process then exits 1.
 
 **Logs:**
 
