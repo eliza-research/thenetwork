@@ -52,7 +52,7 @@ import {
   restoreAttendance, settlementDelayDays, silentConfirmationDue, step as stepMeetingSettlement,
 } from "../../core/src/generated/meetingSettlement.ts";
 import {
-  closesForMinor, groupCanContinue, initial as initialOpportunity, step as stepOpportunity,
+  closesForMinor, groupCanContinue, initial as initialOpportunity, releasesPartialAcceptance, step as stepOpportunity,
   type OpportunityLifecycle, type OpportunityPhase,
 } from "../../core/src/generated/opportunityLifecycle.ts";
 import { queueRepeat, recentRepeatSource, recordsRepeatConsent } from "../../core/src/generated/repeatEncounter.ts";
@@ -2710,7 +2710,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   private closeNoCommonTime(o: Opp, id: MemberId) {
     this.counters.noCommonTime++;
     this.ctx.log("no_common_time", { oppId: o.id, memberId: id, picks: Object.fromEntries(Object.entries(o.picks ?? {}).map(([k, v]) => [k, v.length])) });
-    this.close(o, "no common time");
+    this.close(o, "no common time", { releasePartial: true });
   }
 
   /** A primed requester who has not picked times yet, and times to offer: they get the time question first. */
@@ -2879,7 +2879,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const route = replacementRoute(o.stage === "probing", o.requester === out, o.seat?.manager === out);
     if (route === "IgnoreReplacement") return;
     if (route === "CloseRequester") return this.close(o, "requester unavailable");
-    if (route === "CloseManager") return this.close(o, "manager unavailable");
+    if (route === "CloseManager") return this.close(o, "manager unavailable", { releasePartial: true });
     const group = o.participants.length > 2;
     let alt: MemberId | undefined;
     while (!alt && mayTryAlternate(o.alternates.length > 0, o.replacements)) {
@@ -2907,7 +2907,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (o.first === out) o.first = o.participants[0];
       return;
     }
-    this.close(o, "no one available");
+    this.close(o, "no one available", { releasePartial: true });
   }
 
   private maybeReveal(o: Opp) {
@@ -3064,7 +3064,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const id of o.bookedTold ?? []) if (o.status.get(id) === "yes" && !(o.confirmed ?? []).includes(id)) this.counters.revealExpired++;
   }
 
-  private close(o: Opp, reason: string) {
+  private close(o: Opp, reason: string, { releasePartial = false }: { releasePartial?: boolean } = {}) {
     const current = opportunityLifecycle(o);
     const next = stepOpportunity(current, { type: "close" });
     if (next === current) return;
@@ -3074,13 +3074,21 @@ export class ConsentNetwork implements NetworkUnderTest {
     const wasProbing = o.stage === "probing" || wasReview;
     if (o.stage === "probing") this.counters.oppsNotAvailable++;
     o.stage = STAGE_BY_PHASE[next.phase];
+    const systemProposal = !o.requester && !o.plan && o.origin !== "request" && o.origin !== "plans";
     const told = new Set<MemberId>();
     for (const id of o.participants) {
       const m = this.members.get(id);
       if (!m) continue;
       if (m.awaiting?.oppId === o.id) m.awaiting = undefined;
-      // Tell people who said yes, without saying who declined (F11, F29).
-      if (!wasProbing && o.status.get(id) === "yes" && reason !== "blocked") { this.send(m, copy.declinedQuiet, { type: "info", proposalId: o.id }, "cancellation"); told.add(id); }
+      const status = o.status.get(id);
+      // spec/opportunityLifecycle.md, "Closing an underfilled proposal releases the members who accepted"
+      const accepted = status === "available" && o.primed.has(id);
+      if (releasesPartialAcceptance(current, releasePartial, systemProposal, o.contacted.has(id), accepted)) {
+        this.send(m, copy.declinedQuiet, { type: "cancellation", proposalId: o.id }, "cancellation", { key: `opportunity-release:${o.id}:${id}` });
+      } else if (!wasProbing && status === "yes" && reason !== "blocked") {
+        this.send(m, copy.declinedQuiet, { type: "info", proposalId: o.id }, "cancellation");
+        told.add(id);
+      }
     }
     if (o.requester) {
       const r = this.requests.find(x => x.oppId === o.id && x.memberId === o.requester);

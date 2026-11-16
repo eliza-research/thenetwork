@@ -134,6 +134,19 @@ export function sometimesCanCloseBeforeContact(proposal: OpportunityLifecycle): 
   return proposal.phase === "Closed" && !proposal.approved;
 }
 
+/** Story: Book and conclude a proposal that comes together / Closing an underfilled proposal releases the members who accepted (spec/opportunityLifecycle.md) */
+//@ pure
+export function releasesPartialAcceptance(before: OpportunityLifecycle, unresolved: boolean, systemProposal: boolean, contacted: boolean, accepted: boolean): boolean {
+  return before.phase === "Probing" && before.approved && unresolved && systemProposal && contacted && accepted;
+}
+
+/** Story: Book and conclude a proposal that comes together / Closing an underfilled proposal releases the members who accepted (spec/opportunityLifecycle.md) */
+//@ pure
+export function lawReleaseNeedsAContactedAcceptor(before: OpportunityLifecycle, unresolved: boolean, systemProposal: boolean, contacted: boolean, accepted: boolean): boolean {
+  //@ ensures \result === true
+  return !releasesPartialAcceptance(before, unresolved, systemProposal, contacted, accepted) || (contacted && accepted);
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: OpportunityLifecycle, event: Event): boolean {

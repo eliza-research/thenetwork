@@ -83,3 +83,17 @@ pure def sometimesCanBook(proposal: OpportunityLifecycle): bool = proposal.phase
 pure def sometimesCanComplete(proposal: OpportunityLifecycle): bool = proposal.phase == Done
 pure def sometimesCanCloseBeforeContact(proposal: OpportunityLifecycle): bool = proposal.phase == Closed and not(proposal.approved)
 ```
+
+### Closing an underfilled proposal releases the members who accepted
+
+If a system proposal expires or cannot book enough members at a common time, send one neutral closing notice to each member who received its invitation and still accepts it. Use the ordinary safety and timing checks for cancellation messages. Do not disclose the other members or anyone's response. Member requests and group plans keep their own closing paths.
+
+```quint
+pure def releasesPartialAcceptance(before: OpportunityLifecycle, unresolved: bool, systemProposal: bool,
+    contacted: bool, accepted: bool): bool =
+  before.phase == Probing and before.approved and unresolved and systemProposal and contacted and accepted
+
+pure def lawReleaseNeedsAContactedAcceptor(before: OpportunityLifecycle, unresolved: bool, systemProposal: bool,
+    contacted: bool, accepted: bool): bool =
+  releasesPartialAcceptance(before, unresolved, systemProposal, contacted, accepted) implies (contacted and accepted)
+```
