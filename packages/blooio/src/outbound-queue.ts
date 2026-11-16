@@ -680,14 +680,18 @@ export class OutboundQueue {
     if (next === from) return undefined;
     if (next.phase === "ProviderFailed") {
       const error = `${u.errorCode ?? ""} ${u.errorMessage ?? ""}`.trim() || "failed";
-      const rows = await this.sql`update platform.outbound set status = 'failed',
-        transport = coalesce(${u.transport ?? null}, transport), note = 'receipt: failed', last_error = ${error},
-        ended_at = ${at}, updated_at = ${at}, lease_owner = null, lease_until = null,
-        to_address = case when member_id is null then null else to_address end, body = case when member_id is null then null else body end
-        where id = ${row.id} and status = ${row.status} returning id`;
+      // One transaction: a crash between the status change and the cap release must not leave a failed send counted.
+      const rows = await this.sql.begin(async tx => {
+        const moved = await tx`update platform.outbound set status = 'failed',
+          transport = coalesce(${u.transport ?? null}, transport), note = 'receipt: failed', last_error = ${error},
+          ended_at = ${at}, updated_at = ${at}, lease_owner = null, lease_until = null,
+          to_address = case when member_id is null then null else to_address end, body = case when member_id is null then null else body end
+          where id = ${row.id} and status = ${row.status} returning id`;
+        // spec/outboundReceipt.md, "Only a send the provider took counts toward the recipient's hourly cap"
+        if (moved.length && !countsTowardRecipientCap(next.phase)) await tx`delete from platform.outbound_recipient_sends where outbound_id = ${row.id}`;
+        return moved;
+      });
       if (!rows.length) return this.applyStatus(u);
-      // spec/outboundReceipt.md, "Only a send the provider took counts toward the recipient's hourly cap"
-      if (!countsTowardRecipientCap(next.phase)) await this.sql`delete from platform.outbound_recipient_sends where outbound_id = ${row.id}`;
       if (row.personCap) await this.o.checks.capRelease?.(row).catch(() => {});
       return { id: row.id, app: row.app, memberId: row.memberId, status: "failed" };
     }
