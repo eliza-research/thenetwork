@@ -1,7 +1,8 @@
 # Build context: the repository root. Everything is excluded, then the image's inputs are allowed back.
 *
 !package.json
-!bun.lock
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
 !tsconfig.json
 !packages/
 !deploy/

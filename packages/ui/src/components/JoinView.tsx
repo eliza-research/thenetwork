@@ -172,7 +172,8 @@ export function JoinView({
   return (
     <div className={cn("flex flex-col gap-6", className)} {...props}>
       <FlowNotice notice={page.notice} />
-      <div key={page.screen} ref={focusStep} data-waiting={current.waiting ? "" : undefined}>
+      <div key={page.screen} ref={focusStep} data-join-step={page.screen}
+        data-join-consent={page.consented ? "granted" : undefined} data-waiting={current.waiting ? "" : undefined}>
         {current.view}
       </div>
     </div>

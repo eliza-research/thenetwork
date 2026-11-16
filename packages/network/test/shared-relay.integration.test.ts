@@ -1,9 +1,11 @@
 // Cloud's RELAY wire end to end on the canonical owner: real signed HTTP (RelaySendRequest, x-ntwrk-svc-id
 // "<messageId>:relay") -> POST /internal/relay -> the ConsentNetwork relay desk -> the durable outbox ->
 // the Cloud deliver path. Classifier and Cloud HTTP are controlled boundaries. Needs the dev Postgres on :54339.
-import {afterAll,beforeAll,expect,test} from "bun:test";
+import { serveHttp, type HttpServer } from "../../core/src/runtime/http.ts";
+import { setTimeout as sleep } from "node:timers/promises";
+import {afterAll,beforeAll,expect,test} from "vitest";
 import {randomUUID,createHash} from "node:crypto";
-import {SQL} from "bun";
+import {SQL} from "../../core/src/runtime/postgres.ts";
 import {DAY,HOUR,MINUTE,SimClock} from "@thenetwork/core";
 import {applySchema} from "../../observatory/db/dev-pg.ts";
 import {TURN_PATH,RELAY_PATH,DELIVER_PATH,RELAY_PHOTO_RESOLVE_PATH,type RelaySendRequest,type TurnRequest} from "../../core/src/svc/contract.ts";
@@ -19,7 +21,7 @@ const db=`network_relay_${randomUUID().replaceAll("-","")}`,url=`postgres://${pr
 const admin=new SQL({url:`postgres://${process.env.USER??"postgres"}@127.0.0.1:54339/postgres`,max:1});
 const secret="synthetic-current-relay-signing-secret-20261009",clock=new SimClock(Date.UTC(2026,9,9,16));
 const a="+12125550211",b="+12125550212",c="+12125550213";
-let sql:SQL,service:NetworkService,server:ReturnType<typeof Bun.serve>,cloud:ReturnType<typeof Bun.serve>,fromId:string,toId:string,thirdId:string;
+let sql:SQL,service:NetworkService,server:HttpServer,cloud:HttpServer,fromId:string,toId:string,thirdId:string;
 let classifierFails=false,classifications=0,known=true,posts=0,polls=0,ancillaryPosts=0;
 let classifyGate:Promise<void>|undefined,classifyEntered:(()=>void)|undefined;
 const sent:Array<{id:string;text:string;kind:string;to:string;approvedPhotos?:import("../../core/src/svc/contract.ts").ApprovedRelayPhoto[]}>=[];
@@ -37,9 +39,9 @@ const start=async()=>{
     ...(photoPolicyEnabled?{photoRelayPolicy:{version:"relay-fixture-v1",notice:"Share this selected photo with {{recipient}} only after its designated safety review. Test fixture policy.",authorizeReviewer:async(id:string)=>id===staffId&&reviewerEnabled}}:{}),env:{PLATFORM_ENV:"dev",CLEF_RATINGS:"off",SERVICE_TURN_SECRET:secret},networks:[{id:"friends:nyc",matchingEnabled:false},{id:"slop:nyc",matchingEnabled:false}],log:()=>{},
     relayClassifier:async()=>{classifications++;if(classifyGate){classifyEntered?.();await classifyGate;}if(classifierFails)throw new Error("synthetic classifier outage");return {flags:[],source:"clef" as const};},
     adapter:(_net,rt)=>new CloudChannelAdapter({app:rt.app.id,clock,city:rt.city,from:"+12125550210",origin:cloud.url.origin,secret,env:{PLATFORM_ENV:"dev",BLOOIO_ALLOW_SEND:"1",NTWRK_LIVE_APPROVED:"1",FRIENDS_LIVE_APPROVED:"1",SLOP_LIVE_APPROVED:"1"}})});
-  await service.start();server=Bun.serve({hostname:"127.0.0.1",port:0,fetch:req=>service.fetch(req)});
+  await service.start();server=await serveHttp({hostname:"127.0.0.1",port:0,fetch:req=>service.fetch(req)});
 };
-const restart=async()=>{server.stop(true);await service.close();await start();};
+const restart=async()=>{await server.stop(true);await service.close();await start();};
 // Cloud's client signs every relay with id "<messageId>:relay" (plugin-network client.ts at b763).
 const post=async(path:string,body:object)=>{
   const fields=body as Record<string,unknown>,raw=JSON.stringify(body),id=path===RELAY_PATH?`${fields.messageId}:relay`:String(fields.messageId);
@@ -59,7 +61,7 @@ const fixturePair=async(closed=false,app:"friends"|"slop"="friends",pair=[fromId
 });
 /** The pair as the stored state holds it now (a close commits before its own delivery, which waits for the held dispatch). */
 const pairClosed=async()=>{const [row]=await sql`select state from network.network_state where id='friends:nyc'`;const st=typeof row.state==='string'?JSON.parse(row.state):row.state;return st.opps.find((op:any)=>op.id==='relay-pair')?.stage==='closed';};
-const waitFor=async(cond:()=>Promise<boolean>)=>{for(let i=0;i<400;i++){if(await cond())return true;await Bun.sleep(5);}return false;};
+const waitFor=async(cond:()=>Promise<boolean>)=>{for(let i=0;i<400;i++){if(await cond())return true;await sleep(5);}return false;};
 /** Hold the dispatch of the next relayed row right after its asynchronous gates (the leak check), before admission. */
 const gateDispatch=()=>{
   const rt=service.runtimeFor("friends")!,checks=((rt.adapter as CloudChannelAdapter).queue as unknown as {o:QueueOptions}).o.checks,original=checks.leaks!;
@@ -70,7 +72,7 @@ const gateDispatch=()=>{
 };
 beforeAll(async()=>{
   await admin.unsafe(`create database ${db}`);await applySchema(url,{lockTimeout:"5s"});sql=new SQL({url,max:4});
-  cloud=Bun.serve({hostname:"127.0.0.1",port:0,fetch:async req=>{
+  cloud=await serveHttp({hostname:"127.0.0.1",port:0,fetch:async req=>{
     const path=new URL(req.url).pathname,raw=await req.text(),auth=await svcVerify(secret,{method:req.method,path,headers:req.headers,body:raw,nowS:Math.floor(clock.now()/1000)});
     expect(auth.ok).toBe(true);const input=JSON.parse(raw);expect([a,b,c,"+12125550214","+12125550215","+12125550216"]).toContain(input.to);
     if(input.kind==="relay"){if(path===DELIVER_PATH){
@@ -97,7 +99,7 @@ beforeAll(async()=>{
   thirdId=(await service.people.getMembership((await service.accounts.personFor(c))!.id,"friends"))!.memberId;
   await fixturePair();
 },120_000);
-afterAll(async()=>{server?.stop(true);await service?.close();cloud?.stop(true);await sql?.close();await admin.unsafe(`drop database if exists ${db} with (force)`);await admin.close();});
+afterAll(async()=>{await server?.stop(true);await service?.close();await cloud?.stop(true);await sql?.close();await admin.unsafe(`drop database if exists ${db} with (force)`);await admin.close();});
 
 test("relay binds the original text and pair, sends only rendered wording, swaps numbers only after both ask, and replays accepted receipts",async()=>{
   const request=await open("relay-text","  tell Sam I'm running ten minutes late  ");
@@ -183,7 +185,7 @@ test("closing the pair or a recipient STOP after classification and the async di
       const request=await open("relay-close-classifier","tell Sam I'll meet them outside");const before=posts;
       const pending=post(RELAY_PATH,request);await Promise.race([reached,pending.then(async r=>{throw new Error(`answered before classification: ${await r.clone().text()}`);})]);
       let closedEarly=false;const closing=fixturePair(true).then(()=>{closedEarly=true;});
-      await Bun.sleep(50);expect(closedEarly).toBe(false);
+      await sleep(50);expect(closedEarly).toBe(false);
       release();await dispatch.atGate;expect(await waitFor(pairClosed)).toBe(true);dispatch.resume();
       expect(await(await pending).json()).toMatchObject({decision:"pass",delivered:false});await closing;expect(posts).toBe(before);
     } finally {classifyGate=undefined;classifyEntered=undefined;release?.();dispatch.resume();}

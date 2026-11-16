@@ -1,7 +1,7 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S node --import=tsx
 // The Network Observatory server: game mode (live simulated world) and real-world mode (Postgres),
 // switchable at runtime. REST for state and details, a WebSocket for live deltas, and the web UI.
-//   bun run packages/observatory/src/server.ts [--port 4747] [--mode game|real] [--seed 1]
+//   pnpm run observatory [--port 4747] [--mode game|real] [--seed 1]
 //       [--personas 0] [--engine engine-v1|random|off] [--db-url postgres://...] [--review auto|human] [--time-aware]
 // Security (audit P1-1, admin-console 4): it binds to 127.0.0.1 (OBSERVATORY_HOST overrides). Every
 // /api/* route and the /ws upgrade need a staff identity: a static token ("Authorization: Bearer
@@ -27,12 +27,12 @@
 // when NETWORK_SERVICE_URL and NETWORK_SERVICE_TOKEN are set (sources/service.ts); the database login stays read-only.
 import { randomBytes } from "node:crypto";
 import { parseArgs } from "node:util";
-import type { Server, ServerWebSocket } from "bun";
-import index from "../web/index.html";
+import { serveHttp, type HttpServer as Server, type ServerWebSocket } from "../../core/src/runtime/http.ts";
+import { buildWebRoutes } from "./web-assets.ts";
 import { initial as initialRoute, staffMemberAccess, step as stepStaffRoute } from "../../core/src/generated/staffPermissions.ts";
 import { Lab, LAB_LIMITS, validateLab, type LabOptions } from "./lab.ts";
 import { runDiff } from "./runDiff.ts";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { APP_IDS, appUrlEnv, consoleApps, DEFAULT_APP, isAppId, slaHours, toNetworkReason, type AppId } from "./apps.ts";
 import { appProfile, memberFacets, photosAllowed } from "./appProfile.ts";
 import { countsMember, countsOpp, shapeDelta, shapeState, viewClass, type ViewClass } from "./shape.ts";
@@ -82,7 +82,7 @@ export interface ServerOptions {
   real?: RealOptions & { appUrls?: Partial<Record<AppId, string>> };
   /** The cross-app person view's database. Default: OBSERVATORY_PLATFORM_DATABASE_URL, else the real-mode URL. false: off. */
   peopleUrl?: string | false;
-  /** Bundle the UI in development mode (HMR, unminified). Default: NODE_ENV !== "production". */
+  /** Keep the browser bundle unminified in development. Default: NODE_ENV !== "production". */
   development?: boolean;
   /** Shortest static token accepted (default 32). */
   minTokenLength?: number;
@@ -93,7 +93,7 @@ export interface ServerOptions {
 }
 
 export interface ObservatoryServer {
-  server: Server<unknown>; url: string;
+  server: Server<WsData>; url: string;
   /** The admin token (if there is one), and the page URL that carries it in the #fragment (never sent to a server). */
   token?: string; openUrl: string;
   mode(): Mode;
@@ -193,7 +193,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
   const sources = new Map<string, DataSource>();
   const starting = new Map<string, Promise<DataSource>>();
   const unsub = new Map<string, () => void>();
-  let server!: Server<unknown>;
+  let server!: Server<WsData>;
   const key = (m: Mode, app: AppId) => `${m}:${app}`;
 
   /** Open sockets, each with who opened it (deltas are shaped per person; audit observatory-6). */
@@ -281,6 +281,8 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
   const access = trustCfAccess ? new AccessVerifier({
     ...opts.cfAccess, team: opts.cfAccess?.team ?? process.env.OBSERVATORY_CF_ACCESS_TEAM ?? "", aud: opts.cfAccess?.aud ?? process.env.OBSERVATORY_CF_ACCESS_AUD ?? "",
   }) : undefined;
+  const development = opts.development ?? process.env.NODE_ENV !== "production";
+  const webRoutes = await buildWebRoutes(development);
   // platform.staff_roles (SSO users, real mode): read through the real-mode database.
   const rolesUrl = opts.staffRolesUrl === false ? undefined : opts.staffRolesUrl ?? (trustCfAccess && (realOnly || mode === "real") ? opts.real?.url ?? process.env.NETWORK_DATABASE_URL ?? process.env.DATABASE_URL : undefined);
   const rolesSql = rolesUrl ? new SQL({ url: rolesUrl, max: 1, idleTimeout: 30, connection: { default_transaction_read_only: "on", application_name: "network-observatory-roles" } }) : undefined;
@@ -435,12 +437,12 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
   }
 
   await source(mode, DEFAULT_APP);
-  server = Bun.serve({
+  server = await serveHttp<WsData>({
     port: opts.port ?? 4747,
     hostname,
-    development: opts.development ?? process.env.NODE_ENV !== "production",
+    development,
     routes: {
-      "/": index,
+      ...webRoutes,
       // Liveness for Railway's health check and an uptime monitor: no auth, no data, no Host check (Access guards the domain).
       "/healthz": () => new Response(JSON.stringify({ ok: true }), { headers: { ...SECURITY_HEADERS, "content-type": "application/json" } }),
       "/api/health": global(() => json({ ok: true, mode })),
@@ -695,7 +697,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
       // The weekly bias monitor (aggregates only; real mode reads it from the Network service). Admin or analyst.
       "/api/bias": guard(async (_r, u, app) => {
         const src = await source(mode, app);
-        if (!src.bias) return json({ ok: false, error: "the bias monitor runs on real data only (bun run sim measures it in simulation)", code: "real_only" }, 404);
+        if (!src.bias) return json({ ok: false, error: "the bias monitor runs on real data only (pnpm run sim measures it in simulation)", code: "real_only" }, 404);
         const no = await record(u, app, { action: "read_bias", ok: true });
         if (no) return no;
         const r = await src.bias(u.id);

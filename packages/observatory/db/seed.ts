@@ -1,10 +1,10 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S node --import=tsx
 // Load a dev/staging `network` database for the observatory's real-world mode.
-//   bun run packages/observatory/db/seed.ts --from-dataset                 # the 500 synthetic members (public files)
-//   bun run packages/observatory/db/seed.ts --from-sim --days 14 --seed 1  # a whole simulated run (messages, outcomes...)
+//   node --import tsx --env-file-if-exists=.env packages/observatory/db/seed.ts --from-dataset                 # the 500 synthetic members (public files)
+//   node --import tsx --env-file-if-exists=.env packages/observatory/db/seed.ts --from-sim --days 14 --seed 1  # a whole simulated run (messages, outcomes...)
 // Options: --url (default NETWORK_DATABASE_URL or the local dev cluster), --allow-remote (refused otherwise).
 import { parseArgs } from "node:util";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY } from "@thenetwork/core";
 import { GameSource } from "../src/sources/game.ts";
 import { applySchema, DEV_PG_URL, devPgUp } from "./dev-pg.ts";

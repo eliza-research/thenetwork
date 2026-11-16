@@ -9,7 +9,7 @@
 // (docs/results/2026-10-07-judge-v2.md); the engine ships v2. The v3 text is kept only for the
 // evals' historical replay, in packages/evals/src/historicalPrompts.ts.
 import type { ChatMessage, LLM, MemberId } from "@thenetwork/core";
-import { DAY } from "@thenetwork/core";
+import { standingIntentLive } from "../../core/src/standing-intent.ts";
 import { attendingRefs, passMessages, ReplyFields, runPass, str, type CitedFact, type PassVerdict } from "./judgeCommon.ts";
 import { buildPublicView, screenConfigOf, type PublicView } from "./packs/network/judgeContext.ts";
 import type { Candidate } from "./types.ts";
@@ -75,7 +75,7 @@ export function screenSnapshot(w: World): World["input"] {
   return {
     ...inp,
     facets: inp.facets.map(f => ({ ...f, memberId: C(f.memberId) })),
-    intents: inp.intents.filter(i => i.status === "active" && i.createdAt + i.horizonDays * DAY > now).map(i => ({ ...i, memberId: C(i.memberId) })),
+    intents: inp.intents.filter(i => standingIntentLive(i, now)).map(i => ({ ...i, memberId: C(i.memberId) })),
     presence: inp.presence.map(p => ({ ...p, memberId: C(p.memberId) })),
     edges: inp.edges.map(e => ({ ...e, from: C(e.from), to: C(e.to) })),
   };

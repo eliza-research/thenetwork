@@ -2,7 +2,8 @@
 // age as a property (PLAT-02), malformed cookies (PLAT-21), the canonical opt-in wording (PLAT-24),
 // the body cap and the production host map (PLAT-27), CSRF and Origin checks, one SMS for parallel
 // starts and the daily cap (PLAT-20, platform-26), and the same answer for known and unknown phones.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { setTimeout as sleep } from "node:timers/promises";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { APPS, type AppId } from "../src/apps.ts";
 import { createPublicApi, MAX_API_BODY_BYTES, parseCookies, type PublicApi } from "../src/api.ts";
 import { PgPeopleStore } from "../src/pg-store.ts";
@@ -24,7 +25,7 @@ function make(store: PeopleStore) {
   const api: PublicApi = createPublicApi({
     store, env: { PLATFORM_ENV: "dev" }, now: () => clock.t, minStartMs: 0, minVerifyMs: 0, log: () => {}, ipOf: req => req.headers.get("x-real-ip") ?? "198.51.100.200",
     otp: { name: "fake", send: async e164 => { sends++; const code = String(100000 + ((sends * 7919) % 900000)); codes.set(e164, code); return { code }; } },
-    onJoin: async ({ app, age, membership }) => { await Bun.sleep(5); joined.push({ app: app.id, age, member: membership.memberId }); },
+    onJoin: async ({ app, age, membership }) => { await sleep(5); joined.push({ app: app.id, age, member: membership.memberId }); },
   });
   const call = async (app: AppId, method: string, path: string, body?: unknown, headers: Record<string, string> = {}) => {
     const res = (await api.fetch(new Request(`http://${HOST[app]}${path}`, {
@@ -212,7 +213,7 @@ test("the join flow sends no code and opens no cloud sign-in during mode discove
     return machine.step(page, event);
   };
   try {
-    Object.defineProperty(globalThis, "window", { configurable: true, value: { location: { href: "https://slop.date/join" } } });
+    Object.defineProperty(globalThis, "window", { configurable: true, value: { location: { href: "https://peon.biz/join" } } });
     for (const mode of ["otp", "404", "cloud"] as const) {
       const requests: { path: string; body: unknown }[] = [];
       globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => {

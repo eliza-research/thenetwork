@@ -6,13 +6,14 @@ import type { LLM, MemberId, WorldSnapshot } from "@thenetwork/core";
 import { configHash, ENGINE_VERSION, resolveConfig, type EngineConfigInput } from "./config.ts";
 import { localEmbed, type EmbedFn } from "./embed.ts";
 import { explain, privateVocabulary } from "./explain.ts";
-import { involvesMinor, memberReason, screenCandidate } from "./filters.ts";
+import { involvesMinor, memberReason, publicEventPreferencesAllow, screenCandidate } from "./filters.ts";
 import type { GenCtx } from "./genkit.ts";
 import { JudgeCache, judgeCandidates, runCachedPass } from "./judge.ts";
 import { checkMemberFacing, redactPrivate } from "./judgeCommon.ts";
 import { deepReviewOne, gateMemberFacing, hardGate, type DeepVerdict } from "./judgeDeep.ts";
 import { screenDecision, screenOne, type ScreenVerdict } from "./judgeScreen.ts";
 import { initial as initialJudgmentRun, step as stepJudgmentRun } from "../../core/src/generated/judgmentRun.ts";
+import { standingIntentCandidateInScope } from "../../core/src/generated/standingIntent.ts";
 import { blockingPairs, fairnessMetrics, planAsks, selectProposals, updateExposureDebt } from "./policy.ts";
 import { EngineRng as Rng } from "@thenetwork/core";
 import { sha256, stableStringify } from "./hash.ts";
@@ -112,10 +113,21 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   // The pack's generators, in the pack's order. A generator the config switches off is skipped
   // (networkPack: the GENERATOR_NAMES flags; a name the config does not know runs).
   const gate = cfg.generators as Record<string, boolean | undefined>;
+  const intentScope = input.standingIntentSearch && new Set(input.standingIntentSearch);
+  const publishedEvents = new Set(w.events.filter(event => event.listing).map(event => event.id));
   for (const g of pack.generators) {
     if (g.name in gate && !gate[g.name]) continue;
     const ts = performance.now();
-    const got = g.run(ctx);
+    const proposed = g.run(ctx);
+    const generated = publishedEvents.size ? proposed.filter(c => {
+      if (c.anchor?.type !== "event" || !publishedEvents.has(c.anchor.id)) return true;
+      return c.participants.every(id => publicEventPreferencesAllow(w.get(id)?.m, c.category));
+    }) : proposed;
+    const got = intentScope ? generated.filter(c => standingIntentCandidateInScope(true,
+      c.anchor?.type === "intent" && intentScope.has(c.anchor.id),
+      c.anchor?.type === "event" && c.participants.some(id =>
+        w.get(id)?.intents.some(intent => intentScope.has(intent.id) && intent.category === c.category)),
+    )) : generated;
     f.byGenerator[g.name] = got.length;
     cands.push(...got);
     timings[`gen:${g.name}`] = Math.round((performance.now() - ts) * 100) / 100;

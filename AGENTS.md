@@ -34,16 +34,18 @@ accepted merges and pays after maintainer review. There is no escrow.
   preserve behavior and trace coverage while each flow moves into the
   Vibestack generator's supported subset.
 - `gen/` is disposable output. The production build imports generated
-  TypeScript published by `bun run spec:sync` into
+  TypeScript published by `pnpm run spec:sync` into
   `packages/core/src/generated/`. Commit those copies with their specs.
-  Keep both forms of generated code free of manual edits.
+  The same command compiles the serving shells under
+  `packages/core/src/vibe/`. Commit emitted JavaScript and declarations
+  with each shell and spec. Keep generated code free of manual edits.
 - Change the model and implementation together. Compare their states, guards,
   writes, retries, leases, limits, and invariants. State which seams and proof
   obligations were checked, and which remain open.
-- The [Eliza wire contract](packages/core/src/svc/contract.ts) and
-  [signing code](packages/core/src/svc/svc-auth.ts) mirror upstream byte for
-  byte. Land contract changes upstream before updating the mirror. Use
-  `bun run check:mirror` to compare it.
+- The [Eliza wire contract](packages/core/src/svc/contract.ts) mirrors upstream
+  byte for byte. The [signing file](packages/core/src/svc/svc-auth.ts) has a
+  local opening comment and mirrors the upstream implementation. Land wire and
+  signing changes upstream first. Use `pnpm run check:mirror` to compare them.
 
 ## The Network contribution rules
 
@@ -57,18 +59,18 @@ accepted merges and pays after maintainer review. There is no escrow.
 - Evidence or nothing: numbers before and after, same command and seeds, and a run with real LLM calls (CONTRIBUTING.md section 7.2). Mocked LLM output is not proof.
 - Test the changed flow in several agent clients and report client, version, provider and model for each (CONTRIBUTING.md section 8). Install other clients and drive them with computer use when they have no command line.
 - Simplify first: extend or merge what exists; remove dead code.
-- Validate with `bun run sim`, `bun run test:integration` and `bun run test:e2e`. A bug fix adds a sim gate, a scenario, a corpus row or an integration or e2e case that fails before the fix. No unit tests and no smoke tests ([docs/tests-policy.md](docs/tests-policy.md)).
+- Validate with `pnpm run sim`, `pnpm run test:integration` and `pnpm run test:e2e`. A bug fix adds a sim gate, a scenario, a corpus row or an integration or e2e case that fails before the fix. No unit tests and no smoke tests ([docs/tests-policy.md](docs/tests-policy.md)).
 - Defend the design: give two other implementations.
 - Fill in the PR evidence checklist (CONTRIBUTING.md section 12.2).
 - Write in ASD-STE100 Simplified Technical English (CONTRIBUTING.md section 13).
 
-**Security suite** (`bun run security`, also part of `bun run test:integration`; the same list is in docs/tests-policy.md): `packages/platform/test/db.test.ts`, `packages/platform/test/api-security.test.ts`, `packages/platform/test/proxy.test.ts`, `packages/platform/test/cloud-auth.pg.test.ts`, `packages/platform/test/notify-retention.pg.test.ts`, `packages/mcp/test/oauth.test.ts`, `packages/mcp/test/pg.test.ts`, `deploy/backend/backend.test.ts`, `deploy/router.test.ts`, `packages/network/test/shared-agent.integration.test.ts`, `packages/observatory/test/staff.test.ts`.
+**Security suite** (`pnpm run security`, also part of `pnpm run test:integration`; the same list is in docs/tests-policy.md): `packages/platform/test/db.test.ts`, `packages/platform/test/api-security.test.ts`, `packages/platform/test/proxy.test.ts`, `packages/platform/test/cloud-auth.pg.test.ts`, `packages/platform/test/notify-retention.pg.test.ts`, `packages/mcp/test/oauth.test.ts`, `packages/mcp/test/pg.test.ts`, `deploy/backend/backend.test.ts`, `deploy/router.test.ts`, `packages/network/test/shared-agent.integration.test.ts`, `packages/observatory/test/staff.test.ts`.
 
 **Postgres in the simulations.** The safety, ops, pipeline, pipeline-slop and audit blocks use the dev Postgres (:54339) when it is there and record a tracked "skipped" gate when it is not. CI's sim job has a Postgres service and `REQUIRE_PG=1`, and it fails on any such skip. The migration runner (`packages/observatory/db/migrate.ts`) refuses two numbered migrations with the same NNNN prefix: take the next free number.
 
 ## Code invariants
 
-Do not break these. `bun run sim` checks them in every simulated run.
+Do not break these. `pnpm run sim` checks them in every simulated run.
 
 - Network code reads time only from `Clock` (`packages/core`). No `Date.now()`, no `new Date()` without an argument, no `Math.random()`. Randomness comes from the seeded RNG.
 - Network code never reads hidden persona truth (`Persona.hidden`, the oracle, `hidden_truth.jsonl`). Only `packages/sim` and the judges that run inside the simulator can read it.
@@ -81,7 +83,7 @@ Do not break these. `bun run sim` checks them in every simulated run.
 
 - Use `defaultLLM()`, `judgeLLM()` or `recommenderLLM()` from `packages/core/src/llm.ts`. Every use is `gpt-6-luna` on Surplus Intelligence. OpenAI (same model IDs) is used when there is no `SURPLUS_API_KEY`, and as the fallback when Surplus returns 429 / 5xx / a timeout. Use `endpointsFor(provider)` to check whether a provider has a key. Do not add a new LLM client or provider.
 - Requests time out after 60 s by default (`LLM_TIMEOUT_MS`) and retry at most 4 times (`LLM_MAX_RETRIES`). One call, retries included, stops at `LLM_DEADLINE_MS` (default 3x the timeout; 0 disables). Pass `fallback: false` to a call or client to turn off the OpenAI fallback; every fallback is logged and reported to `onFallback`.
-- `bun run sim` never calls a model: it clears the provider keys before it starts. The one exception is `--llm`, which keeps them for the onboarding LLM arm (tracked gates only).
+- `pnpm run sim` never calls a model: it clears the provider keys before it starts. The one exception is `--llm`, which keeps them for the onboarding LLM arm (tracked gates only).
 - PR evidence needs real LLM calls. The real-LLM commands are in CONTRIBUTING.md section 7.2. The service's engine judge is off by default. For bounded real-model qualification with `NETWORK_ENGINE_JUDGE=1`, use the budget, request limit and dry-run command in [the service README](packages/network/service/README.md#matching-judge-in-staging). The sim adapter still does not supply an LLM to the engine.
 - Judge prompts write the explanation before the verdict.
 - Recommendations and judges use the same model (`gpt-6-luna`) with a different prompt or pass. Use a different judge model for audits only, and a cross-family audit needs founder approval (it sends data to another provider).
@@ -89,55 +91,55 @@ Do not break these. `bun run sim` checks them in every simulated run.
 ## Commands
 
 ```bash
-bun install --frozen-lockfile
-bun run spec:setup
-bun run spec:sync             # generate and publish the application rule modules
-bun run check                 # check the selected compiler inputs
-bun run spec:check-generated  # compare the published copies with fresh output
-bun run sim                  # the validation layer: evals, onboard, network, slop, relay, peon, friends, clef, safety, ops, pipeline, audit (pinned seeds; exits 1 on a blocking gate)
-bun run sim --only network   # one block (the names above, or capital); repeatable
-bun run sim --quick          # fewer seeds, shorter runs; quality gates become tracked
-bun run sim --with-capital   # adds the network-capital block (32 paired seeds; nightly)
-bun run typecheck
-bun run plugins/build.ts --check
-bun run test:integration     # integration suite incl. the security files (real Postgres on :54339 via dev-pg; docs/tests-policy.md)
-bun run test:e2e             # e2e: the full service and platform through HTTP (tests/e2e; needs Postgres)
-bun run security             # the security subset of the integration suite (11 files; list below)
-bun run clef <fit|calibrate|features|audit|synth>   # P2 Clef weight fitting (docs/results/2026-10-09-clef-fitting.md); only `features --live` calls Workers AI
-bun run relay-eval [rules|fit] [--live]   # the relay classifier report; only --live calls Workers AI
+pnpm install --frozen-lockfile
+pnpm run spec:setup
+pnpm run spec:sync             # generate and publish the application rule modules
+pnpm run check                 # check the selected compiler inputs
+pnpm run spec:check-generated  # compare the published copies with fresh output
+pnpm run sim                  # the validation layer: evals, onboard, network, slop, relay, peon, friends, clef, safety, ops, pipeline, audit (pinned seeds; exits 1 on a blocking gate)
+pnpm run sim --only network   # one block (the names above, or capital); repeatable
+pnpm run sim --quick          # fewer seeds, shorter runs; quality gates become tracked
+pnpm run sim --with-capital   # adds the network-capital block (32 paired seeds; nightly)
+pnpm run typecheck
+node --import tsx --env-file-if-exists=.env plugins/build.ts --check
+pnpm run test:integration     # integration suite incl. the security files (real Postgres on :54339 via dev-pg; docs/tests-policy.md)
+pnpm run test:e2e             # e2e: the full service and platform through HTTP (tests/e2e; needs Postgres)
+pnpm run security             # the security subset of the integration suite (11 files; list below)
+pnpm run clef <fit|calibrate|features|audit|synth>   # P2 Clef weight fitting (docs/results/2026-10-09-clef-fitting.md); only `features --live` calls Workers AI
+pnpm run relay-eval [rules|fit] [--live]   # the relay classifier report; only --live calls Workers AI
 
-# The shared design system and components (packages/design-system, packages/ui)
-bun run design:build         # build the token CSS from tokens.json
-bun run design:check         # check token contrast and the token table in design.md
-bun run ui:gen               # generate the component stories, the catalog and the story tests
-bun run ui:storybook         # Storybook, with a theme switch and a brand switch
-bun run ui:test              # mount every story and run its play (happy-dom)
-cd packages/ui && bun run test:browser   # play every story in Chromium with axe (needs a Playwright Chromium)
-bun run lint:ui              # lint packages/ui and apps/ with the design-system rules
+# Shared design and UI
+pnpm run design:build
+pnpm run design:check
+pnpm run ui:gen
+pnpm run ui:storybook
+pnpm run ui:test
+pnpm --filter @thenetwork/ui run test:browser
+pnpm run lint:ui
 
 # The ConsentNetwork on the NYC world (docs/runbook-simulation.md)
-bun run packages/network/harness/experiment.ts --days 21 --seed 1
-bun run packages/network/harness/scenarios.ts [scenario_id]
+node --import tsx --env-file-if-exists=.env packages/network/harness/experiment.ts --days 21 --seed 1
+node --import tsx --env-file-if-exists=.env packages/network/harness/scenarios.ts [scenario_id]
 
 # The simulated world and its scenarios (pass^k)
-bun run packages/sim/src/cli.ts --personas 150 --days 30 --mode discrete --seed 1 --network stub --engine ./packages/sim/src/engineAdapter.ts
-bun run packages/sim/src/cli.ts --scenario packages/sim/scenarios/stop-keyword.json --k 4
+node --import tsx --env-file-if-exists=.env packages/sim/src/cli.ts --personas 150 --days 30 --mode discrete --seed 1 --network stub --engine ./packages/sim/src/engineAdapter.ts
+node --import tsx --env-file-if-exists=.env packages/sim/src/cli.ts --scenario packages/sim/scenarios/stop-keyword.json --k 4
 
-# Per-app worlds (full tables; bun run sim runs their official gates)
-bun run packages/sim/src/apps/slop/packEval.ts --seeds 13-16 --weeks 4 --arms random,slop --gates3 \
+# Per-app worlds (full tables; pnpm run sim runs their official gates)
+node --import tsx --env-file-if-exists=.env packages/sim/src/apps/slop/packEval.ts --seeds 13-16 --weeks 4 --arms random,slop --gates3 \
   --population '{"catfish":0.005,"bodyTypes":true}' --world '{"verification":true,"relay":true,"review":3,"widen":true,"checkin":true,"photos":1,"rater":true}'
-bun run packages/sim/src/apps/peon/cli.ts --seeds 13-16
-bun run packages/sim/src/apps/friends/cli.ts --seeds 5-8
+node --import tsx --env-file-if-exists=.env packages/sim/src/apps/peon/cli.ts --seeds 13-16
+node --import tsx --env-file-if-exists=.env packages/sim/src/apps/friends/cli.ts --seeds 5-8
 
 # Observatory (prints http://127.0.0.1:4747/#token=...)
-bun run observatory
-bun run observatory --review human
-bun run observatory:db       # local Postgres on :54339 with a 14-day simulated run
+pnpm run observatory
+pnpm run observatory --review human
+pnpm run observatory:db       # local Postgres on :54339 with a 14-day simulated run
 
 # The four apps on one backend (docs/runbook-platform.md): dry-run sends only
-bun run db:migrate           # migrations (network and platform schemas), local hosts only
-NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/<your db> bun run platform:dev   # service :4848, API :8790, sites :5101-5104
-bun run sites:dev            # the four sites only, /api/* proxied to :8790
+pnpm run db:migrate           # migrations (network and platform schemas), local hosts only
+NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/<your db> pnpm run platform:dev   # service :4848, API :8790, sites :5101-5104
+pnpm run sites:dev            # the four sites only, /api/* proxied to :8790
 ```
 
 ## Environment
@@ -189,30 +191,24 @@ Screen and synthesize the designs before implementing.
 
 ## The stack
 
-The Network uses Bun for its application and tests. Node 26 and pnpm
-bootstrap the vendored Vibestack toolchain. Pure rules, transitions and
+The application, tests, and vendored Vibestack toolchain use Node 26
+and pnpm. Use the Node patch version in `.nvmrc`. Pure rules, transitions and
 validation types come from Quint. Existing services consume its generated
-TypeScript at their boundaries. Every web interface uses React 19 and one
-design system. `packages/design-system` (`@thenetwork/design-system`) holds
-the tokens and the brand colors. `packages/ui` (`@thenetwork/ui`) holds the
-shared components: Radix primitives, Tailwind CSS v4 and the token utilities,
-with stories that the Vibestack story generator writes. A brand changes only
-colors, logos and text: set `data-brand` (`network`, `slop`, `friends` or
-`peon`) on an ancestor, and the `light` or `dark` class for the theme. Put
-web applications in `apps/`. An application imports components from
-`@thenetwork/ui`. Its CSS entry imports `@thenetwork/design-system/theme.css`,
-`@thenetwork/design-system/brands.css` and `@thenetwork/ui/styles.css`.
+TypeScript at their boundaries. Backend health, shutdown, and alert
+dispatch use compiled VibeLang shells. The public sites, connector authorization, and staff console use React 19
+and the shared design system. Put brand tokens in `packages/design-system`
+and shared components in `packages/ui`. Each brand sets `data-brand` on
+an ancestor. Use the existing theme classes and token utilities.
 Read the [Network command map](README.md#commands) when an imported skill
-refers to the standalone template's pnpm commands, VibeLang shell, React
-design system, or Vitest setup.
+refers to the standalone template commands, VibeLang, or Vitest.
 
 ## Who does what
 
-`bun run check` reports where the executable spec requires attention. Use
+`pnpm run check` reports where the executable spec requires attention. Use
 the [sync skill](.claude/skills/sync/SKILL.md) to translate between stories,
 rules, Quint, and implementation. Read each rule beside its Quint. Use
-`bun run spec:sync` to publish the generated TypeScript for application
-callers. The product owner runs `bun run accept` to record review.
+`pnpm run spec:sync` to publish the generated TypeScript for application
+callers. The product owner runs `pnpm run accept` to record review.
 
 ## Hard rules
 
@@ -227,8 +223,8 @@ callers. The product owner runs `bun run accept` to record review.
   Eliza wire contract and existing product safety guards.
 - Put proof lemmas beside the source spec or contract. Use the
   [prove skill](.claude/skills/prove/SKILL.md) for permitted proof constructs.
-  Run `bun run accept` only at the product owner's request after reviewing
-  each listed rule. Simulated-only approval (`bun run accept unproved`) also
+  Run `pnpm run accept` only at the product owner's request after reviewing
+  each listed rule. Simulated-only approval (`pnpm run accept unproved`) also
   requires that request.
 - Use the shared instructions and product spec as the home for rules. Keep
   the existing guides and guides' skill references up to date.
@@ -374,9 +370,11 @@ Inventory the actions and information each story requires. Compare three
 directions and choose the clearest hierarchy with the fewest elements.
 Use visuals, position and weight where they carry the meaning. Give each
 view one main heading and keep the words required for actions, safety,
-consent, accessibility, and policy. Use shared tokens, a single type pairing,
-an accent and a spacing scale. Retain accessible names for visuals and WCAG
-AA contrast. Review the content and layout across two or three passes.
+consent, accessibility, and policy. Use shared tokens for colors, type, radii,
+shadows and focus. Keep color names distinct from text-size names. Use a
+single type pairing, an accent and a spacing scale. Retain accessible names
+for visuals and WCAG AA contrast, with at least 3:1 contrast for focus
+indicators. Review the content and layout across two or three passes.
 
 ## Tests
 
@@ -393,6 +391,10 @@ AA contrast. Review the content and layout across two or three passes.
   evidence. A Vibestack conformance driver uses the app's own entry point
   and imports the generated machine's types only.
   [Conformance reference](SPEC.md#conformance)
+- A Vibestack page served by a package's local `start` or `dev` can use
+  Bombadil's `explore` stage. Write properties in `test/bombadil.ts` and
+  cite their rules. Keep browser exploration on a local fixture with dry-run
+  sends. [Exploration reference](SPEC.md#exploring-the-page)
 
 ## Definition of done
 

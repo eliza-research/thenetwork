@@ -1,9 +1,10 @@
 // Evaluate the slop.date AppPack (the real engine with slopPack) against the baselines on the slop
 // world, with the launch gates of docs/results/2026-10-08-slop-pack.md. No LLM calls.
-//   bun run packages/sim/src/apps/slop/packEval.ts --seeds 1-4 --weeks 4 [--arms random,greedy,oracle,slop]
+//   node --import tsx --env-file-if-exists=.env --conditions=eliza-source packages/sim/src/apps/slop/packEval.ts --seeds 1-4 --weeks 4 [--arms random,greedy,oracle,slop]
 //       [--variant '{"assignment":"stable"}' --variant-name stable] [--json out.json] [--md]
 // Arms: random, greedy, oracle (the world's baselines) and slop (the pack with its defaults); every
 // --variant adds a slop arm with those pack options (ablations / tuning).
+import { writePath } from "../../../../core/src/runtime/files.ts";
 import type { MemberId } from "@thenetwork/core";
 import { BASELINES } from "./baselines.ts";
 import { slopEngineMatcher } from "./enginePack.ts";
@@ -497,7 +498,7 @@ if (import.meta.main) {
     console.log(`\nGates: ${r.arm}`);
     const gs = (argv.includes("--gates3") ? gates3 : gates)(r, random);
     for (const g of gs) console.log(`  ${g.pass ? "PASS" : "FAIL"}  ${g.name}: ${g.name.includes("cut") ? (g.value * 100).toFixed(1) + "%" : g.value.toFixed(3)} (${g.target})`);
-    // The official arm is "slop" (the default pack): exit 1 when one of its gates fails (bun run sim splits blocking and tracked).
+    // The official arm is "slop" (the default pack): exit 1 when one of its gates fails (pnpm run sim splits blocking and tracked).
     if (r.arm === "slop" && gs.some(g => !g.pass)) process.exitCode = 1;
   }
   if (argv.includes("--groups")) for (const r of results) {
@@ -510,5 +511,5 @@ if (import.meta.main) {
     console.log(`\nBias ${r.arm}: demo ${fmtR(b.demo)}${b.quintile ? ` | quintile ${fmtR(b.quintile)}` : ""}${[...b.demo.alerts, ...(b.quintile?.alerts ?? [])].length ? ` | ALERTS ${[...b.demo.alerts, ...(b.quintile?.alerts ?? [])].map(x => `${x.group}:${x.metric}=${x.ratio.toFixed(2)}`).join(", ")}` : ""}`);
   }
   const out = arg("json");
-  if (out) await Bun.write(out, JSON.stringify(results.map(r => ({ arm: r.arm, seeds: r.seeds, metrics: r.metrics, extra: r.extra })), null, 1));
+  if (out) await writePath(out, JSON.stringify(results.map(r => ({ arm: r.arm, seeds: r.seeds, metrics: r.metrics, extra: r.extra })), null, 1));
 }

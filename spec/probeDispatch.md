@@ -41,7 +41,7 @@ pure def lawLaterTurnRequiresFirst(participant: ParticipantProbe): bool = not(tu
 
 ### Wait for the member's send window and current availability
 
-A pending turn needs only one probe. A requester's own confirmation and a hiring manager's review use the logistics window. Other participants use their proactive send window. An outstanding question defers the probe before timing is checked. After timing allows contact, a participant away from the city is unavailable. When everyone else's proposed times are gone and there is no fixed time or venue, close without probing. The existing send path still checks consent, eligibility, and private facts.
+A pending turn needs only one probe. A requester's own confirmation and a hiring manager's review use the logistics window. Other participants use their proactive send window. An outstanding question defers both regular and plan probes before contact, including an onboarding question sent as a direct reply. The question holds the probe until the member answers or for up to 24 hours. After timing allows contact, a participant away from the city is unavailable. When everyone else's proposed times are gone and there is no fixed time or venue, close without probing. The existing send path still checks consent, eligibility, and private facts.
 
 ```quint
 type ProbeTiming = WaitForQuestion | WaitForWindow | CheckAvailability
@@ -52,8 +52,15 @@ pure def needsProbeSend(participant: ParticipantProbe, contacted: bool): bool =
 
 pure def probeIsInvite(requester: bool, hiringManager: bool): bool = not(requester or hiringManager)
 
+pure val questionHoldMs: int = 24 * 3600000
+
+pure def probeQuestionHoldUntil(askedAt: int): int = askedAt + questionHoldMs
+
 pure def probeTiming(questionOpen: bool, windowOpen: bool): ProbeTiming =
   if (questionOpen) WaitForQuestion else if (not(windowOpen)) WaitForWindow else CheckAvailability
+
+pure def lawProbeWaitsForOpenQuestion(windowOpen: bool): bool =
+  probeTiming(true, windowOpen) == WaitForQuestion
 
 pure def probeAvailability(present: bool, commonTimeGone: bool): ProbeAvailability =
   if (not(present)) ParticipantAway else if (commonTimeGone) NoCommonTime else ReadyToSend

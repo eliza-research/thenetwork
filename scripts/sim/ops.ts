@@ -1,3 +1,7 @@
+import { rm } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { setTimeout as waitForMs } from "node:timers/promises";
+import ts from "typescript";
 // The ops block: monitoring, alerts, cost tracking, the console's deploy guards and the backup drill
 // (docs/deploy.md sections 2.6, 7 and 8; mvp-plan items 2, 10, 11 and 12). No model, no network call:
 // the webhook, the heartbeat, the OTP provider, the rater and the LLM are fakes on a fake clock.
@@ -10,8 +14,9 @@
 //   tracked:  on the dev Postgres (:54339), when it is up: the ops tables and grants under row-level
 //             security, and the backup drill (pg_dump to a directory, restore into a new database,
 //             row counts equal table by table). With REQUIRE_PG=1 (CI) these two gates block.
+import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { dirname, relative, resolve } from "node:path";
-import { SQL } from "bun";
+import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { CostLedger, MemoryCostSink, budgetLines, costRatesFromEnv, DEFAULT_RATES, PgCostSink } from "../../packages/network/service/cost.ts";
 import type { AppInfo } from "../../packages/platform/src/apps.ts";
 import { APPS } from "../../packages/platform/src/apps.ts";
@@ -23,7 +28,7 @@ import {
 } from "../../deploy/backend/ops.ts";
 import { Block, expect } from "./gate.ts";
 
-const REPO = resolve(import.meta.dir, "../..");
+const REPO = resolve(import.meta.dirname, "../..");
 const MIN = 60_000, HOUR = 60 * MIN;
 const T0 = Date.UTC(2026, 9, 8, 15, 0, 0);
 /** A phone number as a person or a provider writes it (E.164, (212) 555-0100, 212-555-0100); epoch times are not phones. */
@@ -226,7 +231,7 @@ export async function opsBlock(b: Block): Promise<void> {
     const hooks = ledger.llmHooks("slop", "understand");
     hooks.onResponse!({ costMicro: 1500, costKnown: true, baseUrl: "https://api.surplusintelligence.ai/v1", model: "gpt-6-luna", usage: { promptTokens: 300, completionTokens: 50, reasoningTokens: 0 }, attempt: 0 } as never);
     hooks.onResponse!({ costMicro: 0, costKnown: true, baseUrl: "https://api.surplusintelligence.ai/v1", model: "gpt-6-luna", usage: { promptTokens: 0, completionTokens: 0, reasoningTokens: 0 }, attempt: 1 } as never);
-    await Bun.sleep(0);
+    await waitForMs(0);
     await ledger.accrue("2026-10-08", { slop: 10 });
     await ledger.accrue("2026-10-08", { slop: 12 });
     const rows = [...sink.rows.values()];
@@ -277,7 +282,7 @@ export async function opsBlock(b: Block): Promise<void> {
     const late = await on.publicFetch(new Request("http://x/healthz"));
     expect([late.status, (await late.json()).status]).toEqual([503, "tick_late"]);
     hang = false; release();
-    await Bun.sleep(1);
+    await waitForMs(1);
     expect((await on.publicFetch(new Request("http://x/healthz"))).status).toBe(200);
     await on.shutdown();
   });
@@ -305,7 +310,7 @@ export async function opsBlock(b: Block): Promise<void> {
     const bad = [...backend, ...consoleGraph].filter(f => FORBIDDEN.some(p => f.startsWith(p)));
     expect(bad).toEqual([]);
     expect(backend.size).toBeGreaterThan(50);
-    const docker = await Bun.file(`${REPO}/deploy/backend/Dockerfile`).text();
+    const docker = await fileAt(`${REPO}/deploy/backend/Dockerfile`).text();
     const pruned = (docker.match(/^RUN rm -rf (.+)$/m)?.[1] ?? "").split(/\s+/).map(p => `${p.replace(/\/$/, "")}/`);
     expect(pruned.sort()).toEqual(FORBIDDEN.filter(p => p.startsWith("packages/")).sort());
   });
@@ -314,7 +319,7 @@ export async function opsBlock(b: Block): Promise<void> {
   const admin = `postgres://${process.env.USER ?? "postgres"}@localhost:54339/postgres`;
   const up = await pgUp(admin);
   if (!up) {
-    b.track("ops tables on Postgres (dev :54339)", false, "skipped: the dev Postgres is not running (bun run observatory:db)");
+    b.track("ops tables on Postgres (dev :54339)", false, "skipped: the dev Postgres is not running (pnpm run observatory:db)");
     b.track("backup drill: dump and restore into a new database, row counts equal", false, "skipped: the dev Postgres is not running");
     return;
   }
@@ -344,8 +349,11 @@ export async function opsBlock(b: Block): Promise<void> {
         // slop's console role sees slop and the shared line, never peon.
         const seen = await sql.begin(async tx => { await tx`set local role network_observatory_slop`; return (await tx`select app_id from network.cost_ledger order by app_id`).map((r: any) => r.app_id); });
         expect(seen).toEqual(["shared", "slop"]);
-        const denied = await sql.begin(async tx => { await tx`set local role network_observatory_slop`; return tx`select 1 from network.ops_alerts`.then(() => "read", e => String(e.message)); });
-        expect(denied).toMatch(/permission denied/);
+        const denied = await sql.begin(async tx => {
+          await tx`set local role network_observatory_slop`;
+          await tx`select 1 from network.ops_alerts`;
+        }).then(() => "read", error => String(error.message));
+        expect(denied).toMatch(/permission denied for table ops_alerts/);
         // The alert store: the service role, the advisory lock, dedupe across a restart.
         const posts: unknown[] = [];
         const svcSql = new SQL({ url: srcUrl, max: 1 });
@@ -407,7 +415,7 @@ export async function opsBlock(b: Block): Promise<void> {
         expect(await restore({ serverUrl: admin, db: dst, dir }).then(() => "restored", e => String(e.message))).toMatch(/already exists/);
         expect(await restore({ serverUrl: admin, db: "railway", dir }).then(() => "restored", e => String(e.message))).toMatch(/refusing/);
         b.track(`backup drill: ${Object.keys(bk.manifest.rowCounts).length} tables, ${rows} rows, dump ${Math.round(bk.bytes / 1024)} KiB, restore ${r.ms} ms`, true);
-      } finally { await Bun.$`rm -rf ${dir}`.quiet().nothrow(); }
+      } finally { await rm(dir, { recursive: true, force: true }).catch(() => {}); }
     }, pgBlocking);
   } finally {
     await a.unsafe(`drop database if exists ${dst}`).catch(() => {});
@@ -438,7 +446,6 @@ async function pgUp(url: string): Promise<boolean> {
 
 /** Files (repo-relative) a module reaches by import: static imports, and with `dynamic` string-literal dynamic imports too. */
 async function importGraph(entry: string, dynamic: boolean): Promise<Set<string>> {
-  const ts = new Bun.Transpiler({ loader: "ts" }), tsx = new Bun.Transpiler({ loader: "tsx" });
   const seen = new Set<string>(), out = new Set<string>();
   const stack = [entry];
   while (stack.length) {
@@ -449,13 +456,23 @@ async function importGraph(entry: string, dynamic: boolean): Promise<Set<string>
     if (rel.startsWith("..") || rel.includes("node_modules/")) continue;
     out.add(rel);
     if (!/\.(ts|tsx)$/.test(f)) continue;
-    let imports: ReturnType<Bun.Transpiler["scanImports"]>;
-    try { imports = (f.endsWith(".tsx") ? tsx : ts).scanImports((await Bun.file(f).text()).replace(/^#!.*/, "")); }
-    catch (e) { throw new Error(`cannot read the imports of ${rel}: ${(e as Error).message}`); }
-    for (const i of imports) {
-      if (i.kind === "dynamic-import" && !dynamic) continue;
-      if (/\.(html|css)$/.test(i.path)) continue;
-      try { stack.push(Bun.resolveSync(i.path, dirname(f))); } catch { /* a builtin */ }
+    const source = ts.createSourceFile(f, await fileAt(f).text(), ts.ScriptTarget.Latest, true);
+    const imports: string[] = [];
+    function visit(node: ts.Node) {
+      if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+        const typeOnly = ts.isImportDeclaration(node) ? node.importClause?.isTypeOnly : node.isTypeOnly;
+        if (!typeOnly) imports.push(node.moduleSpecifier.text);
+      } else if (dynamic && ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+        const argument = node.arguments[0];
+        if (argument && ts.isStringLiteral(argument)) imports.push(argument.text);
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(source);
+    const resolveFrom = createRequire(f);
+    for (const specifier of imports) {
+      if (/\.(html|css)$/.test(specifier)) continue;
+      try { stack.push(resolveFrom.resolve(specifier)); } catch { /* An optional dependency. */ }
     }
   }
   return out;

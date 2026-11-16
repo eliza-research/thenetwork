@@ -1,8 +1,10 @@
+import { setTimeout as waitForMs } from "node:timers/promises";
 // Game mode: a live simulated world (packages/sim) with engine-v1, made steppable and playable.
 // The player can play the Network (propose intros), play a member (take over a persona), play the
 // reviewer (approve or reject what the Network composed, PRD 32.8) or play god (scenario actions).
 // Everything flows through the same Network pipeline and is scored against the oracle's hidden
 // ground truth; the judge scorer checks the run records for invariants, leaks and minor contacts.
+import { fileAt } from "../../../core/src/runtime/files.ts";
 import { DAY, HOUR, MIN_MEMBER_AGE, MINUTE, type City, type MemberId, type Proposal, type ScoreComponents } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import { computeMetrics } from "@thenetwork/sim";
@@ -146,7 +148,7 @@ export class GameSource implements DataSource {
     this.personas.clear(); this.profiles.clear(); this.communities.clear();
     if (synthetic) {
       personas = (await loadPersonas(o.dataDir)).filter(p => o.city === "all" || p.homeCity === "nyc");
-      const manifest = await Bun.file(`${o.dataDir}/manifest.json`).json();
+      const manifest = await fileAt(`${o.dataDir}/manifest.json`).json();
       this.start = manifest.snapshotNow;
       for (const m of await readJsonl<MemberRecord>(`${o.dataDir}/members.jsonl`)) {
         const p = m.profile as Record<string, any>;
@@ -406,7 +408,7 @@ export class GameSource implements DataSource {
    */
   private async idle() {
     // Not while the world waits for the player's reply as a member they control (it would never end).
-    while (this.advancing && !this.takeover.waiting) await Promise.race([this.advancing, Bun.sleep(50)]);
+    while (this.advancing && !this.takeover.waiting) await Promise.race([this.advancing, waitForMs(50)]);
   }
 
   /** Process events due now (e.g. a player action) without moving time, if the world is idle. */

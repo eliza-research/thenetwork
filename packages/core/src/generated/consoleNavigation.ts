@@ -778,7 +778,7 @@ export function pickHit(nav: ConsoleNav, target: Subject, sameAsShown: boolean):
   //@ ensures (inv(nav) && canPickHit(nav, target, sameAsShown)) ==> stepVenueOpensTheMap(nav, "pickHit", \result)
   //@ ensures (inv(nav) && canPickHit(nav, target, sameAsShown)) ==> stepJumpOpensTheDrawer(nav, "pickHit", \result)
   //@ ensures (inv(nav) && canPickHit(nav, target, sameAsShown)) ==> stepChosenTabShowsUnlessItCollapses(nav, "pickHit", \result)
-  const local_3 = withFocus(target, nav, sameAsShown);
+  const local_3: ConsoleNav = withFocus(target, nav, sameAsShown);
   return { ...local_3, queryChars: 0 };
 }
 

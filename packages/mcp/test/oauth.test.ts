@@ -1,5 +1,5 @@
 // OAuth 2.1 against the handler with the real platform OTP and a fake provider (no texts are sent).
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import type { PeopleStore } from "@thenetwork/platform";
 import { signProxyHeaders } from "@thenetwork/platform/src/proxy.ts";
 import { redirectUriAllowed } from "../src/handler.ts";
@@ -588,12 +588,11 @@ describe("explicit client approval boundary", () => {
   test("an approval expiring during storage consumption cannot issue access", async () => {
     const env = setup(); const who = await member(env); const client = await register(env, DOMAIN);
     const request = await begin(env, client.body.client_id, who.cookie);
-    const take = env.store.takeConsentRequest.bind(env.store);
-    env.store.takeConsentRequest = async (id, at) => {
-      const result = await take(id, at);
-      if (result) env.clock.t = result.expiresAt;
-      return result;
-    };
+    const commit = env.store.commitConsentGrant.bind(env.store);
+    env.store.commitConsentGrant = (id, at, confirm, writes) => commit(id, at, approval => {
+      env.clock.t = approval.expiresAt;
+      return confirm(approval);
+    }, writes);
     expect((await post(env, "/oauth/authorize/consent", request.rid, request.cookie, { decision: "approve" })).status).toBe(400);
     noIssuedAccess(env);
   });
@@ -602,10 +601,10 @@ describe("explicit client approval boundary", () => {
     for (const patch of [{ e164: PHONE_B }, { personId: "different-owner" }]) {
       const env = setup(); const who = await member(env); const client = await register(env, DOMAIN);
       const request = await begin(env, client.body.client_id, who.cookie);
-      const take = env.store.takeConsentRequest.bind(env.store);
-      env.store.takeConsentRequest = async (id, at) => {
+      const commit = env.store.commitConsentGrant.bind(env.store);
+      env.store.commitConsentGrant = async (id, at, confirm, writes) => {
         await env.store.updateAuthRequest(id, patch);
-        return take(id, at);
+        return commit(id, at, confirm, writes);
       };
       expect((await post(env, "/oauth/authorize/consent", request.rid, request.cookie, { decision: "approve" })).status).toBe(400);
       noIssuedAccess(env);

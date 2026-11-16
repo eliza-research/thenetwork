@@ -1,5 +1,7 @@
 # Production Cloud → Network identity handoff — source/local only
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-18-production-cloud-network-handoff.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 This implements the previously missing Network consumer contract against a separate, small Cloud producer artifact pinned to Cloud source `15c603c00b63cffaea986b71ec4ffec3bcae8205`. No production database, feature flag, OAuth grant, phone, model or delivery provider was changed. The current live Network sites still use OTP. Hosted original-account/agent/history acceptance remains open.
 
 ## Producer and consumer
@@ -22,7 +24,7 @@ The schema edit is a repeatable `9001_oauth_schema` source migration, applied on
 
 ## Local receipts
 
-Pinned Bun 1.4.2 and the retained isolated PostgreSQL cluster on port 54428:
+Pinned the former runtime 1.4.2 and the retained isolated PostgreSQL cluster on port 54428:
 
 - Seven real-PG producer cases passed 71 assertions: four targets, concurrent single-use exchange, wrong PKCE, cross-app/origin/resource/audience/callback, tamper, stale code, logout, owner/org/phone/lifecycle and original expiry.
 - Actual producer plus four-app Network website/sealed-authority/MCP HTTP pipeline passed one controlled test and 188 assertions. Primary owner and Network store were controlled memory fixtures in this join; this is not live account proof.

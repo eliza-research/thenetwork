@@ -1,5 +1,7 @@
 # Skills, plugins and deploys for the four sites
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/research/2026-10-08-skills-plugins-deploy.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 > **Superseded names (2026-10-08 cleanup note).** This is a dated research record. Since it was written: buddies.nyc was renamed friends.help (AppId `friends`, `friendsPack`); ntwrk.club belongs to someone else and is not used (ntwrk.party is the home page); `packages/worlds` moved to `packages/sim/src/apps`; the prototypes were deleted or promoted (`packages/blooio`). Current decisions: AGENTS.md "Platform decisions" and docs/mvp-plan.md.
 
 Status: research and design, 2026-10-08 (UTC). Nothing here is built or deployed. A Claude agent wrote it from the sources listed in section 0 and from reading the repos. Items marked **verify** could not be confirmed on a primary page.
@@ -416,7 +418,7 @@ Policy: https://ntwrk.party/privacy. Terms: https://ntwrk.party/terms. Support: 
 
 Before publishing: check every description with `wc -c` (≤1024) and the build test. Every keyword (`SLOP`, `PEON`, `FRIENDS`, `NETWORK`) must come from the keyword table the backend uses. That table does not exist yet (finding 11). The keywords above are proposals.
 
-### 2.8 Skill tests (offline, in `bun test sites`)
+### 2.8 Skill tests (offline, in `pnpm exec vitest run sites`)
 
 1. Frontmatter parses. `name` matches `^[a-z0-9]+(-[a-z0-9]+)*$`, is 64 characters or fewer, equals its folder, and has no `claude` or `anthropic`. `description` is 1-1024 characters with no `<` or `>`. `compatibility` is 500 characters or fewer. `metadata` values are strings.
 2. The body is under 500 lines. It has these headings: who can use it, how a person joins, what you may do, what you must never do, privacy.
@@ -618,7 +620,7 @@ The project name becomes `<name>.pages.dev`; pick another name if one is taken. 
 
 **Build:**
 
-- `bun run sites/sites.ts <app>`, then the new `sites/publish.ts <app>` step (section 4.4).
+- `node --import tsx --env-file-if-exists=.env sites/sites.ts <app>`, then the new `sites/publish.ts <app>` step (section 4.4).
 - The output is `sites/<domain>/dist`.
 - Functions live in `sites/<domain>/functions/`. Wrangler compiles them when `pages deploy` runs from the site folder; how it resolves the `functions/` path is not documented (S22), so **verify** with `--dry-run` or a preview deploy.
 
@@ -774,7 +776,7 @@ Rules:
 - **Founder approval stays.** The production job uses a GitHub Environment named `production` with the founder as required reviewer. This replaces `NTWRK_ALLOW_DEPLOY=1` for CI, because CI calls Wrangler directly, not through `scripts/wrangler.sh`.
 - `ci.yml` stays secret-free. Deploys run only after it passes, through `needs:` in the same workflow or `workflow_run`.
 - **Pin every action by full SHA.** For example `cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0  # v4.1.3` (S23, latest on 2026-09-24). Avoid v4.1.0 and v4.1.1, which the releases page marks broken.
-  - Resolve the SHAs for `actions/checkout` and `oven-sh/setup-bun` with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>` when you write the file. Don't copy them from memory.
+  - Resolve the SHAs for `actions/checkout` and `actions/setup-node` with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>` when you write the file. Don't copy them from memory.
   - Pin Wrangler with the action's `wranglerVersion` input.
 
 Pages variant:
@@ -792,15 +794,15 @@ jobs:
     strategy: { matrix: { site: [ntwrk, slop, peon, buddies] } }   # buddies -> friends.help after rename
     steps:
       - uses: actions/checkout@<sha> # v4
-      - uses: oven-sh/setup-bun@<sha> # v2
-        with: { bun-version: 1.4.2 }
-      - run: bun install --frozen-lockfile
-      - run: bun run sites/sites.ts ${{ matrix.site }} && bun run sites/publish.ts ${{ matrix.site }}
+      - uses: actions/setup-node@<sha> # v2
+        with: { node-version-file: .nvmrc }
+      - run: pnpm install --frozen-lockfile
+      - run: node --import tsx --env-file-if-exists=.env sites/sites.ts ${{ matrix.site }} && node --import tsx --env-file-if-exists=.env sites/publish.ts ${{ matrix.site }}
         env:
           NETWORK_BACKEND: ${{ vars.NETWORK_BACKEND }}
           NETWORK_MCP_URL: ${{ vars.NETWORK_MCP_URL }}
           NETWORK_LINE: ${{ vars.NETWORK_LINE }}
-      - run: bun test sites
+      - run: pnpm exec vitest run sites
       - uses: actions/upload-artifact@<sha> # v4
         with: { name: dist-${{ matrix.site }}, path: sites/*/dist, include-hidden-files: true }  # keeps .well-known
   preview:
@@ -876,7 +878,7 @@ curl -s $S/SKILL.md | grep -c '{{'                                              
 **SKILL.md validation**
 
 - `skills-ref validate sites/skills/*`
-- `bun test sites` (the tests in 2.8)
+- `pnpm exec vitest run sites` (the tests in 2.8)
 - `claude plugin validate --strict plugins/the-network`
 - Behaviour test (S2), done by hand in Claude Code and ChatGPT developer mode. Use the five request types with these slop/peon/friends prompts:
   1. "how do I join slop.date": the skill triggers and gives the link and keyword.
@@ -899,7 +901,7 @@ curl -s -o /dev/null -w '%{http_code}\n' "$API_ORIGIN/api/app" -H 'X-Forwarded-H
 
 **Links**
 
-- `bunx linkinator https://<preview>/ --recurse --skip 'mailto:'`, with a pinned version.
+- `pnpm dlx linkinator https://<preview>/ --recurse --skip 'mailto:'`, with a pinned version.
 - Every URL inside each SKILL.md answers 200.
 
 **MCP (phase B)**

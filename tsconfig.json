@@ -1,9 +1,9 @@
 {
   "compilerOptions": {
-    "target": "ES2022", "module": "ESNext", "moduleResolution": "Bundler",
+    "target": "ES2023", "module": "ESNext", "moduleResolution": "Bundler",
     "strict": true, "skipLibCheck": true, "noEmit": true, "jsx": "react-jsx",
-    "types": ["bun"], "resolveJsonModule": true, "allowImportingTsExtensions": true
+    "types": ["node"], "resolveJsonModule": true, "allowImportingTsExtensions": true
   },
-  "include": ["design/**/*.ts", "packages/**/*.ts", "deploy/**/*.ts", "tests/**/*.ts", "scripts/platform-dev.ts", "scripts/sim.ts", "scripts/sim/**/*.ts", "scripts/clef-fit.ts", "scripts/relay-eval.ts", "scripts/relay-clef-lib.ts"],
-  "exclude": ["**/node_modules", "eliza/**", "deploy/cloudflare/**", "packages/ui/**"]
+  "include": ["design/**/*.ts", "packages/**/*.ts", "packages/ui/src/**/*.tsx", "deploy/**/*.ts", "tests/**/*.ts", "scripts/platform-dev.ts", "scripts/sim.ts", "scripts/sim/**/*.ts", "scripts/clef-fit.ts", "scripts/relay-eval.ts", "scripts/relay-clef-lib.ts"],
+  "exclude": ["**/node_modules", "eliza/**", "deploy/cloudflare/**"]
 }

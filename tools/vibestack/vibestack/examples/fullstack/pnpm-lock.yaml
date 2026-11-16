@@ -39,6 +39,9 @@ importers:
         specifier: 0.0.13
         version: 0.0.13(@effect/platform-node@4.1.1(effect@4.1.1)(redis@6.3.1))(effect@4.1.1)
     devDependencies:
+      '@antithesishq/bombadil':
+        specifier: 0.7.10
+        version: 0.7.10
       '@effect/vitest':
         specifier: 4.1.1
         version: 4.1.1(effect@4.1.1)(vitest@5.1.0(@types/node@26.6.6)(happy-dom@21.0.4)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.27.7)(jiti@2.7.0)))
@@ -104,6 +107,10 @@ packages:
 
   '@adobe/css-tools@4.5.0':
     resolution: {integrity: sha512-6OzddxPio9UiWTCemp4N8cYLV2ZN1ncRnV1cVGtve7dhPOtRkleRyx32GQCYSwDYgaHU3USMm84tNsvKzRCa1Q==}
+
+  '@antithesishq/bombadil@0.7.10':
+    resolution: {integrity: sha512-71aLKQBB3GNDBQZXU6MCKbt99dl9I+/pjg0EfGD9eCKXDIqpKPXD2rFH6yCJude37RGtnKq6hZFfZhuTp+Tykg==}
+    hasBin: true
 
   '@babel/code-frame@7.29.7':
     resolution: {integrity: sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw==}
@@ -2282,16 +2289,13 @@ packages:
 
   vibelang-runtime@0.0.13:
     resolution: {integrity: sha512-E7Yn+k8ElL9ZYGj5aT1e1h60Zb3W3nZZPlgJgJC+Ce7IQkxH2uTRLotApVuOQpD2U+p9AbrMzXWjQPi5zMKb3g==}
-    engines: {bun: '>=1.4', node: ^22.22.3 || >=24.11.1}
+    engines: {node: ^22.22.3 || >=24.11.1}
     peerDependencies:
       '@effect/platform-browser': 4.1.1
-      '@effect/platform-bun': 4.1.1
       '@effect/platform-node': 4.1.1
       effect: 4.1.1
     peerDependenciesMeta:
       '@effect/platform-browser':
-        optional: true
-      '@effect/platform-bun':
         optional: true
       '@effect/platform-node':
         optional: true
@@ -2448,6 +2452,8 @@ packages:
 snapshots:
 
   '@adobe/css-tools@4.5.0': {}
+
+  '@antithesishq/bombadil@0.7.10': {}
 
   '@babel/code-frame@7.29.7':
     dependencies:

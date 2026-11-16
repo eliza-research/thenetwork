@@ -5,6 +5,7 @@
 //   replies.jsonl  core parseReply (yes / no / unsure)
 //   opt-out*.jsonl the opt-out readers (core parseOptOut; the platform consent ledger's detectKeyword)
 //   guard/         the shared leak guard (contacts in disguise, private facts, homoglyphs, benign text)
+import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { classifyYesNo, findLeaks, maskPii, parseOptOut, parseReply, type ReplyAnswer } from "../../packages/core/src/index.ts";
 import { ageAnswer, classify, extractProfile, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
 import { detectKeyword, leaveTarget, optOutPhrase } from "../../packages/platform/src/consent.ts";
@@ -15,8 +16,8 @@ import { outputLeaks } from "../../packages/mcp/src/leaks.ts";
 import { Block, expect } from "./gate.ts";
 import { planAgainOf } from "../../packages/network/src/classify.ts";
 
-const ROOT = `${import.meta.dir}/../../evals`;
-const jsonl = async <T>(name: string): Promise<T[]> => (await Bun.file(`${ROOT}/${name}`).text()).trim().split("\n").filter(Boolean).map(l => JSON.parse(l) as T);
+const ROOT = `${import.meta.dirname}/../../evals`;
+const jsonl = async <T>(name: string): Promise<T[]> => (await fileAt(`${ROOT}/${name}`).text()).trim().split("\n").filter(Boolean).map(l => JSON.parse(l) as T);
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 
 export async function evalsBlock(b: Block): Promise<void> {
@@ -67,7 +68,7 @@ export async function evalsBlock(b: Block): Promise<void> {
     b.gate(`consent replies ${file}: no refusal or hedge read as yes`, notYesAsYes.length === 0, notYesAsYes.slice(0, 5).join(" | "));
   }
 
-  const benign = (await Bun.file(`${ROOT}/network/benign-adult.txt`).text()).trim().split("\n");
+  const benign = (await fileAt(`${ROOT}/network/benign-adult.txt`).text()).trim().split("\n");
   const flagged = benign.filter(t => classify(t).abuse.length);
   b.gate(`benign adult phrasing: precision >= 99% (n ${benign.length})`, benign.length >= 200 && 1 - flagged.length / benign.length >= 0.99, pct(1 - flagged.length / benign.length));
   const benignMinor = benign.filter(t => classify(t).minorSignal);

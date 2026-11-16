@@ -5,19 +5,21 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "start": "bun run src/server.ts",
-    "dev": "bun --hot run src/server.ts"
+    "start": "node ../design-system/build.ts build && node --import tsx --env-file-if-exists=.env src/server.ts",
+    "dev": "node ../design-system/build.ts build && node --watch --import tsx --env-file-if-exists=.env src/server.ts"
   },
   "dependencies": {
+    "@tailwindcss/postcss": "^4.3.5",
     "@thenetwork/core": "workspace:*",
     "@thenetwork/design-system": "workspace:*",
     "@thenetwork/engine": "workspace:*",
     "@thenetwork/network": "workspace:*",
     "@thenetwork/sim": "workspace:*",
     "@thenetwork/ui": "workspace:*",
-    "bun-plugin-tailwind": "^0.1.2",
     "d3-force": "^3.0.0",
+    "esbuild": "0.28.2",
     "leaflet": "^1.9.4",
+    "postcss": "8.5.33",
     "react": "catalog:",
     "react-dom": "catalog:",
     "tailwindcss": "catalog:"

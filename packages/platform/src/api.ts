@@ -1,3 +1,4 @@
+import { setTimeout as waitForMs } from "node:timers/promises";
 // The public API that the four sites call at same-origin /api/* (platform plan 3.3, option A).
 // Responses never name or reveal another app, and /api/auth/otp/start answers the same body, after
 // at least the same time, whether or not the phone is known.
@@ -9,14 +10,13 @@
 //  - Anything else: the Host header picks the app (production names only outside dev) and the socket
 //    address is the client. A header a client sets never picks the app or the rate-limit bucket.
 //
-// Mount it in any Bun.serve fetch:
+// Mount it in any serveHttp fetch:
 //   const api = createPublicApi({ store, otp, turnstile });
-//   Bun.serve({ fetch: async (req, server) => (await api.fetch(req, server)) ?? new Response("not found", { status: 404 }) });
+//   serveHttp({ fetch: async (req, server) => (await api.fetch(req, server)) ?? new Response("not found", { status: 404 }) });
 import { NETWORK_SITES, NETWORK_FRESH_PERSON_SITES, type CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
 import { initial as enrollmentInitial, step as stepEnrollment } from "../../core/src/generated/siteEnrollment.ts";
-import {
-  cloudIssuedAtWithinSkew, cloudSessionStartedAt, initial as cloudSignInInitial, liveBeforeDeadline, step as stepCloudSignIn,
-} from "../../core/src/generated/cloudSignIn.ts";
+import { cloudIssuedAtWithinSkew, cloudSessionStartedAt, liveBeforeDeadline } from "../../core/src/generated/cloudSignIn.ts";
+import { completeCloudSignIn } from "../../core/src/vibe/cloudSignInShell.js";
 import {
   type AuthorityCheck, type CloudResponse, canCheckGrantDelegation, canCheckGrantOwner, canFinishCloudCheck,
   grantExpiresAt, grantResourceMatches, initial as authorityInitial, step as stepAuthority,
@@ -42,6 +42,10 @@ function authorityStatus(check: AuthorityCheck): CloudStatus {
   if (check.phase === "AuthorityValid") return "valid";
   return check.phase === "AuthorityUnavailable" ? "unavailable" : "invalid";
 }
+
+export type HomeHelpVenueRequest = { id: string; revision: number } & (
+  { action: "submit"; address: string } | { action: "reveal" | "revoke" }
+);
 
 export interface PublicApiOptions extends AccountHooks {
   store: PeopleStore;
@@ -76,6 +80,8 @@ export interface PublicApiOptions extends AccountHooks {
   photos?: PhotoService;
   /** Voluntary item sharing. Absent until an approved item-review policy is configured. */
   photoRelay?: PhotoRelayService;
+  /** Private home-help address for the current approved revision. Use the verified app session only. */
+  homeHelpVenue?: (app: AppInfo, who: Who, input: HomeHelpVenueRequest) => Promise<{ address?: string } | undefined>;
   /**
    * The member's availability for GET /api/me, read from the member record the Network uses (a pause or
    * busy window set by text or by the agent, and quiet hours). It is not the messaging consent: a STOP
@@ -95,7 +101,7 @@ export interface PublicApiOptions extends AccountHooks {
 import type { MemberParticipation } from "./public-types.ts";
 export type { MemberParticipation } from "./public-types.ts";
 
-/** What Bun.serve passes as the second fetch argument: the socket address of the request. */
+/** What serveHttp passes as the second fetch argument: the socket address of the request. */
 export interface PeerInfo { requestIP(req: Request): { address: string } | null }
 
 export interface PublicApi {
@@ -105,7 +111,7 @@ export interface PublicApi {
   cloudAuthorityRequired(app: AppId): boolean;
   cloudGrantAuthority(app: AppId, req: Request, resource: string): Promise<CloudGrantAuthority | "unavailable" | undefined>;
   validateCloudGrant(grant: { app: AppId; resource: string; phoneKey: string; personId: string | null; cloudAuthority?: CloudGrantAuthority | null }): Promise<"valid" | "invalid" | "unavailable">;
-  /** The answer for an /api/* request, or undefined for any other path. Pass the Bun server for the socket address. */
+  /** The answer for an /api/* request, or undefined for any other path. Pass the HTTP server for the socket address. */
   fetch(req: Request, server?: PeerInfo): Promise<Response | undefined>;
   accounts: Accounts;
   otp: OtpService;
@@ -207,7 +213,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   const log = o.log ?? (s => console.log(s));
   const accounts = new Accounts(o.store, {
     hashKey, now, env, apps: id => apps[id],
-    hooks: { onJoin: o.onJoin, onStop: o.onStop, onForget: o.onForget, onExport: o.onExport, onAgeLowered: o.onAgeLowered },
+    hooks: { findInvitation: o.findInvitation, commitReferredJoin: o.commitReferredJoin, onJoin: o.onJoin, onStop: o.onStop, onForget: o.onForget, onExport: o.onExport, onAgeLowered: o.onAgeLowered },
   });
   const otp = new OtpService(o.store, o.otp, { hashKey, now, limits: o.otpLimits, log });
   const sessions = new SessionService(o.store, { now, secret: sessionSecret });
@@ -217,7 +223,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
 
   const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
     new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", ...headers } });
-  const pad = async (t0: number, min: number) => { const left = min - (performance.now() - t0); if (left > 0) await Bun.sleep(left); };
+  const pad = async (t0: number, min: number) => { const left = min - (performance.now() - t0); if (left > 0) await waitForMs(left); };
 
   /** The JSON object body, "too_large" over 16 KB, or undefined when it is not a JSON object. */
   async function body(req: Request): Promise<Record<string, unknown> | "too_large" | undefined> {
@@ -271,6 +277,18 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
     const name=dev?`cloud_pending_${app}`:"__Secure-cloud_pending";
     return {url:authorize.href,setCookie:`${name}=${value}; Path=/api/auth/cloud; HttpOnly; SameSite=Lax; Max-Age=300${dev?"":"; Secure"}`};
   };
+  function parseCloudIdentity(input: unknown) {
+    if (typeof input !== "object" || input === null) return;
+    const claims: Record<string, unknown> = { ...input };
+    const { userId, organizationId, e164, expiresAt, stewardUserId, issuedAt } = claims;
+    if (typeof userId !== "string" || !userId || typeof organizationId !== "string" || !organizationId
+      || typeof e164 !== "string" || normalizePhone(e164) !== e164
+      || typeof expiresAt !== "number" || !Number.isFinite(expiresAt) || !liveBeforeDeadline(now(), expiresAt)
+      || typeof stewardUserId !== "string" || !stewardUserId
+      || typeof issuedAt !== "number" || !Number.isSafeInteger(issuedAt) || issuedAt <= 0
+      || !cloudIssuedAtWithinSkew(issuedAt * 1000, now())) return;
+    return { ...claims, e164, issuedAt, expiresAt };
+  }
   const identityName = (app: AppId) => (dev ? `cloud_identity_${app}` : "__Host-cloud_identity");
   const identityCookie = (app: AppId, value: string, age: number) => `${identityName(app)}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${age}${dev ? "" : "; Secure"}`;
   // A positive Cloud validation is reused for 60 seconds per session, so a Cloud blip or a page load does not
@@ -434,59 +452,48 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         if (!cloud) return json(404, {ok: false, error: "not_found"});
         const reject = (status: number) => json(status, {ok: false, error: "cloud_auth_unavailable"}, {"set-cookie": pendingCookie("", 0)});
         const pending = unseal("cloud-pending", cookies.get(pendingName));
-        const bound = !!pending && pending.app === appId && pending.state === url.searchParams.get("state") && typeof pending.verifier === "string";
-        const pendingLive = bound && typeof pending.until === "number" && liveBeforeDeadline(now(), pending.until);
+        const verifier = pending?.verifier;
         const returnPath = pending?.returnPath;
-        const allowedReturnPath = cloudReturnPath(returnPath);
         const code = url.searchParams.get("code");
-        const handoff = stepCloudSignIn(cloudSignInInitial, {
-          type: "checkHandoff",
-          handoffFacts: {
-            bindingValid: bound && allowedReturnPath,
-            pendingLive,
-            codeWellFormed: !!code && /^enso_[0-9a-f]{64}$/.test(code),
-          },
-        });
-        if (handoff.phase !== "AwaitingExchange" || !allowedReturnPath || !pending || typeof pending.verifier !== "string" || !code) return reject(400);
+        const bound = pending?.app === appId && pending.state === url.searchParams.get("state") && typeof verifier === "string";
+        const allowedReturnPath = cloudReturnPath(returnPath);
+        const handoff = allowedReturnPath && typeof verifier === "string" && code ? { verifier, code, returnPath } : undefined;
         try {
-          let identity: Record<string, any> | undefined;
-          let exchangeAccepted: boolean;
-          if (productionDelegation) {
-            const delegated = await productionDelegation.exchange(appId, code, pending.verifier);
-            exchangeAccepted = delegated !== undefined;
-            if (delegated) identity = { ...delegated, identity: Object.fromEntries(Object.entries(delegated).filter(([key]) => key !== "proof")) };
-          } else {
-            const response = await (o.cloudAuthFetch ?? fetch)(new Request(`${cloud.apiOrigin}/api/auth/sso-bridge/network-exchange`, {
-              method: "POST", headers: {"content-type": "application/json", origin: cloud.siteOrigin, authorization: `Bearer ${cloud.serverToken}`},
-              body: JSON.stringify({code, codeVerifier: pending.verifier}), redirect: "error", cache: "no-store", signal: AbortSignal.timeout(5000),
-            }));
-            exchangeAccepted = response.ok && !response.redirected;
-            if (exchangeAccepted) identity = await response.json() as Record<string, any>;
-          }
-          const exchanged = stepCloudSignIn(handoff, { type: "recordExchange", exchangeAccepted });
-          if (exchanged.phase !== "AwaitingIdentity") return reject(403);
-          if (identity == null) return reject(503);
-          const identityValid = typeof identity.userId === "string" && !!identity.userId && typeof identity.organizationId === "string" && !!identity.organizationId
-            && normalizePhone(identity.e164) === identity.e164 && typeof identity.e164 === "string" && typeof identity.expiresAt === "number" && Number.isFinite(identity.expiresAt) && liveBeforeDeadline(now(), identity.expiresAt)
-            && typeof identity.stewardUserId === "string" && !!identity.stewardUserId && typeof identity.issuedAt === "number"
-            && Number.isSafeInteger(identity.issuedAt) && identity.issuedAt > 0 && cloudIssuedAtWithinSkew(identity.issuedAt * 1000, now());
-          const checked = stepCloudSignIn(exchanged, { type: "checkIdentity", identityValid });
-          if (checked.phase !== "AwaitingPhone") return reject(403);
-          const phoneAllowed = !(await accounts.held(identity.e164) || await accounts.banned(identity.e164) || await o.store.isSuppressed(accounts.phoneHash(identity.e164)));
-          const eligible = stepCloudSignIn(checked, { type: "checkPhone", phoneAllowed });
-          if (eligible.phase !== "AwaitingSession") return reject(403);
-          await sessions.revoke(cookies.get(cookieName(appId)));
-          await accounts.seen(identity.e164);
-          const person = await accounts.personFor(identity.e164);
-          // A Cloud clock slightly ahead never makes the session start in the future.
-          const {token, session} = await sessions.create(appId, identity.e164, person?.id ?? null, null, cloudSessionStartedAt(identity.issuedAt * 1000, now()), identity.expiresAt, true);
-          const issued = stepCloudSignIn(eligible, { type: "recordSession" });
-          if (issued.phase !== "SignedIn") return reject(503);
+          const result = await completeCloudSignIn({
+            bindingValid: bound && allowedReturnPath,
+            pendingLive: bound && typeof pending.until === "number" && liveBeforeDeadline(now(), pending.until),
+            codeWellFormed: !!code && /^enso_[0-9a-f]{64}$/.test(code),
+          }, handoff, {
+            exchange: async ({ code, verifier }) => {
+              if (productionDelegation) {
+                const delegated = await productionDelegation.exchange(appId, code, verifier);
+                if (!delegated) return { accepted: false };
+                const { proof: _proof, ...identity } = delegated;
+                return { accepted: true, claims: { ...delegated, identity } };
+              }
+              const response = await (o.cloudAuthFetch ?? fetch)(new Request(`${cloud.apiOrigin}/api/auth/sso-bridge/network-exchange`, {
+                method: "POST", headers: {"content-type": "application/json", origin: cloud.siteOrigin, authorization: `Bearer ${cloud.serverToken}`},
+                body: JSON.stringify({code, codeVerifier: verifier}), redirect: "error", cache: "no-store", signal: AbortSignal.timeout(5000),
+              }));
+              if (!response.ok || response.redirected) return { accepted: false };
+              return { accepted: true, claims: await response.json() };
+            },
+            parseIdentity: parseCloudIdentity,
+            phoneAllowed: async e164 => !(await accounts.held(e164) || await accounts.banned(e164) || await o.store.isSuppressed(accounts.phoneHash(e164))),
+            endPreviousSession: () => sessions.revoke(cookies.get(cookieName(appId))),
+            recordPhoneSeen: e164 => accounts.seen(e164),
+            findPersonId: async e164 => (await accounts.personFor(e164))?.id ?? null,
+            createSession: (identity, personId) => sessions.create(
+              appId, identity.e164, personId, null, cloudSessionStartedAt(identity.issuedAt * 1000, now()), identity.expiresAt, true,
+            ),
+          });
+          if (result.status !== 303) return reject(result.status);
+          const { identity, session: { token, session } } = result;
           const age = Math.max(0, Math.floor((session.expiresAt-now())/1000));
           const sessionHash = tokenHash(token, sessionSecret);
           validated.set(sessionHash, now() + VALIDATION_TTL_MS);
           const delegatedIdentity = seal("cloud-identity", {...identity, app: appId, sessionHash});
-          const responseHeaders = new Headers({location: returnPath, "cache-control": "no-store", "referrer-policy": "no-referrer"});
+          const responseHeaders = new Headers({location: result.returnPath, "cache-control": "no-store", "referrer-policy": "no-referrer"});
           responseHeaders.append("set-cookie", pendingCookie("", 0));
           responseHeaders.append("set-cookie", cookie(appId, token, age));
           responseHeaders.append("set-cookie", identityCookie(appId, delegatedIdentity, age));
@@ -549,6 +556,32 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         return response;
       }
 
+      case "POST /api/home-help/venue": {
+        const venue = o.homeHelpVenue;
+        if (!venue) return json(404, { ok: false, error: "not_found" });
+        return withSession(async who => {
+          const { action, id, revision, address } = b;
+          if ((action !== "submit" && action !== "reveal" && action !== "revoke")
+            || typeof id !== "string" || id.length === 0 || id.length > 36
+            || typeof revision !== "number" || !Number.isInteger(revision) || revision < 1 || revision > 2_147_483_647
+            || ("app" in b && b.app !== appId)
+            || Object.keys(b).some(key => key !== "action" && key !== "id" && key !== "revision" && key !== "app" && !(key === "address" && action === "submit"))) {
+            return json(400, { ok: false, error: "invalid" });
+          }
+          let input: HomeHelpVenueRequest;
+          if (action === "submit") {
+            if (typeof address !== "string") return json(400, { ok: false, error: "invalid" });
+            input = { action, id, revision, address };
+          } else input = { action, id, revision };
+          try {
+            const result = await venue(app, who, input);
+            return result ? json(200, { ok: true, ...result }) : json(409, { ok: false, error: "home_help_venue_unavailable" });
+          } catch {
+            return json(503, { ok: false, error: "home_help_venue_unavailable" });
+          }
+        });
+      }
+
       case "GET /api/me":
         return withSession(async who => {
           const c = await accounts.canJoin(app, who);
@@ -557,7 +590,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           const home = live && o.home && (who.personId === null || who.personId === live.personId)
             ? await o.home({ app, personId: live.personId, memberId: live.memberId, e164: who.e164 }) : null;
           return json(200, {
-            app: appId, ...(["ntwrk", "friends"].includes(appId) && c.reason !== "review" ? { signupView: signupAccountView(appId, accounts.phoneHash(who.e164)) } : {}), phoneMasked: maskPhone(who.e164), membership: publicMembership(c.membership),
+            app: appId, ...(["ntwrk", "friends", "peon"].includes(appId) && c.reason !== "review" ? { signupView: signupAccountView(appId, accounts.phoneHash(who.e164)) } : {}), phoneMasked: maskPhone(who.e164), membership: publicMembership(c.membership),
             smsOptedIn: c.reason !== "review" && await accounts.optedIn(appId, who.e164),
             canJoin: c.canJoin, ...(c.reason && c.reason !== "member" ? { reason: c.reason } : {}),
             ...(participation ? { participation } : {}),
@@ -602,8 +635,10 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           const input = parseJoin(b);
           const enrollment = stepEnrollment(accountView, { type: "decodeProfile", decoded: input !== undefined });
           if (!input || enrollment.phase !== "AwaitingConsent") return json(400, { ok: false, error: "invalid" });
+          if (b.inviteToken !== undefined && typeof b.inviteToken !== "string")
+            return json(400, { ok: false, error: "invalid_invitation" });
           try {
-            const r = await accounts.join(app, who, input, enrollment);
+            const r = await accounts.join(app, who, input, enrollment, b.inviteToken);
             if (!r.ok) return json(400, { ok: false, error: r.error, ...(r.error === "invite_only" ? { message: app.brand.inviteOnly } : r.error === "under_age" ? { message: app.brand.underAge } : r.error === "review" ? { message: REVIEW_MESSAGE } : {}) });
             return json(200, { ok: true, membership: publicMembership(r.membership) });
           } catch (e) {

@@ -18,13 +18,13 @@ const { proposals, runLog } = await runEngine(snapshot /* WorldSnapshot | Engine
 Commands:
 
 ```bash
-bun run sim                  # every pack's conformance rules and its world gates, plus the Network sims (scripts/sim.ts)
-bun run sim --only slop      # one pack (network | slop | peon | friends)
+pnpm run sim                  # every pack's conformance rules and its world gates, plus the Network sims (scripts/sim.ts)
+pnpm run sim --only slop      # one pack (network | slop | peon | friends)
 ```
 
 ## App packs
 
-`runEngine(input, cfg, { pack })` runs one app's matching. A pack (`src/pack.ts` `AppPack`) supplies the ontology (lanes, objectives), eligibility rules, generators, geo, scoring and selection hooks, attention settings, the judge prompts, explanation copy and metrics; core invariants (minors in no role, blocks, consent before reveal, the leak gate, the judge cannot undo a hard filter) cannot be loosened by a pack. `bun run sim` checks them for every pack (scripts/sim/conformance.ts).
+`runEngine(input, cfg, { pack })` runs one app's matching. A pack (`src/pack.ts` `AppPack`) supplies the ontology (lanes, objectives), eligibility rules, generators, geo, scoring and selection hooks, attention settings, the judge prompts, explanation copy and metrics; core invariants (minors in no role, blocks, consent before reveal, the leak gate, the judge cannot undo a hard filter) cannot be loosened by a pack. `pnpm run sim` checks them for every pack (scripts/sim/conformance.ts).
 
 | Pack | App | Code | Report |
 |---|---|---|---|
@@ -33,7 +33,7 @@ bun run sim --only slop      # one pack (network | slop | peon | friends)
 | `peonPack` | peon.biz | `src/packs/peon/` | [peon pack](../../docs/results/2026-10-08-peon-pack.md) |
 | `friendsPack` | friends.help | `src/packs/friends/` | [friends pack](../../docs/results/2026-10-08-friends-pack.md) |
 
-slop.date onboarding has one implementation: `src/packs/slop/extract.ts` (`extractSlopProfile`, `slopOnboardTags`) and `src/packs/slop/onboard.ts` (`applyCorrection`, `readBack`, `nextQuestion`). The service runs it as the slop app's onboarding loop (`packages/network/service/packs.ts`, `AppHooks.onboarding`), and `bun run sim --only onboard` gates it on `evals/slop-onboarding/`. Orientation policy (PRD 40.5): "bi", "pan", "queer", "both" and "a mix" leave who the member seeks unset, and the agent asks who they hope to meet. The founder may still pick the other policy (read those words as a seeking set); it is listed as a founder decision.
+slop.date onboarding has one implementation: `src/packs/slop/extract.ts` (`extractSlopProfile`, `slopOnboardTags`) and `src/packs/slop/onboard.ts` (`applyCorrection`, `readBack`, `nextQuestion`). The service runs it as the slop app's onboarding loop (`packages/network/service/packs.ts`, `AppHooks.onboarding`), and `pnpm run sim --only onboard` gates it on `evals/slop-onboarding/`. Orientation policy (PRD 40.5): "bi", "pan", "queer", "both" and "a mix" leave who the member seeks unset, and the agent asks who they hope to meet. The founder may still pick the other policy (read those words as a seeking set); it is listed as a founder decision.
 
 ## Design overview: code to PRD map
 
@@ -102,7 +102,7 @@ contains a minor's id, alias or name, and that the final guard never fires. A mu
 
 ## Requirements coverage (ME-001..ME-012)
 
-| Req | Where enforced | Where tested (before 2026-10-08; now `bun run sim`) |
+| Req | Where enforced | Where tested (before 2026-10-08; now `pnpm run sim`) |
 |---|---|---|
 | ME-001 hard constraints | `filters.ts` (generators pre-filter, then `candidateReason` re-checks every configuration) | `properties.test.ts` independent oracle over 24 random worlds; `filters.test.ts` |
 | Minors policy (17.4) | `isMinor` in the index, member, pair and configuration filters, the composer, and a final guard | `minors.test.ts`: per-generator unit tests and property tests over 18 worlds with 10-20% minors |
@@ -120,7 +120,7 @@ contains a minor's id, alias or name, and that the final guard never fires. A mu
 
 ## Validation
 
-The unit and property tests named in the table above were deleted on 2026-10-08 and stay deleted (no unit tests: [docs/tests-policy.md](../../docs/tests-policy.md)); they are in git history at 16cde70. `bun run sim` now checks the engine through the packs: the conformance rules on random and per-app worlds (minors, blocks, consent before reveal, leaks, filters and the judge), and the world gates.
+The unit and property tests named in the table above were deleted on 2026-10-08 and stay deleted (no unit tests: [docs/tests-policy.md](../../docs/tests-policy.md)); they are in git history at 16cde70. `pnpm run sim` now checks the engine through the packs: the conformance rules on random and per-app worlds (minors, blocks, consent before reveal, leaks, filters and the judge), and the world gates.
 
 ## Benchmark
 

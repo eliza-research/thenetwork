@@ -92,6 +92,7 @@ export function copyFor(b: CopyBrand) {
   /** A member on watch asked for an introduction: nothing starts until a person has looked. */
   requestOnWatch: "I can't start new introductions for you right now. A person on our team will look at your account first.",
   requestAck: "On it. I'll check with a couple of people and get back to you within a day.",
+  homeHelpSafetyReview: "A team member needs to review requests that involve entering a home. I haven't contacted anyone or shared an address.",
   /** Matching is paused (the admin switch): the request waits as a standing request. */
   requestWaiting: "Got it. I'm not starting new introductions right now, but I'll keep your request open and look again soon.",
   /** A standing request found a match on a later try; sent only after a reviewer approved it. */
@@ -114,6 +115,17 @@ export function copyFor(b: CopyBrand) {
   /** A member names a friend to invite where no invite link can be sent: nothing is promised. */
   invitesNotOpen: (friend: string) => `Thanks! I can't send invite links yet, so nothing went to ${friend}. They're welcome to sign up for ${b.name} themselves.`,
   inviteSent: (friend: string) => `Done: here's an invite link for ${friend}. I'll welcome them when they join.`,
+  forwardInvite: (url: string) => `You can forward this invite link:\n${url}`,
+  inviteVouchQuestion: (first: string) => `How long and how well have you known ${first}? For example, “2 years, well” or “3 weeks, met once”.`,
+  inviteVouchReadback: (first: string, relationship: string, durationMonths: number, depth: "met_once" | "somewhat" | "well") => {
+    const duration = durationMonths === 0 ? "less than a month" : durationMonths === 1 ? "1 month" : `${durationMonths} months`;
+    const level = { met_once: "met once", somewhat: "know somewhat", well: "know well" }[depth];
+    return `Your vouch for ${first} is ${relationship}, ${duration}, ${level}. Reply CONFIRM INVITE to request a link you can forward.`;
+  },
+  inviteVouchConfirm: "Reply CONFIRM INVITE to request the link, or CANCEL INVITE to stop.",
+  inviteCancelled: "I cleared your invitation request.",
+  inviteInReview: (reference?: string) => reference ? `Your invite is waiting for review. To check it, reply CHECK INVITE ${reference}.` : "Your invite is waiting for review.",
+  inviteUnavailable: "I couldn't make an invite link right now.",
   inviteeJoined: (friend: string) => `${friend} just joined. Thanks for bringing them in.`,
   secondEncounter: (others: string) => `You and ${others} both said you'd meet again. Want me to find a time?`,
   // Safety and boundaries.
@@ -137,6 +149,7 @@ export function copyFor(b: CopyBrand) {
   hold: "Your account is paused while our team takes a look. You'll hear from a person soon.",
   minorNotice: "Thanks for telling me. Since you're under 18, I won't introduce you to other members, but I'm happy to suggest public places and events.",
   minorConcierge: (topic: string, ideas: string) => `For ${topic}, ${ideas}. Happy to suggest more anytime.`,
+  emptyIntentFollowup: "I haven't found a match I can offer yet. Text “Show me public events” for ideas you can try on your own.",
   stopWelcomeBack: "Welcome back. I'll only reach out when something looks worth it.",
   // Plans (plans v1.1). The probe itself is the engine's buildPlanProbe (no names, leak-checked).
   /** The booked plan, sent only once enough people said yes: names, time, public place, own way. Silence for 48 hours = in. */

@@ -1,13 +1,17 @@
 import { spawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, watch, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, watch, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import type { Model } from "../tools/vibestack/vibestack/gen.ts";
 import { scanSpec } from "../tools/vibestack/vibestack/scan.ts";
 
 export const root = resolve(import.meta.dirname, "..");
 const toolkit = join(root, "tools/vibestack");
 const cli = join(toolkit, "vibestack/spec.ts");
 const excludedTrees = new Set(["models", "product"]);
+const conformanceTrees = ["test/drivers", "test/traces", "test/counterexamples"];
+const counterexamples = "test/counterexamples";
 
 export function formalFiles(): Map<string, string> {
   const entries = new Map<string, string>();
@@ -60,6 +64,129 @@ export function prepareProject(project: string, files: Map<string, string>, appT
   for (const [file, contents] of files) writeProjectedSpec(project, file, contents);
 }
 
+function isProjectDirectory(project: string, folder: string): boolean {
+  let directory = project;
+  for (const part of folder.split("/")) {
+    directory = join(directory, part);
+    const entry = lstatSync(directory, { throwIfNoEntry: false });
+    if (!entry) return false;
+    if (!entry.isDirectory()) throw new Error(`${directory}: expected a regular directory`);
+  }
+  return true;
+}
+
+function conformanceFiles(project: string, folder: string): string[] {
+  if (!isProjectDirectory(project, folder)) return [];
+  const walk = (directory: string): string[] => readdirSync(join(project, directory), { withFileTypes: true }).flatMap(entry => {
+    if (entry.name.startsWith(".")) return [];
+    const file = `${directory}/${entry.name}`;
+    if (entry.isSymbolicLink()) throw new Error(`${file}: conformance inputs cannot be symbolic links`);
+    if (entry.isDirectory()) return walk(file);
+    return entry.isFile() ? [file] : [];
+  });
+  return walk(folder).sort();
+}
+
+function projectConformance(project: string, module?: string): Set<string> {
+  const files = conformanceTrees.flatMap(folder => conformanceFiles(root, folder));
+  const selected = module === undefined ? files : files.filter(file => {
+    const [group, name, subfile] = file.split("/").slice(1);
+    if (group === "drivers") return subfile !== undefined || name === `${module}.ts`;
+    if (group === "traces") return subfile === undefined && name.endsWith(".jsonl") && name.split(".")[0] === module;
+    return name === module;
+  });
+  if (!selected.length) return new Set();
+  for (const file of selected) {
+    const destination = join(project, file);
+    mkdirSync(dirname(destination), { recursive: true });
+    copyFileSync(join(root, file), destination);
+  }
+
+  // Vibestack starts each driver in a Node child of this projection. Its loader resolves here.
+  symlinkSync(join(toolkit, "node_modules"), join(project, "node_modules"), "junction");
+  if (module === undefined) {
+    const packageFile = join(project, "package.json");
+    const manifest = JSON.parse(readFileSync(packageFile, "utf8"));
+    // Drivers run in the traces stage. Preserve the existing application test entry points.
+    manifest.scripts = { test: "vitest run --passWithNoTests" };
+    writeFileSync(packageFile, `${JSON.stringify(manifest)}\n`);
+    const drivers = selected.filter(file => /^test\/drivers\/\w+\.ts$/.test(file));
+    if (drivers.length) {
+      const tsconfigFile = join(project, "tsconfig.json");
+      const tsconfig = JSON.parse(readFileSync(tsconfigFile, "utf8"));
+      tsconfig.files = drivers;
+      // The Node conformance runner uses Array.toSpliced while Network builds target ES2022.
+      tsconfig.compilerOptions.target = "ES2023";
+      writeFileSync(tsconfigFile, `${JSON.stringify(tsconfig)}\n`);
+    }
+  }
+  return new Set(selected.filter(file => file.startsWith(`${counterexamples}/`)));
+}
+
+function saveCounterexamples(project: string, previous: ReadonlySet<string>): void {
+  for (const file of conformanceFiles(project, counterexamples)) {
+    if (previous.has(file) || !/^test\/counterexamples\/[a-z]\w*\/[a-f0-9]{12}\.json$/.test(file)) continue;
+    const folder = dirname(file);
+    if (!isProjectDirectory(root, folder)) mkdirSync(join(root, folder), { recursive: true });
+    const target = join(root, file);
+    const publication = mkdtempSync(join(root, folder, ".publish-"));
+    try {
+      const complete = join(publication, "counterexample.json");
+      copyFileSync(join(project, file), complete);
+      // Link only the complete result, and leave an existing counterexample in place.
+      try { linkSync(complete, target); } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+        continue;
+      }
+      console.error(`Saved conformance counterexample in ${file}`);
+    } finally {
+      rmSync(publication, { recursive: true, force: true });
+    }
+  }
+}
+
+async function checkConformance(project: string, module: string, nightly: boolean): Promise<number> {
+  const { conformance } = await import("../tools/vibestack/vibestack/conform.ts");
+  const { show, readSpecs, generated, typecheckAll } = await import("../tools/vibestack/vibestack/spec.ts");
+  const { simulation } = await import("../tools/vibestack/vibestack/simulate.ts");
+  const { profile } = await import("../tools/vibestack/vibestack/testing/profile.ts");
+  const specs = readSpecs(project);
+  const byName = new Map(specs.map(spec => [spec.name, spec]));
+  const spec = byName.get(module);
+  if (!spec) throw new Error(`No spec module named ${module}`);
+  if (!existsSync(join(project, `test/drivers/${module}.ts`))
+      && !conformanceFiles(project, "test/traces").some(file => file.endsWith(".jsonl"))) {
+    throw new Error(`No conformance driver or recorded trace for ${module}`);
+  }
+
+  const names = new Set<string>();
+  const add = (name: string) => {
+    if (names.has(name)) return;
+    names.add(name);
+    byName.get(name)!.imports.forEach(add);
+  };
+  add(module);
+  const selected = specs.filter(input => names.has(input.name));
+  const memory = { root: project, fresh: nightly, used: new Set<string>() };
+  const typed = typecheckAll(memory, selected);
+  const models = new Map<string, Model>();
+  try {
+    for (const input of selected) generated(project, input, await typed.get(input.name), models);
+  } finally {
+    await Promise.allSettled(typed.values());
+  }
+  const model = models.get(module)!;
+  if (!model.stateType || !model.transitions.length) throw new Error(`${spec.file}: conformance requires a state machine`);
+  const domain = await import(pathToFileURL(join(project, "gen", `${module}.ts`)).href);
+  const mode = nightly ? "nightly" : "normal";
+  const { said, tested } = await simulation(memory, spec, selected, model, domain, profile(mode).seed);
+  for (const result of said) console.log(show(result));
+  if (!tested || said.some(result => !result.ok)) return 1;
+  const results = await conformance(project, new Map([[module, { model, domain, found: tested }]]), {}, mode);
+  for (const [ok, stage, summary, detail = "", where] of results) console.log(show({ ok, stage, summary, detail, where }));
+  return results.length && results.every(([ok]) => ok) ? 0 : 1;
+}
+
 export function assertUnchanged(files: Map<string, string>): void {
   const current = formalFiles();
   if (current.size !== files.size || [...files].some(([file, contents]) => current.get(file) !== contents)) {
@@ -75,10 +202,46 @@ export async function runSpec(project: string, args: string[]): Promise<number> 
   });
 }
 
+async function checkBrowser(nightly: boolean): Promise<number> {
+  const { explore } = await import("../tools/vibestack/vibestack/explore.ts");
+  const { show } = await import("../tools/vibestack/vibestack/spec.ts");
+  const project = mkdtempSync(join(tmpdir(), "thenetwork-browser-"));
+  const saved = "test/__traces__/bombadil";
+  const retained = join(root, saved);
+  const projected = join(project, saved);
+  try {
+    const packageManager = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).packageManager;
+    writeFileSync(join(project, "package.json"), JSON.stringify({
+      name: "thenetwork-browser", private: true, type: "module", packageManager,
+      scripts: { start: "node --import tsx start-browser.mjs" },
+    }));
+    const fixture = pathToFileURL(join(root, "test/fixtures/browserSignup.ts")).href;
+    writeFileSync(join(project, "start-browser.mjs"), `import ${JSON.stringify(fixture)};\n`);
+    // The explorer discovers the site's HTML shell. The fixture builds and serves the Peon join page.
+    copyFileSync(join(root, "apps/site/index.html"), join(project, "index.html"));
+    mkdirSync(join(project, "test"));
+    copyFileSync(join(root, "test/bombadil.ts"), join(project, "test/bombadil.ts"));
+    mkdirSync(join(project, "node_modules/@antithesishq"), { recursive: true });
+    symlinkSync(join(root, "node_modules/tsx"), join(project, "node_modules/tsx"), "junction");
+    symlinkSync(join(toolkit, "node_modules/@antithesishq/bombadil"), join(project, "node_modules/@antithesishq/bombadil"), "junction");
+    if (existsSync(retained)) cpSync(retained, projected, { recursive: true });
+    // The checked page uses source outside the projection, so do not cache a pass.
+    const results = await explore(project, async (_fingerprint, run) => run(), nightly ? "nightly" : "normal", root);
+    for (const [ok, stage, summary, detail = "", where] of results) console.log(show({ ok, stage, summary, detail, where }));
+    rmSync(retained, { recursive: true, force: true });
+    if (existsSync(projected)) cpSync(projected, retained, { recursive: true });
+    return results.length && results.every(([ok]) => ok) ? 0 : 1;
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+}
+
 async function main([command, ...args]: string[]) {
   const patterns: Record<string, string[][]> = {
     gen: [[]],
     check: [[], ["--json"], ["--nightly"], ["--json", "--nightly"], ["--nightly", "--json"]],
+    conformance: [["*"], ["*", "--nightly"]],
+    explore: [[], ["--nightly"]],
     accept: [[], ["unproved"]],
     new: [[], ["*"]],
     studio: [[], ["--port", "*"]],
@@ -87,6 +250,9 @@ async function main([command, ...args]: string[]) {
   const valid = Object.hasOwn(patterns, command) && patterns[command].some((pattern) =>
     args.length === pattern.length && pattern.every((part, index) => part === "*" || part === args[index]));
   if (!valid) throw new Error(`Unsupported Vibestack command or arguments: ${[command, ...args].join(" ")}`);
+  if (command === "explore") return await checkBrowser(args[0] === "--nightly");
+  const module = command === "conformance" ? args[0] : undefined;
+  if (module !== undefined && !/^[a-z]\w*$/.test(module)) throw new Error(`Invalid Vibestack module name: ${module}`);
   const files = formalFiles();
   const studio = command === "studio";
   if (studio && !existsSync(join(toolkit, "vibestack/studio/gen/index.ts"))) {
@@ -96,8 +262,11 @@ async function main([command, ...args]: string[]) {
   const parent = studio ? join(root, "runs/vibestack") : tmpdir();
   mkdirSync(parent, { recursive: true });
   const project = mkdtempSync(join(parent, "thenetwork-vibestack-"));
+  let earlierCounterexamples: Set<string> | undefined;
   try {
-    prepareProject(project, files, !["gen", "new"].includes(command));
+    prepareProject(project, files, !["gen", "new", "conformance"].includes(command));
+    if (["check", "accept", "conformance"].includes(command)) earlierCounterexamples = projectConformance(project, module);
+    if (module !== undefined) return await checkConformance(project, module, args[1] === "--nightly");
     if (studio) console.log(`Studio is editing a copy at ${join(project, "spec")}. The repository’s spec/ remains authoritative.`);
     let previous = files;
     const watcher = command === "watch" ? watch(join(root, "spec"), { recursive: true }, () => {
@@ -138,12 +307,20 @@ async function main([command, ...args]: string[]) {
     }
     return 0;
   } finally {
+    if (earlierCounterexamples) {
+      try {
+        saveCounterexamples(project, earlierCounterexamples);
+      } catch (error) {
+        throw new Error(`Could not save conformance counterexamples. The copy remains in ${project}.`, { cause: error });
+      }
+    }
     if (!studio) rmSync(project, { recursive: true, force: true });
   }
 }
 
 if (import.meta.main) {
   try {
+    process.env.THENETWORK_VIBESTACK_REPO = root;
     process.exitCode = await main(process.argv.slice(2));
   } catch (error) {
     console.error(error instanceof Error ? error.message : error);

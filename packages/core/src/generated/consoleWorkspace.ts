@@ -508,7 +508,7 @@ export function receiveCaseAnswer(w: Workspace, accepted: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveCaseAnswer(w)) ==> stepNewViewerClosesForms(w, "receiveCaseAnswer", \result)
   //@ ensures (inv(w) && canReceiveCaseAnswer(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "receiveCaseAnswer", \result)
   //@ ensures (inv(w) && canReceiveCaseAnswer(w)) ==> stepRevealFollowsAGrant(w, "receiveCaseAnswer", \result)
-  const local_0 = w.caseRow;
+  const local_0: CaseRow = w.caseRow;
   return { ...w, caseRow: ({ ...local_0, caseSending: false, onHold: accepted && local_0.caseStep === "LiftStep" ? false : local_0.onHold, status: accepted && local_0.caseStep === "CloseStep" ? "CaseRowClosed" : local_0.status } as CaseRow) };
 }
 

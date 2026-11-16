@@ -1,5 +1,7 @@
 # One platform, four apps: architecture plan
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/research/2026-10-08-platform-architecture.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 > **Superseded names (2026-10-08 cleanup note).** This is a dated research record. Since it was written: buddies.nyc was renamed friends.help (AppId `friends`, `friendsPack`); ntwrk.club belongs to someone else and is not used (ntwrk.party is the home page); `packages/worlds` moved to `packages/sim/src/apps`; the prototypes were deleted or promoted (`packages/blooio`). Current decisions: AGENTS.md "Platform decisions" and docs/mvp-plan.md.
 
 Status: research and plan, 2026-10-08. Nothing in this document is built or deployed. A Claude agent wrote it by hand from code reading and web research. Web prices and rules were fetched on 2026-10-07 and 2026-10-08 (UTC); each one names its source. Items marked **unverified** could not be confirmed on a primary page.
@@ -619,7 +621,7 @@ Milestone: the audit summary is published before any NYC role is matched.
 | Web OTP | about $15-60 | $0.058 per Twilio Verify login. Most joins are by text (free). 250-1,000 web logins a month. |
 | Twilio A2P SMS fallback | about $40 + usage | 4 campaigns × $10/mo; SMS about $0.0083 + carrier fee about $0.003-0.0045 per segment; setup about $46 + $15 per campaign attempt |
 | Inference (gpt-6-luna) | about $20/mo billed, up to about $180 at list price | $3/mo billed (up to $27 worst case) per 300 members, measured in the PoC validation (summary in `docs/results/SUMMARY.md`); scaled linearly to 2,000 |
-| Hosting | about $60-150 | Railway Pro $20 + Postgres and 2 Bun services (about $10-30 each); Cloudflare Workers Paid $5; Neon or Fly as alternatives (Fly Postgres from $38) |
+| Hosting | about $60-150 | Railway Pro $20 + Postgres and 2 the former runtime services (about $10-30 each); Cloudflare Workers Paid $5; Neon or Fly as alternatives (Fly Postgres from $38) |
 | Domains | under $10/mo | Renewals |
 | One-time | Bias audit for peon: an outside auditor (cost **not researched**); counsel; $75 per custom area code | — |
 

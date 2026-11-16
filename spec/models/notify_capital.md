@@ -8,7 +8,13 @@ A member needs to receive each relevant update once and get credit for confirmed
 
 Check notification projection and deduplication and the network capital ledger. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-Production uses the generated [notification delivery rules](../notificationDelivery.md) for timing, caps, and surface scoring.
+Production uses the generated [notification delivery rules](../notificationDelivery.md) for timing, caps, and surface scoring, the [notification dispatch machine](../notificationDispatch.md) for digest rechecks, recording and queued relevance, and the [inbox acknowledgement machine](../notificationAcknowledgement.md) for scoped reads, update tokens, seen writes, and action feedback.
+
+The VibeLang dispatch shell rechecks the recipient before recording. The Postgres store locks the selected items in ID order, checks that each still belongs to the recipient and remains pending, and records the claim and notice flags in one transaction. The machine treats that transaction's response as an effect result.
+
+The model's token action combines redemption and display. In production, an app-scoped read marks only selected unseen items, and a surface that resolves subject IDs may acknowledge their display separately. The Network uses [booked meeting settlement](../meetingSettlement.md) to decide which attendance and feedback events to write to the capital ledger.
+
+The generated [Capital ledger spec](../capitalLedger.md) governs event admission, contribution qualification, append-only reversals, and which entries count against the rolling credit cap. The [Capital levers](../capitalLevers.md) use admitted credits to calculate allowances. The signed [contribution history](../contributionHistory.md) replays committed app events and projects only the current adult member's verified acts.
 
 Imported from `quint/notify_capital.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 

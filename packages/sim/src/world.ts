@@ -2,6 +2,7 @@
 // drives a NetworkUnderTest through the simulated channel, lets persona agents live by
 // their routines and reply latencies, decides meeting outcomes from hidden truth, and writes
 // a replayable JSONL run log to runs/<runId>/.
+import { writePath } from "../../core/src/runtime/files.ts";
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DAY, HOUR, MINUTE, SimClock, type MemberId, type Proposal } from "@thenetwork/core";
@@ -94,7 +95,7 @@ export interface WorldResult {
 }
 
 export const DEFAULT_START = Date.UTC(2026, 9, 5, 7); // Mon Oct 5 2026, 00:00 in SF
-const REPO_ROOT = resolve(import.meta.dir, "../../..");
+const REPO_ROOT = resolve(import.meta.dirname, "../../..");
 
 export class World {
   readonly clock: SimClock;
@@ -378,9 +379,9 @@ export class World {
   private async write(metrics: Metrics): Promise<string> {
     const dir = join(this.opts.runsDir ?? join(REPO_ROOT, "runs"), this.runId);
     mkdirSync(dir, { recursive: true });
-    await Bun.write(join(dir, "events.jsonl"), this.records.map(r => JSON.stringify(r)).join("\n") + "\n");
-    await Bun.write(join(dir, "personas.json"), JSON.stringify(this.opts.personas, null, 1));
-    await Bun.write(join(dir, "metrics.json"), JSON.stringify(metrics, null, 2));
+    await writePath(join(dir, "events.jsonl"), this.records.map(r => JSON.stringify(r)).join("\n") + "\n");
+    await writePath(join(dir, "personas.json"), JSON.stringify(this.opts.personas, null, 1));
+    await writePath(join(dir, "metrics.json"), JSON.stringify(metrics, null, 2));
     return dir;
   }
 

@@ -3,6 +3,7 @@
 // one id space and compared in another).
 import type { Category, City, Edge, EdgeType, Facet, FacetKind, Intent, Member, MemberId, Presence, Proposal } from "@thenetwork/core";
 import { canBeMatched, DAY } from "@thenetwork/core";
+import { standingIntentLive } from "../../core/src/standing-intent.ts";
 import type { EngineConfig } from "./config.ts";
 import { centroid, cosine, tokenize, type EmbedFn } from "./embed.ts";
 import { sha256, stableStringify } from "./hash.ts";
@@ -201,11 +202,10 @@ export class World {
     // (networkPack.ontology.relabelIntent). Member -> lanes the member is opted in to by relabelling.
     const growthAsHobby = new Map<MemberId, Category[]>();
     for (const it of input.intents) {
+      if (!standingIntentLive(it, now)) continue;
       const id = C(it.memberId);
       const relabel = pack.ontology.relabelIntent?.(it, cfg);
       if (relabel) { if (!growthAsHobby.has(id)) growthAsHobby.set(id, []); if (!growthAsHobby.get(id)!.includes(relabel)) growthAsHobby.get(id)!.push(relabel); }
-      const live = it.status === "active" && it.createdAt + it.horizonDays * DAY > now;
-      if (!live) continue;
       const intent: Intent = { ...it, memberId: id, ...(relabel ? { category: relabel } : {}) };
       if (!intentsBy.has(id)) intentsBy.set(id, []);
       intentsBy.get(id)!.push(intent);

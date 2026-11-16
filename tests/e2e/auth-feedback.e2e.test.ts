@@ -2,10 +2,12 @@
 // security check adapter (packages/ui/src/api/turnstile.ts) and the public API. Only the SDK callbacks are
 // controlled. This does not solve or bypass a challenge.
 // Set PLAYWRIGHT_MODULE to an existing Playwright installation to run this case.
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, normalize } from "node:path";
+import { serveHttp } from "../../packages/core/src/runtime/http.ts";
+import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { createPublicApi } from "../../packages/platform/src/api.ts";
 import { MemoryPeopleStore } from "../../packages/platform/src/store.ts";
 import { buildSite, site } from "../../sites/sites.ts";
@@ -24,7 +26,7 @@ browserTest("failed security checks give recovery feedback, a passed check clear
     otp: { name: "unused-browser-test", async send() { otpSends++; return { code: "246810" }; } },
     log: () => {},
   });
-  const server = Bun.serve({
+  const server = await serveHttp({
     hostname: "127.0.0.1", port: 0,
     async fetch(req) {
       const path = new URL(req.url).pathname;
@@ -33,7 +35,7 @@ browserTest("failed security checks give recovery feedback, a passed check clear
         return (await platform.fetch(req)) ?? new Response("Not found", { status: 404 });
       }
       const file = join(out, normalize(path === "/join" ? "/join.html" : path));
-      return file.startsWith(out) && existsSync(file) ? new Response(Bun.file(file)) : new Response("Not found", { status: 404 });
+      return file.startsWith(out) && existsSync(file) ? new Response(await fileAt(file).blob()) : new Response("Not found", { status: 404 });
     },
   });
   const browser = await chromium.launch({ headless: true });
@@ -60,7 +62,7 @@ browserTest("failed security checks give recovery feedback, a passed check clear
     await send();
     expect(await error()).toContain("Wait for the check");
     await page.evaluate(() => (window as any).sdkCallbacks["error-callback"]("300030"));
-    expect(await error()).toBe("The security check failed. Refresh the page and try again.");
+    await expect.poll(error).toBe("The security check failed. Refresh the page and try again.");
     await send();
     expect(await error()).toContain("security check failed");
     expect(otpRequests).toBe(0);
@@ -71,7 +73,7 @@ browserTest("failed security checks give recovery feedback, a passed check clear
     expect(await error()).toContain("Wait for the check");
     // A simulated SDK success tests feedback only; its inert token is never submitted.
     await page.evaluate(() => (window as any).sdkCallbacks.callback("inert-ui-fixture-token"));
-    expect(await error()).toBe("");
+    await expect.poll(error).toBe("");
 
     await open();
     await phone.fill("invalid");
@@ -98,7 +100,7 @@ browserTest("failed security checks give recovery feedback, a passed check clear
   } finally {
     await context.close();
     await browser.close();
-    server.stop(true);
+    await server.stop(true);
     rmSync(out, { recursive: true, force: true });
   }
 }, 60_000);

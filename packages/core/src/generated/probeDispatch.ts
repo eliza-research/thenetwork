@@ -9,7 +9,7 @@ export interface ParticipantProbe { phase: ProbePhase }
 export type ProbeTiming = "WaitForQuestion" | "WaitForWindow" | "CheckAvailability";
 /** Story: Hear about one reviewed opportunity at a time / Wait for the member's send window and current availability (spec/probeDispatch.md:42) */
 export type ProbeAvailability = "ReadyToSend" | "ParticipantAway" | "NoCommonTime";
-/** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md:101) */
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md:108) */
 export type ReplacementRoute = "IgnoreReplacement" | "CloseRequester" | "CloseManager" | "FindAlternate";
 
 /** One variant per transition in the spec. */
@@ -21,7 +21,9 @@ export type Event =
   | { type: "offerOtherTimes"; hasFreshTimes: boolean }
   | { type: "expireProbe"; expired: boolean; timeQuestion: boolean };
 
-/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md:65) */
+/** Story: Hear about one reviewed opportunity at a time / Wait for the member's send window and current availability (spec/probeDispatch.md:42) */
+export const questionHoldMs: number = exact_probeDispatch(24 * 3600000);
+/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md:72) */
 export const probeResponseMs: number = exact_probeDispatch(26 * 3600000);
 /** Story: Hear about one reviewed opportunity at a time / The first participant opens the later turns (spec/probeDispatch.md:9) */
 export const initial: ParticipantProbe = { phase: "Queued" };
@@ -91,6 +93,12 @@ export function probeIsInvite(requester: boolean, hiringManager: boolean): boole
 
 /** Story: Hear about one reviewed opportunity at a time / Wait for the member's send window and current availability (spec/probeDispatch.md:42) */
 //@ pure
+export function probeQuestionHoldUntil(askedAt: number): number {
+  return exact_probeDispatch(askedAt + questionHoldMs);
+}
+
+/** Story: Hear about one reviewed opportunity at a time / Wait for the member's send window and current availability (spec/probeDispatch.md:42) */
+//@ pure
 export function needsProbeSend(participant: ParticipantProbe, contacted: boolean): boolean {
   return participant.phase === "AwaitingReply" && !contacted;
 }
@@ -120,106 +128,113 @@ export function markUnavailable(participant: ParticipantProbe): ParticipantProbe
   return { phase: "Unavailable" };
 }
 
-/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md:65) */
+/** Story: Hear about one reviewed opportunity at a time / Wait for the member's send window and current availability (spec/probeDispatch.md:42) */
+//@ pure
+export function lawProbeWaitsForOpenQuestion(windowOpen: boolean): boolean {
+  //@ ensures \result === true
+  return probeTiming(true, windowOpen) === "WaitForQuestion";
+}
+
+/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md:72) */
 //@ pure
 export function needsOtherTimes(offeredTimes: boolean, pickedTimes: boolean): boolean {
   return offeredTimes && !pickedTimes;
 }
 
-/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md:65) */
+/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md:72) */
 //@ pure
 export function probeExpiryDeadline(sent: boolean, responseDeadline: number, sendDeadline: number): number {
   return sent ? responseDeadline : sendDeadline;
 }
 
-/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md:65) */
+/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md:72) */
 //@ pure
 export function probeExpired(asOf: number, deadline: number): boolean {
   return asOf >= deadline;
 }
 
-/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md:65) */
+/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md:72) */
 //@ pure
 export function canRecordReply(participant: ParticipantProbe): boolean {
   return participant.phase === "AwaitingReply";
 }
 
-/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md:65) */
+/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md:72) */
 //@ pure
 export function recordReply(participant: ParticipantProbe, agreed: boolean): ParticipantProbe {
   //@ ensures (inv(participant) && canRecordReply(participant)) ==> stepUnavailableNeverReopens(participant, \result)
   return { phase: agreed ? "Available" : "Unavailable" };
 }
 
-/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md:65) */
+/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md:72) */
 //@ pure
 export function shouldLookForOtherTimes(offeredTimes: boolean, pickedTimes: boolean, offeredAgain: boolean): boolean {
   return needsOtherTimes(offeredTimes, pickedTimes) && !offeredAgain;
 }
 
-/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md:65) */
+/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md:72) */
 //@ pure
 export function canOfferOtherTimes(participant: ParticipantProbe, hasFreshTimes: boolean): boolean {
   return participant.phase === "Available" && hasFreshTimes;
 }
 
-/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md:65) */
+/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md:72) */
 //@ pure
 export function offerOtherTimes(participant: ParticipantProbe, hasFreshTimes: boolean): ParticipantProbe {
   //@ ensures (inv(participant) && canOfferOtherTimes(participant, hasFreshTimes)) ==> stepUnavailableNeverReopens(participant, \result)
   return { phase: "AwaitingReply" };
 }
 
-/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md:65) */
+/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md:72) */
 //@ pure
 export function canExpireProbe(participant: ParticipantProbe, expired: boolean): boolean {
   return participant.phase === "AwaitingReply" && expired;
 }
 
-/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md:65) */
+/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md:72) */
 //@ pure
 export function expireProbe(participant: ParticipantProbe, expired: boolean, timeQuestion: boolean): ParticipantProbe {
   //@ ensures (inv(participant) && canExpireProbe(participant, expired)) ==> stepUnavailableNeverReopens(participant, \result)
   return { phase: timeQuestion ? "Available" : "Unavailable" };
 }
 
-/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md:65) */
+/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md:72) */
 //@ pure
 export function stepUnavailableNeverReopens(before: ParticipantProbe, after: ParticipantProbe): boolean {
   return !(before.phase === "Unavailable") || after.phase === "Unavailable";
 }
 
-/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md:65) */
+/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md:72) */
 //@ pure
 export function sometimesAgreed(participant: ParticipantProbe): boolean {
   return participant.phase === "Available";
 }
 
-/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md:65) */
+/** Story: Hear about one reviewed opportunity at a time / A reply or an expired deadline settles the probe (spec/probeDispatch.md:72) */
 //@ pure
 export function sometimesSettledNo(participant: ParticipantProbe): boolean {
   return participant.phase === "Unavailable";
 }
 
-/** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md:101) */
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md:108) */
 //@ pure
 export function mayTryAlternate(alternatesRemain: boolean, replaced: number): boolean {
   return alternatesRemain && replaced < 3;
 }
 
-/** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md:101) */
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md:108) */
 //@ pure
 export function alternateAllowed(eligible: boolean, sameFirstName: boolean, conflict: boolean): boolean {
   return eligible && !sameFirstName && !conflict;
 }
 
-/** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md:101) */
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md:108) */
 //@ pure
 export function replacementRoute(probing: boolean, requesterOut: boolean, managerOut: boolean): ReplacementRoute {
   return !probing ? "IgnoreReplacement" : (requesterOut ? "CloseRequester" : (managerOut ? "CloseManager" : "FindAlternate"));
 }
 
-/** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md:101) */
+/** Story: Hear about one reviewed opportunity at a time / A replacement keeps the requester or hiring manager and all eligible group members (spec/probeDispatch.md:108) */
 //@ pure
 export function lawRequiredParticipantCannotBeReplaced(probing: boolean, requesterOut: boolean, managerOut: boolean): boolean {
   //@ ensures \result === true

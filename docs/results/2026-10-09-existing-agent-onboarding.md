@@ -1,5 +1,7 @@
 # Existing-agent onboarding: acceptance report (2026-10-09)
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-09-existing-agent-onboarding.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 Status: hosted ChatGPT registration blocked; reconciled local integration, e2e, typecheck, and production static builds pass.
 ChatGPT is the first client acceptance target requested by the user.
 Other clients are deferred beyond completed entry checks. No client has passed live Slop onboarding end to end.
@@ -115,25 +117,25 @@ Local fixtures and real signed-in client sessions remain separate.
 
 ## Reproduce the local checks
 
-Use Bun 1.4.2. Use an unoccupied Postgres port and a new cluster directory.
+Use the former runtime 1.4.2. Use an unoccupied Postgres port and a new cluster directory.
 Do not point these commands at a production or shared database.
 
 ```sh
 cd /Users/nubs/Git/thenetwork-existing-agents-20261009
-bun --version
-bun install --frozen-lockfile
+node --version
+pnpm install --frozen-lockfile
 export OBSERVATORY_PG_PORT=54359
 export OBSERVATORY_PG_DIR="$PWD/runs/pg-existing-agent-review"
-bun run packages/observatory/db/dev-pg.ts up
-REQUIRE_PG=1 bun run test:e2e
-REQUIRE_PG=1 bun run test:integration
-bun run typecheck
-bun run sim
-bun run plugins/build.ts --check
+node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts up
+REQUIRE_PG=1 pnpm run test:e2e
+REQUIRE_PG=1 pnpm run test:integration
+pnpm run typecheck
+pnpm run sim
+node --import tsx --env-file-if-exists=.env plugins/build.ts --check
 ```
 
 Run the new identity journey alone with:
-`REQUIRE_PG=1 bun run test:e2e --test-name-pattern 'Slop: two assistants share one phone owner'`.
+`REQUIRE_PG=1 pnpm run test:e2e --test-name-pattern 'Slop: two assistants share one phone owner'`.
 The harness creates process-owned databases and drops them afterward. It selects random site ports.
 
 For a visible local demo, use the lane-owned runtime receipt in `test-results/existing-agents-20261009/local-runtime.json`.

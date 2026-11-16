@@ -26,7 +26,7 @@ export const NETWORK_EVENT_KINDS: ReadonlySet<string> = new Set([
   "probe_started", "probe_sent", "probe_answer", "probe_replaced", "probe_closed", "proposal_skipped", "opportunity_closed", "venue",
   "request", "request_result", "request_withdrawn_want", "trust", "abuse", "safety_action", "guard_blocked", "send_refused", "send_skipped",
   "age_unknown", "age_resolved", "age_conflict", "minor_signal", "join_declined", "invite", "growth_ask", "reengagement",
-  "only_when_asked", "outreach_resumed", "ask_sent", "ask_answered",
+  "only_when_asked", "outreach_resumed", "ask_sent", "ask_answered", "empty_intent_followup",
   // The send path and the booked plan (attention v1.2, network.md 4 and 6.4): what waited and why, what
   // the engine proposed and the gates stopped, the times offered and picked, cancellations, and the
   // availability opt-ins. Codes, keys and tags only, never the member's words.
@@ -237,6 +237,7 @@ export function describe(row: EventRow, name: (id: string) => string = id => id)
     case "outreach_resumed": text = "Outreach resumed (they wrote again)"; break;
     case "ask_sent": text = `Profile question sent (${human(p.reason)})`; keep("reason"); break;
     case "ask_answered": text = `Profile question answered (${human(p.reason)})`; keep("reason"); break;
+    case "empty_intent_followup": text = "The Network offered a public event search because a match was unavailable"; keep("reason"); break;
     default: break;
   }
   const memberId = subjectOf(row);

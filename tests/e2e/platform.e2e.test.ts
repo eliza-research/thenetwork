@@ -1,9 +1,9 @@
 // End to end: the four sites through the production router code, the shared backend, the platform
 // API, the MCP server and Postgres, in one process (harness.ts). Needs the dev Postgres (:54339); it
 // skips with a message without one, and CI (REQUIRE_PG=1) fails instead of skipping.
-//   bun test tests/e2e            (bun run test:e2e)
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { SQL } from "bun";
+//   pnpm test:e2e
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { DAY, HOUR } from "../../packages/core/src/clock.ts";
 import { lastEvents, resolveConsent } from "../../packages/platform/src/consent.ts";
 import { APP_IDS, type AppId } from "../../packages/platform/src/apps.ts";
@@ -527,10 +527,10 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       const app = await (await st.site("ntwrk", "/api/app")).json() as { joinMode: string };
       expect(app.joinMode).toBe("invite");
       const skill = await (await st.site("ntwrk", "/SKILL.md")).text();
-      expect(skill).toContain("The Network website may require an invitation");
       expect(skill).toContain("`canJoin:false`");
-      expect(skill).toContain("Only continue when this account is actually eligible");
-      expect(skill).toContain("Never invent or accept an invitation");
+      expect(skill).toContain('`reason:"invite_only"`');
+      expect(skill).toContain("provided and approved an invitation for this exact app");
+      expect(skill).toContain("`inviteToken`");
       expect(skill).not.toContain("https://ntwrk.party/settings");
       expect(skill).toContain("/api/auth/otp/verify");
       expect(skill).toContain("/api/me/export");
@@ -538,13 +538,13 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       expect(skill).not.toContain("In ChatGPT, add ");
       const info = toolData(await rpc(st, "ntwrk", "/mcp/openai", "tools/call", { name: "app_info", arguments: { app: "ntwrk" } }));
       expect(info.join.mode).toBe("invite");
-      expect(info.join.how).toContain("Reply to that invitation text to accept");
+      expect(info.join.how).toContain("Use a forwarded invitation link in your own agent");
       expect(info.join.how).toContain("connector authorization");
       expect(info.join.how).not.toContain("The agent asks what they are looking for");
       const signup = (app: AppId) => rpc(st, "ntwrk", "/mcp/openai", "tools/call", { name: "start_signup", arguments: { app } });
       const invite = toolData(await signup("ntwrk"));
-      expect(invite).toMatchObject({ app: "ntwrk", join_mode: "invite", url: "https://ntwrk.party/join?via=agent" });
-      expect(invite.instructions_for_person).toContain("Reply to that invitation text to accept");
+      expect(invite).toMatchObject({ app: "ntwrk", join_mode: "invite", url: "https://ntwrk.party/SKILL.md" });
+      expect(invite.instructions_for_person).toContain("Use a forwarded invitation link in your own agent");
       expect(invite.instructions_for_person).toContain("connector authorization");
       expect(invite.instructions_for_person).not.toMatch(/enter your own phone|code arrives|type it on that page/i);
       for (const app of ["peon", "friends"] as const) {
@@ -552,8 +552,10 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         expect(info.join.how).toContain(`texts "${app}" as their first message`);
         const open = toolData(await signup(app));
         expect(open).toMatchObject({ app, join_mode: "open" });
-        expect(open.instructions_for_person).toContain("enter your own phone number");
-        expect(open.instructions_for_person).toContain("Never share the code");
+        const path = new URL(open.url).pathname;
+        expect(path).toBe(app === "peon" ? "/join" : "/SKILL.md");
+        expect((await st.site(app, path)).status).toBe(200);
+        expect(open.instructions_for_person).toContain(app === "peon" ? "Enter it on that page" : "Keep the verification code in that signup session");
       }
       expect((await signup("slop")).body!.result.isError).toBe(true);
       expect((await sql`select count(*)::int as n from oauth.grants`)[0]!.n).toBe(0);
@@ -568,16 +570,16 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       for (const app of ["ntwrk", "friends"] as const) {
         await signIn(st, app, phone, browser);
         const connection = await connectMcp(st, app, phone, { browser, path: "/mcp/openai", redirect: "https://chatgpt.com/connector_platform_oauth_redirect" });
-        expect(connection.token?.access_token, connection.html).toBeString();
+        expect(connection.token?.access_token, connection.html).toEqual(expect.any(String));
         for (const name of ["check_status", "submit_profile"] as const) {
           const data = toolData(await rpc(st, app, "/mcp/openai", "tools/call", { name, arguments: name === "submit_profile" ? { about } : {} }, connection.token!.access_token));
           expect(data).toMatchObject({ app, status: "not_joined" });
           if (name === "submit_profile") expect(data.submitted).toBe(false);
           if (app === "ntwrk") {
             expect(data.next_step).toContain("invite-only");
-            expect(data.next_step).toContain("Reply to that invitation text to accept");
+            expect(data.next_step).toContain("Use a forwarded invitation link in your own agent");
             expect(data.next_step).not.toContain("sign up there");
-          } else expect(data.next_step).toBe("Not joined. To join, open https://friends.help/join and sign up there.");
+          } else expect(data.next_step).toContain("https://friends.help/SKILL.md");
         }
         expect(await st.svc.people.getMembership(person.id, app)).toBeUndefined();
       }
@@ -594,7 +596,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         const member = (await db`select id from network.members where person_id=${person.id} and app_id='slop'`)[0]!;
         pilot.setCustomChatGptSlopPersonIds([person.id]);
         const c = await connectMcp(pilot, "slop", phone, { browser, redirect: "https://chatgpt.com/connector_platform_oauth_redirect" });
-        expect(c.token?.access_token).toBeString();
+        expect(c.token?.access_token).toEqual(expect.any(String));
         const submit = (about: string) => rpc(pilot, "slop", "/mcp", "tools/call", { name: "submit_profile", arguments: { app: "slop", about } }, c.token!.access_token);
         for (const about of ["My phone number is 11211 12345.", "My phone is 41555 50102.", "My verification code is 12 34 56.", "Please keep this private: 41555 50102.", "Please keep this private: 12 34 56.", "Please keep this private: 12-34 56.", "Reach me at cell2125550142."]) {
           expect(toolData(await submit(about)).error).toMatch(/phone numbers, codes and email/);
@@ -641,7 +643,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
           expect((await pilot.site("slop", "/oauth/register", { json: { redirect_uris: uris, token_endpoint_auth_method: "none" } })).status).toBe(400);
         }
         const c = await connectMcp(pilot, "slop", phone, { browser, redirect });
-        expect(c.token?.access_token, c.html).toBeString();
+        expect(c.token?.access_token, c.html).toEqual(expect.any(String));
         const token = c.token!.access_token as string;
         expect(new URL(c.location!).searchParams.get("iss")).toBe(pilot.sites.slop.origin);
         const status = () => rpc(pilot, "slop", "/mcp", "tools/call", { name: "check_status", arguments: {} }, token);
@@ -712,7 +714,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
           if (kind.endsWith("ban")) await pilot.svc.people.ban({ id: crypto.randomUUID(), scope: kind === "phone-ban" ? "phone" : "person", personId: kind === "person-ban" ? person.id : null, phoneHash: kind === "phone-ban" ? pilot.svc.publicApi.accounts.phoneHash(phone) : null, reason: "owned fixture", reportId: null, bannedBy: "fixture", at: pilot.clock.now() });
           pilot.setCustomChatGptSlopPersonIds(ids);
           const connection = await connectMcp(pilot, "slop", phone, { browser, redirect });
-          if (kind === "adult") { expect(connection.token?.access_token).toBeString(); owners.push({ phone, browser, person: person.id }); }
+          if (kind === "adult") { expect(connection.token?.access_token).toEqual(expect.any(String)); owners.push({ phone, browser, person: person.id }); }
           else expect(connection.token?.access_token, kind).toBeUndefined();
         }
         const secondPhone = newPhone(), secondBrowser = new Browser();
@@ -750,7 +752,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
           const person = (await pilot.svc.publicApi.accounts.personFor(phone))!;
           pilot.setCustomChatGptSlopPersonIds([person.id]);
           const c = await connectMcp(pilot, "slop", phone, { browser, redirect: "https://chatgpt.com/connector_platform_oauth_redirect" });
-          expect(c.token?.access_token, kind).toBeString();
+          expect(c.token?.access_token, kind).toEqual(expect.any(String));
           const pendingQuery = new URLSearchParams({ response_type: "code", client_id: c.client.client_id, redirect_uri: "https://chatgpt.com/connector_platform_oauth_redirect", code_challenge: pkceS256(VERIFIER), code_challenge_method: "S256" });
           const pending = await pilot.site("slop", `/oauth/authorize?${pendingQuery}`, { browser });
           expect(pending.status).toBe(200);
@@ -804,7 +806,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         const browser = new Browser();
         expect((await webJoin(pilot, "slop", phone, { age: 30, browser })).res.status).toBe(200);
         const connection = await connectMcp(pilot, "slop", phone, { browser, redirect });
-        expect(connection.token?.access_token, connection.html).toBeString();
+        expect(connection.token?.access_token, connection.html).toEqual(expect.any(String));
         expect(new URL(connection.location!).searchParams.get("iss")).toBe(pilot.sites.slop.origin);
         const member = (await db`select m.id from network.members m join platform.phone_identities ph on ph.person_id = m.person_id where m.app_id = 'slop' and ph.e164 = ${phone}`)[0]!;
         const about = "I'm Rae, 30, in Williamsburg, looking for a long-term relationship. I like climbing and live music. Free weekend afternoons.";
@@ -831,7 +833,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         const approved = await pilot.site("slop", "/oauth/authorize/consent", { browser, form: { rid, decision: "approve" } });
         expect(approved.status).toBe(303);
         const pendingCode = new URL(approved.headers.get("location")!).searchParams.get("code")!;
-        expect(pendingCode).toBeString();
+        expect(pendingCode).toEqual(expect.any(String));
         const refresh = () => pilot.site("slop", "/oauth/token", { form: { grant_type: "refresh_token", refresh_token: connection.token!.refresh_token, client_id: connection.client.client_id } });
         await pilot.setPrivateOpenAiApps([]);
         expect((await rpc(pilot, "slop", "/mcp", "tools/call", { name: "check_status", arguments: {} }, connection.token!.access_token)).res.status).toBe(404);
@@ -862,8 +864,8 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       const sent = st.otp.sent.length;
       const a = await connectMcp(st, "slop", phone, { browser, redirect: "https://assistant-a.example/callback" });
       const b = await connectMcp(st, "slop", phone, { browser, redirect: "http://127.0.0.1:55103/callback" });
-      expect(a.token?.access_token, a.html).toBeString();
-      expect(b.token?.access_token, b.html).toBeString();
+      expect(a.token?.access_token, a.html).toEqual(expect.any(String));
+      expect(b.token?.access_token, b.html).toEqual(expect.any(String));
       expect(st.otp.sent.length).toBe(sent);
       expect(new URL(b.location!).origin).toBe("http://127.0.0.1:55103");
       expect(new URL(b.location!).searchParams.get("iss")).toBe(st.sites.slop.origin);
@@ -894,7 +896,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       expect((await webJoin(st, "slop", phone, { age: 40, browser: b })).res.status).toBe(200);
       // A fresh browser: the authorize page on peon's own domain asks for the number and the code.
       const c = await connectMcp(st, "peon", phone);
-      expect(c.token?.access_token, c.html.slice(0, 300)).toBeString();
+      expect(c.token?.access_token, c.html.slice(0, 300)).toEqual(expect.any(String));
       expect(new URL(c.location!).searchParams.get("iss")).toBe(st.sites.peon.origin);
       const token = c.token!.access_token as string;
       const status = toolData(await rpc(st, "peon", "/mcp", "tools/call", { name: "check_status", arguments: {} }, token));
@@ -916,7 +918,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       expect((await webJoin(st, "friends", phone, { age: 27, browser: b })).res.status).toBe(200);
       const sent = st.otp.sent.length;
       const c = await connectMcp(st, "friends", phone, { browser: b });
-      expect(c.token?.access_token, c.html.slice(0, 300)).toBeString();
+      expect(c.token?.access_token, c.html.slice(0, 300)).toEqual(expect.any(String));
       expect(st.otp.sent.length).toBe(sent);
       const token = c.token!.access_token as string;
       expect(toolData(await rpc(st, "friends", "/mcp", "tools/call", { name: "check_status", arguments: {} }, token)).status).toBe("active");
@@ -981,7 +983,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
 
     test("tools take no phone number and no code", async () => {
       const r = toolData(await rpc(st, "peon", "/mcp", "tools/call", { name: "start_signup", arguments: { app: "peon", phone: "+12125550188" } }));
-      expect(r.error).toBeString();
+      expect(r.error).toEqual(expect.any(String));
       const tools = (await rpc(st, "peon", "/mcp", "tools/list")).body!.result.tools as { name: string; inputSchema: { properties: Record<string, unknown> } }[];
       // submit_profile also takes the person's own approved text ("about"), which refuses phone numbers and codes;
       // get_updates takes an update reference (T-XXXXXX), never a verification code.
@@ -1059,13 +1061,13 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       st.clock.advance(HOUR);
       // The engine proposed among the adults (the test fails if nothing was proposed: a run with no
       // proposals proves nothing about the minor), and the minor is in none of it.
-      const opps = await sql`select o.id, array_agg(p.member_id) as parts from network.opportunities o join network.participations p on p.app_id = o.app_id and p.opportunity_id = o.id where o.app_id = 'friends' group by o.id`;
+      const opps = await sql<{ id: string; parts: string[] }[]>`select o.id, array_agg(p.member_id) as parts from network.opportunities o join network.participations p on p.app_id = o.app_id and p.opportunity_id = o.id where o.app_id = 'friends' group by o.id`;
       expect(opps.length).toBeGreaterThan(0);
       // The engine's own input never holds the minor (packInput drops minors before any pack runs).
       const input = rt.net.packInput(st.clock.now());
       expect(input.members.map(m => m.id)).not.toContain(fm.id);
       expect(input.members.length).toBeGreaterThanOrEqual(adults.length);
-      for (const o of opps as { parts: string[] }[]) expect(o.parts).not.toContain(fm.id);
+      for (const o of opps) expect(o.parts).not.toContain(fm.id);
       expect((await sql`select 1 from network.participations where member_id = ${fm.id}`).length).toBe(0);
       const sm = (await memberRow("slop", teen))!;
       expect((await sql`select 1 from network.participations where member_id = ${sm.id}`).length).toBe(0);

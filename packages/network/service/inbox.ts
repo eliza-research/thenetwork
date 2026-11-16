@@ -3,7 +3,7 @@
 //    the same message through a second webhook subscription finds the row and is a duplicate.
 //  - Durable: the webhook answers 200 once the row is stored. A handler error leaves the row pending and
 //    the next tick handles it again (audit network-service-7: no 500 that makes the provider send a
-//    duplicate). After 5 failed attempts the row is failed and an alert line is logged.
+//    duplicate). After 5 failed attempts a non-STOP row fails. STOP stays pending.
 //  - Ordering per sender: the rows of one sender are handled one at a time (an advisory lock per sender,
 //    across processes), oldest received first. A failed attempt stops that sender's later rows until it
 //    is handled, so the Network never reads an answer before the question it answers.
@@ -22,30 +22,24 @@
 //    sealed: when its consent change committed, it answers with the consent and the confirmation; when
 //    nothing committed, the claim is released and the gateway retries the same messageId (turn_failed).
 import { AsyncLocalStorage } from "node:async_hooks";
+import {
+  initial as initialSignedInbox, leaseRenewMs, mayStartClaimWrite, ordinaryTurnMustWait, processingLeaseMs,
+  signedAdmissionOpen, step as stepSignedInbox, turnTombstoneKeepMs, unresolvedBlockMs, type SignedInbox,
+} from "../../core/src/generated/signedInbox.ts";
+import { webhookAnswer, webhookArrival, webhookAttemptLimit, webhookScanLimit } from "../../core/src/generated/webhookInbox.ts";
+import { drainWebhookSender } from "../../core/src/vibe/webhookInboxShell.js";
 import type { NetworkAppId, TurnRequest, TurnResponse } from "../../core/src/svc/contract.ts";
-import type { SQL } from "bun";
+import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { Clock } from "@thenetwork/core";
 import { normalizeAddress } from "../../blooio/src/phone.ts";
 import type { InboundMessage } from "../../blooio/src/types.ts";
 import { detectKeyword, leaveTarget } from "../../platform/src/consent.ts";
-
-const MAX_ATTEMPTS = 5;
-/** How many waiting rows of one sender are read to find a compliance keyword among them. */
-const KEYWORD_SCAN = 50;
 
 /** STOP, STOP ALL, START, HELP or "leave <app>": consent and its confirmation are never held back. */
 export function isComplianceText(text: unknown): boolean {
   return typeof text === "string" && (detectKeyword(text) !== undefined || leaveTarget(text) !== undefined);
 }
 const isStopText = (text: unknown) => typeof text === "string" && ((k => k === "stop" || k === "stop_all")(detectKeyword(text)));
-/** A signed turn still "processing" this long after its last lease renewal lost its worker (a crash): it reads as unresolved. */
-const PROCESSING_LEASE_MS = 2 * 60_000;
-/** A running signed turn renews its lease this often (well inside PROCESSING_LEASE_MS). */
-const LEASE_RENEW_MS = 30_000;
-/** An unresolved signed turn holds the sender's later messages back only this long, so a sender is never stuck. */
-const UNRESOLVED_BLOCK_MS = 10 * 60_000;
-/** Turn tombstones (scrubbed, unresolved) are deleted after this much longer than the purge window. */
-const TOMBSTONE_KEEP_MS = 30 * 24 * 60 * 60_000;
 
 export interface InboxOptions {
   sql: SQL;
@@ -66,10 +60,25 @@ export interface InboundTurn {
   consent?: {state: "opted_in" | "opted_out"; scope: "all" | "app"; app: NetworkAppId | null; at: number};
   /** The fixed confirmation of a consent change this turn recorded (STOP, leave): sent even if a later step of the turn fails. */
   confirmation?: {id: string; body: string};
+  /** This unit attempted to store its own complete reply. The row determines whether it committed. */
+  atomicReplyCompletion?: true;
   /** Undo work committed outside the turn's own transactions (the one-time notice row) when the turn ends without an answer. */
   onFail?: Array<() => Promise<unknown>>;
 }
 export interface CollectedReply {id: string; body: string; kind: "reply" | "compliance"}
+export type AtomicReplyReason = "member_invitation" | "member_invitation_review" | "bounded_home_help";
+
+interface WebhookEnvelope {
+  ev: InboundMessage;
+  app: string | null;
+}
+
+interface StoredWebhook {
+  id: string;
+  received_at: Date;
+  attempts: number;
+  event: WebhookEnvelope | string | null;
+}
 
 export class Inbox {
   private readonly chains = new Map<string, Promise<unknown>>();
@@ -85,42 +94,55 @@ export class Inbox {
     const keyword = isComplianceText(input.text);
     const wrote = await this.o.sql.begin(async tx => {
       const [lock] = await tx`select pg_try_advisory_xact_lock(hashtext(${`inbox-sender:${normalizeAddress(input.from)}`})) as acquired`;
-      if (!lock.acquired) return [];
-      // Admission is checked again after acquiring the sender lock, before any write.
-      if (admitUntil !== undefined && this.o.clock.now() >= admitUntil) return [];
+      // spec/signedInbox.md, "A worker runs only a committed claim"
+      const admissionOpen = lock.acquired && (admitUntil === undefined || signedAdmissionOpen(true, this.o.clock.now(), admitUntil));
+      if (!mayStartClaimWrite(lock.acquired, admissionOpen)) return [];
       // A turn whose worker stopped (no completion within the lease) is unresolved, not processing forever.
       await tx`update platform.inbound set status='unresolved',event=null,sender=null
-        where sender_hash=${senderHash} and status='processing' and request_hash is not null and arrived_at<${new Date(now - PROCESSING_LEASE_MS)}`;
+        where sender_hash=${senderHash} and status='processing' and request_hash is not null and arrived_at<${new Date(now - processingLeaseMs)}`;
       return tx`insert into platform.inbound(id,line,sender,received_at,arrived_at,event,status,request_hash,sender_hash,network_authority)
       select ${id},null,null,${new Date(input.receivedAt)},${new Date(now)},null,'processing',${requestHash},${senderHash},${input.networkAuthority ?? null}::jsonb
-      where ${admitUntil === undefined || now < admitUntil} and not exists(select 1 from platform.inbound where sender_hash=${senderHash} and (status='processing'
-        or (not ${keyword} and (status='pending' or (status='unresolved' and arrived_at>${new Date(now - UNRESOLVED_BLOCK_MS)})))))
+      where ${signedAdmissionOpen(admitUntil !== undefined, now, admitUntil ?? 0)} and not exists(select 1 from platform.inbound where sender_hash=${senderHash} and (status='processing'
+        or (${ordinaryTurnMustWait(keyword)} and (status='pending' or (status='unresolved' and arrived_at>${new Date(now - unresolvedBlockMs)})))))
       on conflict do nothing returning id`;
     });
-    if (!wrote.length) {
+    const claimed = stepSignedInbox(initialSignedInbox, { type: "recordClaim", inserted: wrote.length > 0 });
+    if (claimed.phase === "CheckingPrior") {
+      // spec/signedInbox.md, "A replay must match a stored request"
       const [prior] = await this.o.sql`select request_hash,status,response from platform.inbound where id=${id}`;
-      if (!prior) return {status:409,body:{error:"turn_busy",retryable:true}};
-      if (prior.request_hash !== requestHash) return {status:409,body:{error:"turn_conflict",retryable:false}};
-      if (prior.status === "done" && prior.response) return {status:200,body:prior.response};
-      // The same turn is still running (a gateway timeout and its retry): the caller may try again; the worker's answer is kept for that replay.
-      if (prior.status === "processing") return {status:409,body:{error:"turn_busy",retryable:true}};
-      return {status:409,body:{error:"turn_unresolved",retryable:false}};
+      const replay = stepSignedInbox(claimed, {
+        type: "readPrior", rowPresent: !!prior, sameRequest: prior?.request_hash === requestHash,
+        responseAvailable: prior?.status === "done" && !!prior.response, processing: prior?.status === "processing",
+      });
+      switch (replay.phase) {
+        case "Busy": return {status:409,body:{error:"turn_busy",retryable:true}};
+        case "Conflict": return {status:409,body:{error:"turn_conflict",retryable:false}};
+        case "Replayed": return {status:200,body:prior!.response};
+        default: return {status:409,body:{error:"turn_unresolved",retryable:false}};
+      }
     }
     const turn: InboundTurn = {id,from:input.from};
     // Renew the lease while the turn runs, so a slow turn (an LLM read, lock waits) is never swept as abandoned after its effects committed.
     const renew = setInterval(() => {
       this.o.sql`update platform.inbound set arrived_at=${new Date(this.o.clock.now())} where id=${id} and status='processing'`.catch(() => {});
-    }, this.o.leaseRenewMs ?? LEASE_RENEW_MS);
+    }, this.o.leaseRenewMs ?? leaseRenewMs);
     (renew as {unref?: () => void}).unref?.();
     try {
       const body = await this.turns.run(turn, () => run(turn));
+      const committed = await this.committedReply(turn);
+      if (committed) return {status: 200, body: committed};
       const rows = await this.o.sql`update platform.inbound set status='done',response=${body}::jsonb,handled_at=${new Date(this.o.clock.now())},
         handled_order=nextval('platform.inbound_handled_seq'),event=null,sender=null,app_id=${turn.app ?? null},member_id=${turn.memberId ?? null} where id=${id} and status='processing' returning id`;
-      if (!rows.length) { this.o.log(`[alert] signed turn ${id} lost its claim before completion (swept or resolved by staff)`); throw new Error("Turn ownership changed before completion"); }
+      // spec/signedInbox.md, "Completion and compliance recovery depend on the stored row"
+      const completed = stepSignedInbox(claimed, { type: "recordCompletion", saved: rows.length > 0 });
+      if (completed.phase !== "Finished") { this.o.log(`[alert] signed turn ${id} lost its claim before completion (swept or resolved by staff)`); throw new Error("Turn ownership changed before completion"); }
       return {status:200,body};
     } catch (e) {
-      if (keyword) {
-        const rescued = await this.rescueCompliance(id, turn).catch(() => undefined);
+      const committed = await this.committedReply(turn);
+      if (committed) return {status: 200, body: committed};
+      const failed = stepSignedInbox(claimed, { type: "handleFailure", compliance: keyword });
+      if (failed.phase === "CheckingRescue") {
+        const rescued = await this.rescueCompliance(id, turn, failed).catch(() => undefined);
         if (rescued) { this.o.log(`[inbound] compliance turn ${id} failed after its consent change: ${(e as Error).message}`); return rescued; }
       }
       await this.o.sql`update platform.inbound set status='unresolved',event=null,sender=null where id=${id} and status='processing'`;
@@ -129,6 +151,12 @@ export class Inbox {
     } finally {
       clearInterval(renew);
     }
+  }
+
+  private async committedReply(turn: InboundTurn): Promise<TurnResponse | undefined> {
+    if (!turn.atomicReplyCompletion) return;
+    const [row] = await this.o.sql`select response from platform.inbound where id=${turn.id} and status='done'`;
+    return row?.response as TurnResponse | undefined;
   }
 
   private async undo(turn: InboundTurn) {
@@ -141,16 +169,20 @@ export class Inbox {
    * updates its send-time fence. If nothing committed, the claim is released and the gateway retries the
    * same messageId (the consent ledger and the member's unit are idempotent per message).
    */
-  private async rescueCompliance(id: string, turn: InboundTurn): Promise<{status: number; body: unknown} | undefined> {
+  private async rescueCompliance(id: string, turn: InboundTurn, failed: SignedInbox): Promise<{status: number; body: unknown} | undefined> {
     const [row] = await this.o.sql`select status,replies from platform.inbound where id=${id}`;
-    if (!row || row.status !== "processing") return undefined;
-    const collected = ((typeof row.replies === "string" ? JSON.parse(row.replies) : row.replies) ?? []) as CollectedReply[];
-    if (!turn.consent && !collected.length) {
+    const processing = row?.status === "processing";
+    const stored = processing ? row.replies : undefined;
+    const collected = ((typeof stored === "string" ? JSON.parse(stored) : stored) ?? []) as CollectedReply[];
+    const recovery = stepSignedInbox(failed, { type: "checkRescue", processing, effectCommitted: !!turn.consent || collected.length > 0 });
+    if (recovery.phase === "Unresolved") return undefined;
+    if (recovery.phase === "ReleasingClaim") {
       const released = await this.o.sql`delete from platform.inbound where id=${id} and status='processing' returning id`;
-      if (!released.length) return undefined;
+      if (stepSignedInbox(recovery, { type: "recordRescue", changed: released.length > 0 }).phase !== "RetryCompliance") return undefined;
       await this.undo(turn);
       return {status:409,body:{error:"turn_failed",retryable:true}};
     }
+    if (recovery.phase !== "PreservingCompliance") return undefined;
     const replies = [...collected];
     if (turn.confirmation && !replies.some(r => r.kind === "compliance")) replies.push({...turn.confirmation, kind: "compliance"});
     const body: TurnResponse = {outcome: "handled", replies: replies.map(r => r.body), replyIds: replies.map(r => r.id), delivery: "collected",
@@ -159,13 +191,24 @@ export class Inbox {
     const rows = await this.o.sql`update platform.inbound set status='done',response=${body}::jsonb,replies=(${{items: replies}}::jsonb->'items'),
       handled_at=${new Date(this.o.clock.now())},handled_order=nextval('platform.inbound_handled_seq'),event=null,sender=null,
       app_id=${turn.app ?? null},member_id=${turn.memberId ?? null} where id=${id} and status='processing' returning id`;
-    return rows.length ? {status: 200, body} : undefined;
+    return stepSignedInbox(recovery, { type: "recordRescue", changed: rows.length > 0 }).phase === "Finished" ? {status: 200, body} : undefined;
   }
 
   /** Persist only causal replies in the same transaction as their Network effects. */
-  async collect(tx: SQL, replies: CollectedReply[]): Promise<void> {
+  async collect(tx: SQL, replies: CollectedReply[], reason?: AtomicReplyReason): Promise<void> {
     const turn = this.currentTurn();
     if (!turn || !replies.length) return;
+    if (reason) {
+      if (!turn.app || !turn.memberId || replies.length !== 1 || replies[0]!.kind !== "reply") throw new Error("Atomic collection requires one verified member reply");
+      turn.atomicReplyCompletion = true;
+      const response: TurnResponse = {outcome: "handled", replies: replies.map(reply => reply.body), replyIds: replies.map(reply => reply.id),
+        delivery: "collected", replyKind: "reply", accountEligible: true, app: turn.app, memberId: turn.memberId, reason};
+      const rows = await tx`update platform.inbound set status='done',response=${response}::jsonb,replies=(${{items: replies}}::jsonb->'items'),
+        handled_at=${new Date(this.o.clock.now())},handled_order=nextval('platform.inbound_handled_seq'),event=null,sender=null,
+        app_id=${turn.app},member_id=${turn.memberId} where id=${turn.id} and status='processing' and replies='[]'::jsonb returning id`;
+      if (rows.length !== 1) throw new Error("Private turn lost its claim before completion");
+      return;
+    }
     const rows = await tx`update platform.inbound set replies=replies || (${{items:replies}}::jsonb->'items'),app_id=${turn.app ?? null},member_id=${turn.memberId ?? null} where id=${turn.id} and status='processing' returning id`;
     if (!rows.length) throw new Error("Turn was sealed before reply collection");
   }
@@ -179,10 +222,15 @@ export class Inbox {
     const wrote = await this.o.sql`insert into platform.inbound (id, line, sender, received_at, arrived_at, event, status, sender_hash)
       values (${id}, ${ev.to ? normalizeAddress(ev.to) : null}, ${sender}, ${new Date(ev.receivedAt)}, ${now}, ${{ ev, app: app ?? null }}::jsonb, 'pending', ${this.o.senderKey(sender)})
       on conflict (id) do nothing returning id`;
-    if (!wrote.length) return "duplicate";
+    if (webhookArrival(wrote.length > 0) === "DuplicateWebhook") return "duplicate";
     await this.handleSender(sender);
     const [r] = await this.o.sql`select status, outcome from platform.inbound where id = ${id}`;
-    return r?.status === "done" ? (r.outcome as string) : r?.status === "failed" ? "failed" : "retry_later";
+    // spec/webhookInbox.md, "Report the received row's stored result after draining"
+    switch (webhookAnswer(r?.status === "done", r?.status === "failed")) {
+      case "StoredWebhookAnswer": return r!.outcome as string;
+      case "StoredWebhookFailure": return "failed";
+      case "WaitForRetry": return "retry_later";
+    }
   }
 
   /** Every sender with waiting rows (the tick): rows a crash or an error left behind. Returns how many rows it handled. */
@@ -200,7 +248,7 @@ export class Inbox {
       where request_hash is not null and status='done' and handled_at<${new Date(before)} returning id`;
     const removed = await this.o.sql`delete from platform.inbound where request_hash is null and status not in ('pending','processing','unresolved') and arrived_at < ${new Date(before)} returning id`;
     // Signed-turn tombstones keep replays refused for a while, then go: platform.inbound does not grow without bound.
-    const tombstones = await this.o.sql`delete from platform.inbound where request_hash is not null and status='unresolved' and arrived_at < ${new Date(before - TOMBSTONE_KEEP_MS)} returning id`;
+    const tombstones = await this.o.sql`delete from platform.inbound where request_hash is not null and status='unresolved' and arrived_at < ${new Date(before - turnTombstoneKeepMs)} returning id`;
     return sealed.length + removed.length + tombstones.length;
   }
 
@@ -230,52 +278,66 @@ export class Inbox {
     return run;
   }
 
-  /** After a STOP: the sender's ordinary rows received before it end unhandled (their text is dropped). */
-  private async cancelBefore(sender: string, stopAt: unknown, ids: string[]): Promise<number> {
-    if (!ids.length) return 0;
-    const rows = await this.o.sql`update platform.inbound set status = 'done', outcome = 'cancelled_by_stop', handled_at = ${new Date(this.o.clock.now())},
-      handled_order = nextval('platform.inbound_handled_seq'), event = null, sender = null
-      where sender = ${sender} and status = 'pending' and received_at <= ${stopAt as Date} and id = any(${this.o.sql.array(ids, "TEXT")}) returning id`;
-    if (rows.length) this.o.log(`[inbound] ${rows.length} earlier message(s) cancelled by STOP`);
-    return rows.length;
+  private handleWaiting(sender: string): Promise<number> {
+    return drainWebhookSender({
+      readWindow: async () => {
+        const waiting = await this.o.sql<StoredWebhook[]>`select id, event, attempts, received_at from platform.inbound
+          where sender = ${sender} and status = 'pending' order by received_at, id limit ${webhookScanLimit}`;
+        return waiting.map(row => {
+          // The database driver normally returns JSONB as an object. Keep reading serialized rows.
+          const event: WebhookEnvelope | null = typeof row.event === "string" ? JSON.parse(row.event) : row.event;
+          const text = event?.ev?.text;
+          return { ...row, event, compliance: isComplianceText(text), stopCommand: isStopText(text) };
+        });
+      },
+      hasBlockingTurn: async () => {
+        const now = this.o.clock.now();
+        const blockedSince = new Date(now - unresolvedBlockMs), stale = new Date(now - processingLeaseMs);
+        const rows = await this.o.sql`select 1 from platform.inbound where sender_hash = ${this.o.senderKey(sender)}
+          and request_hash is not null and ((status = 'processing' and arrived_at > ${stale})
+            or (status = 'unresolved' and arrived_at > ${blockedSince})) limit 1`;
+        return rows.length > 0;
+      },
+      handle: async ({ event }) => {
+        if (!event?.ev) throw new Error("Pending webhook has no message");
+        return this.o.handle(event.ev, event.app ?? undefined);
+      },
+      complete: (row, outcome, cancelIds) => this.completeWebhook(sender, row, outcome, cancelIds),
+      fail: (row, attempts, drop, cause) => this.recordWebhookFailure(row, attempts, drop, cause),
+    });
   }
 
-  private async handleWaiting(sender: string): Promise<number> {
-    let n = 0;
-    for (;;) {
-      const waiting = await this.o.sql`select id, event, attempts, received_at from platform.inbound where sender = ${sender} and status = 'pending'
-        order by received_at, id limit ${KEYWORD_SCAN}`;
-      if (!waiting.length) return n;
-      const parsed = (waiting as any[]).map(w => ({ ...w, ...((typeof w.event === "string" ? JSON.parse(w.event) : w.event) as { ev: InboundMessage; app: string | null }) }));
-      // A compliance keyword goes ahead of an earlier row (one that keeps failing must not hold back a STOP).
-      const compliance = parsed.find(w => isComplianceText(w.ev?.text));
-      // A signed turn of this sender that is running (or ended unresolved a short while ago) holds back
-      // their ordinary rows only: STOP, STOP ALL, leave, START and HELP are handled at once, as signed() does.
-      if (!compliance) {
-        const blockedSince = new Date(this.o.clock.now() - UNRESOLVED_BLOCK_MS), stale = new Date(this.o.clock.now() - PROCESSING_LEASE_MS);
-        if ((await this.o.sql`select 1 from platform.inbound where sender_hash=${this.o.senderKey(sender)} and request_hash is not null
-          and ((status='processing' and arrived_at>${stale}) or (status='unresolved' and arrived_at>${blockedSince})) limit 1`).length) return n;
-      }
-      const r = compliance ?? parsed[0]!;
-      const { ev, app } = r;
-      try {
-        const outcome = await this.o.handle(ev, app ?? undefined);
-        await this.o.sql`update platform.inbound set status = 'done', outcome = ${outcome}, handled_at = ${new Date(this.o.clock.now())},
-          handled_order = nextval('platform.inbound_handled_seq'), event = null, sender = null where id = ${r.id}`;
-        n++;
-        if (isStopText(ev.text)) n += await this.cancelBefore(sender, r.received_at, parsed.filter(w => w.id !== r.id && !isComplianceText(w.ev?.text)).map(w => w.id as string));
-      } catch (e) {
-        const attempts = (r.attempts as number) + 1;
-        if (attempts >= MAX_ATTEMPTS) {
-          await this.o.sql`update platform.inbound set status = 'failed', attempts = ${attempts}, outcome = 'failed', handled_at = ${new Date(this.o.clock.now())},
-            handled_order = nextval('platform.inbound_handled_seq'), event = null, sender = null where id = ${r.id}`;
-          this.o.log(`[alert] inbound ${r.id} failed ${attempts} times and is dropped: ${(e as Error).message}`);
-          continue;
-        }
-        await this.o.sql`update platform.inbound set attempts = ${attempts} where id = ${r.id}`;
-        this.o.log(`[inbound] ${r.id} failed (attempt ${attempts}), handled again on the next tick: ${(e as Error).message}`);
-        return n;
-      }
+  /** Complete the selected row and erase older ordinary messages in the same statement. */
+  private async completeWebhook(sender: string, row: StoredWebhook, outcome: string, cancelIds: string[]): Promise<number> {
+    const at = new Date(this.o.clock.now());
+    const [counts] = await this.o.sql<{ completed: number; cancelled: number }[]>`with completed as (
+        update platform.inbound set status = 'done', outcome = ${outcome}, handled_at = ${at},
+          handled_order = nextval('platform.inbound_handled_seq'), event = null, sender = null
+        where id = ${row.id} and status = 'pending' returning id
+      ), cancelled as (
+        update platform.inbound set status = 'done', outcome = 'cancelled_by_stop', handled_at = ${at},
+          handled_order = nextval('platform.inbound_handled_seq'), event = null, sender = null
+        where sender = ${sender} and status = 'pending' and received_at <= ${row.received_at}
+          and id = any(${this.o.sql.array(cancelIds, "TEXT")}) and exists (select 1 from completed)
+        returning id
+      )
+      select (select count(*)::int from completed) as completed, (select count(*)::int from cancelled) as cancelled`;
+    if (counts.completed !== 1) throw new Error("Webhook is no longer pending");
+    if (counts.cancelled) this.o.log(`[inbound] ${counts.cancelled} earlier message(s) cancelled by STOP`);
+    return counts.cancelled;
+  }
+
+  private async recordWebhookFailure(row: StoredWebhook, attempts: number, drop: boolean, cause: unknown): Promise<void> {
+    const error = cause instanceof Error ? cause.message : String(cause);
+    if (drop) {
+      await this.o.sql`update platform.inbound set status = 'failed', attempts = ${attempts}, outcome = 'failed',
+        handled_at = ${new Date(this.o.clock.now())}, handled_order = nextval('platform.inbound_handled_seq'),
+        event = null, sender = null where id = ${row.id} and status = 'pending'`;
+      this.o.log(`[alert] inbound ${row.id} failed ${attempts} times and is dropped: ${error}`);
+      return;
     }
+    await this.o.sql`update platform.inbound set attempts = ${attempts} where id = ${row.id} and status = 'pending'`;
+    if (attempts === webhookAttemptLimit) this.o.log(`[alert] inbound STOP ${row.id} is still pending after ${attempts} failures: ${error}`);
+    else this.o.log(`[inbound] ${row.id} failed (attempt ${attempts}), handled again on the next tick: ${error}`);
   }
 }

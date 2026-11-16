@@ -1,5 +1,7 @@
 # OTP provider receipt retention
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-13-otp-provider-receipt.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 Date: 2026-10-13. Attribution: Automated. Base: `4da00ca`.
 Reproduced issue: [#68](https://github.com/eliza-research/thenetwork/issues/68).
 
@@ -18,7 +20,7 @@ challenge and client for a single lookup.
 
 ## Closed integration evidence
 
-Bun 1.4.2. Local Postgres on port 54339, isolated per-process test databases.
+the former runtime 1.4.2. Local Postgres on port 54339, isolated per-process test databases.
 No live provider or model call. Provider/model/seed/request settings: N/A;
 this change retains transport metadata and does not change inference.
 The provider fixture uses real local HTTP, including the existing canonical
@@ -27,7 +29,7 @@ Blooio client. The database tests use the normal migrations and PgPeopleStore.
 With `REQUIRE_PG=1` and `OBSERVATORY_PG_DIR` pointing at the owned local cluster:
 
 ```sh
-bun test --conditions eliza-source --timeout 120000 packages/platform/test/blooio-otp.integration.test.ts
+pnpm exec vitest run --testTimeout 120000 packages/platform/test/blooio-otp.integration.test.ts
 ```
 
 Before the source fix: 5 passed, 1 failed, 120 assertions. The new test failed
@@ -42,7 +44,7 @@ a chat ID still verifies normally. Existing cases cover provider binding,
 Twilio verification, expiry, attempt limits, one-use codes and uncertain sends.
 
 ```sh
-bun test --conditions eliza-source --timeout 120000 packages/platform/test/blooio-otp.integration.test.ts packages/platform/test/db.test.ts packages/observatory/test/migrations.test.ts
+pnpm exec vitest run --testTimeout 120000 packages/platform/test/blooio-otp.integration.test.ts packages/platform/test/db.test.ts packages/observatory/test/migrations.test.ts
 node node_modules/typescript/bin/tsc --noEmit -p .
 ```
 

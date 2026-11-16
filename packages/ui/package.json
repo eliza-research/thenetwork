@@ -16,10 +16,6 @@
     "test:browser": "vitest run --project browser",
     "typecheck": "tsc --noEmit -p ."
   },
-  "peerDependencies": {
-    "react": "^19",
-    "react-dom": "^19"
-  },
   "dependencies": {
     "@radix-ui/react-checkbox": "catalog:",
     "@radix-ui/react-collapsible": "catalog:",
@@ -34,6 +30,8 @@
     "@radix-ui/react-tooltip": "catalog:",
     "class-variance-authority": "catalog:",
     "clsx": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
     "tailwind-merge": "catalog:"
   },
   "devDependencies": {
@@ -48,8 +46,6 @@
     "@vitest/browser-playwright": "catalog:",
     "happy-dom": "catalog:",
     "playwright": "catalog:",
-    "react": "catalog:",
-    "react-dom": "catalog:",
     "storybook": "catalog:",
     "tailwindcss": "catalog:",
     "typescript": "catalog:",

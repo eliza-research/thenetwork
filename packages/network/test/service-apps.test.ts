@@ -2,14 +2,18 @@
 // cap, per-app live flags, per-app staff roles, and the public API mounted on the service. Postgres in
 // a database of its own per test process (the packages/observatory/test/pg.ts pattern). Nothing is
 // sent: the adapters are dry-run (or Blooio with a fake provider), and OTP codes come from a fake.
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { setTimeout as sleep } from "node:timers/promises";
+import { findExecutable } from "../../core/src/runtime/process.ts";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { existsSync } from "node:fs";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import type { SendRequest } from "../../blooio/src/types.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { APP_IDS, APPS, type AppId } from "../../platform/src/apps.ts";
+import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
+import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { lastEvents, resolveConsent } from "../../platform/src/consent.ts";
 import type { OtpProvider } from "../../platform/src/otp.ts";
 import { BlooioAdapter, DryRunAdapter, liveSendAllowed, type Outbound } from "../service/channel.ts";
@@ -19,7 +23,7 @@ import { SLOP_ONBOARD_QUESTIONS } from "../../engine/src/packs/slop/index.ts";
 import { START } from "./mini.ts";
 
 const T = 300_000;
-const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!Bun.which("pg_ctl");
+const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
 const DB = `network_service_apps_test_${process.pid}`;
 const ADMIN_URL = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/postgres`;
 const URL_ = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/${DB}`;
@@ -509,7 +513,7 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     const nets = APP_IDS.flatMap(a => [{ id: `${a}:nyc` }, { id: `${a}:sf` }]);
     const { s } = service(clock, { networks: nets });
     const all = Promise.all([...s.runtimes.values()].map(rt => rt.tick()));
-    const result = await Promise.race([all.then(() => "done"), Bun.sleep(60_000).then(() => "stuck")]);
+    const result = await Promise.race([all.then(() => "done"), sleep(60_000, undefined, { ref: false }).then(() => "stuck")]);
     expect(result).toBe("done");
   }, T);
 
@@ -586,18 +590,339 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(await count(sql`select count(*)::int as n from platform.suppression`)).toBe(1);
   }, T);
 
-  test("no invite link exists on the service: naming a friend gets an honest reply that sends and promises nothing", async () => {
+  test("an unsigned member request cannot issue an invite link or contact the named person", async () => {
     await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
     const { s } = service(clock);
     const p = newPhone();
     expect(await text(s, clock, p, "Sam 29", { app: "friends" })).toBe("joined");
     const m = (await memberOf("friends", p))!;
+    const before = await outbound(m.id);
     await text(s, clock, p, "My friend Maya would love this, can you invite her?", { app: "friends" });
-    const bodies = (await outbound(m.id)).map(x => x.body as string);
-    expect(bodies.at(-1)).toMatch(/^Thanks! I can't send invite links yet, so nothing went to Maya\./);
-    for (const b of bodies) expect(b).not.toMatch(/here's an invite link|send you an invite/i);
+    expect(await outbound(m.id)).toEqual(before);
+    expect(await count(sql`select count(*)::int as n from platform.member_invitations`)).toBe(0);
     expect((await sql`select count(*)::int as n from network.members where app_id = 'friends'`)[0].n).toBe(1);
+  }, T);
+
+  const signedInvitationSecret = "member-invitation-signed-turn-fixture-secret";
+  const invitationTurn = (s: NetworkService, clock: SimClock) => async (input: TurnRequest) => {
+    const body = JSON.stringify(input);
+    return s.fetch(new Request(`http://127.0.0.1${TURN_PATH}`, { method: "POST", body, headers: {
+      "content-type": "application/json", ...await svcSign(signedInvitationSecret, { method: "POST", path: TURN_PATH, id: input.messageId, body, nowS: Math.floor(clock.now() / 1000) }),
+    } }));
+  };
+  const confirmInvitationVouch = async (send: ReturnType<typeof invitationTurn>, request: TurnRequest, evidence: string) => {
+    const asked = await send(request);
+    expect(asked.status).toBe(200);
+    expect((await asked.json()).replies.join("\n")).toContain("how well");
+    const readback = await send({ ...request, messageId: `${request.messageId}:facts`, text: evidence });
+    expect(readback.status).toBe(200);
+    expect((await readback.json()).replies.join("\n")).toContain("CONFIRM INVITE");
+    const confirmation = { ...request, messageId: `${request.messageId}:confirm`, text: "CONFIRM INVITE" };
+    const result = await send(confirmation);
+    expect(result.status).toBe(200);
+    return { confirmation, response: await result.json() };
+  };
+
+  // spec/memberInvitation.md, "The link goes to the inviter as a reply"
+  // spec/memberInvitation.md, "A new verified acceptance can be attributed"
+  test("a signed vouch issues a private single-use invitation for a verified app join", async () => {
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
+    const { s, otp } = service(clock, { env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret } });
+    await s.start();
+    const inviterPhone = newPhone();
+    const invited = await s.accounts.invite(APPS.ntwrk, inviterPhone);
+    if (!invited) throw new Error("The fixture's staff invitation is missing");
+    const bodyFor = (firstName: string, app: AppId = "ntwrk") => ({ firstName, age: 31, consent: { sms: true as const, wording: APPS[app].consent.text } });
+    expect(await s.accounts.join(APPS.ntwrk, { e164: inviterPhone, personId: invited.personId }, bodyFor("Ari"))).toMatchObject({ ok: true });
+    const send = invitationTurn(s, clock);
+    const request: TurnRequest = { messageId: "invite-own", from: inviterPhone, to: null, text: "Can you invite my friend Maya?", channel: "blooio", transport: "imessage", receivedAt: clock.now(), app: "ntwrk" };
+    const { confirmation: input, response } = await confirmInvitationVouch(send, request, "I know them well, for two years.");
+    expect(response).toMatchObject({ outcome: "handled", reason: "member_invitation", memberId: invited.memberId, delivery: "collected" });
+    const [, token] = response.replies[0].match(/https:\/\/ntwrk\.party\/SKILL\.md#invite=([a-zA-Z0-9_-]{43})$/) ?? [];
+    expect(token).toHaveLength(43);
+    expect(await (await send(input)).json()).toEqual(response);
+    const rows = await sql`select relationship, inviter_member_id, token_hash, redeemed_at, duration_months, depth from platform.member_invitations`;
+    expect([...rows]).toEqual([{ relationship: "friend", inviter_member_id: invited.memberId, token_hash: expect.stringMatching(/^[0-9a-f]{64}$/),
+      redeemed_at: null, duration_months: 24, depth: "well" }]);
+    expect(JSON.stringify(await sql`select state from network.network_state`)).not.toContain(token);
+    expect(JSON.stringify(await sql`select body from network.messages`)).not.toContain(token);
+    expect(JSON.stringify(await sql`select body from network.messages`)).not.toContain("for two years");
+    expect(await count(sql`select count(*)::int as n from network.members`)).toBe(1);
+
+    const client = (app: AppId) => {
+      let cookie = "";
+      return async (path: string, data: unknown) => {
+        const res = await s.publicFetch(new Request(`http://localhost:${5101 + APP_IDS.indexOf(app)}${path}`, {
+          method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(data),
+        }));
+        cookie = res.headers.get("set-cookie")?.split(";")[0] ?? cookie;
+        return { status: res.status, body: await res.json() };
+      };
+    };
+    const login = async (call: ReturnType<typeof client>, phone: string) => {
+      clock.advance(31_000);
+      expect((await call("/api/auth/otp/start", { phone })).status).toBe(200);
+      expect((await call("/api/auth/otp/verify", { phone, code: otp.codes.get(phone) })).status).toBe(200);
+    };
+    const first = client("ntwrk");
+    const second = client("ntwrk");
+    const otherApp = client("friends");
+    expect((await first("/api/join", { ...bodyFor("Maya"), inviteToken: token })).status).toBe(401);
+    const inviteePhone = newPhone(), secondPhone = newPhone();
+    await login(first, inviteePhone);
+    await login(second, secondPhone);
+    await login(otherApp, inviteePhone);
+    expect(await otherApp("/api/join", { ...bodyFor("Maya", "friends"), inviteToken: token })).toMatchObject({ body: { error: "invalid_invitation" } });
+    // The platform commit must survive a failed downstream welcome and notice projection.
+    await sql`create function platform.fail_fixture_invitation_projection() returns trigger language plpgsql as $$
+      begin raise exception 'fixture invitation projection unavailable'; end $$`;
+    await sql`create trigger fail_fixture_invitation_projection before update of projected_at on platform.member_invitations
+      for each row execute function platform.fail_fixture_invitation_projection()`;
+    const attempts = await Promise.all([
+      first("/api/join", { ...bodyFor("Maya"), inviteToken: token }),
+      second("/api/join", { ...bodyFor("Maya"), inviteToken: token }),
+    ]);
+    expect(attempts.filter(result => result.status === 200)).toHaveLength(1);
+    expect(attempts.find(result => result.status !== 200)?.body).toMatchObject({ error: "invalid_invitation" });
+    const [redeemed] = await sql`select redeemed_member_id, projected_at from platform.member_invitations`;
+    expect(redeemed.projected_at).toBeNull();
+    expect((await sql`select invited_by from network.members where id=${redeemed.redeemed_member_id}`)[0]!.invited_by).toBe(invited.memberId);
+    const winningPhone = attempts[0]!.status === 200 ? inviteePhone : secondPhone;
+    const welcome = await send({ ...input, from: winningPhone, messageId: "invitee-first-turn", text: "Hi, I just joined." });
+    expect(welcome.status).toBe(200);
+    expect((await welcome.json()).replies.join("\n")).toContain("Ari");
+    await sql`drop trigger fail_fixture_invitation_projection on platform.member_invitations`;
+    const rt = s.runtimeFor("ntwrk")!;
+    await rt.tick();
+    expect((await sql`select projected_at from platform.member_invitations`)[0]!.projected_at).toBeInstanceOf(Date);
+    const notices = await sql`select id,body from network.messages where member_id=${invited.memberId} and ${redeemed.redeemed_member_id}=any(invite_join_members)`;
+    expect([...notices]).toEqual([{ id: expect.stringMatching(/^invite-notice:/), body: expect.stringContaining("Maya just joined.") }]);
+    const noticeId = notices[0]!.id as string;
+    expect(await rt.scoped(tx => rt.invitationNoticeAdmission(tx, noticeId, invited.memberId))).toBe(true);
+    expect((await send({ ...input, from: winningPhone, messageId: "invitee-stop", text: "STOP" })).status).toBe(200);
+    expect(await rt.scoped(tx => rt.invitationNoticeAdmission(tx, noticeId, invited.memberId))).toBe(false);
+    expect(await count(sql`select count(*)::int as n from network.members where account_status='active'`)).toBe(2);
+    const tokenReplay = await send(input);
+    expect(tokenReplay.status).toBe(409);
+    expect(await tokenReplay.json()).toMatchObject({ error: "turn_invitation_changed" });
+
+    const pending = await confirmInvitationVouch(send, { ...request, messageId: "invite-weak", text: "Can you invite my coworker Theo?" }, "I met them once, three days ago.");
+    expect(pending.response).toMatchObject({ reason: "member_invitation_review" });
+    expect(pending.response.replies.join("\n")).not.toContain("#invite=");
+    const [reviewId] = pending.response.replies.join("\n").match(/mir_[0-9a-f]{32}/) ?? [];
+    expect(reviewId).toHaveLength(36);
+    const staff = async (method: string, token: string, payload?: Record<string, unknown>) => s.fetch(new Request("http://127.0.0.1/apps/ntwrk/review/member-invitations", {
+      method, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, ...(payload ? { body: JSON.stringify(payload) } : {}),
+    }));
+    expect((await staff("GET", "fr-tok")).status).toBe(403);
+    const queue = await staff("GET", "rev-tok");
+    expect(queue.status).toBe(200);
+    const queued = await queue.json();
+    expect(queued.reviews).toMatchObject([{ id: reviewId, durationMonths: 0, depth: "met_once", reviewReasons: ["weak_vouch"] }]);
+    expect(JSON.stringify(queued)).not.toMatch(/Theo|#invite=/);
+    expect(await count(sql`select count(*)::int as n from platform.member_invitations where redeemed_at is null`)).toBe(0);
+    const claim = { ...request, messageId: "claim-reviewed-invite", text: `Check invite ${reviewId}` };
+    const waiting = await send({ ...claim, messageId: "invite-review-pending" });
+    expect((await waiting.json()).replies.join("\n")).toContain("still waiting for review");
+    expect((await staff("POST", "rev-tok", { id: reviewId, decision: "approve" })).status).toBe(200);
+    expect(await count(sql`select count(*)::int as n from platform.member_invitations where redeemed_at is null`)).toBe(0);
+    const fresh = await send(claim);
+    expect(fresh.status).toBe(200);
+    const [, unused] = (await fresh.json()).replies[0].match(/#invite=([a-zA-Z0-9_-]{43})$/) ?? [];
+    expect(unused).toHaveLength(43);
+    const repeated = await send({ ...claim, messageId: "repeat-reviewed-invite" });
+    expect((await repeated.json()).replies.join("\n")).toContain("already received");
+    expect(await rt.unitOfWork(net => net.holdMember(invited.memberId, "fixture-reviewer"))).toEqual({ ok: true });
+    expect((await send(claim)).status).toBe(409);
+    const loser = attempts[0]!.status === 200 ? second : first;
+    expect(await loser("/api/join", { ...bodyFor("Theo"), inviteToken: unused })).toMatchObject({ body: { error: "invalid_invitation" } });
+    expect(await count(sql`select count(*)::int as n from platform.member_invitations where redeemed_at is null`)).toBe(1);
+  }, T);
+
+  // spec/invitationJoinProjection.md, "The inviter's conversation owns a notice after the welcome"
+  test("a verified invitation projects welcome and join notice through their separate city owners", async () => {
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
+    const { s } = service(clock, { env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret },
+      networks: [{ id: "ntwrk:nyc" }, { id: "ntwrk:sf" }] });
+    await s.start();
+    const inviterPhone = newPhone();
+    const inviter = await s.accounts.invite(APPS.ntwrk, inviterPhone);
+    if (!inviter) throw new Error("The fixture's staff invitation is missing");
+    const consent = { sms: true as const, wording: APPS.ntwrk.consent.text };
+    expect(await s.accounts.join(APPS.ntwrk, { e164: inviterPhone, personId: inviter.personId },
+      { firstName: "Ari", age: 31, homeCity: "nyc", consent })).toMatchObject({ ok: true });
+    const send = invitationTurn(s, clock);
+    const request: TurnRequest = { messageId: "invite-remote", from: inviterPhone, to: null, text: "Can you invite my friend Daria?",
+      channel: "blooio", transport: "imessage", receivedAt: clock.now(), app: "ntwrk" };
+    const issued = await confirmInvitationVouch(send, request, "I know them well, for three years.");
+    const [, token] = issued.response.replies[0].match(/#invite=([a-zA-Z0-9_-]{43})$/) ?? [];
+    expect(token).toHaveLength(43);
+
+    await sql`create function platform.fail_fixture_remote_invite_notice() returns trigger language plpgsql as $$
+      begin raise exception 'fixture remote notice unavailable'; end $$`;
+    await sql`create trigger fail_fixture_remote_invite_notice before update of projected_at on platform.member_invitations
+      for each row when (new.projected_at is not null) execute function platform.fail_fixture_remote_invite_notice()`;
+    const inviteePhone = newPhone();
+    const joined = await s.accounts.join(APPS.ntwrk, { e164: inviteePhone, personId: null },
+      { firstName: "Daria", age: 29, homeCity: "sf", consent }, undefined, token);
+    if (!joined.ok) throw new Error(`Fixture join failed: ${joined.error}`);
+    const id = joined.membership.memberId;
+    const [before] = await sql`select welcome_projected_at,projected_at from platform.member_invitations where redeemed_member_id=${id}`;
+    expect(before.welcome_projected_at).toBeInstanceOf(Date);
+    expect(before.projected_at).toBeNull();
+    expect((await outbound(id)).filter(row => row.type === "onboarding")).toHaveLength(1);
+
+    await sql`drop trigger fail_fixture_remote_invite_notice on platform.member_invitations`;
+    const nyc = s.runtimeFor("ntwrk", "nyc")!, sf = s.runtimeFor("ntwrk", "sf")!;
+    await nyc.tick();
+    expect((await sql`select projected_at from platform.member_invitations where redeemed_member_id=${id}`)[0]!.projected_at).toBeInstanceOf(Date);
+    const notices = await sql`select id,body from network.messages where member_id=${inviter.memberId} and ${id}=any(invite_join_members)`;
+    expect([...notices]).toEqual([{ id: expect.stringMatching(/^invite-notice:/), body: expect.stringContaining("Daria just joined.") }]);
+    expect(await nyc.readState(net => net.memberList().map(person => person.id))).not.toContain(id);
+    expect(await sf.readState(net => net.memberList().map(person => person.id))).not.toContain(inviter.memberId);
+    const noticeId = notices[0]!.id as string;
+    expect(await nyc.scoped(tx => nyc.invitationNoticeAdmission(tx, noticeId, inviter.memberId))).toBe(true);
+    expect(await sf.unitOfWork(net => net.holdMember(id, "fixture-reviewer"))).toEqual({ ok: true });
+    expect(await nyc.scoped(tx => nyc.invitationNoticeAdmission(tx, noticeId, inviter.memberId))).toBe(false);
+  }, T);
+
+  // spec/boundedHelp.md, "Intake keeps only structured home-help details after considering a service"
+  // spec/boundedHelp.md, "Fix the roster before review and recheck it at approval"
+  // spec/homeHelpConsent.md, spec/privateHomeHelpVenue.md
+  test("reviewed home help reaches only the exact roster and shares the address privately after unanimous consent", async () => {
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
+    const sent: SendRequest[] = [];
+    let simulatedDelivery = false;
+    const { s, otp } = service(clock, { env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret },
+      networks: [{ id: "ntwrk:nyc" }], network: { matchingEnabled: true }, tokens: "safety@ntwrk:saf-tok,reviewer@ntwrk:rev-tok",
+      adapter: (_net, rt) => new BlooioAdapter({ app: rt.app.id, from: LINE, clock, liveGate: () => simulatedDelivery, log: () => {},
+        provider: { kind: "sim", async send(request) {
+          sent.push(request);
+          return { providerMessageId: `fixture-${sent.length}`, status: "sent", acceptedAt: clock.now() };
+        } },
+      }),
+    });
+    await s.start();
+    const consent = { sms: true as const, wording: APPS.ntwrk.consent.text };
+    async function enroll(firstName: string) {
+      const phone = newPhone();
+      const incoming = await s.accounts.invite(APPS.ntwrk, phone);
+      if (!incoming) throw new Error("Missing fixture invitation");
+      const joined = await s.accounts.join(APPS.ntwrk, { e164: phone, personId: incoming.personId },
+        { firstName, age: 30, homeCity: "nyc", neighborhood: "Greenpoint", consent });
+      if (!joined.ok) throw new Error(`Fixture join failed: ${joined.error}`);
+      return { id: joined.membership.memberId, phone };
+    }
+    const owner = await enroll("Ari"), first = await enroll("Ben"), second = await enroll("Cora");
+    const send = invitationTurn(s, clock);
+    const turn = (from: string, messageId: string, text: string): TurnRequest =>
+      ({ from, messageId, text, to: null, channel: "blooio", transport: "imessage", receivedAt: clock.now(), app: "ntwrk" });
+    const initial = await send(turn(owner.phone, "home-help-ask", "Could someone help me move my couch into my apartment in Greenpoint?"));
+    expect((await initial.json()).replies.join("\n")).toContain("SUBMIT HOME HELP");
+    const command = turn(owner.phone, "home-help-submit",
+      "SUBMIT HOME HELP | move furniture | Greenpoint | 2026-10-10T19:00Z | 2026-10-10T20:00Z | 30 | service unavailable");
+    const submitted = await send(command);
+    expect(submitted.status).toBe(200);
+    const response = await submitted.json();
+    expect(response).toMatchObject({ reason: "bounded_home_help" });
+    expect(await (await send(command)).json()).toEqual(response);
+    const [plan] = await sql`select id,revision,phase,task,area,alternative,helper_ids from network.bounded_home_help`;
+    expect(plan).toMatchObject({ revision: 1, phase: "AwaitingHelpers", task: "MoveFurniture", area: "Greenpoint", alternative: "ServiceUnavailable", helper_ids: [] });
+    expect(JSON.stringify(await sql`select body from network.messages`)).not.toMatch(/move my couch|service unavailable/i);
+    const code = (response.replies.join("\n") as string).match(/hh_[a-p]{32}/)?.[0];
+    if (!code) throw new Error("The receipt did not include the plan code");
+
+    const staff = (method: string, token: string, data?: Record<string, unknown>) => s.fetch(new Request(
+      `http://127.0.0.1/apps/ntwrk/safety/home-help${method === "POST" ? `/${plan.id as string}` : ""}`,
+      { method, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, ...(data ? { body: JSON.stringify(data) } : {}) },
+    ));
+    expect((await staff("GET", "rev-tok")).status).toBe(403);
+    expect((await staff("GET", "saf-tok")).status).toBe(200);
+    const helperIds = [first.id, second.id];
+    expect((await staff("POST", "saf-tok", { action: "nominate", revision: 1, helperIds })).status).toBe(409);
+    for (const helper of [first, second]) {
+      const offered = await send(turn(helper.phone, `offer-${helper.id}`, "OFFER HOME HELP"));
+      expect((await offered.json()).replies.join("\n")).toContain("saved your offer");
+    }
+    expect((await staff("POST", "saf-tok", { action: "nominate", revision: 1, helperIds: [first.id] })).status).toBe(409);
+    const nominated = await staff("POST", "saf-tok", { action: "nominate", revision: 1, helperIds });
+    expect(await nominated.json()).toMatchObject({ ok: true, result: { phase: "AwaitingReview", revision: 2 } });
+    await send(turn(second.phone, "withdraw-home-offer", "WITHDRAW HOME HELP OFFER"));
+    expect((await staff("POST", "saf-tok", { action: "approve", revision: 2, helperIds })).status).toBe(409);
+    await send(turn(second.phone, "restore-home-offer", "OFFER HOME HELP"));
+    const approved = await staff("POST", "saf-tok", { action: "approve", revision: 2, helperIds });
+    expect(await approved.json()).toMatchObject({ ok: true, result: { phase: "Approved", revision: 2 } });
+    expect(await count(sql`select count(*)::int as n from network.messages where opportunity_id is not null`)).toBe(0);
+
+    const rt = s.runtimeFor("ntwrk")!;
+    const cards = () => sent.filter(request => request.text.includes(`YES HOME HELP ${code} 2`));
+    const answer = (person: { phone: string }, messageId: string, choice = "YES", revision = 2) =>
+      send(turn(person.phone, messageId, `${choice} HOME HELP ${code} ${revision}`)).then(r => r.json());
+    await s.afterTick(rt);
+    expect(cards()).toEqual([]);
+    expect((await answer(owner, "owner-before-receipt")).replies.join("\n")).toContain("unavailable");
+    simulatedDelivery = true;
+    await s.afterTick(rt);
+    expect(cards().map(card => card.to)).toEqual([owner.phone]);
+    await send(turn(owner.phone, "bare-home-help-yes", "yes"));
+    expect((await answer(owner, "wrong-home-help-revision", "YES", 1)).replies.join("\n")).toContain("unavailable");
+    await s.afterTick(rt);
+    expect(cards().map(card => card.to)).toEqual([owner.phone]);
+    expect((await answer(owner, "confirmed-owner")).replies.join("\n")).toContain("recorded your yes");
+    clock.advance(2 * HOUR); // both helpers are past the spread of their noon sending slots
+    await s.afterTick(rt);
+    expect(cards().map(card => card.to).sort()).toEqual([owner.phone, first.phone, second.phone].sort());
+    expect(cards().every(card => card.text.includes("Greenpoint") && !/Ari|Ben|Cora/.test(card.text))).toBe(true);
+    expect(await count(sql`select count(*)::int as n from platform.outbound where id like 'home-help-consent:%'
+      and status='sent' and jsonb_array_length(provider_message_ids)=1`)).toBe(3);
+
+    function client(app: AppId, phone?: string) {
+      let cookie = "";
+      const call = async (path: string, body: Record<string, unknown>) => {
+        const res = await s.publicFetch(new Request(`http://localhost:${5101 + APP_IDS.indexOf(app)}${path}`, {
+          method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
+        }));
+        cookie = res.headers.get("set-cookie")?.split(";")[0] ?? cookie;
+        return { status: res.status, body: await res.json(), cache: res.headers.get("cache-control") };
+      };
+      return { call, async login() {
+        clock.advance(31_000);
+        expect((await call("/api/auth/otp/start", { phone })).status).toBe(200);
+        expect((await call("/api/auth/otp/verify", { phone, code: otp.codes.get(phone!) })).status).toBe(200);
+      } };
+    }
+    const ownerSession = client("ntwrk", owner.phone), helperSession = client("ntwrk", first.phone);
+    const outsiderSession = client("ntwrk", newPhone()), otherApp = client(FR, first.phone), signedOut = client("ntwrk");
+    for (const session of [ownerSession, helperSession, outsiderSession, otherApp]) await session.login();
+    const address = "71 Fictional Fixture Lane, Apartment 4";
+    const submit = { action: "submit", id: code, revision: 2, address };
+    const reveal = { action: "reveal", id: code, revision: 2 };
+    const venue = "/api/home-help/venue";
+    expect((await signedOut.call(venue, reveal)).status).toBe(401);
+    expect((await ownerSession.call(venue, submit)).status).toBe(409);
+    expect((await answer(first, "confirmed-helper-one")).replies.join("\n")).toContain("recorded your yes");
+    expect((await ownerSession.call(venue, submit)).status).toBe(409);
+    expect((await answer(second, "confirmed-helper-two")).replies.join("\n")).toContain("recorded your yes");
+    expect((await helperSession.call(venue, submit)).status).toBe(409);
+    expect(await ownerSession.call(venue, submit)).toMatchObject({ status: 200, body: { ok: true }, cache: "no-store" });
+    expect(await helperSession.call(venue, reveal)).toMatchObject({ status: 200, body: { ok: true, address }, cache: "no-store" });
+    expect((await outsiderSession.call(venue, reveal)).status).toBe(409);
+    expect((await otherApp.call(venue, reveal)).status).toBe(409);
+    expect((await helperSession.call(venue, { ...reveal, revision: 1 })).status).toBe(409);
+    expect(sent.every(request => !request.text.includes(address))).toBe(true);
+    expect(JSON.stringify(await sql`select body from network.messages`)).not.toContain(address);
+    expect(await count(sql`select count(*)::int as n from network.bounded_home_help_venue where ciphertext is not null`)).toBe(1);
+    expect((await answer(second, "withdrawn-helper-two", "WITHDRAW")).replies.join("\n")).toContain("withdrawn your consent");
+    expect((await helperSession.call(venue, reveal)).status).toBe(409);
+    expect(await count(sql`select count(*)::int as n from network.bounded_home_help_venue where ciphertext is not null`)).toBe(0);
+
+    const closed = await send(turn(owner.phone, "close-home-help", `CLOSE HOME HELP ${code} 2`));
+    expect((await closed.json()).replies.join("\n")).toContain("is closed");
+    expect((await sql`select phase from network.bounded_home_help`)[0]!.phase).toBe("Closed");
   }, T);
 
   test("slop onboarding is the engine's loop: one question at a time, bi asked again in other words, the read-back, tags and state without the member's words", async () => {

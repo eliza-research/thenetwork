@@ -5,13 +5,14 @@
 export type ReceiptPhase = "Sending" | "LegacyQueued" | "ProviderAccepted" | "ProviderSent" | "ProviderDelivered" | "ProviderRead" | "ProviderFailed" | "AcceptanceUnknown" | "AcceptanceExpired" | "RetryScheduled" | "WaitingForReply" | "ProviderBlocked" | "OutsideReceipt";
 /** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md:9) */
 export interface ReceiptLifecycle { phase: ReceiptPhase }
-/** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md:72) */
+/** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md:80) */
 export type FailureKind = "UnknownResult" | "Retryable" | "NeedReply" | "BlockedNumber" | "TerminalError";
 
 /** One variant per transition in the spec. */
 export type Event =
   | { type: "recordAcceptance"; providerPhase: ReceiptPhase }
   | { type: "applyReceipt"; providerPhase: ReceiptPhase }
+  | { type: "holdUnrecordedReceipt" }
   | { type: "confirmNeverAdmitted"; neverAdmitted: boolean }
   | { type: "expireUnknown"; pastLimit: boolean }
   | { type: "recordProviderError"; failure: FailureKind; hasAttemptsLeft: boolean };
@@ -35,6 +36,7 @@ export function receiptRank(phase: ReceiptPhase): number {
 //@ pure
 export function recordAcceptance(outbound: ReceiptLifecycle, providerPhase: ReceiptPhase): ReceiptLifecycle {
   //@ ensures (inv(outbound) && canRecordAcceptance(outbound, providerPhase)) ==> stepReceiptsDoNotRegress(outbound, "recordAcceptance", \result)
+  //@ ensures (inv(outbound) && canRecordAcceptance(outbound, providerPhase)) ==> stepUnrecordedReceiptWaits(outbound, "recordAcceptance", \result)
   return { phase: providerPhase };
 }
 
@@ -42,6 +44,7 @@ export function recordAcceptance(outbound: ReceiptLifecycle, providerPhase: Rece
 //@ pure
 export function applyReceipt(outbound: ReceiptLifecycle, providerPhase: ReceiptPhase): ReceiptLifecycle {
   //@ ensures (inv(outbound) && canApplyReceipt(outbound, providerPhase)) ==> stepReceiptsDoNotRegress(outbound, "applyReceipt", \result)
+  //@ ensures (inv(outbound) && canApplyReceipt(outbound, providerPhase)) ==> stepUnrecordedReceiptWaits(outbound, "applyReceipt", \result)
   return { phase: providerPhase };
 }
 
@@ -73,6 +76,26 @@ export function lawDeliveredIgnoresFailure(phase: ReceiptPhase): boolean {
 
 /** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:51) */
 //@ pure
+export function canHoldUnrecordedReceipt(outbound: ReceiptLifecycle): boolean {
+  return outbound.phase === "Sending";
+}
+
+/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:51) */
+//@ pure
+export function holdUnrecordedReceipt(outbound: ReceiptLifecycle): ReceiptLifecycle {
+  //@ ensures (inv(outbound) && canHoldUnrecordedReceipt(outbound)) ==> stepReceiptsDoNotRegress(outbound, "holdUnrecordedReceipt", \result)
+  //@ ensures (inv(outbound) && canHoldUnrecordedReceipt(outbound)) ==> stepUnrecordedReceiptWaits(outbound, "holdUnrecordedReceipt", \result)
+  return { phase: "AcceptanceUnknown" };
+}
+
+/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:51) */
+//@ pure
+export function stepUnrecordedReceiptWaits(before: ReceiptLifecycle, via: string, after: ReceiptLifecycle): boolean {
+  return !(via === "holdUnrecordedReceipt") || (before.phase === "Sending" && after.phase === "AcceptanceUnknown");
+}
+
+/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:51) */
+//@ pure
 export function canConfirmNeverAdmitted(outbound: ReceiptLifecycle, neverAdmitted: boolean): boolean {
   return outbound.phase === "AcceptanceUnknown" && neverAdmitted;
 }
@@ -81,6 +104,7 @@ export function canConfirmNeverAdmitted(outbound: ReceiptLifecycle, neverAdmitte
 //@ pure
 export function confirmNeverAdmitted(outbound: ReceiptLifecycle, neverAdmitted: boolean): ReceiptLifecycle {
   //@ ensures (inv(outbound) && canConfirmNeverAdmitted(outbound, neverAdmitted)) ==> stepReceiptsDoNotRegress(outbound, "confirmNeverAdmitted", \result)
+  //@ ensures (inv(outbound) && canConfirmNeverAdmitted(outbound, neverAdmitted)) ==> stepUnrecordedReceiptWaits(outbound, "confirmNeverAdmitted", \result)
   return { phase: "RetryScheduled" };
 }
 
@@ -94,6 +118,7 @@ export function canExpireUnknown(outbound: ReceiptLifecycle, pastLimit: boolean)
 //@ pure
 export function expireUnknown(outbound: ReceiptLifecycle, pastLimit: boolean): ReceiptLifecycle {
   //@ ensures (inv(outbound) && canExpireUnknown(outbound, pastLimit)) ==> stepReceiptsDoNotRegress(outbound, "expireUnknown", \result)
+  //@ ensures (inv(outbound) && canExpireUnknown(outbound, pastLimit)) ==> stepUnrecordedReceiptWaits(outbound, "expireUnknown", \result)
   return { phase: "AcceptanceExpired" };
 }
 
@@ -109,20 +134,21 @@ export function sometimesCanRead(outbound: ReceiptLifecycle): boolean {
   return outbound.phase === "ProviderRead";
 }
 
-/** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md:72) */
+/** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md:80) */
 //@ pure
 export function canRecordProviderError(outbound: ReceiptLifecycle): boolean {
   return outbound.phase === "Sending";
 }
 
-/** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md:72) */
+/** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md:80) */
 //@ pure
 export function recordProviderError(outbound: ReceiptLifecycle, failure: FailureKind, hasAttemptsLeft: boolean): ReceiptLifecycle {
   //@ ensures (inv(outbound) && canRecordProviderError(outbound)) ==> stepReceiptsDoNotRegress(outbound, "recordProviderError", \result)
+  //@ ensures (inv(outbound) && canRecordProviderError(outbound)) ==> stepUnrecordedReceiptWaits(outbound, "recordProviderError", \result)
   return { phase: failure === "UnknownResult" ? "AcceptanceUnknown" : (failure === "NeedReply" ? "WaitingForReply" : (failure === "BlockedNumber" ? "ProviderBlocked" : (failure === "Retryable" && hasAttemptsLeft ? "RetryScheduled" : "ProviderFailed"))) };
 }
 
-/** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md:72) */
+/** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md:80) */
 //@ pure
 export function lawAnUnknownResultDoesNotRetry(hasAttemptsLeft: boolean): boolean {
   //@ ensures \result === true
@@ -134,6 +160,7 @@ export function lawAnUnknownResultDoesNotRetry(hasAttemptsLeft: boolean): boolea
 export function enabled(current: ReceiptLifecycle, event: Event): boolean {
   if (event.type === "recordAcceptance") return canRecordAcceptance(current, event.providerPhase);
   if (event.type === "applyReceipt") return canApplyReceipt(current, event.providerPhase);
+  if (event.type === "holdUnrecordedReceipt") return canHoldUnrecordedReceipt(current);
   if (event.type === "confirmNeverAdmitted") return canConfirmNeverAdmitted(current, event.neverAdmitted);
   if (event.type === "expireUnknown") return canExpireUnknown(current, event.pastLimit);
   if (event.type === "recordProviderError") return canRecordProviderError(current);
@@ -147,6 +174,7 @@ export function step(current: ReceiptLifecycle, event: Event): ReceiptLifecycle 
   //@ ensures inv(\result)
   if (event.type === "recordAcceptance" && canRecordAcceptance(current, event.providerPhase)) return recordAcceptance(current, event.providerPhase);
   if (event.type === "applyReceipt" && canApplyReceipt(current, event.providerPhase)) return applyReceipt(current, event.providerPhase);
+  if (event.type === "holdUnrecordedReceipt" && canHoldUnrecordedReceipt(current)) return holdUnrecordedReceipt(current);
   if (event.type === "confirmNeverAdmitted" && canConfirmNeverAdmitted(current, event.neverAdmitted)) return confirmNeverAdmitted(current, event.neverAdmitted);
   if (event.type === "expireUnknown" && canExpireUnknown(current, event.pastLimit)) return expireUnknown(current, event.pastLimit);
   if (event.type === "recordProviderError" && canRecordProviderError(current)) return recordProviderError(current, event.failure, event.hasAttemptsLeft);
@@ -169,6 +197,7 @@ export function parseEvent(x: unknown): Event | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
   if (raw.type === "recordAcceptance" && (raw.providerPhase === "Sending" || raw.providerPhase === "LegacyQueued" || raw.providerPhase === "ProviderAccepted" || raw.providerPhase === "ProviderSent" || raw.providerPhase === "ProviderDelivered" || raw.providerPhase === "ProviderRead" || raw.providerPhase === "ProviderFailed" || raw.providerPhase === "AcceptanceUnknown" || raw.providerPhase === "AcceptanceExpired" || raw.providerPhase === "RetryScheduled" || raw.providerPhase === "WaitingForReply" || raw.providerPhase === "ProviderBlocked" || raw.providerPhase === "OutsideReceipt")) return { type: "recordAcceptance", providerPhase: raw.providerPhase };
   if (raw.type === "applyReceipt" && (raw.providerPhase === "Sending" || raw.providerPhase === "LegacyQueued" || raw.providerPhase === "ProviderAccepted" || raw.providerPhase === "ProviderSent" || raw.providerPhase === "ProviderDelivered" || raw.providerPhase === "ProviderRead" || raw.providerPhase === "ProviderFailed" || raw.providerPhase === "AcceptanceUnknown" || raw.providerPhase === "AcceptanceExpired" || raw.providerPhase === "RetryScheduled" || raw.providerPhase === "WaitingForReply" || raw.providerPhase === "ProviderBlocked" || raw.providerPhase === "OutsideReceipt")) return { type: "applyReceipt", providerPhase: raw.providerPhase };
+  if (raw.type === "holdUnrecordedReceipt") return { type: "holdUnrecordedReceipt" };
   if (raw.type === "confirmNeverAdmitted" && typeof raw.neverAdmitted === "boolean") return { type: "confirmNeverAdmitted", neverAdmitted: raw.neverAdmitted };
   if (raw.type === "expireUnknown" && typeof raw.pastLimit === "boolean") return { type: "expireUnknown", pastLimit: raw.pastLimit };
   if (raw.type === "recordProviderError" && (raw.failure === "UnknownResult" || raw.failure === "Retryable" || raw.failure === "NeedReply" || raw.failure === "BlockedNumber" || raw.failure === "TerminalError") && typeof raw.hasAttemptsLeft === "boolean") return { type: "recordProviderError", failure: raw.failure, hasAttemptsLeft: raw.hasAttemptsLeft };

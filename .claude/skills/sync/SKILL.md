@@ -10,7 +10,7 @@ Read AGENTS.md in full first, once per session.
 ## The loop
 
 1. Run `pnpm check`. Each `✗` line is something to resolve; `-` lines are
-   stages skipped because of a `✗` above.
+   stages skipped because of a `✗` above, or that this platform cannot run.
    Under `review` it prints a changed rule's prose and Quint, a story's text
    and rules, and a contract's `//@` lines; for a **new** rule, read it in the
    spec. The last line, `next:`, names what to do first.
@@ -59,6 +59,7 @@ Give up and report after five rounds on the same failure.
 | `proof` … "not proved" | It holds in simulation; it is yours to prove. First decide whether it is true for every state that satisfies all the rules. If it is not (you can name such a state), no proof can help: the missing fact about reachable states becomes a new `always` rule, a discovered rule. If it is, prove it in the unit's proof file, `spec/<path>.proof.dfy` or `src/<path>.proof.dfy`: copy the obligation's `lemma …_ensures` header from `gen/proof/<unit>/<unit>.dfy` and write its body, calling `ProofLib` lemmas and your own helper lemmas (the `prove` skill, "Proof files"). Only what you cannot prove goes in your report, with what you tried; recording it as simulated only is the user's last resort, not yours. |
 | `proof` … "Dafny could not check it" | The generated or hand-written code is not something Dafny accepts (an unguarded lookup, index or division, or a wrong annotation), or the proof file is refused or does not verify: a stale header, a forbidden construct, a helper lemma that fails. The lines under it say which, with the file and line. |
 | `proof` … "belongs to no proof unit" | A stray proof file. Rename it to `spec/<path>.proof.dfy` for `spec/<path>.md`, or `src/<path>.proof.dfy` for a `src/<path>.ts` that contains `//@`; or delete it. |
+| `proof` … "has nothing to prove" | A proof file beside a spec that defines no type or value of its own (prose only, or only imports), which has no proof unit. Delete it; or, if the spec's stories are meant to have rules, write them and their Quint, then prove what is left in that file. |
 | `proof` … "the proof stage needs Dafny 4.11 on the PATH" | Dafny is missing or not 4.11.x. Tell the user; do not work around it. |
 | `proof`, a `src-…` unit | Fix the hand-written code, its `//@` annotation, or its proof file. The full output is in `gen/proof/<unit>.log`. |
 | `tests` … citations name no story or rule | Cite the story or rule by its heading as the spec now has it. If it was removed, the test that cites it is yours to review: does any rule still ask for what it checks? |
@@ -75,6 +76,15 @@ Give up and report after five rounds on the same failure.
 | `traces` … **the run did not get as far as comparing** … "fill in reset, dispatch and observe" | `check` wrote this driver because `src/` keeps the machine's state. Write `reset`, `dispatch` and `observe` on the application's own entry point (SPEC.md, "Conformance"), and `receive` if the shell decodes untrusted input. |
 | `traces` … **the run did not get as far as comparing** … "the spec has outgrown" | A saved counterexample sends an event the spec no longer has. Rewrite its events to what the spec now calls them, or delete the file if what it caught is gone, and say which in your report. |
 | `traces` … **the run did not get as far as comparing**, otherwise | The driver could not run: it threw, exports no `driver`, did not finish, or is named after no state machine. The lines under it say which; fix that. |
+| `explore` … **the page breaks** … | Bombadil reached a state of the page that breaks the named properties; the actions before it are printed. Fix the page. If the property in `test/bombadil.ts` no longer says what the rules ask, fix it instead and say so. The run is saved in `test/__traces__/bombadil` and replayed first; `pnpm exec bombadil browser inspect test/__traces__/bombadil` shows each state. A bug worth keeping fixed becomes a step of the journey it broke. |
+| `explore` … **still breaks, in the replay** | The saved run still breaks the page. Fix the page or the property, as above; never delete the saved run to pass. |
+| `explore` ✓ … **so it was removed** | Not a failure: the saved run breaks nothing now, or no longer applies to the page as it is, and a fresh exploration followed. |
+| `explore` … **is kept, to be replayed when it can be** | The saved run could not be replayed for the reason printed before it (no address, no Chromium, Bombadil stopped). Resolve that reason as its own row says; the run stays until a replay shows whether the page still breaks. |
+| `explore` … **no start or dev script that serves it** | The package has an `index.html` that nothing serves. Add a `start` or `dev` script, not the studio, that serves it and prints its `http://localhost` address. |
+| `explore` … **printed no http://localhost address** | The script ended, or said nothing within 300 s; its last lines are printed. Make it serve the page and print where. |
+| `explore` … **took no action** | Chrome took the whole budget to start, or the page never settled between actions. Run again on a less busy machine; if it persists, find what keeps the page busy. |
+| `explore` … **found no Chromium**, **could not explore the page**, **the browser stalled**, **bombadil ran for more than** | Bombadil or its browser could not run. For no Chromium, `pnpm exec playwright install chromium`, or set `CHROME`. Otherwise read the printed output. Tell the user; do not work around it. |
+| `-` `explore` … **Bombadil runs on** | Not a failure: Bombadil has no executable for this platform, and CI explores the page. |
 | "another check or accept is running" | Wait for that process and run again. If it no longer exists, delete the lock file the message names. |
 
 ## Rules for what you write
@@ -103,7 +113,8 @@ Tell the user, in this order:
 5. **Tests**: journeys added or extended, each with what it covers that the
    checks cannot (search the tests for a rule's citation before adding one:
    extend the journey that has it), drivers written, counterexamples saved
-   and which side you fixed, and tests you propose to delete.
+   and which side you fixed, properties added to `test/bombadil.ts`, what
+   `explore` found and which side you fixed, and tests you propose to delete.
 6. **Not proved**: obligations that hold in simulation only, if any, each
    with why you could not prove it.
 7. **Could not formalize**: anything in a story you left out, and why.

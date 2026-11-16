@@ -12,6 +12,8 @@ The [candidate exposure floor](../exposureFloor.md) supplies the generated alloc
 
 The [candidate screening spec](../candidateScreening.md) generates the ordered hard-check transitions and the first refusal used before scoring.
 
+The [travel presence spec](../travelPresence.md) supplies bounded intervals for the production city check. This model abstracts them to one city per member.
+
 Imported from `quint/candidate_pool.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
@@ -77,7 +79,7 @@ Imported from `quint/candidate_pool.qnt` at `30d950e`. See [model index](README.
 //                            friends group bound of 3 (rules.ts group_size). This can be intended.
 //
 // RUN (from the repository root; quint 0.33.1)
-//   bun run quint:check quint/candidate_pool.qnt
+//   pnpm run quint:check quint/candidate_pool.qnt
 module candidate_pool {
 
   // ------------------------------------------------------------------ constants

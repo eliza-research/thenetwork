@@ -190,7 +190,7 @@ export function loaded(page: JoinPage, view: SessionView, appUnreachable: boolea
   //@ ensures (inv(page) && canLoaded(page, view)) ==> stepSignInKeepsFormValues(page, "loaded", \result)
   //@ ensures (inv(page) && canLoaded(page, view)) ==> stepDoneFollowsSavedProfile(page, "loaded", \result)
   //@ ensures (inv(page) && canLoaded(page, view)) ==> stepOneRequestAtATime(page, \result)
-  const local_0 = routed(view, page, inviteOnly);
+  const local_0: JoinPage = routed(view, page, inviteOnly);
   return { ...local_0, notice: appUnreachable ? "ApiUnreachable" : "NoNotice" };
 }
 
@@ -636,7 +636,7 @@ export function recheck(page: JoinPage, view: SessionView): JoinPage {
   //@ ensures (inv(page) && canRecheck(page, view)) ==> stepSignInKeepsFormValues(page, "recheck", \result)
   //@ ensures (inv(page) && canRecheck(page, view)) ==> stepDoneFollowsSavedProfile(page, "recheck", \result)
   //@ ensures (inv(page) && canRecheck(page, view)) ==> stepOneRequestAtATime(page, \result)
-  const local_4 = routed(view, page, page.inviteOnly);
+  const local_4: JoinPage = routed(view, page, page.inviteOnly);
   return { ...local_4, notice: signedInResult(view.result) || page.notice === "AccountChanged" ? page.notice : (view.result === "SignedOut" ? "SessionEnded" : "ApiUnreachable") };
 }
 
@@ -737,7 +737,7 @@ export function answerJoin(page: JoinPage, joinAnswer: JoinOutcome): JoinPage {
   //@ ensures (inv(page) && canAnswerJoin(page)) ==> stepSignInKeepsFormValues(page, "answerJoin", \result)
   //@ ensures (inv(page) && canAnswerJoin(page)) ==> stepDoneFollowsSavedProfile(page, "answerJoin", \result)
   //@ ensures (inv(page) && canAnswerJoin(page)) ==> stepOneRequestAtATime(page, \result)
-  const local_5 = { ...page, pending: "Idle" };
+  const local_5: JoinPage = { ...page, pending: "Idle" };
   const local_6: BlockReason = joinRefusal(joinAnswer);
   return joinAnswer === "JoinedOk" ? ({ ...local_5, screen: "Done", notice: "NoNotice" } as JoinPage) : (local_6 !== "NoBlock" ? ({ ...local_5, screen: "Blocked", reason: local_6 } as JoinPage) : (joinAnswer === "JoinAccountChanged" ? ({ ...local_5, screen: "Checking", account: 0, formHasValues: false, consented: false, notice: "AccountChanged", formError: "NoError" } as JoinPage) : (joinAnswer === "JoinUnauthorized" ? ({ ...local_5, screen: "Phone", account: 0, formHasValues: false, consented: false, notice: "SessionEnded", formError: "NoError" } as JoinPage) : ({ ...local_5, formError: "RequestFailed" } as JoinPage))));
 }

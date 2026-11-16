@@ -1,8 +1,10 @@
 # Can the consent-first Network reach 90% "everyone says yes"? (2026-10-07)
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-07-network-consent.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 Design: [docs/network.md](../network.md). Runbook: [docs/runbook-simulation.md](../runbook-simulation.md). Raw results: [network/](network/) (the section 12 runs; the older JSON files are in git history at `16cde70`). **No LLM calls, $0.**
 
-The runs used the network harness (`packages/network/harness/experiment.ts`), since deleted; validation on the current tree is `bun run sim`. Sections 2-11 (the older code) are summarized below; their full text is in git history at commit `16cde70` (`git show 16cde70:docs/results/2026-10-07-network-consent.md`).
+The runs used the network harness (`packages/network/harness/experiment.ts`), since deleted; validation on the current tree is `pnpm run sim`. Sections 2-11 (the older code) are summarized below; their full text is in git history at commit `16cde70` (`git show 16cde70:docs/results/2026-10-07-network-consent.md`).
 
 ## 1. Answer
 
@@ -59,7 +61,7 @@ The Network now follows the engine session's send defaults, attention v1.2 ([net
 
 | Item | Value |
 |---|---|
-| Commands | At the time: `bun run packages/network/harness/experiment.ts --days 21 --seed N` (all three arms) and `... --days 21 --seed N --only consent --time-aware`, for N = 1, 2, 3; `... --days 42 --seed 1 --only consent`. That harness has been deleted; validation is now `bun run sim`. |
+| Commands | At the time: `node --import tsx --env-file-if-exists=.env packages/network/harness/experiment.ts --days 21 --seed N` (all three arms) and `... --days 21 --seed N --only consent --time-aware`, for N = 1, 2, 3; `... --days 42 --seed 1 --only consent`. That harness has been deleted; validation is now `pnpm run sim`. |
 | World, personas, engine, oracle model | As section 3. The default persona policy, except the time-aware rows (`PolicyOptions.timeAware` and `WorldOptions.timeAware`: personas answer offered times from a hidden week, and a meeting at a time that clashes is missed with p = 0.7) |
 | Review | `review: "auto"`, the simulated reviewer. Every opportunity is queued and approved before anyone is contacted. |
 | Model and request settings | None. `OPENAI_API_KEY`, `SURPLUS_API_KEY` and `CEREBRAS_API_KEY` were empty. No LLM call, $0. |

@@ -1,11 +1,13 @@
 // OAuthStore on Postgres (the oauth schema, db/oauth.sql). migrate() applies the schema; it only
 // creates what is missing, so it is safe to run at every start.
+import { fileAt } from "../../core/src/runtime/files.ts";
 import { join } from "node:path";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
+import { signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
 import type { McpAppId } from "./apps.ts";
-import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, type AuditRow, type AuthCode, type AuthRequest, type Grant, type OAuthClient, type OAuthStore, type Token } from "./store.ts";
+import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, type AuditRow, type AuthCode, type AuthRequest, type ConsentGrantWrites, type Grant, type OAuthClient, type OAuthStore, type Token } from "./store.ts";
 
-export const OAUTH_SQL = join(import.meta.dir, "..", "db", "oauth.sql");
+export const OAUTH_SQL = join(import.meta.dirname, "..", "db", "oauth.sql");
 
 type Row = Record<string, any>;
 const ms = (v: unknown): number | null => (v === null || v === undefined ? null : new Date(v as string | Date).getTime());
@@ -34,6 +36,14 @@ const token = (r: Row): Token => ({
   createdAt: ms(r.created_at)!, expiresAt: ms(r.expires_at)!, revokedAt: ms(r.revoked_at), rotatedAt: ms(r.rotated_at),
 });
 
+const insertGrant = (sql: SQL, g: Grant) => sql`insert into oauth.grants (id, client_id, app_id, phone_key, person_id, scopes, resource, created_at, expires_at, revoked_at, cloud_authority)
+      values (${g.id}, ${g.clientId}, ${g.app}, ${g.phoneKey}, ${g.personId}, ${sql.array(g.scopes, "TEXT")}, ${g.resource}, ${ts(g.createdAt)}, ${ts(g.expiresAt)}, ${ts(g.revokedAt)}, ${g.cloudAuthority ?? null}::jsonb)`;
+
+const insertCode = (sql: SQL, c: AuthCode) => sql`insert into oauth.codes (hash, grant_id, client_id, redirect_uri, code_challenge, resource, scopes, created_at, expires_at, used_at)
+      values (${c.hash}, ${c.grantId}, ${c.clientId}, ${c.redirectUri}, ${c.codeChallenge}, ${c.resource}, ${sql.array(c.scopes, "TEXT")}, ${ts(c.createdAt)}, ${ts(c.expiresAt)}, ${ts(c.usedAt)})`;
+
+const insertAudit = (sql: SQL, a: AuditRow) => sql`insert into oauth.audit (at, kind, client_id, grant_id, app_id, detail) values (${ts(a.at)}, ${a.kind}, ${a.clientId}, ${a.grantId}, ${a.app}, ${a.detail})`;
+
 export class PgOAuthStore implements OAuthStore {
   readonly sql: SQL;
   private readonly owned: boolean;
@@ -41,21 +51,21 @@ export class PgOAuthStore implements OAuthStore {
     this.owned = typeof db === "string";
     this.sql = typeof db === "string" ? new SQL({ url: db, max: 4 }) : db;
   }
-  async migrate() { await this.sql.unsafe(await Bun.file(OAUTH_SQL).text()); }
+  async migrate() { await this.sql.unsafe(await fileAt(OAUTH_SQL).text()); }
   async close() { if (this.owned) await this.sql.close(); }
 
   async putSignupDraft(d: import("./store.ts").SignupDraft, at: number) {
     const started = performance.now();
     try { return await this.sql.begin(async tx => {
       const grants = await tx`select id from oauth.grants where id=${d.grantId} for update`;
-      if (grants.length !== 1) return false;
+      if (!signupDraftUnique(grants.length)) return false;
       const liveAt = at + Math.ceil(performance.now() - started);
       const rows = await tx`insert into oauth.signup_drafts(grant_id,app_id,phone_key,fields,expires_at,consumed_at)
         select id,app_id,phone_key,${d.fields}::jsonb,${new Date(d.expiresAt)},null from oauth.grants
         where id=${d.grantId} and app_id=${d.app} and phone_key=${d.phoneKey} and revoked_at is null and expires_at>${new Date(liveAt)}
         and ${new Date(d.expiresAt)}>${new Date(liveAt)} and 'profile:write'=any(scopes)
         on conflict(grant_id) do nothing returning grant_id`;
-      return rows.length === 1;
+      return signupDraftUnique(rows.length);
     }); } catch { throw new Error("Signup draft storage unavailable"); }
   }
   async claimSignupDraft(phoneKey: string, app: import("./apps.ts").McpAppId, personId: string | null, at: number) {
@@ -66,13 +76,13 @@ export class PgOAuthStore implements OAuthStore {
         where d.phone_key=${phoneKey} and d.app_id=${app} and d.consumed_at is null and d.expires_at>${new Date(at)}
         and g.app_id=${app} and g.phone_key=${phoneKey} and g.person_id is not distinct from ${personId}
         and g.revoked_at is null and g.expires_at>${new Date(at)} and 'profile:write'=any(g.scopes) order by g.id for update of g`;
-      if (grants.length !== 1) return undefined;
+      if (!signupDraftUnique(grants.length)) return undefined;
       const liveAt = at + Math.ceil(performance.now() - started);
       const rows = await tx`select d.grant_id,d.fields from oauth.signup_drafts d join oauth.grants g on g.id=d.grant_id
         where d.grant_id=${grants[0].id} and d.consumed_at is null and d.expires_at>${new Date(liveAt)}
         and g.app_id=${app} and g.phone_key=${phoneKey} and g.person_id is not distinct from ${personId}
         and g.revoked_at is null and g.expires_at>${new Date(liveAt)} and 'profile:write'=any(g.scopes) for update of d`;
-      if (rows.length !== 1) return undefined;
+      if (!signupDraftUnique(rows.length)) return undefined;
       return rows[0].fields as import("./store.ts").SignupDraftFields;
     }); } catch { throw new Error("Signup draft storage unavailable"); }
   }
@@ -106,18 +116,22 @@ export class PgOAuthStore implements OAuthStore {
     const n = { ...cur, ...patch };
     await this.sql`update oauth.auth_requests set e164 = ${n.e164}, person_id = ${n.personId}, step = ${n.step} where id = ${id}`;
   }
-  async takeConsentRequest(id: string, at: number) {
-    const [r] = await this.sql`delete from oauth.auth_requests
-      where id = ${id} and step = 'consent' and e164 is not null and expires_at > ${ts(at)}
-      returning *`;
-    return r ? request(r) : undefined;
+  async commitConsentGrant(id: string, at: number, confirm: (approval: AuthRequest) => Promise<boolean>, writes: ConsentGrantWrites) {
+    return this.sql.begin(async tx => {
+      const [pending] = await tx`select * from oauth.auth_requests
+        where id = ${id} and step = 'consent' and e164 is not null and expires_at > ${ts(at)} for update`;
+      if (!pending || !await confirm(request(pending))) return false;
+
+      await tx`delete from oauth.auth_requests where id = ${id}`;
+      await insertGrant(tx, writes.grant);
+      await insertCode(tx, writes.code);
+      for (const row of writes.audit) await insertAudit(tx, row);
+      return true;
+    });
   }
   async deleteAuthRequest(id: string) { await this.sql`delete from oauth.auth_requests where id = ${id}`; }
 
-  async putGrant(g: Grant) {
-    await this.sql`insert into oauth.grants (id, client_id, app_id, phone_key, person_id, scopes, resource, created_at, expires_at, revoked_at, cloud_authority)
-      values (${g.id}, ${g.clientId}, ${g.app}, ${g.phoneKey}, ${g.personId}, ${this.sql.array(g.scopes, "TEXT")}, ${g.resource}, ${ts(g.createdAt)}, ${ts(g.expiresAt)}, ${ts(g.revokedAt)}, ${g.cloudAuthority ?? null}::jsonb)`;
-  }
+  async putGrant(g: Grant) { await insertGrant(this.sql, g); }
   async getGrant(id: string) {
     const [r] = await this.sql`select * from oauth.grants where id = ${id}`;
     return r ? grant(r) : undefined;
@@ -134,10 +148,7 @@ export class PgOAuthStore implements OAuthStore {
     });
   }
 
-  async putCode(c: AuthCode) {
-    await this.sql`insert into oauth.codes (hash, grant_id, client_id, redirect_uri, code_challenge, resource, scopes, created_at, expires_at, used_at)
-      values (${c.hash}, ${c.grantId}, ${c.clientId}, ${c.redirectUri}, ${c.codeChallenge}, ${c.resource}, ${this.sql.array(c.scopes, "TEXT")}, ${ts(c.createdAt)}, ${ts(c.expiresAt)}, ${ts(c.usedAt)})`;
-  }
+  async putCode(c: AuthCode) { await insertCode(this.sql, c); }
   async getCode(hash: string) {
     const rows=await this.sql`select * from oauth.codes where hash=${hash}`;
     return rows[0]?code(rows[0]):undefined;
@@ -181,9 +192,7 @@ export class PgOAuthStore implements OAuthStore {
     }
   }
 
-  async audit(a: AuditRow) {
-    await this.sql`insert into oauth.audit (at, kind, client_id, grant_id, app_id, detail) values (${ts(a.at)}, ${a.kind}, ${a.clientId}, ${a.grantId}, ${a.app}, ${a.detail})`;
-  }
+  async audit(a: AuditRow) { await insertAudit(this.sql, a); }
   async auditRows(limit = 1000) {
     const rows = await this.sql`select * from (select * from oauth.audit order by id desc limit ${limit}) x order by id`;
     return rows.map((r: Row): AuditRow => ({ at: ms(r.at)!, kind: r.kind, clientId: r.client_id ?? null, grantId: r.grant_id ?? null, app: r.app_id ?? null, detail: r.detail ?? null }));
@@ -212,11 +221,14 @@ export class PgOAuthStore implements OAuthStore {
   }
 
   async forgetPhone(phoneKey: string, e164: string, app?: McpAppId) {
-    const rows = app
-      ? await this.sql`delete from oauth.grants where phone_key = ${phoneKey} and app_id = ${app} returning id`
-      : await this.sql`delete from oauth.grants where phone_key = ${phoneKey} returning id`;
-    if (app) await this.sql`delete from oauth.auth_requests where e164 = ${e164} and app_id = ${app}`;
-    else await this.sql`delete from oauth.auth_requests where e164 = ${e164}`;
-    return rows.length;
+    return this.sql.begin(async tx => {
+      // Wait for a locked approval before scanning grants, including any grant it just committed.
+      if (app) await tx`delete from oauth.auth_requests where e164 = ${e164} and app_id = ${app}`;
+      else await tx`delete from oauth.auth_requests where e164 = ${e164}`;
+      const rows = app
+        ? await tx`delete from oauth.grants where phone_key = ${phoneKey} and app_id = ${app} returning id`
+        : await tx`delete from oauth.grants where phone_key = ${phoneKey} returning id`;
+      return rows.length;
+    });
   }
 }

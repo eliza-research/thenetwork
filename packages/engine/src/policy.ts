@@ -4,6 +4,7 @@
 // penalty and an amortized exposure-debt lift; an exposure-floor pass first; then a seeded
 // 10-15% exploration slice, logged with selection probabilities for off-policy evaluation.
 import { gini } from "@thenetwork/core";
+import { countPublishedQuestions, initial as initialAskRun, questionSubjectAllowed, step as stepAskRun } from "../../core/src/generated/engineAsks.ts";
 import { canReserveSelection, initial, proactiveUsed, selectedBefore, step, type SelectionChoice } from "../../core/src/generated/selectionRun.ts";
 export { gini };
 import type { MemberId } from "@thenetwork/core";
@@ -34,31 +35,36 @@ export interface AskPlan { asks: EngineAsk[]; exclude: Set<MemberId>; extraProac
 /**
  * Pack asks (selection.extraAsks): networkPack asks members with a live romance intent but no
  * stated preferences for them (config.romance.requireStatedPrefs); romance proposals wait for the
- * answer (generators.ts romanceIntros), other proposals do not. slopPack asks for an age range or a
- * distance. An ask is a proactive message, so it needs the same availability and budget as an invitation.
+ * answer (generators.ts romanceIntros). slopPack asks for missing matching information.
+ * Proposal selection includes planned questions in its proactive capacity.
  */
 export function planAsks(w: World, input: EngineInput): AskPlan {
   const cfg = w.cfg;
   const plan: AskPlan = { asks: [], exclude: new Set(), extraProactive: new Map() };
   const S = w.pack.selection;
-  const extra = S.extraAsksEnabled?.(cfg) ?? false;
-  if (!extra) return plan;
+  let askRun = stepAskRun(initialAskRun, { type: "setAvailability", configured: !!S.extraAsksEnabled?.(cfg) });
+  if (askRun.phase !== "PlanningQuestions") return plan;
   const lastAsk = new Map<string, number>();
   for (const a of input.recentAsks ?? []) {
     const k = `${w.canonical(a.memberId)}|${a.reason}`;
     lastAsk.set(k, Math.max(lastAsk.get(k) ?? -Infinity, a.at));
   }
   const anyAsk = (id: MemberId, reasons: AskReason[]) => Math.max(-Infinity, ...reasons.map(r => lastAsk.get(`${id}|${r}`) ?? -Infinity));
-  const add = (id: MemberId, reason: AskReason, intentId?: string) => {
+  const add = (id: MemberId, reason: AskReason, intentId: string | undefined, adult: boolean, supportedMarket: boolean) => {
+    const reserved = stepAskRun(askRun, { type: "reserveQuestion", memberId: id, adult, supportedMarket });
+    if (reserved === askRun) return;
+    askRun = reserved;
     plan.asks.push({ kind: "ask", id: `a_${sha256(`${id}|${reason}|${w.now}`).slice(0, 16)}`, memberId: id, reason, question: S.askQuestions[reason]!, createdAt: w.now, ...(intentId ? { intentId } : {}) });
-    plan.extraProactive.set(id, (plan.extraProactive.get(id) ?? 0) + 1);
   };
   for (const id of w.ids) {
     const mi = w.get(id)!;
-    if (isMinor(w, id) || !w.pack.geo.markets(cfg).includes(mi.m.homeCity)) continue;
-    // Pack asks (networkPack: the romance-preferences ask, config.romance.requireStatedPrefs).
-    if (extra) S.extraAsks?.(w, id, mi, reasons => anyAsk(id, reasons as AskReason[]), (reason, intentId) => add(id, reason as AskReason, intentId));
+    const adult = !isMinor(w, id);
+    const supportedMarket = adult && w.pack.geo.markets(cfg).includes(mi.m.homeCity);
+    if (!questionSubjectAllowed(askRun, adult, supportedMarket)) continue;
+    S.extraAsks?.(w, id, mi, reasons => anyAsk(id, reasons as AskReason[]), (reason, intentId) => add(id, reason as AskReason, intentId, adult, supportedMarket));
   }
+  askRun = stepAskRun(askRun, { type: "publishQuestions" });
+  for (const { memberId } of plan.asks) plan.extraProactive.set(memberId, countPublishedQuestions(askRun, memberId));
   return plan;
 }
 

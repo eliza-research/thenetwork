@@ -8,7 +8,7 @@ metadata:
   site: https://peon.biz
   mcp: "https://ntwrk.party/mcp/openai"
   operator: Eliza Research Corporation
-  version: "1.1.3"
+  version: "1.1.2"
 ---
 
 # peon.biz
@@ -45,7 +45,6 @@ The steps differ by device. If you cannot tell which the person is on, ask once.
   settings. Do step 1, including their stated age. Then give them one link that opens their messages app with the approved
   profile already written: `sms:+18087881821?&body=` followed by the profile, URL-encoded (spaces as
   %20). The person presses send themselves. That text is their profile; step 3 is not needed.
-  Do not report it as a saved profile: tell them that it waits until they send it.
 - **On a computer.** Do steps 1, 2 and 3. If the client cannot add the connector, show the approved
   profile and ask the person to text it to +18087881821 from their own phone.
 
@@ -56,10 +55,7 @@ You never send a text for the person, and you never see their number.
 The person signs up through you, in this conversation:
 
 1. Build the profile: whether they are looking for work or hiring, the kind of role, the neighborhood or remote, when they can start, and the skills that matter (no salary history, no Social Security number, no bank details). Start from what you already know about the person: draft the profile from your memory of them and show it. Ask only for what is missing, one or two questions at a time. Never ask for a phone number, a code, an <!-- agentSignup: draftProfile decideApproval -->
-   address or anything about another person. Ask for their stated age and use the lowest age they
-   state. Under 13, tell them that they cannot join and stop. At 13 to 17, continue and tell them
-   that matching and introductions are for adults 18 and older only.
-   Read the profile back and change it until they agree.
+   address or anything about another person. Read the profile back and change it until they agree.
 2. Give them one link to confirm their own phone (prefill it as described in "A shorter browser handoff"): https://peon.biz/join?via=agent. On that page they type
    their own number and code, review their first name and age, and agree to the texts. You
    never see the number or the code.
@@ -71,12 +67,8 @@ The person signs up through you, in this conversation:
    The person confirms their phone on our page. Access connects automatically. A code is skipped only when that browser
    has a current session for this app. Call check_status first and confirm its app is peon.
    If the connection names another app, stop and connect to this app; never submit across apps.
-   If the status is not joined or invited, ask the person to finish on the page. If it is stopped
-   or on hold, stop and tell them its next step. Only for an onboarding or active member, call
-   submit_profile once with their approved profile, then check_status on the same connection.
-   Report success only when both calls confirm it. If submit_profile does not accept the profile,
-   say that it was not sent. If the second check_status does not show an onboarding or active
-   member, say that the save is not confirmed. Do not send the profile again.
+   Call submit_profile once with their approved profile, then check_status on the same connection.
+   Report success only when both calls confirm it.
 4. No agent at hand: the person can text "peon" or "peon.biz" as their first message to +18087881821
    and answer the agent there.
 

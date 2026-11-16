@@ -17,6 +17,7 @@
 // the prompt bytes (and therefore of the evals cache key): do not reorder fields.
 import type { Category, City, Facet, MemberId, OpportunityKind, Presence, WorldSnapshot } from "@thenetwork/core";
 import { DAY } from "@thenetwork/core";
+import { standingIntentDeadline, standingIntentLive } from "../../../../core/src/standing-intent.ts";
 import { validityIncludes } from "../../interval.ts";
 import { basisOf, boundaryRelevance, evidenceTag, isHypothesis, redactPrivate, scrubIds, STALE_DAYS, type EvidenceBasis } from "../../judgeCommon.ts";
 import type { Candidate } from "../../types.ts";
@@ -93,8 +94,8 @@ const PUBLIC_SCOPES: ReadonlySet<Facet["scope"]> = new Set(["shareable", "matcha
 /**
  * "v2" (default) is the view pass1-screen-v2 (the engine's pass 1) and rec-eval-v1 use. "v3" is the
  * view the historical pass1-screen-v3 prompt was run on (evals replay only, packages/evals/src/
- * historicalPrompts.ts): per-fact evidence notes, intent age, expired intents dropped, and a redacted
- * private-boundary flag.
+ * historicalPrompts.ts): per-fact evidence notes, intent age, and a redacted private-boundary flag.
+ * Both views keep only live intents.
  */
 export interface PublicViewOptions { version?: "v2" | "v3" }
 
@@ -118,7 +119,7 @@ export function buildPublicView(snap: WorldSnapshot, cfg: ScreenConfig, o: Publi
       },
       shareable: facets.filter(f => f.scope === "shareable").map(line),
       matchable_do_not_quote: facets.filter(f => f.scope === "matchable").map(line),
-      intents: snap.intents.filter(i => i.memberId === id && i.status === "active" && (!v3 || i.createdAt + i.horizonDays * DAY >= now))
+      intents: snap.intents.filter(i => i.memberId === id && standingIntentLive(i, now))
         .map(i => ({ objective: scrub(i.objective), category: i.category, ...(v3 ? { created_days_ago: joinedDaysAgo(i.createdAt, now) } : {}) })),
       presence: snap.presence.filter(p => p.memberId === id).map(p => presenceOf(p, now)),
       ...(v3 && id !== cfg.via ? (() => {
@@ -326,7 +327,7 @@ export function buildDeepContext(w: World, c: Candidate, o: DeepContextOptions =
       intents: mi.intents.map(it => ({
         objective: scrub(it.objective), category: it.category,
         ...(it.details ? { details: scrub(it.details) } : {}), ...(it.desiredPeople ? { desired_people: scrub(it.desiredPeople) } : {}),
-        created_days_ago: daysAgo(it.createdAt), expires_in_days: r1((it.createdAt + it.horizonDays * DAY - now) / DAY),
+        created_days_ago: daysAgo(it.createdAt), expires_in_days: r1((standingIntentDeadline(it) - now) / DAY),
         ...(anchorIntent?.id === it.id ? { anchors_this: true } : {}),
       })),
       presence: mi.presence.map(p => presenceOf(p, now)),

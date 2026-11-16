@@ -86,13 +86,13 @@ Every project built here uses this, and nothing beside it:
 | For | Use | Never |
 |---|---|---|
 | Runtime | Node 26 | an older Node |
-| Packages | pnpm workspaces, pinned by `packageManager`; Turborepo runs and caches tasks across them ([SPEC.md](SPEC.md#one-spec-tree)) | npm, yarn, bun; a second task runner |
+| Packages | pnpm workspaces, pinned by `packageManager`; Turborepo runs and caches tasks across them ([SPEC.md](SPEC.md#one-spec-tree)) | npm, yarn; a second task runner |
 | Rules and state | the spec, and the code `gen/` derives from it | a second model of the same state |
 | Shell: effects, services, I/O, async | [VibeLang](.claude/skills/shell/SKILL.md) (`.vibe`) on Effect 4 | plain TypeScript for effectful code; Redux, Zustand or another state library |
 | User interface | React, in `.tsx`, built with Vite | Vue, Svelte, Angular, hand-built DOM |
 | UI state | React hooks over the generated machine's `Machine` service | state kept in a component that the spec owns |
 | Styling | Tailwind CSS v4 with the project's design tokens, shadcn/ui conventions on Radix primitives | hard-coded colors, a second token set, global CSS beyond the token file |
-| Tests | Vitest with `@effect/vitest`, on `test/**/*.test.{vibe,tsx}`; a driver for a shell that keeps a machine's state | Jest, `node --test` for a new test |
+| Tests | Vitest with `@effect/vitest`, on `test/**/*.test.{vibe,tsx}`; a driver for a shell that keeps a machine's state; Bombadil exploring each page | Jest, `node --test` for a new test |
 
 - **Every interface is React**: an application's, an example's and Studio's.
 - **Reuse before adding.** Find the component, token or service that exists
@@ -359,6 +359,11 @@ How `pnpm check` runs them, in its `tests` stage:
 - **Drivers are not tests.** `test/drivers/` is run by the `traces` stage
   ([SPEC.md, Conformance](SPEC.md#conformance)), and imports `gen/` as types only; `check`
   fails on a driver that imports its code.
+- **The page is explored.** The `explore` stage serves a package's
+  `index.html` with its `start` or `dev` script and lets Bombadil drive it,
+  checking `test/bombadil.ts`, or Bombadil's defaults, in every state
+  ([SPEC.md, "Exploring the page"](SPEC.md#exploring-the-page)). A property
+  there cites its rule as a test does.
 - **Notes**, never failures: two test files for one runner and language, a
   test file of 15,000 lines, and a spec of the package that no test cites and
   no driver, trace or `driver:` script checks.

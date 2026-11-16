@@ -47,6 +47,18 @@ pure def lawAGroupNeedsAtLeastThree(remaining: int): bool =
   groupCanContinue(remaining) implies remaining >= 3
 ```
 
+### A new minor signal closes an unbooked opportunity involving that person
+
+Close an opportunity still in review or probing when a person involved becomes known to be a minor. This applies to current members, alternates, and someone who received a probe and was already replaced. A booked opportunity uses the existing cancellation path if the minor is on the booked roster.
+
+```quint
+pure def closesForMinor(proposal: OpportunityLifecycle, minorSignal: bool, participant: bool, alternate: bool, contacted: bool): bool =
+  (proposal.phase == InReview or proposal.phase == Probing) and minorSignal and (participant or alternate or contacted)
+
+pure def lawMinorContactClosesAnUnbookedOpportunity(proposal: OpportunityLifecycle): bool =
+  (proposal.phase == InReview or proposal.phase == Probing) implies closesForMinor(proposal, true, false, false, true)
+```
+
 ### A scheduled opportunity is done when feedback becomes due
 
 Once the feedback time arrives, the Network marks the scheduled opportunity done and records the feedback request. A refusal, cancellation, or expiry can close any open stage. Done and closed are terminal.

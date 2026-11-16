@@ -1,15 +1,15 @@
-// bun run sim: the single validation command. Offline and deterministic: no LLM, no network, and no
+// pnpm run sim: the single validation command. Offline and deterministic: no LLM, no network, and no
 // Postgres except the safety block's Postgres scenarios, which run on a database of their own on the
 // dev cluster (:54339) when it is there and are tracked as skipped when it is not. Each block runs
 // simulations (or scores hand-written corpora) and checks named gates; the run exits 1 when any
 // BLOCKING gate fails. Tracked gates are printed and never fail the run.
 //
-//   bun run sim                      evals, onboard, network, slop, relay, peon, friends, clef (the CI run)
-//   bun run sim --only slop          one block (repeatable or comma-separated: --only network,peon)
-//   bun run sim --quick              fewer seeds and shorter runs; quality gates become tracked
-//   bun run sim --with-capital       also the network-capital block (slow: 32 paired seeds; nightly)
-//   bun run sim --json out.json      write every gate to a file
-//   bun run sim --only onboard --llm  also the onboarding LLM arm (keeps the provider keys; tracked only; never in CI)
+//   pnpm run sim                      evals, onboard, network, slop, relay, peon, friends, clef (the CI run)
+//   pnpm run sim --only slop          one block (repeatable or comma-separated: --only network,peon)
+//   pnpm run sim --quick              fewer seeds and shorter runs; quality gates become tracked
+//   pnpm run sim --with-capital       also the network-capital block (slow: 32 paired seeds; nightly)
+//   pnpm run sim --json out.json      write every gate to a file
+//   pnpm run sim --only onboard --llm  also the onboarding LLM arm (keeps the provider keys; tracked only; never in CI)
 //
 // Blocks and pinned seeds (see each block's header in scripts/sim/):
 //   evals     evals/ corpora: consent replies, abuse, teen ages, wants, areas, negations, core replies, opt-out, leak guard
@@ -37,6 +37,7 @@
 //   clef      P2 Clef weight fitting: synthetic labels from the slop world's hidden appearance (seed 1, 2,000 labels
 //             per dimension); ranking recovery, weights file round trip, extraction, bias audit, labelling page
 //   capital   network capital: 32 paired seeds, 90 days (--with-capital or --only capital)
+import { writePath } from "../packages/core/src/runtime/files.ts";
 import { auditBlock } from "./sim/audit.ts";
 import { capitalBlock } from "./sim/capital.ts";
 import { clefBlock } from "./sim/clef.ts";
@@ -106,5 +107,5 @@ const total = Math.round((performance.now() - t0) / 100) / 10;
 console.log(`\n${failed.length ? "FAIL" : "PASS"}: ${all.filter(g => g.blocking).length - failed.length}/${all.filter(g => g.blocking).length} blocking gates, ${all.filter(g => !g.blocking && !g.pass).length} tracked off target, ${total}s (${Object.entries(timings).map(([k, v]) => `${k} ${v}s`).join(", ")})`);
 for (const g of failed) console.error(`  FAIL [${g.block}] ${g.name}${g.detail ? `: ${g.detail.split("\n")[0]}` : ""}`);
 const out = values("json")[0];
-if (out) await Bun.write(out, JSON.stringify({ quick: opts.quick, blocks: run, timings, total, gates: all }, null, 1));
+if (out) await writePath(out, JSON.stringify({ quick: opts.quick, blocks: run, timings, total, gates: all }, null, 1));
 process.exit(failed.length ? 1 : 0);

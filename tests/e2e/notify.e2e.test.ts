@@ -2,8 +2,8 @@
 // out is recorded once, the person's assistant reads it through the MCP get_updates tool (their own
 // app only, then seen everywhere), the thread and the OAuth grant feed the surface signals, and the
 // inbox's own sends go through the Network's consent-checked delivery. Needs the dev Postgres.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { SQL } from "bun";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import type { Outbound } from "../../packages/network/service/channel.ts";
 import type { NetworkRuntime } from "../../packages/network/service/runtime.ts";
 import { connectMcp, newPhone, pgAvailable, rpc, startStack, toolData, webJoin, type Stack } from "./harness.ts";

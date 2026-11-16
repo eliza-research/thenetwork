@@ -1,9 +1,9 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S node --import=tsx
 // Restore a backup into a NEW scratch database and check it against the backup's manifest (docs/deploy.md
 // section 8; the restore drill is runbook-real.md section 8). It never writes into an existing database.
-//   bun run deploy/backup/restore.ts --from ./runs/backup/<stamp> --db restore_drill_20261008
-//   bun run deploy/backup/restore.ts --r2 postgres/production/<stamp> --db restore_drill_20261008
-//   bun run deploy/backup/restore.ts --r2 latest --db restore_drill_20261008     # the newest complete backup under BACKUP_PREFIX
+//   node --import tsx --env-file-if-exists=.env deploy/backup/restore.ts --from ./runs/backup/<stamp> --db restore_drill_20261008
+//   node --import tsx --env-file-if-exists=.env deploy/backup/restore.ts --r2 postgres/production/<stamp> --db restore_drill_20261008
+//   node --import tsx --env-file-if-exists=.env deploy/backup/restore.ts --r2 latest --db restore_drill_20261008     # the newest complete backup under BACKUP_PREFIX
 // The target server is RESTORE_DATABASE_URL (a login that may create databases; any database on that
 // server, usually the maintenance one). Exit 0: every table has the row count of the manifest.
 // Keep the scratch database only as long as the drill or the comparison needs it, then drop it.
@@ -16,11 +16,12 @@
 //    that is not the source (an empty replacement cluster). On the source server it is refused.
 //  - The source's own database on the source server is refused, as are the live names and any database that exists.
 //  - An encrypted backup (manifest.encryption) needs BACKUP_ENCRYPTION_KEY to decrypt after download.
+import { fileAt, writePath } from "../../packages/core/src/runtime/files.ts";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SQL } from "bun";
+import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { initial, shouldApplyRoles, step } from "../../packages/core/src/generated/databaseRestore.ts";
 import { pgEnv } from "./backup.ts";
 import { backupBucketFromEnv, backupKey, compareCounts, decryptFile, pgBin, redactUrls, rowCounts, run, safeDbName, sameServer, withDatabase, type BackupKey, type Manifest } from "./lib.ts";
@@ -37,7 +38,7 @@ export async function restore(o: { serverUrl: string; db: string; dir: string; k
   // spec/databaseRestore.md, "The target must be a valid scratch database name"
   let state = step(initial, { type: "checkName", name: o.db, validName: safeDbName(o.db) });
   if (state.phase !== "ReadingManifest") throw new Error(`refusing to restore into "${o.db}": use a new scratch name such as restore_drill_<date>`);
-  const manifest = JSON.parse(await Bun.file(join(o.dir, "manifest.json")).text()) as Manifest;
+  const manifest = JSON.parse(await fileAt(join(o.dir, "manifest.json")).text()) as Manifest;
   state = step(state, { type: "checkVersion", versionOne: manifest.version === 1 });
   if (state.phase !== "CheckingSource") throw new Error(`unknown manifest version ${manifest.version}`);
   const target = pgEnv(withDatabase(o.serverUrl, o.db));
@@ -109,13 +110,13 @@ export async function download(prefix: string, dir: string, env: Record<string, 
     if (k.id !== manifest.encryption.keyId) throw new Error(`BACKUP_ENCRYPTION_KEY is not the key this backup was made with (key id ${manifest.encryption.keyId})`);
   }
   for (const f of [manifest.files.dump, ...(manifest.files.roles ? [manifest.files.roles] : [])]) {
-    if (!k) { await Bun.write(join(dir, f), bucket.file(`${prefix}/${f}`)); continue; }
+    if (!k) { await writePath(join(dir, f), await bucket.stream(`${prefix}/${f}`)); continue; }
     const enc = join(dir, `${f}.enc`);
-    await Bun.write(enc, bucket.file(`${prefix}/${f}.enc`));
+    await writePath(enc, await bucket.stream(`${prefix}/${f}.enc`));
     try { await decryptFile(enc, join(dir, f), k); } finally { await rm(enc, { force: true }); }
   }
   const { encryption: _e, ...plain } = manifest;
-  await Bun.write(join(dir, "manifest.json"), JSON.stringify(plain));
+  await writePath(join(dir, "manifest.json"), JSON.stringify(plain));
   return prefix;
 }
 

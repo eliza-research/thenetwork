@@ -3,40 +3,38 @@
 # One image serves both Railway services: the backend (default command) and the optional
 # observatory console (deploy/backend/observatory.railway.toml overrides the start command, real mode only).
 
-# Bun 1.4.2 (the version the repo is tested with), Debian slim, pinned by its multi-arch index digest.
-# To update: look up the new tag's digest on Docker Hub (oven/bun), change both lines together, rebuild, rerun the smoke in docs/deploy.md.
-ARG BUN_IMAGE=oven/bun:1.4.2-slim@sha256:cb3bbbb08e13a4a2ff400f24c7a2a1d5efa83f6ef8544d52d95a519631e2fc61
+# Node 26.13.0 matches .nvmrc. Pin the official image to its multi-architecture index.
+ARG NODE_IMAGE=node:26.13.0-bookworm-slim@sha256:add5c17c14752c54d2f3d519ec46a3815684d41c33f198bcb09fb998f7dcbf68
 
-FROM ${BUN_IMAGE} AS build
+FROM ${NODE_IMAGE} AS build
 WORKDIR /app
 # Only what the processes run: the workspaces, the lockfile and the deploy entry (Dockerfile.dockerignore keeps the rest out).
-COPY package.json bun.lock tsconfig.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
 COPY packages ./packages
 COPY deploy ./deploy
+COPY tools/vibestack/vibestack/design ./tools/vibestack/vibestack/design
 # The fitted relay Clef weights (RELAY_CLEF_WEIGHTS_PATH=evals/relay/clef-relay-weights.json); the corpora stay out.
 COPY evals/relay/clef-relay-weights.json ./evals/relay/clef-relay-weights.json
-# The runtime has no npm dependencies of its own: this links the workspaces. No lifecycle scripts run.
-RUN bun install --frozen-lockfile --production --ignore-scripts
-# The connector pages inline the design-system CSS; the server refuses to start without it.
-# Bun runs both builds, and the design-system build runs the toolkit's token CLI with Bun too. The toolkit is not shipped.
-COPY tools/vibestack/vibestack/design ./tools/vibestack/vibestack/design
-RUN bun packages/design-system/build.ts build \
- && bun packages/mcp/src/pages/build-css.ts \
- && rm -rf tools
+# Link the workspaces and install their pinned runtime dependencies. No lifecycle scripts run.
+RUN npm install --global corepack@0.35.0 \
+    && corepack pnpm install --frozen-lockfile --prod --ignore-scripts
+# Build the CSS used in connector responses and in the staff console.
+RUN node packages/design-system/build.ts build \
+    && node --import tsx packages/mcp/src/pages/build-css.ts \
+    && rm -rf tools
 # The simulator, the judges, the eval corpora, the synthetic worlds and the Eliza plugin never run here:
-# the backend and the real-only console import none of them (bun run sim, block ops, checks this line).
+# the backend and the real-only console import none of them (pnpm run sim, block ops, checks this line).
 RUN rm -rf packages/sim packages/judge packages/evals packages/worlds packages/plugin-network
 
-FROM ${BUN_IMAGE}
+FROM ${NODE_IMAGE}
 WORKDIR /app
-COPY --from=build --chown=bun:bun /app /app
-# Never root. The bun user (uid 1000) ships with the base image.
-USER bun
+COPY --from=build --chown=node:node /app /app
+USER node
 ENV PORT=8790 STAFF_PORT=4848
 EXPOSE 8790 4848
 # Railway uses healthcheckPath in railway.toml; this is for docker and podman runs.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-  CMD ["bun", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||8790)+'/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+  CMD ["node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||8790)+'/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
 STOPSIGNAL SIGTERM
-# Exec form: bun is PID 1 and gets SIGTERM itself (graceful shutdown in server.ts).
-CMD ["bun", "run", "deploy/backend/server.ts"]
+# Exec form gives the Node process SIGTERM for graceful shutdown in server.ts.
+CMD ["node", "--import", "tsx", "deploy/backend/server.ts"]

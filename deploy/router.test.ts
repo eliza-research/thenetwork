@@ -1,8 +1,11 @@
 // The site router's fetch handler with a fake env and a fake fetch (no Miniflare, no network):
 // which paths go to the backend, which headers it strips and signs, and that the rest are assets.
-//   bun test deploy
-import { describe, expect, test } from "bun:test";
+//   pnpm exec vitest run deploy
+import { describe, expect, test } from "vitest";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { build } from "esbuild";
+import { parse as parseToml } from "smol-toml";
 import { PROXY_HEADERS, proxySignature, verifyProxyHeaders } from "../packages/platform/src/proxy.ts";
 import { handle, isBackendPath, MAX_BODY_BYTES, RETIRED_SITE_PATHS, RETIRED_SIGNUP_PATHS, RUN_WORKER_FIRST, UNKNOWN_IP, type Env } from "./router.ts";
 
@@ -66,11 +69,11 @@ describe("which paths reach the backend", () => {
     // The built _worker.js exports only the default handler (workerd refuses any other named export:
     // "Incorrect type for map entry 'MAX_BODY_BYTES'" under wrangler pages dev, before the fix).
     const { ROUTER } = await import("../sites/sites.ts");
-    const built = await Bun.build({ entrypoints: [ROUTER], target: "browser", format: "esm", minify: true });
-    const code = await built.outputs[0]!.text();
+    const built = await build({ entryPoints: [ROUTER], bundle: true, write: false, platform: "browser", format: "esm", minify: true });
+    const code = built.outputFiles[0]!.text;
     expect([...code.matchAll(/export\s*\{([^}]*)\}/g)].map(m => m[1]!.split(",").map(x => x.trim().split(/\s+as\s+/).at(-1))).flat()).toEqual(["default"]);
     for (const s of SITES) {
-      const toml = (await import(join(import.meta.dir, "../sites", s.domain, "wrangler.toml"))).default as { name: string; pages_build_output_dir: string; main?: string; assets?: unknown; routes?: unknown; account_id?: string; vars: Record<string, string> };
+      const toml = parseToml(readFileSync(join(import.meta.dirname, "../sites", s.domain, "wrangler.toml"), "utf8")) as { name: string; pages_build_output_dir: string; main?: string; assets?: unknown; routes?: unknown; account_id?: string; vars: Record<string, string> };
       expect(toml.name, s.domain).toBe(s.project);
       expect(toml.pages_build_output_dir, s.domain).toBe("./dist");
       // A Workers config (main, [assets], custom-domain routes) would deploy a Worker, not the Pages project.

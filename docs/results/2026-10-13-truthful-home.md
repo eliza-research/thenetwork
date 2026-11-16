@@ -1,5 +1,7 @@
 # Explicit home and conversation ownership
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-13-truthful-home.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 Date: 2026-10-13. Attribution: Automated. Base: `61d5663`.
 Implementation: `948dc6bc809a29c93b04d444a47949e3335076ca`.
 Reproduced issue: [#72](https://github.com/eliza-research/thenetwork/issues/72).
@@ -30,11 +32,11 @@ the same predicate. No network activation or historical data backfill was added.
 
 ## Closed source evidence
 
-Bun 1.4.2; owned local Postgres port 54349; isolated synthetic test databases.
+the former runtime 1.4.2; owned local Postgres port 54349; isolated synthetic test databases.
 No live provider, model, personal account or real OTP was used.
 
 - Same-command HTTP/Postgres reproduction, using existing exposed fields:
-  `bun test --conditions eliza-source tests/e2e/platform.e2e.test.ts -t 'explicit home survives'`.
+  `pnpm exec vitest run --conditions eliza-source tests/e2e/platform.e2e.test.ts -t 'explicit home survives'`.
   Base: 0 pass, 1 fail, 3 assertions; expected SF, received NYC. Fixed: 1 pass,
   37 assertions. The case verifies profile learning, real record/age, fresh
   service reload, physical-presence boundaries, invalid input and an NYC control.
@@ -43,8 +45,8 @@ No live provider, model, personal account or real OTP was used.
   child-app home propagation, signed agent context and the lowest-age guard.
 - Existing platform E2E plus service-apps, service-platform, shared-agent and
   shared-actions integration files: 81 pass, 0 fail, 1,291 assertions.
-- `bun node_modules/typescript/bin/tsc --noEmit`: exit 0.
-- Official `bun run --conditions eliza-source scripts/sim.ts --only network`:
+- `pnpm exec tsc --noEmit`: exit 0.
+- Official `node --import tsx --env-file-if-exists=.env --conditions eliza-source scripts/sim.ts --only network`:
   61/61 blocking gates pass; 0 tracked targets missed; 101.2 seconds. The normal
   runner clears model keys. The whole simulation suite was not rerun locally.
 
@@ -70,12 +72,12 @@ The same-command HTTP/PostgreSQL RED/GREEN case additionally uses identical fina
 
 ### Reproduce the browser flow
 
-For a clean checkout, install the documented Bun1.4.2 dependencies and PostgreSQL16 prerequisites.
+For a clean checkout, install the project dependencies and PostgreSQL 16 prerequisites.
 Use a fresh, owned local database. Do not reuse another operator's database or occupied ports.
 The standard dry-run platform command below uses the documented local dev cluster on54339.
 
 ```sh
-NETWORK_DATABASE_URL=postgres://$USER@127.0.0.1:54339/truthful_home_demo bun run platform:dev
+NETWORK_DATABASE_URL=postgres://$USER@127.0.0.1:54339/truthful_home_demo pnpm run platform:dev
 curl -fsS -X POST 'http://127.0.0.1:4848/invite?app=ntwrk' \
   -H 'Authorization: Bearer dev-admin' -H 'Content-Type: application/json' \
   --data '{"phone":"+12125550177"}'

@@ -1,3 +1,4 @@
+import { setTimeout as waitForMs } from "node:timers/promises";
 // The remote MCP server and its OAuth 2.1 authorization server, as one fetch handler that the
 // service mounts next to the platform's /api/*. Each site's Worker forwards /mcp, /oauth/* and
 // /.well-known/oauth-* to the shared backend, so every site is its own issuer and resource:
@@ -9,11 +10,13 @@
 import { devShortcutsAllowed, ipBucket, signupAccountView, type Env } from "@thenetwork/platform";
 import { verifyProxyHeaders } from "@thenetwork/platform/src/proxy.ts";
 import { readCappedText } from "@thenetwork/platform/src/body.ts";
+import { signupDraftAppEnabled, signupDraftBrowserAction, signupDraftBrowserSource, signupDraftClaimRoute, signupDraftDiscardAllowed } from "../../core/src/generated/mcpSignupDraft.ts";
 import {
   type BrowserForm, type StoredPage, initial as browserInitial, mayCompareBrowserDigest,
   sessionMatchesConsent, step as stepBrowser,
 } from "../../core/src/generated/oauthBrowserAuthorization.ts";
-import { initial as issuanceInitial, requestIsLive, step as stepIssuance } from "../../core/src/generated/oauthGrantIssuance.ts";
+import { requestIsLive } from "../../core/src/generated/oauthGrantIssuance.ts";
+import { issueConnectorGrant } from "../../core/src/vibe/oauthGrantIssuanceShell.js";
 import {
   type TokenAuthority, type TokenFlow, type TokenReason, canReadAuthority, canReadCodeBinding, canReadRefreshBinding,
   canRecordRotation, canRecordTokens, codeCanBeConsumed, initial as tokenInitial, step as stepToken, tokenRevocation,
@@ -90,7 +93,7 @@ export const LIMITS = {
 };
 
 export interface McpHandler {
-  /** The answer for an MCP or OAuth path, or undefined for any other path. Pass the Bun server for the socket address. */
+  /** The answer for an MCP or OAuth path, or undefined for any other path. Pass the HTTP server for the socket address. */
   fetch(req: Request, server?: { requestIP(req: Request): { address: string } | null }): Promise<Response | undefined>;
   store: OAuthStore;
   /** Revoke every consent of a phone (one app, or all). Call it when the person leaves an app or deletes everything. */
@@ -193,8 +196,12 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   /** Tell the inbox an assistant was connected or disconnected for the grant's person (never blocks OAuth). */
   async function linked(grant: Grant | undefined, active: boolean) {
     if (!grant?.personId || !o.platform.assistantLinked) return;
-    const client = await store.getClient(grant.clientId);
-    await o.platform.assistantLinked(grant.personId, client ? assistantOf(client) : "web", active).catch(e => log(`[mcp] assistant ${active ? "link" : "unlink"} not recorded: ${(e as Error).message}`));
+    try {
+      const client = await store.getClient(grant.clientId);
+      await o.platform.assistantLinked(grant.personId, client ? assistantOf(client) : "web", active);
+    } catch (error) {
+      log(`[mcp] assistant ${active ? "link" : "unlink"} not recorded: ${(error as Error).message}`);
+    }
   }
   /** Every revocation goes through here, so the inbox always hears about it. */
   async function revokeGrant(id: string, at: number) {
@@ -511,7 +518,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
 
     if (action.phase === "StartingOtp") {
       const t0 = performance.now();
-      const pad = async () => { const left = (o.minOtpStartMs ?? 700) - (performance.now() - t0); if (left > 0) await Bun.sleep(left); };
+      const pad = async () => { const left = (o.minOtpStartMs ?? 700) - (performance.now() - t0); if (left > 0) await waitForMs(left); };
       if (o.turnstile && !(await o.turnstile.verify(form.get("cf-turnstile-response") ?? undefined, c.ip, c.app.id))) {
         return phonePage(c.app, r.id, { error: "Please complete the check and try again.", turnstileSiteKey: o.turnstile.siteKey });
       }
@@ -590,40 +597,56 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     return redirectTo(r.redirectUri, { error: "access_denied", error_description: "Connection cancelled", state: r.state, iss: c.issuer }, 303, { "set-cookie": clearCookie });
   }
 
-  /** Validate Cloud authority before single-use consumption so outages remain retryable. */
+  /** Validate Cloud authority before the atomic issuance so outages remain retryable. */
   async function finishAuthorization(c: Ctx, r: AuthRequest & { e164: string }, client: OAuthClient, authority?: Grant["cloudAuthority"]): Promise<Response> {
     const clearCookie = `${browserCookie(c.app)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies(c.app) ? "; Secure" : ""}`;
-    const at = now();
-    const expired = () => messagePage(c.app, "This page has expired", "Go back to the assistant and connect again.");
-    const began = stepIssuance(issuanceInitial, { type: "beginApproval", requestLive: requestIsLive(at, r.expiresAt) });
-    if (began.phase !== "AwaitingAuthority") return expired();
-    const grant: Grant = { id: `${authority ? "grant_cloud_" : "grant_"}${randomId()}`, clientId: client.id, app: c.app.id, phoneKey: o.platform.phoneKey(r.e164), personId: r.personId, scopes: r.scopes, resource: r.resource, createdAt: at, expiresAt: Math.min(at + ttl.grantMs, authority?.expiresAt ?? Infinity), revokedAt: null, ...(authority ? { cloudAuthority: authority } : {}) };
-    const cloudStatus = await cloudGrantCurrent(grant);
-    const checked = stepIssuance(began, {
-      type: "checkGrantAuthority",
-      authority: cloudStatus === "valid" ? "AuthorityValid" : cloudStatus === "unavailable" ? "AuthorityUnavailable" : "AuthorityInvalid",
+    const issued = await issueConnectorGrant<Grant>(r, {
+      now,
+      makeGrant: at => ({
+        id: `${authority ? "grant_cloud_" : "grant_"}${randomId()}`,
+        clientId: client.id,
+        app: c.app.id,
+        phoneKey: o.platform.phoneKey(r.e164),
+        personId: r.personId,
+        scopes: r.scopes,
+        resource: r.resource,
+        createdAt: at,
+        expiresAt: Math.min(at + ttl.grantMs, authority?.expiresAt ?? Infinity),
+        revokedAt: null,
+        ...(authority ? { cloudAuthority: authority } : {}),
+      }),
+      checkAuthority: cloudGrantCurrent,
+      prepareIssuance: (grant, at) => {
+        const code = randomToken("ntwc_");
+        const record: AuthCode = {
+          hash: sha256hex(code), grantId: grant.id, clientId: client.id, redirectUri: r.redirectUri,
+          codeChallenge: r.codeChallenge, resource: r.resource, scopes: r.scopes,
+          createdAt: at, expiresAt: at + ttl.codeMs, usedAt: null,
+        };
+        const audit = { at, clientId: client.id, grantId: grant.id, app: c.app.id };
+        return {
+          code,
+          commit: (approvalAt, confirm) => store.commitConsentGrant(r.id, approvalAt, confirm, {
+            grant, code: record,
+            audit: [
+              { ...audit, kind: "consent_granted", detail: r.scopes.join(" ") },
+              { ...audit, kind: "code_issued", detail: null },
+            ],
+          }),
+        };
+      },
     });
-    if (checked.phase === "RetryAuthority") return consentUnavailable(c, r, client);
-    if (checked.phase !== "AwaitingConsumption") return messagePage(c.app, "Connect again", "This connection is no longer valid. Return to your agent or text conversation and connect again.", 403);
-    const approved = await store.takeConsentRequest(r.id, now());
-    const ownerMatches = !!approved?.e164 && approved.e164 === r.e164 && approved.personId === r.personId;
-    const consumedRequestLive = ownerMatches && requestIsLive(now(), approved.expiresAt);
-    const consumed = stepIssuance(checked, {
-      type: "checkConsumption",
-      consumption: { ownerMatches, consumedRequestLive, pendingGrantLive: consumedRequestLive && requestIsLive(now(), grant.expiresAt) },
-    });
-    if (consumed.phase !== "AwaitingPersistence") return expired();
-    await store.putGrant(grant);
-    await linked(grant, true);
-    const code = randomToken("ntwc_");
-    const ac: AuthCode = { hash: sha256hex(code), grantId: grant.id, clientId: client.id, redirectUri: r.redirectUri, codeChallenge: r.codeChallenge, resource: r.resource, scopes: r.scopes, createdAt: at, expiresAt: at + ttl.codeMs, usedAt: null };
-    await store.putCode(ac);
-    await store.audit({ at, kind: "consent_granted", clientId: client.id, grantId: grant.id, app: c.app.id, detail: r.scopes.join(" ") });
-    await store.audit({ at, kind: "code_issued", clientId: client.id, grantId: grant.id, app: c.app.id, detail: null });
-    const issued = stepIssuance(consumed, { type: "recordIssuance" });
-    return issued.phase === "GrantIssued"
-      ? redirectTo(r.redirectUri, { code, state: r.state, iss: c.issuer }, 303, { "set-cookie": clearCookie })
-      : expired();
+    switch (issued.kind) {
+      case "expired":
+        return messagePage(c.app, "This page has expired", "Go back to the assistant and connect again.");
+      case "retry":
+        return consentUnavailable(c, r, client);
+      case "denied":
+        return messagePage(c.app, "Connect again", "This connection is no longer valid. Return to your agent or text conversation and connect again.", 403);
+      case "issued":
+        await linked(issued.grant, true);
+        return redirectTo(r.redirectUri, { code: issued.code, state: r.state, iss: c.issuer }, 303, { "set-cookie": clearCookie });
+    }
   }
 
   // ---------------------------------------------------------------- token, revoke
@@ -997,23 +1020,27 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       case "/oauth/signup-draft/discard": {
         if (req.method !== "POST") return json(405, { error: "method_not_allowed" });
         // Same-origin session only. No draft IDs, phone or facts in URLs or request bodies.
-        if (!originOk(c) || (req.headers.get("origin") === null && req.headers.get("sec-fetch-site") !== "same-origin") || url.search) return json(403, { error: "not_allowed" });
-        if (!["ntwrk", "friends"].includes(c.app.id)) return json(404, { error: "not_found" });
+        const browserConfirmed = req.headers.get("origin") !== null || req.headers.get("sec-fetch-site") === "same-origin";
+        if (!signupDraftBrowserSource(originOk(c), browserConfirmed, !!url.search)) return json(403, { error: "not_allowed" });
+        if (!signupDraftAppEnabled(c.app.id)) return json(404, { error: "not_found" });
         const who = await o.platform.session?.(c.app.id, req);
         if(who==="unavailable")return temporarilyUnavailable();
         if (!who) return json(401, { error: "sign_in_required" });
         const key = o.platform.phoneKey(who.e164);
-        if (who.personId !== await o.platform.personForKey(key)) return json(403, { error: "not_allowed" });
-        if (p.endsWith("/discard")) {
+        const action = signupDraftBrowserAction(who.personId === await o.platform.personForKey(key), p.endsWith("/discard"));
+        if (action === "RefuseBrowserAction") return json(403, { error: "not_allowed" });
+        if (action === "CheckDiscardView") {
           const body = await readJson(req);
-          if (!body || body.signupView !== signupAccountView(c.app.id, key)) return json(403, { error: "not_allowed" });
+          if (!signupDraftDiscardAllowed(action, !!body && body.signupView === signupAccountView(c.app.id, key))) return json(403, { error: "not_allowed" });
           await store.discardSignupDrafts(key, c.app.id, now());
           return json(200, { discarded: true }, who.setCookie ? { "set-cookie": who.setCookie } : {});
         }
         if (!o.platform.withSignupAgePolicy || !o.platform.setSignupAgeCleanup) return json(403, { error: "not_allowed" });
         return o.platform.withSignupAgePolicy(key, c.app.id, async allowed => {
-          if (who.personId !== null && !["not_joined", "invited"].includes(await o.platform.status(who.personId, c.app.id))) return json(403, { error: "not_allowed" });
-          const draft = allowed ? await store.claimSignupDraft(key, c.app.id, who.personId, now()) : undefined;
+          const status = who.personId === null ? "not_joined" : await o.platform.status(who.personId, c.app.id);
+          const decision = signupDraftClaimRoute(status, allowed);
+          if (decision === "RefuseClaim") return json(403, { error: "not_allowed" });
+          const draft = decision === "ReadDraft" ? await store.claimSignupDraft(key, c.app.id, who.personId, now()) : undefined;
           const response = json(200, { draft: draft ?? null, signupView: signupAccountView(c.app.id, key) }, { "cache-control": "no-store" });
           if (who.setCookie) response.headers.append("set-cookie", who.setCookie);
           return response;

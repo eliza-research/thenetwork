@@ -1,4 +1,4 @@
-// The capital block (nightly, or `bun run sim --with-capital`): the network-capital simulation
+// The capital block (nightly, or `pnpm run sim --with-capital`): the network-capital simulation
 // (packages/capital/experiments/run.ts) and its launch gates. The primary fairness gate needs at least
 // 32 paired seeds (capital-13), so this block is slow; it is not part of the default run.
 //   blocking: (a) NC levers lower the bottom/top-decile V14 ratio by <= 0.02 (95% CI lower bound, paired

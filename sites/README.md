@@ -81,11 +81,11 @@ join page needs it and says so in `<noscript>`.
 ## Commands
 
 ```bash
-bun run sites:dev                 # all four sites; backend paths proxied to PLATFORM_API_ORIGIN (default http://127.0.0.1:8790)
-bun run sites:dev slop            # one site
-bun run sites/sites.ts            # build every site into sites/<domain>/dist
-DEPLOY_TARGET=production TURNSTILE_SITE_KEY=... bun run sites/sites.ts   # production build: refuses draft legal text
-bunx tsc --noEmit -p sites/tsconfig.json   # typecheck (the root tsconfig does not include sites/)
+pnpm run sites:dev                 # all four sites; backend paths proxied to PLATFORM_API_ORIGIN (default http://127.0.0.1:8790)
+pnpm run sites:dev slop            # one site
+pnpm run sites:build            # build every site into sites/<domain>/dist
+DEPLOY_TARGET=production TURNSTILE_SITE_KEY=... pnpm run sites:build   # production build: refuses draft legal text
+pnpm exec tsc --noEmit -p sites/tsconfig.json   # typecheck (the root tsconfig does not include sites/)
 ```
 
 The dev proxy forwards the same paths as the production router (`/api/*`, `/mcp`, `/oauth/*`,

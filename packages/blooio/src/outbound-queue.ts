@@ -35,9 +35,11 @@ import {
   consentPolicy, conversationPolicy, duePolicy, lineCaps, linePolicy, livePolicy, personPolicy, quietPolicy,
   recipientPolicy, replyPolicy, textPolicy,
 } from "../../core/src/generated/outboundAdmission.ts";
-import { initial as initialReceipt, step as stepReceipt, type FailureKind, type ReceiptPhase } from "../../core/src/generated/outboundReceipt.ts";
+import { step as stepReceipt, type FailureKind, type ReceiptPhase } from "../../core/src/generated/outboundReceipt.ts";
+import { receiptAccepted, receiptFinal, receiptMessageStatus } from "../../core/src/generated/turnReceipt.ts";
+import { settleClaimedSend, type SendDisposition } from "../../core/src/vibe/outboundReceiptShell.js";
 import { parseApprovedRelayPhotos, type ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
-import type { SQL } from "bun";
+import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY, HOUR, MINUTE } from "../../core/src/clock.ts";
 import { LeakGuard } from "../../core/src/guard.ts";
 import { normalizeAddress } from "./phone.ts";
@@ -59,6 +61,8 @@ export type RecipientCheck = { ok: true } | { ok: false; reason: string };
 
 /** What must not appear in a message to this recipient (see LeakOptions in packages/core/src/guard.ts). */
 export interface LeakSources {
+  /** Exact, complete tokens authorized for this row's contact check. */
+  contactAllow?: readonly string[];
   forbidden?: string[];
   privateVocab?: string[];
   canaries?: string[];
@@ -185,6 +189,12 @@ export interface QueueOptions {
   /** The Network's own fixed copy that may carry its contact details (removed before the contact checks). */
   leakAllow?: string[];
   onAlert?: (id: string, reason: string) => void;
+}
+
+class ClaimedSendWriteError extends Error {
+  constructor(cause: unknown) {
+    super("The admitted send outcome could not be stored", { cause });
+  }
 }
 
 export class IdempotencyConflictError extends Error {
@@ -316,6 +326,11 @@ export class OutboundQueue {
         try {
           c = await this.dispatch(row);
         } catch (e) {
+          if (e instanceof ClaimedSendWriteError) {
+            // A provider call may have succeeded. Retain the lease and payload for recovery.
+            this.o.onAlert?.(row.id, "claimed_outcome_write_failed");
+            continue;
+          }
           // One bad row never stops the drain: it is parked for a person and the drain goes on.
           c = await this.end(row, "parked_error", (e as Error).message);
           this.o.onAlert?.(row.id, "dispatch_error");
@@ -454,13 +469,14 @@ export class OutboundQueue {
     return this.send(row, isNew, conversation.reengage);
   }
 
-  private async leakReasons(row: QueueRow, db: SQL = this.sql): Promise<string[]> {
+  private async leakReasons(row: QueueRow, db: SQL = this.sql, contactAllow?: readonly string[]): Promise<string[]> {
     let src: LeakSources = {};
     if (this.o.checks.leaks) {
       try { src = await this.o.checks.leaks(row); } catch { return ["leak_check_error"]; }
     }
     const own = row.memberId ?? row.to;
-    const reasons = new LeakGuard({ ...src, canaryShapes: true, allow: [...(this.o.leakAllow ?? []), ...(src.allow ?? [])], contacts: row.kind !== "compliance" }).check(row.text, { exceptOwner: own });
+    const reasons = new LeakGuard({ ...src, canaryShapes: true, allow: [...(this.o.leakAllow ?? []), ...(src.allow ?? [])], contacts: row.kind !== "compliance" })
+      .check(row.text, { exceptOwner: own, contactAllow: [...(src.contactAllow ?? []), ...(contactAllow ?? [])] });
     // core-14: the new text together with the recent thread to this address (any app on the line), so a
     // value split across messages ("212 555" then "0102") is caught. The generic contact patterns run on
     // the new text alone (two ordinary messages joined can look like a number); another member's own
@@ -523,33 +539,72 @@ export class OutboundQueue {
     if (admission!=="admitted") return this.end(row,admission);
     const attempts = row.attempts + 1;
     try {
-      const receipt = await this.o.provider.send(this.request(row));
-      return this.acceptReceipt({...row,newConversation:isNew,reengagement}, receipt);
-    } catch (err) {
-      const e = err instanceof ChannelSendError ? err : new ChannelSendError(err instanceof Error ? err.message : String(err), "retryable");
-      const error = `${e.failure}${e.status ? ` ${e.status}` : ""}${e.code ? ` ${e.code}` : ""}: ${e.message}`.slice(0, 500);
-      await this.sql`update platform.outbound set last_error = ${error} where id = ${row.id}`;
-      // spec/outboundReceipt.md, "A provider failure either waits or ends the send"
-      const failure = stepReceipt(initialReceipt, {
-        type: "recordProviderError", failure: FAILURE_KIND[e.failure], hasAttemptsLeft: attempts < this.opt("maxAttempts", 6),
+      return await settleClaimedSend(attempts < this.opt("maxAttempts", 6), {
+        send: () => this.o.provider.send(this.request(row)),
+        saveReceipt: receipt => this.acceptReceipt({ ...row, newConversation: isNew, reengagement }, receipt),
+        classifyError: cause => {
+          const error = cause instanceof ChannelSendError ? cause : new ChannelSendError(
+            cause instanceof Error ? cause.message : String(cause), "retryable",
+          );
+          return { kind: FAILURE_KIND[error.failure], error };
+        },
+        unrecordedReceipt: () => new ChannelSendError("Provider response could not be recorded", "unknown"),
+        saveDisposition: (phase, error) => this.recordClaimedFailure(row, attempts, phase, error),
       });
-      switch (failure.phase) {
-        case "AcceptanceUnknown":
-          return this.wait(row, "unknown_acceptance", this.now, "provider acceptance unresolved; receipt lookup only");
-        case "RetryScheduled": {
-          const backoff = e.retryAfterMs ?? Math.min(this.opt("baseBackoffMs", 30_000) * 2 ** (attempts - 1), 30 * MINUTE);
-          return this.wait(row, "retry_scheduled", this.now + backoff, e.code ?? "retry");
-        }
-        case "WaitingForReply":
-          return this.wait(row, "held_awaiting_reply", this.now, e.code ?? "conversation limit");
-        case "ProviderBlocked":
-          this.o.onAlert?.(row.id, e.code ?? "blocked");
-          return this.end(row, "blocked", e.code, error);
-        default:
-          this.o.onAlert?.(row.id, e.failure === "retryable" ? "send_failed" : `send_${e.failure}`);
-          return this.end(row, "failed", e.failure === "retryable" ? "retries used up" : e.code, error);
-      }
+    } catch (error) {
+      throw new ClaimedSendWriteError(error);
     }
+  }
+
+  private async recordClaimedFailure(row: QueueRow, attempts: number, phase: SendDisposition, e: ChannelSendError): Promise<StatusChange> {
+    const error = `${e.failure}${e.status ? ` ${e.status}` : ""}${e.code ? ` ${e.code}` : ""}: ${e.message}`.slice(0, 500);
+    const now = this.now;
+    let status: string, note: string | undefined, alert: string | undefined;
+    let nextAttemptAt = now, terminal = false;
+    switch (phase) {
+      case "AcceptanceUnknown":
+        status = "unknown_acceptance";
+        note = "provider acceptance unresolved; receipt lookup only";
+        break;
+      case "RetryScheduled":
+        status = "retry_scheduled";
+        nextAttemptAt += e.retryAfterMs ?? Math.min(this.opt("baseBackoffMs", 30_000) * 2 ** (attempts - 1), 30 * MINUTE);
+        note = e.code ?? "retry";
+        break;
+      case "WaitingForReply":
+        status = "held_awaiting_reply";
+        note = e.code ?? "conversation limit";
+        break;
+      case "ProviderBlocked":
+        status = "blocked";
+        note = e.code;
+        alert = e.code ?? "blocked";
+        terminal = true;
+        break;
+      case "ProviderFailed":
+        status = "failed";
+        note = e.failure === "retryable" ? "retries used up" : e.code;
+        alert = e.failure === "retryable" ? "send_failed" : `send_${e.failure}`;
+        terminal = true;
+        break;
+    }
+    const wrote = await this.sql`update platform.outbound set status = ${status}, note = ${note ?? null}, last_error = ${error},
+      in_doubt = in_doubt or ${phase === "AcceptanceUnknown"},
+      next_attempt_at = case when ${terminal} then next_attempt_at else ${new Date(nextAttemptAt)} end,
+      ended_at = case when ${terminal} then ${new Date(now)} else ended_at end, updated_at = ${new Date(now)},
+      lease_owner = null, lease_until = null,
+      to_address = case when ${terminal} and member_id is null then null else to_address end,
+      body = case when ${terminal} and member_id is null then null else body end
+      where id = ${row.id} and app_id = ${row.app} and line = ${this.line} and status = 'sending'
+        and lease_owner = ${this.instance} and attempts = ${attempts} returning id`;
+    if (!wrote.length) return this.currentStatus(row);
+    if (alert) this.o.onAlert?.(row.id, alert);
+    if (terminal && row.personCap) await this.o.checks.capRelease?.(row).catch(() => {});
+    return { id: row.id, app: row.app, memberId: row.memberId, status };
+  }
+
+  private async currentStatus(row: QueueRow): Promise<StatusChange> {
+    return { id: row.id, app: row.app, memberId: row.memberId, status: await this.statusOf(row.id) ?? "dropped_forgotten" };
   }
 
   private request(row: QueueRow): SendRequest {
@@ -596,7 +651,7 @@ export class OutboundQueue {
       }
       return true;
     });
-    if (!committed) return {id:row.id,app:row.app,memberId:row.memberId,status:"dropped_forgotten"};
+    if (!committed) return this.currentStatus(row);
     if (status === "failed" && row.personCap) await this.o.checks.capRelease?.(row).catch(() => {});
     return {id:row.id,app:row.app,memberId:row.memberId,status};
   }
@@ -722,12 +777,12 @@ export class OutboundQueue {
   // Cloud reports acceptance (collectedReceipt).
 
   /** The leak guard's reasons for one reply that another transport will deliver (empty: it may go). `db`: the caller's transaction. */
-  async collectedLeaks(db: SQL, i: { id: string; memberId?: string; to: string; kind: MessageKind; text: string }): Promise<string[]> {
+  async collectedLeaks(db: SQL, i: { id: string; memberId?: string; to: string; kind: MessageKind; text: string; contactAllow?: readonly string[] }): Promise<string[]> {
     const row: QueueRow = {
       id: i.id, app: this.app, ...(i.memberId ? { memberId: i.memberId } : {}), line: this.line, to: normalizeAddress(i.to), kind: i.kind, text: i.text, mediaUrls: [],
       timeZone: "UTC", status: "collected", attempts: 0, createdAt: this.now, inDoubt: false, personCap: false, newConversation: false, reengagement: false,
     };
-    return this.leakReasons(row, db);
+    return this.leakReasons(row, db, i.contactAllow);
   }
 
   /** Record collected replies to members (thread history for the leak guard) in the caller's transaction. A replay is a no-op. */
@@ -745,10 +800,10 @@ export class OutboundQueue {
   /** Cloud's turn receipt for collected replies: accepted ones enter the thread history (sent_at); the others end. */
   async collectedReceipt(tx: SQL, ids: string[], outcome: "accepted" | "unknown" | "rejected", at: number): Promise<void> {
     if (!ids.length) return;
-    const status = outcome === "accepted" ? "sent" : outcome === "unknown" ? "send_unknown" : "refused_gateway";
+    const status = receiptMessageStatus(outcome);
     await tx`update platform.outbound set status = ${status}, updated_at = ${new Date(this.now)},
-      sent_at = case when ${outcome === "accepted"} then coalesce(sent_at, ${new Date(at)}) else sent_at end,
-      ended_at = case when ${outcome === "unknown"} then null else coalesce(ended_at, ${new Date(this.now)}) end
+      sent_at = case when ${receiptAccepted(outcome)} then coalesce(sent_at, ${new Date(at)}) else sent_at end,
+      ended_at = case when ${receiptFinal(outcome)} then coalesce(ended_at, ${new Date(this.now)}) else null end
       where app_id = ${this.app} and id = any(${tx.array(ids, "TEXT")}) and status in ('collected', 'send_unknown')`;
   }
 

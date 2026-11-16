@@ -1,6 +1,6 @@
 // PeopleStore on Postgres (the platform schema, migration 0003). The login needs the
-// platform_service role (or the owner). Run the migrations first (bun run db:migrate).
-import { SQL } from "bun";
+// platform_service role (or the owner). Run the migrations first (pnpm run db:migrate).
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import type { AppId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
 import { LONG_RATE_WINDOWS } from "./store.ts";

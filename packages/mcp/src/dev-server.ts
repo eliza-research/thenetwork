@@ -1,7 +1,8 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S node --import=tsx
+import { serveHttp } from "../../core/src/runtime/http.ts";
 // Local dev only: the MCP server for ntwrk on http://127.0.0.1:4849/mcp, with memory stores and the
 // platform's dev console OTP provider (codes are printed here; nothing is texted). For MCP clients and
-// the Inspector:  PLATFORM_ENV=dev bun run packages/mcp/src/dev-server.ts [--port 4849] [--app ntwrk]
+// the Inspector:  PLATFORM_ENV=dev node --import tsx --env-file-if-exists=.env packages/mcp/src/dev-server.ts [--port 4849] [--app ntwrk]
 import { parseArgs } from "node:util";
 import { Accounts, APPS, type AppInfo, devShortcutsAllowed, DevConsoleProvider, MemoryPeopleStore, OtpService, SessionService } from "@thenetwork/platform";
 import { isMcpAppId, type McpAppId } from "./apps.ts";
@@ -26,5 +27,5 @@ const handler = createMcpHandler({
   issuer: x => (x.id === app ? local : `https://${x.domain}`),
   hostMap: { [`127.0.0.1:${port}`]: app, [`localhost:${port}`]: app },
 });
-Bun.serve({ hostname: "127.0.0.1", port, fetch: async (req, server) => (await handler.fetch(req, server)) ?? new Response("not found", { status: 404 }) });
+await serveHttp({ hostname: "127.0.0.1", port, fetch: async (req, server) => (await handler.fetch(req, server)) ?? new Response("not found", { status: 404 }) });
 console.log(`MCP (${app}) on ${local}/mcp and ${local}/mcp/openai. OTP codes print here. Use 555-01xx numbers only.`);

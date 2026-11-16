@@ -1,5 +1,7 @@
 # Codebase audit: fixes and validation
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-19-codebase-audit.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 This report records verified changes. It does not certify the whole codebase or production.
 The first pass started at local `b9a6c20` on branch `codex/codebase-audit`.
 A live GitHub refresh found newer merged work. The branch was rebased onto `24b8d3a`.
@@ -20,7 +22,7 @@ An older age cannot raise the stored age.
 Regression command:
 
 ```sh
-REQUIRE_PG=1 bun test --conditions eliza-source packages/network/test/service-platform.test.ts --test-name-pattern 'repeated web join'
+REQUIRE_PG=1 pnpm exec vitest run --conditions eliza-source packages/network/test/service-platform.test.ts --test-name-pattern 'repeated web join'
 ```
 
 Before: 0 pass, 1 fail. Expected age 16; actual age 30.
@@ -81,7 +83,7 @@ Historical boundary at that run: PR #101 was incorporated locally and PR #99 was
 Five module-load errors and the old age behavior came from changing files during the diagnostic run.
 A fresh process on the rebased tree is required; no passing suite is claimed from that run.
 
-All runs above use Bun 1.4.2. Database runs use local Postgres on port 54339.
+All runs above use the former runtime 1.4.2. Database runs use local Postgres on port 54339.
 The real-LLM run below uses synthetic personas. No paid rater, live message, deployment,
 or real agent-client run has occurred in this audit.
 The deterministic regression has one scenario; confidence intervals do not apply.
@@ -117,7 +119,7 @@ content before the fix; after the fix it suppresses that content and still sends
 The queue uses a recording provider, fictional numbers, and a simulated clock; no live sends occur.
 
 ```sh
-REQUIRE_PG=1 bun test --conditions eliza-source --timeout 120000 packages/notify/test packages/platform/test/notify-retention.pg.test.ts packages/network/test/service-platform.test.ts packages/network/test/cloud-outbound.integration.test.ts
+REQUIRE_PG=1 pnpm exec vitest run --testTimeout 120000 packages/notify/test packages/platform/test/notify-retention.pg.test.ts packages/network/test/service-platform.test.ts packages/network/test/cloud-outbound.integration.test.ts
 ```
 
 Result: 41 pass, 0 fail, 476 assertions. Logs are in `runs/audit/notify-suite-after.log`.
@@ -147,7 +149,7 @@ The trigger is removed before the retry. Before the fix, slop stays at 30; after
 The person-level send fence remains a separate check; this regression does not claim a live minor contact.
 
 ```sh
-REQUIRE_PG=1 bun test --conditions eliza-source --timeout 120000 packages/network/test/service-platform.test.ts packages/platform/test/number-change.pg.test.ts packages/mcp/test/signup-draft.test.ts
+REQUIRE_PG=1 pnpm exec vitest run --testTimeout 120000 packages/network/test/service-platform.test.ts packages/platform/test/number-change.pg.test.ts packages/mcp/test/signup-draft.test.ts
 ```
 
 Result: 34 pass, 0 fail, 370 assertions; typecheck passes. Logs: `runs/audit/age-retry-before.log`,
@@ -162,7 +164,7 @@ The chosen fix repeats reconciliation on age statements. It does not add a backg
 
 ## Real-LLM evidence: synthetic persona wording
 
-Command: `bun run packages/sim/src/cli.ts --personas 6 --days 3 --seed 2 --llm`.
+Command: `node --import tsx --env-file-if-exists=.env packages/sim/src/cli.ts --personas 6 --days 3 --seed 2 --llm`.
 The launcher passes only basic process variables and the provider keys from the original checkout,
 with `DEFAULT_LLM_PROVIDER=surplus` and `DEFAULT_LLM_MODEL=gpt-6-luna`.
 No live-send, deployment, or channel settings are passed to the child.
@@ -186,7 +188,7 @@ candidate construction. Removed an unused probe context, summary wrapper, and sl
 The slate type had duplicated the match-check shape but had no consumer; deleting it avoids creating
 a new shared abstraction for unused code. Searches include all tracked source and documentation.
 
-`REQUIRE_PG=1 bun run sim --only peon --only evals` passes all 52 blocking gates before and after.
+`REQUIRE_PG=1 pnpm run sim --only peon --only evals` passes all 52 blocking gates before and after.
 Reported gate output is identical after excluding durations. The official seeds and sample sizes
 are those of the existing blocks; no model is called. Typecheck passes.
 Logs: `runs/audit/engine-cleanup-before.log`, `engine-cleanup-after.log`, and `typecheck-engine-cleanup.log`.
@@ -207,16 +209,16 @@ It no longer owns a second baseline context and text-item constructor. Alternati
 the copies or creating another fixture module. The existing shared library already supplies the
 same data to the relay CLI, so it needs no new dependency layer.
 
-`REQUIRE_PG=1 bun run sim --only relay` passes all 60 blocking gates before and after. Gate output
+`REQUIRE_PG=1 pnpm run sim --only relay` passes all 60 blocking gates before and after. Gate output
 is identical except timing; four tracked metrics remain off target. No model is called.
 Logs: `runs/audit/relay-dedupe-before.log` and `relay-dedupe-after.log`.
 Unused imports confirmed by the compiler were removed from 17 source, harness, and test files.
 Typecheck passes (`runs/audit/typecheck-import-cleanup.log`).
 
-`bun run check:mirror` confirms both service contract files match upstream `elizaOS/eliza@develop`.
+`pnpm run check:mirror` confirms both service contract files match upstream `elizaOS/eliza@develop`.
 They remain unchanged. Evidence: `runs/audit/contract-mirror-current.log`.
 The combined tree passes the full integration suite: 575 pass, 0 fail, 12212 assertions across
-61 files (`REQUIRE_PG=1 bun run test:integration`, `runs/audit/integration-second-batch.log`).
+61 files (`REQUIRE_PG=1 pnpm run test:integration`, `runs/audit/integration-second-batch.log`).
 
 ## Confirmed defect: backup privacy checks accept server errors
 
@@ -231,7 +233,7 @@ The full backup file passes 6 tests and 32 assertions, including encryption and 
 that checks source-server roles are unchanged. Typecheck passes.
 
 ```sh
-REQUIRE_PG=1 bun test --conditions eliza-source --timeout 120000 deploy/backup/backup.test.ts
+REQUIRE_PG=1 pnpm exec vitest run --testTimeout 120000 deploy/backup/backup.test.ts
 ```
 
 Logs: `runs/audit/backup-privacy-before.log`, `backup-privacy-after.log`, and `typecheck-backup.log`.
@@ -272,8 +274,8 @@ The suite covers built Pages workers, spoofed headers, signed app routing, body 
 Typecheck passes. Commands and logs:
 
 ```sh
-REQUIRE_PG=1 bun test --conditions eliza-source --timeout 120000 deploy/router.test.ts deploy/backend/backend.test.ts packages/platform/test/proxy.test.ts
-bun run typecheck
+REQUIRE_PG=1 pnpm exec vitest run --testTimeout 120000 deploy/router.test.ts deploy/backend/backend.test.ts packages/platform/test/proxy.test.ts
+pnpm run typecheck
 ```
 
 `runs/audit/proxy-dedupe-before.log`, `proxy-dedupe-after.log`, and `typecheck-proxy.log`.
@@ -293,7 +295,7 @@ Empty, zero, equal, concentrated, and generated count populations are included. 
 absolute difference is 2.220446049250313e-16; 790 comparisons differ only in floating-point rounding.
 The comparison is an ignored audit script, not a new unit-test suite.
 
-Before and after `REQUIRE_PG=1 bun run sim --only slop --only friends`: all 56 blocking gates pass,
+Before and after `REQUIRE_PG=1 pnpm run sim --only slop --only friends`: all 56 blocking gates pass,
 with the same nine tracked metrics off target. Typecheck passes. No model is called.
 Logs: `runs/audit/gini-before.log`, `gini-after.log`, `gini-numeric-before.log`,
 `gini-numeric-after.log`, and `typecheck-gini.log`.
@@ -473,7 +475,7 @@ It now applies the existing join-age policy after recording the floor. A later c
 receives `under_age`; it cannot raise the floor. Existing membership and consent are not recreated.
 
 Before: the added real-Postgres case expected HTTP 400 and received 200.
-After: `bun test --conditions eliza-source --timeout 120000 packages/network/test/service-platform.test.ts`
+After: `pnpm exec vitest run --testTimeout 120000 packages/network/test/service-platform.test.ts`
 passes 19 tests with 224 assertions. The case verifies a 30 to 16 to 12 age correction, a later 30
 claim, and unchanged consent-event count. This is deterministic API/database evidence, not a model run.
 

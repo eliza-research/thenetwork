@@ -3,6 +3,7 @@
 // minor contacts). Each seed is one child process of packages/network/harness/experiment.ts (the
 // same arms and the same judge numbers as the results docs), at most 2 at a time; the rest wait in a
 // queue. Each run is saved to runs/lab/<id>.json and loaded again when the server starts.
+import { spawnProcess } from "../../core/src/runtime/process.ts";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { APP_IDS, DEFAULT_APP, isAppId, matchingAllowed, type AppId } from "./apps.ts";
@@ -14,10 +15,10 @@ export const LAB_ARMS: readonly LabArm[] = ["push_baseline", "push_v2", "consent
 export const LAB_LIMITS = { maxSeeds: 5, maxDays: 60, concurrency: 2, maxQueued: 20 } as const;
 
 /**
- * The child's environment: what Bun needs to run, nothing else. API keys, database URLs and tokens
+ * The child's environment: what Node needs to run, nothing else. API keys, database URLs and tokens
  * stay in the server (a run is offline and deterministic; LIVE_TESTS is never passed).
  */
-export const LAB_ENV_KEYS = ["PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "TZ", "USER", "SHELL", "BUN_INSTALL", "NODE_ENV"] as const;
+export const LAB_ENV_KEYS = ["PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "TZ", "USER", "SHELL", "NODE_ENV"] as const;
 export function labEnv(env: Record<string, string | undefined> = process.env): Record<string, string> {
   const out: Record<string, string> = {};
   for (const k of LAB_ENV_KEYS) if (env[k] !== undefined) out[k] = env[k]!;
@@ -85,7 +86,7 @@ export class Lab {
   private active = 0;
   private seq = 0;
   private loaded: Promise<void>;
-  private children = new Set<ReturnType<typeof Bun.spawn>>();
+  private children = new Set<ReturnType<typeof spawnProcess>>();
   readonly dir: string;
   private script: string;
   private concurrency: number;
@@ -160,7 +161,7 @@ export class Lab {
     if (run.status === "queued") { run.status = "running"; run.startedAt = Date.now(); await this.save(run); }
     const r = run.request;
     try {
-      const child = Bun.spawn([process.execPath, "run", this.script, ...labArgs(r, seed)], {
+      const child = spawnProcess([process.execPath, "--import", "tsx", this.script, ...labArgs(r, seed)], {
         cwd: REPO, stdout: "pipe", stderr: "pipe", env: labEnv(),
       });
       this.children.add(child);

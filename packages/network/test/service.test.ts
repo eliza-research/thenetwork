@@ -1,19 +1,24 @@
 // The production service (packages/network/service) against the local dev Postgres, in a database
 // of its own per test process (the packages/observatory/test/pg.ts pattern). Nothing is sent: the
 // default adapter is dry-run, and the Blooio adapter gets a fake provider. Skipped without Postgres.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { setTimeout as sleep } from "node:timers/promises";
+import { findExecutable } from "../../core/src/runtime/process.ts";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { existsSync } from "node:fs";
-import { SQL } from "bun";
-import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
+import { SQL } from "../../core/src/runtime/postgres.ts";
+import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import type { SendRequest } from "../../blooio/src/types.ts";
+import { GENERATOR_NAMES } from "../../engine/src/config.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { BlooioAdapter } from "../service/channel.ts";
+import { importPublicEvents } from "../service/import-public-events.ts";
 import { NetworkService, WEBHOOK_PATH, type ServiceOptions } from "../service/service.ts";
+import { loadSnapshot } from "../service/snapshot.ts";
 import { START } from "./mini.ts";
 
 const T = 300_000;
-const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!Bun.which("pg_ctl");
+const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
 const DB = `network_service_test_${process.pid}`;
 const ADMIN_URL = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/postgres`;
 const URL_ = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/${DB}`;
@@ -71,7 +76,7 @@ async function say(s: NetworkService, clock: SimClock, id: string, text: string)
 const ONBOARD = ["hi!", "More time outdoors.", "Weekends, mostly.", "One-on-one is good."];
 const staff = (s: NetworkService, token: string, method: string, path: string, body?: unknown) =>
   s.fetch(new Request(`http://127.0.0.1${path}`, { method, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) }));
-const outbound = async (member: string) => (await sql`select id, body, status, type, opportunity_id, system from network.messages where direction = 'outbound' and member_id = ${member} order by ts, id`) as any[];
+const outbound = async (member: string) => (await sql`select id, body, status, type, opportunity_id, proactive, system from network.messages where direction = 'outbound' and member_id = ${member} order by ts, id`) as any[];
 
 describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
   beforeAll(async () => {
@@ -219,6 +224,257 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     expect(h.lastTick.thisInstance).toEqual({ at: clock.now(), ran: true });
   }, T);
 
+  // spec/standingIntent.md, "Changed matching evidence starts another standing intent search"
+  test("a new eligible member rechecks standing intents on the same day and queues human review", async () => {
+    await reset();
+    await sql`update network.members set account_status = 'invited' where id <> 'a'`;
+    const clock = new SimClock(START);
+    const options: Partial<ServiceOptions> = {
+      network: { seed: 1, maxNewPerDay: 1, plans: false, growth: false, selective: false,
+        engine: { floors: { fit: 0, mutualBenefit: 0, confidence: 0 }, retrieval: { minSim: 0 }, thresholds: { byState: { normal: 0 } } },
+      },
+    };
+    const s = service(clock, "intent-search", options);
+    expect((await staff(s, "adm-tok", "POST", "/matching", { on: true })).status).toBe(200);
+    for (const text of ONBOARD) await say(s, clock, "a", text);
+    const runCount = async () => (await sql<{ n: number }[]>`select count(*)::int as n from network.matching_runs where app_id = 'ntwrk'`)[0]!.n;
+    expect(await s.tick()).toBe(true);
+    expect(await runCount()).toBe(1);
+
+    // A changed matchable facet does not need a new day. A private facet does not trigger a run.
+    await sql`update network.facets set value = 'Indoor climbing' where id = 'a:interest:climbing'`;
+    clock.advance(MINUTE);
+    expect(await s.tick()).toBe(true);
+    expect(await runCount()).toBe(2);
+    await sql`insert into network.facets (id, member_id, kind, value, privacy_scope, provenance, status, valid_from)
+      values ('a:private', 'a', 'fact', 'Private note', 'agent_private', 'said', 'confirmed', ${new Date(clock.now())})`;
+    clock.advance(MINUTE);
+    expect(await s.tick()).toBe(true);
+    expect(await runCount()).toBe(2);
+
+    await s.close();
+    const restarted = service(clock, "intent-search-restarted", options);
+    await restarted.start();
+    clock.advance(MINUTE);
+    expect(await restarted.tick()).toBe(true);
+    expect(await runCount()).toBe(2);
+    await sql`update network.members set account_status = 'active' where id = 'b'`;
+    for (const text of ONBOARD) await say(restarted, clock, "b", text);
+    expect(await restarted.tick()).toBe(true);
+    expect(await runCount()).toBe(3);
+    const queue = await (await staff(restarted, "rev-tok", "GET", "/review")).json();
+    const item = queue.items.find((row: { origin: string }) => row.origin === "engine");
+    expect(item).toBeDefined();
+    expect([...item.proposal.participants].sort()).toEqual(["a", "b"]);
+    expect((await sql`select id from network.messages where opportunity_id = ${item.oppId}`)).toHaveLength(0);
+
+    // The next new member does not give the recheck another daily review slot.
+    await sql`update network.members set account_status = 'active' where id = 'c'`;
+    for (const text of ONBOARD) await say(restarted, clock, "c", text);
+    expect(await restarted.tick()).toBe(true);
+    expect(await runCount()).toBe(3);
+  }, T);
+
+  // spec/emptyIntentFollowup.md, "A pending follow-up uses current permission and the same live statement"
+  test("an aged intent without a match gets one eligible solo next step across restart", async () => {
+    await reset();
+    await sql`update network.members set account_status = 'invited' where id <> 'a'`;
+    const clock = new SimClock(START);
+    const options = { network: { seed: 1, plans: false, growth: false, engine: { emptyStateDays: 10 } } };
+    const s = service(clock, "empty-intent", options);
+    expect((await staff(s, "adm-tok", "POST", "/matching", { on: true })).status).toBe(200);
+    for (const message of ONBOARD) await say(s, clock, "a", message);
+    const statedAt = START - 10 * DAY + 3 * HOUR;
+    const objective = "Find a partner for my quiet north-wall climb";
+    await sql`update network.intents set created_at = ${new Date(statedAt)}, objective = ${objective} where member_id = 'a'`;
+    const sent = async () => (await outbound("a")).filter(message => message.type === "info" && message.body.includes("Show me public events"));
+
+    clock.set(START + 90 * MINUTE);
+    expect(await s.tick()).toBe(true);
+    expect(await sent()).toHaveLength(0);
+
+    // The result is old enough on the next day. The member's selected outreach preference wins.
+    await sql`update network.members set prefs = jsonb_set(prefs, '{onlyWhenAsked}', 'true') where id = 'a'`;
+    clock.advance(DAY);
+    expect(await s.tick()).toBe(true);
+    expect(await sent()).toHaveLength(0);
+
+    await sql`update network.members set prefs = jsonb_set(prefs, '{onlyWhenAsked}', 'false') where id = 'a'`;
+    const morning = START - 3 * HOUR - 30 * MINUTE;
+    const pending = async (instance: NetworkService) => (await instance.pg.load())?.deferred.filter(entry => entry.o.hook?.t === "empty_intent");
+    // The member's own 48-hour follow-up window has also passed.
+    clock.set(morning + 3 * DAY);
+    expect(await s.tick()).toBe(true);
+    expect(await pending(s)).toHaveLength(1);
+    expect(await sent()).toHaveLength(0);
+
+    // Losing the intent's category before the send window cancels this deferred follow-up.
+    await sql`update network.members set prefs = jsonb_set(prefs, '{categoriesOptIn}', (prefs->'categoriesOptIn') - 'hobby') where id = 'a'`;
+    clock.advance(5 * HOUR);
+    expect(await s.tick()).toBe(true);
+    expect(await pending(s)).toHaveLength(0);
+    expect(await sent()).toHaveLength(0);
+
+    await sql`update network.members set prefs = jsonb_set(prefs, '{categoriesOptIn}', (prefs->'categoriesOptIn') || '["hobby"]') where id = 'a'`;
+    clock.set(morning + 4 * DAY);
+    expect(await s.tick()).toBe(true);
+    expect(await pending(s)).toHaveLength(1);
+    await s.close();
+    const restarted = service(clock, "empty-intent-restarted", options);
+    await restarted.start();
+    clock.advance(5 * HOUR);
+    expect(await restarted.tick()).toBe(true);
+    const one = await sent();
+    expect(one).toHaveLength(1);
+    expect(one[0]).toMatchObject({ status: "dry_run", opportunity_id: null, proactive: true });
+    expect(one[0].body).not.toContain(objective);
+    expect((await restarted.pg.load())?.members.find(member => member.id === "a")?.unsol?.state).toEqual([clock.now()]);
+    const audit = await sql`select payload from network.events where type = 'empty_intent_followup' order by id`;
+    expect(audit).toHaveLength(1);
+    expect(audit[0]?.payload).toMatchObject({ memberId: "a", intentId: "a:want", reason: expect.any(String) });
+    expect(JSON.stringify(audit[0]?.payload)).not.toContain(objective);
+
+    await restarted.close();
+    const reopened = service(clock, "empty-intent-reopened", options);
+    await reopened.start();
+    clock.advance(DAY);
+    expect(await reopened.tick()).toBe(true);
+    expect(await sent()).toHaveLength(1);
+  }, T);
+
+  // spec/publicEventCatalog.md, "A successful complete scan replaces the previous source and expires if refresh stops"
+  test("publishes current public Parks events and rechecks standing intents through the production tick", async () => {
+    await reset();
+    await sql`update network.members set account_status = 'invited' where id <> 'a'`;
+    const clock = new SimClock(START);
+    const delivered: SendRequest[] = [];
+    const s = service(clock, "public-events", {
+      adapter: (net, runtime) => new BlooioAdapter({
+        net, memberOf: runtime.memberOf, from: "+12125550190", clock, env: {}, liveGate: () => true, log: () => {},
+        provider: { kind: "sim", send: async request => {
+          delivered.push(request);
+          return { providerMessageId: `public-event-${delivered.length}`, status: "queued" };
+        } },
+      }),
+      network: { seed: 1, plans: false, growth: false, selective: false, engine: {
+        generators: Object.fromEntries(GENERATOR_NAMES.map(name => [name, name === "event_anchor"])),
+        floors: { fit: 0, mutualBenefit: 0, confidence: 0 }, retrieval: { minSim: 0 }, thresholds: { byGenerator: { event_anchor: 0 } },
+      } },
+    });
+    expect((await staff(s, "adm-tok", "POST", "/matching", { on: true })).status).toBe(200);
+    for (const message of ONBOARD) await say(s, clock, "a", message);
+    const runCount = async () => (await sql<{ n: number }[]>`select count(*)::int as n from network.matching_runs where app_id = 'ntwrk'`)[0]!.n;
+    expect(await s.tick()).toBe(true);
+    expect(await runCount()).toBe(1);
+    const fixture = {
+      guid: "2257118", title: "Outdoor climbing", categories: "Fitness | Climbing", location: "McCarren Park",
+      starttime: "2026-10-07T18:00:00.000", endtime: "2026-10-07T19:00:00.000", coordinates: "40.7206,-73.9518",
+      link: { url: "http://www.nycgovparks.org/events/2026/10/07/fitness" }, contact_phone: "unneeded value", description: "unneeded copy",
+    };
+    const fetchFixture: typeof fetch = async input => {
+      const url = new URL(String(input));
+      expect(`${url.origin}${url.pathname}`).toBe("https://data.cityofnewyork.us/resource/w3wp-dpdi.json");
+      expect(url.searchParams.get("$select")).not.toContain("contact_phone");
+      return Response.json([fixture, fixture, { ...fixture, guid: "2", title: "Kids yoga" },
+        { ...fixture, guid: "3", location: "Virtual workshop" }, { ...fixture, guid: "4", endtime: fixture.starttime }]);
+    };
+    clock.advance(MINUTE);
+    expect(await importPublicEvents(sql, clock, fetchFixture)).toEqual({ published: true, events: 1 });
+    const publishedAt = clock.now();
+    const snapshot = await s.runtimeFor("ntwrk")!.scoped(tx => loadSnapshot(tx, clock.now(), { app: "ntwrk", city: "nyc" }));
+    expect(snapshot.events).toEqual([{
+      id: "nyc-parks:2257118", title: "Outdoor climbing", city: "nyc", area: "Williamsburg",
+      start: Date.UTC(2026, 9, 7, 22), end: Date.UTC(2026, 9, 7, 23), tags: ["climbing", "fitness"], category: "hobby",
+      listing: { venue: "McCarren Park", lat: 40.7206, lng: -73.9518, url: "https://www.nycgovparks.org/events/2026/10/07/fitness" },
+    }]);
+    expect((await loadSnapshot(sql, clock.now(), { app: "ntwrk", city: "sf" })).events).toBeUndefined();
+    expect((await loadSnapshot(sql, clock.now(), { app: "ntwrk", purpose: "profile_review" })).events).toBeUndefined();
+    expect(await s.tick()).toBe(true);
+    expect(await runCount()).toBe(2);
+    expect(await importPublicEvents(sql, clock, fetchFixture)).toEqual({ published: false, events: 0 });
+
+    clock.advance(MINUTE);
+    expect(await importPublicEvents(sql, clock, fetchFixture)).toEqual({ published: true, events: 1 });
+    await expect(importPublicEvents(sql, clock, async () => new Response(null, { status: 503 }))).rejects.toThrow("HTTP 503");
+    expect(await s.tick()).toBe(true);
+    expect(await runCount()).toBe(2);
+    expect((await loadSnapshot(sql, publishedAt + 2 * DAY + MINUTE, { app: "ntwrk" })).events).toBeUndefined();
+    const [grants] = await sql`select has_table_privilege('network_service', 'network.public_events', 'SELECT') reader,
+      has_table_privilege('network_service', 'network.public_events', 'INSERT') reader_can_publish,
+      has_table_privilege('network_public_event_ingest', 'network.members', 'SELECT') publisher_can_read_members`;
+    expect(grants).toEqual({ reader: true, reader_can_publish: false, publisher_can_read_members: false });
+
+    // The reviewed opportunity names the publisher's end-to-end window. A moved listing cannot
+    // authorize contact for the old opportunity even before the next tick notices the move.
+    await sql`update network.members set account_status = 'active' where id = 'b'`;
+    await sql`update network.members set account_status = 'active', age = 16 where id = 'c'`;
+    for (const message of ONBOARD) await say(s, clock, "b", message);
+    expect(await s.tick()).toBe(true);
+    const eventInReview = async () => (await (await staff(s, "rev-tok", "GET", "/review")).json()).items.find(
+      (row: { proposal: { kind: string } }) => row.proposal.kind === "event_coattend",
+    );
+    const pending = await eventInReview();
+    const [latest] = await sql`select summary->'funnel' as funnel from network.matching_runs where app_id = 'ntwrk' order by at desc limit 1`;
+    expect(pending, JSON.stringify({ funnel: latest?.funnel, gateReasons: (await s.pg.load())?.gateReasons })).toBeDefined();
+    expect(pending?.proposal.window).toEqual({ start: Date.UTC(2026, 9, 7, 22), end: Date.UTC(2026, 9, 7, 23) });
+    expect([...pending.proposal.participants].sort()).toEqual(["a", "b"]);
+    clock.advance(MINUTE);
+    expect(await importPublicEvents(sql, clock, async () => Response.json([{ ...fixture, location: "Transmitter Park", coordinates: "40.7273,-73.9606" }]))).toEqual({ published: true, events: 1 });
+    const approval = await staff(s, "rev-tok", "POST", `/review/${pending.oppId}`, { decision: "approve" });
+    expect(approval.status).toBe(409);
+    expect(await approval.json()).toMatchObject({ reason: "public_event_changed" });
+    expect(await sql`select id from network.messages where opportunity_id = ${pending.oppId}`).toHaveLength(0);
+
+    // A fresh review cannot ignore a member's change to their event-format preference.
+    clock.set(START + 90 * MINUTE);
+    expect(await s.tick()).toBe(true);
+    const preferenceReview = await eventInReview();
+    expect(preferenceReview?.oppId).toBeDefined();
+    expect(preferenceReview.oppId).not.toBe(pending.oppId);
+    await sql`update network.members set prefs = jsonb_set(prefs, '{formats}', '["one_to_one"]') where id = 'b'`;
+    const preferenceApproval = await staff(s, "rev-tok", "POST", `/review/${preferenceReview.oppId}`, { decision: "approve" });
+    expect(preferenceApproval.status).toBe(409);
+    expect(await preferenceApproval.json()).toMatchObject({ reason: "public_event_participant_ineligible" });
+    expect(await sql`select id from network.messages where opportunity_id = ${preferenceReview.oppId}`).toHaveLength(0);
+    clock.advance(MINUTE);
+    expect(await s.tick()).toBe(true);
+    expect(await eventInReview()).toBeUndefined();
+
+    // After the member restores their preference, a new review and two choices book the event.
+    await sql`update network.members set prefs = jsonb_set(prefs, '{formats}', '["one_to_one", "small_group", "event"]') where id = 'b'`;
+    clock.advance(MINUTE);
+    expect(await s.tick()).toBe(true);
+    const replacement = await eventInReview();
+    expect(replacement).toBeDefined();
+    const messages = () => sql<{ member_id: string; body: string; type: string; status: string }[]>`select member_id, body, type, status
+      from network.messages where direction = 'outbound' and opportunity_id = ${replacement.oppId} order by ts, id`;
+    expect(await messages()).toHaveLength(0);
+    expect((await staff(s, "rev-tok", "POST", `/review/${replacement.oppId}`, { decision: "approve" })).status).toBe(200);
+    expect(await s.tick()).toBe(true);
+    const first = (await messages()).filter(m => m.type === "probe");
+    expect(first).toHaveLength(1);
+    expect(first[0]!.body).toContain("Outdoor climbing");
+    expect(first[0]!.body).not.toMatch(/\b(Ana|Ben)\b/);
+    await say(s, clock, first[0]!.member_id, "A");
+    expect(await s.tick()).toBe(true);
+    const probes = (await messages()).filter(m => m.type === "probe");
+    expect(probes.map(m => m.member_id).sort()).toEqual(["a", "b"]);
+    expect((await messages()).filter(m => m.type === "proposal")).toHaveLength(0);
+    await say(s, clock, probes.find(m => m.member_id !== first[0]!.member_id)!.member_id, "A");
+    expect(await s.tick()).toBe(true);
+    const booked = (await s.pg.load())?.opps.find(o => o.id === replacement.oppId);
+    expect(booked).toMatchObject({ stage: "scheduled", meetingAt: Date.UTC(2026, 9, 7, 22), venue: "Transmitter Park" });
+    const confirmations = (await messages()).filter(m => m.type === "proposal");
+    const dispatchTrace = await sql`select type, payload from network.events where type in ('guard_blocked', 'send_refused', 'venue') order by id`;
+    expect(confirmations.map(m => m.member_id).sort(), JSON.stringify(dispatchTrace)).toEqual(["a", "b"]);
+    for (const confirmation of confirmations) {
+      expect(confirmation).toMatchObject({ status: "accepted", body: expect.stringContaining("Transmitter Park") });
+      expect(confirmation.body).toContain("https://www.nycgovparks.org/events/2026/10/07/fitness");
+      expect(delivered).toContainEqual(expect.objectContaining({ to: phone(confirmation.member_id), text: confirmation.body }));
+    }
+    await s.close();
+  }, T);
+
   test("an item past its review SLA expires unsent even when the reviewer acts before the next tick", async () => {
     await reset();
     const clock = new SimClock(START);
@@ -271,7 +527,7 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     let active = 0, most = 0;
     for (const s of [x, y]) {
       const orig = s.net.tick.bind(s.net);
-      s.net.tick = async now => { active++; most = Math.max(most, active); await Bun.sleep(25); try { await orig(now); } finally { active--; } };
+      s.net.tick = async now => { active++; most = Math.max(most, active); await sleep(25); try { await orig(now); } finally { active--; } };
     }
     const results: boolean[] = [];
     for (let i = 0; i < 4; i++) { clock.advance(MINUTE); results.push(...await Promise.all([x.tick(), y.tick()])); }
@@ -281,7 +537,7 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     // While x holds the lock (an inbound message or staff action), y's tick does nothing and /health names x.
     let release!: () => void;
     const held = x.pg.withLock(() => new Promise<void>(r => (release = r)));
-    await Bun.sleep(50);
+    await sleep(50);
     expect(await y.tick()).toBe(false);
     expect((await y.health()).lockHolder?.application).toBe("network-service:svc-x");
     release(); await held;

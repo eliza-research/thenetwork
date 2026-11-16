@@ -21,7 +21,7 @@ type SignupPhase =
   Drafting | BelowJoinAge | AwaitingApproval | Declined |
   CheckingSession | CheckingAuthMode | SignInUnavailable |
   AwaitingNumber | CodeNotSent | SecurityCheckBlocked | AwaitingCode | CodeRejected |
-  ReadingAccount | ReadyToJoin | NeedsInvite | OnReview | JoinFailed | ExistingMember |
+  ReadingAccount | ReadyToJoin | NeedsInvite | InvitationUnavailable | OnReview | JoinFailed | ExistingMember |
   ReadingBack | Saved | SavedDiffers | SaveUnconfirmed |
   HandedOff | ReadyToSubmit | ConfirmingProfile | ProfileNotSent | MessagesStopped |
   HandedToMessages
@@ -30,6 +30,7 @@ type AgentSignup = {
   transport: Transport,
   age: AgeBand,
   inviteOnly: bool,
+  useInvitation: bool,
   approved: bool,
   minorNotified: bool,
   codeStarts: int,
@@ -38,7 +39,7 @@ type AgentSignup = {
   submits: int
 }
 pure val initial: AgentSignup = {
-  phase: CheckingCapability, transport: TransportUndecided, age: AgeNotStated, inviteOnly: false,
+  phase: CheckingCapability, transport: TransportUndecided, age: AgeNotStated, inviteOnly: false, useInvitation: false,
   approved: false, minorNotified: false, codeStarts: 0, codeChecks: 0, joins: 0, submits: 0
 }
 
@@ -213,42 +214,63 @@ pure def requestNewCode(s: AgentSignup): AgentSignup =
 
 ### The account's state decides whether the agent may join
 
-After sign-in, the agent reads the account. An account of another app stops the flow. An existing membership is read back and reported as it is; the agent never sends Join again to overwrite it. An invite-only app without a current invitation stops at the invite gate. An account on hold stops with the review outcome. Only an account that can join continues. The agent never invents or accepts an invitation and never uses another app to get around the gate.
+After sign-in, the agent reads the account. An account of another app stops the flow. An existing membership is read back and reported as it is. The agent never sends Join again to overwrite it. An account on hold stops with the review outcome. If the site says an invitation is required, the agent can attempt Join only with a forwarded link for this app that the person supplied and explicitly approved with their profile and text consent. A joinable account can use the same kind of invitation by choice. The agent keeps the token value private and treats the server result as the authority on whether the invitation can be used.
 
 ```quint
 type AccountFact = OtherAppAccount | MemberAccount | JoinableAccount | InviteRequired | HeldForReview
+type InvitationEvidence = { forwarded: bool, sameApp: bool, approved: bool }
+
+pure val invitationValues = Set(
+  { forwarded: false, sameApp: false, approved: false },
+  { forwarded: true, sameApp: false, approved: true },
+  { forwarded: true, sameApp: true, approved: false },
+  { forwarded: true, sameApp: true, approved: true }
+)
+
+pure def approvedAppInvitation(invitation: InvitationEvidence): bool =
+  invitation.forwarded and invitation.sameApp and invitation.approved
 
 pure def canReadAccount(s: AgentSignup, account: AccountFact): bool =
   s.phase == ReadingAccount and s.transport == InAgentCode and (account != InviteRequired or s.inviteOnly)
 
-pure def readAccount(s: AgentSignup, account: AccountFact): AgentSignup =
-  { ...s, phase:
+pure def readAccount(s: AgentSignup, account: AccountFact, invitation: InvitationEvidence): AgentSignup =
+  val use = approvedAppInvitation(invitation)
+  { ...s, useInvitation: use and (account == JoinableAccount or account == InviteRequired), phase:
     if (account == OtherAppAccount) WrongApp
     else if (account == MemberAccount) ExistingMember
-    else if (account == InviteRequired) NeedsInvite
     else if (account == HeldForReview) OnReview
+    else if (account == InviteRequired and not(use)) NeedsInvite
     else ReadyToJoin }
 
 pure def alwaysInviteGateOnlyForInviteApps(s: AgentSignup): bool =
   s.phase == NeedsInvite implies s.inviteOnly
+
+pure def lawInviteGateRequiresApprovedSameAppEvidence(s: AgentSignup, invitation: InvitationEvidence): bool =
+  (readAccount(s, InviteRequired, invitation).phase == ReadyToJoin) iff approvedAppInvitation(invitation)
+
+pure def lawOnlyApprovedSameAppEvidenceUsesInvitation(s: AgentSignup, account: AccountFact, invitation: InvitationEvidence): bool =
+  readAccount(s, account, invitation).useInvitation implies
+    (approvedAppInvitation(invitation) and (account == JoinableAccount or account == InviteRequired))
 ```
 
 ### The agent joins once, with the approved profile and the current consent
 
-The agent sends Join once, with the approved fields, the confirmed home region, the account marker when the site gave one, and the current consent wording and version. Each refusal leads to its own result: an age below the join age, a missing invitation, a hold, or a profile that the site did not save.
+The agent sends Join once, with the approved fields, the confirmed home region, the account marker when the site gave one, and the current consent wording and version. It sends the exact token only when the person supplied and approved the same-app forwarded invitation. Each refusal leads to its own result, including age below the join age, a missing or unavailable invitation, a hold, or a profile that the site did not save. If the server refused the invitation, the agent reports that result and does not retry the same attempt.
 
 ```quint
-type JoinResult = JoinCreated | JoinBelowAge | JoinNeedsInvite | JoinHeld | JoinNotSaved
+type JoinResult = JoinCreated | JoinBelowAge | JoinNeedsInvite | JoinInvalidInvitation | JoinHeld | JoinNotSaved
 
-pure def canJoinApp(s: AgentSignup, joinResult: JoinResult): bool =
+pure def canJoinApp(s: AgentSignup, joinResult: JoinResult, invitationSubmitted: bool): bool =
   s.phase == ReadyToJoin and s.transport == InAgentCode and s.approved and s.joins == 0 and
-  (joinResult != JoinNeedsInvite or s.inviteOnly)
+  invitationSubmitted == s.useInvitation and (joinResult != JoinNeedsInvite or s.inviteOnly) and
+  (joinResult != JoinInvalidInvitation or invitationSubmitted)
 
-pure def joinApp(s: AgentSignup, joinResult: JoinResult): AgentSignup =
+pure def joinApp(s: AgentSignup, joinResult: JoinResult, invitationSubmitted: bool): AgentSignup =
   { ...s, joins: s.joins + 1, phase:
     if (joinResult == JoinCreated) ReadingBack
     else if (joinResult == JoinBelowAge) BelowJoinAge
     else if (joinResult == JoinNeedsInvite) NeedsInvite
+    else if (joinResult == JoinInvalidInvitation) InvitationUnavailable
     else if (joinResult == JoinHeld) OnReview
     else JoinFailed }
 
@@ -335,7 +357,7 @@ Each end of the flow has its own report. A refusal (under the join age, an invit
 ```quint
 type SignupReport =
   ReportWorking | ReportSaved | ReportSaveDiffers | ReportSaveUnconfirmed | ReportAlreadyMember | ReportUnderAge |
-  ReportInviteNeeded | ReportOnHold | ReportStopped | ReportUnsupported | ReportCodeProblem |
+  ReportInviteNeeded | ReportInviteUnavailable | ReportOnHold | ReportStopped | ReportUnsupported | ReportCodeProblem |
   ReportNotSaved | ReportDeclined | ReportOtherApp | ReportSendTheText
 
 pure def reportFor(phase: SignupPhase): SignupReport =
@@ -346,6 +368,7 @@ pure def reportFor(phase: SignupPhase): SignupReport =
   else if (phase == ExistingMember) ReportAlreadyMember
   else if (phase == BelowJoinAge) ReportUnderAge
   else if (phase == NeedsInvite) ReportInviteNeeded
+  else if (phase == InvitationUnavailable) ReportInviteUnavailable
   else if (phase == OnReview) ReportOnHold
   else if (phase == MessagesStopped) ReportStopped
   else if (phase == Unsupported or phase == SignInUnavailable or phase == SecurityCheckBlocked) ReportUnsupported
@@ -397,6 +420,8 @@ pure def sometimesSavedWithCode(s: AgentSignup): bool = s.phase == Saved and s.t
 pure def sometimesSavedWithSession(s: AgentSignup): bool = s.phase == Saved and s.transport == InAgentCode and s.codeStarts == 0
 pure def sometimesExistingMember(s: AgentSignup): bool = s.phase == ExistingMember
 pure def sometimesNeedsInvite(s: AgentSignup): bool = s.phase == NeedsInvite
+pure def sometimesSavedWithForwardedInvite(s: AgentSignup): bool = s.phase == Saved and s.inviteOnly and s.useInvitation
+pure def sometimesForwardedInviteUnavailable(s: AgentSignup): bool = s.phase == InvitationUnavailable
 pure def sometimesOnReview(s: AgentSignup): bool = s.phase == OnReview
 pure def sometimesBelowJoinAge(s: AgentSignup): bool = s.phase == BelowJoinAge
 pure def sometimesTeenApproved(s: AgentSignup): bool = s.age == Teen and s.approved

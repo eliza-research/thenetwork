@@ -4,9 +4,10 @@
 //    every row reaches the provider once, with its own key "tn:<id>".
 //  - A worker that stopped mid-send: recover() hands the row back and it goes again with the same key.
 //  - The leak guard reads the new text together with the recent thread to the same address (core-14).
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { setTimeout as sleep } from "node:timers/promises";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { randomUUID } from "node:crypto";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { SimClock } from "../../core/src/clock.ts";
 import { applySchema, devPgUp, DEV_PG_PORT } from "../../observatory/db/dev-pg.ts";
 import { pgAvailable } from "../../observatory/test/pg.ts";
@@ -30,7 +31,7 @@ function recorder() {
     kind: "sim",
     async send(req) {
       calls.push(req);
-      await Bun.sleep(5);
+      await sleep(5);
       return { providerMessageId: `sim:${req.idempotencyKey}`, chatId: req.to, status: "sent", transport: "sim" };
     },
   };
@@ -138,6 +139,66 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
     expect(await q.statusOf("unk-3")).toBe("failed_unknown");
     expect(alerts).toContain("unk-3:unknown_acceptance_expired");
     expect(calls.length).toBe(2);
+  });
+
+  // spec/outboundReceipt.md, "An uncertain send waits for a receipt instead of sending again"
+  test.each(["unusable provider reply", "failed acceptance write"])("%s holds the original key for lookup", async failure => {
+    const id = failure === "unusable provider reply" ? "unusable-provider-reply" : "failed-acceptance-write";
+    const sends: string[] = [], lookups: string[] = [];
+    const provider: ChannelAdapter = {
+      kind: "sim",
+      async send(req) {
+        sends.push(req.idempotencyKey);
+        return { providerMessageId: failure === "unusable provider reply" ? "" : "sim:" + id, status: "sent" };
+      },
+      async receipt(req) {
+        lookups.push(req.idempotencyKey);
+        return { providerMessageId: "sim:" + id, status: "sent" };
+      },
+    };
+    const worker = queue(a, provider, { clock: new SimClock(Date.UTC(2026, 9, 12, 16)) });
+    await worker.enqueue(a, [{ id, to: "+12125556125", kind: "compliance", text: "You're unsubscribed.", timeZone: NY }]);
+    if (failure === "failed acceptance write") {
+      await a`alter table platform.outbound add constraint fixture_reject_provider_acceptance
+        check (id <> 'failed-acceptance-write' or status <> 'sent')`;
+    }
+    try {
+      expect(await worker.drain()).toContainEqual(expect.objectContaining({ id, status: "unknown_acceptance" }));
+      const [held] = await a`select status, attempts, sent_at, body from platform.outbound where id = ${id}`;
+      expect(held).toEqual({ status: "unknown_acceptance", attempts: 1, sent_at: null, body: "You're unsubscribed." });
+    } finally {
+      if (failure === "failed acceptance write") await a`alter table platform.outbound drop constraint fixture_reject_provider_acceptance`;
+    }
+    expect(await worker.drain()).toContainEqual(expect.objectContaining({ id, status: "sent" }));
+    expect(sends).toEqual(["tn:" + id]);
+    expect(lookups).toEqual(sends);
+  });
+
+  test("when neither acceptance nor its hold can be stored, the lease survives until lookup recovery", async () => {
+    const id = "send-outcome-write-unavailable";
+    const now = new SimClock(Date.UTC(2026, 9, 12, 16));
+    const sends: string[] = [], lookups: string[] = [], alerts: string[] = [];
+    const provider: ChannelAdapter = {
+      kind: "sim",
+      async send(req) { sends.push(req.idempotencyKey); return { providerMessageId: "sim:" + id, status: "sent" }; },
+      async receipt(req) { lookups.push(req.idempotencyKey); return { providerMessageId: "sim:" + id, status: "sent" }; },
+    };
+    const worker = queue(a, provider, { clock: now, leaseMs: 1000, onAlert: (key, reason) => alerts.push(`${key}:${reason}`) });
+    await worker.enqueue(a, [{ id, to: "+12125556126", kind: "compliance", text: "You're unsubscribed.", timeZone: NY }]);
+    await a`alter table platform.outbound add constraint fixture_reject_provider_outcome
+      check (id <> 'send-outcome-write-unavailable' or status not in ('sent', 'unknown_acceptance'))`;
+    try {
+      expect(await worker.drain()).toEqual([]);
+      const [held] = await a`select status, attempts, body, lease_until from platform.outbound where id = ${id}`;
+      expect(held).toEqual({ status: "sending", attempts: 1, body: "You're unsubscribed.", lease_until: new Date(now.now() + 1000) });
+      expect(alerts).toContain(`${id}:claimed_outcome_write_failed`);
+    } finally {
+      await a`alter table platform.outbound drop constraint fixture_reject_provider_outcome`;
+    }
+    now.advance(1001);
+    expect(await worker.drain()).toContainEqual(expect.objectContaining({ id, status: "sent" }));
+    expect(sends).toEqual(["tn:" + id]);
+    expect(lookups).toEqual(sends);
   });
 
   test("unknown acceptance: the TTL runs from when acceptance became unknown, not from enqueue, so a text that waited out quiet hours still gets its receipt lookup", async () => {

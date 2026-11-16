@@ -2,8 +2,13 @@
 // check_status and get_updates need membership:read and return only the signed-in person's own state
 // or updates in the one app the client is bound to. No tool takes a phone number, a code or an age, and every
 // input schema refuses properties it does not list. prepare_signup alone takes approved Join name/home city.
-import { type MemberStatus, type NextStep, nextStepFor, toolAllowedFor, toolListed } from "../../core/src/generated/connectorTools.ts";
-import { appsOn, connectorApp, connectorSurface, type McpApp, type McpAppId, type Surface } from "./apps.ts";
+import {
+  initial as initialDraftPreparation, signupDraftAppEnabled, signupDraftDeadline, signupDraftLifetimeMs,
+  signupDraftRequestAllowed, step as stepDraftPreparation,
+} from "../../core/src/generated/mcpSignupDraft.ts";
+import { type MemberStatus, type NextStep, nextStepFor, toolAllowedFor } from "../../core/src/generated/connectorTools.ts";
+import { publicSignupUsesBrowser } from "../../core/src/generated/siteEnrollment.ts";
+import { appsOn, type McpApp, type McpAppId, type Surface } from "./apps.ts";
 import type { AssistantKind, PlatformHooks, PublicStatus } from "./hooks.ts";
 import type { Grant, Scope, OAuthStore, SignupDraftFields } from "./store.ts";
 import { outputLeaks } from "./leaks.ts";
@@ -65,9 +70,9 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
       securitySchemes: noauth,
       _meta: { securitySchemes: noauth },
     },
-    ...(toolListed(connectorApp[host.id], connectorSurface[surface], "PrepareSignupTool") ? [{
+    ...(signupDraftAppEnabled(host.id) ? [{
       name: "prepare_signup", title: "Prepare my Join form",
-      description: "After verified phone sign-in and OAuth approval, save only the first name and optional home city the person explicitly approved for this app. The draft is only for a Join page, and ntwrk.party and friends.help have no Join page now: do not send the person to one. The person enters their age and gives text consent themselves. Never creates a person, membership or text consent. One draft per grant; no age, phone, code, gender or dating preferences.",
+      description: "After verified phone sign-in and OAuth approval, save only the first name and optional home city the person explicitly approved for this app. They must open Join, review or edit every field and consent themselves. Never creates a person, membership or text consent. One draft per grant; no age, phone, code, gender or dating preferences.",
       inputSchema: { type: "object", properties: { app: { type: "string", enum: [host.id] }, firstName: { type: "string", minLength: 1, maxLength: 50 }, homeCity: { type: "string", enum: ["nyc", "sf"] } }, required: ["firstName"], additionalProperties: false },
       outputSchema: object({ prepared: { type: "boolean", const: true }, app: ownApp, url: text, next_step: text }),
       annotations: { title: "Prepare my Join form", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
@@ -165,7 +170,7 @@ export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host
   // Refuse unlisted fields. Only prepare_signup takes an approved first name and home city.
   if (extra.length) return { ok: false, message: `This tool does not take ${extra.map(k => `"${k.slice(0, 40)}"`).join(", ")}. It never takes phone numbers, codes or personal details.` };
   if (name === "prepare_signup") {
-    if (!["friends", "ntwrk"].includes(host.id) || (a.app !== undefined && a.app !== host.id)) return { ok: false, message: "This draft is not available for that app." };
+    if (!signupDraftRequestAllowed(host.id, a.app !== undefined, a.app === host.id)) return { ok: false, message: "This draft is not available for that app." };
     const firstName = typeof a.firstName === "string" ? a.firstName.trim() : "";
     if (!firstName || firstName.length > 50 || !/^[\p{L}][\p{L}\p{M}'’-]{0,49}$/u.test(firstName) || contactOrCode(firstName) || (a.homeCity !== undefined && a.homeCity !== "nyc" && a.homeCity !== "sf")) return { ok: false, message: "Use only the approved first name and a supported home city." };
     return { ok: true, app: host.id, draft: { firstName, ...(a.homeCity ? { homeCity: a.homeCity as "nyc" | "sf" } : {}) } };
@@ -190,9 +195,13 @@ export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host
   return { ok: true, app: a.app };
 }
 
+const publicSignupUrl = (a: McpApp) => publicSignupUsesBrowser(a.id) ? `${a.links.join}?via=agent` : `${a.links.site}/SKILL.md`;
+const skillSignup = (a: McpApp) => `Read ${publicSignupUrl(a)} in your own agent and follow the signup instructions there.`;
+
 function invitationGuidance(a: McpApp): string {
-  return `${a.name} is invite-only. There is no public sign-up form. Ask a member who knows you, or the team, for an invitation. ` +
-    `Reply to that invitation text to accept. Already a member? Confirm your phone during connector authorization, then return to your agent.`;
+  return `${a.name} is invite-only. Ask a member who knows you, or the team, for an invitation. ` +
+    `Use a forwarded invitation link in your own agent, or reply to the team's invitation text to accept. ` +
+    `Already a member? Confirm your phone during connector authorization, then return to your agent.`;
 }
 
 function publicInfo(a: McpApp, surface: Surface) {
@@ -201,11 +210,12 @@ function publicInfo(a: McpApp, surface: Surface) {
     powered_by: "All of these apps are powered by The Network (https://ntwrk.party).",
     join: {
       mode: a.joinMode,
-      url: `${a.links.join}?via=agent`,
+      url: publicSignupUrl(a),
       keyword: a.keyword,
       how: a.joinMode === "invite" ? invitationGuidance(a) : a.keyword
-        ? `The person texts "${a.keyword}" as their first message to The Network's line, or opens ${a.links.site} and follows the steps there.`
-        : `The person texts The Network's line with no keyword, or opens ${a.links.join}. The agent asks what they are looking for (${surface === "openai" ? "friends or work" : "friends, dating or work"}) and adds the right apps.`,
+        ? `The person texts "${a.keyword}" as their first message to The Network's line. ` + (publicSignupUsesBrowser(a.id)
+          ? `They can also open ${publicSignupUrl(a)} and verify their own phone there.` : skillSignup(a))
+        : `The person texts The Network's line with no keyword. The agent asks what they are looking for (${surface === "openai" ? "friends or work" : "friends, dating or work"}) and adds the right apps. ${skillSignup(a)}`,
     },
     ages: { join: a.ages.join, matching: a.ages.match },
     adults_only: a.adultsOnly,
@@ -213,19 +223,18 @@ function publicInfo(a: McpApp, surface: Surface) {
     consent_rules: [
       "Nobody is introduced unless both people say yes.",
       "Nothing crosses from one app to another unless the person shares it.",
-      "The person signs themselves up and types their own code on the site. An assistant never handles the code.",
+      "The person verifies their own phone in the app's signup session. This connector must never receive the code.",
     ],
     links: { privacy: a.links.privacy, terms: a.links.terms, sms_terms: a.links.smsTerms, support: a.links.support },
   };
 }
 
-/** The generated member status of each public status (spec/connectorTools.md:50). */
 const memberStatus: Record<PublicStatus, MemberStatus> = { not_joined: "NotJoined", invited: "Invited", onboarding: "Onboarding", active: "Active", stopped: "Stopped", on_hold: "OnHold" };
 
 const NEXT_TEXT: Record<NextStep, (a: McpApp) => string> = {
   GetInvitation: a => `Not joined. ${invitationGuidance(a)}`,
-  JoinOnSite: a => `Not joined. To join, open ${a.links.site} and follow the steps there.`,
-  AcceptInvitation: () => "Invited. To accept, reply to the invitation text.",
+  JoinOnSite: a => `Not joined. ${publicSignupUsesBrowser(a.id) ? `Open ${publicSignupUrl(a)} to sign up.` : skillSignup(a)}`,
+  AcceptInvitation: a => `Invited. Reply to the invitation text or ${publicSignupUsesBrowser(a.id) ? `open ${publicSignupUrl(a)}.` : `follow ${publicSignupUrl(a)} in your agent.`}`,
   ReplyToLastText: () => "Joining is not finished. Reply to the last text from the agent to finish.",
   AlreadySignedUp: () => "You are signed up.",
   TextStart: () => `Messages are stopped. To start again, text START to the line.`,
@@ -270,31 +279,40 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       return {
         kind: "ok",
         data: {
-          app: a.id, join_mode: a.joinMode, url: `${a.links.join}?via=agent`, keyword: a.keyword,
+          app: a.id, join_mode: a.joinMode, url: publicSignupUrl(a), keyword: a.keyword,
           instructions_for_person: a.joinMode === "invite"
-            ? `${invitationGuidance(a)} Never share a verification code with anyone, including this assistant.`
-            : `Open ${a.links.join}?via=agent yourself and enter your own phone number. ` +
-            `A code arrives by text: type it on that page only. Never share the code with anyone, including this assistant.` +
-            (a.keyword ? ` Or text "${a.keyword}" as your first message to The Network's line.` : ""),
+            ? `${invitationGuidance(a)} ${skillSignup(a)} Keep the verification code in that signup session.`
+            : (publicSignupUsesBrowser(a.id)
+              ? `Open ${publicSignupUrl(a)} yourself and enter your own phone number. Never share the code. Enter it on that page.`
+              : `${skillSignup(a)} Keep the verification code in that signup session.`)
+              + (a.keyword ? ` Or text "${a.keyword}" as your first message to The Network's line.` : ""),
           ages: { join: a.ages.join, matching: a.ages.match },
         },
       };
     }
     case "prepare_signup": {
       const g = c.grant, store = c.store;
-      if (!g || !store) return { kind: "invalid_grant" };
-      if (!c.hooks.withSignupAgePolicy || !c.hooks.setSignupAgeCleanup) return { kind: "error", message: "We cannot prepare this draft here." };
+      const preparedConnection = stepDraftPreparation(initialDraftPreparation, {
+        type: "observeConnection", grantReady: !!(g && store), guardReady: !!(c.hooks.withSignupAgePolicy && c.hooks.setSignupAgeCleanup),
+      });
+      if (preparedConnection.phase === "GrantRefused" || !g || !store) return { kind: "invalid_grant" };
+      if (preparedConnection.phase !== "CheckAge" || !c.hooks.withSignupAgePolicy) return { kind: "error", message: "Use the normal Join form to enter your details." };
       const started = performance.now(), requestedAt = c.now ?? Date.now();
       return c.hooks.withSignupAgePolicy(g.phoneKey, g.app, async allowed => {
-        if (!allowed) return { kind: "error", message: "We cannot prepare this Join form. Check the joining requirements on the site." };
+        const preparedAge = stepDraftPreparation(preparedConnection, { type: "observeAge", allowed });
+        if (preparedAge.phase !== "CheckOwner") return { kind: "error", message: "We cannot prepare this Join form. Check the joining requirements on the site." };
         const person = await c.hooks.personForKey(g.phoneKey);
-        if (!grantStillTheirs(g.personId, person)) return { kind: "invalid_grant" };
+        const preparedOwner = stepDraftPreparation(preparedAge, { type: "observeOwner", ownerMatches: grantStillTheirs(g.personId, person) });
+        if (preparedOwner.phase !== "CheckMembership") return { kind: "invalid_grant" };
         const status = person === null ? "not_joined" : await c.hooks.status(person, g.app);
-        if (!toolAllowedFor("PrepareSignupTool", memberStatus[status])) return { kind: "error", message: "Use your existing profile; this form is for joining." };
+        const preparedMembership = stepDraftPreparation(preparedOwner, { type: "observeMembership", status });
+        if (preparedMembership.phase !== "WriteDraft") return { kind: "error", message: "Use your existing profile; this form is for joining." };
         const at = requestedAt + Math.ceil(performance.now() - started);
-        const saved = await store.putSignupDraft({ grantId: g.id, app: g.app, phoneKey: g.phoneKey, fields: chk.draft!, expiresAt: Math.min(requestedAt + 10 * 60_000, g.expiresAt), consumedAt: null }, at);
-        return saved ? { kind: "ok", data: { prepared: true, app: g.app, url: `${c.apps[g.app].links.join}?via=agent`, next_step: "The draft has only your name and home city. Your age and text consent are still yours to enter." } }
-          : { kind: "error", message: "This connection already prepared a draft or is no longer valid." };
+        const expiresAt = signupDraftDeadline(requestedAt + signupDraftLifetimeMs, g.expiresAt);
+        const saved = await store.putSignupDraft({ grantId: g.id, app: g.app, phoneKey: g.phoneKey, fields: chk.draft!, expiresAt, consumedAt: null }, at);
+        const finished = stepDraftPreparation(preparedMembership, { type: "observeWrite", saved });
+        return finished.phase === "Prepared" ? { kind: "ok", data: { prepared: true, app: g.app, url: `${c.apps[g.app].links.join}?via=agent`, next_step: "Open Join to review or edit your name and home city. Your age and text consent are still yours to enter." } }
+          : { kind: "error", message: "This connection already prepared a draft or is no longer valid. Open Join to enter or edit your details." };
       });
     }
     case "check_status": {

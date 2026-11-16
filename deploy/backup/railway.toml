@@ -7,10 +7,10 @@
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "deploy/backup/Dockerfile"
-watchPatterns = ["deploy/backup/**", "packages/core/src/generated/databaseRestore.ts"]
+watchPatterns = ["deploy/backup/**", "packages/core/**", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "tsconfig.json"]
 
 [deploy]
-startCommand = "bun run deploy/backup/backup.ts"
+startCommand = "node --import tsx deploy/backup/backup.ts"
 # Every day at 07:15 UTC (03:15 in New York, a quiet hour).
 cronSchedule = "15 7 * * *"
 restartPolicyType = "NEVER"

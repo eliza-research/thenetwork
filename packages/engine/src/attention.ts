@@ -168,7 +168,7 @@ export type Calibrator = (score: number, category: Category) => number;
 /**
  * Isotonic (pool-adjacent-violators) fit of persona "worth a text?" judgments on the engine score,
  * engine-v1.2.0 defaults, simulator seeds 101-104 (disjoint from the evaluation seeds 1-8), 1,650
- * labels, base rate 58.7%: `bun packages/engine/experiments/attention.ts --fit`. Knots are
+ * labels, base rate 58.7%: `node --import tsx packages/engine/experiments/attention.ts --fit`. Knots are
  * (score, P(worthwhile)); linear in between, flat outside. Per-category knots where n >= 100. A
  * prior to be replaced by the weekly per-category refit on production labels (5.3).
  */

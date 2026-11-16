@@ -8,7 +8,11 @@ A member needs to give an agent scoped access to their account and revoke it.
 
 Check code use, refresh, ownership, ban and revocation, scoped tools, and request retention. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [connector browser authorization spec](../oauthBrowserAuthorization.md) generates the request binding, phone verification, and explicit consent decisions. The [connector grant issuance spec](../oauthGrantIssuance.md) generates the runtime steps from confirmed consent through authority, single-use request consumption and issuance. The [connector token spec](../oauthTokenLifecycle.md) generates token exchange, renewal, and client revocation decisions. This standalone model also covers persisted grant state and member tools.
+The [connector browser authorization spec](../oauthBrowserAuthorization.md) generates the request binding, phone verification, and explicit consent decisions. The [connector grant issuance spec](../oauthGrantIssuance.md) drives the VibeLang shell from confirmed consent through authority and one commit for request consumption, grant, code and both audit rows. The [connector token spec](../oauthTokenLifecycle.md) generates token exchange, renewal, and client revocation decisions. This standalone model also covers persisted grant state and member tools.
+
+The [signup draft rules](../mcpSignupDraft.md) drive draft preparation,
+session-bound reads, discard, and expiry. The draft waits for the
+person's final Join submission.
 
 Imported from `quint/oauth_mcp.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
@@ -36,8 +40,9 @@ Imported from `quint/oauth_mcp.qnt` at `30d950e`. See [model index](README.md) f
 // Abstractions (hand-written):
 //  - Each Postgres statement or transaction is one action. Each `await` between two statements is a
 //    point where a process can stop (a crash action) or another actor can run.
-//  - A grant gets the id of the auth request it came from (each request gives at most one grant,
-//    P:115-132 approveConsent). Each grant has its one code (same transaction).
+//  - A grant gets the id of the auth request it came from. The model's approval action combines
+//    request consumption and writes. Production commits them together after locking the
+//    live approval. The serving flow spells out its authority and deadline checks.
 //  - Time: grants, codes and tokens expire by nondeterministic clock actions. Auth requests have an
 //    age in 5-minute ticks, because the README gives a minute limit for them (SD-393).
 //  - Cloud validation is an oracle: a Cloud grant is valid only while its owner is the consent person
@@ -48,9 +53,8 @@ Imported from `quint/oauth_mcp.qnt` at `30d950e`. See [model index](README.md) f
 //  - Revocation and its audit row are one action on every path. A crash between revokeGrant and its
 //    audit row is not modelled.
 //  - Leave, delete everything and the under-13 decline are each one action. The real paths are several
-//    statements; the race of a leave with an approval is closed by a row lock (P:246-249, the
-//    Q-oauth_mcp-1 fix, proved by packages/mcp/test/consent-forget.pg.test.ts), so an atomic leave is
-//    a sound abstraction of it.
+//    statements. The OAuth erasure transaction deletes pending requests before committed grants.
+//    This ordering serializes deletion with the approval row lock, which the model abstracts.
 //  - The leak gate (leaks.ts) is an oracle: each inbox item has a nondeterministic `leaky` flag.
 //  - A signup draft has no clock here: its 10-minute expiry (T:288, P:232-233 scrubs it) only removes
 //    data, and no invariant needs it.

@@ -42,7 +42,7 @@ pure def checkPresence(invite: PlanDispatch, present: bool): PlanDispatch =
 
 ### Wait for the send window, earlier questions, and the right allowance
 
-If the member is busy with another opportunity, wait. Then check the send window, any outstanding question, and whether this member already got a plan invite that day. The first such result determines why the invite waits. Members who qualify for the separate allowance use it. Other members use the introduction allowance. An exhausted allowance defers the invite.
+If the member is busy with another opportunity, wait. Then check the send window, any outstanding question, and whether this member already got a plan invite that day. An unanswered onboarding question holds plan invites for the same period as [regular probes](probeDispatch.md#wait-for-the-members-send-window-and-current-availability). The first such result determines why the invite waits. Members who qualify for the separate allowance use it. Other members use the introduction allowance. An exhausted allowance defers the invite.
 
 ```quint
 pure def canCheckWindow(invite: PlanDispatch): bool = invite.phase == CheckingWindow

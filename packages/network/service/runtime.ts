@@ -17,28 +17,40 @@
 //    network-service-2).
 //  - Nothing here reads another app's rows; the person cap across apps (service.ts) goes through a
 //    SECURITY DEFINER function that returns ids only.
-import { DAY } from "@thenetwork/core";
+import { DAY, LeakGuard } from "@thenetwork/core";
 import { randomUUID } from "node:crypto";
-import type { SQL } from "bun";
+import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { City, Clock, MemberId, WorldSnapshot } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import type { NetworkContext, SimMessage } from "@thenetwork/core";
-import { ConsentNetwork, presentInNyc, relayDispatchCheck, type NetworkOptions, type NetworkState } from "../src/network.ts";
+import { matchingDisabledByRegistry, startupPlan, tickRepairsProjection, tickRunsFollowup } from "../../core/src/generated/runtimeUnit.ts";
+import { legacyIntentReconciliationDue } from "../../core/src/generated/standingIntentManagement.ts";
+import { inviteJoinNoticeLifetimeMs } from "../../core/src/generated/outreachPolicy.ts";
+import {
+  contextFacetEligible, contextFacetLimit, contextFacetSizeLimit, contextMode, contextSinglePlayer,
+  initial as initialContext, step as stepContext, type ContextMode,
+} from "../../core/src/generated/sharedContext.ts";
+import { ConsentNetwork, presentInNyc, relayDispatchCheck, storedInviteNoticePartyCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
 import type { RelayCanonical } from "../src/relay.ts";
 import { loadRelayRows, PgStore, runStored, runTick, type NetworkStore } from "../src/store.ts";
 import { capitalWiring, type CapitalEvent } from "../src/capital.ts";
-import type { AppInfo } from "../../platform/src/apps.ts";
+import type { AppId, AppInfo } from "../../platform/src/apps.ts";
 import { effectiveParticipation, loadSnapshot } from "./snapshot.ts";
+import { reconcileLegacyIntentRows } from "./standing-intent-reconciliation.ts";
 import { appWiring, type AppWiring } from "./packs.ts";
 import { BlooioAdapter, DryRunAdapter, WAITING_STATUSES, type ChannelAdapter, type Delivery, type Outbound } from "./channel.ts";
 import { normalizeAddress } from "../../blooio/src/phone.ts";
-import type { InboundTurn, CollectedReply } from "./inbox.ts";
+import type { InboundTurn, CollectedReply, AtomicReplyReason } from "./inbox.ts";
+import { BOUNDED_HOME_HELP_PROMPT } from "./bounded-home-help-intake.ts";
+import { homeHelpNoticeId, lockHomeHelpNoticeRoster } from "./bounded-home-help-delivery.ts";
 import { parseApprovedRelayPhotos, type TurnContext } from "../../core/src/svc/contract.ts";
-import { canBeMatched } from "../../core/src/policy.ts";
+import { ADULT_AGE, canBeMatched } from "../../core/src/policy.ts";
 import type { PhotoRelayService } from "../../platform/src/photo-relay.ts";
 import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import { isDeepStrictEqual } from "node:util";
 import type { Accounts } from "../../platform/src/accounts.ts";
+import type { HeldMemberInvitation, ReferralJoin } from "../../platform/src/invite-links.ts";
+import type { InviteRelationship, MemberInviteEvidence, MemberInviteRequest } from "../src/invitation.ts";
 import { outputLeaks } from "../../mcp/src/leaks.ts";
 // The Observatory's event shape and run summaries, so the console reads what this writes.
 import { eventOf, membersOf, type EventRow } from "../../observatory/src/events.ts";
@@ -46,13 +58,29 @@ import { eventOf, membersOf, type EventRow } from "../../observatory/src/events.
 import { NOT_SENT, type RecipientCheck } from "../../blooio/src/outbound-queue.ts";
 import { summarizeRun } from "../../observatory/src/engineCapture.ts";
 import type { JobPosting } from "../src/jobs.ts";
+import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
 import { savePosting } from "./postings.ts";
 
 type Row = Record<string, unknown>;
 
+export type StagedMemberInvitation =
+  | { status: "review"; review: HeldMemberInvitation }
+  | { status: "issued"; referral: ReferralJoin; url: string; relationship: InviteRelationship;
+      evidence: MemberInviteEvidence; at: number; reviewId?: string };
+
+const privateMemberMessage = (type?: string) => type === "bounded_home_help" || type?.startsWith("member_invitation") === true;
+
 /** What one unit of work produced. Written in the save transaction, then delivered. */
 export interface Unit {
   inbound?: Row;
+  privateInviteTurn?: true;
+  privateHomeHelpTurn?: true;
+  atomicHomeHelpReceipt?: true;
+  memberInvitation?: StagedMemberInvitation;
+  standingIntent?: StoredStandingIntentChange;
+  legacyIntentState?: NetworkState;
+  /** A signed member command prepares its own reply inside the save transaction. */
+  memberCommand?: (tx: SQL) => Promise<void>;
   sends: Outbound[];
   events: EventRow[];
   blocks: [MemberId, MemberId][];
@@ -61,6 +89,8 @@ export interface Unit {
   optOut: Map<MemberId, boolean>;
   forget: Set<MemberId>;
   collected: Set<string>;
+  /** Exact source links for the signed public-event reply with this id. */
+  collectedPublicLinks?: Map<string, readonly string[]>;
   /** A signed agent action's receipt (relay-endpoint.ts), completed in this unit's save transaction with its rows. */
   completeAction?: (tx: SQL) => Promise<void>;
   /** peon job postings saved in this unit (a manager's confirmed text, or staff): their rows go in the save transaction. */
@@ -75,12 +105,17 @@ export interface RuntimeHost {
   instance: string;
   log: (line: string) => void;
   conversationCities?(rt: NetworkRuntime): readonly string[];
+  conversationNetworkId?(app: AppId, homeCity: string): string | undefined;
   accounts?: Pick<Accounts, "activeMembership" | "lowestAge" | "phoneHash">;
   photoRelay?: PhotoRelayService;
   /** Canonical read checks inside an existing admission transaction, without another pool lease. */
   accountsFor?(tx: SQL): Pick<Accounts, "activeMembership" | "lowestAge" | "phoneHash">;
   inboundTurn?(): InboundTurn | undefined;
-  collectReplies?(tx: SQL, replies: CollectedReply[]): Promise<void>;
+  collectReplies?(tx: SQL, replies: CollectedReply[], reason?: AtomicReplyReason): Promise<void>;
+  stageMemberInvitation?(rt: NetworkRuntime, request: MemberInviteRequest): StagedMemberInvitation | undefined;
+  saveMemberInvitation?(tx: SQL, rt: NetworkRuntime, staged: StagedMemberInvitation): Promise<void>;
+  homeHelpNoticeCurrent?(tx: SQL, app: AppInfo, noticeId: string, recipient: MemberId, to: string, body: string): Promise<boolean>;
+  homeHelpRecipientStopped?(tx: SQL, app: AppId, memberId: MemberId): Promise<void>;
   /** Proactive sends of this batch the person-level daily cap refuses (ids). Called before delivery. */
   capRefused(rt: NetworkRuntime, batch: Outbound[]): Promise<Set<string>>;
   /** Give back the person-cap slots of sends the adapter refused (they never went out). */
@@ -121,6 +156,7 @@ export class NetworkRuntime {
   /** This app's engine pack, its engine config and its hooks (packs.ts). */
   readonly wiring: AppWiring;
   private snap?: WorldSnapshot;
+  private joinedInviteeNames = new Map<string, string>();
   private addrToMember = new Map<string, MemberId>();
   private memberToAddr = new Map<MemberId, string>();
   /** The unit being built. The service adds system sends (keyword confirmations) to it. */
@@ -164,6 +200,21 @@ export class NetworkRuntime {
       onAgeStated: (memberId, age, o) => { this.statedAges.push({ memberId, age, ...o }); },
       // peon (#9): a posting the manager confirmed (or staff saved) is written with the unit (writeUnit).
       onPosting: p => { this.unit.postings.push(p); },
+      memberInviteTurnAllowed: (memberId, messageId) => this.signedMemberTurn(memberId, messageId),
+      onPrivateInviteTurn: (memberId, messageId) => {
+        if (this.signedMemberTurn(memberId, messageId)) this.unit.privateInviteTurn = true;
+      },
+      homeHelpIntakePrompt: memberId => {
+        if (!this.signedMemberTurn(memberId)) return;
+        this.unit.privateHomeHelpTurn = true;
+        return BOUNDED_HOME_HELP_PROMPT;
+      },
+      issueMemberInvite: request => {
+        const staged = this.host.stageMemberInvitation?.(this, request);
+        if (!staged) return;
+        this.unit.memberInvitation = staged;
+        return staged.status === "issued" ? { status: "issued", url: staged.url } : { status: "review", reviewId: staged.review.id };
+      },
     });
     this.net.init(this.context());
     this.adapter = typeof o.adapter === "function" ? o.adapter(this.net, this) : o.adapter ?? new DryRunAdapter(host.log);
@@ -286,6 +337,49 @@ export class NetworkRuntime {
     return { ok: true };
   }
 
+  async invitationNoticeAdmission(tx: SQL, id: string, recipient?: MemberId | null): Promise<boolean> {
+    if (!recipient) return false;
+    const [row] = await tx`select invite_join_members from network.messages where app_id=${this.app.id} and id=${id}
+      and direction='outbound' and member_id=${recipient}`;
+    return this.invitationNoticeCurrent(tx, recipient, row?.invite_join_members as MemberId[] | undefined);
+  }
+
+  async lockHomeHelpConsentAdmission(tx: SQL, id: string, recipient?: MemberId | null): Promise<void> {
+    const noticeId = homeHelpNoticeId(id);
+    if (!noticeId || !recipient) return;
+    await tx`select id from network.network_state where id=${this.pg.id} for share`;
+    await lockHomeHelpNoticeRoster(tx, this.app.id, noticeId, recipient);
+  }
+
+  async homeHelpConsentAdmission(tx: SQL, row: { id: string; memberId?: MemberId | null; to: string; text: string }): Promise<boolean> {
+    const noticeId = homeHelpNoticeId(row.id);
+    return !!noticeId && !!row.memberId && !!await this.host.homeHelpNoticeCurrent?.(tx, this.app, noticeId, row.memberId, row.to, row.text);
+  }
+
+  private async invitationNoticeCurrent(tx: SQL, inviter: MemberId, invitees?: readonly MemberId[]): Promise<boolean> {
+    if (!invitees?.length) return false;
+    const app = this.app.id;
+    const links = await tx`select i.id,i.home_city,v.home_city as inviter_home from network.members i join network.members v on v.app_id=i.app_id and v.id=i.invited_by
+      where i.app_id=${app} and v.id=${inviter} and i.id in ${tx([...invitees])}
+      and not exists(select 1 from network.edges b where b.app_id=${app} and b.type='blocked'
+        and ((b.from_id=i.id and b.to_id=v.id) or (b.from_id=v.id and b.to_id=i.id)))
+      and not exists(select 1 from platform.person_blocks b where (b.from_person=i.person_id and b.to_person=v.person_id)
+        or (b.from_person=v.person_id and b.to_person=i.person_id))`;
+    if (links.length !== invitees.length) return false;
+    const ownerOf = (city: string) => this.host.conversationNetworkId?.(app, city) ?? this.id;
+    const members = new Map<MemberId, string>([[inviter, ownerOf(links[0]!.inviter_home as string)]]);
+    if (members.get(inviter) !== this.id) return false;
+    for (const row of links) members.set(row.id as string, ownerOf(row.home_city as string));
+    const stateRows = await tx`select id,state from network.network_state where id in ${tx([...new Set(members.values())])}`;
+    const states = new Map(stateRows.map(row => [row.id as string, (typeof row.state === "string" ? JSON.parse(row.state) : row.state) as NetworkState]));
+    if (![...members].every(([member, network]) => {
+      const state = states.get(network);
+      return state && storedInviteNoticePartyCurrent(state, member);
+    })) return false;
+    const parties = await this.relayParties([...members.keys()], tx);
+    return [...parties.values()].every(party => party.adult && !party.optedOut && !party.held);
+  }
+
   /** Current canonical parties for a selected photo; no participant or phone is selected by the model. */
   async relayPhotoParties(input: { app: AppInfo["id"]; threadId: string; senderPersonId: string }, transaction?: SQL): Promise<{
     senderPersonId: string; senderMemberId: string; recipientPersonId: string; recipientMemberId: string;
@@ -342,7 +436,8 @@ export class NetworkRuntime {
     for (const r of await this.scoped(tx => tx`select event from network.capital_events where app_id = ${this.app.id} order by t, id`) as any[]) {
       try { this.capital.ledger.record(typeof r.event === "string" ? JSON.parse(r.event) : r.event); } catch { /* out of order: counted by the wiring only for new events */ }
     }
-    if (!this.adapter.enqueue) {await this.projectNotifications();return;}
+    // spec/runtimeUnit.md, "Runtime follow-up depends on the adapter and whether the tick ran"
+    if (startupPlan(!!this.adapter.enqueue) === "RepairProjection") { await this.projectNotifications(); return; }
     const recovered = (await this.adapter.recover?.()) ?? 0;
     if (recovered) this.host.log(`[restart] ${recovered} message(s) ${this.adapter.name === "eliza_cloud" ? "held for receipt lookup" : "go out again with the same provider key"} (${this.id})`);
     // One unit loads the state and the address book; its delivery drains the queue.
@@ -357,14 +452,15 @@ export class NetworkRuntime {
         this.unit = newUnit();
         await this.refresh();
         const state = await this.loadState();
+        if (legacyIntentReconciliationDue(!!state, state?.legacyIntentRowsReconciled === true)) this.unit.legacyIntentState = state;
         // The registry's switch wins: a network whose matching is not allowed never matches, whatever was stored.
-        if (state && !this.matchingAllowed) state.matchingEnabled = false;
+        if (state && matchingDisabledByRegistry(this.matchingAllowed)) state.matchingEnabled = false;
         return state;
       },
       save: async (state: NetworkState) => {
         const u = this.unit;
         // PgStore.save sets app.app_id for its own transaction; the unit's rows go in the same one.
-        await this.pg.save(state, tx => this.writeUnit(tx, u));
+        await this.pg.save({ ...state, legacyIntentRowsReconciled: true }, tx => this.writeUnit(tx, u));
         this.committed.push(...u.sends.filter(s => !u.collected.has(s.id)));
         this.unit = newUnit();
       },
@@ -375,7 +471,21 @@ export class NetworkRuntime {
 
   /** The snapshot and the address book, read fresh for every unit (inside the lock), in one app-scoped transaction. */
   private async refresh() {
-    this.snap = await this.scoped(tx => loadSnapshot(tx, this.clock.now(), { app: this.app.id, city: this.city, homeCities: this.host.conversationCities?.(this) }));
+    const app = this.app.id, now = this.clock.now(), homes = this.host.conversationCities?.(this);
+    await this.scoped(async tx => {
+      const [snapshot, names] = await Promise.all([
+        loadSnapshot(tx, now, { app, city: this.city, homeCities: homes }),
+        tx`select i.id,i.invited_by,i.name from network.members i join network.members v on v.app_id=i.app_id and v.id=i.invited_by
+          join platform.matching_ages a on a.app_id=i.app_id and a.member_id=i.id
+          where i.app_id=${app} and v.home_city in ${tx([...(homes ?? [this.city])])} and i.home_city not in ${tx([...(homes ?? [this.city])])}
+            and i.joined_at>${new Date(now - inviteJoinNoticeLifetimeMs)} and i.account_status='active' and not i.opted_out and a.age>=${ADULT_AGE}`,
+      ]);
+      this.snap = snapshot;
+      this.joinedInviteeNames = new Map(names.flatMap(row => {
+        const first = (row.name as string | null)?.trim().split(/\s+/)[0];
+        return first ? [[`${row.invited_by}\0${row.id}`, first] as const] : [];
+      }));
+    });
     await this.identities();
   }
 
@@ -408,6 +518,12 @@ export class NetworkRuntime {
   memberOf = (address: string): MemberId | undefined => this.addrToMember.get(normalizeAddress(address));
   addressOf = (id: MemberId): string | undefined => this.memberToAddr.get(id);
 
+  signedMemberTurn(memberId: MemberId, messageId?: string): boolean {
+    const turn = this.host.inboundTurn?.();
+    return !!turn && turn.app === this.app.id && turn.memberId === memberId && (messageId === undefined || `in:${turn.id.slice(4)}` === messageId)
+      && normalizeAddress(this.addressOf(memberId) ?? "") === normalizeAddress(turn.from);
+  }
+
   private context(): NetworkContext {
     const ev = (rec: unknown) => { const e = eventOf(rec as RunRecord); if (e) this.unit.events.push(e); };
     return {
@@ -417,10 +533,22 @@ export class NetworkRuntime {
         const meta = o?.meta ?? {};
         const approvedPhotos = meta.approvedPhotos === undefined ? undefined : parseApprovedRelayPhotos(meta.approvedPhotos);
         if (meta.approvedPhotos !== undefined && !approvedPhotos) throw new Error("Invalid deferred approved photo payload");
-        const id = o?.idempotencyKey ?? `${memberId}:${t}:${this.nonce}${++this.seq}`;
+        const baseId = o?.idempotencyKey ?? `${memberId}:${t}:${this.nonce}${++this.seq}`;
+        const id = meta.privateInviteVouch && !meta.approvedInviteLink ? `invite-vouch:${baseId}` : baseId;
         const turn = this.host.inboundTurn?.();
         const causal = turn?.app === this.app.id && turn.memberId === memberId && o?.reply === true
           && normalizeAddress(this.memberToAddr.get(memberId) ?? "") === normalizeAddress(turn.from);
+        const pendingInvite = this.unit.memberInvitation;
+        if (meta.approvedInviteLink) {
+          if (!causal || pendingInvite?.status !== "issued" || pendingInvite.referral.inviterMemberId !== memberId || pendingInvite.url !== meta.approvedInviteLink) {
+            throw new Error("Invitation reply has no matching signed issuer");
+          }
+          (this.unit.collectedPublicLinks ??= new Map()).set(id, [pendingInvite.url]);
+        }
+        if (meta.privateInviteVouch && !causal) throw new Error("Private invitation text requires its signed member reply");
+        const type = meta.homeHelpConsentFor ? "home_help_consent" : meta.approvedInviteLink ? "member_invitation" : meta.privateInviteVouch
+          ? pendingInvite?.status === "review" ? "member_invitation_review" : "member_invitation_vouch"
+          : this.unit.privateHomeHelpTurn && causal ? "bounded_home_help" : meta.type;
         if (causal) this.unit.collected.add(id);
         this.unit.sends.push({
           id, memberId, to: this.memberToAddr.get(memberId), body,
@@ -428,12 +556,13 @@ export class NetworkRuntime {
           // re-engagement or a check-in), so the queue's quiet hours and caps still apply to those.
           kind: o?.reply && (causal || this.replyingTo === memberId) ? "reply" : meta.proactive ? "proactive" : "transactional",
           // A probe names its opportunity only in meta.probe (anonymous to the member); the row links it either way.
-          ...(approvedPhotos ? { approvedPhotos } : {}),
-          type: meta.type, oppId: meta.proposalId ?? meta.probe?.key, proactive: !!meta.proactive, system: false, ts: t,
+          ...(approvedPhotos ? { approvedPhotos } : {}), ...(meta.invitationJoins ? { invitationJoins: meta.invitationJoins } : {}),
+          type, oppId: meta.proposalId ?? meta.probe?.key, proactive: !!meta.proactive, system: false, ts: t,
         });
         return { id, ts: t, direction: "outbound", channel: "imessage", from: "network", to: memberId, memberId, body, status: causal ? "collected" : "delivered", meta } satisfies SimMessage;
       },
       snapshot: () => this.snap ?? { now: this.clock.now(), members: [], facets: [], intents: [], presence: [], edges: [], recentProposals: [] },
+      verifiedJoinedInviteeName: (inviter, invitee) => this.joinedInviteeNames.get(`${inviter}\0${invitee}`),
       // A proposal record has no oracle in production; eventOf reads only the proposal and the source.
       recordProposal: (proposal, source = "network") => ev({ t: this.clock.now(), type: "proposal", source, proposal }),
       recordMeeting: m => { ev({ t: this.clock.now(), type: "meeting_scheduled", meetingId: m.proposalId, proposalId: m.proposalId, participants: m.participants, at: m.at, city: m.city }); return m.proposalId; },
@@ -450,9 +579,25 @@ export class NetworkRuntime {
     this.unit.sends.push({ id, memberId, to: this.memberToAddr.get(memberId), body, ...(mediaUrls?.length ? { mediaUrls } : {}), kind, type, proactive: false, system: true, ts: this.clock.now() });
   }
 
+  /** A directly requested result for this signed member. Source links grant only a per-reply contact exception. */
+  collectedMemberReply(memberId: MemberId, id: string, body: string,
+    type: "solo_events" | "contribution_history" | "member_invitation" | "member_invitation_vouch" | "bounded_home_help", publicLinks: readonly string[] = []) {
+    const turn = this.host.inboundTurn?.();
+    if (turn?.app !== this.app.id || turn.memberId !== memberId
+      || normalizeAddress(this.addressOf(memberId) ?? "") !== normalizeAddress(turn.from)) return;
+    const reasons = new LeakGuard({ ...this.net.leakSources([memberId]), canaryShapes: true }).check(body, { contactAllow: publicLinks });
+    if (reasons.length) {
+      this.host.log(`[alert] a ${type} reply failed the leak guard (${this.id}, ${id})`);
+      return;
+    }
+    this.system(memberId, id, body, "reply", type);
+    if (publicLinks.length) (this.unit.collectedPublicLinks ??= new Map()).set(id, publicLinks);
+  }
+
   /** Everything the unit produced, inside the save transaction (app.app_id is set). Rows that name a member not in this app's network.members are skipped. */
   private async writeUnit(tx: SQL, u: Unit) {
     const app = this.app.id;
+    await u.memberCommand?.(tx);
     const personIds = new Map<string, string>();
     if (u.forget.size) {
       const rows = await tx`select person.id,member.id as member_id from platform.people person
@@ -460,34 +605,87 @@ export class NetworkRuntime {
         order by person.id for update of person`;
       for (const row of rows as Row[]) personIds.set(row.member_id as string, row.id as string);
     }
-    const named = new Set<string>([...u.sends.map(s => s.memberId), ...(u.inbound ? [u.inbound.member_id as string] : []), ...u.blocks.flat(), ...u.optOut.keys(), ...u.postings.map(p => p.managerId)]);
+    const named = new Set<string>([...u.sends.map(s => s.memberId), ...(u.inbound ? [u.inbound.member_id as string] : []),
+      ...(u.standingIntent ? [u.standingIntent.memberId] : []), ...u.blocks.flat(), ...u.optOut.keys(), ...u.postings.map(p => p.managerId)]);
     const known = new Set<string>();
     if (named.size) for (const r of await tx`select id from network.members where app_id = ${app} and id in ${tx([...named])}`) known.add(r.id);
     const ok = (id: string) => known.has(id) && !u.forget.has(id);
-    if (u.inbound && ok(u.inbound.member_id as string)) await tx`insert into network.messages ${tx({ ...u.inbound, app_id: app })} on conflict (id) do nothing`;
+    if (u.standingIntent) {
+      const change = u.standingIntent;
+      if (!ok(change.memberId)) throw new Error("Standing intent owner is unavailable");
+      const rows = await tx`update network.intents set status = ${change.status}
+        where app_id = ${app} and id = ${change.id} and member_id = ${change.memberId}
+          and status = ${change.previousStatus} and coalesce(details, '') not like ${`${JOB_INTENT}%`}
+        returning id`;
+      if (rows.length !== 1) throw new Error("Selected standing intent changed before commit");
+    }
+    if (u.legacyIntentState) {
+      const inactive = new Set(u.forget);
+      for (const [member, optedOut] of u.optOut) if (optedOut) inactive.add(member);
+      await reconcileLegacyIntentRows(tx, app, this.host.conversationCities?.(this) ?? [this.city], u.legacyIntentState, this.clock.now(), inactive);
+    }
+    if (u.inbound && ok(u.inbound.member_id as string)) {
+      const privateFields = u.privateHomeHelpTurn ? { body: "Private home-help request.", type: "bounded_home_help" }
+        : u.privateInviteTurn ? { body: "Private invitation request.", type: "member_invitation_vouch" } : {};
+      await tx`insert into network.messages ${tx({ ...u.inbound, ...privateFields, app_id: app })} on conflict (id) do nothing`;
+    }
     const turn = this.host.inboundTurn?.();
     const queue = this.adapter instanceof BlooioAdapter ? this.adapter.queue : undefined;
+    for (const send of u.sends) {
+      if (!send.invitationJoins?.length) continue;
+      if (!ok(send.memberId) || send.invitationJoins.some(member => u.forget.has(member)) || !await this.invitationNoticeCurrent(tx, send.memberId, send.invitationJoins)) {
+        u.collected.delete(send.id);
+        u.sends = u.sends.filter(message => message.id !== send.id);
+      }
+    }
     // Collected replies (Cloud sends them) get the queue's own leak guard first: canary shapes, contacts,
     // the recipient's leak sources and the thread check. One that fails is not collected; it goes into
     // the queue like any other send, where the same guard parks it for staff (parked_leak_review).
     if (queue) for (const s of u.sends) {
       if (!u.collected.has(s.id) || !s.to) continue;
-      const reasons = await queue.collectedLeaks(tx, { id: s.id, ...(u.forget.has(s.memberId) ? {} : { memberId: s.memberId }), to: s.to, kind: s.kind, text: s.body });
-      if (reasons.length) { u.collected.delete(s.id); this.host.log(`[alert] a collected reply failed the leak guard and goes to the queue for review (${this.id}, ${s.id})`); }
+      const bookedLink = s.kind === "reply" && s.type === "proposal" ? this.net.approvedPublicEventLink(s.oppId, s.memberId, s.body) : undefined;
+      const contactAllow = u.collectedPublicLinks?.get(s.id) ?? (bookedLink ? [bookedLink] : undefined);
+      const reasons = await queue.collectedLeaks(tx, { id: s.id, ...(u.forget.has(s.memberId) ? {} : { memberId: s.memberId }), to: s.to, kind: s.kind, text: s.body, contactAllow });
+      if (reasons.length) {
+        u.collected.delete(s.id);
+        if (s.type === "solo_events" || s.type === "contribution_history" || privateMemberMessage(s.type)) {
+          // This result was authorized for the signed reply only.
+          u.sends = u.sends.filter(message => message.id !== s.id);
+          this.host.log(`[alert] a ${s.type} reply failed the collected leak guard (${this.id}, ${s.id})`);
+        } else this.host.log(`[alert] a collected reply failed the leak guard and goes to the queue for review (${this.id}, ${s.id})`);
+      }
     }
     const captured = u.sends.filter(s => u.collected.has(s.id) && (ok(s.memberId) || u.forget.has(s.memberId)));
+    let replyReason: AtomicReplyReason | undefined;
+    if (u.atomicHomeHelpReceipt) {
+      if (!captured.some(send => send.type === "bounded_home_help")) throw new Error("Home-help receipt was not collected");
+      replyReason = "bounded_home_help";
+    }
+    if (u.memberInvitation) {
+      const staged = u.memberInvitation;
+      replyReason = staged.status === "issued" ? "member_invitation" : "member_invitation_review";
+      const inviterId = staged.status === "issued" ? staged.referral.inviterMemberId : staged.review.inviterMemberId;
+      const reply = captured.find(s => s.type === replyReason && s.memberId === inviterId && ok(s.memberId));
+      // The invitation outcome and its allowance must roll back together if the exact reply was withheld.
+      if (!reply || !this.host.saveMemberInvitation) throw new Error("Member invitation reply was not collected");
+      await this.host.saveMemberInvitation(tx, this, staged);
+    }
     if (captured.length) {
       if (!turn || !this.host.collectReplies) throw new Error("Signed turn collector is unavailable");
-      await this.host.collectReplies(tx, captured.map(s => ({id:s.id, body:s.body, kind:s.kind === "compliance" ? "compliance" : "reply"})));
+      await this.host.collectReplies(tx, captured.map(s => ({id:s.id, body:s.body, kind:s.kind === "compliance" ? "compliance" : "reply"})), replyReason);
     }
     const out = u.sends.filter(s => ok(s.memberId)).map(s => ({
-      id: s.id, app_id: app, member_id: s.memberId, direction: "outbound", channel: "imessage", body: s.body, status: u.collected.has(s.id) ? "collected" : this.adapter.storedStatus,
+      id: s.id, app_id: app, member_id: s.memberId, direction: "outbound", channel: "imessage",
+      body: s.type === "bounded_home_help" ? "Private home-help reply." : privateMemberMessage(s.type) ? "Private invitation reply." : s.body,
+      status: u.collected.has(s.id) ? "collected" : this.adapter.storedStatus,
       inbound_id: u.collected.has(s.id) ? turn!.id : null,
+      invite_join_members: s.invitationJoins ? tx.array([...s.invitationJoins], "TEXT") : null,
       type: s.type ?? null, opportunity_id: s.oppId ?? null, proactive: s.proactive, system: s.system, ts: new Date(s.ts),
     }));
     // Collected replies to members join the line's thread history (platform.outbound "collected"; sent_at when Cloud accepts), so the
     // leak guard's thread check (core-14) sees what Cloud delivered, and a value split across a reply and a later text is caught.
-    if (queue) await queue.recordCollected(tx, captured.filter(s => ok(s.memberId) && s.to).map(s => ({ id: s.id, memberId: s.memberId, to: s.to!, kind: s.kind, text: s.body })));
+    if (queue) await queue.recordCollected(tx, captured.filter(s => ok(s.memberId) && s.to && !privateMemberMessage(s.type))
+      .map(s => ({ id: s.id, memberId: s.memberId, to: s.to!, kind: s.kind, text: s.body })));
     for (let i = 0; i < out.length; i += 500) {
       const chunk = out.slice(i, i + 500);
       const wrote = new Set((await tx`insert into network.messages ${tx(chunk)} on conflict (id) do nothing returning id`).map((r: any) => r.id as string));
@@ -516,7 +714,10 @@ export class NetworkRuntime {
     for (const r of u.runs) await tx`insert into network.matching_runs ${tx(r)} on conflict (id) do nothing`;
     // Job postings: the intent and its tagged facets on the manager (postings.ts); never for a member this unit forgets.
     for (const p of u.postings) if (ok(p.managerId)) await savePosting(tx, app, p);
-    for (const [id, out] of u.optOut) if (ok(id)) await tx`update network.members set opted_out = ${out} where app_id = ${app} and id = ${id}`;
+    for (const [id, out] of u.optOut) if (ok(id)) {
+      await tx`update network.members set opted_out = ${out} where app_id = ${app} and id = ${id}`;
+      if (out) await this.host.homeHelpRecipientStopped?.(tx, app, id);
+    }
     // The forget path (an under-age decline, leaving the app, deleting everything): keep only the id. Nothing that names the member stays.
     for (const id of u.forget) {
       // Seal old signed replay payloads in the same canonical removal transaction. Keep only dedupe metadata.
@@ -540,6 +741,19 @@ export class NetworkRuntime {
       await tx`delete from network.presence where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.edges where app_id = ${app} and (from_id = ${id} or to_id = ${id})`;
       await tx`delete from network.channel_identities where app_id = ${app} and member_id = ${id}`;
+      await tx`delete from platform.member_invitations where app_id=${app} and (inviter_member_id=${id} or redeemed_member_id=${id})`;
+      await tx`delete from platform.member_invitation_reviews where app_id=${app} and inviter_member_id=${id}`;
+      const joinNotices = await tx`select id,inbound_id from network.messages where app_id=${app} and ${id}=any(invite_join_members)`;
+      if (joinNotices.length) {
+        const ids = joinNotices.map(row => row.id as string);
+        await tx`update platform.outbound set body=null, ended_at=coalesce(ended_at,${new Date(this.clock.now())}),
+          status=case when status=any(${tx.array(WAITING_STATUSES, "TEXT")}) then 'dropped_forgotten' else status end
+          where app_id=${app} and id in ${tx(ids)}`;
+        const turns = joinNotices.flatMap(row => row.inbound_id ? [row.inbound_id as string] : []);
+        if (turns.length) await tx`update platform.inbound set status='unresolved',response=null,replies='[]'::jsonb,
+          receipt=null,receipt_hash=null,action_receipts='{}'::jsonb where app_id=${app} and id in ${tx(turns)}`;
+        await tx`update network.messages set body='Invitation notice erased.',invite_join_members=null where app_id=${app} and id in ${tx(ids)}`;
+      }
       await tx`update network.members set invited_by = null where app_id = ${app} and invited_by = ${id}`;
       await tx`update network.members set name = null, home_city = null, home_area = null, account_status = 'removed', opted_out = false, age = null, invited_by = null,
         community = null, occupation = null, bio = null, participation_window=null, prefs = '{}'::jsonb, unanswered_proactive = 0, joined_at = null, person_id = null where app_id = ${app} and id = ${id}`;
@@ -662,8 +876,8 @@ export class NetworkRuntime {
     if (this.retry.length) this.committed.unshift(...this.retry.splice(0));
     await this.deliver();
     await this.storeStatuses(await this.adapter.flush());
-    if (ran && !this.adapter.enqueue) await this.projectNotifications();
-    if (ran && this.host.afterTick) await this.host.afterTick(this).catch(e => this.host.log(`[tick] after-tick work failed (${this.id}): ${(e as Error).message}`));
+    if (tickRepairsProjection(ran, !!this.adapter.enqueue)) await this.projectNotifications();
+    if (tickRunsFollowup(ran, !!this.host.afterTick)) await this.host.afterTick?.(this).catch(e => this.host.log(`[tick] after-tick work failed (${this.id}): ${(e as Error).message}`));
     return ran;
   }
 
@@ -700,18 +914,24 @@ export class NetworkRuntime {
       await this.refresh();
       const e164 = this.addressOf(memberId);
       const accounts = this.host.accounts;
-      if (!e164 || !accounts) return null;
+      // spec/sharedContext.md, "Only the canonical member of the requested app can receive context"
+      const account = stepContext(initialContext, { type: "checkAccount", canReadAccount: !!e164 && !!accounts });
+      if (account.phase !== "CheckingMembership" || !e164 || !accounts) return null;
       const binding = await accounts.activeMembership(this.app, {e164, personId: null});
-      if (!binding || binding.membership.memberId !== memberId) return null;
+      const membership = stepContext(account, { type: "checkMembership", exactMember: binding?.membership.memberId === memberId });
+      if (membership.phase !== "CheckingMember" || !binding) return null;
       const snapshot = this.snap!;
       const member = snapshot.members.find(m => m.id === memberId);
       if (!member) return null;
       const [canonical] = await this.scoped(tx => tx`select participation_state,participation_window,opted_out from network.members where app_id=${this.app.id} and id=${memberId}`);
       if (!canonical) return null;
       const participation = effectiveParticipation(canonical as {participation_state: typeof member.state; participation_window?:unknown; opted_out?:boolean},snapshot.now);
-      const state = participation.active ? participation.window!.state : participation.state === "normal" || participation.state === "open" || participation.state === "receiving" ? "open"
-        : participation.state === "quiet" ? "busy" : participation.state === "paused" ? "paused" : null;
-      if (!state) return null;
+      const stateByMode = {
+        ModeOpen: "open", ModeBusy: "busy", ModeTraveling: "traveling", ModePaused: "paused", ModeUnavailable: null,
+      } as const satisfies Record<ContextMode, TurnContext["state"] | null>;
+      const state = stateByMode[contextMode(participation.active, participation.window?.state ?? "", participation.state)];
+      const memberContext = stepContext(membership, { type: "checkMember", memberAndModeExist: state !== null });
+      if (memberContext.phase !== "CheckingLabels" || state === null) return null;
       const firstName = member.name.trim().split(/\s+/)[0] ?? "";
       const forbidden = [e164, binding.person.id, ...snapshot.facets.map(f => f.id), ...snapshot.members.flatMap(m => {
         const first = m.name.trim().split(/\s+/)[0] ?? "";
@@ -721,15 +941,20 @@ export class NetworkRuntime {
       })];
       const facts = [...snapshot.facets.filter(f => f.scope === "agent_private").map(f => f.value),...(participation.window?.note?[participation.window.note]:[])];
       const safe = (text: string) => outputLeaks(text, {forbidden, facts, contacts: true}).length === 0;
-      if (!safe(firstName) || !safe(member.homeCity)) return null;
-      const facets = snapshot.facets.filter(f => f.memberId === memberId && f.scope === "shareable" && f.confirmedByMember === true
-        && !f.sensitive && (f.validFrom === undefined || f.validFrom <= snapshot.now) && (f.validTo === undefined || f.validTo > snapshot.now)
-        && safe(f.value)).map(f => f.value);
+      // spec/sharedContext.md, "Check the public labels and each confirmed shareable fact"
+      const labels = stepContext(memberContext, { type: "checkLabels", labelsSafe: safe(firstName) && safe(member.homeCity) });
+      if (labels.phase !== "CheckingFacets") return null;
+      const facets = snapshot.facets.filter(f => contextFacetEligible(f.memberId === memberId, f.scope === "shareable", f.confirmedByMember === true,
+        !!f.sensitive, (f.validFrom === undefined || f.validFrom <= snapshot.now) && (f.validTo === undefined || f.validTo > snapshot.now)) && safe(f.value)).map(f => f.value);
       // The deployed plugin contract rejects larger context. Withhold it whole; never truncate a fact.
-      if (facets.length > 50 || facets.some(f => f.length > 300)) return null;
+      const ready = stepContext(labels, { type: "checkFacets", facetCount: facets.length,
+        oversized: facets.length <= contextFacetLimit && facets.some(f => f.length > contextFacetSizeLimit),
+      });
+      if (ready.phase !== "ContextReady") return null;
+      const present = presentInNyc(snapshot, member.id, snapshot.now, snapshot.now + 6 * DAY);
       return {
         firstName, city: member.homeCity, state, stateFrom: participation.active?participation.window!.from:null, stateUntil: participation.active?participation.window!.until:null, facets,
-        activeItems: null, singlePlayer: !presentInNyc(snapshot, member.id, snapshot.now, snapshot.now + 6 * DAY) || !canBeMatched(await accounts.lowestAge(e164, binding.person)),
+        activeItems: null, singlePlayer: contextSinglePlayer(present, present && canBeMatched(await accounts.lowestAge(e164, binding.person))),
       };
     });
   }

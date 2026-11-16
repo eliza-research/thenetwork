@@ -181,7 +181,7 @@ export function BiasMonitor() {
     <StatusRow
       view={view}
       error={r.error ?? r.data?.error}
-      unavailable="The bias monitor runs on real data only (bun run sim measures it in simulation)."
+      unavailable="The bias monitor runs on real data only (pnpm run sim measures it in simulation)."
       empty="No report yet: the Network service writes one a week for each network that takes photos."
     >
       {last && (

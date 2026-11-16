@@ -83,7 +83,7 @@ export function grantCard(named: boolean): GrantCard {
 //@ pure
 export function lawGrantCardShowsClaimDateAndScopes(named: boolean): boolean {
   //@ ensures \result === true
-  const local_0 = grantCard(named);
+  const local_0: GrantCard = grantCard(named);
   return local_0.claimNote && local_0.allowedDate && local_0.scopeList && local_0.removeButton;
 }
 

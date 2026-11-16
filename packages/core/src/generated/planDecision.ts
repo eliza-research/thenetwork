@@ -27,7 +27,7 @@ export function planReplyChoice(reply: ReplyFacts): ReplyChoice {
 //@ pure
 export function lawBookingNeedsQuorum(phase: PlanStage, pendingMember: boolean, accepted: boolean, yesAfter: number, needed: number, partnerPlan: boolean, firstMember: boolean, beforeDeadline: boolean, lateJoinOpen: boolean): boolean {
   //@ ensures \result === true
-  const local_0 = { phase: phase, pendingMember: pendingMember, accepted: accepted, yesAfter: yesAfter, needed: needed, partnerPlan: partnerPlan, firstMember: firstMember, beforeDeadline: beforeDeadline, lateJoinOpen: lateJoinOpen };
+  const local_0: ReplyFacts = { phase: phase, pendingMember: pendingMember, accepted: accepted, yesAfter: yesAfter, needed: needed, partnerPlan: partnerPlan, firstMember: firstMember, beforeDeadline: beforeDeadline, lateJoinOpen: lateJoinOpen };
   return !(planReplyChoice(local_0) === "BookPlan") || (phase === "Probing" && pendingMember && accepted && yesAfter >= needed);
 }
 

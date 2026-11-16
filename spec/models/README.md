@@ -7,11 +7,11 @@ The 31 modules came from `claude/quint-state-machines` at `30d950e1d6fa027a67b94
 ## Run the models
 
 ```bash
-bun run spec:setup
-bun run quint:check                         # typecheck, replay traces, simulate safety and reachability
-bun run quint:check turn_consent            # one model
-bun run quint:check --tangle-only           # write the model blocks to runs/quint-models/
-bun run quint:check --verify --jobs 2       # include bounded Apalache checks, requires Java 17+
+pnpm run spec:setup
+pnpm run quint:check                         # typecheck, replay traces, simulate safety and reachability
+pnpm run quint:check turn_consent            # one model
+pnpm run quint:check --tangle-only           # write the model blocks to runs/quint-models/
+pnpm run quint:check --verify --jobs 2       # include bounded Apalache checks, requires Java 17+
 ```
 
 A `witness_*` assertion is the negation of an expected reachable state. A witness check passes when the simulator reaches that state and the assertion fails. Random simulation and bounded model checking cover the modeled states within the run bounds.
@@ -34,7 +34,7 @@ entire imported model.
 | [auth_edge](auth_edge.md) | Web sessions and trusted requests | [Phone verification](../otpLimits.md), [web sessions](../webSession.md) |
 | [backup_restore](backup_restore.md) | Database restore | [Scratch restore lifecycle](../databaseRestore.md) |
 | [boot_config](boot_config.md) | Service start and proxy configuration | [Startup configuration](../bootPolicy.md) |
-| [candidate_pool](candidate_pool.md) | Candidate retrieval and groups | [Candidate screening](../candidateScreening.md), [exposure floor state machine](../exposureFloor.md), [group formation](../groupFormation.md) |
+| [candidate_pool](candidate_pool.md) | Candidate retrieval and groups | [Candidate screening](../candidateScreening.md), [travel presence](../travelPresence.md), [signed travel journey](../travelPresenceJourney.md), [exposure floor state machine](../exposureFloor.md), [group formation](../groupFormation.md) |
 | [chatjson_loop](chatjson_loop.md) | Structured model calls | [Structured request state machine](../chatRetry.md) |
 | [cloud_auth](cloud_auth.md) | Eliza Cloud sign-in and grants | [Cloud callback and session issuance](../cloudSignIn.md), [session and grant validation](../cloudAuthority.md) |
 | [console_privacy](console_privacy.md) | Staff console data visibility | [Staff permissions and view scope](../staffPermissions.md) |
@@ -43,22 +43,22 @@ entire imported model.
 | [identity_sagas](identity_sagas.md) | Phone ownership and account changes | [Phone change lifecycle](../phoneChange.md), [account privacy](../accountPrivacy.md) |
 | [join_age](join_age.md) | Membership and age | [Shared-line enrollment](../textEnrollment.md), [member age](../memberAge.md) |
 | [join_flow](join_flow.md) | Browser signup | [Current site enrollment](../siteEnrollment.md), [member age](../memberAge.md), [phone verification limits](../otpLimits.md) |
-| [matching_engine](matching_engine.md) | Matching, interviews, and job seats | [Judgment passes](../judgmentRun.md), [judgment cache and attempts](../judgmentAttempt.md), [global selection run](../selectionRun.md), [Slop assignment rounds](../slopAssignment.md), [Slop onboarding](../slopOnboarding.md), [Peon capacity](../peonCapacity.md) |
-| [notify_capital](notify_capital.md) | Inbox and network capital | [Notification delivery](../notificationDelivery.md), [capital levers](../capitalLevers.md) |
-| [oauth_mcp](oauth_mcp.md) | Connector authorization and member tools | [Browser authorization](../oauthBrowserAuthorization.md), [connector grant issuance](../oauthGrantIssuance.md), [token lifecycle](../oauthTokenLifecycle.md) |
+| [matching_engine](matching_engine.md) | Matching, interviews, and job seats | [Standing intent freshness](../standingIntent.md), [empty intent follow-up](../emptyIntentFollowup.md), [repeat encounter consent](../repeatEncounter.md), [bounded help admission](../boundedHelp.md), [judgment passes](../judgmentRun.md), [judgment cache and attempts](../judgmentAttempt.md), [matching questions](../engineAsks.md), [global selection run](../selectionRun.md), [Slop assignment rounds](../slopAssignment.md), [Slop onboarding](../slopOnboarding.md), [Peon capacity](../peonCapacity.md) |
+| [notify_capital](notify_capital.md) | Inbox and network capital | [Notification delivery](../notificationDelivery.md), [digest dispatch and rechecks](../notificationDispatch.md), [reading and acknowledgements](../notificationAcknowledgement.md), [capital ledger](../capitalLedger.md), [capital levers](../capitalLevers.md), [private contribution history](../contributionHistory.md), [attendance events](../meetingSettlement.md) |
+| [oauth_mcp](oauth_mcp.md) | Connector authorization and member tools | [Browser authorization](../oauthBrowserAuthorization.md), [connector grant issuance](../oauthGrantIssuance.md), [token lifecycle](../oauthTokenLifecycle.md), [signup draft](../mcpSignupDraft.md) |
 | [observatory_sync](observatory_sync.md) | Staff console synchronization | [Snapshot and delta lifecycle](../observatorySync.md) |
-| [opportunity](opportunity.md) | Proposal, review, and response | [Opportunity lifecycle](../opportunityLifecycle.md), [probe dispatch and settlement](../probeDispatch.md), [review deadline](../reviewDeadline.md), [probe reply](../probeReply.md) |
+| [opportunity](opportunity.md) | Proposal, review, and response | [Member requests](../memberRequest.md), [request and review journey](../memberRequestJourney.md), [review-to-contact journey](../reviewContactJourney.md), [mutual-consent booking journey](../mutualConsentJourney.md), [opportunity lifecycle](../opportunityLifecycle.md), [probe dispatch and settlement](../probeDispatch.md), [review deadline](../reviewDeadline.md), [probe reply](../probeReply.md), [booked meeting settlement](../meetingSettlement.md), [repeat encounter consent](../repeatEncounter.md) |
 | [outbound_queue](outbound_queue.md) | Outbound queue and delivery receipts | [Outbound admission](../outboundAdmission.md), [provider receipt lifecycle](../outboundReceipt.md), [outreach cap](../outreachPolicy.md), [participation budgets](../participationBudgets.md), [quiet hours](../quietHours.md) |
 | [phone_identity](phone_identity.md) | Phone number identity | [Phone change lifecycle](../phoneChange.md) |
-| [photo_relay_item](photo_relay_item.md) | Selected-photo delivery | [Selected-photo claim and fetch](../photoRelayItem.md) |
-| [photos_rating](photos_rating.md) | Photo storage and private ratings | [Photo eligibility and limits](../photoPolicy.md) |
+| [photo_relay_item](photo_relay_item.md) | Selected-photo delivery | [Selected-photo request and review](../photoRelayReview.md), [selected-photo claim and fetch](../photoRelayItem.md) |
+| [photos_rating](photos_rating.md) | Photo storage and private ratings | [Photo eligibility and limits](../photoPolicy.md), [upload and retention](../photoRetention.md), [asynchronous rating lifecycle](../photoRating.md) |
 | [plan_crew](plan_crew.md) | Crew invitations and sessions | [Crew offer state machine](../crewOffer.md), [formation rules](../planDecision.md), [Friends weekly pass reservations](../friendsWeek.md) |
-| [plan_run](plan_run.md) | Group plans and fallback | [Plan reply, fallback and allowance](../planDecision.md), [plan dispatch](../planDispatch.md), [Friends weekly pass reservations](../friendsWeek.md) |
-| [profile_learning](profile_learning.md) | Suggestions from connected sources | [Suggestion review state machine](../profileSuggestionReview.md) |
-| [profile_read](profile_read.md) | Read a saved profile | [Saved-profile read](../savedProfileRead.md) and [suggestion review](../profileSuggestionReview.md) state machines |
+| [plan_run](plan_run.md) | Group plans and fallback | [Reviewed group journey](../reviewedGroupJourney.md), [Single-slot plan formation](../planFormation.md), [plan reply, fallback and allowance](../planDecision.md), [plan dispatch](../planDispatch.md), [Friends weekly pass reservations](../friendsWeek.md), [booked meeting settlement](../meetingSettlement.md) |
+| [profile_learning](profile_learning.md) | Suggestions from connected sources | [Source collection and cleanup](../profileSuggestionSource.md), [suggestion review state machine](../profileSuggestionReview.md), [standing intent management](../standingIntentManagement.md) |
+| [profile_read](profile_read.md) | Read a saved profile | [Saved-profile read](../savedProfileRead.md), [profile isolation and app leave](../savedProfileJourney.md), [suggestion review](../profileSuggestionReview.md) |
 | [relay](relay.md) | Relay between matched members | [Consent timing and verdict](../relayDecision.md), [item lifecycle](../relayLifecycle.md) |
 | [review_desk](review_desk.md) | Staff review desk | [Staff review interaction](../staffReview.md), [server review deadline](../reviewDeadline.md) |
-| [runtime_ops](runtime_ops.md) | Runtime work, retention, and alerts | [Observatory timing](../operationsTiming.md) |
-| [safety_trust](safety_trust.md) | Safety reports, holds, and blocks | [Safety case lifecycle](../safetyCase.md), [trust levels](../trustLevel.md) |
+| [runtime_ops](runtime_ops.md) | Runtime work, retention, and alerts | [Stored units and tick follow-up](../runtimeUnit.md), [backend tick and shutdown lifecycle](../backendLifecycle.md), [backend health](../backendHealth.md), [platform retention](../platformRetention.md), [service cost ledger](../costLedger.md), [Observatory timing](../operationsTiming.md), [operations alert dispatch](../opsAlertDispatch.md), [weekly bias monitoring](../weeklyBias.md) |
+| [safety_trust](safety_trust.md) | Safety reports, holds, and blocks | [Safety case lifecycle](../safetyCase.md), [staff safety scope and audit](../staffSafetyService.md), [trust levels](../trustLevel.md) |
 | [staff_console](staff_console.md) | Staff roles and console actions | [Staff request permissions](../staffPermissions.md) |
-| [turn_consent](turn_consent.md) | Signed turns and carrier consent | [Carrier consent](../carrierConsent.md) |
+| [turn_consent](turn_consent.md) | Signed turns and carrier consent | [Carrier consent](../carrierConsent.md), [shared-line consent journey](../sharedLineConsentJourney.md), [signed inbox and recovery](../signedInbox.md), [webhook queue](../webhookInbox.md), [signed receipt processing](../turnReceipt.md), [receipt replay journey](../turnReceiptJourney.md), [shared agent context](../sharedContext.md) |

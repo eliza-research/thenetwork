@@ -19,3 +19,4 @@ export {
 } from "./generated/participationBudgets.ts";
 export { withinMutualRadius } from "./dating-radius.ts";
 export { sharedDatingMarket } from "./generated/datingRadius.ts";
+export { temporaryPresenceWindow } from "./travel-presence.ts";

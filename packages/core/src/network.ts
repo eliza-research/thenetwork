@@ -83,6 +83,14 @@ export interface SimMeta {
   plan?: PlanMeta;
   /** Outbound only, on a "crew_offer": the crew being offered. The persona opts in ("yes") or out. */
   crew?: { crewId: string; activity?: string };
+  /** Issuer-owned member invitation URL in the requester's own direct reply. Never a general URL exemption. */
+  approvedInviteLink?: string;
+  /** Exact invitees whose verified join notices are present in this outbound message. */
+  invitationJoins?: readonly MemberId[];
+  /** The party whose decision is requested on an exact staff-reviewed home-help plan. */
+  homeHelpConsentFor?: "requester" | "helper";
+  /** A private invitation question, evidence readback, or review status for the signed requester. */
+  privateInviteVouch?: true;
   [k: string]: unknown;
 }
 
@@ -153,6 +161,8 @@ export interface NetworkContext {
    * later if they accept. Returns the new member id, or undefined when the world has no factory.
    */
   invite?(inviterId: MemberId, friendName: string): MemberId | undefined;
+  /** Current verified cross-city join evidence, scoped to this inviter and app. Not a matching input. */
+  verifiedJoinedInviteeName?(inviterId: MemberId, inviteeId: MemberId): string | undefined;
 }
 
 export interface NetworkUnderTest {

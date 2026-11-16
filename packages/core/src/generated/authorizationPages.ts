@@ -339,7 +339,7 @@ export function lawOnlyConsentPagesNameAClient(view: AuthView, clientNamed: bool
 //@ pure
 export function lawConsentNamesClientAndScopes(view: AuthView, clientNamed: boolean): boolean {
   //@ ensures \result === true
-  const local_1 = consentParts(view, clientNamed);
+  const local_1: ConsentParts = consentParts(view, clientNamed);
   return !isConsentView(view) || (local_1.client !== "NoClientShown" && local_1.claimNote && local_1.returnHost && local_1.scopeList);
 }
 

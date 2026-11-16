@@ -1,6 +1,6 @@
 // MCP over Streamable HTTP: 2026-07-28 (per-request _meta and headers) and the legacy initialize
 // handshake, the OpenAI surface that hides slop, and tool inputs that never take a phone or a code.
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { addMember, call, connect, MODERN, origin, PHONE_A, PHONE_B, register, rpc, setup } from "./harness.ts";
 
 const NTWRK = `${origin("ntwrk.party")}/mcp`;
@@ -29,8 +29,8 @@ describe("Streamable HTTP, 2026-07-28", () => {
     expect(info.body!.result.isError).toBe(false);
     expect(info.body!.result.structuredContent).toMatchObject({ id: "peon", site: "https://peon.biz", ages: { join: 13, matching: 18 } });
     const signup = await call(env, NTWRK, "start_signup", { app: "friends" });
-    expect(signup.body!.result.structuredContent).toMatchObject({ app: "friends", url: "https://friends.help/join?via=agent", keyword: "friends" });
-    expect(signup.body!.result.structuredContent.instructions_for_person).toContain("Never share the code with anyone, including this assistant");
+    expect(signup.body!.result.structuredContent).toMatchObject({ app: "friends", url: "https://friends.help/SKILL.md", keyword: "friends" });
+    expect(signup.body!.result.structuredContent.instructions_for_person).toContain("Keep the verification code in that signup session");
     expect((await rpc(env, NTWRK, "ping")).body!.result).toMatchObject({ resultType: "complete" });
   });
 

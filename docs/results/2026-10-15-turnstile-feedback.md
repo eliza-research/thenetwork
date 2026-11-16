@@ -1,5 +1,7 @@
 # Failed security-check feedback
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-15-turnstile-feedback.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 Attribution: Automated. Codex made this change under the user's project approval.
 
 Base: `4e6a67e7d0273e170250de1bf54c1a17fa8e7442`.
@@ -56,8 +58,8 @@ It checks pending, failure, recovery, unrelated validation feedback, script-load
 | Sites TypeScript | Pass |
 | Whitespace | Pass |
 
-Local runtime: Bun 1.3.14, Playwright 1.62.1, Chromium 151.0.7922.34.
-The maintained project runtime is Bun 1.4.2; its normal CI remains a separate check.
+Local runtime: the former runtime 1.3.14, Playwright 1.62.1, Chromium 151.0.7922.34.
+The maintained project runtime is the former runtime 1.4.2; its normal CI remains a separate check.
 Existing cached dependencies were linked into the isolated checkout. No dependency was installed or added.
 
 Real LLM evidence: not applicable. This change has no model path. Calls: zero. Cost: zero.
@@ -72,9 +74,9 @@ Use an existing Playwright installation and its browser binaries.
 Set `PLAYWRIGHT_MODULE` to its module path or resolvable package name.
 
 ```sh
-PLAYWRIGHT_MODULE=playwright bun test --conditions eliza-source tests/e2e/auth-feedback.e2e.test.ts
-bun test --conditions eliza-source sites
-bun run typecheck
+PLAYWRIGHT_MODULE=playwright pnpm exec vitest run --conditions eliza-source tests/e2e/auth-feedback.e2e.test.ts
+pnpm exec vitest run --conditions eliza-source sites
+pnpm run typecheck
 ```
 
 The browser case starts an isolated local HTTP server and closes it after the test.

@@ -1,23 +1,26 @@
+import { createHash as hashForNode } from "node:crypto";
 // Clef weight fitting for P2 (operator CLI). Everything runs locally; only `features --live` calls
 // Cloudflare Workers AI, and only with CLOUDFLARE_AI_TOKEN + CLOUDFLARE_ACCOUNT_ID set. Reports are
 // aggregates only: no photo id, member id or per-person score is printed. Runbook:
 // docs/results/2026-10-09-clef-fitting.md.
 //
-//   bun run clef fit --features features.jsonl --pairs labels.jsonl[,more.jsonl] [--out clefWeights.json]
+//   pnpm run clef fit --features features.jsonl --pairs labels.jsonl[,more.jsonl] [--out clefWeights.json]
 //       [--version v1-2026-11] [--notes text] [--holdout 0.2] [--split pair|photo] [--seed 1]
 //       [--l2 auto|0.01] [--min-pairs 50] [--exclude-raters id,id] [--exclude-features f,f] [--include-body-type]
 //       [--population member-features.jsonl] [--no-refit] [--report report.json]
 //       [--groups groups.jsonl]   opt-in self-reported groups ({"photo", "group"} per line): label-side
 //                                 bias check (does the model rate a group lower than the raters do?)
-//   bun run clef calibrate --weights clefWeights.json --population member-features.jsonl --out clefWeights.json
-//   bun run clef features --photos <dir> --manifest consent.jsonl --out features.jsonl
+//   pnpm run clef calibrate --weights clefWeights.json --population member-features.jsonl --out clefWeights.json
+//   pnpm run clef features --photos <dir> --manifest consent.jsonl --out features.jsonl
 //       [--labels labels.jsonl] [--model clef|clef-flash] [--concurrency 4] [--budget-usd 5] [--live]
 //       Without --live: the plan and the cost estimate only (no network). With --live: needs the env.
-//   bun run clef audit --members members.jsonl [--weights clefWeights.json --features features.jsonl]
+//   pnpm run clef audit --members members.jsonl [--weights clefWeights.json --features features.jsonl]
 //       [--min-n 15] [--threshold 0.8] [--json audit.json]
-//   bun run clef synth --curve [--seeds 1-3] [--counts 125,250,500,1000,2000,4000,8000] [--json curve.json]
-//   bun run clef synth --write <dir> [--seed 1] [--n 2000] [--clef-bias 0] [--rater-bias 0]
+//   pnpm run clef synth --curve [--seeds 1-3] [--counts 125,250,500,1000,2000,4000,8000] [--json curve.json]
+//   pnpm run clef synth --write <dir> [--seed 1] [--n 2000] [--clef-bias 0] [--rater-bias 0]
 //       synthetic features, labels and members from the slop world, to rehearse fit and audit.
+import { fileAt, writePath } from "../packages/core/src/runtime/files.ts";
+import { spawnProcessSync } from "../packages/core/src/runtime/process.ts";
 import { appendFile, mkdir, readdir, stat } from "node:fs/promises";
 import { hash32 } from "../packages/core/src/index.ts";
 import { join, relative, sep } from "node:path";
@@ -37,14 +40,14 @@ const list = (v: string | undefined) => (v ?? "").split(",").map(s => s.trim()).
 const range = (v: string) => list(v).flatMap(x => { const [a, b] = x.split("-").map(Number); return b ? Array.from({ length: b - a! + 1 }, (_, i) => a! + i) : [a!]; });
 
 async function jsonl<T>(path: string): Promise<T[]> {
-  const f = Bun.file(path);
+  const f = fileAt(path);
   if (!(await f.exists())) die(`not found: ${path}`);
   return (await f.text()).split("\n").filter(l => l.trim()).map((l, i) => { try { return JSON.parse(l) as T; } catch { die(`${path}:${i + 1}: not JSON`); } });
 }
-const sha256 = (data: string | Uint8Array) => new Bun.CryptoHasher("sha256").update(data).digest("hex");
-async function fileSha(paths: string[]): Promise<string> { const h = new Bun.CryptoHasher("sha256"); for (const p of paths) h.update(await Bun.file(p).bytes()); return h.digest("hex"); }
+const sha256 = (data: string | Uint8Array) => hashForNode("sha256").update(data).digest("hex");
+async function fileSha(paths: string[]): Promise<string> { const h = hashForNode("sha256"); for (const p of paths) h.update(await fileAt(p).bytes()); return h.digest("hex"); }
 function gitCommit(): string | undefined {
-  try { const r = Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"], { cwd: import.meta.dir }); return r.exitCode === 0 ? r.stdout.toString().trim() : undefined; } catch { return undefined; }
+  try { const r = spawnProcessSync(["git", "rev-parse", "--short", "HEAD"], { cwd: import.meta.dirname }); return r.exitCode === 0 ? r.stdout.toString().trim() : undefined; } catch { return undefined; }
 }
 async function featureRows(path: string): Promise<Map<string, Record<string, number>>> {
   return new Map((await jsonl<{ id: string; x: Record<string, number> }>(path)).filter(r => r?.id && r.x).map(r => [r.id, r.x]));
@@ -57,7 +60,7 @@ async function labelsFrom(paths: string[]): Promise<(LabelledPair | PhotoFlag)[]
 
 async function fit() {
   const fp = arg("features"), pp = list(arg("pairs")), out = arg("out") ?? "clefWeights.json";
-  if (!fp || !pp.length) die("usage: bun run clef fit --features features.jsonl --pairs labels.jsonl[,more.jsonl] [--out clefWeights.json] (see scripts/clef-fit.ts)");
+  if (!fp || !pp.length) die("usage: pnpm run clef fit --features features.jsonl --pairs labels.jsonl[,more.jsonl] [--out clefWeights.json] (see scripts/clef-fit.ts)");
   const rows = await featureRows(fp), labels = await labelsFrom(pp);
   const l2v = arg("l2") ?? "auto";
   const split = arg("split") ?? "pair";
@@ -85,18 +88,18 @@ async function fit() {
     }
   }
   if (!DIMS.some(d => report.dims[d].source === "fitted")) die(`\nno dimension had --min-pairs ${num("min-pairs", 50)} usable training labels: nothing written`, 1);
-  await Bun.write(out, `${JSON.stringify(weights, null, 2)}\n`);
+  await writePath(out, `${JSON.stringify(weights, null, 2)}\n`);
   await loadClefWeights(out); // the file the platform will load must validate
-  if (arg("report")) await Bun.write(arg("report")!, JSON.stringify(report, null, 1));
-  console.log(`\nwrote ${out} (${weights.version}; ${DIMS.map(d => `${d} ${report.dims[d].source}`).join(", ")}). Recalibrate on the member population before use: bun run clef calibrate.`);
+  if (arg("report")) await writePath(arg("report")!, JSON.stringify(report, null, 1));
+  console.log(`\nwrote ${out} (${weights.version}; ${DIMS.map(d => `${d} ${report.dims[d].source}`).join(", ")}). Recalibrate on the member population before use: pnpm run clef calibrate.`);
 }
 
 async function calibrate() {
   const wp = arg("weights"), pp = arg("population"), out = arg("out") ?? wp;
-  if (!wp || !pp || !out) die("usage: bun run clef calibrate --weights clefWeights.json --population member-features.jsonl [--out file]");
+  if (!wp || !pp || !out) die("usage: pnpm run clef calibrate --weights clefWeights.json --population member-features.jsonl [--out file]");
   const w = await loadClefWeights(wp), rows = [...(await featureRows(pp)).values()].filter(x => (x["gate.one_adult"] ?? 1) >= w.gate.oneAdult);
   const c = calibrateClefWeights({ ...w, ...(w.provenance ? { provenance: { ...w.provenance, calibratedOn: `${rows.length} population rows (sha256 ${(await fileSha([pp])).slice(0, 12)}), ${new Date().toISOString().slice(0, 10)}` } } : {}) }, rows);
-  await Bun.write(out, `${JSON.stringify(c, null, 2)}\n`);
+  await writePath(out, `${JSON.stringify(c, null, 2)}\n`);
   console.log(`calibrated ${c.version} on ${rows.length} rows: ${DIMS.map(d => `${d} mean ${c.calibration[d].mean.toFixed(3)} sd ${c.calibration[d].sd.toFixed(3)}`).join("; ")} -> ${out}`);
 }
 
@@ -117,15 +120,15 @@ async function listPhotos(dir: string): Promise<{ id: string; path: string; byte
 
 async function features() {
   const dir = arg("photos"), mp = arg("manifest"), out = arg("out") ?? "features.jsonl";
-  if (!dir || !mp) die("usage: bun run clef features --photos <dir> --manifest consent.jsonl [--out features.jsonl] [--model clef|clef-flash] [--live]");
+  if (!dir || !mp) die("usage: pnpm run clef features --photos <dir> --manifest consent.jsonl [--out features.jsonl] [--model clef|clef-flash] [--live]");
   const model = (arg("model") ?? "clef") as ClefModel;
   if (!(model in CLEF_MODEL_IDS)) die("--model must be clef or clef-flash");
   const manifest = new Map((await jsonl<ManifestRow>(mp)).map(r => [r.photo, r]));
-  const cache = (await Bun.file(out).exists()) ? new Map((await jsonl<FeatureCacheRow>(out)).map(r => [r.id, r])) : new Map<string, FeatureCacheRow>();
+  const cache = (await fileAt(out).exists()) ? new Map((await jsonl<FeatureCacheRow>(out)).map(r => [r.id, r])) : new Map<string, FeatureCacheRow>();
   const flagged = new Set((await labelsFrom(list(arg("labels")))).flatMap(l => ("flag" in l ? [l.flag] : [])));
   const photos = await listPhotos(dir);
   // Cached rows are re-checked by content hash: an edited photo is rated again.
-  const hashed = await Promise.all(photos.map(async p => (cache.has(p.id) ? { ...p, sha256: sha256(await Bun.file(p.path).bytes()) } : p)));
+  const hashed = await Promise.all(photos.map(async p => (cache.has(p.id) ? { ...p, sha256: sha256(await fileAt(p.path).bytes()) } : p)));
   const plan = planExtraction(hashed, manifest, { cache, flagged, model });
   const est = estimateCost(plan.todo.length, model);
   console.log(`${photos.length} photos in ${dir}; to rate: ${plan.todo.length}`);
@@ -141,7 +144,7 @@ async function features() {
   const byId = new Map(photos.map(p => [p.id, p.path]));
   const res = await runExtraction(plan, {
     source: rater, model, now: () => new Date().toISOString(), concurrency: num("concurrency", 4),
-    read: async id => { const bytes = await Bun.file(byId.get(id)!).bytes(); return { bytes, sha256: sha256(bytes) }; },
+    read: async id => { const bytes = await fileAt(byId.get(id)!).bytes(); return { bytes, sha256: sha256(bytes) }; },
     write: row => appendFile(out, `${JSON.stringify(row)}\n`),
     onError: (_id, e) => console.error(`  error: ${(e as Error).message}`),
   });
@@ -150,7 +153,7 @@ async function features() {
 
 async function audit() {
   const mp = arg("members");
-  if (!mp) die("usage: bun run clef audit --members members.jsonl [--weights clefWeights.json --features features.jsonl] [--min-n 15] [--threshold 0.8]");
+  if (!mp) die("usage: pnpm run clef audit --members members.jsonl [--weights clefWeights.json --features features.jsonl] [--min-n 15] [--threshold 0.8]");
   type Row = AuditMember & { photos?: string[]; overall?: number };
   const rows = await jsonl<Row>(mp);
   let w: ClefWeights | undefined, feats: Map<string, Record<string, number>> | undefined;
@@ -169,7 +172,7 @@ async function audit() {
   const rep = auditRatings(members, { minN: num("min-n", 15), threshold: num("threshold", 0.8) });
   console.log(formatAudit(rep));
   if (unscored) console.log(`(${unscored} members had no score and no usable photo features: left out)`);
-  if (arg("json")) await Bun.write(arg("json")!, JSON.stringify(rep, null, 1));
+  if (arg("json")) await writePath(arg("json")!, JSON.stringify(rep, null, 1));
   if (rep.flags.length) process.exitCode = 3; // flags exit non-zero so a weekly job can alert
 }
 
@@ -182,25 +185,25 @@ async function synth() {
     console.log(`placeholder weights tau ${c.placeholderTau.toFixed(3)}; ceiling (20k noiseless labels) tau ${c.ceilingTau.toFixed(3)}`);
     console.log("labels   tau (unseen photos)   held-out label acc   ECE     alpha   careless rater flagged");
     for (const p of c.points) console.log(`${String(p.n).padStart(6)}   ${p.tau.toFixed(3)} ± ${p.tauSe.toFixed(3)}         ${(100 * p.heldOutAccuracy).toFixed(1)}%                ${p.ece.toFixed(3)}   ${p.alpha === null ? " n/a " : p.alpha.toFixed(3)}   ${p.careless ? "yes (all seeds)" : "no"}`);
-    if (arg("json")) await Bun.write(arg("json")!, JSON.stringify(c, null, 1));
+    if (arg("json")) await writePath(arg("json")!, JSON.stringify(c, null, 1));
     return;
   }
   const dir = arg("write");
-  if (!dir) die("usage: bun run clef synth --curve | --write <dir>");
+  if (!dir) die("usage: pnpm run clef synth --curve | --write <dir>");
   const seed = num("seed", 1), n = num("n", 2000);
   const s = synthPhotos({ seed, clefBias: num("clef-bias", 0) });
   await mkdir(dir, { recursive: true });
   const labels = DIMS.flatMap(dim => synthLabels(s, { n, dim, seed, raterBias: num("rater-bias", 0) }));
-  await Bun.write(join(dir, "features.jsonl"), [...s.rows].map(([id, x]) => JSON.stringify({ id, sha256: "synthetic", model: "synthetic", x, confidence: 0.8, extractedAt: "2026-10-09" })).join("\n") + "\n");
-  await Bun.write(join(dir, "labels.jsonl"), labels.map(l => JSON.stringify(l)).join("\n") + "\n");
+  await writePath(join(dir, "features.jsonl"), [...s.rows].map(([id, x]) => JSON.stringify({ id, sha256: "synthetic", model: "synthetic", x, confidence: 0.8, extractedAt: "2026-10-09" })).join("\n") + "\n");
+  await writePath(join(dir, "labels.jsonl"), labels.map(l => JSON.stringify(l)).join("\n") + "\n");
   const optIn = (id: string) => hash32("clef-synth-optin", id) % 10 < 6;
-  await Bun.write(join(dir, "groups.jsonl"), [...s.rows.keys()].filter(optIn).map(id => JSON.stringify({ photo: id, group: `group-${s.group.get(id)}` })).join("\n") + "\n");
+  await writePath(join(dir, "groups.jsonl"), [...s.rows.keys()].filter(optIn).map(id => JSON.stringify({ photo: id, group: `group-${s.group.get(id)}` })).join("\n") + "\n");
   // Members: one photo each; 60% opt in to report a (synthetic) group.
-  await Bun.write(join(dir, "members.jsonl"), [...s.rows.keys()].map(id => JSON.stringify({ id: id.split("/")[0], photos: [id], ...(optIn(id) ? { group: `group-${s.group.get(id)}` } : {}) })).join("\n") + "\n");
+  await writePath(join(dir, "members.jsonl"), [...s.rows.keys()].map(id => JSON.stringify({ id: id.split("/")[0], photos: [id], ...(optIn(id) ? { group: `group-${s.group.get(id)}` } : {}) })).join("\n") + "\n");
   const f = synthFit(s, { n, seed, raterBias: num("rater-bias", 0) });
   console.log(`wrote ${dir}/{features,labels,groups,members}.jsonl (${s.rows.size} photos, ${labels.length} labels). Hidden-truth tau on unseen photos after fitting: ${DIMS.map(d => `${d} ${f.tau[d].toFixed(3)}`).join(", ")}`);
 }
 
 const CMDS: Record<string, () => Promise<void>> = { fit, calibrate, features, audit, synth };
-if (!cmd || !CMDS[cmd]) die(`usage: bun run clef <${Object.keys(CMDS).join("|")}> ... (see scripts/clef-fit.ts)`);
+if (!cmd || !CMDS[cmd]) die(`usage: pnpm run clef <${Object.keys(CMDS).join("|")}> ... (see scripts/clef-fit.ts)`);
 await CMDS[cmd]!();

@@ -64,5 +64,5 @@ database at send time, so a STOP that arrives while a message waits wins. Every 
 | `BLOOIO_ALLOW_SEND` | `1` to send for real (with the founder's `NTWRK_LIVE_APPROVED=1` and `<APP>_LIVE_APPROVED=1`); otherwise dry-run |
 | `BLOOIO_LINE_DAILY_CAP`, `BLOOIO_LINE_NEW_CHATS_PER_DAY` | The line's daily caps (defaults 200 and 20) |
 
-Validation: `bun run sim --only pipeline` drives the queue end to end (signed webhook in, Postgres, the queue,
+Validation: `pnpm run sim --only pipeline` drives the queue end to end (signed webhook in, Postgres, the queue,
 a fake provider out) with crash, outage, STOP and line-safety scenarios.

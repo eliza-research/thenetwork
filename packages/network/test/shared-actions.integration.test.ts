@@ -1,7 +1,8 @@
 // Real signed HTTP -> NetworkService -> original inbound/action receipts -> canonical PostgreSQL owners.
-import {afterAll,beforeAll,expect,test} from "bun:test";
+import { serveHttp, type HttpServer } from "../../core/src/runtime/http.ts";
+import {afterAll,beforeAll,expect,test} from "vitest";
 import {randomUUID} from "node:crypto";
-import {SQL} from "bun";
+import {SQL} from "../../core/src/runtime/postgres.ts";
 import {SimClock,MINUTE} from "@thenetwork/core";
 import {applySchema} from "../../observatory/db/dev-pg.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
@@ -14,13 +15,13 @@ const admin=new SQL({url:`postgres://${process.env.USER??"postgres"}@127.0.0.1:5
 const url=`postgres://${process.env.USER??"postgres"}@127.0.0.1:54339/${db}`;
 const secret="synthetic-signed-actions-fixture-20261009",clock=new SimClock(Date.UTC(2026,9,9,16));
 const phone="+12125550181";
-let sql:SQL,service:NetworkService,server:ReturnType<typeof Bun.serve>,memberId:string,personId:string;
+let sql:SQL,service:NetworkService,server:HttpServer,memberId:string,personId:string;
 let escaped=0;
 const start=async()=>{
   service=new NetworkService({url,clock,photoStorage:null,instance:"signed-actions-integration",env:{PLATFORM_ENV:"dev",CLEF_RATINGS:"off",SERVICE_TURN_SECRET:secret},
     networks:[{id:"friends:nyc",matchingEnabled:false},{id:"slop:nyc",matchingEnabled:false}],network:{seed:1},log:()=>{},
     adapter:()=>{const a=new DryRunAdapter(()=>{});a.deliver=async rows=>{escaped+=rows.length;return rows.map(row=>({id:row.id,status:"dry_run"}));};a.direct=async()=>{escaped++;return "dry_run";};return a;}});
-  await service.start();server=Bun.serve({hostname:"127.0.0.1",port:0,fetch:req=>service.fetch(req)});
+  await service.start();server=await serveHttp({hostname:"127.0.0.1",port:0,fetch:req=>service.fetch(req)});
 };
 const post=async(path:string,body:object,signedPath=path)=>{
   const fields=body as Record<string,unknown>;
@@ -38,7 +39,7 @@ beforeAll(async()=>{
   const opened=await post(TURN_PATH,turn("action-open","Tell me something about the weather"));expect(opened.status).toBe(200);
   const body=await opened.json() as any;expect(body.outcome).toBe("open");memberId=body.memberId;personId=(await service.accounts.personFor(phone))!.id;
 },120_000);
-afterAll(async()=>{server?.stop(true);await service?.close();await sql?.close();await admin.unsafe(`drop database if exists ${db} with (force)`);await admin.close();});
+afterAll(async()=>{await server?.stop(true);await service?.close();await sql?.close();await admin.unsafe(`drop database if exists ${db} with (force)`);await admin.close();});
 
 test("state and private signals are bound to the original open turn and commit once with receipts",async()=>{
   const before=escaped;
@@ -71,7 +72,7 @@ test("scheduled canonical state is projected only inside its window and survives
   expect((await service.runtimeFor("friends")!.sharedContext(memberId))!.state).toBe("busy");
   const same=await post(SET_STATE_PATH,state("future-travel-same",{state:"traveling",from,until}));expect(same.status).toBe(200);expect(await same.json()).toMatchObject({unchanged:true,eventId:null});
   clock.advance(2*MINUTE);expect(await service.runtimeFor("friends")!.sharedContext(memberId)).toMatchObject({state:"traveling",stateFrom:from,stateUntil:until});
-  server.stop(true);await service.close();await start();
+  await server.stop(true);await service.close();await start();
   expect(await service.runtimeFor("friends")!.sharedContext(memberId)).toMatchObject({state:"traveling",stateFrom:from,stateUntil:until});
   clock.advance(2*MINUTE);expect((await service.runtimeFor("friends")!.sharedContext(memberId))!.state).toBe("busy");
   expect((await post(SET_STATE_PATH,state("future-travel",{state:"traveling",from,until}))).status).toBe(200);

@@ -8,7 +8,7 @@
 // NETWORK_SERVICE_TOKEN are set (sources/service.ts), and are refused otherwise. "Shadow" engine runs
 // build a WorldSnapshot from the database and run engine-v1 on it in memory; proposals are shown as
 // ghosts and never written (PRD 34.6).
-import { SQL } from "bun";
+import { SQL } from "../../../core/src/runtime/postgres.ts";
 import {
   DAY, isMinor, validAge, type City, type EdgeType, type WorldSnapshot,
 } from "@thenetwork/core";
@@ -945,10 +945,7 @@ export function appSnapshotSql(sql: SQL, app: string): SQL {
     if (!strings.some(x => x.includes("platform.person_blocks") || x.includes("platform.matching_ages"))) return (sql as any)(strings, ...values);
     const swapped = strings.map(x => x.replaceAll("platform.person_blocks", `platform.person_blocks_${suffix}`)
       .replaceAll("platform.matching_ages", `platform.matching_ages_${suffix}`));
-    // A real tagged template gives `raw` as a frozen, non-enumerable property. Object.assign made it
-    // enumerable, so Bun 1.4.4 and later refuse the array ("use sql.unsafe(), or define 'raw' with
-    // Object.defineProperty()") and every rewritten query failed. Build it the way the parser builds
-    // it, so the rewritten query runs on Bun 1.4.2 and on 1.4.4 and later.
+    // The query builder needs the raw segments of a tagged template.
     const raw = Object.freeze([...swapped]);
     const rebuilt = Object.freeze(Object.defineProperty([...swapped], "raw", { value: raw, enumerable: false })) as unknown as TemplateStringsArray;
     return (sql as any)(rebuilt, ...values);

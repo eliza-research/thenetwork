@@ -1,24 +1,30 @@
 // Real service, HTTP and PostgreSQL. Only OTP/provider delivery boundaries are controlled.
-import {afterAll, beforeAll, expect, spyOn, test} from "bun:test";
-import {randomUUID} from "node:crypto";
-import {SQL} from "bun";
+import { fetchWithHost } from "../../core/src/runtime/fetch.ts";
+import { serveHttp, type HttpServer } from "../../core/src/runtime/http.ts";
+import { setTimeout as sleep } from "node:timers/promises";
+import {afterAll, beforeAll, expect, test, vi} from "vitest";
+import {createHash, randomUUID} from "node:crypto";
+import {SQL} from "../../core/src/runtime/postgres.ts";
+import type { CapitalEvent } from "../../capital/src/index.ts";
 import {SimClock, MINUTE, DAY} from "@thenetwork/core";
 import {applySchema, DEV_PG_PORT} from "../../observatory/db/dev-pg.ts";
-import {APPS} from "../../platform/src/apps.ts";
+import {APPS, type AppInfo} from "../../platform/src/apps.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {TURN_PATH, TURN_RECEIPT_PATH, type TurnRequest, type TurnReceiptRequest} from "../../core/src/svc/contract.ts";
-import {DryRunAdapter} from "../service/channel.ts";
+import {BlooioAdapter, DryRunAdapter} from "../service/channel.ts";
 import {NetworkService} from "../service/service.ts";
+import type { NetworkState } from "../src/network.ts";
 import {networkRoutePolicy, routeEnvelopeAllowed} from "../service/route-authority.ts";
+import { importPublicEvents } from "../service/import-public-events.ts";
 
 const db = `network_signed_turn_${randomUUID().replaceAll("-", "")}`;
 const admin = new SQL({url:`postgres://${process.env.USER ?? "postgres"}@127.0.0.1:${DEV_PG_PORT}/postgres`, max:1});
 const url = `postgres://${process.env.USER ?? "postgres"}@127.0.0.1:${DEV_PG_PORT}/${db}`;
 const secret = "synthetic-shared-agent-test-secret-20261009";
 const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
-let sql: SQL, service: NetworkService, server: ReturnType<typeof Bun.serve>;
+let sql: SQL, service: NetworkService, server: HttpServer;
 let escaped = 0, code = "";
-const start = async (routePolicy?: Record<string, unknown>) => {
+const start = async (routePolicy?: Record<string, unknown>, collectedQueue = false) => {
   // Only this test's newly created database changes realm markers. The service's
   // normal staging/database mismatch guard stays intact.
   const [realm] = await sql`select current_database() as database,value from platform.settings where key='environment'`;
@@ -27,10 +33,17 @@ const start = async (routePolicy?: Record<string, unknown>) => {
   service = new NetworkService({url, clock, photoStorage:null, instance:"signed-turn-integration",
     env:{PLATFORM_ENV:routePolicy ? "staging" : "dev", PLATFORM_HASH_KEY:"synthetic-route-test-hash-key", CLEF_RATINGS:"off", SERVICE_TURN_SECRET:secret, ...(routePolicy ? {NETWORK_ROUTE_AUTHORITY_POLICY:JSON.stringify(routePolicy)} : {})}, networks:[{id:"ntwrk:nyc",matchingEnabled:false},{id:"slop:nyc",matchingEnabled:false},{id:"friends:nyc",matchingEnabled:false}],
     network:{seed:1}, publicApi:{minStartMs:0,minVerifyMs:0,otp:{name:"fixture",send:async () => {code="314159";return {code};}}},
-    adapter:() => {const a=new DryRunAdapter(()=>{});a.direct=async()=>{escaped++;return "dry_run";};a.deliver=async rows=>{escaped+=rows.length;return rows.map(r=>({id:r.id,status:"dry_run"}));};return a;},log:()=>{},
+    adapter:(_net, rt) => {
+      if (collectedQueue) return new BlooioAdapter({ app: rt.app.id, city: rt.city, from: "+12125550160", clock, env: {}, log: () => {},
+        provider: { kind: "sim", send: async () => { escaped++; throw new Error("The signed reply left its collector"); } } });
+      const a = new DryRunAdapter(() => {});
+      a.direct = async () => { escaped++; return "dry_run"; };
+      a.deliver = async rows => { escaped += rows.length; return rows.map(r => ({ id: r.id, status: "dry_run" })); };
+      return a;
+    },log:()=>{},
   });
   await service.start();
-  server=Bun.serve({hostname:"127.0.0.1",port:0,fetch:req=>new URL(req.url).pathname.startsWith("/api/")?service.publicFetch(req):service.fetch(req)});
+  server=await serveHttp({hostname:"127.0.0.1",port:0,fetch:req=>new URL(req.url).pathname.startsWith("/api/")?service.publicFetch(req):service.fetch(req)});
 };
 const turn = (id:string, from:string, text:string, app?:TurnRequest["app"]):TurnRequest => ({messageId:id,from,text,channel:"blooio",to:null,transport:"imessage",receivedAt:clock.now(),...(app?{app}:{})});
 const post = async (input:TurnRequest, signedPath=TURN_PATH) => {
@@ -42,7 +55,7 @@ const receipt = async (input:TurnReceiptRequest) => {
   return fetch(new URL(TURN_RECEIPT_PATH,server.url),{method:"POST",headers:{"content-type":"application/json",...await svcSign(secret,{method:"POST",path:TURN_RECEIPT_PATH,id:`${input.messageId}:receipt`,body,nowS:Math.floor(clock.now()/1000)})},body});
 };
 beforeAll(async()=>{await admin.unsafe(`create database ${db}`);console.info(`[owned-db] ${db}`);await applySchema(url,{lockTimeout:"5s"});sql=new SQL({url,max:2});await start();},120_000);
-afterAll(async()=>{server?.stop(true);await service?.close();await sql?.close();await admin.close();}); // Keep this owned database for the source receipt.
+afterAll(async()=>{await server?.stop(true);await service?.close();await sql?.close();await admin.close();}); // Keep this owned database for the source receipt.
 
 test("signed turns collect direct replies, replay immutable JSON and isolate concurrent users/channels",async()=>{
   const input=turn("help-one","+12125550111","HELP");
@@ -60,9 +73,295 @@ test("signed turns collect direct replies, replay immutable JSON and isolate con
   expect(escaped).toBe(0);
 },60_000);
 
+// spec/travelPresence.md, "Tell the Network my travel dates"
+test("signed travel stores one coarse trip in the routed app and never guesses missing dates", async () => {
+  const phone = "+12125550155";
+  for (const app of [APPS.friends, APPS.slop]) {
+    await service.accounts.invite(app, phone);
+    const person = (await service.accounts.personFor(phone))!;
+    const joined = await service.accounts.join(app, { e164: phone, personId: person.id }, {
+      firstName: "Ari", age: 29, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+    });
+    expect(joined.ok).toBe(true);
+  }
+  const trips = () => sql`select p.app_id, p.city, p.from_at, p.to_at, p.areas, m.home_city from network.presence p
+    join network.members m on m.app_id=p.app_id and m.id=p.member_id
+    join platform.phone_identities ph on ph.person_id=m.person_id
+    where ph.e164=${phone} and p.type='temporary'`;
+  const declare = (id: string, text: string) => post(turn(id, phone, text, "friends"));
+  const before = escaped;
+  const unclear = await declare("travel-unclear", "I'll be in SF the 10th to the 14th.");
+  expect(unclear.status).toBe(200);
+  expect((await unclear.json()).replies[0]).toContain("YYYY-MM-DD");
+  expect(await trips()).toHaveLength(0);
+  const statement = "I will be in San Francisco from 2026-10-31 until 2026-11-02.";
+  const stranger = await post(turn("travel-not-member", "+12125550156", statement, "friends"));
+  expect(stranger.status).toBe(200);
+  expect(await stranger.json()).toMatchObject({ memberId: null, reason: "travel_presence", replies: [] });
+  expect(await service.accounts.personFor("+12125550156")).toBeUndefined();
+  const request = turn("travel-valid", phone, statement, "friends");
+  const first = await post(request);
+  expect(first.status).toBe(200);
+  const accepted = await first.json();
+  expect(accepted).toMatchObject({ app: "friends", reason: "travel_presence", replyKind: "reply", replies: [expect.stringContaining("Saved in friends.help")] });
+  expect(await (await post(request)).json()).toEqual(accepted);
+  expect((await (await declare("travel-duplicate", statement)).json()).replies[0]).toContain("Already saved");
+  expect((await (await declare("travel-conflict", "I will be in Los Angeles from 2026-11-01 until 2026-11-03.")).json()).replies[0]).toContain("overlap");
+  expect(await trips()).toEqual([expect.objectContaining({
+    app_id: "friends", city: "sf", home_city: "nyc", areas: [],
+    from_at: new Date("2026-10-31T07:00:00Z"), to_at: new Date("2026-11-02T08:00:00Z"),
+  })]);
+  expect(escaped).toBe(before);
+  expect((await declare("travel-stop", "STOP")).status).toBe(200);
+  const lockedReplay = await post(request);
+  expect(lockedReplay.status).toBe(409);
+  expect(await lockedReplay.json()).toEqual({ error: "turn_travel_account_changed", retryable: false });
+}, 60_000);
+
+// spec/standingIntentManagement.md, "Reconcile older saved controls during the first normal save"
+test("reconciles legacy intent controls for the current app and owner once and preserves timestamps", async () => {
+  const phone = "+12125550165", inactivePhone = "+12125550166";
+  async function join(app: AppInfo, e164: string) {
+    await service.accounts.invite(app, e164);
+    const person = (await service.accounts.personFor(e164))!;
+    const joined = await service.accounts.join(app, { e164, personId: person.id }, {
+      firstName: "Ari", age: 29, consent: { sms: true, wording: app.consent.text },
+    });
+    if (!joined.ok) throw new Error("Intent reconciliation fixture join failed");
+    return joined.membership.memberId;
+  }
+  const owner = await join(APPS.friends, phone);
+  const inactive = await join(APPS.friends, inactivePhone);
+  const otherApp = await join(APPS.slop, phone);
+  const now = clock.now();
+  const old = new Date(now - DAY), expired = new Date(now - 60 * DAY), newer = new Date(now + MINUTE);
+  const raw = [
+    { id: "legacy-pause", app: "friends", member: owner, status: "active", at: old },
+    { id: "legacy-close", app: "friends", member: owner, status: "paused", at: old },
+    { id: "legacy-done", app: "friends", member: owner, status: "closed", at: old },
+    { id: "legacy-expired", app: "friends", member: owner, status: "active", at: expired },
+    { id: "legacy-newer", app: "friends", member: owner, status: "active", at: newer },
+    { id: "legacy-job", app: "friends", member: owner, status: "active", at: old, details: "peon:job legacy fixture" },
+    { id: "legacy-inactive", app: "friends", member: inactive, status: "active", at: old },
+    { id: "legacy-other-app", app: "slop", member: otherApp, status: "active", at: old },
+    { id: "legacy-unselected", app: "friends", member: owner, status: "active", at: old },
+  ];
+  await sql`insert into network.intents ${sql(raw.map(row => ({
+    id: row.id, app_id: row.app, member_id: row.member, objective: "Looking for something", category: "hobby", status: row.status,
+    created_at: row.at, horizon_days: 60, details: row.details ?? null,
+  })))}`;
+  await sql`update platform.memberships set state = 'paused' where app_id = 'friends' and member_id = ${inactive}`;
+  const [prior] = await sql<{ state: NetworkState }[]>`select state from network.network_state where id = 'friends:nyc'`;
+  const state = prior!.state;
+  state.savedAt = now;
+  delete state.legacyIntentRowsReconciled;
+  state.members.find(m => m.id === owner)!.intentControls = {
+    "stored:legacy-pause": "PauseControl", "stored:legacy-close": "CloseControl", "stored:legacy-done": "PauseControl",
+    "stored:legacy-expired": "PauseControl", "stored:legacy-newer": "CloseControl", "stored:legacy-job": "CloseControl",
+    "stored:legacy-other-app": "PauseControl", "stored:missing-legacy-row": "CloseControl", "learned:climb-partner": "PauseControl",
+  };
+  state.members.find(m => m.id === inactive)!.intentControls = {
+    "stored:legacy-inactive": "PauseControl", "stored:legacy-unselected": "CloseControl",
+  };
+  await sql`update network.network_state set state = ${state}::jsonb where id = 'friends:nyc'`;
+
+  const snapshot = () => sql<{ id: string; status: string; created_at: Date; horizon_days: number }[]>`select id, status, created_at, horizon_days
+    from network.intents where id like 'legacy-%' order by id`;
+  const before = escaped;
+  const result = await post(turn("legacy-intents-show", phone, "list my intents", "friends"));
+  expect(result.status).toBe(200);
+  expect((await result.json()).replies[0]).toContain("Your standing intents");
+  const rows = await snapshot();
+  expect([...rows]).toEqual(raw.map(row => ({
+    id: row.id, status: row.id === "legacy-pause" ? "paused" : row.id === "legacy-close" ? "closed" : row.status,
+    created_at: row.at, horizon_days: 60,
+  })).sort((a, b) => a.id.localeCompare(b.id)));
+  const [saved] = await sql<{ state: NetworkState }[]>`select state from network.network_state where id = 'friends:nyc'`;
+  expect(saved?.state.legacyIntentRowsReconciled).toBe(true);
+  expect(saved?.state.members.find(m => m.id === owner)?.intentControls?.["learned:climb-partner"]).toBe("PauseControl");
+
+  await server.stop(true);
+  await service.close();
+  await start();
+  expect((await post(turn("legacy-intents-again", phone, "list my intents", "friends"))).status).toBe(200);
+  expect([...await snapshot()]).toEqual([...rows]);
+  expect(escaped).toBe(before);
+}, 60_000);
+
+// spec/soloConcierge.md, "Get ideas for my own time"
+test("signed solo concierge offers current public listings without recruiting another member", async () => {
+  await server.stop(true);
+  await service.close();
+  await start(undefined, true);
+  try {
+    const adult = "+12125550157", teen = "+12125550158";
+    for (const [phone, age] of [[adult, 20], [teen, 16]] as const) {
+      await service.accounts.invite(APPS.friends, phone);
+      const person = (await service.accounts.personFor(phone))!;
+      const joined = await service.accounts.join(APPS.friends, { e164: phone, personId: person.id }, {
+        firstName: "Ari", age, homeCity: "nyc", neighborhood: "Greenpoint", interests: ["nature"],
+        consent: { sms: true, wording: APPS.friends.consent.text },
+      });
+      if (!joined.ok) throw new Error("Concierge fixture join failed");
+      const member = joined.membership.memberId;
+      await sql`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, status, valid_from)
+        values ('friends', ${`${member}:available`}, ${member}, 'availability_pattern', 'Saturday afternoon', '{afternoon:Sat}', 'matchable', 'said', 'confirmed', ${new Date(clock.now())})`;
+    }
+
+    const listing = (guid: string, title: string, categories: string, from: string, to: string, location = "McCarren Park", coordinates = "40.7206,-73.9518") => ({
+      guid, title, categories, location, coordinates, starttime: from, endtime: to,
+      link: { url: `https://www.nycgovparks.org/events/2026/10/10/one-solo-event-${guid}` },
+    });
+    const event = (id: string, title: string, tags: string, start = "14", end = "15") => listing(id, title, tags, `2026-10-10T${start}:00:00`, `2026-10-10T${end}:00:00`);
+    const allAges = event("110", "Nature sketch walk", "Nature | All ages");
+    expect(await importPublicEvents(sql, clock, async () => Response.json([
+      allAges, event("111", "Public art tour", "Arts"), event("112", "Garden history tour", "History"), event("113", "Public chess group", "Chess"),
+      event("114", "Evening music 21+", "Music | All ages"), event("115", "Early garden tour", "Nature | All ages", "09", "10"),
+      listing("116", "Weekday walk", "Nature | All ages", "2026-10-12T14:00:00", "2026-10-12T15:00:00"),
+    ]))).toEqual({ published: true, events: 7 });
+
+    const before = escaped;
+    const request = (id: string, phone: string) => turn(id, phone, "Anything fun this weekend?", "friends");
+    const asked = request("adults-solo-events", adult);
+    const response = await post(asked);
+    expect(response.status).toBe(200);
+    const accepted = await response.json();
+    expect(accepted).toMatchObject({ outcome: "handled", app: "friends", reason: "solo_events", replyKind: "reply" });
+    const picks = accepted.replies[0].split("\n");
+    expect(picks).toHaveLength(3);
+    expect(picks[0]).toContain("Nature sketch walk");
+    expect(picks[0]).toContain("Fits one of your interests");
+    expect(picks[0]).toContain(allAges.link.url);
+    const [queued] = await sql`select status from platform.outbound where id = ${accepted.replyIds[0]}`;
+    expect(queued?.status).toBe("collected");
+    expect(picks.join(" ")).not.toMatch(/21\+|Early garden tour|Weekday walk/);
+    expect(await (await post(asked)).json()).toEqual(accepted);
+
+    const teenResponse = await post(request("all-ages-solo-events", teen));
+    expect(teenResponse.status).toBe(200);
+    const teenAnswer = (await teenResponse.json()).replies[0];
+    expect(teenAnswer.split("\n")).toHaveLength(1);
+    expect(teenAnswer).toContain("Nature sketch walk");
+    expect(await sql`select id from network.requests where app_id='friends'`).toHaveLength(0);
+    expect(await sql`select id from network.opportunities where app_id='friends'`).toHaveLength(0);
+
+    clock.advance(MINUTE);
+    expect(await importPublicEvents(sql, clock, async () => Response.json([]))).toEqual({ published: true, events: 0 });
+    const previous = await post(asked);
+    expect(previous.status).toBe(409);
+    expect(await previous.json()).toEqual({ error: "turn_concierge_changed", retryable: false });
+    const empty = await post(request("no-current-solo-events", adult));
+    expect((await empty.json()).replies[0]).toContain("couldn't find any current NYC Parks listings");
+    expect(escaped).toBe(before);
+  } finally {
+    await server.stop(true);
+    await service.close();
+    await start();
+  }
+}, 60_000);
+
+// spec/contributionHistory.md, "Show verified acts a page at a time"
+test("signed contribution history scopes verified acts to the current adult and app", async () => {
+  await server.stop(true);
+  await service.close();
+  await start(undefined, true);
+  try {
+    const adult = "+12125550167", teen = "+12125550168", stranger = "+12125550169";
+    const join = async (app: AppInfo, phone: string, age: number) => {
+      await service.accounts.invite(app, phone);
+      const person = (await service.accounts.personFor(phone))!;
+      const joined = await service.accounts.join(app, { e164: phone, personId: person.id }, {
+        firstName: "Ari", age, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+      });
+      if (!joined.ok) throw new Error("Contribution history fixture join failed");
+      return joined.membership.memberId;
+    };
+    const owner = await join(APPS.friends, adult, 30);
+    await join(APPS.slop, adult, 30);
+    const minor = await join(APPS.friends, teen, 17);
+    const other = "contribution-other-member", invitee = "contribution-invitee", provider = "contribution-provider";
+    const planId = "contribution-private-plan", privateLabel = "private venue call 212-555-0101";
+    const t = clock.now() - DAY;
+    const seed = async (...events: CapitalEvent[]) => {
+      const rows = events.map(event => ({
+        app_id: "friends", id: event.id, type: event.type, member_id: "member" in event ? event.member : null, t: new Date(event.t), event,
+      }));
+      await sql`insert into network.capital_events ${sql(rows)}`;
+    };
+    await seed(
+      ...[owner, minor, other, invitee, provider].map((member): CapitalEvent => ({
+        id: `contribution-joined:${member}`, type: "member_joined", member, age: 30, t,
+        ...(member === invitee ? { vouchedBy: owner } : {}),
+      })),
+      { id: "contribution-active", type: "member_activated", member: invitee, t: t + 1 },
+      { id: "contribution-value", type: "value_received", member: invitee, with: [provider], confirmedBy: [provider], t: t + 1 },
+      { id: "contribution-accepted", type: "plan_accepted", member: owner, planId, kind: "plan", startsAt: t + 4, t: t + 2 },
+      { id: "contribution-feedback", type: "feedback_given", member: owner, planId, t: t + 2 },
+      { id: "contribution-attended", type: "plan_attended", member: owner, planId, counterparts: [provider], verifiedBy: ["counterpart"], origin: "engine", publicVenue: true, t: t + 2 },
+      { id: "contribution-help", type: "help_given", helper: owner, recipient: other, helpId: "contribution-help-private", t: t + 3 },
+      { id: "contribution-useful", type: "help_confirmed", recipient: other, helpId: "contribution-help-private", useful: true, t: t + 3 },
+      { id: "contribution-organized", type: "organized", organizer: owner, planId, publicVenue: true, recurring: false, attendees: [invitee, provider], label: privateLabel, t: t + 4 },
+      { id: "contribution-need", type: "need_answered", member: owner, needId: "contribution-private-need", confirmedBy: "staff", t: t + 5 },
+      { id: "contribution-other", type: "review_completed", member: other, items: 1, t: t + 6 },
+      { id: "contribution-minor-history", type: "review_completed", member: minor, items: 1, t: t + 6 },
+    );
+
+    // Old exports can store a serialized event inside the JSONB column.
+    await sql`update network.capital_events set event = to_jsonb(event::text)
+      where app_id = 'friends' and id = 'contribution-attended'`;
+
+    const text = "Show my contribution history";
+    const before = escaped;
+    const initial = turn("history-adult", adult, text, "friends");
+    const first = await post(initial);
+    expect(first.status).toBe(200);
+    const firstPage = await first.json();
+    expect(firstPage).toMatchObject({ app: "friends", memberId: owner, reason: "contribution_history", replyKind: "reply" });
+    const body = firstPage.replies[0];
+    expect(body.split("\n").filter((line: string) => line.startsWith("•"))).toHaveLength(5);
+    expect(body).toContain("Gave feedback");
+    expect(body).toContain("Organized a public plan");
+    expect(body).toContain("Helped a member");
+    expect(body).not.toContain("Helped review");
+    for (const hidden of [privateLabel, other, planId, invitee, provider]) expect(body).not.toContain(hidden);
+    expect(await (await post(initial)).json()).toEqual(firstPage);
+    const [queued] = await sql`select status from platform.outbound where id = ${firstPage.replyIds[0]}`;
+    expect(queued?.status).toBe("collected");
+    const second = await post(turn("history-page-two", adult, `${text} page 2`, "friends"));
+    expect((await second.json()).replies[0]).toContain("Vouched for someone who became active");
+
+    const otherApp = await post(turn("history-other-app", adult, text, "slop"));
+    expect(await otherApp.json()).toMatchObject({ app: "slop", replies: [expect.stringContaining("No confirmed contributions")] });
+    for (const [id, phone] of [["history-minor", teen], ["history-nonmember", stranger]]) {
+      const denied = await post(turn(id!, phone!, text, "friends"));
+      expect(denied.status).toBe(200);
+      expect(await denied.json()).toMatchObject({ reason: "contribution_history", replies: [] });
+    }
+    expect(await service.accounts.personFor(stranger)).toBeUndefined();
+
+    await seed({ id: "contribution-correction", type: "fraud_confirmed", members: [owner, other], t: t + 7 });
+    const stale = await post(initial);
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toEqual({ error: "turn_contribution_history_changed", retryable: false });
+    const refreshed = turn("history-refreshed", adult, text, "friends");
+    const current = await post(refreshed);
+    expect(current.status).toBe(200);
+    expect((await current.json()).replies[0]).not.toContain("Helped a member");
+
+    expect((await post(turn("history-leave", adult, "leave friends", "friends"))).status).toBe(200);
+    expect((await post(refreshed)).status).toBe(409);
+    expect(await service.accounts.activeMembership(APPS.slop, { e164: adult, personId: null })).toBeDefined();
+    expect(escaped).toBe(before);
+  } finally {
+    await server.stop(true);
+    await service.close();
+    await start();
+  }
+}, 60_000);
+
 test("canonical membership STOP is collected atomically and cannot drain to a provider on restart",async()=>{
   const phone="+12125550121";
-  const call=async(path:string,body:unknown,cookie?:string)=>fetch(new URL(path,server.url),{method:"POST",headers:{host:"localhost:5102","content-type":"application/json",...(cookie?{cookie}:{})},body:JSON.stringify(body)});
+  const call=async(path:string,body:unknown,cookie?:string)=>fetchWithHost(new URL(path,server.url),{method:"POST",headers:{host:"localhost:5102","content-type":"application/json",...(cookie?{cookie}:{})},body:JSON.stringify(body)});
   expect((await call("/api/auth/otp/start",{phone})).status).toBe(200);
   const login=await call("/api/auth/otp/verify",{phone,code});expect(login.status).toBe(200);
   const cookie=login.headers.get("set-cookie")!.split(";")[0]!;
@@ -88,7 +387,7 @@ test("canonical membership STOP is collected atomically and cannot drain to a pr
   expect(await (await receipt(accepted)).json()).toEqual({ok:true,replayed:true});
   expect((await receipt({...accepted,providerMessageIds:["altered-receipt"]})).status).toBe(409);
   expect(escaped).toBe(before);
-  server.stop(true);await service.close();await start();expect(await (await post(input)).json()).toEqual(body);expect(escaped).toBe(before);
+  await server.stop(true);await service.close();await start();expect(await (await post(input)).json()).toEqual(body);expect(escaped).toBe(before);
   // The canonical public leave path seals prior personal reply payloads, while STOP remains in force.
   expect((await call("/api/me/delete",{scope:"app"},cookie)).status).toBe(200);
   expect((await post(input)).status).toBe(409);
@@ -97,7 +396,7 @@ test("canonical membership STOP is collected atomically and cannot drain to a pr
   const [retained]=await sql`select response,replies,app_id from platform.inbound where id='msg:blooio:other-app-help'`;
   expect(retained.app_id).toBe("friends");expect(retained.response.outcome).toBe("handled");expect(retained.replies.length).toBe(1);
   expect(await service.accounts.optedIn("slop",phone)).toBe(false);
-  server.stop(true);await service.close();await start();expect((await post(input)).status).toBe(409);expect(escaped).toBe(before);
+  await server.stop(true);await service.close();await start();expect((await post(input)).status).toBe(409);expect(escaped).toBe(before);
 },60_000);
 
 test("a normal signed join reaches open context, and STOP revokes replay without rerunning the turn",async()=>{
@@ -169,6 +468,19 @@ test("accepted handled replies repair the single Notify projection after faults,
   expect((await receipt(ack)).status).toBe(200);
   expect((await sql`select delivery_id from notify.deliveries where delivery_id='net:scheduling:handled-notify'`).length).toBe(0);
   const accepted={...ack,outcome:"accepted" as const,providerMessageIds:["handled-proof-1","handled-proof-2"],historyRecorded:true};
+  // The signed receipt, collected message status and notification projection must stay consistent if the write fails.
+  await sql`alter table platform.inbound add constraint reject_fixture_receipt
+    check (id <> 'msg:blooio:handled-notify' or receipt->>'outcome' is distinct from 'accepted')`;
+  try {
+    expect((await receipt(accepted)).status).toBe(500);
+    const [original] = await sql`select receipt from platform.inbound where id = 'msg:blooio:handled-notify'`;
+    expect(original.receipt).toEqual(ack);
+    const [collected] = await sql`select status from network.messages where id = 'scheduling:handled-notify'`;
+    expect(collected.status).toBe("send_unknown");
+    expect((await sql`select delivery_id from notify.deliveries where delivery_id = 'net:scheduling:handled-notify'`).length).toBe(0);
+  } finally {
+    await sql`alter table platform.inbound drop constraint reject_fixture_receipt`;
+  }
   expect((await receipt(accepted)).status).toBe(200);
   const [message]=await sql`select ts,notification_recorded_at from network.messages where id='scheduling:handled-notify'`;
   expect(message.notification_recorded_at).toBeNull();
@@ -186,7 +498,7 @@ test("accepted handled replies repair the single Notify projection after faults,
   expect((await receipt(restartAck)).status).toBe(200);
   expect((await sql`select notification_recorded_at from network.messages where id='scheduling:handled-notify-restart'`)[0].notification_recorded_at).toBeNull();
   service.inbound=originalInbound;
-  server.stop(true);await service.close();await start();
+  await server.stop(true);await service.close();await start();
   expect((await sql`select delivery_id from notify.deliveries where delivery_id='net:scheduling:handled-notify-restart'`).length).toBe(1);
   expect((await sql`select notification_recorded_at from network.messages where id='scheduling:handled-notify-restart'`)[0].notification_recorded_at).not.toBeNull();
   const person=await service.accounts.personFor(phone);expect(person).toBeDefined();
@@ -229,7 +541,7 @@ test("full canonical deletion scrubs signed context, replies and receipts withou
   const control=turn("delete-other-person",otherPhone,"Tell me something about the weather","friends");
   const kept=await post(control);expect(kept.status).toBe(200);const keptBody=await kept.json();
   expect((await sql`select receipt from platform.inbound where id='msg:blooio:delete-help'`)[0].receipt).not.toBeNull();
-  const call=async(path:string,body:unknown,cookie?:string)=>fetch(new URL(path,server.url),{method:"POST",headers:{host:"localhost:5104","content-type":"application/json",...(cookie?{cookie}:{})},body:JSON.stringify(body)});
+  const call=async(path:string,body:unknown,cookie?:string)=>fetchWithHost(new URL(path,server.url),{method:"POST",headers:{host:"localhost:5104","content-type":"application/json",...(cookie?{cookie}:{})},body:JSON.stringify(body)});
   expect((await call("/api/auth/otp/start",{phone})).status).toBe(200);
   const login=await call("/api/auth/otp/verify",{phone,code});expect(login.status).toBe(200);
   const cookie=login.headers.get("set-cookie")!.split(";")[0]!;
@@ -245,7 +557,7 @@ test("full canonical deletion scrubs signed context, replies and receipts withou
   expect((await sql`select person_id from platform.phone_identities where e164=${otherPhone}`).length).toBe(1);
   expect(await (await post(control)).json()).toEqual(keptBody);
   expect(escaped).toBe(before);
-  server.stop(true);await service.close();await start();
+  await server.stop(true);await service.close();await start();
   expect((await post(open)).status).toBe(409);expect((await receipt(ack)).status).toBe(409);
   expect(await (await post(control)).json()).toEqual(keptBody);expect(escaped).toBe(before);
 },60_000);
@@ -260,7 +572,7 @@ test("the Cloud turn secret is never also a staff bearer token", () => {
 
 
 test("isolated route authority fences cross-realm writes and only drains exact durable turns", async () => {
-  server.stop(true); await service.close();
+  await server.stop(true); await service.close();
   const authority = {version:1 as const,routeId:"owned-route",generation:"generation-1",audience:"network-owned-qa",realmId:"owned-qa"};
   const begin = clock.now(), policy = {authority,admitUntil:begin+10*MINUTE,drainUntil:begin+20*MINUTE};
   await start(policy);
@@ -274,7 +586,7 @@ test("isolated route authority fences cross-realm writes and only drains exact d
   const accepted = await post(input); expect(accepted.status).toBe(200); const response = await accepted.json() as any;
   const [stored] = await sql`select network_authority,request_hash from platform.inbound where id='msg:blooio:isolated-help'`;
   expect(stored.network_authority).toEqual(authority);
-  expect(stored.request_hash).toBe(new Bun.CryptoHasher("sha256").update(JSON.stringify(input)).digest("hex"));
+  expect(stored.request_hash).toBe(createHash("sha256").update(JSON.stringify(input)).digest("hex"));
   // Use a distinct fixture name: the separate sharedContext duplicate-first-name
   // defect is tracked explicitly and must not obscure route-authority assertions.
   const phone = "+12125550993";
@@ -311,7 +623,7 @@ test("isolated route authority fences cross-realm writes and only drains exact d
   expect(JSON.stringify(gatewayAck)).not.toBe(JSON.stringify(ack));
   expect(await (await receipt(gatewayAck)).json()).toEqual({ok:true,replayed:true});
   expect((await sql`select receipt_hash,receipt from platform.inbound where id='msg:blooio:isolated-help'`)[0]).toEqual(savedReceipt);
-  expect(savedReceipt.receipt_hash).toBe(new Bun.CryptoHasher("sha256").update(JSON.stringify(ack)).digest("hex"));
+  expect(savedReceipt.receipt_hash).toBe(createHash("sha256").update(JSON.stringify(ack)).digest("hex"));
   for (const changed of [
     {...gatewayAck,providerMessageIds:["different-provider-receipt"]},
     {...gatewayAck,historyRecorded:true},
@@ -330,7 +642,7 @@ test("isolated route authority fences cross-realm writes and only drains exact d
   expect((await post(input)).status).toBe(403);
   expect((await receipt(ack)).status).toBe(403);
   expect((await updates(action)).status).toBe(403);
-  server.stop(true); await service.close(); await start();
+  await server.stop(true); await service.close(); await start();
   expect((await post(input)).status).toBe(403);
   expect((await post(turn("legacy-after-isolation", "+12125550992", "HELP"))).status).toBe(200);
 }, 60_000);
@@ -355,7 +667,7 @@ test("route policy boot validation rejects malformed or non-staging authority", 
 
 // A real row lock holds both signed requests across the server's drain deadline.
 test("isolated actions and receipts recheck the drain window after database lock waits", async () => {
-  server.stop(true); await service.close();
+  await server.stop(true); await service.close();
   const authority = {version:1 as const,routeId:"locked-route",generation:"g1",audience:"locked-qa",realmId:"locked-qa"};
   const begin = clock.now(), policy={authority,admitUntil:begin+10*MINUTE,drainUntil:begin+20*MINUTE}; await start(policy);
   const help = {...turn("locked-help", "+12125550994", "HELP"),networkAuthority:authority};
@@ -387,7 +699,7 @@ test("isolated actions and receipts recheck the drain window after database lock
     const deadline=Date.now()+5000; let waiters=0;
     while(Date.now()<deadline){
       const[row]=await admin`select count(*)::int as count from pg_stat_activity where datname=${db} and wait_event_type='Lock' and lower(query) like '%platform.inbound%'`;
-      waiters=row.count;if(waiters>=2)break;await Bun.sleep(10);
+      waiters=row.count;if(waiters>=2)break;await sleep(10);
     }
     expect(waiters).toBeGreaterThanOrEqual(2);
     clock.advance(policy.drainUntil-clock.now()); release(); await transaction;
@@ -404,7 +716,7 @@ test("isolated actions and receipts recheck the drain window after database lock
     expect(memberAfter).toEqual(memberBefore);
     // Expired exact replays remain denied; an accepted receipt is not an extension of the window.
     expect((await receipt(ack)).status).toBe(403);
-  } finally {release();await transaction;await locker.close();server.stop(true);await service.close();await start();}
+  } finally {release();await transaction;await locker.close();await server.stop(true);await service.close();await start();}
 },60_000);
 
 
@@ -448,7 +760,7 @@ test("members sharing a first name receive their own context without another per
 // This regression must fail on the old UPDATES path: markSeen committed before
 // the later route check rejected completion, silently consuming the unread item.
 test("expired isolated updates roll back unread and surface changes after a notify row wait", async () => {
-  server.stop(true); await service.close();
+  await server.stop(true); await service.close();
   const authority={version:1 as const,routeId:"updates-route",generation:"g1",audience:"updates-qa",realmId:"updates-qa"};
   const policy={authority,admitUntil:clock.now()+10*MINUTE,drainUntil:clock.now()+20*MINUTE};await start(policy);
   const phone="+12125550781";let step=0;
@@ -462,27 +774,27 @@ test("expired isolated updates roll back unread and surface changes after a noti
   const person=await service.accounts.personFor(phone);expect(person).toBeDefined();
   const[item]=await sql`insert into notify.inbox_items(dedupe_key,person_id,app_id,event_type,subject_id,urgency,summary,created_at)
     values('updates-drain-unread',${person!.id},'friends','test','updates-drain-unread','requested','Your requested update is ready.',${new Date(clock.now())})returning id`;
-  const surfaceBefore=await sql`select surface,active,last_used_at,acted,ignored,ignored_streak from notify.surface_signals where person_id=${person!.id}order by surface`;
+  const surfaceBefore=await sql`select surface,active,last_used_at,acted,ignored,ignored_streak from notify.surface_signals where person_id=${person!.id} order by surface`;
   const locker=new SQL({url,max:1});let release!:()=>void,locked!:()=>void;
   const gate=new Promise<void>(r=>{release=r;}),acquired=new Promise<void>(r=>{locked=r;});
-  const held=locker.begin(async tx=>{await tx`select id from notify.inbox_items where id=${item.id}for update`;locked();await gate;});await acquired;
+  const held=locker.begin(async tx=>{await tx`select id from notify.inbox_items where id=${item.id} for update`;locked();await gate;});await acquired;
   let pending:Promise<Response>|undefined;
   try{
     const body=JSON.stringify({channel:open.channel,messageId:open.messageId,app:opened.app,memberId:opened.memberId,networkAuthority:authority});
     pending=fetch(new URL("/internal/updates",server.url),{method:"POST",headers:{"content-type":"application/json",...await svcSign(secret,{method:"POST",path:"/internal/updates",id:`${open.messageId}:updates`,body,nowS:Math.floor(clock.now()/1000)})},body});
     const deadline=Date.now()+5000;let waiters=0;
-    while(Date.now()<deadline){const[row]=await admin`select count(*)::int as count from pg_stat_activity where datname=${db}and wait_event_type='Lock'and lower(query)like'%notify.inbox_items%'`;waiters=row.count;if(waiters)break;await Bun.sleep(10);}
+    while(Date.now()<deadline){const[row]=await admin`select count(*)::int as count from pg_stat_activity where datname=${db} and wait_event_type='Lock'and lower(query)like'%notify.inbox_items%'`;waiters=row.count;if(waiters)break;await sleep(10);}
     expect(waiters).toBeGreaterThan(0);clock.advance(policy.drainUntil-clock.now());release();await held;
     expect((await pending).status).toBe(403);
     const[after]=await sql`select seen_at,seen_on from notify.inbox_items where id=${item.id}`;
     expect(after).toEqual({seen_at:null,seen_on:null});
-    expect(await sql`select surface,active,last_used_at,acted,ignored,ignored_streak from notify.surface_signals where person_id=${person!.id}order by surface`).toEqual(surfaceBefore);
-  }finally{release();await held;if(pending)await pending.catch(()=>undefined);await locker.close();server.stop(true);await service.close();await start();}
+    expect(await sql`select surface,active,last_used_at,acted,ignored,ignored_streak from notify.surface_signals where person_id=${person!.id} order by surface`).toEqual(surfaceBefore);
+  }finally{release();await held;if(pending)await pending.catch(()=>undefined);await locker.close();await server.stop(true);await service.close();await start();}
 },60_000);
 
 // Real service + real owned fixture PostgreSQL: provider receipts remain controlled.
 test("explicit saved-profile reads select the app without consuming onboarding or changing profiles", async () => {
-  server.stop(true);
+  await server.stop(true);
   await service.close();
   await start();
   const phone = "+12125550991";
@@ -512,8 +824,8 @@ test("explicit saved-profile reads select the app without consuming onboarding o
   expect((await post(turn("profile-prime-slop", phone, "Slop"))).status).toBe(200);
   const pending = async () => {
     const rows =
-      await sql`select id,state from network.network_state where id in ('friends:nyc','slop:nyc') order by id`;
-    return rows.map((row: { id: string; state: string | { asks: unknown; members: unknown[] } }) => {
+      await sql<{ id: string; state: string | { asks: unknown; members: unknown[] } }[]>`select id,state from network.network_state where id in ('friends:nyc','slop:nyc') order by id`;
+    return rows.map(row => {
       const state = typeof row.state === "string" ? JSON.parse(row.state) : row.state;
       return {
         id: row.id,
@@ -548,7 +860,7 @@ test("explicit saved-profile reads select the app without consuming onboarding o
       expect((await post(turn("profile-select-friends", phone, "Friends"))).status).toBe(200);
     }
     const before = await pending();
-    const spies = [...service.runtimes.values()].map((rt) => spyOn(rt.net, "onInbound"));
+    const spies = [...service.runtimes.values()].map((rt) => vi.spyOn(rt.net, "onInbound"));
     const input = turn(`profile-read-${index}`, phone, text);
     try {
       const response = await post(input);
@@ -619,7 +931,7 @@ test("explicit saved-profile reads select the app without consuming onboarding o
     await sql`select (select count(*) from platform.people) people,(select count(*) from platform.memberships) memberships,(select count(*) from platform.consent_events) consents,(select count(*) from platform.pending_texts) pending`;
   expect(countsAfter).toEqual(countsBefore);
   // An edit is ordinary inbound, never swallowed as a saved-profile read.
-  const editSpies = [...service.runtimes.values()].map((rt) => spyOn(rt.net, "onInbound"));
+  const editSpies = [...service.runtimes.values()].map((rt) => vi.spyOn(rt.net, "onInbound"));
   try {
     const edited = await post(
       turn("profile-edit-intent", phone, "Change my Friends profile to say I like kayaking", "friends"),

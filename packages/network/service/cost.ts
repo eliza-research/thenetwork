@@ -22,7 +22,12 @@
 // NETWORK_ENGINE_JUDGE=1 creates a per-app recommenderLLM with llmHooks(app, "engine_judge").
 // The member conversation remains in Eliza; the service-side onboarding reader stays rules-only.
 import { randomUUID } from "node:crypto";
-import type { SQL } from "bun";
+import type { SQL } from "../../core/src/runtime/postgres.ts";
+import {
+  costAccrualDaysPerMonth, costAmountWithFloor, costBudgetIsEnabled, costMicrosPerUsd, costOverrideValid,
+  dailyCostIncludesLine, defaultBlooioLines, defaultClefPhotoMicros, defaultSmsMicros, defaultTwilioVerifyMicros,
+  llmAttemptIsPriced, meteredPhotoQuantity, otpCostBasis, photoRaterIsMetered, photoResultIsBillable, relayCostBasis,
+} from "../../core/src/generated/costLedger.ts";
 import type { Clock } from "@thenetwork/core";
 import type { ClientOptions, ResponseInfo } from "@thenetwork/core";
 import type { AppId, AppInfo } from "../../platform/src/apps.ts";
@@ -50,15 +55,19 @@ export interface CostRates {
   clefRelayUsd?: number;
 }
 
-export const DEFAULT_RATES: CostRates = { twilioVerifyUsd: 0.058, clefPhotoUsd: 0.0017 / 4, smsUsd: 0.0083, blooioLines: 1 };
-const DAYS_PER_MONTH = 30;
+export const DEFAULT_RATES: CostRates = {
+  twilioVerifyUsd: defaultTwilioVerifyMicros / costMicrosPerUsd,
+  clefPhotoUsd: defaultClefPhotoMicros / costMicrosPerUsd,
+  smsUsd: defaultSmsMicros / costMicrosPerUsd,
+  blooioLines: defaultBlooioLines,
+};
 
 type Env = Record<string, string | undefined>;
 const num = (env: Env, k: string): number | undefined => {
   const v = env[k];
   if (v === undefined || v.trim() === "") return undefined;
   const n = Number(v);
-  if (!Number.isFinite(n) || n < 0) throw new Error(`${k} must be a number of US dollars, 0 or more (got ${JSON.stringify(v)})`);
+  if (!costOverrideValid(Number.isFinite(n), n)) throw new Error(`${k} must be a number of US dollars, 0 or more (got ${JSON.stringify(v)})`);
   return n;
 };
 
@@ -138,23 +147,25 @@ export class CostLedger {
     const at = this.o.clock.now();
     const row: CostRow = {
       id: `cost_${randomUUID()}`, app: e.app, day: dayOf(at), at, kind: e.kind, provider: e.provider,
-      quantity: e.quantity ?? 1, unitCostUsd: e.unitCostUsd ?? null, costUsd: Math.max(0, e.costUsd), estimated: e.estimated ?? true, detail: e.detail ?? {},
+      quantity: e.quantity ?? 1, unitCostUsd: e.unitCostUsd ?? null, costUsd: costAmountWithFloor(e.costUsd), estimated: e.estimated ?? true, detail: e.detail ?? {},
     };
     await this.o.sink.write([row]).catch(err => this.log(`[cost] a ${e.kind} row was not written: ${(err as Error).message}`));
   }
 
   /** OTP acceptance estimate. Blooio uses the configured text rate, not a Twilio Verify charge. */
   meterOtp(p: OtpProvider): OtpProvider {
-    if (!p.name.startsWith("twilio") && p.name !== "blooio") return p;
+    const pricing = otpCostBasis(p.name, p.name.startsWith("twilio"));
+    if (pricing === "OtpUnmetered") return p;
     const ledger = this;
     return {
       name: p.name,
       async send(e164: string, app: AppInfo) {
         const r = await p.send(e164, app);
         // Not awaited: the row's write never changes how long a login request takes (no enumeration by time).
-        const rate = p.name === "blooio" ? ledger.rates.smsUsd : ledger.rates.twilioVerifyUsd;
+        const sms = pricing === "OtpSmsEstimate";
+        const rate = sms ? ledger.rates.smsUsd : ledger.rates.twilioVerifyUsd;
         void ledger.record({ app: app.id, kind: "otp_verify", provider: p.name, costUsd: rate, unitCostUsd: rate,
-          ...(p.name === "blooio" ? { detail: { pricing: "sms_estimate", acceptance: "provider" } } : {}) });
+          ...(sms ? { detail: { pricing: "sms_estimate", acceptance: "provider" } } : {}) });
         return r;
       },
       ...(p.check ? { check: (e164: string, code: string, ref?: string | null) => p.check!(e164, code, ref) } : {}),
@@ -168,7 +179,7 @@ export class CostLedger {
    * photos). A refusal (null: not a verified adult) reached nothing and costs nothing; an error is counted.
    */
   meterRater(r: PhotoRater, app: AppId = "slop"): PhotoRater {
-    if (r.id === "none") return r;
+    if (!photoRaterIsMetered(r.id)) return r;
     const parts = retryParts(r);
     if (parts) return withRetry(this.meterRater(parts.inner, app), parts.options);
     const ledger = this;
@@ -176,10 +187,10 @@ export class CostLedger {
       id: r.id,
       async rate(subject, photos) {
         let charged = true;
-        try { const s = await r.rate(subject, photos); charged = s !== null; return s; }
+        try { const s = await r.rate(subject, photos); charged = photoResultIsBillable(s === null); return s; }
         finally {
           if (charged) {
-            const n = Math.max(1, photos.length), unit = ledger.rates.clefPhotoUsd;
+            const n = meteredPhotoQuantity(photos.length), unit = ledger.rates.clefPhotoUsd;
             await ledger.record({ app, kind: "photo_rating", provider: r.id, quantity: n, unitCostUsd: unit, costUsd: unit * n });
           }
         }
@@ -195,8 +206,10 @@ export class CostLedger {
    */
   relayClefEvent(app: CostApp): (e: RelayClefEvent) => void {
     return e => {
-      if (e.outcome !== "ok" && e.outcome !== "error" && e.outcome !== "timeout") return;
-      const unit = this.rates.clefRelayUsd ?? relayClefCost(e.inputTokens ?? estimateRelayClefTokens(""), e.model);
+      const fixedRate = this.rates.clefRelayUsd;
+      const pricing = relayCostBasis(e.outcome, fixedRate != null);
+      if (pricing === "RelayUnmetered") return;
+      const unit = pricing === "RelayFixedPrice" ? fixedRate! : relayClefCost(e.inputTokens ?? estimateRelayClefTokens(""), e.model);
       void this.record({
         app, kind: "other", provider: "workers_ai", costUsd: unit, unitCostUsd: unit,
         detail: { purpose: "relay_classifier", model: e.model, outcome: e.outcome, ...(e.inputTokens ? { inputTokens: e.inputTokens } : {}) },
@@ -211,9 +224,9 @@ export class CostLedger {
   llmHooks(app: CostApp, purpose: string): Pick<ClientOptions, "onResponse"> {
     return {
       onResponse: (i: ResponseInfo) => {
-        if (!(i.costMicro > 0)) return;
+        if (!llmAttemptIsPriced(i.costMicro)) return;
         void this.record({
-          app, kind: "llm", provider: new URL(i.baseUrl).hostname, costUsd: i.costMicro / 1e6, estimated: !i.costKnown,
+          app, kind: "llm", provider: new URL(i.baseUrl).hostname, costUsd: i.costMicro / costMicrosPerUsd, estimated: !i.costKnown,
           detail: { purpose, model: i.model, promptTokens: i.usage.promptTokens, completionTokens: i.usage.completionTokens, attempt: i.attempt },
         });
       },
@@ -228,9 +241,9 @@ export class CostLedger {
     const at = this.o.clock.now();
     const rows: CostRow[] = [];
     const monthly = this.rates.blooioLineMonthlyUsd;
-    if (line && monthly !== undefined && this.rates.blooioLines > 0) {
-      const unit = monthly / DAYS_PER_MONTH;
-      rows.push({ id: `blooio_line:${day}`, app: "shared", day, at, kind: "blooio_line", provider: "blooio", quantity: this.rates.blooioLines, unitCostUsd: unit, costUsd: unit * this.rates.blooioLines, estimated: true, detail: { monthlyUsd: monthly } });
+    if (dailyCostIncludesLine(line, monthly !== undefined, this.rates.blooioLines)) {
+      const unit = monthly! / costAccrualDaysPerMonth;
+      rows.push({ id: `blooio_line:${day}`, app: "shared", day, at, kind: "blooio_line", provider: "blooio", quantity: this.rates.blooioLines, unitCostUsd: unit, costUsd: unit * this.rates.blooioLines, estimated: true, detail: { monthlyUsd: monthly! } });
     }
     for (const [app, n] of Object.entries(smsFallbacks) as [AppId, number][]) {
       if (!n) continue;
@@ -250,9 +263,9 @@ export function budgetLines(totals: Partial<Record<CostApp, number>>, b: CostBud
   const out: BudgetLine[] = [];
   const used = (x: number) => Math.round(x * 10_000) / 10_000;
   const total = Object.values(totals).reduce((s, x) => s + (x ?? 0), 0);
-  if (b.daily !== undefined && b.daily > 0) out.push({ scope: "total", usedUsd: used(total), budgetUsd: b.daily, share: total / b.daily });
+  if (b.daily !== undefined && costBudgetIsEnabled(b.daily)) out.push({ scope: "total", usedUsd: used(total), budgetUsd: b.daily, share: total / b.daily });
   for (const [app, budget] of Object.entries(b.byApp) as [CostApp, number][]) {
-    if (!(budget > 0)) continue;
+    if (!costBudgetIsEnabled(budget)) continue;
     const u = totals[app] ?? 0;
     out.push({ scope: app, usedUsd: used(u), budgetUsd: budget, share: u / budget });
   }

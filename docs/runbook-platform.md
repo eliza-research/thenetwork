@@ -12,9 +12,9 @@ The backend follows the founder decisions of 2026-10-08 (AGENTS.md): the app id 
 
 | Part | Where | What it does |
 |---|---|---|
-| Dev Postgres | `localhost:54339` | `bun run db:migrate` runs on the database first. Use a database of your own (step 2). |
+| Dev Postgres | `localhost:54339` | `pnpm run db:migrate` runs on the database first. Use a database of your own (step 2). |
 | Staff API | `127.0.0.1:4848` | The backend's private port: the staff API (`?app=<app>` or `/apps/<app>/...`). One network per row of `platform.networks` (`ntwrk:nyc`, `friends:nyc`, `peon:nyc`, `slop:nyc`) ticks once a minute under its own lock. |
-| Backend (public) | `127.0.0.1:8790` | The shared backend (`deploy/backend` createBackend, the same code as `bun run start:backend`): `/api/*`, `/webhooks/blooio[/<app>]`, `/mcp`, `/mcp/openai`, `/oauth/*`, `/.well-known/oauth-*`, `/healthz`. The app comes only from a request a site router signed (`packages/platform/src/proxy.ts`); an unsigned request to `:8790` names no app. |
+| Backend (public) | `127.0.0.1:8790` | The shared backend (`deploy/backend` createBackend, the same code as `pnpm run start:backend`): `/api/*`, `/webhooks/blooio[/<app>]`, `/mcp`, `/mcp/openai`, `/oauth/*`, `/.well-known/oauth-*`, `/healthz`. The app comes only from a request a site router signed (`packages/platform/src/proxy.ts`); an unsigned request to `:8790` names no app. |
 | Sites | `127.0.0.1:5101`-`5104` | ntwrk.party, slop.date, peon.biz, friends.help (`scripts/sites-dev.ts`). Their backend paths run through the production router code (`deploy/router.ts`) and are signed with a dev `PLATFORM_PROXY_SECRET` (a fresh one per run). Each site is the MCP issuer of its app: an MCP client connects to `http://127.0.0.1:5102/mcp` for slop. Open the sites at `127.0.0.1`, not `localhost`: the MCP pages check the Origin. |
 
 Matching is off for slop and peon (`platform.networks.matching_enabled = false`) until the engine session ships their packs. The staff switch refuses to turn it on for them (`409 matching_not_allowed`). For ntwrk and friends, a new stored state starts with matching off, and an admin turns it on.
@@ -25,12 +25,12 @@ Matching is off for slop and peon (`platform.networks.matching_enabled = false`)
 2. Start everything:
 
 ```bash
-NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/platform_dev bun run platform:dev
+NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/platform_dev pnpm run platform:dev
 ```
 
 The script refuses a database that is not on `localhost:54339`. It refuses to run when `NODE_ENV` or `PLATFORM_ENV` is `production`, and it sets `PLATFORM_ENV=dev` (the dev shortcuts need it). It prints the dev staff tokens once (`admin:dev-admin,reviewer:dev-reviewer,safety:dev-safety,analyst:dev-analyst`). Set `NETWORK_SERVICE_TOKENS` to use your own, for example `reviewer@slop:<token>` for a reviewer of slop only.
 
-Run `bun run platform:dev --no-sites` to start the database and the backend only, and `--verbose` to log every request.
+Run `pnpm run platform:dev --no-sites` to start the database and the backend only, and `--verbose` to log every request.
 
 The end-to-end tests that started this stack in one process (`tests/e2e`) were deleted on 2026-10-08; they are in git history at 16cde70.
 
@@ -38,13 +38,13 @@ To run the parts one at a time (each command was checked on 2026-10-08):
 
 ```bash
 psql "postgres://$USER@localhost:54339/postgres" -c "create database platform_dev"
-bun run db:migrate -- --url postgres://$USER@localhost:54339/platform_dev     # 0001-0006; a second run applies nothing
+pnpm run db:migrate -- --url postgres://$USER@localhost:54339/platform_dev     # 0001-0006; a second run applies nothing
 PLATFORM_ENV=dev NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/platform_dev \
-  bun run packages/network/service/main.ts --once --dry-run                    # one tick of every network, then exit
-bun run sites:dev                                                              # the four sites only, backend paths proxied to :8790 (unsigned X-Forwarded-Host unless PLATFORM_PROXY_SECRET is set)
+  node --import tsx --env-file-if-exists=.env packages/network/service/main.ts --once --dry-run                    # one tick of every network, then exit
+pnpm run sites:dev                                                              # the four sites only, backend paths proxied to :8790 (unsigned X-Forwarded-Host unless PLATFORM_PROXY_SECRET is set)
 ```
 
-`bun run db:migrate` with no `--url` and no `NETWORK_DATABASE_URL` migrates the shared dev `network` database. It refuses a host that is not local. `main.ts --once --dry-run` prints one line per network, for example `network slop:nyc: sends dry-run, review "human", matching not allowed (platform.networks)`, then `slop:nyc: tick done`.
+`pnpm run db:migrate` with no `--url` and no `NETWORK_DATABASE_URL` migrates the shared dev `network` database. It refuses a host that is not local. `main.ts --once --dry-run` prints one line per network, for example `network slop:nyc: sends dry-run, review "human", matching not allowed (platform.networks)`, then `slop:nyc: tick done`.
 
 ## 3. Check the flows with curl
 
@@ -97,7 +97,7 @@ The service reads these. **[FOUNDER]** marks a flag that only the founder may se
 
 | Variable | Default | Per app | What it does |
 |---|---|---|---|
-| `NETWORK_DATABASE_URL` | `DATABASE_URL` | no | Postgres with the `network` and `platform` schemas (`bun run db:migrate`). `platform:dev` accepts only `localhost:54339`. |
+| `NETWORK_DATABASE_URL` | `DATABASE_URL` | no | Postgres with the `network` and `platform` schemas (`pnpm run db:migrate`). `platform:dev` accepts only `localhost:54339`. |
 | `NETWORK_SERVICE_TOKENS` | dev tokens in `platform:dev`; none in `main.ts` | yes | Staff tokens: `role@app:<t>` (one app) or `role@*:<t>` (every app). Outside production `role:<t>` still means every app; in production it is refused. **[CREDENTIALS]** |
 | `NETWORK_SERVICE_CONSOLE_TOKEN` | none | no | The admin console's own token (also one of the tokens). Only it may name the reviewer of record (`X-Network-Staff-Id`). **[CREDENTIALS]** |
 | `BLOOIO_WEBHOOK_SECRET` | `whsec_dev_shared` in `platform:dev` | no | The shared line's webhook (`/webhooks/blooio`). Without it, 503. **[CREDENTIALS]** |
@@ -114,7 +114,7 @@ The service reads these. **[FOUNDER]** marks a flag that only the founder may se
 | `PLATFORM_HASH_KEY` | a dev key (dev only) | no | The key for phone, IP and code hashes (rate limits, suppression, age floor). Required outside `PLATFORM_ENV=dev`. Changing it orphans old suppression hashes and age floors. **[CREDENTIALS]** |
 | `OTP_PROVIDER` | the dev console (dev only) | no | `twilio` uses Twilio Verify with `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SERVICE_SID` **[CREDENTIALS]**. The dev console prints codes and runs only with `PLATFORM_ENV=dev`. |
 | `TURNSTILE_SECRET_KEY` | none (dev bypass) | no | Cloudflare Turnstile check on `otp/start`. Required outside `PLATFORM_ENV=dev` (`main.ts` refuses to start without it). The sites send no Turnstile token yet, so a staging or production `otp/start` answers 400 `turnstile` until they do. |
-| `PLATFORM_ENV` | none | no | Required by `main.ts`: `production`, `staging` or `dev`. Outside dev, `main.ts` refuses to start without `OTP_PROVIDER=twilio` and its three credentials, `TURNSTILE_SECRET_KEY`, `PLATFORM_PROXY_SECRET`, `PLATFORM_HASH_KEY`, `PLATFORM_SESSION_SECRET`, a database URL and review mode human (`bootConfigProblems` in `packages/platform/src/env.ts`). Detection fails closed: only `dev` gets the dev shortcuts (console codes, Turnstile bypass, dev hash key, `X-Forwarded-Host`, cookies without `Secure`). It must match `platform.settings.environment` or the service refuses to start. `bun test` counts as dev (`NODE_ENV=test`); `NODE_ENV=development` does not. `NODE_ENV=production` also means production. |
+| `PLATFORM_ENV` | none | no | Required by `main.ts`: `production`, `staging` or `dev`. Outside dev, `main.ts` refuses to start without `OTP_PROVIDER=twilio` and its three credentials, `TURNSTILE_SECRET_KEY`, `PLATFORM_PROXY_SECRET`, `PLATFORM_HASH_KEY`, `PLATFORM_SESSION_SECRET`, a database URL and review mode human (`bootConfigProblems` in `packages/platform/src/env.ts`). Detection fails closed: only `dev` gets the dev shortcuts (console codes, Turnstile bypass, dev hash key, `X-Forwarded-Host`, cookies without `Secure`). It must match `platform.settings.environment` or the service refuses to start. `pnpm exec vitest run` counts as dev (`NODE_ENV=test`); `NODE_ENV=development` does not. `NODE_ENV=production` also means production. |
 
 The Observatory has its own per-app variables (`OBSERVATORY_DATABASE_URL_<APP>`, `OBSERVATORY_PLATFORM_DATABASE_URL`, `role@app` in `OBSERVATORY_TOKENS` and `OBSERVATORY_ROLES`): [runbook-real.md](runbook-real.md) section 4.
 
@@ -170,11 +170,11 @@ Known gaps:
 Validation is simulations plus integration and e2e tests; unit and smoke tests are not kept ([tests-policy.md](tests-policy.md)). With the dev Postgres up:
 
 ```bash
-bun run test:integration                              # the platform API on memory and Postgres, photos, the trusted proxy, the service, MCP, the console, and the security suite (RLS, CSRF, OTP limits, OAuth PKCE, the backend "two logins" check)
-bun run test:e2e                                      # tests/e2e: the platform and notify through the running service
-bun run sim --only evals                              # the opt-out corpus, keywords and per-app leave, the leak guard
-DEPLOY_TARGET=production bun run sites/sites.ts       # the four sites build (refuses draft legal text)
-bun run typecheck
+pnpm run test:integration                              # the platform API on memory and Postgres, photos, the trusted proxy, the service, MCP, the console, and the security suite (RLS, CSRF, OTP limits, OAuth PKCE, the backend "two logins" check)
+pnpm run test:e2e                                      # tests/e2e: the platform and notify through the running service
+pnpm run sim --only evals                              # the opt-out corpus, keywords and per-app leave, the leak guard
+DEPLOY_TARGET=production node --import tsx --env-file-if-exists=.env sites/sites.ts       # the four sites build (refuses draft legal text)
+pnpm run typecheck
 ```
 
 The security tests make a database of their own on the dev cluster and drop it afterwards. Coverage given up with the deleted tests: the full-stack e2e run, the site contract and 10DLC wording checks, the service and cross-app tests, and the console tests (git history at 16cde70).

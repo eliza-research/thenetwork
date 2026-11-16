@@ -125,7 +125,7 @@ export function lawRetiredAnswersShowNoPage(app: brandIdentity_AppKey, path: Pat
 /** Story: Old links never open a retired page / The terms name the join page as a way to opt in only where the site serves it (spec/sitePages.md:123) */
 //@ pure
 export function optInWays(app: brandIdentity_AppKey): OptInWay[] {
-  return keepsBrowserJoin(app) ? ["OptInOnJoinPage", "OptInByText"] : ["OptInInAgent", "OptInByText"];
+  return keepsBrowserJoin(app) ? (["OptInOnJoinPage", "OptInByText"] as OptInWay[]) : (["OptInInAgent", "OptInByText"] as OptInWay[]);
 }
 
 /** Story: Old links never open a retired page / The terms name the join page as a way to opt in only where the site serves it (spec/sitePages.md:123) */

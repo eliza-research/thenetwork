@@ -5,9 +5,10 @@
 // The staff API (service/postings.ts jobPostingRoutes) verifies the employer, refuses a minor's
 // posting, and closes the posting (the seat then has no opening). Postgres in a database of its own;
 // dry-run sends; fictional numbers (+1 212 555 01xx). Nothing is sent.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { findExecutable } from "../../core/src/runtime/process.ts";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { existsSync } from "node:fs";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
@@ -19,7 +20,7 @@ import { POSTING_COPY } from "../src/jobs.ts";
 import { START } from "./mini.ts";
 
 const T = 300_000;
-const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!Bun.which("pg_ctl");
+const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
 const USER = process.env.USER ?? "postgres";
 const DB = `network_peon_postings_test_${process.pid}`;
 const ADMIN_URL = `postgres://${USER}@localhost:${DEV_PG_PORT}/postgres`;
@@ -77,7 +78,7 @@ describe.skipIf(!pgAvailable)("peon postings: text intake, restart, staff API (N
     await text(s, clock, ROWAN, "peon");
     await text(s, clock, ROWAN, "Rowan, 34");
     const rowan = (await memberId(ROWAN))!;
-    expect(rowan).toBeString();
+    expect(rowan).toEqual(expect.any(String));
     await text(s, clock, ROWAN, "We're hiring a data analyst (level 2), 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL");
     expect(await last(rowan)).toMatch(/^Here's your job post: Data analyst, 2 openings, \$90k-\$120k a year, hybrid in Brooklyn\..*Reply yes to post it/);
     expect(await postings(rowan)).toHaveLength(0);
@@ -94,7 +95,7 @@ describe.skipIf(!pgAvailable)("peon postings: text intake, restart, staff API (N
     await text(s, clock, KAI, "peon");
     await text(s, clock, KAI, "Kai, 15");
     const kai = (await memberId(KAI))!;
-    expect(kai).toBeString();
+    expect(kai).toEqual(expect.any(String));
     await text(s, clock, KAI, "We're hiring a cashier, 1 opening, $30k-$35k, onsite in Queens");
     expect(await last(kai)).toBe(POSTING_COPY.adultsOnly);
     expect(await postings(kai)).toHaveLength(0);

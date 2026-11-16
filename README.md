@@ -8,6 +8,7 @@ human review and consent.
 [Product specification](spec/product/README.md) ·
 [User stories](spec/product/stories.md) ·
 [Flow models](spec/models/README.md) ·
+[Stack](#the-stack) ·
 [Quick start](#quick-start) ·
 [Spec reference](SPEC.md) ·
 [Commands](#commands)
@@ -42,16 +43,28 @@ See the [pinned Vibestack README](tools/vibestack/README.md)
 for the complete standalone guide, including the React and VibeLang stack,
 Studio, examples, template setup and the packaged CLI.
 
+## The stack
+
+| Layer | Source and checks |
+|---|---|
+| Product | Stories and acceptance rules in [the product specification](spec/product/README.md). Product owners record approval in `spec/lock.json` with `pnpm run accept`. |
+| Decisions | Quint in the [executable specs](SPEC.md#writing-a-spec) generates TypeScript. The checker simulates the model, compares TypeScript traces, and runs Dafny proof obligations. |
+| Effects | VibeLang shells check [backend health](packages/core/src/vibe/backendHealthShell.vibe), drain [shutdown work](packages/core/src/vibe/backendShutdownShell.vibe), and dispatch [operations alerts](packages/core/src/vibe/opsAlertShell.vibe) and [inbox digests](packages/core/src/vibe/notificationDigestShell.vibe). `pnpm run spec:sync` compiles the shells and their generated Effect adapters. |
+| Application | Node 26 serves the backend and console. React 19 renders the public sites, the connector pages and the staff console from one shared design system. The [Network agent guide](AGENTS.md) applies the upstream design guidance to these packages. |
+| Conformance | The spec checker compares the app's observed state and effects with generated rules. The [command table](#commands) lists scoped journeys and the existing application test commands. |
+
 ## Quick start
 
-Use Bun 1.4.2 for the application, Node 26 with Corepack and pnpm 10.24.0
-for the Vibestack toolchain, and Dafny 4.11 on PATH for proofs. PostgreSQL 16
-is required for local service and database tests.
+Use Node 26, Corepack 0.35.0, and pnpm 10.24.0 for the application and
+Vibestack. The Node patch version is in `.nvmrc`. Use Dafny 4.11 for proofs
+and PostgreSQL 16 for local service and database tests.
 
 ```bash
-bun install --frozen-lockfile
-bun run spec:setup
-bun run gen
+npm install --global corepack@0.35.0
+corepack enable pnpm
+pnpm install --frozen-lockfile
+pnpm run spec:setup
+pnpm run gen
 ```
 
 Use the [platform runbook](docs/runbook-platform.md) to start the four
@@ -64,7 +77,7 @@ and its referenced files directly.
 
 ## Studio
 
-Run `bun run spec:studio` to inspect the executable rules and run their
+Run `pnpm run spec:studio` to inspect the executable rules and run their
 checks. Studio edits land in the projection under `runs/vibestack/`. Apply
 reviewed changes in the repository's `spec/` tree and restart Studio to
 refresh the projection. Standalone Vibestack also runs application build
@@ -81,7 +94,7 @@ describes those controls.
    Put its type definitions, pure guards, transition, or property in the
    rule's `quint` block. Follow the [format reference](SPEC.md#writing-a-spec).
 3. **Sync.** Use the [sync skill](.claude/skills/sync/SKILL.md) and
-   `bun run check`. Run `bun run spec:sync` to publish the resulting
+   `pnpm run check`. Run `pnpm run spec:sync` to publish the resulting
    TypeScript under `packages/core/src/generated/`.
 4. **Wire the decision.** Call the generated function from the app's
    existing HTTP, storage, or service entry point. Exercise the story through
@@ -103,32 +116,75 @@ from The Network root.
 
 | In standalone Vibestack | In The Network | Purpose |
 |---|---|---|
-| `pnpm install` | `bun install --frozen-lockfile`, then `bun run spec:setup` | Install the app and the pinned toolchain. |
-| `pnpm gen` | `bun run gen` | Generate the executable modules into `gen/`. |
-| `pnpm check` | `bun run check` | Run the Vibestack checks on the executable spec inputs. |
-| `pnpm studio` | `bun run spec:studio` | Open the spec editor on the local projection. |
-| `spec watch` | `bun run spec:watch` | Repeat checks when the local projection changes. |
-| `pnpm new <name>` | `bun run new <name>` | Scaffold a child spec. |
-| `pnpm accept` | `bun run accept` | Product owner sign-off after a fresh check. |
-| `pnpm selftest` | `bun run spec:selftest` | Exercise the vendored toolchain against its fixtures. |
-| `pnpm demo` | `bun run spec:demo` | Run the standalone order example. |
-| `pnpm build`, `pnpm check` in `@repo/design-system` | `bun run design:build`, `bun run design:check` | Build and check the design tokens. |
-| `pnpm gen` in `@repo/ui` | `bun run ui:gen` | Generate the component stories. |
-| `pnpm storybook` in `@repo/ui` | `bun run ui:storybook` | Open the components in Storybook. |
-| `pnpm test` in `@repo/ui` | `bun run ui:test` | Mount and play every story. |
-| `pnpm test:browser` in `@repo/ui` | `cd packages/ui && bun run test:browser` | Play every story in Chromium with axe. |
-| `pnpm lint` | `bun run lint:ui` | Lint the components and the apps. |
-| | `bun run spec:sync` | Generate and publish the production copies. |
-| | `bun run spec:check-generated` | Compare the production copies with fresh generation. |
-| | `bun run quint:check` | Exercise the action-based flows in `spec/models/`. |
-| | `bun run typecheck`, `bun run test:integration`, `bun run test:e2e`, `bun run sim` | Check the application and the live-code seams. |
+| `pnpm install` | `pnpm install --frozen-lockfile`, then `pnpm run spec:setup` | Install the app and the pinned toolchain. |
+| `pnpm gen` | `pnpm run gen` | Generate the executable modules into `gen/`. |
+| `pnpm check` | `pnpm run check` | Run the Vibestack checks on the executable spec inputs. |
+| `pnpm studio` | `pnpm run spec:studio` | Open the spec editor on the local projection. |
+| `spec watch` | `pnpm run spec:watch` | Repeat checks when the local projection changes. |
+| `pnpm new <name>` | `pnpm run new <name>` | Scaffold a child spec. |
+| `pnpm accept` | `pnpm run accept` | Product owner sign-off after a fresh check. |
+| `pnpm selftest` | `pnpm run spec:selftest` | Exercise the vendored toolchain against its fixtures and standalone examples. |
+| `pnpm demo` | `pnpm run spec:demo` | Run the standalone order example. |
+| | `pnpm run spec:sync` | Generate the TypeScript snapshots and compile the serving VibeLang shells. |
+| | `pnpm run spec:check-generated` | Compare checked-in TypeScript and VibeLang output with fresh generation. |
+| | `pnpm run spec:conformance <module>` | Run one spec's simulation and compare it with the app through its driver or recorded trace. |
+| | `pnpm run spec:explore` | Explore the real Peon signup page in Chromium. |
+| | `pnpm run quint:check` | Exercise the action-based flows in `spec/models/`. |
+| | `pnpm run typecheck`, `pnpm run test:integration`, `pnpm run test:e2e`, `pnpm run sim` | Check the application and the live-code seams. |
 
-The spec checker uses an executable projection of `spec/`. Product prose,
-historical sources, and action-based flow models stay in the repository
-under `spec/product/` and `spec/models/`. Application TypeScript, service
-journeys, and simulations have their own commands. The review ledger,
+The spec checker uses an executable projection of `spec/` and the
+conformance inputs under `test/`. The
+[shared-line consent](spec/sharedLineConsentJourney.md),
+[saved profile](spec/savedProfileJourney.md), and
+[gateway turn receipt](spec/turnReceiptJourney.md) journeys run through
+signed HTTP and isolated local Postgres databases on port 54339. Run
+`pnpm run spec:conformance` with `sharedLineConsentJourney`,
+`savedProfileJourney`, or `turnReceiptJourney`. Run
+`pnpm run spec:conformance reviewContactJourney` to compare a signed
+Friends request, scoped staff review, and dry-run probe records against
+the [review-to-contact rules](spec/reviewContactJourney.md). The
+[mutual-consent journey](spec/mutualConsentJourney.md) extends that flow
+from separate yes replies through booking and the gateway receipt. Run it
+with `pnpm run spec:conformance mutualConsentJourney`. The
+[travel presence journey](spec/travelPresenceJourney.md) checks signed
+trip saves, exact expiry in the matching snapshot, and replay after app
+leave. Run it with `pnpm run spec:conformance travelPresenceJourney`.
+The [solo concierge journey](spec/soloConciergeJourney.md) compares current
+Parks recommendations, age eligibility, and replay after catalog changes.
+Run it with `pnpm run spec:conformance soloConciergeJourney`. The
+[reviewed group journey](spec/reviewedGroupJourney.md) checks a planned
+public hike through staff review, consent, and private cancellation in
+the ConsentNetwork harness. Run it with
+`pnpm run spec:conformance reviewedGroupJourney`. Run
+`pnpm run spec:conformance memberRequestJourney` to compare the request
+and review flow through the dry-run ConsentNetwork harness. The checker saves
+a minimal failing trace under `test/counterexamples/` and replays it on
+later runs. Product prose, historical sources, and action-based flow
+models stay in `spec/product/` and `spec/models/`. The review ledger,
 `spec/lock.json`, records product owner approval and goes with the spec. See the [standalone stage definitions](SPEC.md#stages-of-pnpm-check)
 and the [Network test policy](docs/tests-policy.md).
+
+The [Bombadil browser check](SPEC.md#exploring-the-page) builds peon.biz and
+runs the actual signup page against the local platform API. A synthetic OTP
+provider opens the browser in a confirmed session without sending a text.
+Bombadil exercises consent, signup, and reloading the resulting membership.
+
+```bash
+pnpm --dir tools/vibestack exec playwright install chromium
+pnpm run spec:explore
+```
+
+A failed exploration is kept in `test/__traces__/bombadil` for the next run.
+
+The shared design system uses these commands.
+
+| Command | Purpose |
+|---|---|
+| `pnpm run design:build`, `pnpm run design:check` | Build the CSS from the brand tokens and check token contrast. |
+| `pnpm run ui:gen` | Check the shared component catalog and story outputs. |
+| `pnpm run ui:storybook`, `pnpm run ui:test` | Browse the shared components or exercise the component stories. |
+| `pnpm --filter @thenetwork/ui run test:browser` | Exercise the component stories in Chromium with axe. |
+| `pnpm run lint:ui` | Check design-system usage in the shared UI and the site app. |
 
 ## What's here
 
@@ -136,6 +192,9 @@ and the [Network test policy](docs/tests-policy.md).
 |---|---|
 | `packages/core` | Shared contract: domain types, `Clock`, seeded RNG, the age policy (`policy.ts`), the outbound leak guard (`guard.ts`), the reply and opt-out parsers (`replies.ts`), the run-log schema, and the LLM clients (`llm.ts`) |
 | `packages/engine` | The matching and opportunity engine (PRD 33) with one pack per app: filters, retrieval, generators, scoring, LLM judge passes, group composer, fairness, attention budget ([README](packages/engine/README.md)) |
+| `apps/site` | React source for the brand-specific public sites. |
+| `packages/design-system` | Shared type scales, spacing, themes, and per-brand colors. |
+| `packages/ui` | Shared application, connector, and console components and stories. |
 | `packages/network` | The ConsentNetwork: human review before any member contact, consent-first probes, request fulfilment, safety and trust, the leak guard on every send, Postgres state. `service/` is the production service. `harness/` holds its simulations ([design](docs/network.md)) |
 | `packages/sim` | The simulator: personas with hidden truth, the oracle, persona agents, the per-app worlds (`src/apps`) and the judge ([README](packages/sim/README.md)) |
 | `packages/capital` | The network-capital ledger and its simulation |
@@ -148,7 +207,7 @@ and the [Network test policy](docs/tests-policy.md).
 | `sites/` | The four app sites and their `SKILL.md` files ([README](sites/README.md)) |
 | `plugins/` | The Claude and OpenAI agent plugins, generated from `sites/` ([README](plugins/README.md)) |
 | `deploy/` | The backend image, the Pages router, the backup job and the post-deploy check ([docs/deploy.md](docs/deploy.md)) |
-| `evals/` | Hand-written corpora, scored by `bun run sim` |
+| `evals/` | Hand-written corpora, scored by `pnpm run sim` |
 | `scripts/` | `sim.ts` (the validation command), `relay-eval.ts`, `clef-fit.ts`, the dev servers and the synthetic-data scripts |
 | `data/synthetic/v1` | 500 synthetic members with hidden truth ([README](data/synthetic/README.md)) |
 
@@ -158,11 +217,11 @@ Copy `.env.example` to `.env` for local work. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for variables and real-agent evidence.
 
 ```bash
-bun run packages/observatory/db/dev-pg.ts up
-bun run typecheck
-bun run sim
-bun run test:integration
-bun run test:e2e
+node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts up
+pnpm run typecheck
+pnpm run sim
+pnpm run test:integration
+pnpm run test:e2e
 ```
 
 The simulator runs offline by default. The integration and e2e suites

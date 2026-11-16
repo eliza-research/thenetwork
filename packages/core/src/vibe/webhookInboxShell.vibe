@@ -1,0 +1,69 @@
+import { apply, chooseWebhook, earlierWebhookCancellable, initial } from "./generated/webhookInbox.effect.js"
+
+interface PendingWebhook {
+  id: string
+  attempts: number
+  compliance: boolean
+  stopCommand: boolean
+}
+
+interface DrainEffects<Row> {
+  readWindow(): Promise<readonly Row[]>
+  hasBlockingTurn(): Promise<boolean>
+  handle(row: Row): Promise<string>
+  complete(row: Row, outcome: string, cancelIds: string[]): Promise<number>
+  fail(row: Row, attempts: number, drop: boolean, cause: unknown): Promise<void>
+}
+
+error WebhookDrainIO { cause: unknown }
+
+function io<T>(work: () => Promise<T>) {
+  return tryPromise({ try: work, catch: cause => new WebhookDrainIO({ cause }) })
+}
+
+/** A sender's advisory lock is held until the whole drain returns. */
+export async function drainWebhookSender<Row extends PendingWebhook>(effects: DrainEffects<Row>): Promise<number> {
+  try {
+    return await runPromise(effect {
+      let handled = 0
+      for (;;) {
+        const window = try io(() => effects.readWindow())
+        const oldest = window[0]
+        const compliance = window.find(row => row.compliance)
+        const blocked = oldest !== undefined && compliance === undefined
+          ? try io(() => effects.hasBlockingTurn())
+          : false
+        const selection = chooseWebhook(oldest !== undefined, compliance !== undefined, blocked)
+        const row = selection === "RunCompliance" ? compliance : selection === "RunOldest" ? oldest : undefined
+        if (row === undefined) return handled
+
+        let attempt = initial
+        const result = effect {
+          const outcome = try io(() => effects.handle(row))
+          attempt = try apply(attempt, { type: "recordHandled", stopCommand: row.stopCommand })
+          const cancelIds = attempt.phase === "CancelEarlier"
+            ? window.filter(item => earlierWebhookCancellable(item.id === row.id, item.compliance)).map(item => item.id)
+            : []
+          const cancelled = try io(() => effects.complete(row, outcome, cancelIds))
+          return { kind: "completed", cancelled } as const
+        } catch failure => ({ kind: "failed", failure } as const)
+
+        if (result.kind === "completed") {
+          try apply(attempt, { type: "recordCompletion" })
+          handled += 1 + result.cancelled
+          continue
+        }
+        const { failure } = result
+        if (!(failure instanceof WebhookDrainIO)) throw failure
+        const attempts = row.attempts + 1
+        const failed = try apply(attempt, { type: "recordFailure", attempts, stopCommand: row.stopCommand })
+        const drop = failed.phase === "DropWebhook"
+        try io(() => effects.fail(row, attempts, drop, failure.cause))
+        if (!drop) return handled
+      }
+    })
+  } catch (error) {
+    if (error instanceof WebhookDrainIO) throw error.cause
+    throw error
+  }
+}

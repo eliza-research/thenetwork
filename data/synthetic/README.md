@@ -59,12 +59,12 @@ Every timestamp is relative to the snapshot time `now = 2026-10-12T17:00Z` (Mon 
 ## Regenerate
 
 ```bash
-bun scripts/synthetic/generate.ts --dry-run        # list members whose text is cached vs needs the LLM; no API calls, writes nothing
-bun scripts/synthetic/generate.ts --max-fresh 60   # LLM-enriched via defaultLLM() (DEFAULT_LLM_PROVIDER/MODEL, default Surplus gpt-6-luna); refuses if >60 members need new text
-bun scripts/synthetic/generate.ts --no-llm         # template prose only, no API calls (~0.1 s)
-bun scripts/synthetic/generate.ts --concurrency 4 --fresh   # ignore the LLM cache (regenerates all 500)
-bun scripts/synthetic/validate.ts                  # writes v1/validation.json (or --out PATH), exit 1 on failure
-bun scripts/synthetic/load.ts --engine             # runs engine v1, writes v1/engine_v1_run.json
+node --import tsx --env-file-if-exists=.env scripts/synthetic/generate.ts --dry-run        # list members whose text is cached vs needs the LLM; no API calls, writes nothing
+node --import tsx --env-file-if-exists=.env scripts/synthetic/generate.ts --max-fresh 60   # LLM-enriched via defaultLLM() (DEFAULT_LLM_PROVIDER/MODEL, default Surplus gpt-6-luna); refuses if >60 members need new text
+node --import tsx --env-file-if-exists=.env scripts/synthetic/generate.ts --no-llm         # template prose only, no API calls (~0.1 s)
+node --import tsx --env-file-if-exists=.env scripts/synthetic/generate.ts --concurrency 4 --fresh   # ignore the LLM cache (regenerates all 500)
+node --import tsx --env-file-if-exists=.env scripts/synthetic/validate.ts                  # writes v1/validation.json (or --out PATH), exit 1 on failure
+node --import tsx --env-file-if-exists=.env scripts/synthetic/load.ts --engine             # runs engine v1, writes v1/engine_v1_run.json
 ```
 
 Everything except the LLM prose is a pure function of `SEED = 20261005` (`scripts/synthetic/common.ts`), the `packages/sim` generator and the taxonomy. The manifest records `simGeneratorSourceSha256`, so you can tell when the sim generator changed underneath the dataset. LLM outputs are cached per member under `runs/synthetic-cache/v1/` (gitignored). Each entry stores the model that wrote it and a hash of model plus prompt; an entry is reused whenever the member's prompt is unchanged, **whichever model wrote it**, so switching the default model does not regenerate existing text. A rerun with the cache in place reproduces the data files byte for byte, except for members without a valid entry (template fallbacks, or members whose prompt changed), which the rerun sends to the LLM. Without the cache you get the same structure with different prose.
@@ -204,7 +204,7 @@ The table below is from 1.1.0. The counts it gives for facets, intents and roman
 
 ### Engine v1.2.0 by richness tier (1.2.1 data, seed 1, no LLM judge)
 
-Engine v1.2.0 (docs/results/2026-10-07-engine-v1.2.md) turns on dispatch awareness, personal-growth wants matched as hobby, the 0.40 bar for event pairs and theme groups, and the romance stated-preferences gate. On this one-tick snapshot only the growth fix and the group bar act (no history, no events in the files). The run produced **218 proposals** touching 256 members (v1.1.0: 208 touching 247). Oracle precision is **33.0%** (34.6%, inside the ±6.5-point CI), latent-pair recall 2.2% (2.1%), Gini 0.540 (0.558). The run had 0 minors in any proposal and 0 canary leaks. `bun scripts/synthetic/load.ts --engine` regenerates `v1/engine_v1_run.json`.
+Engine v1.2.0 (docs/results/2026-10-07-engine-v1.2.md) turns on dispatch awareness, personal-growth wants matched as hobby, the 0.40 bar for event pairs and theme groups, and the romance stated-preferences gate. On this one-tick snapshot only the growth fix and the group bar act (no history, no events in the files). The run produced **218 proposals** touching 256 members (v1.1.0: 208 touching 247). Oracle precision is **33.0%** (34.6%, inside the ±6.5-point CI), latent-pair recall 2.2% (2.1%), Gini 0.540 (0.558). The run had 0 minors in any proposal and 0 canary leaks. `node --import tsx --env-file-if-exists=.env scripts/synthetic/load.ts --engine` regenerates `v1/engine_v1_run.json`.
 
 | Tier (adults) | Proposals per member | Share with any proposal | Mean fit | Mean confidence | Oracle compatible | Latent-pair recall |
 |---|---:|---:|---:|---:|---:|---:|

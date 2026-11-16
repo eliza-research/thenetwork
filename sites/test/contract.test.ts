@@ -2,8 +2,8 @@
 // same process: the join flow that peon.biz calls, and the member endpoints through the same `call`, with
 // the same headers and bodies a browser sends. A fake OTP provider keeps the code in memory (nothing is
 // sent). Audit SITE-01, SITE-02 and SITE-22.
-//   bun test sites
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+//   pnpm run test:integration sites
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { APPS, type AppId } from "../../packages/platform/src/apps.ts";
@@ -116,7 +116,7 @@ describe("the member endpoints through the typed client", () => {
 describe("the join page client (packages/ui/src/api) against createPublicApi", () => {
   const phone = "+12125550144";
   const platformCodes = () => {
-    const src = ["api.ts", "accounts.ts"].map((f) => readFileSync(join(import.meta.dir, "../../packages/platform/src", f), "utf8")).join("\n");
+    const src = ["api.ts", "accounts.ts"].map((f) => readFileSync(join(import.meta.dirname, "../../packages/platform/src", f), "utf8")).join("\n");
     return new Set([...src.matchAll(/error: "([a-z_]+)"/g)].map((m) => m[1]!));
   };
 
@@ -177,7 +177,7 @@ describe("the join page client (packages/ui/src/api) against createPublicApi", (
     }
   });
 
-  test("every error code the platform API can send gives the join page a message; only the home change has no code of its own", async () => {
+  test("each platform error used by the browser signup gives the join page a message", async () => {
     const codes = platformCodes();
     expect(codes.size).toBeGreaterThan(5);
     const keep = globalThis.fetch;
@@ -191,7 +191,8 @@ describe("the join page client (packages/ui/src/api) against createPublicApi", (
     } finally {
       globalThis.fetch = keep;
     }
-    // /api/me/home is the one endpoint that sends it, and the join page never calls it.
-    expect([...codes].filter((c) => !platformErrors[c])).toEqual(["home_runtime_conflict"]);
+    // The browser join sends no invitation token and uses neither of the private home endpoints.
+    const agentOrAccountOnly = new Set(["home_runtime_conflict", "invalid_invitation", "home_help_venue_unavailable"]);
+    expect([...codes].filter((c) => !platformErrors[c] && !agentOrAccountOnly.has(c))).toEqual([]);
   });
 });

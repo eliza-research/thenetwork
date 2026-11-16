@@ -1,5 +1,6 @@
 // Canonical account erasure and Notify retention on real PostgreSQL; synthetic records only.
-import {afterAll, beforeAll, describe, expect, test} from "bun:test";
+import { setTimeout as sleep } from "node:timers/promises";
+import {afterAll, beforeAll, describe, expect, test} from "vitest";
 import {Accounts} from "../src/accounts.ts";
 import {APPS} from "../src/apps.ts";
 import {PgPeopleStore} from "../src/pg-store.ts";
@@ -73,7 +74,7 @@ describe.skipIf(!pgAvailable)("canonical Notify erasure (PostgreSQL)", () => {
     await admitted;
     let erased = false;
     const deleting = people.deleteAll(person.id, phone, accounts.phoneHash(phone), now).then(() => {erased = true;});
-    await Bun.sleep(20);
+    await sleep(20);
     expect(erased).toBe(false);
     resume(); await writing; await deleting;
     for (const table of ["inbox_items", "deliveries", "task_tokens", "surface_signals"]) {

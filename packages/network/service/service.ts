@@ -28,43 +28,77 @@ import { profileSuggestionDisconnectEndpoint, type SuggestionRevokedOwnerResolve
 //    /apps/:app/..., each action audited. The review mode is never exposed: production is "human" only.
 //  - Sends: each app's adapter (dry-run by default; Blooio needs the per-app live flag too) after a
 //    person-level cap of proactive messages across apps (default 3 a day).
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { SQL } from "bun";
+import { createHash, createSecretKey, hkdfSync, randomUUID, timingSafeEqual } from "node:crypto";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { isDeepStrictEqual } from "node:util";
 import { DAY, LLMBudget, RealClock, recommenderLLM, type Clock, type City, type MemberId } from "@thenetwork/core";
-import type { ActionResult, NetworkOptions, NetworkState, ReviewDecision, ReviewOptions } from "../src/network.ts";
+import { storedInviterCurrent, type ActionResult, type NetworkOptions, type NetworkState, type ReviewDecision, type ReviewOptions } from "../src/network.ts";
 import { brandOf, copy as ntwrkCopy, copyFor, ELIZA_NOTICE, type Copy } from "../src/copy.ts";
 import { isMinor } from "@thenetwork/core";
 import { personDailyCap } from "../../core/src/generated/outreachPolicy.ts";
+import {
+  initial as initialStaffSafety, staffAgeAppCleared, staffAgeClearSummary, staffAgeMayReviewReports,
+  staffMinorReportDismissible, staffSafetyAuditScope, staffSafetyMembershipLive, staffSafetySelectsTarget,
+  step as stepStaffSafety,
+} from "../../core/src/generated/staffSafetyService.ts";
+import { inboxKeepMs, platformKeepMs, stopHintWindowMs } from "../../core/src/generated/platformRetention.ts";
+import { stopCoversEveryApp } from "../../core/src/generated/sharedLineConsentJourney.ts";
+import { standingIntentReplayAllowed } from "../../core/src/generated/standingIntentManagement.ts";
+import { homeHelpOfferChangeAllowed } from "../../core/src/generated/boundedHelp.ts";
+import { projectInvitationWelcome, projectRemoteInvitationNotice } from "../../core/src/generated/invitationJoinProjection.ts";
 import { ageAnswer, agesStated } from "../src/classify.ts";
-import { NetworkRuntime, type RuntimeHost } from "./runtime.ts";
+import { standingIntentCommand } from "../src/standing-intents.ts";
+import { contributionHistoryReply, contributionHistoryRequest } from "./contribution-history.ts";
+import { contributionHistoryReplayAllowed } from "../../core/src/generated/contributionHistory.ts";
+import { saveTravelPresence, travelOwner, travelPresenceCommand } from "./travel-presence.ts";
+import { soloReplyReplayAllowed } from "../../core/src/generated/soloConcierge.ts";
+import { soloConciergeReply, soloConciergeRequest } from "./solo-concierge.ts";
+import { NetworkRuntime, type RuntimeHost, type StagedMemberInvitation } from "./runtime.ts";
+import { isMemberInvitationLink, memberInvitationLink, type InviteRelationship, type MemberInviteEvidence, type MemberInviteRequest } from "../src/invitation.ts";
 import { effectiveParticipation, automatedFacetPredicate } from "./snapshot.ts";
 import { ProfileSuggestions, type SuggestionAuthorization } from "./profile-suggestions.ts";
 import { profileReviewFromEnv } from "./profile-review-factory.ts";
 import { profileReadRequest, savedProfileText } from "./profile-read.ts";
 import { step as stepProfileRead } from "../../core/src/generated/savedProfileRead.ts";
+import { receiptAccepted } from "../../core/src/generated/turnReceipt.ts";
+import { recordSignedTurnReceipt } from "../../core/src/vibe/turnReceiptShell.js";
 import {
   checkExplicitRoute, checkFallbackRoute, initial as textJoinInitial, initialRoute, namedOtherApp,
   networkEnrollmentAllowed, noticeAllowed, otherAppAllowed, otherAppEnrollment, pendingMatchesApp, shouldReadLookingFor,
   shouldReadPendingAnswer, step as stepTextJoin,
 } from "../../core/src/generated/textEnrollment.ts";
-import { Inbox, type CollectedReply } from "./inbox.ts";
+import { Inbox, type CollectedReply, type AtomicReplyReason } from "./inbox.ts";
+import { staffDecideInvitationReview, staffInvitationReviewQueue } from "./invitation-review.ts";
+import { BOUNDED_HOME_HELP_CLARIFICATION, boundedHomeHelpCommand, boundedHomeHelpDraft, type BoundedHomeHelpCommand } from "./bounded-home-help-intake.ts";
+import { boundedHomeHelpSenderCurrent, createBoundedHomeHelpAuthority } from "./bounded-home-help-authority.ts";
+import { handleBoundedHomeHelpStaff, writeBoundedHomeHelpStaffAudit } from "./bounded-home-help-staff.ts";
+import { BOUNDED_HOME_HELP_CONSENT_CLARIFICATION, boundedHomeHelpConsentCard, boundedHomeHelpConsentCommand,
+  boundedHomeHelpConsentReply, homeHelpPlanCode, homeHelpPlanId, type BoundedHomeHelpConsentCommand } from "./bounded-home-help-consent-command.ts";
+import { queueReviewedHomeHelp, reconcileHomeHelpDelivery, stageApprovedHomeHelp } from "./bounded-home-help-delivery.ts";
+import { BoundedHomeHelp } from "../src/bounded-help.ts";
+import { BoundedHomeHelpConsent, type HomeHelpConsentKey } from "../src/bounded-home-help-consent.ts";
+import { BoundedHomeHelpVenue } from "../src/bounded-home-help-venue.ts";
 import { networkRoutePolicy, routeEnvelopeAllowed, sameNetworkAuthority, type NetworkRoutePolicy } from "./route-authority.ts";
-import { TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH, RELAY_PHOTO_RESOLVE_PATH, parseApprovedRelayPhotos, type SetStateRequest, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
+import { TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH, RELAY_PHOTO_RESOLVE_PATH, parseApprovedRelayPhotos, type SetStateRequest, type TurnReceiptRequest, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
 import { SVC_MIN_SECRET, svcVerify } from "../../core/src/svc/svc-auth.ts";
 import { readCapped } from "../../platform/src/body.ts";
-import { ADULT_AGE, canJoin } from "../../core/src/policy.ts";
+import { ADULT_AGE, canBeMatched, canJoin } from "../../core/src/policy.ts";
 import { CostLedger, costRatesFromEnv, PgCostSink } from "./cost.ts";
 import { BlooioAdapter, type ChannelAdapter, type DirectKind, type Outbound } from "./channel.ts";
 import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, type AppId, type AppInfo } from "../../platform/src/apps.ts";
-import { Accounts, homeCityOf, type AccountHooks, type HomeInput, type JoinHookContext, type MemberHookContext } from "../../platform/src/accounts.ts";
+import { Accounts, homeCityOf, type AccountHooks, type HomeInput, type JoinHookContext, type MemberHookContext, type Who } from "../../platform/src/accounts.ts";
+import {
+  consumeMemberInvitation, findApprovedMemberInvitationReview, findMemberInvitation, holdMemberInvitation, InvitationUnavailable,
+  memberInvitationHash, memberInvitationReviewId, memberInvitationReviewStatus, newMemberInvitation, purgeExpiredMemberInvitationReviews,
+  releaseMemberInvitationReview, storeMemberInvitation, type ReferralJoin,
+} from "../../platform/src/invite-links.ts";
 import { joinAgeCheck, lowestAge } from "../../platform/src/age.ts";
 import { detectKeyword as platformKeyword, keywordEvent, leaveTarget, resolveConsent, stopScope, type StopScope } from "../../platform/src/consent.ts";
 import { devShortcutsAllowed, isProduction, platformEnv, type Env } from "../../platform/src/env.ts";
 import { keyedHash, maskPhone, normalizePhone, safeEqual } from "../../platform/src/phone.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
 import type { Membership, PeopleStore, PendingText, Person } from "../../platform/src/store.ts";
-import { createPublicApi, type MemberParticipation, type PublicApi, type PublicApiOptions } from "../../platform/src/api.ts";
+import { createPublicApi, type HomeHelpVenueRequest, type MemberParticipation, type PublicApi, type PublicApiOptions } from "../../platform/src/api.ts";
 import { otpProviderFromEnv } from "../../platform/src/otp.ts";
 import { turnstileFromEnv } from "../../platform/src/turnstile.ts";
 import type { PeerInfo } from "../../platform/src/api.ts";
@@ -72,7 +106,8 @@ import { PHOTO_APPS, PgPhotoStore, PhotoService, photoStorageFromEnv, type Photo
 import { PhotoRelayService, PgPhotoRelayStore, type PhotoRelayPolicy, type PhotoRelayItem } from "../../platform/src/photo-relay.ts";
 import { appearanceFacet, type AppearanceScore, type RatingSubject } from "../../engine/src/packs/slop/appearance.ts";
 import { fetchMediaCapped, PhotoIntake, type PhotoIntakeDeps } from "./photoIntake.ts";
-import { BIAS_EVERY_MS, biasAlerts, biasReport, type BiasMember, type StoredBiasReport } from "./bias.ts";
+import { biasAlerts, biasReport, type BiasMember, type StoredBiasReport } from "./bias.ts";
+import { weeklyBiasDue } from "../../core/src/generated/weeklyBias.ts";
 import { DEFAULT_SLA_HOURS } from "../../observatory/src/apps.ts";
 import type { Ban } from "../../platform/src/store.ts";
 import { parseBlooioWebhook, SIGNATURE_HEADER, verifyBlooioSignature } from "../../blooio/src/blooio/webhook.ts";
@@ -113,10 +148,10 @@ export function turnSecretProblem(env: Record<string, string | undefined> = proc
   if (!secret || secret.length < SVC_MIN_SECRET) return `SERVICE_TURN_SECRET must have at least ${SVC_MIN_SECRET} characters when the turn path is on`;
   return undefined;
 }
-/** The tables the service needs (bun run db:migrate). */
+/** The tables the service needs (pnpm run db:migrate). */
 const REQUIRED_TABLES = [
-  ...["members", "channel_identities", "facets", "intents", "presence", "edges", "messages", "events", "matching_runs", "staff_audit", "network_state", "opportunities", "review_items", "requests"].map(t => `network.${t}`),
-  ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "app_lines", "share_grants", "eliza_notices"].map(t => `platform.${t}`),
+  ...["members", "channel_identities", "facets", "intents", "presence", "edges", "messages", "events", "matching_runs", "staff_audit", "network_state", "opportunities", "review_items", "requests", "bounded_home_help", "bounded_home_help_consent", "bounded_home_help_venue"].map(t => `network.${t}`),
+  ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "app_lines", "share_grants", "eliza_notices", "member_invitations", "member_invitation_reviews"].map(t => `platform.${t}`),
 ];
 /** The dev-only key for keyed phone hashes (the platform's own default). Production needs PLATFORM_HASH_KEY. */
 const DEV_HASH_KEY = "dev-only-platform-hash-key";
@@ -228,7 +263,7 @@ const NOTIFY_SUMMARY_MAX = 500;
 
 export type InboundOutcome =
   | "open" | "handled" | "duplicate" | "unknown_sender" | "ignored" | "ignored_group" | "status" | "reaction" | "safety"
-  | "invite_only" | "join_asked" | "joined" | "under_age" | "stopped" | "left" | "no_network" | "held";
+  | "invite_only" | "join_asked" | "joined" | "under_age" | "stopped" | "left" | "no_network" | "held" | "standing_intents" | "travel_presence" | "solo_events" | "contribution_history" | AtomicReplyReason;
 
 interface Route { app: AppId; shared: boolean }
 
@@ -308,6 +343,7 @@ export class NetworkService implements RuntimeHost {
   private readonly secret?: string;
   private readonly secrets: Partial<Record<AppId, string>>;
   private readonly hashKey: string;
+  private readonly homeHelpVenueKey: ReturnType<typeof createSecretKey>;
   /** The inbound inbox: one row per provider message, handled once and in order per sender (inbox.ts). */
   readonly inbox: Inbox;
   private readonly cap: number;
@@ -351,6 +387,7 @@ export class NetworkService implements RuntimeHost {
     const key = this.env.PLATFORM_HASH_KEY ?? (devShortcutsAllowed(this.env) ? DEV_HASH_KEY : undefined);
     if (!key) throw new Error("PLATFORM_HASH_KEY is required in production and outside PLATFORM_ENV=dev");
     this.hashKey = key;
+    this.homeHelpVenueKey = createSecretKey(Buffer.from(hkdfSync("sha256", key, "thenetwork", "private-home-help-venue-v1", 32)));
     try { this.tokens = parseTokenGrants(o.tokens, { explicitApp: isProduction(this.env) }); } catch (e) { throw new Error(String((e as Error).message).replace("OBSERVATORY_TOKENS", "NETWORK_SERVICE_TOKENS")); }
     // Cloud holds the turn secret; it must never also be a staff bearer (PR #4: the agent credential was never the console token).
     const turnSecret = this.env.SERVICE_TURN_SECRET;
@@ -418,6 +455,118 @@ export class NetworkService implements RuntimeHost {
   /** Reuse canonical account policy inside the caller's existing PostgreSQL transaction. */
   accountsFor(tx: SQL): Accounts {
     return new Accounts(new PgPeopleStore(tx), { hashKey: this.hashKey, now: () => this.clock.now(), env: this.env, apps: id => this.apps[id] });
+  }
+
+  private homeHelpAuthority(user?: StaffUser) {
+    return createBoundedHomeHelpAuthority({
+      accountsFor: tx => this.accountsFor(tx), appInfo: app => this.apps[app],
+      routeOfMember: (app, city) => this.conversationNetworkId(app, city), now: () => this.clock.now(),
+      engineConfig: app => this.runtimeFor(app)?.wiring.engine,
+      reviewerAuthorized: async (_tx, reviewer) => !!user && user.id === reviewer.staffId && allowed(user, ["safety"], reviewer.app, "real"),
+    });
+  }
+
+  private async homeHelpSender(tx: SQL, rt: NetworkRuntime, memberId: MemberId, sender: string): Promise<boolean> {
+    return await boundedHomeHelpSenderCurrent(this.accountsFor(tx), rt.app, { memberId, e164: sender })
+      && await this.homeHelpAuthority().ownerEligible(tx, { app: rt.app.id, requesterId: memberId });
+  }
+
+  private homeHelpConsent() {
+    const now = () => this.clock.now();
+    return new BoundedHomeHelpConsent(new BoundedHomeHelp(this.homeHelpAuthority(), now),
+      (tx, app, actor) => boundedHomeHelpSenderCurrent(this.accountsFor(tx), this.apps[app], actor), now);
+  }
+
+  private homeHelpVenue() {
+    const consent = this.homeHelpConsent();
+    return new BoundedHomeHelpVenue((tx, key) => consent.currentConsent(tx, key), this.homeHelpVenueKey, () => this.clock.now());
+  }
+
+  private async privateHomeHelpVenue(app: AppInfo, who: Who, input: HomeHelpVenueRequest): Promise<{ address?: string } | undefined> {
+    const runtime = this.runtimeFor(app.id);
+    const id = homeHelpPlanId(input.id);
+    if (!runtime?.net.allowedCategories.has("help") || !id || !who.personId) return;
+    return runtime.scoped(async tx => {
+      const accounts = this.accountsFor(tx);
+      const participant = await accounts.activeMembership(app, who);
+      if (!participant || !canBeMatched(await accounts.lowestAge(who.e164, participant.person))) return;
+      const actor = { app: app.id, memberId: participant.membership.memberId };
+      const version = { id, revision: input.revision };
+      const venue = this.homeHelpVenue();
+      if (input.action === "reveal") {
+        const result = await venue.reveal(tx, actor, version);
+        // Recheck this session's exact phone binding after taking the roster locks.
+        if (result && (await accounts.activeMembership(app, who))?.membership.memberId === actor.memberId) return result;
+        return;
+      }
+      const changed = input.action === "submit"
+        ? await venue.submit(tx, actor, { ...version, address: input.address })
+        : await venue.revoke(tx, actor, version);
+      if (changed) return {};
+    });
+  }
+
+  async homeHelpNoticeCurrent(tx: SQL, app: AppInfo, noticeId: string, memberId: MemberId, to: string, body: string): Promise<boolean> {
+    if (!await boundedHomeHelpSenderCurrent(this.accountsFor(tx), app, { memberId, e164: to })) return false;
+    const notice = await this.homeHelpConsent().pendingNoticeById(tx, app.id, noticeId, memberId);
+    return !!notice && boundedHomeHelpConsentCard(notice) === body;
+  }
+
+  async homeHelpRecipientStopped(tx: SQL, app: AppId, memberId: MemberId): Promise<void> {
+    await this.homeHelpConsent().invalidateForMember(tx, app, memberId);
+  }
+
+  /** Only the verified sender of the current signed turn can receive a forwarding link. */
+  stageMemberInvitation(rt: NetworkRuntime, request: MemberInviteRequest): StagedMemberInvitation | undefined {
+    if (!rt.signedMemberTurn(request.inviterId, request.messageId)) return;
+    if (request.disposition === "review") {
+      const { inviterId: inviterMemberId, relationship, durationMonths, depth, reviewReasons, at } = request;
+      const id = memberInvitationReviewId(this.hashKey, rt.app.id, inviterMemberId, request.requestId);
+      return { status: "review", review: { id, inviterMemberId, relationship, durationMonths, depth, reviewReasons, at } };
+    }
+    return this.invitationLink(rt.app, request.inviterId, request.relationship, request, request.at);
+  }
+
+  private invitationLink(app: AppInfo, inviterMemberId: MemberId, relationship: InviteRelationship,
+    evidence: MemberInviteEvidence, at: number, reviewId?: string): Extract<StagedMemberInvitation, { status: "issued" }> {
+    const { token, tokenHash } = newMemberInvitation(this.hashKey, app.id);
+    return { status: "issued", referral: { tokenHash, inviterMemberId }, url: memberInvitationLink(app, token), relationship, evidence, at, reviewId };
+  }
+
+  private async invitationOwner(tx: SQL, app: AppInfo, memberId: string, sender?: string): Promise<boolean> {
+    const [row] = await tx`select m.person_id, m.home_city, ph.e164 from network.members m join platform.phone_identities ph on ph.person_id=m.person_id
+      where m.app_id=${app.id} and m.id=${memberId} and m.account_status='active' and not m.opted_out and ph.hold is null
+      and (${sender ?? null}::text is null or ph.e164=${sender ?? null})
+      order by ph.last_seen_at desc nulls last, ph.e164 limit 1`;
+    if (!row) return false;
+    const accounts = this.accountsFor(tx);
+    const e164 = row.e164 as string;
+    const binding = await accounts.activeMembership(app, { e164, personId: row.person_id as string });
+    if (binding?.membership.memberId !== memberId || !canBeMatched(await accounts.lowestAge(e164, binding.person))) return false;
+    const owner = this.runtimeForHome(app.id, row.home_city as string);
+    if (!owner) return false;
+    const [stored] = await tx`select state from network.network_state where id=${owner.id}`;
+    const state = stored?.state;
+    return !!state && storedInviterCurrent((typeof state === "string" ? JSON.parse(state) : state) as NetworkState, memberId, this.clock.now());
+  }
+
+  async saveMemberInvitation(tx: SQL, rt: NetworkRuntime, staged: StagedMemberInvitation): Promise<void> {
+    const turn = this.inboundTurn();
+    const inviterId = staged.status === "issued" ? staged.referral.inviterMemberId : staged.review.inviterMemberId;
+    if (!turn || !await this.invitationOwner(tx, rt.app, inviterId, turn.from)) throw new InvitationUnavailable();
+    if (staged.status === "review") return holdMemberInvitation(tx, rt.app.id, staged.review);
+    const approval = staged.reviewId && await releaseMemberInvitationReview(tx, rt.app.id, staged.reviewId, inviterId, staged.at);
+    await storeMemberInvitation(tx, rt.app.id, staged.referral, staged.relationship, staged.at, approval ? approval.expiresAt : undefined, staged.evidence);
+  }
+
+  private async referralFor(app: AppId, token: string, at: number): Promise<ReferralJoin | undefined> {
+    const hash = memberInvitationHash(this.hashKey, app, token);
+    const rt = this.runtimeFor(app);
+    if (!hash || !rt) return;
+    return rt.scoped(async tx => {
+      const referral = await findMemberInvitation(tx, app, hash, at);
+      if (referral && await this.invitationOwner(tx, rt.app, referral.inviterMemberId)) return referral;
+    });
   }
 
   private async photoRelayParties(input: { app: AppId; threadId: string; senderPersonId: string }, transaction?: SQL) {
@@ -491,6 +640,10 @@ export class NetworkService implements RuntimeHost {
     return this.runtimeFor(app, homeCity) ?? this.runtimeFor(app);
   }
 
+  conversationNetworkId(app: AppId, homeCity: string): string | undefined {
+    return this.runtimeForHome(app, homeCity)?.id;
+  }
+
   conversationCities(rt: NetworkRuntime): readonly string[] {
     return ["nyc", "sf", "la"].filter(city => this.runtimeForHome(rt.app.id, city) === rt);
   }
@@ -515,7 +668,7 @@ export class NetworkService implements RuntimeHost {
       const [r] = await this.sql`select to_regclass(${t}) is not null as ok`;
       if (!r?.ok) missing.push(t);
     }
-    if (missing.length) throw new Error(`the database is missing ${missing.join(", ")}: run bun run db:migrate (runbook-real 1.1, runbook-platform)`);
+    if (missing.length) throw new Error(`the database is missing ${missing.join(", ")}: run pnpm run db:migrate (runbook-real 1.1, runbook-platform)`);
     // The database and the process must agree on the environment (the 555-01xx guard reads the database's).
     const declared = platformEnv(this.env);
     const [envRow] = await this.sql`select value from platform.settings where key = 'environment'`;
@@ -540,22 +693,57 @@ export class NetworkService implements RuntimeHost {
    * host's log alerts pick up (docs/deploy.md); a failure is logged and never stops the tick.
    */
   async afterTick(rt: NetworkRuntime): Promise<void> {
+    await this.recoverInvitationJoins(rt);
+    if (this.runtimeFor(rt.app.id) === rt) await rt.scoped(async tx => {
+      const now = this.clock.now();
+      await purgeExpiredMemberInvitationReviews(tx, rt.app.id, now);
+      await tx`delete from platform.member_invitations
+        where app_id=${rt.app.id} and expires_at<=${new Date(now)} and (redeemed_at is null or projected_at is not null)`;
+    }).catch(() => this.log(`[purge] invitations failed (${rt.id})`));
+    if (this.runtimeFor(rt.app.id) === rt) await rt.scoped(async tx => {
+      const app = rt.app.id;
+      const expired = await tx`select id from network.bounded_home_help where app_id=${app} and phase<>'Closed'
+        and expires_at<=${new Date(this.clock.now())} order by expires_at,id limit 20`;
+      const store = new BoundedHomeHelp(this.homeHelpAuthority(), () => this.clock.now());
+      for (const row of expired) await store.expire(tx, { app, id: row.id as string });
+      await this.homeHelpVenue().purgeExpired(tx, app);
+    }).catch(() => this.log(`[purge] home-help plans failed (${rt.id})`));
+    if (rt.net.allowedCategories.has("help")) await this.projectHomeHelpConsent(rt).catch(() => this.log(`[home-help] consent projection waits (${rt.id})`));
     for (const line of slaAlerts(rt.id, rt.net.reviewQueue(), this.clock.now(), DEFAULT_SLA_HOURS[rt.app.id], this.slaAlerted)) this.log(line);
     if (PHOTO_APPS.includes(rt.app.id)) await this.weeklyBias(rt);
+  }
+
+  private async projectHomeHelpConsent(rt: NetworkRuntime) {
+    const consent = this.homeHelpConsent();
+    if (this.runtimeFor(rt.app.id) === rt) {
+      await stageApprovedHomeHelp(rt, consent, this.clock.now());
+      await rt.scoped(tx => reconcileHomeHelpDelivery(tx, consent, rt.app.id));
+    }
+    await queueReviewedHomeHelp(rt, consent, this.conversationCities(rt), this.clock.now());
   }
 
   /** The bias monitor of one network when its last stored report is a week old (or there is none). Returns the new report, if one was made. */
   async weeklyBias(rt: NetworkRuntime, force = false): Promise<StoredBiasReport | undefined> {
     const now = this.clock.now();
+    const reportDue = (lastAt: Date | string | null | undefined) =>
+      weeklyBiasDue(force, !!lastAt, !force && lastAt ? now - new Date(lastAt).getTime() : 0);
     const [last] = await rt.scoped(tx => tx`select max(at) as at from network.bias_reports where app_id = ${rt.app.id} and network_id = ${rt.id}`);
-    if (!force && last?.at && now - new Date(last.at as string).getTime() < BIAS_EVERY_MS) return undefined;
+    if (!reportDue(last?.at)) return undefined;
     const rows = await rt.scoped(tx => tx`select m.id, m.age, m.joined_at, coalesce(array_agg(t) filter (where t like 'appearance:%'), '{}') as tags
       from network.members m left join network.facets f on f.app_id = m.app_id and f.member_id = m.id and f.status <> 'rejected' and ${automatedFacetPredicate(tx, true)} left join lateral unnest(f.tags) t on true
       where m.app_id = ${rt.app.id} and m.account_status in ('active', 'paused', 'restricted') group by m.id, m.age, m.joined_at order by m.id`) as any[];
     const members: BiasMember[] = rows.map(r => ({ id: r.id, age: r.age, joinedAt: r.joined_at ? new Date(r.joined_at).getTime() : null, tags: r.tags ?? [] }));
-    const r = biasReport(rt.id, rt.app.id, members, [...rt.net.opps.values()], now);
-    await rt.scoped(tx => tx`insert into network.bias_reports (app_id, id, network_id, at, members, alerts, report)
-      values (${rt.app.id}, ${`bias_${rt.id}_${now}`}, ${rt.id}, ${new Date(now)}, ${r.members}, ${r.report.alerts.length}, ${r.report as unknown as Row}::jsonb)`);
+    const opportunities = await rt.readState(n => [...n.opps.values()]);
+    const r = biasReport(rt.id, rt.app.id, members, opportunities, now);
+    const saved = await rt.scoped(async tx => {
+      await tx`select pg_advisory_xact_lock(hashtext(${`bias-report-${rt.id}`}))`;
+      const [latest] = await tx`select max(at) as at from network.bias_reports where app_id = ${rt.app.id} and network_id = ${rt.id}`;
+      if (!reportDue(latest?.at)) return false;
+      await tx`insert into network.bias_reports (app_id, id, network_id, at, members, alerts, report)
+        values (${rt.app.id}, ${`bias_${rt.id}_${now}`}, ${rt.id}, ${new Date(now)}, ${r.members}, ${r.report.alerts.length}, ${r.report as unknown as Row}::jsonb)`;
+      return true;
+    });
+    if (!saved) return undefined;
     this.log(`[bias] ${rt.id}: ${r.members} adult member(s), ${r.report.alerts.length} alert(s)`);
     for (const line of biasAlerts(r)) this.log(line);
     return r;
@@ -578,9 +766,9 @@ export class NetworkService implements RuntimeHost {
     for (const app of new Set([...this.runtimes.values()].map(rt => rt.app.id))) {
       await this.profileSuggestions.expirePending(app, this.clock.now()).catch(e => this.log(`[purge] profile suggestions failed: ${(e as Error).message}`));
     }
-    const n = await this.people.purge(this.clock.now() - 2 * DAY).catch(e => { this.log(`[purge] failed: ${(e as Error).message}`); return 0; });
+    const n = await this.people.purge(this.clock.now() - platformKeepMs).catch(e => { this.log(`[purge] failed: ${(e as Error).message}`); return 0; });
     // The inbox keeps handled ids a week (dedupe); the line keeps no counters for an address that is nobody's phone.
-    await this.inbox.purge(this.clock.now() - 7 * DAY).catch(e => this.log(`[purge] inbox failed: ${(e as Error).message}`));
+    await this.inbox.purge(this.clock.now() - inboxKeepMs).catch(e => this.log(`[purge] inbox failed: ${(e as Error).message}`));
     await this.lineAdapter()?.purge?.().catch(e => { this.log(`[purge] line counters failed: ${(e as Error).message}`); return 0; });
     if (n) this.log(`[purge] removed ${n} expired platform row(s)`);
     return n;
@@ -729,17 +917,21 @@ export class NetworkService implements RuntimeHost {
    * first name, age) and what the person gave at join (neighborhood, interests). The phone stays in
    * platform.phone_identities. Written with app.app_id set (migration 0004).
    */
-  async createMember(rt: NetworkRuntime, m: Membership, info: { age: number; firstName: string; homeCity?: string; neighborhood?: string; interests?: string[]; zip?: string }) {
-    const now = new Date(this.clock.now());
+  async createMember(rt: NetworkRuntime, m: Membership, info: { age: number; firstName: string; homeCity?: string; neighborhood?: string; interests?: string[]; zip?: string }, invitation?: { tx: SQL; referral: ReferralJoin }) {
+    const at = this.clock.now();
+    const now = new Date(at);
     const homeCity = info.homeCity ?? homeCityOf(m.profile.homeCity) ?? rt.city;
     // The app's categories (packs.ts): slop is dating and only for adults; peon is work; friends is social and hobby.
     const prefs = { ...rt.wiring.prefs(info.age), quietHours: [21, 9], formats: ["one_to_one", "small_group", "event"], maxTravelMinutes: 45, onlyWhenAsked: false };
-    await this.sql.begin(async tx => {
-      await tx`select set_config('app.app_id', ${rt.app.id}, true)`;
-      await tx`insert into network.members (app_id, id, person_id, name, home_city, home_area, account_status, age, prefs, joined_at)
-        values (${rt.app.id}, ${m.memberId}, ${m.personId}, ${info.firstName}, ${homeCity}, ${info.neighborhood ?? null}, 'active', ${info.age}, ${prefs}::jsonb, ${now})
+    const referral = invitation?.referral;
+    const write = async (tx: SQL) => {
+      if (referral && !await this.invitationOwner(tx, rt.app, referral.inviterMemberId)) throw new InvitationUnavailable();
+      await tx`insert into network.members (app_id, id, person_id, name, home_city, home_area, account_status, age, prefs, joined_at, invited_by)
+        values (${rt.app.id}, ${m.memberId}, ${m.personId}, ${info.firstName}, ${homeCity}, ${info.neighborhood ?? null}, 'active', ${info.age}, ${prefs}::jsonb, ${now}, ${referral?.inviterMemberId ?? null})
         on conflict (id) do update set person_id = excluded.person_id, name = excluded.name, home_city = excluded.home_city, home_area = excluded.home_area,
-          account_status = 'active', age = excluded.age, joined_at = excluded.joined_at, opted_out = false`;
+          account_status = 'active', age = excluded.age, joined_at = excluded.joined_at, opted_out = false,
+          invited_by = coalesce(excluded.invited_by, network.members.invited_by)`;
+      if (referral) await consumeMemberInvitation(tx, rt.app.id, referral, m.memberId, at);
       if (info.neighborhood || info.homeCity) await tx`insert into network.presence (app_id, member_id, city, type, areas) values (${rt.app.id}, ${m.memberId}, ${homeCity}, 'home', ${tx.array(info.neighborhood ? [info.neighborhood] : [], "TEXT")})`;
       // slop dates by distance from a zip (a coarse cell; agent_private, never shown).
       if (info.zip && rt.app.id === "slop") {
@@ -752,7 +944,9 @@ export class NetworkService implements RuntimeHost {
           values (${rt.app.id}, ${`${m.memberId}:join:${tag}`}, ${m.memberId}, 'interest', ${tag}, ${tx.array([tag], "TEXT")}, 'matchable', 'said', 'web_join', 0.8, 'confirmed', ${now})
           on conflict (id) do nothing`;
       }
-    });
+    };
+    if (invitation) await write(invitation.tx);
+    else await rt.scoped(write);
     const turn = this.inboundTurn();
     if (turn && (await this.accounts.personFor(turn.from))?.id === m.personId) {
       turn.app = rt.app.id; turn.memberId = m.memberId;
@@ -762,7 +956,9 @@ export class NetworkService implements RuntimeHost {
   /** The platform hooks: a join creates the network member and sends the welcome; stop, forget and export reach the network. */
   private hooks(): AccountHooks {
     return {
+      findInvitation: (app, token, at) => this.referralFor(app, token, at),
       onJoin: (ctx: JoinHookContext) => this.joined(ctx),
+      commitReferredJoin: ctx => this.commitReferredJoin(ctx),
       onStop: ctx => this.stopped(ctx.app, ctx.personId, ctx.scope),
       onForget: async (ctx: MemberHookContext) => {
         // The app's photos go first (leave, delete everything, a new owner of the number).
@@ -798,8 +994,82 @@ export class NetworkService implements RuntimeHost {
     const rt = this.runtimeForHome(ctx.app.id, ctx.input.homeCity ?? this.runtimeFor(ctx.app.id)?.city ?? "");
     if (!rt) throw new Error(`no network runs for ${ctx.app.id}`);
     if (ctx.membership.state !== "active") return; // waitlist or a recycled number: staff first
-    await this.createMember(rt, ctx.membership, { age: ctx.age, firstName: ctx.input.firstName, homeCity: ctx.input.homeCity, neighborhood: ctx.input.neighborhood, interests: ctx.input.interests, zip: ctx.input.zip });
+    await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age });
     await rt.unitOfWork(n => { n.welcomeJoined(ctx.membership.memberId); });
+  }
+
+  private async commitReferredJoin(ctx: JoinHookContext & { referral: ReferralJoin }): Promise<void> {
+    const rt = this.runtimeForHome(ctx.app.id, ctx.input.homeCity ?? "");
+    const at = ctx.membership.joinedAt;
+    if (!rt || ctx.membership.state !== "active" || at === null) throw new InvitationUnavailable();
+    // A verified person can already exist. The active membership, consent and referral are one outcome.
+    await rt.scoped(async tx => {
+      const accounts = this.accountsFor(tx);
+      await accounts.store.unsuppress(accounts.phoneHash(ctx.e164));
+      await accounts.store.putMembership(ctx.membership);
+      await accounts.store.addConsent({ e164: ctx.e164, app: ctx.app.id, state: "opted_in", source: "web_form", wording: ctx.app.consent.text, wordingVersion: ctx.app.consent.version, at });
+      await accounts.store.attachPerson(ctx.e164, ctx.person.id);
+      await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age }, { tx, referral: ctx.referral });
+    });
+    // The token is consumed and attribution is durable. A failed welcome can retry independently.
+    await this.projectInvitationJoin(rt, ctx.membership.memberId).catch(() => this.log(`[invite] joined projection waits for retry (${rt.id})`));
+  }
+
+  private async projectInvitationJoin(rt: NetworkRuntime, memberId: MemberId): Promise<void> {
+    const remote = await rt.unitOfWork(async net => {
+      const app = rt.app.id;
+      const [pending] = await rt.scoped(tx => tx`select i.token_hash,i.inviter_member_id,i.welcome_projected_at,
+          v.home_city as inviter_home,m.home_city as invitee_home
+        from platform.member_invitations i join network.members m on m.app_id=i.app_id and m.id=i.redeemed_member_id and m.invited_by=i.inviter_member_id
+        join network.members v on v.app_id=i.app_id and v.id=i.inviter_member_id
+        where i.app_id=${app} and i.redeemed_member_id=${memberId}`);
+      if (!pending || !projectInvitationWelcome(true, this.runtimeForHome(app, pending.invitee_home as string) === rt, !!pending.welcome_projected_at)) return;
+      const inviterRuntime = this.runtimeForHome(app, pending.inviter_home as string);
+      const localNotice = inviterRuntime === rt;
+      net.welcomeJoined(memberId, localNotice ? pending.inviter_member_id as MemberId : undefined);
+      rt.unit.memberCommand = async tx => {
+        const at = new Date(this.clock.now());
+        const rows = await tx`update platform.member_invitations set welcome_projected_at=${at},
+          projected_at=case when ${localNotice} then ${at} else projected_at end
+          where app_id=${app} and token_hash=${pending.token_hash as string} and welcome_projected_at is null returning token_hash`;
+        if (rows.length !== 1) throw new InvitationUnavailable();
+      };
+      return localNotice ? undefined : inviterRuntime;
+    });
+    if (remote) await this.projectInvitationNotice(remote, memberId);
+  }
+
+  private async projectInvitationNotice(rt: NetworkRuntime, inviteeId: MemberId): Promise<void> {
+    await rt.unitOfWork(async net => {
+      const app = rt.app.id;
+      const [pending] = await rt.scoped(tx => tx`select i.token_hash,i.inviter_member_id,i.redeemed_at,i.welcome_projected_at,i.projected_at,v.home_city
+        from platform.member_invitations i join network.members v on v.app_id=i.app_id and v.id=i.inviter_member_id
+        join network.members m on m.app_id=i.app_id and m.id=i.redeemed_member_id and m.invited_by=v.id
+        where i.app_id=${app} and i.redeemed_member_id=${inviteeId}`);
+      if (!pending || !projectRemoteInvitationNotice(true, this.runtimeForHome(app, pending.home_city as string) === rt, !!pending.welcome_projected_at, !!pending.projected_at)) return;
+      net.announceVerifiedInviteJoin(pending.inviter_member_id as MemberId, inviteeId, new Date(pending.redeemed_at as Date | string).getTime());
+      rt.unit.memberCommand = async tx => {
+        const rows = await tx`update platform.member_invitations set projected_at=${new Date(this.clock.now())}
+          where app_id=${app} and token_hash=${pending.token_hash as string} and welcome_projected_at is not null and projected_at is null returning token_hash`;
+        if (rows.length !== 1) throw new InvitationUnavailable();
+      };
+    });
+  }
+
+  private async recoverInvitationJoins(rt: NetworkRuntime): Promise<void> {
+    const app = rt.app.id;
+    const cities = this.conversationCities(rt);
+    const pending = await rt.scoped(tx => tx`select i.redeemed_member_id,i.welcome_projected_at from platform.member_invitations i
+      join network.members m on m.app_id=i.app_id and m.id=i.redeemed_member_id
+      join network.members v on v.app_id=i.app_id and v.id=i.inviter_member_id
+      where i.app_id=${app} and i.redeemed_at is not null and i.projected_at is null
+        and ((i.welcome_projected_at is null and m.home_city in ${tx(cities)}) or (i.welcome_projected_at is not null and v.home_city in ${tx(cities)}))
+      order by i.redeemed_at, i.token_hash limit 20`);
+    for (const row of pending) {
+      const memberId = row.redeemed_member_id as string;
+      const projection = row.welcome_projected_at ? this.projectInvitationNotice(rt, memberId) : this.projectInvitationJoin(rt, memberId);
+      await projection.catch(() => this.log(`[invite] joined projection waits for retry (${rt.id})`));
+    }
   }
 
   /**
@@ -943,12 +1213,13 @@ export class NetworkService implements RuntimeHost {
       onResume: ctx => this.resumeMember(ctx.app, ctx.memberId),
       home: ctx => this.memberHome(ctx),
       onHome: (ctx, input) => this.correctHome(ctx, input),
+      homeHelpVenue: (app, who, input) => this.privateHomeHelpVenue(app, who, input),
       // Each code Twilio Verify sends is a cost row (cost.ts).
       otp: this.cost.meterOtp(this.apiOptions?.otp ?? otpProviderFromEnv(this.env)),
     });
     return this.api;
   }
-  /** The public API handler for Bun.serve: /api/* or 404. */
+  /** The public API handler for serveHttp: /api/* or 404. */
   publicFetch = async (req: Request, server?: PeerInfo): Promise<Response> => (await this.publicApi.fetch(req, server)) ?? Response.json({ ok: false, error: "not_found" }, { status: 404 });
 
   // ------------------------------------------------------------------ inbound
@@ -1021,7 +1292,7 @@ export class NetworkService implements RuntimeHost {
 
   /** A verified, parsed channel event (Blooio webhook). `app`: the per-app webhook path. */
   inboundTurn = () => this.inbox.currentTurn();
-  collectReplies = (tx: SQL, replies: CollectedReply[]) => this.inbox.collect(tx, replies);
+  collectReplies = (tx: SQL, replies: CollectedReply[], reason?: AtomicReplyReason) => this.inbox.collect(tx, replies, reason);
 
   async inbound(ev: ChannelEvent, o: { app?: AppId } = {}): Promise<InboundOutcome> {
     switch (ev.kind) {
@@ -1043,8 +1314,13 @@ export class NetworkService implements RuntimeHost {
       case "message": break;
     }
     if (ev.isGroup) return "ignored_group";
+    const kw = platformKeyword(ev.text);
+    const intentCommand = !kw ? standingIntentCommand(ev.text) : undefined;
+    const travel = !kw && this.inboundTurn() ? travelPresenceCommand(ev.text) : undefined;
+    const soloEvents = !kw && this.inboundTurn() ? soloConciergeRequest(ev.text) : undefined;
+    const contributionPage = !kw && this.inboundTurn() ? contributionHistoryRequest(ev.text) : undefined;
     // Legacy webhooks own transport engagement. A signed turn admits its canonical member after policy processing.
-    if (!this.inboundTurn()) await this.lineAdapter()?.engaged?.(ev.from);
+    if (!this.inboundTurn() && !intentCommand) await this.lineAdapter()?.engaged?.(ev.from);
     const route = await this.route(ev, o.app);
     const app = this.apps[route.app];
     const joinedMember = (await this.memberApps(ev.from)).find(m => m.app === route.app);
@@ -1066,13 +1342,12 @@ export class NetworkService implements RuntimeHost {
     const e164 = normalizePhone(ev.from);
     const t = this.clock.now();
     const rowId = `in:${ev.channel}:${ev.messageId}`;
-    const kw = platformKeyword(ev.text);
     const profileRead = !kw ? profileReadRequest(ev.text, this.apps) : undefined;
     const line = ev.to ? normalizeAddress(ev.to) : undefined;
 
     // STOP / STOP ALL: the consent ledger first (with or without a membership; once per message), then every member it covers.
     if (kw === "stop" || kw === "stop_all") {
-      const scope: StopScope = kw === "stop_all" || route.shared ? "global" : stopScope(this.env);
+      const scope: StopScope = stopCoversEveryApp(kw === "stop_all", route.shared, stopScope(this.env) === "global") ? "global" : "app";
       return this.stop(kw, ev.from, app, rt, scope, rowId, line, ev);
     }
 
@@ -1087,8 +1362,8 @@ export class NetworkService implements RuntimeHost {
     // Photos by text (photoIntake.ts): the answer to the photo consent ask, then any attachment. A photo
     // from a minor, an unknown age, a banned person or a non-member of slop is dropped before it is fetched.
     // Only an explicit YES PHOTOS / NO PHOTOS routed to slop: a bare yes or no goes on to the Network (a probe, a date ask, another app).
-    if (e164 && !kw && !profileRead && (await this.photoIntake.consentAnswer(e164, ev.text, rowId, route.app))) return "handled";
-    if (e164 && ev.mediaUrls?.length && !profileRead) {
+    if (e164 && !kw && !profileRead && !intentCommand && (await this.photoIntake.consentAnswer(e164, ev.text, rowId, route.app))) return "handled";
+    if (e164 && ev.mediaUrls?.length && !profileRead && !intentCommand) {
       // A provider retry of the same message takes no photo twice.
       const first = (await this.people.hit(`photo_msg:${rowId}`, DAY, t)).count === 1;
       const r = first ? await this.photoIntake.photosIn(e164, ev.mediaUrls, rowId) : { outcome: "duplicate" as const };
@@ -1113,8 +1388,10 @@ export class NetworkService implements RuntimeHost {
       }
     }
 
-    // A read request is never an instruction to join, opt in or create a person.
-    if (!memberId && profileRead) return "handled";
+    // An account command never joins an app or opts the sender in.
+    if (!memberId && (profileRead || intentCommand || travel || soloEvents || contributionPage !== undefined)) {
+      return travel ? "travel_presence" : soloEvents ? "solo_events" : contributionPage !== undefined ? "contribution_history" : "handled";
+    }
 
     if (memberId) {
       if (kw === "start" && e164) {
@@ -1132,13 +1409,13 @@ export class NetworkService implements RuntimeHost {
       const reply = kw === "help" ? app.brand.help : undefined;
       if (!kw && e164 && /^\s*share\W*$/i.test(ev.text) && (await this.pendingOf(e164, "share", app.id))) return this.share(rt, app, memberId, e164, ev, rowId);
       // The answer to The Network's "what are you looking for?": enroll in the apps they named.
-      if (shouldReadLookingFor(!!kw, !!profileRead, app.id === "ntwrk") && e164 && (await this.pendingOf(e164, "looking_for"))) {
+      if (!intentCommand && !travel && !soloEvents && contributionPage === undefined && shouldReadLookingFor(!!kw, !!profileRead, app.id === "ntwrk") && e164 && (await this.pendingOf(e164, "looking_for"))) {
         const wants = lookingFor(ev.text).filter(a => namedOtherApp(a, a !== "ntwrk" && !!this.runtimeFor(a)));
         if (wants.length) return this.enroll(rt, memberId, e164, wants, ev, rowId);
       }
       // After STOP the member's texts still reach the Network (a report is never dropped), but its replies are
       // refused: the person gets one hint instead (founder decision 2026-10-11, #22).
-      if (!kw && e164) await this.stopHint(rt, app, e164, ev, rowId);
+      if (!kw && e164 && contributionPage === undefined) await this.stopHint(rt, app, e164, ev, rowId);
       const out = await this.memberMessage(rt, memberId, ev, rowId, kw, reply);
       if (e164) await this.statedAge(app, rt, memberId, e164);
       return out;
@@ -1177,7 +1454,7 @@ export class NetworkService implements RuntimeHost {
     const key = this.phoneKey(e164);
     if (resolveConsent(await this.people.lastConsent(e164, app.id)) !== "opted_out" || (await this.people.isSuppressed(key))) return;
     if (await this.people.isBanned(key, (await this.people.findPhone(e164))?.personId ?? null)) return;
-    const { ok } = await this.people.hit(`stop_hint:${app.id}:${key}`, 30 * DAY, this.clock.now(), { minGapMs: 30 * DAY });
+    const { ok } = await this.people.hit(`stop_hint:${app.id}:${key}`, stopHintWindowMs, this.clock.now(), { minGapMs: stopHintWindowMs });
     if (ok) await this.direct(rt, ev.from, app.brand.stoppedHint, `sys:${rowId}`, "compliance");
   }
 
@@ -1243,7 +1520,8 @@ export class NetworkService implements RuntimeHost {
     // Not from the thread: a profile from the member's AI assistant, learned but never an answer (InboundMessage.source).
     const out = await this.memberUnit(rt, memberId, ev, rowId, kw, systemReply, !fromThread);
     // The member wrote in the thread: pending notify deliveries count as acted on (an assistant's submit_profile does not).
-    if (out === "handled" && fromThread && this.notify && kw !== "stop" && kw !== "stop_all" && !profileReadRequest(ev.text, this.apps)) {
+    if ((out === "handled" || out === "member_invitation" || out === "member_invitation_review" || out === "bounded_home_help")
+      && fromThread && this.notify && kw !== "stop" && kw !== "stop_all" && !profileReadRequest(ev.text, this.apps)) {
       const personId = await this.personOfMember(rt, memberId);
       if (personId) await this.notify.threadReply(personId, ev.transport === "sms" ? "sms" : "imessage", this.clock.now()).catch(e => this.log(`[notify] thread reply not recorded: ${(e as Error).message}`));
     }
@@ -1258,9 +1536,74 @@ export class NetworkService implements RuntimeHost {
       if (n.isDeclined(memberId)) return "handled" as const; // declined at join: never answered, nothing stored
       const t = this.clock.now();
       const channel = ev.transport === "sms" ? "sms" : "imessage";
-      rt.unit.inbound = { id: rowId, member_id: memberId, direction: "inbound", channel, body: ev.text, status: "received", type: null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
+      const inbound = { id: rowId, member_id: memberId, direction: "inbound", channel, body: ev.text, status: "received", type: null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
+      const signedDirect = !keyword && !fromAssistant && this.inboundTurn();
+      const homeHelpConsent = signedDirect && boundedHomeHelpConsentCommand(ev.text);
+      if (homeHelpConsent && rt.signedMemberTurn(memberId, rowId)) {
+        rt.unit.inbound = inbound;
+        rt.unit.privateHomeHelpTurn = true;
+        rt.unit.memberCommand = tx => this.replyToHomeHelpConsent(tx, rt, { memberId, e164: signedDirect.from }, rowId, ev.receivedAt, homeHelpConsent);
+        return "bounded_home_help";
+      }
+      const homeHelp = signedDirect && boundedHomeHelpCommand(ev.text);
+      if (homeHelp && rt.signedMemberTurn(memberId, rowId)) {
+        rt.unit.inbound = inbound;
+        rt.unit.privateHomeHelpTurn = true;
+        rt.unit.memberCommand = tx => this.replyToHomeHelp(tx, rt, memberId, signedDirect.from, rowId, homeHelp);
+        return "bounded_home_help";
+      }
+      const inviteReview = signedDirect && /^check invite (mir_[0-9a-f]{32})$/i.exec(ev.text.trim())?.[1]?.toLowerCase();
+      if (inviteReview && rt.signedMemberTurn(memberId, rowId)) {
+        rt.unit.inbound = inbound;
+        rt.unit.privateInviteTurn = true;
+        rt.unit.memberCommand = tx => this.replyToInvitationReview(tx, rt, memberId, signedDirect.from, rowId, inviteReview);
+        return "handled";
+      }
+      const travel = signedDirect ? travelPresenceCommand(ev.text) : undefined;
+      const soloEvents = signedDirect ? soloConciergeRequest(ev.text) : undefined;
+      const contributionPage = signedDirect ? contributionHistoryRequest(ev.text) : undefined;
+      if (travel || soloEvents || contributionPage !== undefined) {
+        const reason = travel ? "travel_presence" : soloEvents ? "solo_events" : "contribution_history";
+        const e164 = normalizePhone(ev.from);
+        if (e164) rt.unit.memberCommand = async tx => {
+          const owner = { app: rt.app, memberId, e164 };
+          const accounts = this.accountsFor(tx);
+          const now = this.clock.now();
+          if (travel) {
+            const body = await saveTravelPresence(tx, accounts, owner, travel, now);
+            if (body === undefined) return;
+            rt.unit.inbound = inbound;
+            rt.system(memberId, `sys:${rowId}`, body, "reply", "travel_presence");
+          } else if (soloEvents) {
+            const reply = await soloConciergeReply(tx, accounts, owner, soloEvents, now);
+            if (!reply) return;
+            rt.unit.inbound = inbound;
+            rt.collectedMemberReply(memberId, `sys:${rowId}`, reply.body, "solo_events", reply.publicLinks);
+          } else if (contributionPage !== undefined) {
+            const body = await contributionHistoryReply(tx, accounts, owner, contributionPage);
+            if (body === undefined) return;
+            rt.unit.inbound = inbound;
+            rt.collectedMemberReply(memberId, `sys:${rowId}`, body, "contribution_history");
+          }
+        };
+        return reason;
+      }
+      rt.unit.inbound = inbound;
       rt.replyingTo = memberId;
       let disposition: "handled" | "open";
+      const manageIntent = !keyword && !fromAssistant ? standingIntentCommand(ev.text) : undefined;
+      if (manageIntent) {
+        try {
+          const e164 = normalizePhone(ev.from);
+          const own = e164 && await this.accounts.activeMembership(rt.app, { e164, personId: null });
+          const body = n.manageStandingIntents(memberId, manageIntent, !!own && own.membership.memberId === memberId,
+            change => { rt.unit.standingIntent = change; });
+          if (body) rt.system(memberId, `sys:${rowId}`, body, "reply", "standing_intent");
+          return "standing_intents" as const;
+        } finally {
+          rt.replyingTo = undefined;
+        }
+      }
       const read = !keyword && !fromAssistant ? profileReadRequest(ev.text, this.apps) : undefined;
       if (read) {
         try {
@@ -1311,8 +1654,85 @@ export class NetworkService implements RuntimeHost {
         rt.unit.forget.add(memberId);
         for (const s of rt.unit.sends) if (s.memberId === memberId) s.kind = "compliance";
       }
+      if (rt.unit.memberInvitation) {
+        rt.unit.privateInviteTurn = true;
+        return rt.unit.memberInvitation.status === "issued" ? "member_invitation" : "member_invitation_review";
+      }
       return keyword || systemReply ? "handled" as const : disposition;
     });
+  }
+
+  private async replyToInvitationReview(tx: SQL, rt: NetworkRuntime, memberId: MemberId, sender: string, messageId: string, id: string): Promise<void> {
+    const now = this.clock.now();
+    if (!await this.invitationOwner(tx, rt.app, memberId, sender)) return;
+    const approved = await findApprovedMemberInvitationReview(tx, rt.app.id, id, memberId, now);
+    const replyId = `sys:${messageId}`;
+    if (approved) {
+      const staged = this.invitationLink(rt.app, memberId, approved.relationship, approved, now, id);
+      rt.unit.memberInvitation = staged;
+      rt.collectedMemberReply(memberId, replyId, this.copyOf(rt.app).forwardInvite(staged.url), "member_invitation", [staged.url]);
+      return;
+    }
+    const status = await memberInvitationReviewStatus(tx, rt.app.id, id, memberId, now);
+    const text = status === "pending" ? "Your invitation is still waiting for review."
+      : status === "denied" ? "Your invitation was not approved."
+      : status === "released" ? "You already received the forwarding link." : "I couldn't find a current invitation with that code.";
+    rt.collectedMemberReply(memberId, `invite-vouch:${replyId}`, text, "member_invitation_vouch");
+  }
+
+  private async replyToHomeHelp(tx: SQL, rt: NetworkRuntime, memberId: MemberId, sender: string, messageId: string, command: BoundedHomeHelpCommand): Promise<void> {
+    if (!await this.homeHelpSender(tx, rt, memberId, sender)) return;
+    const reply = (text: string, recorded = false) => {
+      if (recorded) rt.unit.atomicHomeHelpReceipt = true;
+      rt.collectedMemberReply(memberId, `home-help:${messageId}`, text, "bounded_home_help");
+    };
+    if (!rt.net.allowedCategories.has("help")) return reply("This app does not take home-help requests.");
+    if (command.kind === "invalid") return reply(BOUNDED_HOME_HELP_CLARIFICATION);
+    const app = rt.app.id;
+    if (command.kind === "offer" || command.kind === "withdraw_offer") {
+      if (!homeHelpOfferChangeAllowed(true, rt.signedMemberTurn(memberId, messageId))) return;
+      if (command.kind === "withdraw_offer") {
+        await tx`delete from network.facets where app_id=${app} and member_id=${memberId} and kind='offer' and 'moving_help'=any(tags)`;
+        await this.homeHelpRecipientStopped(tx, app, memberId);
+        return reply("Your moving-help offer is withdrawn.", true);
+      }
+      const now = new Date(this.clock.now());
+      await tx`insert into network.facets (app_id,id,member_id,kind,value,tags,privacy_scope,provenance,source,status,confidence,valid_from,observed_at)
+        values (${app},${`${memberId}:home-help-offer`},${memberId},'offer','I can help move furniture or carry boxes.',
+          ${tx.array(["moving_help"], "TEXT")},'matchable','said','home_help_command','confirmed',1,${now},${now})
+        on conflict (id) do update set status='confirmed',valid_from=${now},valid_to=null,observed_at=${now}`;
+      return reply("I've saved your offer to help move furniture or carry boxes. You can withdraw it at any time.", true);
+    }
+    const store = new BoundedHomeHelp(this.homeHelpAuthority(), () => this.clock.now());
+    if (command.kind === "close") {
+      const closed = await store.close(tx, { app, id: command.id, revision: command.revision, actor: { kind: "owner", requesterId: memberId } });
+      return reply(closed ? "Your home-help plan is closed." : "I couldn't find that current home-help plan.", closed);
+    }
+    const owner = { app, requesterId: memberId, detailsConfirmed: true, alternativeChecked: true };
+    const existing = command.kind === "revise" ? await store.readOwnerDraft(tx, { ...owner, id: command.id, revision: command.revision }) : undefined;
+    if (command.kind === "revise" && !existing) return reply("I couldn't find that current home-help plan.");
+    const draft = boundedHomeHelpDraft(command.draft, this.clock.now(), { reviewSlaHours: DEFAULT_SLA_HOURS[app], previousExpiresAt: existing?.expiresAt });
+    if (!draft) return reply(BOUNDED_HOME_HELP_CLARIFICATION);
+    const recorded = command.kind === "submit" ? await store.submit(tx, { ...owner, id: randomUUID(), draft })
+      : await store.revise(tx, { ...owner, id: command.id, revision: command.revision, draft });
+    if (!recorded) return reply("I couldn't record that home-help plan. Check the time and current revision.");
+    reply(`Home-help plan ${homeHelpPlanCode(recorded.id)}, revision ${recorded.revision}, is ready for staff to consider. Leave out the street address.`, true);
+  }
+
+  private async replyToHomeHelpConsent(tx: SQL, rt: NetworkRuntime, actor: { memberId: MemberId; e164: string },
+    messageId: string, receivedAt: number, command: BoundedHomeHelpConsentCommand): Promise<void> {
+    if (!await boundedHomeHelpSenderCurrent(this.accountsFor(tx), rt.app, actor)) return;
+    const responseId = `home-help-consent-reply:${messageId}`;
+    if (command.kind === "invalid") {
+      rt.collectedMemberReply(actor.memberId, responseId, BOUNDED_HOME_HELP_CONSENT_CLARIFICATION, "bounded_home_help");
+      return;
+    }
+    const key: HomeHelpConsentKey = { app: rt.app.id, id: command.id, revision: command.revision };
+    const store = this.homeHelpConsent();
+    await reconcileHomeHelpDelivery(tx, store, key.app, actor.memberId, key);
+    const result = await store.respond(tx, { ...key, actor, decision: command.decision, receivedAt });
+    if (result) rt.unit.atomicHomeHelpReceipt = true;
+    rt.collectedMemberReply(actor.memberId, responseId, boundedHomeHelpConsentReply(result), "bounded_home_help");
   }
 
   /**
@@ -1706,7 +2126,7 @@ export class NetworkService implements RuntimeHost {
     const members: { rt: NetworkRuntime; memberId: MemberId }[] = [];
     for (const m of await this.people.memberships(personId)) {
       const r = await this.runtimeOfMember(m.app, m.memberId);
-      if (r && m.state !== "removed" && m.state !== "invited") members.push({ rt: r, memberId: m.memberId as MemberId });
+      if (r && staffSafetyMembershipLive(m.state)) members.push({ rt: r, memberId: m.memberId as MemberId });
     }
     if (!members.some(x => x.rt === rt && x.memberId === memberId)) members.push({ rt, memberId });
     return { personId, members };
@@ -1720,10 +2140,12 @@ export class NetworkService implements RuntimeHost {
     // Staff with safety on this app only hold here; the hold on every other app needs safety@* (or admin@*),
     // and the audit row never says how many apps the person uses (a slop membership never shows across apps).
     const all = await this.membersOfPerson(rt, memberId);
-    const members = crossAppSafety(user) ? all.members : all.members.filter(x => x.rt === rt);
-    return this.audited(rt, user, { type: "member", id: memberId }, { safety: "hold", reportId: reportId ?? null, scope: members.length > 1 ? "every_app" : "this_app" }, async () => {
+    const everywhere = crossAppSafety(user);
+    const members = all.members.filter(x => staffSafetySelectsTarget(everywhere, x.rt === rt));
+    return this.audited(rt, user, { type: "member", id: memberId }, { safety: "hold", reportId: reportId ?? null, scope: staffSafetyAuditScope(members.length) }, async () => {
       const r = await rt.unitOfWork(n => n.holdMember(memberId, user.id, note, reportId));
-      if (!r.ok) return r;
+      const hold = stepStaffSafety(initialStaffSafety, { type: "readPrimaryHold", applied: r.ok });
+      if (hold.phase !== "HoldRemainingTargets") return r;
       // One network at a time (never one unit inside another: no lock order to get wrong).
       for (const x of members) if (!(x.rt === rt && x.memberId === memberId)) await x.rt.unitOfWork(o => o.holdMember(x.memberId, user.id, note));
       return r;
@@ -1740,32 +2162,36 @@ export class NetworkService implements RuntimeHost {
    */
   async clearMinor(user: StaffUser, rt: NetworkRuntime, memberId: MemberId, note: string): Promise<ActionResult & { apps?: { app: AppId; result: string }[] }> {
     const all = await this.membersOfPerson(rt, memberId);
-    const members = crossAppSafety(user) ? all.members : all.members.filter(x => x.rt === rt);
+    const everywhere = crossAppSafety(user);
+    const members = all.members.filter(x => staffSafetySelectsTarget(everywhere, x.rt === rt));
     const apps: { app: AppId; result: string }[] = [];
-    const r = await this.audited(rt, user, { type: "member", id: memberId }, { safety: "clear_minor", scope: members.length > 1 ? "every_app" : "this_app" }, async () => {
+    const r = await this.audited(rt, user, { type: "member", id: memberId }, { safety: "clear_minor", scope: staffSafetyAuditScope(members.length) }, async () => {
       let refusal: string | undefined;
       // One network at a time (never one unit inside another).
       for (const x of members) {
         const one = await x.rt.unitOfWork(n => {
           const c = n.clearMinorSignal(x.memberId, user.id, note);
-          if (!c.ok && c.reason !== "no_signal") return c;
+          if (!staffAgeMayReviewReports(c.ok, !c.ok && c.reason === "no_signal")) return c;
           let dismissed = 0;
           for (const rep of n.safetyReports()) {
-            if (rep.kind === "minor" && rep.subjectId === x.memberId && rep.status === "open" && n.dismissReport(rep.id, user.id, note).ok) dismissed++;
+            if (staffMinorReportDismissible(rep.subjectId === x.memberId, rep.kind === "minor", rep.status === "open")
+              && n.dismissReport(rep.id, user.id, note).ok) dismissed++;
           }
-          return c.ok || dismissed ? { ok: true as const } : c;
+          return staffAgeAppCleared(c.ok, dismissed > 0) ? { ok: true as const } : c;
         });
         apps.push({ app: x.rt.app.id, result: one.ok ? "cleared" : one.reason });
         if (!one.ok && one.reason !== "no_signal") refusal ??= one.reason;
       }
-      return refusal ? { ok: false, reason: refusal } : apps.some(a => a.result === "cleared") ? { ok: true } : { ok: false, reason: "no_signal" };
+      const summary = staffAgeClearSummary(!!refusal, apps.some(a => a.result === "cleared"));
+      return summary === "ClearSucceeded" ? { ok: true } : { ok: false, reason: summary === "ClearRefused" ? refusal! : "no_signal" };
     });
     return { ...r, apps };
   }
 
   /** Dismiss a report: it no longer keeps the member out of matching. */
   dismissReport(user: StaffUser, rt: NetworkRuntime, reportId: string, note: string) {
-    return this.staffAction(rt, user, "safety", { type: "case", id: reportId }, { safety: "dismiss_report" }, n => n.dismissReport(reportId, user.id, note));
+    return this.audited(rt, user, { type: "case", id: reportId }, { safety: "dismiss_report" },
+      () => rt.unitOfWork(n => n.dismissReport(reportId, user.id, note)));
   }
 
   /**
@@ -1779,15 +2205,22 @@ export class NetworkService implements RuntimeHost {
     const { personId, members } = await this.membersOfPerson(rt, memberId);
     const target = { type: "member" as const, id: memberId };
     // A ban stops the number on every app: only safety@* (or admin@*) may do it. Staff of one app hold.
-    if (!crossAppSafety(user)) return this.refused(user, rt, "ban", target, "needs_safety_everywhere");
-    if (!personId) return this.refused(user, rt, "ban", target, "no_person");
+    const admission = stepStaffSafety(initialStaffSafety, {
+      type: "startStaffBan", everywhere: crossAppSafety(user), hasPerson: !!personId, phoneOnly: by === "phone",
+    });
+    if (admission.phase === "BanNeedsCrossApp") return this.refused(user, rt, "ban", target, "needs_safety_everywhere");
+    if (admission.phase !== "ReadingBanPhones" || !personId) return this.refused(user, rt, "ban", target, "no_person");
     const hashes = await this.people.phoneHashesOf(personId);
-    if (by === "phone" && !hashes.length) return this.refused(user, rt, "ban", target, "no_phone");
-    const already = by === "person" ? await this.people.isBanned("", personId) : (await Promise.all(hashes.map(h => this.people.isBanned(h)))).every(Boolean);
-    if (already) return this.refused(user, rt, "ban", target, "already_banned");
+    const phones = stepStaffSafety(admission, { type: "readStaffBanPhones", hasPhone: hashes.length > 0 });
+    if (phones.phase !== "ReadingExistingBan") return this.refused(user, rt, "ban", target, "no_phone");
+    const already = phones.phoneOnly
+      ? (await Promise.all(hashes.map(h => this.people.isBanned(h)))).every(Boolean)
+      : await this.people.isBanned("", personId);
+    const admitted = stepStaffSafety(phones, { type: "checkExistingStaffBan", alreadyBanned: already });
+    if (admitted.phase !== "ApplyingPersonBan" && admitted.phase !== "ApplyingPhoneBan") return this.refused(user, rt, "ban", target, "already_banned");
     return this.audited(rt, user, target, { safety: "ban", by, reportId: reportId ?? null }, async () => {
       const at = this.clock.now();
-      const rows: Ban[] = by === "person"
+      const rows: Ban[] = admitted.phase === "ApplyingPersonBan"
         ? [{ id: `ban_${randomUUID()}`, scope: "person", personId, phoneHash: hashes[0] ?? null, reason: note, reportId: reportId ?? null, bannedBy: user.id, at },
           ...hashes.slice(1).map(h => ({ id: `ban_${randomUUID()}`, scope: "person" as const, personId, phoneHash: h, reason: note, reportId: reportId ?? null, bannedBy: user.id, at }))]
         : hashes.map(h => ({ id: `ban_${randomUUID()}`, scope: "phone" as const, personId, phoneHash: h, reason: note, reportId: reportId ?? null, bannedBy: user.id, at }));
@@ -1795,7 +2228,7 @@ export class NetworkService implements RuntimeHost {
       for (const h of hashes) await this.people.suppress(h, "banned", at);
       // No rating of looks is kept for a banned person (they are never matched again). The photos stay for the safety team.
       await this.dropRatings(personId);
-      for (const m of await this.people.memberships(personId)) if (m.state !== "removed" && m.state !== "invited") await this.people.putMembership({ ...m, state: "restricted" });
+      for (const m of await this.people.memberships(personId)) if (staffSafetyMembershipLive(m.state)) await this.people.putMembership({ ...m, state: "restricted" });
       let out: ActionResult = { ok: true };
       for (const x of members) {
         await x.rt.scoped(tx => tx`update network.members set account_status = 'restricted' where app_id = ${x.rt.app.id} and id = ${x.memberId}`);
@@ -1807,13 +2240,17 @@ export class NetworkService implements RuntimeHost {
     });
   }
 
-  /** A safety action that spans networks: the audit row first (no row, no action), then `fn`, then a result row. */
+  /** Audit the requested safety action, run it, then write its result. */
   private async audited(rt: NetworkRuntime, user: StaffUser, target: { type: NonNullable<AuditEntry["targetType"]>; id: string }, detail: Row, fn: () => Promise<ActionResult>): Promise<ActionResult> {
     const base = { actor: user.id, roles: user.roles, action: "safety", targetType: target.type, targetId: target.id, mode: "real" as const, app: rt.app.id };
     await this.audit.write({ ...base, at: this.clock.now(), ok: true, detail: { ...detail, network: rt.id, phase: "requested" } });
+    const audited = stepStaffSafety(initialStaffSafety, { type: "recordRequestedSafetyAudit" });
+    if (audited.phase !== "PerformingAuditedAction") throw new Error("Safety action requires a request audit");
     const r = await fn();
-    await this.audit.write({ ...base, at: this.clock.now(), ok: r.ok, detail: { ...detail, network: rt.id, phase: "result", ...(r.ok ? {} : { reason: r.reason }) } })
-      .catch(e => this.log(`[audit] result row failed: ${(e as Error).message}`));
+    if (stepStaffSafety(audited, { type: "recordCompletedSafetyAction" }).phase === "RecordingAuditResult") {
+      await this.audit.write({ ...base, at: this.clock.now(), ok: r.ok, detail: { ...detail, network: rt.id, phase: "result", ...(r.ok ? {} : { reason: r.reason }) } })
+        .catch(e => this.log(`[audit] result row failed: ${(e as Error).message}`));
+    }
     return r;
   }
 
@@ -2050,47 +2487,50 @@ export class NetworkService implements RuntimeHost {
         || !Array.isArray(b.replyIds) || !b.replyIds.every(x => typeof x === "string")
         || !Array.isArray(b.providerMessageIds) || !b.providerMessageIds.every(x => typeof x === "string" && x.trim())
         || typeof b.historyRecorded !== "boolean" || !["accepted", "unknown", "rejected"].includes(b.outcome as string)) return json({error: "invalid_request"}, 400);
-      const result = await this.sql.begin(async tx => {
-        const [claim] = await tx`select status,response,receipt_hash,receipt,replies,network_authority from platform.inbound where id=${id} for update`;
-        if (!claim || claim.status !== "done" || claim.response?.outcome !== "handled") return json({error: "turn_unavailable", retryable: false}, 409);
-        if (this.routePolicy && !routeEnvelopeAllowed(this.routePolicy, claim.network_authority, this.clock.now()))
-          return json({error:"route_authority_invalid",retryable:false},403);
-        // Cloud and Gateway independently acknowledge the same acceptance. JSON
-        // object key order may differ; the authenticated receipt values may not.
-        if (claim.receipt_hash === digest || (claim.receipt_hash && isDeepStrictEqual(claim.receipt, b))) return json({ok: true, replayed: true});
-        if (claim.receipt_hash && !(claim.receipt?.outcome === "unknown" && ["accepted", "rejected"].includes(b.outcome as string))) return json({error: "receipt_conflict", retryable: false}, 409);
-        const collected = claim.replies as CollectedReply[];
-        // A handled turn with no reply (a quiet acknowledgement, an under-13 decline) takes an empty receipt and is done.
-        if (!collected.length) {
-          if ((b.replyIds as string[]).length || (b.providerMessageIds as string[]).length || b.historyRecorded) return json({error: "receipt_scope_invalid", retryable: false}, 409);
+      const delivery = b.outcome as TurnReceiptRequest["outcome"];
+      const replyIds = b.replyIds as string[];
+      const phase = await this.sql.begin(tx => recordSignedTurnReceipt({
+        digest, delivery, replyIds, providerIds: (b.providerMessageIds as string[]).length > 0, history: b.historyRecorded === true,
+      }, {
+        readTurn: async () => {
+          const [claim] = await tx<{
+            status: string;
+            response: TurnResponse | null;
+            receipt_hash: string | null;
+            receipt: TurnReceiptRequest | null;
+            replies: CollectedReply[];
+            network_authority: unknown;
+          }[]>`select status,response,receipt_hash,receipt,replies,network_authority from platform.inbound where id=${id} for update`;
+          if (claim?.status !== "done" || claim.response?.outcome !== "handled") return undefined;
+          return { ...claim, response: claim.response, knownApp: isAppId(claim.response.app) };
+        },
+        authorityIsCurrent: claim => !this.routePolicy || routeEnvelopeAllowed(this.routePolicy, claim.network_authority, this.clock.now()),
+        receiptValuesMatch: claim => isDeepStrictEqual(claim.receipt, b),
+        writeReplies: async ({ response }, status) => {
+          if (!isAppId(response.app)) return;
+          await tx`select set_config('app.app_id', ${response.app}, true)`;
+          await tx`update network.messages set status=${status} where app_id=${response.app} and inbound_id=${id}
+            and id in ${tx(replyIds)} and status in ('collected','send_unknown')`;
+          // The leak guard's thread check reads the same accepted replies from the line.
+          const runtime = response.memberId ? await this.runtimeOfMember(response.app, response.memberId) : this.runtimeFor(response.app);
+          if (runtime?.adapter instanceof BlooioAdapter) await runtime.adapter.queue.collectedReceipt(tx, replyIds, delivery, this.clock.now());
+        },
+        writeReceipt: async () => {
           await tx`update platform.inbound set receipt_hash=${digest},receipt=${b}::jsonb where id=${id}`;
-          return json({ok: true, replayed: false});
-        }
-        if (JSON.stringify(collected.map(r => r.id)) !== JSON.stringify(b.replyIds)) return json({error: "receipt_scope_invalid", retryable: false}, 409);
-        // No-history acceptance belongs only to a persisted policy reply or
-        // canonical join prompt; a normal member reply still needs its history.
-        const accountFree = claim.response.accountEligible === false &&
-          (claim.response.replyKind === "compliance" ||
-            (claim.response.reason === "onboarding_asked" && claim.response.replyKind === "reply" &&
-              claim.response.memberId === null && isAppId(claim.response.app)));
-        if ((b.outcome === "accepted" && (!(b.providerMessageIds as string[]).length || (!b.historyRecorded && !accountFree)))
-          || (b.outcome !== "accepted" && b.historyRecorded)) return json({error: "invalid_receipt", retryable: false}, 400);
-        const status = b.outcome === "accepted" ? "sent" : b.outcome === "unknown" ? "send_unknown" : "refused_gateway";
-        if (isAppId(claim.response.app)) {
-          await tx`select set_config('app.app_id', ${claim.response.app}, true)`;
-          await tx`update network.messages set status=${status} where app_id=${claim.response.app} and inbound_id=${id} and id in ${tx(b.replyIds as string[])} and status in ('collected','send_unknown')`;
-          // The same replies in the line's thread history (the leak guard's core-14 check reads accepted ones).
-          const lrt = claim.response.memberId ? await this.runtimeOfMember(claim.response.app, claim.response.memberId) : this.runtimeFor(claim.response.app);
-          if (lrt?.adapter instanceof BlooioAdapter) await lrt.adapter.queue.collectedReceipt(tx, b.replyIds as string[], b.outcome as "accepted" | "unknown" | "rejected", this.clock.now());
-        }
-        await tx`update platform.inbound set receipt_hash=${digest},receipt=${b}::jsonb where id=${id}`;
-        return json({ok: true, replayed: false});
-      });
-      if (result.status===200 && b.outcome==="accepted") {
+        },
+      }));
+      switch (phase) {
+        case "TurnUnavailable": return json({error: "turn_unavailable", retryable: false}, 409);
+        case "AuthorityInvalid": return json({error: "route_authority_invalid", retryable: false}, 403);
+        case "Conflict": return json({error: "receipt_conflict", retryable: false}, 409);
+        case "ScopeInvalid": return json({error: "receipt_scope_invalid", retryable: false}, 409);
+        case "DeliveryInvalid": return json({error: "invalid_receipt", retryable: false}, 400);
+      }
+      if (receiptAccepted(delivery)) {
         const [claim]=await this.sql`select response from platform.inbound where id=${id}`;
         if (isAppId(claim?.response?.app)) await (claim.response.memberId ? await this.runtimeOfMember(claim.response.app, claim.response.memberId) : this.runtimeFor(claim.response.app))?.projectNotifications();
       }
-      return result;
+      return json({ok: true, replayed: phase === "Replayed"});
     }
     if (auth.id !== b.messageId || Object.keys(b).some(k => !["messageId","channel","from","to","text","transport","receivedAt","app","networkAuthority"].includes(k))
       || typeof b.from !== "string" || normalizePhone(b.from) !== b.from
@@ -2128,8 +2568,10 @@ export class NetworkService implements RuntimeHost {
       const onboarding = policyAllowed && age === undefined && outcome === "join_asked" && !turn.memberId;
       const rt = turn.app ? (turn.memberId ? await this.runtimeOfMember(turn.app, turn.memberId) : this.runtimeFor(turn.app)) : undefined;
       const binding = rt && turn.memberId ? await this.accounts.activeMembership(rt.app, {e164: input.from, personId: person?.id ?? null}) : undefined;
-      // activeMembership owns the known join-age check; first contact, STOP, leave and policy denials create no service counter.
-      if (accountEligible && binding && binding.membership.memberId === turn.memberId) await this.lineAdapter()?.engaged?.(input.from);
+      // Own-profile commands preserve send holds. The binding includes the known join-age check.
+      if (outcome !== "standing_intents" && outcome !== "travel_presence" && outcome !== "solo_events" && outcome !== "contribution_history" && accountEligible && binding && binding.membership.memberId === turn.memberId) {
+        await this.lineAdapter()?.engaged?.(input.from);
+      }
       if (outcome === "open" && !collected.length && turn.app && turn.memberId) {
         const context = binding?.membership.memberId === turn.memberId ? await rt!.sharedContext(turn.memberId) : null;
         if (context) return {outcome: "open", channel: input.channel, app: turn.app, memberId: turn.memberId, context};
@@ -2148,6 +2590,84 @@ export class NetworkService implements RuntimeHost {
     }
     if (result.status===200 && result.body && typeof result.body==="object" && "outcome" in result.body && result.body.outcome==="handled") {
       const handled=result.body as Extract<TurnResponse,{outcome:"handled"}>;
+      if (handled.reason === "standing_intents" && handled.replies.length) {
+        const rt = handled.app && handled.memberId ? await this.runtimeOfMember(handled.app, handled.memberId) : undefined;
+        const e164 = normalizePhone(input.from);
+        const binding = rt && e164 && await this.accounts.activeMembership(rt.app, { e164, personId: null });
+        if (!standingIntentReplayAllowed(!!binding && binding.membership.memberId === handled.memberId)) return json({error: "turn_intent_account_changed", retryable: false}, 409);
+      }
+      if (handled.reason === "travel_presence" && handled.replies.length) {
+        const rt = handled.app && handled.memberId ? await this.runtimeOfMember(handled.app, handled.memberId) : undefined;
+        const memberId = handled.memberId;
+        const authorized = rt && memberId && await rt.scoped(tx => travelOwner(tx, this.accountsFor(tx), { app: rt.app, memberId, e164: input.from }));
+        if (!authorized) return json({error: "turn_travel_account_changed", retryable: false}, 409);
+      }
+      if (handled.reason === "solo_events" && handled.replies.length) {
+        const rt = handled.app && handled.memberId ? await this.runtimeOfMember(handled.app, handled.memberId) : undefined;
+        const memberId = handled.memberId;
+        const period = soloConciergeRequest(input.text);
+        const live = rt && memberId && period && await rt.scoped(tx => soloConciergeReply(tx, this.accountsFor(tx), { app: rt.app, memberId, e164: input.from }, period, this.clock.now())).catch(() => null);
+        if (live === null) return json({error: "concierge_unavailable", retryable: true}, 503);
+        const available = typeof live === "object" && live !== null;
+        if (!soloReplyReplayAllowed(available, available && handled.replies.length === 1 && handled.replies[0] === live.body)) {
+          return json({error: "turn_concierge_changed", retryable: false}, 409);
+        }
+      }
+      if (handled.reason === "contribution_history" && handled.replies.length) {
+        const memberId = handled.memberId;
+        const rt = handled.app && memberId ? await this.runtimeOfMember(handled.app, memberId) : undefined;
+        const page = contributionHistoryRequest(input.text);
+        const live = rt && memberId && page !== undefined
+          ? await rt.scoped(tx => contributionHistoryReply(tx, this.accountsFor(tx), { app: rt.app, memberId, e164: input.from }, page)).catch(() => null)
+          : undefined;
+        if (live === null) return json({error: "contribution_history_unavailable", retryable: true}, 503);
+        if (!contributionHistoryReplayAllowed(live !== undefined, handled.replies.length === 1 && handled.replies[0] === live)) {
+          return json({error: "turn_contribution_history_changed", retryable: false}, 409);
+        }
+      }
+      if (handled.reason === "member_invitation" && handled.replies.length) {
+        const memberId = handled.memberId;
+        const rt = handled.app && memberId ? await this.runtimeOfMember(handled.app, memberId) : undefined;
+        const links = rt ? handled.replies.flatMap(body => body.split(/\s+/)).filter(link => isMemberInvitationLink(rt.app, link)) : [];
+        const hash = rt && links.length === 1 ? memberInvitationHash(this.hashKey, rt.app.id, links[0]!.slice(-43)) : undefined;
+        const current = rt && memberId && hash && await rt.scoped(async tx => {
+          const referral = await findMemberInvitation(tx, rt.app.id, hash, this.clock.now());
+          return referral?.inviterMemberId === memberId && await this.invitationOwner(tx, rt.app, memberId, input.from);
+        });
+        if (!current) return json({error: "turn_invitation_changed", retryable: false}, 409);
+      }
+      if (handled.replyIds?.some(id => id.startsWith("invite-vouch:"))) {
+        const memberId = handled.memberId;
+        const rt = handled.app && memberId ? await this.runtimeOfMember(handled.app, memberId) : undefined;
+        if (!rt || !memberId || !await rt.scoped(tx => this.invitationOwner(tx, rt.app, memberId, input.from))) {
+          return json({error: "turn_invitation_changed", retryable: false}, 409);
+        }
+      }
+      if (handled.replyIds?.some(id => id.startsWith("home-help:"))) {
+        const memberId = handled.memberId;
+        const rt = handled.app && memberId ? await this.runtimeOfMember(handled.app, memberId) : undefined;
+        if (!rt || !memberId || !await rt.scoped(tx => this.homeHelpSender(tx, rt, memberId, input.from))) {
+          return json({error: "turn_home_help_changed", retryable: false}, 409);
+        }
+      }
+      if (handled.replyIds?.some(id => id.startsWith("home-help-consent-reply:"))) {
+        const memberId = handled.memberId;
+        const rt = handled.app && memberId ? await this.runtimeOfMember(handled.app, memberId) : undefined;
+        if (!rt || !memberId || !await rt.scoped(tx => boundedHomeHelpSenderCurrent(this.accountsFor(tx), rt.app, { memberId, e164: input.from }))) {
+          return json({error: "turn_home_help_changed", retryable: false}, 409);
+        }
+      }
+      const invitationNotices = handled.replyIds?.filter(id => id.startsWith("invite-notice:")) ?? [];
+      if (invitationNotices.length) {
+        const memberId = handled.memberId;
+        const rt = handled.app && memberId ? await this.runtimeOfMember(handled.app, memberId) : undefined;
+        const current = rt && memberId && await rt.scoped(async tx => {
+          if (!await this.invitationOwner(tx, rt.app, memberId, input.from)) return false;
+          for (const id of invitationNotices) if (!await rt.invitationNoticeAdmission(tx, id, memberId)) return false;
+          return true;
+        });
+        if (!current) return json({error: "turn_invitation_notice_changed", retryable: false}, 409);
+      }
       if (handled.reason === "onboarding_asked") {
         const current = await admission(handled.app ?? undefined);
         if (!current.allowed || current.age !== undefined) return json({error: "turn_onboarding_changed", retryable: false}, 409);
@@ -2316,6 +2836,29 @@ export class NetworkService implements RuntimeHost {
         const no = need(["safety"]); if (no) return no;
         await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_safety_reports", mode: "real", ok: true, app: rt.app.id });
         return json({ ok: true, network: rt.id, reports: await this.safetyReports(rt) });
+      }
+      if (path === "/safety/home-help" || path.startsWith("/safety/home-help/")) {
+        const homeHelp = await handleBoundedHomeHelpStaff({
+          store: new BoundedHomeHelp(this.homeHelpAuthority(user), () => this.clock.now()),
+          transaction: (_app, fn) => rt.scoped(fn), writeAudit: writeBoundedHomeHelpStaffAudit, now: () => this.clock.now(),
+          stageConsent: (tx, key) => this.homeHelpConsent().stage(tx, key),
+        }, req, { app: rt.app.id, path, user });
+        if (homeHelp) return homeHelp;
+      }
+      if (path === "/review/member-invitations") {
+        const no = need(["reviewer", "safety"]); if (no) return no;
+        const at = this.clock.now();
+        if (req.method === "GET") {
+          const reviews = await rt.scoped(tx => staffInvitationReviewQueue(tx, rt.app.id, user, at));
+          return reviews ? json({ ok: true, reviews }) : json({ error: "forbidden" }, 403);
+        }
+        if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
+        const data = await body(req) as Record<string, unknown> | undefined;
+        const id = data?.id, decision = data?.decision;
+        if (typeof id !== "string" || (decision !== "approve" && decision !== "deny")) return json({ error: "invalid_invitation_decision" }, 400);
+        const resolved = await rt.scoped(tx => staffDecideInvitationReview(tx, rt.app.id, id, decision, user, at));
+        if (resolved === "forbidden") return json({ error: "forbidden" }, 403);
+        return resolved === "decided" ? json({ ok: true }) : json({ error: "invitation_review_unavailable" }, 409);
       }
       if (req.method === "GET" && path === "/signals") {
         // Agent signals that need a person: opt_out and safety_concern proposed from /internal/signals.
@@ -2566,9 +3109,11 @@ export class NetworkService implements RuntimeHost {
     }
   }
 
-  async close() {
-    await this.audit.close().catch(() => {});
-    await this.sql.close();
+  async close(force = false) {
+    await Promise.all([
+      this.audit.close(force).catch(() => {}),
+      this.sql.end(force ? { timeout: 0 } : undefined),
+    ]);
   }
 }
 

@@ -1,8 +1,11 @@
 // The deployable backend (deploy/backend; docs/deploy.md): config, edge headers, routing, logs,
 // shutdown, and one boot of the real process against a database of its own on the dev cluster.
-import { afterAll, describe, expect, test } from "bun:test";
+import { setTimeout as sleep } from "node:timers/promises";
+import { spawnProcess } from "../../packages/core/src/runtime/process.ts";
+import { serveHttp } from "../../packages/core/src/runtime/http.ts";
+import { afterAll, describe, expect, test } from "vitest";
 import { DEFAULT_HOST_MAP } from "../../packages/platform/src/apps.ts";
-import { SQL } from "bun";
+import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { dropDb, emptyDb, pgAvailable } from "../../packages/platform/test/pg.ts";
 import { migrate } from "../../packages/observatory/db/migrate.ts";
 import { PROXY_MAX_SKEW_S, signProxyHeaders } from "../../packages/platform/src/proxy.ts";
@@ -350,12 +353,12 @@ describe("graceful shutdown", () => {
     svc.slowTick = true;
     const b = createBackend({ svc, config: cfg(), log: silent, ping: async () => true });
     const first = b.startTicks();
-    await Bun.sleep(5);
+    await sleep(5);
     expect(b.inFlight).toBe(1);
     const stopped: boolean[] = [];
     const server = { stop: (force?: boolean) => { stopped.push(!!force); } };
     const done = b.shutdown([server]);
-    await Bun.sleep(20);
+    await sleep(20);
     expect(svc.closed).toBe(false);
     expect((await b.publicFetch(new Request("http://x/healthz"))).status).toBe(503);
     expect((await b.publicFetch(new Request("http://x/api/app"))).status).toBe(503);
@@ -375,9 +378,37 @@ describe("graceful shutdown", () => {
     svc.slowTick = true;
     const b = createBackend({ svc, config: cfg({ shutdownGraceMs: 30 }), log: silent, ping: async () => true });
     void b.startTicks();
-    await Bun.sleep(5);
+    await sleep(5);
     expect(await b.shutdown()).toEqual({ clean: false });
     expect(svc.closed).toBe(true);
+  });
+
+  // spec/backendLifecycle.md, "The grace period covers listener and work drain"
+  test("the shutdown grace period also bounds an in-flight HTTP response", async () => {
+    const { svc } = fakeService();
+    let recordEntry!: () => void;
+    let finishResponse!: (response: Response) => void;
+    const entered = new Promise<void>(resolve => { recordEntry = resolve; });
+    const response = new Promise<Response>(resolve => { finishResponse = resolve; });
+    const closeMode: boolean[] = [];
+    svc.publicFetch = () => { recordEntry(); return response; };
+    svc.close = async (force = false) => { closeMode.push(force); };
+    const b = createBackend({ svc, config: cfg({ deployed: false, shutdownGraceMs: 30 }), log: silent, ping: async () => true });
+    const listener = await serveHttp({ hostname: "127.0.0.1", port: 0, fetch: b.publicFetch });
+    const client = fetch(new URL("/api/app", listener.url), { signal: AbortSignal.timeout(2000) })
+      .then(res => res.status, () => null);
+    const reachedService = await Promise.race([entered.then(() => true), client.then(() => false)]);
+    try {
+      expect(reachedService).toBe(true);
+      const result = await Promise.race([b.shutdown([listener]), sleep(600, "still draining")]);
+      expect(result).toEqual({ clean: false });
+      expect(closeMode).toEqual([true]);
+      expect(await client).toBeNull();
+    } finally {
+      finishResponse(Response.json({ ok: true }));
+      await listener.stop(true);
+      await b.shutdown();
+    }
   });
 });
 
@@ -405,12 +436,12 @@ describe.skipIf(!pgAvailable)("boot (dev Postgres, a database of its own)", () =
       ...process.env as Record<string, string>, ...DEPLOYED, DATABASE_URL: svcUrl, MIGRATION_DATABASE_URL: url, PORT: String(port), STAFF_PORT: String(staff), TICK_MS: "3600000",
       PLATFORM_DB_ENVIRONMENT_INIT: "1", BUILD_ID: "boot-test", NODE_ENV: "", NETWORK_CHANNEL: "", BLOOIO_ALLOW_SEND: "", NTWRK_LIVE_APPROVED: "", NETWORK_PROFILE_REVIEW_ENABLED: "0",
     };
-    const proc = Bun.spawn(["bun", "run", `${import.meta.dir}/server.ts`], { env, stdout: "pipe", stderr: "pipe" });
+    const proc = spawnProcess([process.execPath, "--import", "tsx", `${import.meta.dirname}/server.ts`], { env, stdout: "pipe", stderr: "pipe" });
     const out = new Response(proc.stdout).text();
     try {
       let ok = false;
       for (let i = 0; i < 100 && !ok; i++) {
-        await Bun.sleep(100);
+        await sleep(100);
         ok = await fetch(`http://127.0.0.1:${port}/healthz`).then(r => r.status === 200, () => false);
       }
       if (!ok) { proc.kill("SIGKILL"); throw new Error(`the backend did not become healthy:\n${(await out).split("\n").filter(l => !l.includes('"applied ')).slice(-5).join("\n")}`); }

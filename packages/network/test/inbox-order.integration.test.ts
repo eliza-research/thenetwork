@@ -2,9 +2,10 @@
 // (:54339). A STOP must not wait behind an earlier message from the same sender that keeps failing
 // (P3, issue 9): compliance keywords go ahead, and a handled STOP cancels the ordinary rows received
 // before it. Skipped without Postgres.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { setTimeout as sleep } from "node:timers/promises";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { randomUUID } from "node:crypto";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { SimClock } from "@thenetwork/core";
 import { applySchema, devPgUp, DEV_PG_PORT } from "../../observatory/db/dev-pg.ts";
 import { pgAvailable } from "../../observatory/test/pg.ts";
@@ -65,6 +66,35 @@ describe.skipIf(!pgAvailable)("inbox ordering: compliance keywords are never hel
     clock.advance(1000);
     expect(await box.receive(msg(from, "a3", "hello again"))).toBe("handled");
     expect(handled).toEqual(["STOP", "hello again"]);
+  });
+
+  // spec/webhookInbox.md, "Completing a STOP clears earlier ordinary rows in the same write"
+  test("a failed STOP cancellation keeps both rows pending until an atomic retry", async () => {
+    const from = "+12125557005";
+    const { box, handled } = inbox(new Set(["earlier message"]));
+    expect(await box.receive(msg(from, "atomic-older", "earlier message"))).toBe("retry_later");
+    clock.advance(1000);
+    await sql`alter table platform.inbound add constraint reject_one_cancellation
+      check (id <> 'msg:sim:atomic-older' or outcome is distinct from 'cancelled_by_stop')`;
+    try {
+      expect(await box.receive(msg(from, "atomic-stop", "STOP"))).toBe("retry_later");
+      // The STOP still owns the sender's next attempt after the ordinary retry limit.
+      for (let retry = 0; retry < 5; retry++) expect(await box.drain()).toBe(0);
+      expect(await sql`select id, status, attempts from platform.inbound
+          where id in ('msg:sim:atomic-older', 'msg:sim:atomic-stop') order by id`).toEqual([
+        { id: "msg:sim:atomic-older", status: "pending", attempts: 1 },
+        { id: "msg:sim:atomic-stop", status: "pending", attempts: 6 },
+      ]);
+    } finally {
+      await sql`alter table platform.inbound drop constraint reject_one_cancellation`;
+    }
+    expect(await box.drain()).toBe(2);
+    expect(handled).toEqual(Array.from({ length: 7 }, () => "STOP"));
+    expect(await sql`select id, status, outcome, event from platform.inbound
+        where id in ('msg:sim:atomic-older', 'msg:sim:atomic-stop') order by id`).toEqual([
+      { id: "msg:sim:atomic-older", status: "done", outcome: "cancelled_by_stop", event: null },
+      { id: "msg:sim:atomic-stop", status: "done", outcome: "handled", event: null },
+    ]);
   });
 
   test("HELP and leave go ahead of a failing row; the failing row is not cancelled", async () => {
@@ -135,7 +165,7 @@ describe.skipIf(!pgAvailable)("inbox ordering: compliance keywords are never hel
     let release!: () => void;
     const gate = new Promise<void>(r => { release = r; });
     const running = box.signed(turnReq(from, "c1", "tell me more"), "h-c1", async () => { await gate; return handled(); });
-    await Bun.sleep(50);
+    await sleep(50);
     expect(await box.signed(turnReq(from, "c1", "tell me more"), "h-c1", async () => handled())).toEqual({ status: 409, body: { error: "turn_busy", retryable: true } });
     release();
     expect((await running).status).toBe(200);
@@ -148,10 +178,10 @@ describe.skipIf(!pgAvailable)("inbox ordering: compliance keywords are never hel
     let release!: () => void;
     const gate = new Promise<void>(r => { release = r; });
     const slow = box.signed(turnReq(from, "l1", "find me a climbing partner"), "h-l1", async () => { await gate; return handled(); });
-    await Bun.sleep(30);
+    await sleep(30);
     // Three minutes pass on the service clock (past the 2-minute lease) while the worker is alive and renewing.
     clock.advance(3 * 60_000);
-    await Bun.sleep(80);
+    await sleep(80);
     expect(await box.signed(turnReq(from, "l2", "also tennis"), "h-l2", async () => handled())).toEqual({ status: 409, body: { error: "turn_busy", retryable: true } });
     release();
     expect((await slow).status).toBe(200);

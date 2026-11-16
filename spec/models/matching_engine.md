@@ -12,6 +12,11 @@ The [global selection spec](../selectionRun.md) generates the default selectorâ€
 
 The [candidate screening spec](../candidateScreening.md) generates the ordered hard-check transitions and the first refusal used before scoring.
 
+The [matching question spec](../engineAsks.md) generates Network and Slop question eligibility, per-question timing and caps, and the engine's proactive reservations before proposal selection.
+
+[Standing intent freshness](../standingIntent.md) governs matching
+evidence, judgment views, probe order, and cached matching profiles. The [repeat encounter rules](../repeatEncounter.md) require consent tied to the same completed meeting before a repeat candidate exists.
+
 Imported from `quint/matching_engine.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
@@ -32,7 +37,8 @@ Imported from `quint/matching_engine.qnt` at `30d950e`. See [model index](README
 //   - slop: three adults a, b, c and one member k aged 15. Only b smokes. The five hard fields are two
 //     bits: `core` (gender, seeks, age range, distance) and `loc` (a placeable location).
 //   - peon: one hiring manager with postings A and B, and one candidate.
-//   - The engine run and the Network gate of one daily run are one action (in memory, then one unit).
+  //   - The engine run and the Network gate of one run are one action (in memory, then one unit).
+  //     The standingIntent spec owns evidence-triggered scope and the daily queue shared by those runs.
 //
 // Values that are not in `safety` (each one names a defect that is not fixed, and why):
 //   readBackBeforeMatch (SD-060, skipped: founder decision), readBackHasPath (SD-418, not reproduced:

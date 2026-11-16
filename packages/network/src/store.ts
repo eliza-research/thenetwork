@@ -1,11 +1,14 @@
 // Where the ConsentNetwork keeps its state between processes (docs/network.md 11, admin-console gap 1).
 //  - MemoryStore: tests and the simulator.
-//  - PgStore: Postgres (Bun SQL). One JSON document per network in network.network_state, plus
+//  - PgStore: Postgres (PostgreSQL). One JSON document per network in network.network_state, plus
 //    normalized rows the console reads (opportunities, participations, review_items, requests).
 //    Every unit of work (a tick, an inbound message, a staff action) runs under one Postgres advisory
 //    lock and loads the newest state first, so two processes never overwrite each other's saves.
 // The SQL is in packages/network/db/network-state.sql.
-import { SQL } from "bun";
+import { fileAt } from "../../core/src/runtime/files.ts";
+import { SQL } from "../../core/src/runtime/postgres.ts";
+import { tickMayEnter, tickMayTryLock } from "../../core/src/generated/runtimeUnit.ts";
+import { runStoredNetworkUnit } from "../../core/src/vibe/runtimeUnitShell.js";
 import type { ConsentNetwork, NetworkState } from "./network.ts";
 import type { RelayRecord } from "../../engine/src/relay.ts";
 import { emptyRelayState, RELAY_LOG_MAX, type RelayState } from "./relay.ts";
@@ -39,7 +42,7 @@ export class MemoryStore implements NetworkStore {
   private readonly queue = new Queue();
   async load() { return this.json === undefined ? undefined : (JSON.parse(this.json) as NetworkState); }
   async save(state: NetworkState) { this.json = JSON.stringify(state); }
-  async withTickLock<T>(fn: () => Promise<T>): Promise<T | undefined> { return this.queue.busy ? undefined : this.queue.run(fn); }
+  async withTickLock<T>(fn: () => Promise<T>): Promise<T | undefined> { return tickMayTryLock(this.queue.busy) ? this.queue.run(fn) : undefined; }
   withLock<T>(fn: () => Promise<T>): Promise<T> { return this.queue.run(fn); }
 }
 
@@ -50,12 +53,13 @@ function storeOf(net: ConsentNetwork, store: NetworkStore | undefined): NetworkS
 }
 
 /** Under the lock: load the newest stored state, run `fn`, save. Another process's saves are never overwritten. */
-async function stored<T>(net: ConsentNetwork, s: NetworkStore, fn: (net: ConsentNetwork) => Promise<T> | T): Promise<T> {
-  const state = await s.load();
-  if (state) net.importState(state);
-  const out = await fn(net);
-  await s.save(net.exportState());
-  return out;
+function stored<T>(net: ConsentNetwork, s: NetworkStore, fn: (net: ConsentNetwork) => Promise<T> | T): Promise<T> {
+  return runStoredNetworkUnit({
+    load: () => s.load(),
+    restore: state => net.importState(state),
+    run: () => fn(net),
+    save: () => s.save(net.exportState()),
+  });
 }
 
 /**
@@ -136,7 +140,7 @@ export function consoleRows(state: NetworkState, savedAt = state.savedAt, city =
 // ------------------------------------------------------------------ relay rows (migration 0026)
 /** Relay log rows newer than this are written on every save (older ones changed only through held items). */
 const RELAY_ROW_WINDOW_MS = 2 * 86_400_000;
-/** A Postgres text[] literal: Bun.SQL sends a JS array in a bulk insert as a plain comma string. */
+/** A Postgres text[] literal for bulk inserts. */
 const textArray = (xs: readonly string[]) => `{${xs.map(x => `"${String(x).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`).join(",")}}`;
 
 /**
@@ -241,9 +245,9 @@ export class PgStore implements NetworkStore {
 
   /** Apply packages/network/db/network-state.sql (idempotent). */
   async migrate() {
-    // The URL goes to Bun.file as a URL: its .pathname is percent-encoded, which breaks a checkout
-    // under a path with non-ASCII characters.
-    await this.sql.unsafe(await Bun.file(new URL("../db/network-state.sql", import.meta.url)).text());
+    // Read the URL directly to support checkout paths
+    // with non-ASCII characters.
+    await this.sql.unsafe(await fileAt(new URL("../db/network-state.sql", import.meta.url)).text());
   }
 
   async load(): Promise<NetworkState | undefined> {
@@ -306,7 +310,7 @@ export class PgStore implements NetworkStore {
   private readonly queue = new Queue();
 
   withTickLock<T>(fn: () => Promise<T>): Promise<T | undefined> {
-    return this.queue.busy ? Promise.resolve(undefined) : this.queue.run(() => this.locked(false, fn));
+    return tickMayTryLock(this.queue.busy) ? this.queue.run(() => this.locked(false, fn)) : Promise.resolve(undefined);
   }
 
   withLock<T>(fn: () => Promise<T>): Promise<T> {
@@ -324,7 +328,7 @@ export class PgStore implements NetworkStore {
       if (wait) await conn`select pg_advisory_lock(hashtext(${key}))`;
       else {
         const [row] = await conn`select pg_try_advisory_lock(hashtext(${key})) as ok`;
-        if (!row?.ok) return undefined;
+        if (!tickMayEnter(!!row?.ok)) return undefined;
       }
       try { return await fn(); } finally { await conn`select pg_advisory_unlock(hashtext(${key}))`; }
     } finally {

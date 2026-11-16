@@ -21,13 +21,17 @@ A turn commits its claim in `platform.inbound` before it calls the existing inbo
 
 Open context rechecks the canonical phone and app membership. It includes confirmed shareable facts after the leak gate, and refuses context that exceeds the deployed plugin bounds. Unavailable active-item summaries are `null`. Replays recheck current admission and context, so STOP, a hold, a ban or changed context cannot reuse an old open grant. App leave seals prior signed payloads for that app. The existing seven-day purge strips completed signed payloads and retains a minimal replay tombstone; tombstones are deleted 30 days after that.
 
+A member can say `I will be in San Francisco from YYYY-MM-DD until YYYY-MM-DD` in the signed conversation. New York City and Los Angeles also work. Use the destination's calendar dates. The end date is the first day outside the trip. The current app saves the statement and names itself in the confirmation. A trip does not change the person's home or open a new matching market.
+
+For a solo recommendation, a member can ask `Anything fun this weekend?` or `Show me public events tomorrow.` The current app checks the member's saved interests, availability, location and age against the [published NYC Parks catalog](../../../spec/publicEventCatalog.md). The reply includes up to three eligible listings with a venue, New York time and source link. Minors can receive only explicitly all-ages listings. The request creates no opportunity or booking. The catalog refresh runs separately from the request.
+
 A turn still processing after 2 minutes lost its worker and becomes unresolved. An unresolved turn is never rerun, and it holds the sender's later messages back for 10 minutes at most. STOP, START and HELP are never held back. Staff with `admin@*` can release a stuck turn with `POST /inbound/resolve {"id":"msg:<channel>:<messageId>"}`; the turn stays unresolved and a replay is still refused.
 
 A handled turn with no replies (a quiet acknowledgement, an under-13 decline) takes a receipt with empty `replyIds` and `providerMessageIds`. `accountEligible` is false for an unknown age, so Cloud eligibility never runs ahead of the join age check. An accepted receipt may carry `historyRecorded: false` (no Eliza account yet).
 
 Agent signals never act on their own. `opt_out` and `safety_concern` are stored as proposed private facets, logged as an alert line, and listed for reviewer or safety staff at `GET /signals`. STOP and "leave <app>" in the member's own words stay the only automatic consent changes.
 
-**Contract.** `packages/core/src/svc/contract.ts` and `svc-auth.ts` are byte-identical to elizaos/eliza `plugins/plugin-network/src/backend/{contract,svc-auth}.ts` on `develop` (upstream #34657 and #34661). There is no contract version constant: `packages/core/test/contract-mirror.test.ts` pins the SHA-256 of both files, the same pins as upstream's `contract-mirror.test.ts`, and `bun run check:mirror` compares the files with upstream through `gh` (read-only, never in a test suite). A wire change lands upstream first, then both files are copied here unchanged and the pins are updated.
+**Contract.** `packages/core/src/svc/contract.ts` and `svc-auth.ts` are byte-identical to elizaos/eliza `plugins/plugin-network/src/backend/{contract,svc-auth}.ts` on `develop` (upstream #34657 and #34661). There is no contract version constant: `packages/core/test/contract-mirror.test.ts` pins the SHA-256 of both files, the same pins as upstream's `contract-mirror.test.ts`, and `pnpm run check:mirror` compares the files with upstream through `gh` (read-only, never in a test suite). A wire change lands upstream first, then both files are copied here unchanged and the pins are updated.
 
 Two paths the service uses are not in the mirror:
 - `DELIVER_RECEIPT_PATH = "/api/internal/network/deliver/receipt"` is a local constant in `cloud-channel.ts`. Eliza Cloud serves it (develop: `packages/cloud/api/internal/network/deliver/receipt/route.ts`, the deliver handler in reconcile-only mode): the same signed body and id as the deliver, and it never sends. The service calls it only to learn whether an unknown acceptance was accepted; it never retries an unknown acceptance with a new id. **Proposal for upstream:** add `DELIVER_RECEIPT_PATH` to `contract.ts`, so both sides name it from the contract.
@@ -88,7 +92,7 @@ Real-model qualification with fictional adults on a throwaway local Postgres dat
 
 ```bash
 NETWORK_ENGINE_JUDGE=1 NETWORK_ENGINE_JUDGE_BUDGET_USD=0.25 NETWORK_ENGINE_JUDGE_MAX_REQUESTS=12 \
-  bun test --conditions eliza-source --timeout 300000 \
+  pnpm exec vitest run --testTimeout 300000 \
   packages/network/test/slop-date-path.integration.test.ts --test-name-pattern 'join, onboard'
 ```
 
@@ -98,14 +102,14 @@ This uses the configured provider and sends no member texts. It does not prove a
 
 ```bash
 # Once: one tick, then exit.
-PLATFORM_ENV=dev NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/<db> bun run packages/network/service/main.ts --once --dry-run
+PLATFORM_ENV=dev NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/<db> node --import tsx --env-file-if-exists=.env packages/network/service/main.ts --once --dry-run
 
 # As a service: each network ticks every minute on its own; staff and webhooks on 127.0.0.1:4848, the public API on 127.0.0.1:8790.
 PLATFORM_ENV=dev NETWORK_DATABASE_URL=... NETWORK_SERVICE_TOKENS="admin:<t>,reviewer:<t>,safety:<t>,analyst:<t>" \
-  BLOOIO_WEBHOOK_SECRET=whsec_... bun run packages/network/service/main.ts
+  BLOOIO_WEBHOOK_SECRET=whsec_... node --import tsx --env-file-if-exists=.env packages/network/service/main.ts
 ```
 
-The database must have the `network` and `platform` schemas (`bun run db:migrate`; runbook-real 1.1). The service checks the tables at start and does not migrate. It reads the networks and the app policy (`platform.networks`, `platform.apps`) at start.
+The database must have the `network` and `platform` schemas (`pnpm run db:migrate`; runbook-real 1.1). The service checks the tables at start and does not migrate. It reads the networks and the app policy (`platform.networks`, `platform.apps`) at start.
 
 | Variable | Default | What it does |
 |---|---|---|
@@ -237,7 +241,7 @@ Two parts of the product talk to members. They have different jobs.
 | | This service (`packages/network/service`) | `packages/plugin-network` (the Eliza agent side) |
 |---|---|---|
 | What it is | The Network: matching, review, consent, probes, booked plans, reminders, feedback, safety, outreach limits | An Eliza plugin: the member-context provider, the `SET_STATE` action, the network-signals evaluator and their routing |
-| Who runs it | A Bun process on its own (Railway worker, runbook-real 7.2) | Eliza Cloud, on each agent turn, with Cloud's stores and turn authority |
+| Who runs it | A Node 26 process (Railway worker, runbook-real 7.2) | Eliza Cloud, on each agent turn, with Cloud's stores and turn authority |
 | State | `network.network_state` and the console tables, under the advisory lock | The `NetworkStore` that Cloud injects (availability state, member context) |
 | Messages | Every Network message (probes, booked plans, reminders) goes through its send path, the leak guard and the adapter | Agent replies in a conversation the member started |
 | Review | Every opportunity waits for a person here | Never composes an opportunity |
@@ -246,8 +250,38 @@ Rules for the boundary:
 
 1. **One owner per inbound message.** The service handles every inbound message it gets. This service answers STOP, START and HELP, inside the signed turn; the gateway only mirrors the reported `consent`. The legacy Blooio webhook must not point at the service while the gateway owns the line, or two systems would confirm a STOP.
 2. **Only this service proposes or contacts members about other members.** The plugin must not send probes, introductions or booked plans. It can read what the Network knows through its own store.
-3. **Joining is a membership.** The platform creates members: a web join (`POST /api/join`) or a join by text on an open app makes the person, the membership and the `network.members` row. For The Network, Cloud's invite gate still creates the `network.members` and `network.channel_identities` rows. An `invited` member is not a member here.
+3. **Joining is a membership.** The platform creates members after a verified join (`POST /api/join`) or a join by text on an open app. A new membership through a forwarding link commits with consent, the Network member, and the app-scoped attribution. An `invited` member still has to complete signup.
 4. **No shared process state.** The two talk only through Postgres (the `network` schema) and the channel gateway. Nothing here imports Eliza, and the plugin does not import this service.
+
+## Private home-help review
+
+An eligible adult who asks for home entry receives a private intake prompt. The
+signed reply records the confirmed moving task, NYC neighborhood, time window,
+effort and outcome of considering a service. The owner can revise or close the
+plan by ID and revision. Members can express or withdraw willingness with
+`OFFER HOME HELP` and `WITHDRAW HOME HELP OFFER`.
+
+Safety staff on the app use `GET /apps/<app>/safety/home-help` for the queue.
+`POST /apps/<app>/safety/home-help/<id>` takes `nominate`, `approve` or `close`
+as the action, with the current revision and the exact helper IDs for nomination
+and approval. Nomination creates a new revision. Approval rereads age, consent,
+holds, blocks, offers, availability and capacity. A singleton also needs recorded
+prior contact at a shared public plan or a confirmed meeting edge. Approval, the
+exact consent roster and its staff audit commit together. The outbound queue
+sends the requester a coarse plan card, then asks the approved helpers after the
+requester's explicit yes. Each signed response names the plan code and revision
+and requires a send receipt for that member's card.
+
+An existing verified `ntwrk.party` app session can use
+`POST /api/home-help/venue`. Send `action` (`submit`, `reveal` or `revoke`),
+`id` (the plan code) and `revision`. Add `address` for `submit`. Only the
+requester can submit or revoke it. Only current, consenting helpers can retrieve
+it, after everyone on the approved roster agrees. The response is private and
+uncached. Keep the address out of SMS, agent chat and tool logs.
+
+[Review rules](../../../spec/boundedHelp.md) ·
+[Consent rules](../../../spec/homeHelpConsent.md) ·
+[Private address rules](../../../spec/privateHomeHelpVenue.md)
 
 ## Limits
 
@@ -255,13 +289,27 @@ Rules for the boundary:
 - **The queue's caps are placeholders.** 200 agent-started messages and 20 new conversations a day per line until prototype P3 measures the line.
 - Parked leak reviews have staff routes (`/queue/leak-review`, above). Collected replies in signed turns get the same leak guard before they are returned to Cloud; one that fails goes to the queue instead, where it is parked for that review.
 - **The requester's time question has no opportunity id.** The Network sends it with no `proposalId` (network.md 4.1), so its `network.messages` row has no `opportunity_id`. Probes are linked through `meta.probe.key`.
-- **Invites are not built.** The Network's `ctx.invite` is not set, so an invite request logs `invite` with no new member.
+- A direct signed request asks for the relationship, duration and depth. The member confirms the readback before a link is issued. Eligible adults can forward the app-bound, single-use link. It expires 30 days after the request. Reviewers can list and decide unusual vouches through `/apps/<app>/review/member-invitations`. After approval, the inviter asks for the link with `Check invite <code>`. Signup checks the invitee's verified phone, age and consent. The invitee's city owns the welcome, and the inviter's city owns the join notice. [Invitation rules](../../../spec/memberInvitation.md) · [Join projection](../../../spec/invitationJoinProjection.md)
 - **The service imports the Observatory's modules** (`events.ts`, `engineCapture.ts`, `staff.ts`) by path, so the events, run summaries and staff auth are the same in both. The Observatory imports `snapshot.ts` from here.
 - **No JWT check.** Use role tokens only, and keep the port on 127.0.0.1 or behind an access proxy.
 - **No fencing on the save.** Two instances that both believe they hold a network's lock can overwrite each other's state (audit network-service-8).
 - **One network engine for every app.** Each app's ConsentNetwork is The Network's code with that app's brand words and join age. The NYC places, time zone and copy are NYC only. The slop and peon packs are wired (`packs.ts`); their matching is off only by the stored switch (`POST /matching`).
 - **Phones of platform members are in `platform.phone_identities` only.** `network.channel_identities` allows one member per address, so it cannot hold a phone that is a member of two apps. Console views that read phones from `channel_identities` do not see platform members.
 
+
+### Public event catalog
+
+The NYC matcher reads upcoming public listings from the catalog after a successful import. This can recheck a standing intent on the next matching tick. A changed listing requires another approval before anyone is contacted about it. Matching ticks and member turns read Postgres only. [NYC Parks public events dataset](https://data.cityofnewyork.us/City-Government/NYC-Parks-Public-Events-Upcoming-14-Days/w3wp-dpdi)
+
+Migration `0042` creates the catalog and its restricted ingest role. Give the feed runner a separate login with `network_public_event_ingest` and set `NETWORK_PUBLIC_EVENTS_DATABASE_URL` for that runner. Run one refresh explicitly with Node 26.
+
+```sh
+node --import tsx packages/network/service/import-public-events.ts
+```
+
+The command fetches the city dataset once and publishes the normalized scan in one transaction. The daily source expires from matching after two days without a successful refresh. The backend starts with an empty catalog on a new database. [Catalog rules](../../../spec/publicEventCatalog.md)
+
+For a recurring refresh, use a separate Railway cron service with the repository root as its build context. Set `RAILWAY_DOCKERFILE_PATH=/deploy/backend/Dockerfile` and use the command above as its start command. Set `Cron Schedule` to `5 12 * * *` for a daily run at 12:05 UTC, and set the restart policy to `Never`. Apply migration `0042` before the first run and supply the ingest URL to this service. The importer closes its connection and exits after one scan. [Railway cron jobs](https://docs.railway.com/cron-jobs), [Dockerfile settings](https://docs.railway.com/builds/dockerfiles)
 
 ### Isolated signed-route receiver
 

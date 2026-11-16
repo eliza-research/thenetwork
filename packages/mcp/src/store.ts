@@ -3,6 +3,7 @@
 // Tokens and codes are stored only as sha256 hashes (they are 32 random bytes, so a plain hash is
 // enough). A client secret is stored the same way. The phone number of a grant stays on the server,
 // as platform.sessions keeps it; no tool and no response carries it.
+import { signupDraftExpired, signupDraftGrantAllowed, signupDraftRowReadable, signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
 import type { CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
 import type { McpAppId, Surface } from "./apps.ts";
 
@@ -96,6 +97,12 @@ export type AuditKind =
 /** One audit row. Never a token, a code, a secret or a phone number. */
 export interface AuditRow { at: number; kind: AuditKind; clientId: string | null; grantId: string | null; app: McpAppId | null; detail: string | null }
 
+export interface ConsentGrantWrites {
+  grant: Grant;
+  code: AuthCode;
+  audit: readonly [AuditRow, AuditRow];
+}
+
 /** Approved editable Join fields only. No phone, age, consent or dating preferences. */
 export interface SignupDraftFields { firstName: string; homeCity?: "nyc" | "sf" }
 export interface SignupDraft { grantId: string; app: McpAppId; phoneKey: string; fields: SignupDraftFields; expiresAt: number; consumedAt: number | null }
@@ -113,8 +120,9 @@ export interface OAuthStore {
   putAuthRequest(r: AuthRequest): Promise<void>;
   getAuthRequest(id: string): Promise<AuthRequest | undefined>;
   updateAuthRequest(id: string, patch: Partial<Pick<AuthRequest, "e164" | "personId" | "step">>): Promise<void>;
-  /** Atomically consume one unexpired, phone-verified client approval. */
-  takeConsentRequest(id: string, at: number): Promise<AuthRequest | undefined>;
+  /** Check the current approval, then consume it and persist the grant, code and audit together.
+   * False leaves no issuance. The callback must inspect the approval only. */
+  commitConsentGrant(id: string, at: number, confirm: (approval: AuthRequest) => Promise<boolean>, writes: ConsentGrantWrites): Promise<boolean>;
   deleteAuthRequest(id: string): Promise<void>;
 
   putGrant(g: Grant): Promise<void>;
@@ -173,15 +181,18 @@ export class MemoryOAuthStore implements OAuthStore {
 
   async putSignupDraft(d: SignupDraft, at: number) {
     const g = this.grants.get(d.grantId);
-    if (!g || g.revokedAt !== null || g.expiresAt <= at || !g.scopes.includes("profile:write") || g.app !== d.app || g.phoneKey !== d.phoneKey || this.signupDrafts.has(g.id)) return false;
+    if (!g || !signupDraftGrantAllowed(g.app === d.app && g.phoneKey === d.phoneKey, !(g.expiresAt <= at), g.revokedAt === null, g.scopes.includes("profile:write"))
+      || this.signupDrafts.has(g.id)) return false;
     this.signupDrafts.set(g.id, structuredClone(d)); return true;
   }
   async claimSignupDraft(phoneKey: string, app: McpAppId, personId: string | null, at: number) {
     const drafts = [...this.signupDrafts.values()].filter(d => {
+      if (!signupDraftRowReadable(d.phoneKey === phoneKey && d.app === app, d.consumedAt === null, d.expiresAt, at)) return false;
       const g = this.grants.get(d.grantId);
-      return d.phoneKey === phoneKey && d.app === app && d.consumedAt === null && d.expiresAt > at && g?.revokedAt === null && g.expiresAt > at && g.personId === personId && g.app === app && g.phoneKey === phoneKey && g.scopes.includes("profile:write");
+      return !!g && signupDraftGrantAllowed(g.personId === personId && g.app === app && g.phoneKey === phoneKey,
+        g.expiresAt > at, g.revokedAt === null, g.scopes.includes("profile:write"));
     });
-    if (drafts.length !== 1) return undefined;
+    if (!signupDraftUnique(drafts.length)) return undefined;
     return structuredClone(drafts[0].fields);
   }
   async discardSignupDrafts(phoneKey: string, app: McpAppId, at: number) {
@@ -196,19 +207,30 @@ export class MemoryOAuthStore implements OAuthStore {
   async getAuthRequest(id: string) { return copy(this.requests.get(id)); }
   async updateAuthRequest(id: string, patch: Partial<Pick<AuthRequest, "e164" | "personId" | "step">>) {
     const r = this.requests.get(id);
-    if (r) Object.assign(r, patch);
+    if (r) this.requests.set(id, { ...r, ...patch });
   }
-  async takeConsentRequest(id: string, at: number) {
-    const r = this.requests.get(id);
-    if (!r || r.step !== "consent" || !r.e164 || r.expiresAt <= at) return undefined;
+  async commitConsentGrant(id: string, at: number, confirm: (approval: AuthRequest) => Promise<boolean>, writes: ConsentGrantWrites) {
+    const pending = this.requests.get(id);
+    if (!pending || pending.step !== "consent" || !pending.e164 || pending.expiresAt <= at) return false;
+    if (!await confirm(structuredClone(pending)) || this.requests.get(id) !== pending) return false;
+
+    const prepared = structuredClone(writes);
+    this.requireNewGrant(prepared.grant);
+    if (this.codes.has(prepared.code.hash)) throw new Error("Authorization code already exists");
     this.requests.delete(id);
-    return structuredClone(r);
+    this.grants.set(prepared.grant.id, prepared.grant);
+    this.codes.set(prepared.code.hash, prepared.code);
+    this.rows.push(...prepared.audit);
+    return true;
   }
   async deleteAuthRequest(id: string) { this.requests.delete(id); }
 
+  private requireNewGrant(grant: Grant) {
+    if (grant.id.startsWith("grant_cloud_") && grant.cloudAuthority?.version !== 1) throw new Error("Cloud grant authority required");
+    if (this.grants.has(grant.id)) throw new Error("Grant already exists");
+  }
   async putGrant(g: Grant) {
-    if(g.id.startsWith("grant_cloud_") && (!g.cloudAuthority || g.cloudAuthority.version!==1))throw new Error("Cloud grant authority required");
-    if(this.grants.has(g.id))throw new Error("Grant already exists");
+    this.requireNewGrant(g);
     this.grants.set(g.id, structuredClone(g));
   }
   async getGrant(id: string) { return copy(this.grants.get(id)); }
@@ -258,7 +280,7 @@ export class MemoryOAuthStore implements OAuthStore {
   }
 
   async sweep(at: number) {
-    for (const d of this.signupDrafts.values()) if (d.expiresAt <= at) d.fields = { firstName: "" };
+    for (const d of this.signupDrafts.values()) if (signupDraftExpired(d.expiresAt, at)) d.fields = { firstName: "" };
     for (const [k, r] of this.requests) if (r.expiresAt <= at) this.requests.delete(k);
     for (const [k, c] of this.codes) if (c.expiresAt <= at) this.codes.delete(k);
     for (const [k, t] of this.tokens) if (t.expiresAt <= at) this.tokens.delete(k);

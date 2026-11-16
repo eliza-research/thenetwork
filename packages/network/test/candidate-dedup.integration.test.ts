@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { runEngine } from '../../engine/src/engine.ts';
 import { DAY, HOUR } from '@thenetwork/core';
 import type { EngineInput } from '../../engine/src/types.ts';

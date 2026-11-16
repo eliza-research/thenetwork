@@ -2,8 +2,6 @@
 
 The `F1`–`F29` identifiers retain the original [PRD flow IDs](source/prd.md#29-user-flows-and-interactions-mvp-and-later). Later stories carry separate IDs. A named model is a starting point for the state and rules of the flow. Check its coverage before relying on it as evidence for a complete journey.
 
-Stories F37–F51 cover the frontend and the agent experience: the four public sites, the connector pages, the signup conversation in the person's own agent, the staff console and the shared design system. Each of these stories names the spec that owns its rules. The acceptance points are what a tester can see or measure. The spec is correct when a story and its spec disagree.
-
 ## Story F1 — Invite and vouch
 
 > As a member, I want to invite someone I can vouch for so they can decide whether to join.
@@ -13,6 +11,10 @@ Stories F37–F51 cover the frontend and the agent experience: the four public s
 Check the member's invite allowance, normally three per month. Save their vouch as invite evidence with the relationship and its strength. Flag a weak or unusual invite for a human. By default, the inviter forwards the invitation. The service can send one when the inviter confirms it is expected, with attribution and opt-out. An unanswered invitation gets no follow-up.
 
 Keep vouch notes outside matching until the invitee joins and consents. Clear notes when declined or after 30 days. An existing member's status and onboarding details stay private. A decline stops contact, and age policy applies at acceptance.
+
+When someone joins through the invitation, tell the inviter using their first name and join status. Apply the delivery rules and carry the notice on a genuine reply when it cannot go out separately. [Invite join notice](../outreachPolicy.md#an-eligible-join-receipt-can-ride-on-a-current-reply).
+
+[Member invitation rules](../memberInvitation.md) cover the confirmation, allowance, private vouch, and referral. [Join projection](../invitationJoinProjection.md) covers welcome and notice ownership when the two members live in different cities.
 
 ## Story F2 — Seed a cohort
 
@@ -42,7 +44,7 @@ Use a short, resumable conversation. Explain consent and where facts came from. 
 
 The site entry stays in the person's current agent where direct signup is supported. Use the separate [agent signup rules](policies.md#age-identity-and-enrollment). A person can also choose the shared text line as their entry.
 
-Models: [join flow](../models/join_flow.md), [profile learning](../models/profile_learning.md), [agent loop](../models/chatjson_loop.md), [authorization](../models/auth_edge.md). The signup conversation in the person's agent is [F45](#story-f45--sign-up-in-my-agents-conversation).
+Models: [join flow](../models/join_flow.md), [profile learning](../models/profile_learning.md), [agent loop](../models/chatjson_loop.md), [authorization](../models/auth_edge.md).
 
 ## Story F5 — Review and correct my profile
 
@@ -52,7 +54,7 @@ Models: [join flow](../models/join_flow.md), [profile learning](../models/profil
 
 Return the person's own app profile, with source and scope as applicable. Ask for explicit approval to correct, remove or change how a fact may be used. Remove its derived data where required and apply the change at the next relevant engine read. A saved-profile readback must not advance onboarding or claim a pending draft was saved.
 
-Models: [generated saved-profile read](../savedProfileRead.md), [profile read flow](../models/profile_read.md), [profile learning](../models/profile_learning.md).
+Models: [generated saved-profile read](../savedProfileRead.md), [profile isolation and app leave](../savedProfileJourney.md), [profile read flow](../models/profile_read.md), [profile learning](../models/profile_learning.md).
 
 ## Story F6 — Answer a useful follow-up
 
@@ -72,7 +74,7 @@ Models: [profile learning](../models/profile_learning.md), [outbound queue](../m
 
 Offer authorized Google Calendar free/busy, pasted LinkedIn profile text, an allowed X profile or approved connection, or a summary from the member's agent. Mark proposed facts with source, confidence and scope. Persist confirmed facts, remove raw pasted summaries after confirmation, and support revocation. Exclude sensitive inferences and other people's private details.
 
-Models: [OAuth and MCP](../models/oauth_mcp.md), [profile learning](../models/profile_learning.md), [generated suggestion review](../profileSuggestionReview.md).
+Models: [OAuth and MCP](../models/oauth_mcp.md), [profile learning](../models/profile_learning.md), [source collection and cleanup](../profileSuggestionSource.md), [suggestion review](../profileSuggestionReview.md).
 
 ## Story F8 — Ask for something
 
@@ -82,7 +84,7 @@ Models: [OAuth and MCP](../models/oauth_mcp.md), [profile learning](../models/pr
 
 Classify the request into an answer, a recommendation, a standing intent, or a draft member opportunity. Use available knowledge before spending a person's attention. Explain what will happen and give a likely time when creating a draft. Avoid promising a match. A draft that would contact a person passes review and consent.
 
-Models: [agent loop](../models/chatjson_loop.md), [opportunity](../models/opportunity.md), [review desk](../models/review_desk.md).
+Models: [agent loop](../models/chatjson_loop.md), [member request admission](../memberRequest.md), [request and review journey](../memberRequestJourney.md), [opportunity](../models/opportunity.md), [review desk](../models/review_desk.md).
 
 ## Story F9 — Keep a standing intent
 
@@ -92,7 +94,7 @@ Models: [agent loop](../models/chatjson_loop.md), [opportunity](../models/opport
 
 Record the objective, essential constraints, source and time horizon. List, pause or close it on request. Re-evaluate when relevant evidence or supply changes. Expire or reconfirm at 60 days. A later suggestion still needs current eligibility and consent.
 
-Models: [profile learning](../models/profile_learning.md), [matching engine](../models/matching_engine.md).
+Models: [profile learning](../models/profile_learning.md), [standing intent freshness](../standingIntent.md), [standing intent management](../standingIntentManagement.md), [public event supply](../publicEventCatalog.md), [request retry and withdrawal](../memberRequest.md), [matching engine](../models/matching_engine.md).
 
 ## Story F10 — Get concierge value
 
@@ -102,7 +104,9 @@ Models: [profile learning](../models/profile_learning.md), [matching engine](../
 
 Return 1–3 options with a useful reason based on interests, location, availability and age. Use permitted public sources and do not imply another member is involved. Minors may receive age-appropriate solo suggestions. A resulting co-attendance proposal follows F13.
 
-Model: [matching engine](../models/matching_engine.md).
+The signed conversation answers a direct request such as “Anything fun this weekend?” from current NYC Parks listings. An event must carry an explicit all-ages label for a minor to receive it. A separate process publishes fresh data. With no eligible listing, the reply says it found none. A recommendation does not create a match or booking.
+
+Models: [solo event recommendations](../soloConcierge.md), [signed solo concierge journey](../soloConciergeJourney.md), [public event supply](../publicEventCatalog.md), [matching engine](../models/matching_engine.md).
 
 ## Story F11 — Consider a one-to-one introduction
 
@@ -122,7 +126,7 @@ Models: [opportunity](../models/opportunity.md), [matching engine](../models/mat
 
 Anchor a group of 3–6 to a public activity, place or event and add a host when needed. Probe anonymously under review. Enforce the approved deadline and quorum, typically three for a plan. Use eligible alternates under review and release members without revealing declines if quorum fails. Book and relay only for consenting participants.
 
-Models: [plan run](../models/plan_run.md), [opportunity](../models/opportunity.md), [plan crew](../models/plan_crew.md).
+Models: [reviewed group journey](../reviewedGroupJourney.md), [plan run](../models/plan_run.md), [opportunity](../models/opportunity.md), [plan crew](../models/plan_crew.md).
 
 ## Story F13 — Meet at an event
 
@@ -132,7 +136,9 @@ Models: [plan run](../models/plan_run.md), [opportunity](../models/opportunity.m
 
 Suggest public events independently. When connecting members at the event, check compatible plans, review the proposal and ask each participant independently before disclosing identities. A minor's event suggestion is solo.
 
-Models: [matching engine](../models/matching_engine.md), [opportunity](../models/opportunity.md).
+Use a current listing from an accepted source. If the listed place or time changes during review or consent, retire the pending proposal. A booking uses the reviewed listing's place and time.
+
+Models: [public event catalog](../publicEventCatalog.md), [matching engine](../models/matching_engine.md), [opportunity](../models/opportunity.md).
 
 ## Story F14 — Ask for bounded help
 
@@ -142,7 +148,7 @@ Models: [matching engine](../models/matching_engine.md), [opportunity](../models
 
 Try information and services first. Consider adults who opted into that kind of help and have capacity. State the request, time and effort clearly, review it before contacting anyone, and collect feedback afterwards. Requests requiring entry to a home are medium-risk exceptions to the public venue default. Require two or more helpers or a helper already known to the requester, plus review and consent from everyone before revealing an address. Route a request with a single unfamiliar helper to safety review.
 
-Models: [matching engine](../models/matching_engine.md), [review desk](../models/review_desk.md), [safety and trust](../models/safety_trust.md).
+Models: [bounded help admission](../boundedHelp.md), [reviewed roster consent](../homeHelpConsent.md), [private address release](../privateHomeHelpVenue.md), [matching engine](../models/matching_engine.md), [review desk](../models/review_desk.md), [safety and trust](../models/safety_trust.md).
 
 ## Story F15 — Ask for an introduction
 
@@ -182,7 +188,7 @@ Models: [opportunity](../models/opportunity.md), [plan run](../models/plan_run.m
 
 Send permitted reminders and a day-of check-in. Relay a late arrival. Offer a reviewed, eligible replacement or reschedule when someone drops, or cancel gracefully if minimum participation fails. A booked group cannot continue with fewer than three people. Record attendance and apply the contextual no-show rule. STOP, bans, blocks and quiet hours still apply.
 
-Models: [plan run](../models/plan_run.md), [outbound queue](../models/outbound_queue.md).
+Models: [reviewed group journey](../reviewedGroupJourney.md), [plan run](../models/plan_run.md), [outbound queue](../models/outbound_queue.md).
 
 ## Story F19 — Give feedback and meet again
 
@@ -192,7 +198,7 @@ Models: [plan run](../models/plan_run.md), [outbound queue](../models/outbound_q
 
 Ask factual questions first, then whether it was worthwhile and whether the person wants to meet again. Update contextual reliability, intent and edges. Offer a second encounter when mutual evidence and current policy support it. Keep negative feedback private. Sample whether an interruption was worthwhile under the one-open-question rule.
 
-Models: [opportunity](../models/opportunity.md), [profile learning](../models/profile_learning.md), [notification and capital](../models/notify_capital.md).
+Models: [repeat encounters](../repeatEncounter.md), [opportunity](../models/opportunity.md), [profile learning](../models/profile_learning.md), [notification and capital](../models/notify_capital.md).
 
 ## Story F20 — Set my participation
 
@@ -202,7 +208,7 @@ Models: [opportunity](../models/opportunity.md), [profile learning](../models/pr
 
 Interpret plain-language categories, quiet hours, pause and resume. Confirm the new setting briefly. STOP and STOP ALL stop the shared line across apps. Leave removes one app. START and HELP have their own consent-aware path. Preserve the member's control across channels and prevent ordinary sends during an opt-out.
 
-Models: [turn consent](../models/turn_consent.md), [outbound queue](../models/outbound_queue.md), [safety and trust](../models/safety_trust.md).
+Models: [shared-line consent journey](../sharedLineConsentJourney.md), [turn consent](../models/turn_consent.md), [outbound queue](../models/outbound_queue.md), [safety and trust](../models/safety_trust.md).
 
 ## Story F21 — Hear when nothing fits
 
@@ -212,7 +218,7 @@ Models: [turn consent](../models/turn_consent.md), [outbound queue](../models/ou
 
 If nothing clears the bar for an intent after the configured interval, normally ten days, record the reason. Offer a short relevant question, an outside-world suggestion, another format or a vouch invitation where permitted. Respect category and interruption settings.
 
-Models: [matching engine](../models/matching_engine.md), [profile learning](../models/profile_learning.md).
+Models: [empty intent follow-up](../emptyIntentFollowup.md), [matching engine](../models/matching_engine.md), [profile learning](../models/profile_learning.md).
 
 ## Story F22 — Attend a Network gathering
 
@@ -262,7 +268,11 @@ Models: [phone identity](../models/phone_identity.md), [identity lifecycle](../m
 
 Store confirmed city and time windows. Use travel tolerance and any visitor opt-in in the relevant app. Expire the travel window automatically. A supported signup or presence region does not enable live matching there. Expose only coarse area or travel bands.
 
-Models: [matching engine](../models/matching_engine.md), [candidate pool](../models/candidate_pool.md).
+Temporary presence needs a start and an end. Matching uses a valid trip only during that window. When the window ends, future matching uses other eligible presence, such as the member's home city.
+
+On the signed conversation, a member can state the city and two exact dates to record a trip for the current app. The end date is the first day away from that city. The member sees the saving app in the reply. If a date lacks its month or year, the Network asks for the dates before saving anything.
+
+Models: [live travel windows](../travelPresence.md), [signed travel journey](../travelPresenceJourney.md), [matching engine](../models/matching_engine.md), [candidate pool](../models/candidate_pool.md).
 
 ## Story F27 — Review before contact
 
@@ -302,7 +312,7 @@ Models: [opportunity](../models/opportunity.md), [plan run](../models/plan_run.m
 
 A named app or domain selects that app. A no-keyword text join starts at The Network and asks what the person seeks. Keep the invite boundary on app-bound Network signup. Check consent version and approved profile before submitting, then read back the app and the profile. Join mode, matching activation and send approval are separate states. A different app cannot see that the person already has another membership.
 
-Models: [generated site enrollment](../siteEnrollment.md), [Cloud authentication](../models/cloud_auth.md), [OAuth and MCP](../models/oauth_mcp.md), [turn consent](../models/turn_consent.md), [profile read](../models/profile_read.md), [agent signup](../agentSignup.md), [connector tools](../connectorTools.md).
+Models: [generated site enrollment](../siteEnrollment.md), [agent-assisted signup draft](../mcpSignupDraft.md), [Cloud authentication](../models/cloud_auth.md), [OAuth and MCP](../models/oauth_mcp.md), [turn consent](../models/turn_consent.md), [profile read](../models/profile_read.md).
 
 ## Story F31 — Add my adult dating photos privately
 
@@ -342,7 +352,7 @@ Models: [matching engine](../models/matching_engine.md), [candidate pool](../mod
 
 Record vouches, attendance, feedback, confirmed help and organizing. Show the member their itemized history in conversation. Apply effort, invite and organizing limits privately. Maintain a baseline of access and separate contextual reliability. Do not penalize declines, pause or inactivity.
 
-Model: [notification and capital](../models/notify_capital.md).
+Models: [private contribution history](../contributionHistory.md), [notification and capital](../models/notify_capital.md).
 
 ## Story F35 — Inspect a member's experience as staff
 
@@ -638,8 +648,8 @@ Acceptance:
 - Every web interface uses React components from `@thenetwork/ui`. No component holds a color of its own for one brand.
 - `data-brand` (`network`, `slop`, `friends` or `peon`) on an ancestor sets the brand. A `light` or `dark` class sets the theme, and without a class the theme follows the system.
 - The four sites use the same header mark, headline, prompt field, agent row, Messages entry, status line, footer, legal text and not-found notice. Only peon.biz adds the browser join flow.
-- Each text and fill pair meets WCAG AA in both themes. The edge of a control has a contrast of 3:1 or more. `bun run design:check` checks the contrast of the tokens.
-- Each component has a story. Storybook has a theme switch and a brand switch. `bun run ui:test` mounts each story and runs its play, and the browser run checks each story with axe.
+- Each text and fill pair meets WCAG AA in both themes. The edge of a control has a contrast of 3:1 or more. `pnpm run design:check` checks the contrast of the tokens.
+- Each component has a story. Storybook has a theme switch and a brand switch. `pnpm run ui:test` mounts each story and runs its play, and the browser run checks each story with axe.
 - Each view, notice and error that the specs of F38–F50 can reach has a component state.
 
 Spec: [brand identity](../brandIdentity.md), "Story: One component set for every brand". Tokens: the [brand design notes](../../packages/design-system/brands/network/design.md).

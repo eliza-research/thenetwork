@@ -8,8 +8,8 @@ function windowNames(window: Window): string[] {
 }
 
 /**
- * Makes a happy-dom window the browser of the test: the named globals, and each window class and function that Bun does not have (such as `HTMLFormElement` and `getComputedStyle`, which Radix controls read).
- * Returns the function that puts the earlier globals back.
+ * Installs the named globals and browser APIs used by Radix, such as `HTMLFormElement` and `getComputedStyle`.
+ * The returned cleanup restores the previous globals.
  */
 export function installDom(window: Window, named: Record<string, unknown>): () => void {
   const source = window as unknown as Record<string, unknown>;

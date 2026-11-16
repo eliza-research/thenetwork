@@ -1,8 +1,9 @@
 // Hard filters (Section 33.5). Hard constraints are never traded for score (33.1): a candidate
 // failing any of these is dropped before scoring, and the reason is counted in the run funnel.
-import type { Category, MemberId } from "@thenetwork/core";
+import type { Category, Member, MemberId } from "@thenetwork/core";
 import { ADULT_AGE as CORE_ADULT_AGE, canBeMatched, DAY, HOUR } from "@thenetwork/core";
 import { initial, step, type CheckPhase } from "../../core/src/generated/candidateScreening.ts";
+import { publicEventMemberAllowsMatch } from "../../core/src/generated/publicEventCatalog.ts";
 import type { EngineConfig } from "./config.ts";
 import type { Candidate } from "./types.ts";
 import { pairKey, type World } from "./world.ts";
@@ -31,6 +32,12 @@ export type { MemberCheck };
  */
 export const ADULT_AGE = CORE_ADULT_AGE;
 export const isMinorAge = (age: unknown): boolean => !canBeMatched(age);
+/** Scope the shared catalog's event format separately from each member's matching category. */
+export function publicEventPreferencesAllow(member: Member | undefined, category: Category): boolean {
+  const categories = member?.prefs?.categoriesOptIn, formats = member?.prefs?.formats;
+  return publicEventMemberAllowsMatch(canBeMatched(member?.age),
+    Array.isArray(categories) && categories.includes(category), Array.isArray(formats) && formats.includes("event"));
+}
 /** True if `id` is a known member under 18 (or with an unknown/invalid age). Unknown ids are not minors here. */
 export function isMinor(w: World, id: MemberId): boolean {
   const mi = w.get(id);

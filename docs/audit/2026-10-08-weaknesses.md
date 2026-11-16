@@ -1,5 +1,7 @@
 # Weakness report, 2026-10-08
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/audit/2026-10-08-weaknesses.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 This report merges the adversarial audit of every package. Each dimension had a finder and a skeptic. The skeptic re-ran the repros and set the final verdict and severity. This report uses the skeptic's severity.
 
 Checkouts audited:
@@ -99,10 +101,10 @@ The six P0 findings share one cause. The consent and understanding layer of `pac
 | sites-infra-1 | sites | sites/shared/api.ts:56 | Settings "Stop messages" and "Log out" always fail with 415. Logout shows success while the session stays valid. | confirmed | Send JSON content-type on every POST. Show logout only after the server confirms. |
 | sites-infra-4 | scripts | scripts/wrangler.sh:17 | The deploy guard is bypassed by any flag with a value before the command, and it misses many mutating verbs. | confirmed | Use an allowlist of read-only commands. Parse flags with values. |
 | sites-infra-5 | ci | .github/workflows/ci.yml:44 | CI does not test or typecheck sites or plugin-network, and every Postgres suite skips silently. | confirmed | Add those steps. Fail when REQUIRE_PG=1 and Postgres is missing. |
-| sites-infra-6 | root | bun.lock:1 | bun.lock lacks packages/platform, so frozen install fails once the branch is committed. | confirmed | Regenerate bun.lock in the same commit. |
+| sites-infra-6 | root | the former lockfile:1 | the former lockfile lacks packages/platform, so frozen install fails once the branch is committed. | confirmed | Regenerate the former lockfile in the same commit. |
 | sites-infra-9 | sites, platform | sites/buddies.nyc/wrangler.toml:11 | buddies is not renamed to friends.help, and peon and buddies have production custom-domain configs although they are local-only. | confirmed (resolved: renamed to friends.help, AppId `friends`, migration 0007) | Rename everywhere. Remove production routes. Deploy allowlist is ntwrk and slop. |
 | sites-infra-10 | sites | sites/sites.ts:40 | The build drops every non-HTML file, so _headers, SKILL.md and robots.txt can never ship. | confirmed | Copy public/ passthrough files into dist. |
-| sites-infra-13 (also sites-infra-M3, platform-31, platform-M3) | sites, platform | sites/ntwrk.party/wrangler.toml:6 | /api/* is not routed on any site. The API runs only as a Bun process. No deploy workflow exists. Deploying ntwrk now replaces the working 10DLC page with broken forms. | confirmed | Choose the API host. Route /api through one backend. Add a gated deploy workflow with a smoke test. |
+| sites-infra-13 (also sites-infra-M3, platform-31, platform-M3) | sites, platform | sites/ntwrk.party/wrangler.toml:6 | /api/* is not routed on any site. The API runs only as a the former runtime process. No deploy workflow exists. Deploying ntwrk now replaces the working 10DLC page with broken forms. | confirmed | Choose the API host. Route /api through one backend. Add a gated deploy workflow with a smoke test. |
 | sites-infra-14 | sites | sites/slop.date/public/terms.html:15 | slop, peon and buddies legal pages say "Draft. Not yet in effect." | confirmed | Block any production build that contains "Draft". |
 
 ### P2
@@ -222,7 +224,7 @@ The six P0 findings share one cause. The consent and understanding layer of `pac
 | sites-infra-15 | sites | sites/test/sites.test.ts:66 | The sites test forbids naming other apps, but the founder wants ntwrk to link them and say "powered by The Network". | confirmed | Test the privacy rule (no per-number disclosure) instead. |
 | sites-infra-16 | sites | sites/ntwrk.party/public/index.html:20 | SMS terms omit keyword opt-in and the line number. The ntwrk invite starts with an unsolicited text. | plausible | Document every opt-in path. Invitee opts in first. |
 | sites-infra-17 | sites | sites/shared/api.ts:48 | Client error mapping misses many platform codes. A 500 shows "can't reach our server". | confirmed | Export a typed error union and map all of it. |
-| sites-infra-18 | supply chain | scripts/wrangler.sh:67 | wrangler is fetched unpinned. Actions are pinned by tag. @types/bun is "latest". .wrangler/ is not ignored. | confirmed | Pin everything. |
+| sites-infra-18 | supply chain | scripts/wrangler.sh:67 | wrangler is fetched unpinned. Actions are pinned by tag. the former runtime types package is "latest". .wrangler/ is not ignored. | confirmed | Pin everything. |
 | sites-infra-20 | sites | sites/test/sites.test.ts:1 | No behavioural tests of join and settings. Destructive actions run without confirmation if a dialog is missing. | confirmed | DOM tests. Fail closed without the dialog. |
 | sites-infra-22 | sites | sites/ntwrk.party/public/privacy.html:1 | Privacy policies make operational promises no test verifies. | plausible | Add a policy-claims test suite. |
 | matching-e2e-6 | network, engine | packages/network/src/network.ts:2786 | Exposure debt is never persisted, and unrevealed probes count as exposure. | confirmed | Round-trip debt in state. Count revealed only. |
@@ -438,4 +440,4 @@ Stop and logout always fail against the real API. /api is not routed. The deploy
 
 ## Appendix B: superseded detail
 
-platform-31 said createPublicApi is not mounted. On the current tree service.ts:350 mounts it and the onJoin, onStop, onForget and onExport hooks exist. The remaining gap is hosting: the API runs only as a Bun process and no site routes /api. That gap is tracked in sites-infra-13.
+platform-31 said createPublicApi is not mounted. On the current tree service.ts:350 mounts it and the onJoin, onStop, onForget and onExport hooks exist. The remaining gap is hosting: the API runs only as a the former runtime process and no site routes /api. That gap is tracked in sites-infra-13.

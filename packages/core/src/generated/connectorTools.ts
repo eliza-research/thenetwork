@@ -514,7 +514,7 @@ export function callGetUpdates(c: Connection, tokenGiven: boolean, tokenOwn: boo
   //@ ensures (inv(c) && canCallGetUpdates(c)) ==> stepNothingSentAtTheLimit(c, "callGetUpdates", \result)
   //@ ensures (inv(c) && canCallGetUpdates(c)) ==> stepSubmitOnlyForLiveMember(c, "callGetUpdates", \result)
   //@ ensures (inv(c) && canCallGetUpdates(c)) ==> stepReadingNeverAddsUnseen(c, "callGetUpdates", \result)
-  const local_0 = readUpdates(c.tokenUnseen, c.otherUnseen, tokenGiven, tokenOwn);
+  const local_0: UpdateRead = readUpdates(c.tokenUnseen, c.otherUnseen, tokenGiven, tokenOwn);
   return { ...c, tokenUnseen: local_0.tokenLeft, otherUnseen: local_0.otherLeft, lastShown: local_0.shown, lastResult: "UpdatesShown" };
 }
 
@@ -528,7 +528,7 @@ export function canReceiveUpdate(c: Connection): boolean {
 //@ pure
 export function lawUntokenedReadMarksAllSeen(tokenUnseen: boolean, otherUnseen: boolean, tokenOwn: boolean): boolean {
   //@ ensures \result === true
-  const local_1 = readUpdates(tokenUnseen, otherUnseen, false, tokenOwn);
+  const local_1: UpdateRead = readUpdates(tokenUnseen, otherUnseen, false, tokenOwn);
   return !local_1.tokenLeft && !local_1.otherLeft;
 }
 
@@ -536,7 +536,7 @@ export function lawUntokenedReadMarksAllSeen(tokenUnseen: boolean, otherUnseen: 
 //@ pure
 export function lawForeignReferenceShowsNothing(tokenUnseen: boolean, otherUnseen: boolean): boolean {
   //@ ensures \result === true
-  const local_2 = readUpdates(tokenUnseen, otherUnseen, true, false);
+  const local_2: UpdateRead = readUpdates(tokenUnseen, otherUnseen, true, false);
   return local_2.shown === 0 && local_2.tokenLeft === tokenUnseen && local_2.otherLeft === otherUnseen;
 }
 

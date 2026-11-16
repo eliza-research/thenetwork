@@ -1,5 +1,6 @@
-import { beforeAll,afterAll,test,expect } from "bun:test";
-import { SQL } from "bun";
+import { setTimeout as sleep } from "node:timers/promises";
+import { beforeAll,afterAll,test,expect } from "vitest";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { randomUUID } from "node:crypto";
 import { devPgUp,DEV_PG_PORT } from "../../observatory/db/dev-pg.ts";
 import { PgOAuthStore } from "../src/pg-store.ts";
@@ -85,6 +86,6 @@ test("refresh waiting on the grant lock cannot publish tokens after the original
  const pair:[Token,Token]=[{...old,hash:randomUUID(),kind:"access"},{...old,hash:randomUUID()}];
  let pending:Promise<boolean>|undefined;
  await store.sql.begin(async tx=>{await tx`select id from oauth.grants where id=${id} for update`;
- pending=store.rotateRefresh(old.hash,at,pair,{at,kind:"token_refreshed",clientId,grantId:id,app:"friends",detail:null});await Bun.sleep(150);});
+ pending=store.rotateRefresh(old.hash,at,pair,{at,kind:"token_refreshed",clientId,grantId:id,app:"friends",detail:null});await sleep(150);});
  expect(await pending).toBe(false);expect(await store.getToken(pair[0].hash)).toBeUndefined();expect((await store.getToken(old.hash))?.rotatedAt).toBeNull();
 });

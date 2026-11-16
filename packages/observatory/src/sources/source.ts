@@ -31,7 +31,7 @@ export interface DataSource {
    * checks the role, the reason, the member's age and writes the audit row first. Absent: no photos.
    */
   photos?(memberId: string, actor: string, reason: string): Promise<{ ok: true; photos: MemberPhoto[] } | ControlResult>;
-  /** The weekly bias monitor reports (real mode: the Network service, GET /bias). Absent: the simulation has none here (bun run sim measures it). */
+  /** The weekly bias monitor reports (real mode: the Network service, GET /bias). Absent: the simulation has none here (pnpm run sim measures it). */
   bias?(actor: string): Promise<{ ok: true; reports: BiasReportView[] } | { ok: false; error: string }>;
   /**
    * Texts held for staff (real mode: the Network service's leak review and held relay routes). The text of

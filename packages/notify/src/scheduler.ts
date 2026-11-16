@@ -13,7 +13,12 @@
 //    with neither after OUTCOME_WINDOW_MS is "ignored" (`sweep`).
 
 import { createHash, randomInt } from "node:crypto";
+import {
+  appAllowsInboxItem, canRecordInboxSeen, initial as acknowledgementInitial, mayRedeemInboxToken, step as stepAcknowledgement,
+} from "../../core/src/generated/notificationAcknowledgement.ts";
 import { inboxDueAt, removeProactiveItems } from "../../core/src/generated/notificationDelivery.ts";
+import { inboxItemAllowedForRecipient } from "../../core/src/generated/notificationDispatch.ts";
+import { dispatchInboxDigest, queuedInboxDigestCurrent } from "../../core/src/vibe/notificationDigestShell.js";
 import { isQuietAt } from "../../blooio/src/quiet-hours.ts";
 import { composeText } from "./compose.ts";
 import type { NotifyStore } from "./store.ts";
@@ -124,7 +129,7 @@ export class Notifier {
       if (!r) { holds.push({ personId, reason: "unknown_recipient" }); continue; }
       let items = (await this.store.unseen(personId, now)).filter(i => i.notifiedAt === undefined);
       if (!r.proactiveAllowed) {
-        items = items.filter(i => i.urgency === "requested");
+        items = items.filter(i => inboxItemAllowedForRecipient(i.urgency === "requested", r.proactiveAllowed));
         if (items.length === 0) { holds.push({ personId, reason: "proactive_off" }); continue; }
       }
       const firstDue = Math.min(...items.map(i => this.dueAt(i)));
@@ -176,27 +181,24 @@ export class Notifier {
     const { sends, holds } = await this.plan(now);
     const sent: SendPlan[] = [];
     const cancelled: string[] = [];
-    for (const p of sends) {
-      const fresh = (await this.store.getItems(p.itemIds)).filter(i => i.seenAt === undefined && i.notifiedAt === undefined);
-      if (fresh.length === 0) { cancelled.push(p.deliveryId); continue; }
-      const final = fresh.length === p.itemIds.length ? p : await this.build((await this.directory.get(p.personId))!, fresh, now);
-      const target: Surface = final.delivery.mode === "deeplink" ? final.delivery.assistant : final.channel;
-      // Record first: a crash after this and before enqueue loses one text, never sends two.
-      const recorded = await this.store.recordDelivery({
-        deliveryId: final.deliveryId, personId: final.personId, itemIds: final.itemIds, target,
-        countsTowardCap: final.countsTowardCap, sentAt: now,
+    for (const planned of sends) {
+      const result = await dispatchInboxDigest(planned, now, {
+        readItems: ids => this.store.getItems(ids),
+        readRecipient: async personId => this.directory.get(personId),
+        rebuild: (recipient, items) => this.build(recipient, items, now),
+        record: final => this.store.recordDelivery({
+          deliveryId: final.deliveryId, personId: final.personId, itemIds: final.itemIds,
+          target: final.delivery.mode === "deeplink" ? final.delivery.assistant : final.channel,
+          countsTowardCap: final.countsTowardCap, sentAt: now,
+        }),
+        enqueue: async final => sink.enqueue({
+          idempotencyKey: final.deliveryId, channel: final.channel, to: final.to, text: final.text,
+          kind: final.countsTowardCap ? "proactive" : "transactional",
+          timeZone: final.timeZone, briefId: final.deliveryId,
+        }),
       });
-      if (!recorded) { cancelled.push(final.deliveryId); continue; }
-      await sink.enqueue({
-        idempotencyKey: final.deliveryId,
-        channel: final.channel,
-        to: final.to,
-        text: final.text,
-        kind: final.countsTowardCap ? "proactive" : "transactional",
-        timeZone: final.timeZone,
-        briefId: final.deliveryId,
-      });
-      sent.push(final);
+      if (result.kind === "queued") sent.push(result.plan);
+      else cancelled.push(result.deliveryId);
     }
     return { sent, cancelled, holds };
   }
@@ -205,22 +207,26 @@ export class Notifier {
    * Revalidate the immutable queued digest. Erasure or expiry cancels the whole text: its old body
    * cannot be sent after the underlying item set changes. Seen items alone cancel only when all were seen.
    */
-  async stillNeeded(deliveryId: string, now: number): Promise<boolean> {
-    const d = await this.store.getDelivery(deliveryId);
-    if (!d || deliveryIdFor(d.personId, d.itemIds) !== deliveryId) return false;
-    const items = await this.store.getItems(d.itemIds);
-    if (items.length !== d.itemIds.length || items.some(i => i.expiresAt !== undefined && i.expiresAt <= now)) return false;
-    return items.some(i => i.seenAt === undefined);
+  stillNeeded(deliveryId: string, now: number): Promise<boolean> {
+    return queuedInboxDigestCurrent(deliveryId, now, {
+      readDelivery: id => this.store.getDelivery(id),
+      idFor: deliveryIdFor,
+      readItems: ids => this.store.getItems(ids),
+    });
   }
 
   private async acted(deliveryId: string | undefined, on: Surface, personId: string, now: number) {
-    if (deliveryId && (await this.store.actOnDelivery(deliveryId, on, now))) await this.store.recordOutcome(personId, on, "acted", now);
+    const outcome = stepAcknowledgement(acknowledgementInitial, {
+      type: "readDeliveryClosure",
+      deliveryClosed: !!deliveryId && await this.store.actOnDelivery(deliveryId, on, now),
+    });
+    if (outcome.phase === "DeliveryActed") await this.store.recordOutcome(personId, on, "acted", now);
   }
 
   /** Resolve a token for its owner. null for unknown, expired or foreign tokens (shown as "no update"). */
   private async redeem(token: string, callerPersonId: string, surface: Surface, now: number): Promise<InboxItem[] | null> {
     const t = await this.store.getToken(token.trim().toUpperCase());
-    if (!t || t.personId !== callerPersonId || t.expiresAt <= now) return null;
+    if (!t || !mayRedeemInboxToken(t.personId === callerPersonId, t.expiresAt, now)) return null;
     await this.store.markTokenRedeemed(t.token, surface, now);
     const items = await this.store.getItems(t.itemIds);
     await this.acted(items.find(i => i.deliveryId)?.deliveryId, surface, callerPersonId, now);
@@ -235,15 +241,19 @@ export class Notifier {
   async readUpdates(callerPersonId: string, surface: Surface, now: number, token?: string, opts: { app?: string } = {}): Promise<InboxItem[]> {
     await this.store.touch(callerPersonId, surface, now);
     // A surface bound to one app (an MCP grant) never sees another app's items: cross-app privacy.
-    let items = (await this.store.unseen(callerPersonId, now)).filter(i => opts.app === undefined || i.app === opts.app);
-    if (token) {
+    let items = (await this.store.unseen(callerPersonId, now)).filter(i => appAllowsInboxItem(opts.app !== undefined, i.app === opts.app));
+    let read = stepAcknowledgement(acknowledgementInitial, { type: "selectInboxRead", withToken: !!token });
+    if (read.phase === "AwaitingReadToken" && token) {
       const own = await this.redeem(token, callerPersonId, surface, now);
-      if (!own) return [];
-      const wanted = new Set(own.map(i => i.id));
-      items = items.filter(i => wanted.has(i.id));
+      read = stepAcknowledgement(read, { type: "resolveInboxReadToken", valid: own !== null });
+      if (own) {
+        const wanted = new Set(own.map(i => i.id));
+        items = items.filter(i => wanted.has(i.id));
+      }
     }
+    if (!canRecordInboxSeen(read)) return [];
     await this.store.markSeen(callerPersonId, surface, now, items.map(i => i.id));
-    return items;
+    return stepAcknowledgement(read, { type: "recordInboxSeen" }).phase === "InboxSeen" ? items : [];
   }
 
   /** For a surface that lists its own items (the MCP connector): token to subject ids, or null. */
@@ -258,7 +268,10 @@ export class Notifier {
     await this.store.touch(personId, surface, now);
     const wanted = new Set(subjectIds);
     const ids = (await this.store.unseen(personId, now)).filter(i => wanted.has(i.subjectId)).map(i => i.id);
-    return ids.length ? this.store.markSeen(personId, surface, now, ids) : [];
+    const read = stepAcknowledgement(acknowledgementInitial, { type: "selectShownSubjects", hasVisibleItems: ids.length > 0 });
+    if (!canRecordInboxSeen(read)) return [];
+    const seen = await this.store.markSeen(personId, surface, now, ids);
+    return stepAcknowledgement(read, { type: "recordInboxSeen" }).phase === "InboxSeen" ? seen : [];
   }
 
   /** The member wrote in the thread: every pending delivery counts as acted on the channel. */

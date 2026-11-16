@@ -6,7 +6,8 @@
 //  - The oracle's verdict (hidden truth) stays off opportunities until they are resolved.
 //  - Commands for the other mode, prototype keys as command types, client fields in audit rows,
 //    reveals per mode and their revocation, and refused reveals in the audit log.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { setTimeout as sleep } from "node:timers/promises";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { appendFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +15,7 @@ import { DAY } from "@thenetwork/core";
 import { APP_IDS } from "../src/apps.ts";
 import { createServer, type ObservatoryServer } from "../src/server.ts";
 import type { AuditEntry, ObsDelta, ObsState, OpportunityDetail, RevealGrant } from "../src/types.ts";
+import { webSocketUpgradeStatus } from "./websocket.ts";
 
 const T = 300_000;
 const long = (t: string) => t.padEnd(32, "-0123456789abcdef");
@@ -77,7 +79,7 @@ describe("per-role shaping (OBS-06)", () => {
     const a = socket(TOK.analyst), b = socket(TOK.admin);
     await Promise.all([a.open, b.open]);
     expect((await post(TOK.admin, "/api/control", { type: "step", ms: DAY })).status).toBe(200);
-    await Bun.sleep(400);
+    await sleep(400);
     const am = a.deltas.flatMap(d => d.members ?? []), bm = b.deltas.flatMap(d => d.members ?? []);
     expect(bm.length).toBeGreaterThan(0);
     expect(am.length).toBe(bm.length);
@@ -116,11 +118,12 @@ describe("per-app grant matrix (OBS-07)", () => {
         const r = await as(tok, url, { method, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
         expect([method, path, app, r.status]).toEqual([method, path, app, 403]);
       }
-      const ws = await fetch(`${obs.url}/ws?app=${app}`, { headers: { authorization: `Bearer ${tok}`, upgrade: "websocket", connection: "upgrade", "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==", "sec-websocket-version": "13" } });
-      expect(["/ws", app, ws.status]).toEqual(["/ws", app, 403]);
+      const status = await webSocketUpgradeStatus(`${obs.url}/ws?app=${app}`, tok);
+      expect(["/ws", app, status]).toEqual(["/ws", app, 403]);
     }
     // And the same token reaches slop.
     expect((await as(TOK.ana, "/api/state?app=slop")).status).toBe(200);
+    expect(await webSocketUpgradeStatus(`${obs.url}/ws?app=slop`, TOK.ana)).toBe(101);
   }, T);
 });
 

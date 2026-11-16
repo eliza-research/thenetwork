@@ -1,6 +1,7 @@
 // Run the slop.date baselines over seeds and print the table used in
 // docs/results/2026-10-08-slop-world.md. No LLM calls.
-//   bun run packages/sim/src/apps/slop/cli.ts --seeds 1-8 --per-city 300 --weeks 4 [--only random,greedy,oracle] [--json out.json]
+//   node --import tsx --env-file-if-exists=.env --conditions=eliza-source packages/sim/src/apps/slop/cli.ts --seeds 1-8 --per-city 300 --weeks 4 [--only random,greedy,oracle] [--json out.json]
+import { writePath } from "../../../../core/src/runtime/files.ts";
 import { BASELINES } from "./baselines.ts";
 import { slopMetrics, type SlopMetrics } from "./metrics.ts";
 import { runSlopWorld } from "./world.ts";
@@ -69,4 +70,4 @@ for (const n of only) {
   console.log(`  ${n}: ` + keys.map(k => `${k} (n≈${Math.round(mean(all[n]!.map(m => m.fairness.byGroup[k]?.n ?? 0)))}) ${mean(all[n]!.map(m => m.fairness.byGroup[k]?.datesPerMemberMonth ?? 0)).toFixed(3)}`).join("; "));
 }
 const out = arg("json");
-if (out) await Bun.write(out, JSON.stringify(all, null, 1));
+if (out) await writePath(out, JSON.stringify(all, null, 1));

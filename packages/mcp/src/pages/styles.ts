@@ -18,7 +18,7 @@ function read(): string {
   try {
     css = readFileSync(connectorCssFile, "utf8");
   } catch {}
-  if (!css.trim()) throw new Error(`${fileURLToPath(connectorCssFile)} is missing or empty. Run \`bun run connector:css\` before the server starts.`);
+  if (!css.trim()) throw new Error(`${fileURLToPath(connectorCssFile)} is missing or empty. Run \`pnpm run connector:css\` before the server starts.`);
   return css;
 }
 

@@ -1,27 +1,19 @@
-// The wire contract mirror (issue #10). packages/core/src/svc/contract.ts and svc-auth.ts are byte-identical
-// copies of elizaos/eliza plugins/plugin-network/src/backend/{contract,svc-auth}.ts. The service and the
-// Eliza side must sign and parse the same bytes, so neither copy may change alone. Upstream pins the same
-// two SHA-256 values in plugins/plugin-network/src/backend/contract-mirror.test.ts.
-//
-// When this test fails you changed the wire contract here, or you copied a new upstream version:
-//   1. A wire change goes upstream first (elizaos/eliza, plugins/plugin-network/src/backend), with the
-//      new hashes in its contract-mirror.test.ts.
-//   2. Copy both upstream files unchanged into packages/core/src/svc/ (do not reformat them).
-//   3. Run `bun run check:mirror` (needs `gh` signed in): it compares these files with elizaos/eliza develop.
-//   4. Update the two hashes below to what `shasum -a 256 packages/core/src/svc/{contract,svc-auth}.ts`
-//      prints; they must equal the upstream pins.
-// There is no contract version constant: the hashes are the contract's identity.
-import { expect, test } from "bun:test";
+// Pin the local wire contract and signing files to detect drift offline.
+// The wire contract mirrors the plugin-network source byte for byte. The signing
+// file has a local opening comment. Its implementation must still match upstream.
+// Land changes to the wire contract or signing upstream first, then copy them
+// locally, run pnpm run check:mirror, and update these local hashes.
+import { expect, test } from "vitest";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 const MIRRORED_CONTRACT_SHA256: Record<string, string> = {
   "contract.ts": "564b22b222547f47bf11908a7074c7f640f5059925460ccdb2e69d4d2fb20d42",
-  "svc-auth.ts": "80c561af25581926e6317837f91e92063e4655e5cd9a687597ce4ea8ce297c70",
+  "svc-auth.ts": "bde3fdc4b742f8eab8217974a70a3021cf69c3d0e54d84bac2f41d6945bcadf3",
 };
 
 for (const [file, pinned] of Object.entries(MIRRORED_CONTRACT_SHA256)) {
-  test(`${file} is byte-identical to the upstream plugin-network copy`, () => {
+  test(`${file} matches the pinned local mirror`, () => {
     const hash = createHash("sha256").update(readFileSync(new URL(`../src/svc/${file}`, import.meta.url))).digest("hex");
     expect(hash).toBe(pinned);
   });

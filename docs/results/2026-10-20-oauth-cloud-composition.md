@@ -1,5 +1,7 @@
 # Cloud OAuth safeguards on the current consent boundary
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-20-oauth-cloud-composition.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 Automated composition by Codex under Nubs's project preapproval. This candidate is based on PR111 follow-up `2931377`; it is separate from the minimal consent repair. The feature delta from qualified source `003f89f` is applied relative to its common ancestor, preserving current-main public agent/text entry flows and all PR111 consent tests.
 
 ## Composed behavior
@@ -15,19 +17,19 @@ Storage changes are additive: nullable sealed Cloud authority metadata, an immut
 
 ## Diagnostics and remaining qualification
 
-Pure in-process synthetic HTTP/Cloud-producer tests used fictional 555 identities and no provider/model/live network. Local Bun is 1.3.14 and TypeScript is 5.9.3, so these results are diagnostics, not normal-runtime or hosted acceptance.
+Pure in-process synthetic HTTP/Cloud-producer tests used fictional 555 identities and no provider/model/live network. Local the former runtime is 1.3.14 and TypeScript is 5.9.3, so these results are diagnostics, not normal-runtime or hosted acceptance.
 
 The initial affected run executed 51 cases: 47 passed; four failed only because the composed unavailable page omitted the previously required agent/text fallback phrase. After restoring that fallback, the four affected retry cases passed (164 assertions). A new Cloud-authority concurrent-approval case passed (30 assertions), proving one grant/code after two independently validated approvals. The existing nine PR111 security cases passed in the initial run. Final affected TypeScript diagnostics passed, including PostgreSQL authority test source. No local PostgreSQL cluster was started.
 
 Commands:
 
 ```sh
-bun test packages/mcp/test/oauth.test.ts packages/mcp/test/cloud-oauth-continuation.integration.test.ts
-bun test packages/mcp/test/cloud-oauth-continuation.integration.test.ts --test-name-pattern 'before return and consent'
-bun test packages/mcp/test/cloud-oauth-continuation.integration.test.ts --test-name-pattern 'concurrent validated'
+pnpm exec vitest run packages/mcp/test/oauth.test.ts packages/mcp/test/cloud-oauth-continuation.integration.test.ts
+pnpm exec vitest run packages/mcp/test/cloud-oauth-continuation.integration.test.ts --test-name-pattern 'before return and consent'
+pnpm exec vitest run packages/mcp/test/cloud-oauth-continuation.integration.test.ts --test-name-pattern 'concurrent validated'
 ```
 
-Normal Bun1.4.2, actual PostgreSQL qualification and independent review must bind to this exact successor. PR111's CI proves its own unchanged boundary and store cases; old003f receipts prove their own old source, not this composition. No image build, release, private capture, genuine OTP or real account/history acceptance occurred. The real GPT signup/readback and real Shared iMessage-to-website same-account/agent/history flows remain open.
+Normal the original runtime version 1.4.2, actual PostgreSQL qualification and independent review must bind to this exact successor. PR111's CI proves its own unchanged boundary and store cases; old003f receipts prove their own old source, not this composition. No image build, release, private capture, genuine OTP or real account/history acceptance occurred. The real GPT signup/readback and real Shared iMessage-to-website same-account/agent/history flows remain open.
 
 ## Composition review follow-up
 
@@ -35,6 +37,6 @@ Review found two merge omissions: callback CSP permission and binding the consum
 
 ## Hosted qualification and staged fixture composition
 
-[Hosted run 39442276383](https://github.com/eliza-research/thenetwork/actions/runs/39442276383) is bound to combined source `ccf4f7a`. Under Bun1.4.2 and actual PostgreSQL it passed the ten consent boundary cases, the pending-consent cross-connection case, all four Cloud PostgreSQL authority cases and all thirteen synthetic Cloud continuation/outage/concurrency cases. Integration reported 606 passed and one failed; e2e did not run because the integration stage failed. Normal package/site typechecks passed. This is case-level runtime/PG evidence, not full CI acceptance.
+[Hosted run 39442276383](https://github.com/eliza-research/thenetwork/actions/runs/39442276383) is bound to combined source `ccf4f7a`. Under the original runtime version 1.4.2 and actual PostgreSQL it passed the ten consent boundary cases, the pending-consent cross-connection case, all four Cloud PostgreSQL authority cases and all thirteen synthetic Cloud continuation/outage/concurrency cases. Integration reported 606 passed and one failed; e2e did not run because the integration stage failed. Normal package/site typechecks passed. This is case-level runtime/PG evidence, not full CI acceptance.
 
 The sole failure exposed a fixture composition mismatch: the staging-origin test mounted a staging public API but constructed MCP with the original dev public API. The new authority-aware session hook therefore looked for the dev cookie while the browser held the staging __Host-sid cookie. The fixture now mounts that same staging API as the service's public API before constructing MCP. All original proxy/origin, OTP, membership/profile and cross-app rejection assertions are preserved. Product source is unchanged. The fixture passed affected local TypeScript diagnostics; successor hosted CI remains the full-flow gate. The independent Auth review at ccf4f7a is carried only because all production source leaves are unchanged.

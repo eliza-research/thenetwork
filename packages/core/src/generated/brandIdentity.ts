@@ -54,8 +54,8 @@ export function lawBrandNamesItsApp(app: AppKey): boolean {
 //@ pure
 export function lawBrandsAreDistinct(a: AppKey, b: AppKey): boolean {
   //@ ensures \result === true
-  const local_0 = brandFor(a);
-  const local_1 = brandFor(b);
+  const local_0: Brand = brandFor(a);
+  const local_1: Brand = brandFor(b);
   return !(a !== b) || (local_0.name !== local_1.name && local_0.domain !== local_1.domain && local_0.keyword !== local_1.keyword && local_0.accent !== local_1.accent && local_0.logo !== local_1.logo && local_0.skillName !== local_1.skillName);
 }
 
@@ -76,7 +76,7 @@ export function accentTokens(accent: Accent): AccentTokens {
 //@ pure
 export function lawAccentInkDiffersFromAccent(accent: Accent): boolean {
   //@ ensures \result === true
-  const local_2 = accentTokens(accent);
+  const local_2: AccentTokens = accentTokens(accent);
   return local_2.light !== local_2.lightInk && local_2.dark !== local_2.darkInk;
 }
 

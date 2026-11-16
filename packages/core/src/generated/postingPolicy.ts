@@ -8,7 +8,7 @@ export const maxOpenings: number = 50;
 /** Story: Publish a job with a clear pay range / Job drafts need a title and pay range before read-back (spec/postingPolicy.md:7) */
 //@ pure
 export function missingPostingFields(isClose: boolean, hasTitle: boolean, hasPay: boolean): string[] {
-  return isClose ? ([] as string[]) : (hasTitle ? (hasPay ? ([] as string[]) : ["pay"]) : (hasPay ? ["title"] : ["title", "pay"]));
+  return isClose ? ([] as string[]) : (hasTitle ? (hasPay ? ([] as string[]) : (["pay"] as string[])) : (hasPay ? (["title"] as string[]) : (["title", "pay"] as string[])));
 }
 
 /** Story: Publish a job with a clear pay range / A posting has between one and fifty openings (spec/postingPolicy.md:19) */

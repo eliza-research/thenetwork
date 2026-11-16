@@ -1,5 +1,7 @@
 # Network factory for explicit learning-purpose authorization
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-17-profile-review-purpose-factory.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 Source/local qualification only. No flag was enabled in a running service, no new consent or OAuth grant was created, no Google data was collected, and nothing was deployed. The original GPT/native iMessage account-and-history acceptance remains a separate open requirement.
 
 ## Wiring
@@ -22,11 +24,11 @@ Preview, reject, delete and connector-owned revoke cleanup do not invoke collect
 
 ## Verification
 
-Pinned Bun 1.4.2, isolated synthetic PostgreSQL on port 54428:
+Pinned the former runtime 1.4.2, isolated synthetic PostgreSQL on port 54428:
 
 ```sh
-bun test --conditions eliza-source packages/network/test/profile-suggestions.integration.test.ts packages/network/test/profile-suggestion-review.test.ts
-bun run typecheck
+pnpm exec vitest run --conditions eliza-source packages/network/test/profile-suggestions.integration.test.ts packages/network/test/profile-suggestion-review.test.ts
+pnpm run typecheck
 ```
 
 Result: **44 passed, zero failed, 586 assertions**. TypeScript passed. Cases cover normal constructor opt-in registration, default-off/incomplete configuration, same-transaction ownership, wrong owner and source scope, missing purpose, legacy purpose, nonce/hash mismatch, expired/future/overlong proof, positive synthetic proof, post-authorization expiry rollback, and cleanup without new collection permission. The normal bootstrap test redirects only a reserved synthetic Cloud origin inside its own test process; HMAC bytes and the real Network/fixture HTTP handlers are exercised. This is not live TLS/provider acceptance.

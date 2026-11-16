@@ -65,6 +65,7 @@ build does not read this prose. To change a token, write the change as a list in
 | `ring` | oklch(0.5 0.13 150) | oklch(0.72 0.17 150) |
 | `ok` | oklch(0.5 0.13 150) | oklch(0.78 0.17 150) |
 | `warn` | oklch(0.53 0.13 55) | oklch(0.82 0.15 75) |
+| `info` | oklch(0.5 0.13 255) | oklch(0.82 0.09 253) |
 
 | Token | Value |
 | --- | --- |

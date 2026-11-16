@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "bun run ../../sites/sites.ts",
+    "build": "node --import tsx --env-file-if-exists=../../.env ../../sites/sites.ts",
     "typecheck": "tsc --noEmit -p ."
   },
   "dependencies": {

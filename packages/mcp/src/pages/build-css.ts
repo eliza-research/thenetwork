@@ -23,7 +23,7 @@ const compiler = await compile(readFileSync(entry, "utf8"), {
   customCssResolver: async id => (id === "tailwindcss" ? tailwindIndex : undefined),
 });
 const css = optimize(compiler.build(candidates), { file: entry, minify: true }).code;
-if (!candidates.length || !css.trim()) throw new Error("the connector pages have no classes or the CSS is empty; run `bun run design:build` first");
+if (!candidates.length || !css.trim()) throw new Error("the connector pages have no classes or the CSS is empty; run `pnpm run design:build` first");
 
 mkdirSync(dirname(fileURLToPath(connectorCssFile)), { recursive: true });
 writeFileSync(connectorCssFile, css);

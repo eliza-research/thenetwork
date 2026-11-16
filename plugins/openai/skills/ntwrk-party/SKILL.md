@@ -65,14 +65,24 @@ or a text conversation to finish signup. The person receives a verification text
 and enters its code here; they must never have to send a text to receive a code.
 If existing tools cannot perform HTTPS POST and retain a private session under
 this client's default permissions, explain that signup cannot currently finish <!-- agentSignup: chooseTransport -->
-in this agent. Do this check first, before step 1, and stop before you ask for
-a profile, a number or a code. Never claim that reading
+in this agent. Perform this check first and stop before asking for a profile, a number or a code. Never claim that reading
 this skill grants tools, permissions or a session. Do not change security settings,
 use a different origin, or pretend signup/profile saving succeeded.
 Do not ask the person to change a domain allowlist, enable tools, install anything,
 or adjust permissions as a signup step. In an ordinary signup request, state the
 unsupported capability simply: "Signup isn't supported in this agent yet."
 Give technical diagnostics only when the person explicitly asks for them.
+
+## A forwarded invitation
+
+If the person supplies a link starting with `https://ntwrk.party/SKILL.md#invite=`,
+it can attribute their new membership to the member who forwarded it. Fetch only
+the `/SKILL.md` path. Keep the 43-character invitation value from the fragment
+private and only for this signup. Ask if the person wants to use the invitation
+when you ask for their approval of the profile and text consent. Never repeat the
+link or value in your reply, logs or stored notes. Never ask for a link after the
+site shows an existing membership. The invitation does not replace phone
+verification, age eligibility or consent.
 
 ## Join in this conversation
 
@@ -83,10 +93,7 @@ Give technical diagnostics only when the person explicitly asks for them.
 2. Draft the profile from confirmed facts: first name, explicitly stated age, <!-- agentSignup: draftProfile -->
    home city/region and neighbourhood, interests, availability, and what kinds
    of connection they want: friends or work. Never choose for them.
-   Ask only what is missing, one or two questions at a time. Use the lowest age
-   that the person states. Under 13, tell them that they cannot join and stop:
-   ask for no number and save nothing. At 13 to 17, continue and tell them that
-   matching and introductions are for adults 18 and older only. Show a short draft
+   Ask only what is missing, one or two questions at a time. Show a short draft
    for approval. Keep this a general profile; leave out private app-specific details intended for a
    separate app. Their stated interests do not authorize joining other apps.
 3. Explain that joining accepts recurring texts, with variable frequency and <!-- agentSignup: decideApproval -->
@@ -96,18 +103,14 @@ Give technical diagnostics only when the person explicitly asks for them.
    for this exact profile and text consent before the Join request. If approval
    is missing, do not submit it. Never infer consent from a code or a draft.
 4. If a private session for this site already exists, GET `/api/me` first. <!-- agentSignup: checkSession readAuthMode -->
-   Otherwise, or after a 401, GET `/api/auth/mode` before you ask for a number:
-   continue with the code steps only for `mode: "otp"`. If another sign-in mode
-   is required, explain that this agent's direct sign-in is unavailable and stop;
-   do not ask for a number, offer a website fallback or bypass it. Only for
-   `mode: "otp"`, ask for the person's own mobile number. Do not infer a number
-   from contacts or past conversations.
+   Otherwise, or after a 401, GET `/api/auth/mode` before asking for a number.
+   Continue only for `mode: "otp"`. If another mode is required, explain that
+   direct sign-in is unavailable and stop before asking for a number. Do not offer
+   a website fallback. Ask for their own mobile number only in OTP mode. Do not
+   infer a number from contacts or past conversations.
 5. With the number the person provided, POST `/api/auth/otp/start` once: <!-- agentSignup: startCode -->
-   `{"phone":"<their own number in E.164>"}`. Request a code at most once in
-   each attempt. A 200/`ok:true` means a code was requested, not that
-   verification succeeded. Ask for the genuine texted code. If the site refuses
-   the request (a malformed number or a rate limit), stop this attempt and tell
-   the person the reason; only the person can start a new attempt.
+   `{"phone":"<their own number in E.164>"}`. A 200/`ok:true` means a code was
+   requested, not that verification succeeded. Ask for the genuine texted code.
    Never invent, brute-force or automatically resend codes. If the site requires
    a security check unavailable in this agent, stop and explain the limitation;
    do not offer a website signup or fake a token.
@@ -116,19 +119,16 @@ Give technical diagnostics only when the person explicitly asks for them.
    session cookie in the private jar. On rejection explain it; only the person
    can authorize a new code request. On success, GET `/api/me` with that jar.
 7. Check the reply and confirm its app is ntwrk; never submit across apps. <!-- agentSignup: readAccount -->
-   If the account is for another app, stop.
-   If a membership already exists, do not POST Join
-   again to overwrite it: that endpoint does not update existing profiles. Read
+   If a membership already exists in a state other than `invited`, use the
+   existing account. The Join request does not update existing profiles. Read
    the existing account as described below and report its actual state. Do not
    claim a newly drafted profile was saved over an existing membership.
-   If the account is on hold for review, report the hold and stop; do not POST Join.
-8. The Network website may require an invitation. If `/api/me` says `canJoin:false`, explain the actual next step from <!-- agentSignup: joinApp -->
-   its reason and the current `/api/app` join mode. An invite-only app permits
-   Join only after this account is actually eligible.
-   Never invent or accept an invitation, change join mode, or use another app
-   to get around it. Only continue when this account is actually eligible.
-   For a new membership, require `canJoin:true` and the person's explicit profile
-   and text-consent approval from step 3. POST `/api/join` once with the approved
+8. For a new membership, continue after `canJoin:true`. If the reply has <!-- agentSignup: joinApp -->
+   `canJoin:false` and `reason:"invite_only"`, continue only when the person
+   provided and approved an invitation for this exact app. For any other
+   refusal, explain the next step and stop.
+   Require explicit profile and text-consent approval from step 3. POST
+   `/api/join` once with the approved
    fields, the latest `/api/me` `signupView` when present, and current consent:
    `firstName`, integer `age`, `neighborhood`, `homeCity` (`sf` or `nyc`
    from the confirmed supported region), optional `interests` (up to 20 short strings), and `about`
@@ -142,10 +142,11 @@ Give technical diagnostics only when the person explicitly asks for them.
    is missing/ambiguous, ask. Do not infer it from a ZIP or neighbourhood, or select
    an incorrect supported region for someone elsewhere.
    Use `consent:{"sms":true,"version":"<current consent.version>","wording":"<current consent.text>"}`.
+   Include `inviteToken` in that JSON body only when the person supplied and
+   approved the exact app's invitation. If the site returns `invalid_invitation`,
+   say the invitation is unavailable. Do not submit again without the person's
+   approval for a new link or, where joining is open, an ordinary join.
    Never send placeholders or guessed fields. Do not silently omit the profile.
-   If Join refuses, report the true reason and stop: an age below the join age,
-   a missing invitation, an account on hold, or a profile that was not saved.
-   Never report a refusal as a saved profile, and do not POST Join again.
 9. After Join succeeds, GET `/api/me` again, then GET `/api/me/export` using the <!-- agentSignup: readBack -->
    SAME private session. The export is this person's own app data: parse it in
    memory, never print/store the raw export or expose identifiers/phone numbers.

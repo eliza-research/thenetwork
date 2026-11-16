@@ -9,7 +9,7 @@ import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 //    cap, the leak lists). It sends only when BLOOIO_ALLOW_SEND=1, NTWRK_LIVE_APPROVED=1 and the app's
 //    own <APP>_LIVE_APPROVED=1 (founder approval per app; for ntwrk the last two are the same flag).
 //    Otherwise every message is refused ("refused_not_approved") and the provider is never called.
-import type { SQL } from "bun";
+import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { MemberId } from "@thenetwork/core";
 import { blooioRecipientPolicy, forbiddenProvider } from "../src/network.ts";
 import { OutboundQueue, WAITING, type AppChecks, type MessageKind } from "../../blooio/src/outbound-queue.ts";
@@ -30,6 +30,7 @@ export interface Outbound {
   /** HTTPS links to attachments (a photo). */
   mediaUrls?: string[];
   approvedPhotos?: ApprovedRelayPhoto[];
+  invitationJoins?: readonly MemberId[];
   /** reply: an answer to the member's own message; compliance: STOP/HELP confirmations; proactive; transactional: everything else. */
   kind: MessageKind;
   type?: string;
@@ -186,22 +187,32 @@ export class BlooioAdapter implements ChannelAdapter {
         : policy(row.to, { kind: row.kind, ...(row.oppId ? { briefId: row.oppId } : {}), agentInitiated }),
       // A relayed item may carry its sender's own private facts, as the Network's guard allows (guardCheck
       // relayFrom): the queue excludes the sender's facts too, so it never parks what the Network passed.
-      // A number swap both members asked for (relay.ts) is the one contact the guard lets through, for that row only.
+      // Allow only this row's mutually approved number or its exact public booking link.
       leaks: row => {
         const sender = rt.net.relaySenderOf(row.id), recipient = (row.memberId as MemberId | undefined) ?? rt.memberOf(row.to);
         const base = sender && recipient ? rt.net.leakSources([recipient], [sender]) : leaks(row.to);
         const from = rt.net.relayContactShareFrom(row.id), number = from && rt.addressOf(from);
-        return number ? { ...base, allow: [number] } : base;
+        const publicEventLink = row.kind === "reply" || row.kind === "transactional"
+          ? rt.net.approvedPublicEventLink(row.oppId, recipient, row.text) : undefined;
+        return number ? { ...base, allow: [number] }
+          : publicEventLink ? { ...base, contactAllow: [publicEventLink] } : base;
       },
       // PgStore.save locks the state before erasing members. Dispatch takes the
       // same order, then the existing admit check revalidates current parties.
       lockAdmission: async (row, tx) => {
-        if (row.id.startsWith("relay:")) await tx`select id from network.network_state where id=${rt.pg.id} for share`;
+        if (row.id.startsWith("relay:") || row.id.startsWith("invite-notice:")) await tx`select id from network.network_state where id=${rt.pg.id} for share`;
+        if (row.id.startsWith("home-help-consent:")) await rt.lockHomeHelpConsentAdmission(tx, row.id, row.memberId);
       },
       // A relayed item: its match and both members are read again inside the admission transaction (runtime.ts).
-      admit: (row, tx) => row.approvedPhotos?.length && this.name !== "eliza_cloud"
-        ? Promise.resolve({ ok: false as const, reason: "approved_photos_require_cloud" })
-        : row.id.startsWith("relay:") ? rt.relayAdmission(tx, row) : Promise.resolve({ ok: true as const }),
+      admit: async (row, tx) => {
+        if (row.approvedPhotos?.length && this.name !== "eliza_cloud") return { ok: false, reason: "approved_photos_require_cloud" };
+        if (row.id.startsWith("relay:")) return rt.relayAdmission(tx, row);
+        if (row.id.startsWith("invite-notice:")) return await rt.invitationNoticeAdmission(tx, row.id, row.memberId)
+          ? { ok: true } : { ok: false, reason: "invitation_notice_changed" };
+        if (row.id.startsWith("home-help-consent:")) return await rt.homeHelpConsentAdmission(tx, row)
+          ? { ok: true } : { ok: false, reason: "home_help_consent_changed" };
+        return { ok: true };
+      },
       capTake: row => rt.capTake(row.id, row.memberId as MemberId),
       capRelease: row => rt.capRelease(row.id),
     };

@@ -1,6 +1,6 @@
 // Real MCP HTTP handler and platform/OAuth stores; synthetic phones and fake OTP only.
 // Ajv validates advertised contracts independently of the tool implementation.
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import Ajv from "ajv";
 import { addMember, call, connect, origin, PHONE_A, rpc, setup } from "./harness.ts";
 

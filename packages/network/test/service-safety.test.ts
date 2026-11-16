@@ -2,12 +2,14 @@
 // (docs/admin-console.md 3.7.1; founder decisions 2026-10-08: photos and ratings are for verified
 // adults only). Postgres in a database of its own per test process; dry-run sends; fictional numbers
 // (+1 212 555 01xx); photos in a temporary folder (no R2).
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { serveHttp } from "../../core/src/runtime/http.ts";
+import { findExecutable } from "../../core/src/runtime/process.ts";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SQL } from "bun";
-import { MINUTE, SimClock } from "@thenetwork/core";
+import { SQL } from "../../core/src/runtime/postgres.ts";
+import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { APPS, type AppId } from "../../platform/src/apps.ts";
@@ -18,13 +20,14 @@ import { ServiceClient } from "../../observatory/src/sources/service.ts";
 import { NetworkService, WEBHOOK_PATH, type ServiceOptions } from "../service/service.ts";
 import { START } from "./mini.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
+import { presentInNyc } from "../src/network.ts";
 import { resolveConfig } from "../../engine/src/config.ts";
 import { localEmbed } from "../../engine/src/embed.ts";
 import { friendsInfo, friendsPack } from "../../engine/src/packs/friends/index.ts";
 import { World } from "../../engine/src/world.ts";
 
 const T = 300_000;
-const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!Bun.which("pg_ctl");
+const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
 const USER = process.env.USER ?? "postgres";
 const DB = `network_service_safety_test_${process.pid}`;
 const ADMIN_URL = `postgres://${USER}@localhost:${DEV_PG_PORT}/postgres`;
@@ -281,7 +284,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     await fresh();
     const clock = new SimClock(START);
     const { s } = service(clock, { tokens: "admin:adm-tok,safety:saf-tok,admin:console-token-0123456789abcdef0123", consoleToken: "console-token-0123456789abcdef0123" });
-    const srv = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: req => s.fetch(req) });
+    const srv = await serveHttp({ hostname: "127.0.0.1", port: 0, fetch: req => s.fetch(req) });
     try {
       const ed = newPhone(), flo = newPhone();
       for (const [p, who] of [[ed, "Ed, 35"], [flo, "Flo, 33"]] as const) { await text(s, clock, p, "slop"); await text(s, clock, p, who); }
@@ -297,7 +300,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
       expect(new Set((await sql`select actor from network.staff_audit where action = 'safety'`).map((x: any) => x.actor))).toEqual(new Set(["safety.lead@example.org"]));
       // Photos: no photo storage here, so the console hears that photos are off (never a link).
       expect(await client.photos("safety.lead@example.org", r.subjectId, "report review")).toMatchObject({ ok: false });
-    } finally { srv.stop(true); }
+    } finally { await srv.stop(true); }
   }, T);
 
   test("photos: adults by stated age (no ID check), a failed staff check refuses, the staff read audited before the link, signed links through the backend, deleted on leave", async () => {
@@ -420,6 +423,35 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
       expect(await (await staff(s, "saf-tok", "POST", `/apps/friends/members/${id}/verify`, { check, result, note: "staff review" })).json()).toEqual({ ok: true });
     }
     expect(await verified()).toEqual({ [ari]: true, [bo]: false });
+  }, T);
+
+  // spec/travelPresence.md, "Use my travel dates for matching"
+  test("friends matching uses bounded trips and drops them at the end", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const { s, otp } = service(clock);
+    const web = site(s, clock, otp);
+    const phone = newPhone();
+    await web.login("friends", phone);
+    expect((await web.join("friends", 30, "Ari")).status).toBe(200);
+    const id = (await memberOf("friends", phone))!.id;
+    const now = clock.now(), from = now + HOUR, to = now + 2 * HOUR, end = now + 3 * HOUR;
+    await sql`insert into network.presence (app_id, member_id, city, type, from_at, to_at) values
+      ('friends', ${id}, 'sf', 'temporary', ${new Date(from)}, ${new Date(to)}),
+      ('friends', ${id}, 'la', 'temporary', ${new Date(now - HOUR)}, ${new Date(now)}),
+      ('friends', ${id}, 'la', 'temporary', null, null),
+      ('friends', ${id}, 'la', 'temporary', ${new Date(to)}, ${new Date(from)})`;
+
+    const snapshot = await loadSnapshot(sql, now, { app: "friends", city: "sf" });
+    expect(snapshot.members.map(m => m.id)).toEqual([id]);
+    expect(snapshot.presence.filter(p => p.type === "temporary").map(p => [p.city, p.from, p.to])).toEqual([["sf", from, to]]);
+    const world = new World(snapshot, resolveConfig({ seed: 1 }), localEmbed, friendsPack);
+    expect([...world.location(id, now, end)]).toEqual([["nyc", [[now, from], [to, end]]], ["sf", [[from, to]]]]);
+    expect(presentInNyc(snapshot, id, now, from)).toBe(true);
+    expect(presentInNyc(snapshot, id, from, to)).toBe(false);
+    expect(presentInNyc(snapshot, id, to, end)).toBe(true);
+    expect((await loadSnapshot(sql, to, { app: "friends", city: "sf" })).members).toEqual([]);
+    expect((await loadSnapshot(sql, to, { app: "friends", city: "sf", homeCities: ["nyc"] })).members.map(m => m.id)).toEqual([id]);
   }, T);
 
   test("staff with safety on one app hold on that app only and cannot ban; the audit never counts the person's apps", async () => {

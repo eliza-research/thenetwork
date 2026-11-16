@@ -1,6 +1,6 @@
 # Complete a Cloud sign-in
 
-The app's Cloud callback turns an approved handoff into a site session. The shell verifies cookies, decodes the callback, exchanges the code with the configured Cloud authority, checks phone eligibility, and stores the session. This model governs the order and result of the callback.
+The app's Cloud callback turns an approved handoff into a site session. The VibeLang shell uses this machine to order the exchange, identity and phone checks, phone ownership reads, and session writes. The HTTP handler decodes the cookie and callback, supplies the Cloud and storage operations, and produces the response.
 
 ## Story: Use my Cloud identity to sign in to this app
 
@@ -11,7 +11,7 @@ The app's Cloud callback turns an approved handoff into a site session. The shel
 The callback must carry a sealed pending handoff for the routed app, matching state and an allowed return path. It must contain the verifier and be before the handoff expiry. The code must have the expected format. The shell validates binding, type and syntax before the model permits an exchange.
 
 ```quint
-type SignInPhase = AwaitingHandoff | AwaitingExchange | AwaitingIdentity | AwaitingPhone | AwaitingSession | SignedIn | RejectCallback | DenySignIn
+type SignInPhase = AwaitingHandoff | AwaitingExchange | AwaitingIdentity | AwaitingPhone | AwaitingSession | SignedIn | RejectCallback | DenySignIn | CloudUnavailable
 type SignIn = { phase: SignInPhase, handoffAccepted: bool, exchangeAccepted: bool, identityAccepted: bool, phoneAllowed: bool }
 type HandoffFacts = { bindingValid: bool, pendingLive: bool, codeWellFormed: bool }
 pure val initial: SignIn = {
@@ -36,7 +36,7 @@ pure def lawAnExpiredHandoffIsNeverLive(expiresAt: int): bool =
 
 ### Cloud must accept the exchange and return a live identity
 
-The authority must accept the app-bound code exchange. The returned identity contains verified account and phone fields and a valid timestamp window. Its expiry must be in the future and its positive issue time may be at most 30 seconds ahead of the local clock. Session start uses the earlier of issue time and local time.
+The authority must accept the app-bound code exchange. The returned identity contains verified account and phone fields and a valid timestamp window. Its expiry must be in the future and its positive issue time may be at most 30 seconds ahead of the local clock. Session start uses the earlier of issue time and local time. A successful exchange with no identity returns an unavailable response. An exchange refusal or an invalid identity returns a denial.
 
 ```quint
 pure val cloudClockSkewMs: int = 30 * 1000
@@ -57,8 +57,10 @@ pure def recordExchange(signIn: SignIn, exchangeAccepted: bool): SignIn =
 
 pure def canCheckIdentity(signIn: SignIn): bool =
   signIn.phase == AwaitingIdentity and signIn.exchangeAccepted and signIn.handoffAccepted
-pure def checkIdentity(signIn: SignIn, identityValid: bool): SignIn =
-  { ...signIn, identityAccepted: identityValid, phase: if (identityValid) AwaitingPhone else DenySignIn }
+pure def checkIdentity(signIn: SignIn, identityAvailable: bool, identityValid: bool): SignIn =
+  val accepted = identityAvailable and identityValid
+  { ...signIn, identityAccepted: accepted,
+    phase: if (not(identityAvailable)) CloudUnavailable else if (accepted) AwaitingPhone else DenySignIn }
 ```
 
 ### The site checks phone eligibility before issuing a session
@@ -79,7 +81,7 @@ pure def recordSession(signIn: SignIn): SignIn = { ...signIn, phase: SignedIn }
 
 ### A completed callback passed each issuance check
 
-The stored session and the success response require a valid pending handoff, accepted exchange, current identity and eligible phone. Invalid handoffs and refused Cloud identities have separate outcomes. Transport or storage errors remain with the existing callback error handler.
+The stored session and the success response require a valid pending handoff, accepted exchange, current identity and eligible phone. Invalid handoffs and refused Cloud identities have separate outcomes. An unavailable identity or an error from the authority or session store returns an unavailable response. Every failure clears the pending cookie.
 
 ```quint
 pure def alwaysSessionRequiresAcceptedHandoff(signIn: SignIn): bool =
@@ -89,4 +91,5 @@ pure def alwaysSessionRequiresAcceptedHandoff(signIn: SignIn): bool =
 pure def sometimesSignsIn(signIn: SignIn): bool = signIn.phase == SignedIn
 pure def sometimesRejectsCallback(signIn: SignIn): bool = signIn.phase == RejectCallback
 pure def sometimesDeniesSignIn(signIn: SignIn): bool = signIn.phase == DenySignIn
+pure def sometimesCloudUnavailable(signIn: SignIn): bool = signIn.phase == CloudUnavailable
 ```

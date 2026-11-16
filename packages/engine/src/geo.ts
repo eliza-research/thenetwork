@@ -4,7 +4,8 @@
 // run city. The Network and friends.help use it. A radius model (slop.date: within X miles of a zip
 // or point, mutual radius) implements the same interface plus `pairReason` / `displayDistance`.
 import type { City, MemberId, Presence } from "@thenetwork/core";
-import { HOUR } from "@thenetwork/core";
+import { HOUR, temporaryPresenceWindow } from "@thenetwork/core";
+import { presenceWindowsOverlap, presenceWindowValid } from "../../core/src/generated/travelPresence.ts";
 import type { GeoModel } from "./pack.ts";
 import { intersect, subtract, union, type Interval } from "./interval.ts";
 import type { World } from "./world.ts";
@@ -18,7 +19,8 @@ export const cityBucketGeo: GeoModel = {
   location(w: World, id: MemberId, start: number, end: number): Map<City, Interval[]> {
     const mi = w.members.get(id);
     const out = new Map<City, Interval[]>();
-    if (!mi) return out;
+    const requested = { from: start, to: end };
+    if (!mi || !presenceWindowValid(requested)) return out;
     const base = new Set<City>([mi.m.homeCity]);
     const dated: Presence[] = [];
     for (const p of mi.presence) {
@@ -27,8 +29,9 @@ export const cityBucketGeo: GeoModel = {
     }
     for (const c of base) out.set(c, [[start, end]]);
     for (const p of dated) {
-      const s = Math.max(start, p.from ?? start), e = Math.min(end, p.to ?? end);
-      if (e <= s) continue;
+      const available = p.type === "temporary" ? temporaryPresenceWindow(p) : { from: p.from ?? start, to: p.to ?? end };
+      if (!available || !presenceWindowsOverlap(available, requested)) continue;
+      const s = Math.max(start, available.from), e = Math.min(end, available.to);
       for (const [c, ivs] of out) if (c !== p.city) out.set(c, subtract(ivs, [s, e]));
       out.set(p.city, union([...(out.get(p.city) ?? []), [s, e]]));
     }

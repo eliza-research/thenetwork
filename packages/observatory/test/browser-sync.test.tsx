@@ -1,4 +1,6 @@
-import { expect, test } from "bun:test";
+import { serveHttp } from "../../core/src/runtime/http.ts";
+import { setTimeout as sleep } from "node:timers/promises";
+import { expect, test } from "vitest";
 import { Window, type HTMLInputElement as TestInput } from "happy-dom";
 import { act, createElement } from "react";
 import type { ClockInfo, ObsDelta, ObsFeedItem, ObsOpportunity } from "../src/types.ts";
@@ -17,12 +19,12 @@ test("the console keeps the current view, live feed, and review draft", async ()
     objective: `${id} objective`, kind: "intro", score: 0, source: "player", createdAt: 0, updatedAt: 0,
     review: { queuedAt: 0, deadline, rerolls: 0 },
   });
-  const api = Bun.serve({
+  const api = await serveHttp({
     hostname: "127.0.0.1", port: 0,
     async fetch(req, server) {
       const url = new URL(req.url);
       const app = url.searchParams.get("app");
-      if (url.pathname === "/ws") return server.upgrade(req) ? undefined : new Response(null, { status: 400 });
+      if (url.pathname === "/ws") return server.upgrade(req, { data: undefined }) ? undefined : new Response(null, { status: 400 });
       if (url.pathname === "/api/ws-ticket") return Response.json({ ticket: "local" });
       if (url.pathname === "/api/me") return Response.json({ id: "staff", roles: ["admin"], grants: [{ role: "admin", app: "*" }], via: "token", apps: ["ntwrk", "slop"] });
       if (url.pathname === "/api/mode") return Response.json({ mode: "game" });
@@ -64,14 +66,15 @@ test("the console keeps the current view, live feed, and review draft", async ()
   const until = async (predicate: () => boolean) => {
     for (let attempt = 0; attempt < 250; attempt++) {
       if (predicate()) return;
-      await Bun.sleep(4);
+      await sleep(4);
     }
     throw Error("Timed out waiting for the browser store");
   };
   const publish = (d: ObsDelta) => api.publish("updates", JSON.stringify({ type: "delta", app: "slop", mode: "game", delta: d }));
 
   try {
-    const { store } = await import(`../web/store.ts?browser-sync=${api.port}`) as typeof import("../web/store.ts");
+    const isolatedStorePath = "../web/store.ts?browser-sync";
+    const { store } = await import(/* @vite-ignore */ isolatedStorePath) as typeof import("../web/store.ts");
     const olderLoad = store.load();
     await waiting.promise;
     store.setApp("slop");
@@ -118,16 +121,16 @@ test("the console keeps the current view, live feed, and review draft", async ()
     try {
       await act(async () => { root.render(createElement(ReviewQueue)); });
       await writeNote("first card note");
-      await act(async () => { reviewStore.focus({ kind: "opportunity", id: "b" }); await Bun.sleep(40); });
+      await act(async () => { reviewStore.focus({ kind: "opportunity", id: "b" }); await sleep(40); });
       // spec/staffReview.md, "A changed card or revision starts a fresh draft"
       expect(note().value).toBe("");
       await writeNote("second card note");
       await act(async () => { button("Approve").click(); });
       expect(await decisionSent.promise).toMatchObject({ oppId: "b", note: "second card note" });
 
-      await act(async () => { reviewStore.focus({ kind: "opportunity", id: "a" }); await Bun.sleep(40); });
+      await act(async () => { reviewStore.focus({ kind: "opportunity", id: "a" }); await sleep(40); });
       await writeNote("new draft");
-      await act(async () => { decisionRelease.resolve(); await Bun.sleep(50); });
+      await act(async () => { decisionRelease.resolve(); await sleep(50); });
       // spec/staffReview.md, "An old response cannot clear or move a newer selection"
       expect([reviewStore.ui.focus?.id, note().value]).toEqual(["a", "new draft"]);
     } finally {
@@ -140,7 +143,7 @@ test("the console keeps the current view, live feed, and review draft", async ()
     for (const socket of sockets) { socket.onclose = null; socket.close(); }
     globalThis.fetch = nativeFetch;
     restoreDom();
-    api.stop(true);
+    await api.stop(true);
     await window.happyDOM.close();
   }
 });

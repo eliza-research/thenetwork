@@ -4,6 +4,7 @@
 // pairs: duplicate_participant, underage, blocked; configurations: duplicate_participant, then these
 // pre-rules, then minors / via / member / pair, then these post-rules, then the geo overlap).
 import { budgetReached, DAY, inCooldown, pairInteractionCooling } from "@thenetwork/core";
+import { homeHelperSetAllowed } from "../../../../core/src/generated/boundedHelp.ts";
 import { isHomeEntry, riskTerms } from "../../filters.ts";
 import type { CandidateRule, MemberRule, PairRule } from "../../pack.ts";
 import { CONTRIBUTOR_ROLES } from "../../types.ts";
@@ -110,8 +111,12 @@ export const NETWORK_CANDIDATE_POST_RULES: readonly CandidateRule[] = [
       if (c.kind === "help" && isHomeEntry(w.cfg, c.riskText)) {
         const requester = c.participants[0]!;
         const helpers = c.participants.slice(1);
-        const acquainted = helpers.every(h => w.edgeHas(requester, h, "met") || w.edgeHas(requester, h, "knows") || w.edgeHas(requester, h, "helped"));
-        if (helpers.length < 2 && !acquainted) return "home_entry_rule";
+        const helper = helpers[0];
+        const knownSingleton = helpers.length === 1 && helper !== undefined
+          && (w.edgeHas(requester, helper, "met") || w.edgeHas(requester, helper, "knows") || w.edgeHas(requester, helper, "helped"));
+        const format = helpers.length === 1 ? "one_to_one" : "small_group";
+        if (!homeHelperSetAllowed(helpers.length, knownSingleton)
+          || c.participants.some(id => !w.get(id)?.m.prefs.formats.includes(format))) return "home_entry_rule";
         c.safetyClass = "medium";
       }
       return null;

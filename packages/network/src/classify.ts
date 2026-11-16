@@ -36,6 +36,8 @@ export interface Classified {
   disclosure?: Abuse[];
   /** For requests: what they want. */
   desireId?: string; category?: Category; tags: string[];
+  /** The member asks the Network to find people now, rather than stating a profile preference. */
+  directPeopleAsk?: boolean;
   /** Wants the member said they do NOT want ("I don't want to meet other founders"). */
   notWanted?: string[];
   /** For invites: the friend's first name. */
@@ -72,6 +74,7 @@ const RX = {
   report: /^\s*(?:please\s+|i (?:want|need|'d like) to\s+)?report\s+(?!(?:back|on|to|that|this|it|in|for|my|the|when)\b)(.+)$/i,
   plans: /\b(anything fun|what'?s (on|happening|good)|something to do|plans? (this|for the) (weekend|week|tonight)|fun (going on|this weekend)|any (events|plans))\b/i,
   peopleAsk: /\b(anyone (around|who|want|up for)|looking for (a |an |someone|people|other|more)|hoping to|find (me )?(a|an|someone|people)|want to meet|wanna meet|know anyone|still hoping|would love to (meet|find)|i'?d (love|like) to (meet|find)|searching for|in search of)\b/i,
+  directPeopleAsk: /^\s*(?:please\s+)?(?:(?:is there |do you know )?anyone (?:around|who|want|up for)|find me|(?:can|could|would) you (?:please )?(?:find me|help me find|connect me (?:with|to)|introduce me to))\b/i,
   feedback: /\b(it was (great|nice|fine|fun|good|ok|okay)|we (really )?clicked|(not|wasn'?t) great|didn'?t (really )?click|never showed|would (definitely )?(do it|meet|hang out) again|not much in common)\b/i,
   ack: /^(thanks|thank you|got it|ok|okay|👍|see you|sounds good|perfect|works for me|great|cool|nice)\b/i,
 };
@@ -154,7 +157,10 @@ export function classify(body: string): Classified {
 
   if (abuse.length && !desire) return out;
   if (RX.plans.test(t) && !x.negatedAsk) return { ...out, kind: "plans_request", category: out.category ?? "events" };
-  if (desire || (RX.peopleAsk.test(t) && !x.negatedAsk)) return { ...out, kind: "people_request", category: out.category ?? "social" };
+  const directPeopleAsk = !x.negatedAsk && sents.some(s => RX.directPeopleAsk.test(normText(s.text)));
+  if (desire || directPeopleAsk || (RX.peopleAsk.test(t) && !x.negatedAsk)) {
+    return { ...out, kind: "people_request", category: out.category ?? "social", directPeopleAsk };
+  }
   if (RX.ack.test(t) || t.length < 12) return { ...out, kind: "ack" };
   return out;
 }
@@ -587,6 +593,14 @@ export function extractProfile(body: string): Profile {
     groups: /small groups|groups are (good|great|better|my thing)|prefer groups/i.test(body) ? true : undefined,
     weekends: /weekends work best|weekends are best|prefer weekends/i.test(body) ? true : undefined,
   };
+}
+
+const EXPLICIT_REPEAT = /^(?:(?:yes|yeah)[, ]+)?(?:(?:i would|i'd|would)(?: definitely| really)?(?: love to| like to)? |(?:i want to|let's) )(?:do (?:it|that)|meet(?: up)?|see (?:you|them|him|her|each other)|hang out|get together) again$/i;
+
+/** Read a first-person follow-up request in its own clause. */
+export function explicitRepeatRequest(body: string): boolean {
+  const text = body.toLowerCase().replace(/[‘’ʼ]/g, "'");
+  return planAgainOf(text) === "yes" && text.split(/[.!?;]/).some(clause => EXPLICIT_REPEAT.test(clause.trim()));
 }
 
 /**

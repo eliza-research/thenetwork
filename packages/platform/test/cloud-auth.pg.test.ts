@@ -1,5 +1,6 @@
 // Real PostgreSQL + signed site router + platform account/session owners; Cloud HTTP authority is a controlled fixture.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+// spec/cloudSignIn.md, "A completed callback passed each issuance check"
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { APPS, type AppId } from "../src/apps.ts";
 import { createPublicApi, parseCookies } from "../src/api.ts";
 import { PgPeopleStore } from "../src/pg-store.ts";
@@ -17,6 +18,7 @@ describe.skipIf(!pgAvailable)("Cloud phone handoff (PostgreSQL)", () => {
     let now = Date.UTC(2026, 9, 9, 15);
     let authorityLive = true, exchangeCount = 0, validations = 0, otpSends = 0, validationStatus = 200;
     let challenge = "";
+    let identityResponse: "present" | "absent" | "expired" = "present";
     let code = `enso_${"a".repeat(64)}`;
     let proofIssuedAt = Math.floor(now/1000)-11*60, sourceExpiresAt = now+60_000;
     const consumed = new Set<string>();
@@ -35,7 +37,9 @@ describe.skipIf(!pgAvailable)("Cloud phone handoff (PostgreSQL)", () => {
       if (body.code !== code || consumed.has(code)) return Response.json({ok: false}, {status: 401});
       consumed.add(code);
       if (hash !== challenge) return Response.json({ok: false}, {status: 401});
-      return Response.json({userId: "cloud-user-fixture", organizationId: "cloud-org-fixture", e164: phone, expiresAt: sourceExpiresAt, stewardUserId: "steward-fixture", issuedAt: proofIssuedAt});
+      if (identityResponse === "absent") return Response.json(null);
+      const expiresAt = identityResponse === "expired" ? now : sourceExpiresAt;
+      return Response.json({userId: "cloud-user-fixture", organizationId: "cloud-org-fixture", e164: phone, expiresAt, stewardUserId: "steward-fixture", issuedAt: proofIssuedAt});
     }) as typeof fetch;
     const proxySecret = "local-proxy-fixture";
     // Validation caching is off here so each request reaches the transport fixture.
@@ -87,11 +91,23 @@ describe.skipIf(!pgAvailable)("Cloud phone handoff (PostgreSQL)", () => {
     expect((await call("slop", "GET", callback, undefined, pending)).status).toBe(403);
     challenge = correctChallenge;
     expect((await call("slop", "GET", callback, undefined, pending)).status).toBe(403);
+    const previous = await api.sessions.create("slop", phone, person.id);
+    const callbackCookies = `${pending}; sid_slop=${previous.token}`;
+    for (const [mode, key, expected] of [["absent", "d", 503], ["expired", "e", 403]] as const) {
+      identityResponse = mode;
+      code = `enso_${key.repeat(64)}`;
+      const refused = await call("slop", "GET", `/api/auth/cloud/callback?code=${code}&state=${state}`, undefined, callbackCookies);
+      expect(refused.status).toBe(expected);
+      expect(refused.headers.getSetCookie()).toEqual([expect.stringMatching(/^cloud_pending_slop=;.*Max-Age=0/)]);
+      expect(await api.sessions.authenticate("slop", previous.token)).toBeDefined();
+    }
+    identityResponse = "present";
     code = `enso_${"c".repeat(64)}`;
-    const validCallback = callback.replace(`enso_${"a".repeat(64)}`, code);
-    const signedIn = await call("slop", "GET", validCallback, undefined, pending);
+    const validCallback = `/api/auth/cloud/callback?code=${code}&state=${state}`;
+    const signedIn = await call("slop", "GET", validCallback, undefined, callbackCookies);
     expect(signedIn.status).toBe(303);
     expect(signedIn.headers.get("location")).toBe("/join");
+    expect(await api.sessions.authenticate("slop", previous.token)).toBeUndefined();
     const cookies = signedIn.headers.getSetCookie();
     const sessionCookie = cookies.find(value => value.startsWith("sid_slop="))!;
     expect(sessionCookie).toContain("Max-Age=60");
