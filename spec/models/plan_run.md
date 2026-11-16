@@ -43,6 +43,12 @@ Imported from `quint/plan_run.qnt` at `30d950e`. See [model index](README.md) fo
 // Abstractions:
 //  - One group plan: invited a, b, c, d; alternate e (the engine bench); quorum 3 (DEFAULT_PLANS
 //    quorum.group). The activity's smallest group (groupSize[0]) is 2 or 3, chosen at init.
+//  - The plan's formation is outside this model. On branch vibestack-matching, plans.ts planProposals forms
+//    the primary group as a circle of the plans lane's search edges admitted by groupFormation
+//    circleCoherent (group.ts poolCircles and chooseCircle), and an alternate has a pair value with every
+//    primary member and passes the pair gate with every earlier alternate. candidate_pool models the circle
+//    admission and the friends planner's tables. This model starts from the formed plan, so a block made
+//    after formation is an actor event here.
 //  - Partner plans are not modelled: the planner's partner path is not in any register defect of this module,
 //    and the network never runs the fallback's partnerPlan (that is SD-008).
 //  - Hours are small integers: probe deadline D, late-join cutoff CUTOFF (start - lateJoinHours), start S,

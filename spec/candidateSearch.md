@@ -1,6 +1,6 @@
 # Bounded candidate search
 
-The [matching engine model](models/matching_engine.md) and the [candidate pool model](models/candidate_pool.md) follow matching from retrieval to proposal. This spec governs one search: the best candidates for one member in one block (one lane, the partner side and one market), found with a fixed limit on pair checks. The engine shell supplies the lane's search limit and search budget, the member's standing window, the bucket bounds, the pair value and canonical ordinal of each candidate it checks, and the highest bound of the buckets it has not scanned. The shell keeps the candidate index, the bucket order, and the candidate records. The [reciprocal pair value](pairValue.md) gives each pair value. [Story F21](product/stories.md#story-f21--hear-when-nothing-fits) uses an empty or budgeted result as a recorded reason, and [Story F11](product/stories.md#story-f11--consider-a-one-to-one-introduction) uses the kept candidates.
+The [matching engine model](models/matching_engine.md) and the [candidate pool model](models/candidate_pool.md) follow matching from retrieval to proposal. This spec governs one search: the best candidates for one member in one block (one lane, the partner side and one market), found with a fixed limit on pair checks. The engine shell supplies the lane's search limit and search budget, the member's standing window, a value bound for each candidate it touched through the tag postings, the pair value and canonical ordinal of each candidate it checks, and the highest bound of the candidates it has not checked. The shell keeps the candidate index (one posting list per tag, sorted by standing), the visit order, and the candidate records. The [reciprocal pair value](pairValue.md) gives each pair value, and the [relationship lanes](matchLane.md) give the law that a pair without a shared tag stays below the floor. [Story F21](product/stories.md#story-f21--hear-when-nothing-fits) uses an empty or budgeted result as a recorded reason, and [Story F11](product/stories.md#story-f11--consider-a-one-to-one-introduction) uses the kept candidates.
 
 ## Story: Search only where a pair can have a value
 
@@ -8,7 +8,7 @@ The [matching engine model](models/matching_engine.md) and the [candidate pool m
 
 ### The standing window contains every partner that the parity rule allows
 
-The window is centered on the member's standing minus the lane offset. Its half-width is the parity band plus the member's own uncertainty plus the uncertainty ceiling, because the shell does not know the partner's uncertainty before it reads the partner. A partner whose uncertainty is at most the ceiling and who passes the parity rule is always in the window, so the shell can find the window with two binary searches on members sorted by standing and skip everyone outside it.
+The window is centered on the member's standing minus the lane offset. Its half-width is the parity band plus the member's own uncertainty plus the uncertainty ceiling, because the shell does not know the partner's uncertainty before it reads the partner. A partner whose uncertainty is at most the ceiling and who passes the parity rule is always in the window. Each posting list of the index is sorted by standing, so the window is one binary-search range inside every posting list, and the shell skips everyone outside it.
 
 ```quint
 import pairValue.* from "./pairValue"
@@ -29,9 +29,11 @@ pure def lawWindowComplete(standing: int, otherStanding: int, offset: int, band:
   implies inSearchWindow(otherStanding, standing, offset, band, uncertainty, uncertaintyCeiling)
 ```
 
-### A bucket bound is never below the value of a pair inside the bucket
+### A bound is never below the value of the pair it covers
 
-The shell computes, for each bucket, an upper bound on the member's utility for any member of the bucket, an upper bound on their utility for the member, and the smallest parity penalty in the bucket's standing range. The bucket bound is the harmonic value of the two utility bounds minus that least penalty, and never below zero. The harmonic value does not decrease when either utility increases, so no pair value in the bucket is above the bound.
+The shell bounds the value of each candidate before it checks the candidate. For a candidate it touched, it knows both tag sets, both standings and both exchanges, so it computes the lane pair value with each utility replaced by an upper bound: the tag terms and the closeness are exact, and only the pack term, which the shell does not read before a check, counts at full value. The pair gate (minors, blocks, holds) can only lower a value to `noPairValue`. A higher utility never lowers the pair value: the floors are the only admission conditions that read a utility, and the harmonic value does not decrease when either utility increases. So the bound is never below the pair value (`lawCandidateBoundSound`).
+
+For a candidate it did not touch, the shell knows only upper bounds of the two utilities and the two exchanges. When a bound is below the floor that it must reach, no such pair has a value. Otherwise the bound is the harmonic value of the two utility bounds, because the window contains the member's target standing, so the least penalty in the window is zero (`lawUnseenBoundSound`). Both arguments rest on `lawBucketBoundSound`: the harmonic value of two utility bounds minus a least penalty, never below zero, is never below the value of a pair whose utilities and penalty those bounds cover.
 
 ```quint
 pure def bucketValueBound(utilityBound: int, otherUtilityBound: int, leastPenalty: int): int =
@@ -43,6 +45,40 @@ pure def lawBucketBoundSound(utility: int, otherUtility: int, penalty: int, util
   val pairWorth = if (penalised > 0) penalised else 0
   and { utility <= utilityBound, otherUtility <= otherUtilityBound, penalty >= leastPenalty, leastPenalty >= 0 }
     implies pairWorth <= bucketValueBound(utilityBound, otherUtilityBound, leastPenalty)
+
+pure def unseenValueBound(utilityBound: int, otherUtilityBound: int, exchangeBound: int, otherExchangeBound: int, rules: PairRules): int =
+  val belowFloor = utilityBound < rules.utilityFloor or otherUtilityBound < rules.utilityFloor
+  val belowExchangeFloor = rules.balanceRequired and (exchangeBound < rules.exchangeFloor or otherExchangeBound < rules.exchangeFloor)
+  if (belowFloor or belowExchangeFloor) noPairValue
+  else bucketValueBound(utilityBound, otherUtilityBound, 0)
+
+pure val utilityBoundValues = Set(0, 299, 350, 800, 1000)
+pure val otherUtilityBoundValues = Set(0, 350, 600, 1000)
+pure val exchangeBoundValues = Set(0, 199, 500, 1000)
+pure val otherExchangeBoundValues = Set(0, 200, 1000)
+
+pure def lawCandidateBoundSound(side: PairSide, other: PairSide, offset: int, rules: PairRules, utilityBound: int, otherUtilityBound: int): bool =
+  (side.utility <= utilityBound and other.utility <= otherUtilityBound) implies
+    pairValue(side, other, offset, rules)
+      <= pairValue({ ...side, utility: utilityBound }, { ...other, utility: otherUtilityBound }, offset, rules)
+
+pure def lawUnseenBoundSound(side: PairSide, other: PairSide, offset: int, rules: PairRules, utilityBound: int, otherUtilityBound: int, exchangeBound: int, otherExchangeBound: int): bool =
+  and {
+    side.utility <= utilityBound, other.utility <= otherUtilityBound,
+    side.exchange <= exchangeBound, other.exchange <= otherExchangeBound,
+  } implies pairValue(side, other, offset, rules) <= unseenValueBound(utilityBound, otherUtilityBound, exchangeBound, otherExchangeBound, rules)
+```
+
+### The tag postings of the member hold every partner with a value
+
+In every lane where `laneSharedTagRequired` holds (every lane except Date), a member whose utility has no complement hit and no affinity hit stays below the utility floor (`lawNoSharedTagStaysBelowFloor` in the [relationship lanes](matchLane.md)). So a partner `b` of member `a` with a pair value shares an interest with `a`, or offers something that `a` seeks; and, from `b`'s side, shares an interest with `a`, or seeks something that `a` offers. Where the lane requires a balanced exchange, both exchanges must reach a positive floor, so `b` offers something that `a` seeks and seeks something that `a` offers.
+
+Theorem: every partner with a pair value is in the window range of the posting lists of `a`'s interests (in the partners' interests), or of both `a`'s seeks (in the partners' offers) and `a`'s offers (in the partners' seeks). The shell does not prune with this theorem directly. It walks the posting ranges of all three groups, rarest first, and after each range it computes, with `unseenValueBound`, the bound of every candidate it has not touched: such a candidate can have a hit only in a tag whose range is not fully walked. It checks the touched candidate with the highest bound while no untouched candidate can rank above it, and it walks the next range otherwise (the threshold walk). When the open tags cannot lift an untouched pair to the floor, that bound is `noPairValue`, and the walk stops; by the theorem this happens at the latest when the walk is complete. In a lane where the law does not hold (Date), the untouched bound can stay at or above zero, so the shell walks the whole window last.
+
+The shell stops the walk when the posting entries it has visited (the touches) reach `searchTouchesPerCheck` times the lane's search budget. A tag that it did not walk, or walked only in part, stays open, so the untouched bound still covers every candidate the walk missed, and the search closes Budgeted (with `walkSpent`) when that bound is not below the kept values. The touch limit is a decision: 8 entries per allowed pair check keeps the walk within a small constant of the pair checks, and the share of exact searches at N = 10,000 and 100,000 in the `matching` block tunes it.
+
+```quint
+pure val searchTouchesPerCheck: int = 8
 ```
 
 ## Story: Keep the best candidates within a fixed number of pair checks
@@ -147,9 +183,9 @@ pure def sometimesDroppedCandidate(s: CandidateSearch): bool = s.bestDropped >= 
 
 ### An exact search stops only when no unseen candidate can enter the kept list
 
-The shell passes as `unseenBound` the highest bucket bound of the window buckets that still hold an unchecked candidate (a partly scanned bucket counts), or `noPairValue` when every window candidate was checked. The search is exact when nothing is unseen, or when the kept list is full and every kept value is above the unseen bound.
+The shell checks the touched candidates in the order of their bounds, highest first, and then ordinal, lowest first. It passes as `unseenBound` the higher of the next touched candidate's bound and the bound of the candidates it did not touch, or `noPairValue` when no candidate is left that can have a value. The search is exact when nothing is unseen, or when the kept list is full and every kept value is above the unseen bound.
 
-The composed theorem: the window contains every feasible partner (`lawWindowComplete`), no unseen pair value is above its bucket bound (`lawBucketBoundSound`), every kept candidate ranks above every dropped one in the total order, so ties go to the lower ordinal (`alwaysKeptRankAboveDropped`, which implies `alwaysKeptBeatDropped`), and an exact search leaves no unseen candidate that could enter (`alwaysExactBeatsUnseen`). So an Exact result is the brute-force answer: the first `limit` members of the feasible set in the order of value, highest first, and then ordinal, lowest first. If the feasible set is smaller than the limit, the result is the whole feasible set.
+The composed theorem: the window contains every feasible partner (`lawWindowComplete`), every partner with a value is touched through the tag postings or is covered by the untouched bound (`lawNoSharedTagStaysBelowFloor`, `lawUnseenBoundSound`), no pair value is above its bound (`lawCandidateBoundSound`), every kept candidate ranks above every dropped one in the total order, so ties go to the lower ordinal (`alwaysKeptRankAboveDropped`, which implies `alwaysKeptBeatDropped`), and an exact search leaves no unseen candidate that could enter (`alwaysExactBeatsUnseen`). So an Exact result is the brute-force answer: the first `limit` members of the feasible set in the order of value, highest first, and then ordinal, lowest first. If the feasible set is smaller than the limit, the result is the whole feasible set.
 
 ```quint
 pure val unseenBoundValues = Set(-1, 2, 4, 6)
@@ -169,17 +205,17 @@ pure def alwaysExactBeatsUnseen(s: CandidateSearch): bool =
 pure def sometimesExact(s: CandidateSearch): bool = s.phase == Exact and s.unseenBound >= 0
 ```
 
-### A search that spends its budget before it is exact reports the value it may have missed
+### A search that spends its budget or its posting walk before it is exact reports the value it may have missed
 
-A search that reaches its budget and cannot stop exactly closes as Budgeted. Its kept list is the best among the checked candidates, and no candidate it did not check has a pair value above `unseenBound`. The engine records the search, its bound, and an empty or Budgeted result as the reason of [Story F21](product/stories.md#story-f21--hear-when-nothing-fits). It never fills the gap with a pair that has no pair value. A closed search does not change.
+A search that cannot stop exactly closes as Budgeted when it reaches its check budget, or when the shell has spent its posting walk (`walkSpent`) and has no touched candidate left to check. Its kept list is the best among the checked candidates, and no candidate it did not check has a pair value above `unseenBound`. The engine records the search, its bound, and an empty or Budgeted result as the reason of [Story F21](product/stories.md#story-f21--hear-when-nothing-fits). It never fills the gap with a pair that has no pair value. A closed search does not change.
 
-The cost bound: a search makes at most `budget` pair checks (`alwaysChecksWithinBudget`), and a run starts at most one search for each lane membership of each member. So the pair checks of a run in one lane are at most the number of members times the lane's search budget, whatever the data.
+The cost bound: a search makes at most `budget` pair checks (`alwaysChecksWithinBudget`), and a run starts at most one search for each lane membership of each member. So the pair checks of a run in one lane are at most the number of members times the lane's search budget, whatever the data. The shell also stops its posting walk at `searchTouchesPerCheck` times the search budget, and it bounds each touched candidate once, so the other work of a search is at most that many posting entries and bounds, plus the binary searches and one sort of the touched candidates.
 
 ```quint
-pure def canCloseBudgeted(s: CandidateSearch, unseenBound: int): bool =
-  s.phase == Scanning and s.checks >= s.budget and not(searchStopsExact(s, unseenBound))
+pure def canCloseBudgeted(s: CandidateSearch, unseenBound: int, walkSpent: bool): bool =
+  s.phase == Scanning and (s.checks >= s.budget or walkSpent) and not(searchStopsExact(s, unseenBound))
 
-pure def closeBudgeted(s: CandidateSearch, unseenBound: int): CandidateSearch =
+pure def closeBudgeted(s: CandidateSearch, unseenBound: int, walkSpent: bool): CandidateSearch =
   { ...s, phase: Budgeted, unseenBound: unseenBound }
 
 pure def stepClosedSearchStaysClosed(before: CandidateSearch, after: CandidateSearch): bool =

@@ -1,11 +1,14 @@
 // The matching block: the generic match core (packages/engine/src/match) and runEngine on planted
 // worlds (packages/sim/src/planted.ts), engine only, offline and deterministic, for each pack and
-// each lane the pack offers (one lane per world, so every proposal belongs to that lane).
+// each lane the pack offers. Each world plants one lane with the app's own member inputs; a member
+// may also hold other lanes of the pack, so every proposal resolves in its own lane: the invariant
+// gates check every proposal under its own lane's limits, and the quality metrics grade the world's lane.
 // PINNED (CI): seeds 1-10; exactness at N 100, 200 and 400; the engine gates at N 200 (the shipped
 // config, plus a greedy-only arm for stability); cost at N 1,000 (every lane), 10,000 and 100,000
 // (each pack's primary lane, seed 1). --quick: seeds 1-3, exactness at N 100 and 200, cost at N
 // 1,000 and 10,000. The hidden truth (planted circles and standing) is read here only.
 import { hash32, Rng, type MemberId } from "../../packages/core/src/index.ts";
+import { searchTouchesPerCheck } from "../../packages/core/src/generated/candidateSearch.ts";
 import { laneLimits, laneOffered, laneOffset, type MatchLane } from "../../packages/core/src/generated/matchLane.ts";
 import { parityAllowed, standingGap } from "../../packages/core/src/generated/pairValue.ts";
 import { resolveConfig, type EngineConfigInput } from "../../packages/engine/src/config.ts";
@@ -21,7 +24,7 @@ import { slopPack } from "../../packages/engine/src/packs/slop/index.ts";
 import type { EngineInput } from "../../packages/engine/src/types.ts";
 import { World } from "../../packages/engine/src/world.ts";
 import {
-  adjustedRandIndex, groupPurity, matchedStandingCorrelation, pairPrecision, PLANTED_LANES, plantedEngineInput, plantedLabels,
+  adjustedRandIndex, groupPurity, levelStanding, matchedStandingCorrelation, pairPrecision, PLANTED_LANES, plantedEngineInput, plantedLabels,
   plantedPairTruth, randomGroups, type PlantedTruth,
 } from "../../packages/sim/src/planted.ts";
 import { Block } from "./gate.ts";
@@ -52,10 +55,10 @@ const flatEmbed = (): number[] => [1];
 
 type Pair = readonly [MemberId, MemberId];
 interface Faults { count: number; first?: string }
-interface CostRow { profiles: number; checks: number; bound: number; tally: number; ms: number }
+interface CostRow { profiles: number; exact: number; checks: number; bound: number; touches: number; touchBound: number; tally: number; ms: number }
 interface LaneStats {
   readonly lane: MatchLane;
-  searches: number; exact: number; runs: number; laneProfiles: number; noKept: number;
+  searches: number; exact: number; runs: number; laneProfiles: number; noKept: number; otherLane: number;
   pairs: number; groups: number; circles: number; blockingPairs: number;
   readonly empty: Faults; readonly minors: Faults; readonly mismatch: Faults; readonly missed: Faults;
   readonly parity: Faults; readonly reciprocity: Faults; readonly unprofiled: Faults; readonly groupFaults: Faults;
@@ -69,7 +72,7 @@ interface LaneStats {
 
 const noFaults = (): Faults => ({ count: 0 });
 const laneStats = (lane: MatchLane): LaneStats => ({
-  lane, searches: 0, exact: 0, runs: 0, laneProfiles: 0, noKept: 0, pairs: 0, groups: 0, circles: 0, blockingPairs: 0,
+  lane, searches: 0, exact: 0, runs: 0, laneProfiles: 0, noKept: 0, otherLane: 0, pairs: 0, groups: 0, circles: 0, blockingPairs: 0,
   empty: noFaults(), minors: noFaults(), mismatch: noFaults(), missed: noFaults(),
   parity: noFaults(), reciprocity: noFaults(), unprofiled: noFaults(), groupFaults: noFaults(),
   logged: { members: 0, exact: 0 },
@@ -154,45 +157,53 @@ async function engineGates(pack: AppPack, seed: number, input: EngineInput, trut
   s.laneProfiles += own.length;
   for (const p of own) if (!w.match.candidates(p).kept.length) s.noKept++;
 
-  const { utilityFloor } = laneLimits(lane).rules;
   const pairs: Pair[] = [];
   const proposed = new Set<MemberId>();
   for (const p of shipped.proposals) {
-    for (const id of p.participants) proposed.add(id);
     if (p.participants.some(id => minors.has(id))) { fault(s.minors, `${at}: proposal ${p.id} includes a minor`); continue; }
-    if (p.participants.length < 2) continue;
-    // The proposal names each participant's matched entity (a seat, a market) when it is not the member.
+    if (p.participants.length < 2) { for (const id of p.participants) proposed.add(id); continue; }
+    // spec/matchLane.md, "Two members pair only on compatible sides of the same lane": every proposal
+    // with two or more participants names its lane, and each participant resolves to a profile in that
+    // lane (the named entity, a seat or a market, else the member's).
+    const proposalLane = p.lane;
+    if (!proposalLane) { fault(s.unprofiled, `${at}: proposal ${p.id} (${p.generator}) names no lane`); continue; }
     const group = p.participants.flatMap(id => {
       const entity = p.entities?.[id];
-      const q = entity ? w.match.profile(entity) : w.match.profileIn(id, p.lane ?? lane);
-      return q?.lane === lane ? [q] : [];
+      const q = entity ? w.match.profile(entity) : w.match.profileIn(id, proposalLane);
+      return q?.lane === proposalLane ? [q] : [];
     });
-    if (group.length !== p.participants.length) { fault(s.unprofiled, `${at}: proposal ${p.id} (${p.generator}) has a participant without a ${lane} profile`); continue; }
+    if (group.length !== p.participants.length) { fault(s.unprofiled, `${at}: proposal ${p.id} (${p.generator}) has a participant without a ${proposalLane} profile`); continue; }
+    // A member also holds the pack's other lanes (an ntwrk founder raising money is an Intro peer
+    // too). The invariants below hold in every lane, under that lane's limits; the quality metrics
+    // (pairs, groups, the low quintile) count the world's lane only.
+    const graded = proposalLane === lane;
+    if (graded) for (const id of p.participants) proposed.add(id);
+    else s.otherLane++;
     if (group.length > 2) {
-      s.groups++;
-      const f = groupFault(w, lane, group);
-      if (f) fault(s.groupFaults, `${at}: proposal ${p.id}: ${f}`);
+      if (graded) s.groups++;
+      const f = groupFault(w, proposalLane, group);
+      if (f) fault(s.groupFaults, `${at}: ${proposalLane} proposal ${p.id}: ${f}`);
       continue;
     }
     const [a, b] = group as [MatchProfile, MatchProfile];
-    s.pairs++;
-    pairs.push([a.memberId, b.memberId]);
+    if (graded) { s.pairs++; pairs.push([a.memberId, b.memberId]); }
+    const { parityBand, utilityFloor } = laneLimits(proposalLane).rules;
     // spec/pairValue.md, "A pair is refused when the gap is wider than the band and both uncertainties"
-    const gap = standingGap(a.standing, b.standing, laneOffset(lane, a.side));
-    if (!parityAllowed(gap, laneLimits(lane).rules.parityBand, a.uncertainty, b.uncertainty)) {
-      fault(s.parity, `${at}: ${a.id} (${a.standing}±${a.uncertainty}) and ${b.id} (${b.standing}±${b.uncertainty}) gap ${gap}`);
+    const gap = standingGap(a.standing, b.standing, laneOffset(proposalLane, a.side));
+    if (!parityAllowed(gap, parityBand, a.uncertainty, b.uncertainty)) {
+      fault(s.parity, `${at}: ${proposalLane} ${a.id} (${a.standing}±${a.uncertainty}) and ${b.id} (${b.standing}±${b.uncertainty}) gap ${gap}`);
     }
     // spec/pairValue.md, "A pair has a value only when both utilities reach the lane floor"
     const ua = directed(w, a, b), ub = directed(w, b, a);
-    if (ua < utilityFloor || ub < utilityFloor) fault(s.reciprocity, `${at}: ${a.id}->${b.id} ${ua}, ${b.id}->${a.id} ${ub}, floor ${utilityFloor}`);
+    if (ua < utilityFloor || ub < utilityFloor) fault(s.reciprocity, `${at}: ${proposalLane} ${a.id}->${b.id} ${ua}, ${b.id}->${a.id} ${ub}, floor ${utilityFloor}`);
   }
 
   if (pairs.length) {
     const random = randomPairs(w, lane, pairs.length, seed);
-    s.rho.push(matchedStandingCorrelation(truth, lane, pairs));
-    s.rhoRandom.push(matchedStandingCorrelation(truth, lane, random));
-    s.worse.push(mean(pairs.map(([a, b]) => plantedPairTruth(truth, lane, a, b))));
-    s.worseRandom.push(mean(random.map(([a, b]) => plantedPairTruth(truth, lane, a, b))));
+    s.rho.push(matchedStandingCorrelation(truth, pairs));
+    s.rhoRandom.push(matchedStandingCorrelation(truth, random));
+    s.worse.push(mean(pairs.map(([a, b]) => plantedPairTruth(truth, a, b))));
+    s.worseRandom.push(mean(random.map(([a, b]) => plantedPairTruth(truth, a, b))));
   }
 
   if (laneLimits(lane).circleMaximum >= 3) {
@@ -218,7 +229,8 @@ async function engineGates(pack: AppPack, seed: number, input: EngineInput, trut
     }
   }
 
-  const standingOf = (id: MemberId): number => truth.members[truth.ordinalOf.get(id)!]!.lanes[lane]?.standing ?? 0;
+  // Ranked by standing after the lane offset, so a two-sided lane's low quintile is not just its Seeking side.
+  const standingOf = (id: MemberId): number => levelStanding(truth, id) ?? 0;
   const members = [...new Set(own.map(q => q.memberId))].sort((x, y) => standingOf(x) - standingOf(y) || (x < y ? -1 : x > y ? 1 : 0));
   const low = members.slice(0, Math.ceil(members.length / 5));
   s.low.members += low.length; s.low.proposed += low.filter(id => proposed.has(id)).length;
@@ -226,13 +238,17 @@ async function engineGates(pack: AppPack, seed: number, input: EngineInput, trut
 }
 
 function costRun(pack: AppPack, n: number, seed: number, s: LaneStats): void {
-  const { input } = plantedEngineInput({ seed: `matching-${seed}`, n, lanes: [s.lane], app: pack.id });
+  const { input } = plantedEngineInput({ seed: `matching-${seed}`, n, lane: s.lane, app: pack.id });
   const w = new World(input, resolveConfig({ seed }), flatEmbed, pack);
   const profiles = w.match.profiles;
   const t = performance.now();
-  let checks = 0, bound = 0;
-  for (const p of profiles) { checks += w.match.candidates(p).checks; bound += laneLimits(p.lane).searchBudget; }
-  s.cost.set(n, { profiles: profiles.length, checks, bound, tally: w.match.tally().checks, ms: Math.round(performance.now() - t) });
+  let exact = 0, checks = 0, bound = 0, touches = 0, touchBound = 0;
+  for (const p of profiles) {
+    const result = w.match.candidates(p);
+    exact += result.exact ? 1 : 0; checks += result.checks; touches += result.touches;
+    bound += laneLimits(p.lane).searchBudget; touchBound += searchTouchesPerCheck * laneLimits(p.lane).searchBudget;
+  }
+  s.cost.set(n, { profiles: profiles.length, exact, checks, bound, touches, touchBound, tally: w.match.tally().checks, ms: Math.round(performance.now() - t) });
 }
 
 const pct = (x: number, n: number): string => (n ? `${((100 * x) / n).toFixed(1)}%` : "-");
@@ -254,6 +270,7 @@ function printTable(pack: AppPack, lanes: readonly LaneStats[], plan: Plan): voi
     ["parity faults", s => String(s.parity.count)],
     ["reciprocity faults", s => String(s.reciprocity.count)],
     ["unprofiled proposals", s => String(s.unprofiled.count)],
+    ["other-lane proposals (not graded)", s => String(s.otherLane)],
     ["blocking pairs (greedy)", s => String(s.blockingPairs)],
     ["standing rho match / random", s => versus(s.rho, s.rhoRandom)],
     ["worse-side truth match / random", s => versus(s.worse, s.worseRandom)],
@@ -262,7 +279,9 @@ function printTable(pack: AppPack, lanes: readonly LaneStats[], plan: Plan): voi
     ["purity circles / random", s => versus(s.purity, s.purityRandom)],
     ["pair precision circles / random", s => versus(s.precision, s.precisionRandom)],
     ["low quintile / overall rate", s => fixed(lowRatio(s), 2)],
+    ...costRow("exact searches", c => pct(c.exact, c.profiles)),
     ...costRow("checks/profile", c => fixed(c.checks / Math.max(1, c.profiles), 1)),
+    ...costRow("touches/profile", c => fixed(c.touches / Math.max(1, c.profiles), 1)),
     ...costRow("search ms", c => String(c.ms)),
   ];
   const table = [["", ...lanes.map(s => s.lane)], ...rows.map(([label, f]) => [label, ...lanes.map(f)])];
@@ -298,14 +317,15 @@ function packGates(b: Block, pack: AppPack, lanes: readonly LaneStats[], plan: P
   for (const s of lanes) for (const [n, c] of s.cost) {
     if (c.profiles === 0) fault(cost, `${s.lane} N ${n}: no profiles`);
     else if (c.checks > c.bound) fault(cost, `${s.lane} N ${n}: ${c.checks} checks > ${c.bound}`);
+    else if (c.touches > c.touchBound) fault(cost, `${s.lane} N ${n}: ${c.touches} touches > ${c.touchBound}`);
     else if (c.tally !== c.checks) fault(cost, `${s.lane} N ${n}: tally ${c.tally} != ${c.checks} checks`);
   }
-  b.gate(`${id}: pair checks <= profiles x searchBudget (N ${plan.costN.join("/")})`, cost.count === 0,
-    `${perLane(s => [...s.cost].map(([n, c]) => `N ${n} ${fixed(c.checks / Math.max(1, c.profiles), 1)}/profile ${c.ms}ms`).join(", "))}; ${show(cost)}`);
+  b.gate(`${id}: pair checks <= profiles x searchBudget, posting touches <= profiles x ${searchTouchesPerCheck} x searchBudget (N ${plan.costN.join("/")})`, cost.count === 0,
+    `${perLane(s => [...s.cost].map(([n, c]) => `N ${n} ${fixed(c.checks / Math.max(1, c.profiles), 1)} checks, ${fixed(c.touches / Math.max(1, c.profiles), 1)} touches/profile ${c.ms}ms`).join(", "))}; ${show(cost)}`);
 
   const parity = merged(s => s.parity);
   b.gate(`${id}: no proposed pair has a standing gap beyond band + both uncertainties (${runs})`, parity.count === 0,
-    `${perLane(s => `${s.pairs} pairs`)}; ${show(parity)}`);
+    `${perLane(s => `${s.pairs} pairs, ${s.otherLane} other-lane proposals`)}; ${show(parity)}`);
 
   const reciprocity = merged(s => s.reciprocity);
   b.gate(`${id}: both directed utilities of every proposed pair reach the lane floor (${runs})`, reciprocity.count === 0, show(reciprocity));
@@ -319,8 +339,10 @@ function packGates(b: Block, pack: AppPack, lanes: readonly LaneStats[], plan: P
 
   const above = (xs: readonly number[], ys: readonly number[]) => mean(xs) > mean(ys);
   const paired = lanes.filter(s => s.rho.length);
+  // A lane with fewer than two pairs per run has no correlation (NaN), so it is not compared.
+  const correlated = paired.filter(s => Number.isFinite(mean(s.rho)));
   b.track(`${id}: matched standing correlation above a random pairing (${runs})`,
-    paired.length > 0 && paired.every(s => above(s.rho, s.rhoRandom)), perLane(s => versus(s.rho, s.rhoRandom)));
+    correlated.length > 0 && correlated.every(s => above(s.rho, s.rhoRandom)), perLane(s => versus(s.rho, s.rhoRandom)));
   b.track(`${id}: hidden worse-side utility above a random pairing (${runs})`,
     paired.length > 0 && paired.every(s => above(s.worse, s.worseRandom)), perLane(s => versus(s.worse, s.worseRandom)));
 
@@ -349,7 +371,7 @@ export async function matchingBlock(b: Block, o: { quick: boolean }): Promise<vo
   const plan = o.quick ? MATCHING_QUICK : MATCHING_PINNED;
   const stats = PACKS.map(pack => ({ pack, lanes: lanesOf(pack).map(laneStats) }));
   for (const n of plan.exactN) for (const seed of plan.seeds) for (const { pack, lanes } of stats) for (const s of lanes) {
-    const { input, truth } = plantedEngineInput({ seed: `matching-${seed}`, n, lanes: [s.lane], app: pack.id });
+    const { input, truth } = plantedEngineInput({ seed: `matching-${seed}`, n, lane: s.lane, app: pack.id });
     // runEngine canonicalizes its input the same way, so this World holds the run's profiles.
     const w = new World(canonicalInput(input), resolveConfig({ seed }), localEmbed, pack);
     exactness(w, s, `N ${n} seed ${seed}`);

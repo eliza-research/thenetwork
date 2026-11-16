@@ -177,9 +177,18 @@ export function composeGroup(w: World, opts: ComposeOptions): ComposedGroup | nu
           return [{ id, low: Math.min(...known), fit: affinity.get(id) ?? 0 }];
         })
         .sort((x, y) => y.low - x.low || y.fit - x.fit || compareText(x.id, y.id));
-      const alternateLimit = Math.min(Math.max(0, Math.trunc(opts.alternates)), alternates.length);
-      formation = step(formation, { type: "openAlternates", alternateLimit });
-      for (const alt of alternates.slice(0, alternateLimit)) formation = step(formation, { type: "reserveAlternate", member: alt.id });
+      // In that order, an alternate is kept only with a pair value (the one pair gate) with every
+      // alternate kept before it, so any backfill values every pair (spec/models/candidate_pool.md,
+      // noAltPairBlockedEngine).
+      const wanted = Math.max(0, Math.trunc(opts.alternates));
+      const kept: MemberId[] = [];
+      for (const alt of alternates) {
+        if (kept.length >= wanted) break;
+        const profile = graph.profiles.get(alt.id)!;
+        if (kept.every(other => w.match.value(profile, graph.profiles.get(other)!) >= 0)) kept.push(alt.id);
+      }
+      formation = step(formation, { type: "openAlternates", alternateLimit: kept.length });
+      for (const id of kept) formation = step(formation, { type: "reserveAlternate", member: id });
       formation = step(formation, { type: "finishGroup" });
 
       const roles: Record<MemberId, Role> = {};

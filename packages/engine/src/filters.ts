@@ -288,9 +288,7 @@ function pairValuesOf(w: World, c: LaneSeats, lane: MatchLane): readonly number[
 }
 
 /** An alternate stays only when it has a pair value with every primary participant the lane pairs it with. */
-function alternateFits(w: World, c: Candidate, lane: MatchLane, id: MemberId): boolean {
-  const alternate = laneProfile(w, c, id, lane);
-  if (!alternate) return false;
+function alternateFits(w: World, c: Candidate, lane: MatchLane, alternate: MatchProfile): boolean {
   let paired = false;
   for (const primary of c.participants) {
     const profile = laneProfile(w, c, primary, lane)!;
@@ -313,14 +311,23 @@ function laneReason(w: World, c: Candidate): FilterReason | null {
 }
 
 /**
- * The alternates that keep a pair value with every primary participant the lane pairs them with; a
- * failing alternate is dropped and never refuses the candidate. With one participant an alternate
- * replaces that participant and pairs with nobody, so there is no pair to check.
+ * The alternates, in the candidate's order, that keep a pair value with every primary participant
+ * and with every alternate kept before them that the lane pairs them with, so any backfill from them
+ * values every pair (spec/models/candidate_pool.md, noAltPairBlockedEngine). A failing alternate is
+ * dropped and never refuses the candidate. With one participant an alternate replaces that
+ * participant and pairs with nobody, so there is no pair to check.
  */
 function keptAlternates(w: World, c: Candidate): MemberId[] {
   const lane = c.lane;
   if (!lane || c.participants.length < 2) return [...c.alternates];
-  return c.alternates.filter(id => alternateFits(w, c, lane, id));
+  const kept: MatchProfile[] = [];
+  for (const id of c.alternates) {
+    const alternate = laneProfile(w, c, id, lane);
+    if (!alternate || !alternateFits(w, c, lane, alternate)) continue;
+    if (kept.some(other => laneSidesCompatible(lane, alternate.side, other.side) && w.match.value(alternate, other) < 0)) continue;
+    kept.push(alternate);
+  }
+  return kept.map(profile => profile.memberId);
 }
 
 /** Resolve the shared city and window after the other checks (ME-011). */

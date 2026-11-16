@@ -31,8 +31,8 @@ import {
   type Category, type Facet, type Intent, type LeakOptions, type LLM, type MemberId, type NetworkEvent, type ParticipationState, type Proposal, type ScoreComponents, type WorldSnapshot,
 } from "@thenetwork/core";
 import {
-  attention, CONTRIBUTOR_ROLES, DEFAULT_ATTENTION, localEmbed, networkPack, plans, resolveConfig, resolvePlans, runEngine,
-  type AskRecord, type EngineAsk, type EngineConfigInput, type EngineInput, type EngineProposal, type FeedbackRecord, type InteractionRecord, type MatchingRunLog,
+  attention, CONTRIBUTOR_ROLES, DEFAULT_ATTENTION, JudgeCache, localEmbed, networkPack, plans, resolveConfig, resolvePlans, runEngine,
+  type AskRecord, type EngineDeps, type EngineAsk, type EngineConfigInput, type EngineInput, type EngineProposal, type FeedbackRecord, type InteractionRecord, type MatchingRunLog,
   type AppPack, type PlansConfig, type PlansConfigInput, World as EngineWorld, DEFAULT_FRIENDS_POLICY, planFriendsWeek,
 } from "@thenetwork/engine";
 import { initial as initialCrewOffer, step as stepCrewOffer, type CrewOfferState } from "../../core/src/generated/crewOffer.ts";
@@ -3922,7 +3922,15 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     for (const crew of this.crews) {
       if (crew.handedOff) continue;
-      if ([...this.opps.values()].some(o => o.plan?.crewId === crew.id && OPEN_STAGES.has(o.stage))) continue;
+      const sessions = [...this.opps.values()].filter(o => o.plan?.crewId === crew.id);
+      if (sessions.some(o => OPEN_STAGES.has(o.stage))) continue;
+      // spec/models/plan_crew.md, handoffCountsSessions: the hand-off comes after the sessions that were
+      // held (done); a session rejected, expired or without quorum (closed) does not count.
+      if (sessions.filter(o => o.stage === "done").length >= this.pcfg.crews.handOffAfterSessions) {
+        crew.handedOff = true;
+        this.ctx.log("crew_handoff", { crewId: crew.id });
+        continue;
+      }
       const v = PLAN_VENUES.find(x => x.id === crew.venueId);
       const place = v ? { name: v.name, area: v.area } : { name: "the usual spot" };
       const members = crew.members.filter(id => { const m = this.members.get(id); return !!m && this.planSeatOk(m); });
@@ -3933,7 +3941,6 @@ export class ConsentNetwork implements NetworkUnderTest {
       crew.sessions.push(plan.id);
       this.plansCounters.crewSessions++;
       this.ctx.log("crew_session", { crewId: crew.id, session: crew.sessions.length, invited: plan.invited.length });
-      if (crew.sessions.length >= this.pcfg.crews.handOffAfterSessions) { crew.handedOff = true; this.ctx.log("crew_handoff", { crewId: crew.id }); }
       this.submitPlan(plan, now);
     }
   }
@@ -4211,9 +4218,14 @@ export class ConsentNetwork implements NetworkUnderTest {
     return { fingerprint: sha256(stableStringify(evidence)), intentIds: intents.map(i => i.id).sort() };
   }
 
+  /** The judge verdict caches of this Network, kept across its engine runs (ME-008; spec/models/matching_engine.md judgeCacheReused). */
+  private judgeCaches?: Required<Pick<EngineDeps, "judgeCache" | "screenCache" | "deepCache">>;
+
   private async runMatching(input: EngineInput, now: number, allowance: number) {
-    const deps = { ...(this.opts.engineLLM ? { llm: this.opts.engineLLM } : {}), ...(this.opts.pack ? { pack: this.opts.pack } : {}) };
     const config = this.effectiveEngineConfig();
+    const ttlMs = resolveConfig(config).judge.ttlMs;
+    this.judgeCaches ??= { judgeCache: new JudgeCache(ttlMs), screenCache: new JudgeCache(ttlMs), deepCache: new JudgeCache(ttlMs) };
+    const deps: EngineDeps = { ...this.judgeCaches, ...(this.opts.engineLLM ? { llm: this.opts.engineLLM } : {}), ...(this.opts.pack ? { pack: this.opts.pack } : {}) };
     const { proposals, asks, runLog } = await runEngine(input, config, deps);
     // Exposure debt tracks regular runs over the whole market (matching-e2e-6).
     if (!input.standingIntentSearch) this.exposureDebt = { ...(runLog.exposureDebt ?? {}) };

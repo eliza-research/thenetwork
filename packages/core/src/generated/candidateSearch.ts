@@ -16,8 +16,10 @@ export type Event =
   | { type: "beginSearch"; limit: number; budget: number }
   | { type: "checkCandidate"; value: number; ordinal: number }
   | { type: "closeExact"; unseenBound: number }
-  | { type: "closeBudgeted"; unseenBound: number };
+  | { type: "closeBudgeted"; unseenBound: number; walkSpent: boolean };
 
+/** Story: Search only where a pair can have a value / The tag postings of the member hold every partner with a value (spec/candidateSearch.md) */
+export const searchTouchesPerCheck: number = 8;
 /** Story: Keep the best candidates within a fixed number of pair checks / A search starts once with a positive limit and a budget no smaller than the limit (spec/candidateSearch.md) */
 export const initial: CandidateSearch = { phase: "Idle", limit: 0, budget: 0, checks: 0, kept: ([] as RankedCandidate[]), bestDropped: pairValue_noPairValue, bestDroppedOrdinal: 0, unseenBound: pairValue_noPairValue };
 
@@ -52,20 +54,42 @@ export function lawWindowComplete(standing: number, otherStanding: number, offse
   return !(otherUncertainty <= uncertaintyCeiling && pairValue_parityAllowed(pairValue_standingGap(standing, otherStanding, offset), band, uncertainty, otherUncertainty)) || inSearchWindow(otherStanding, standing, offset, band, uncertainty, uncertaintyCeiling);
 }
 
-/** Story: Search only where a pair can have a value / A bucket bound is never below the value of a pair inside the bucket (spec/candidateSearch.md) */
+/** Story: Search only where a pair can have a value / A bound is never below the value of the pair it covers (spec/candidateSearch.md) */
+//@ pure
+export function lawCandidateBoundSound(side: pairValue_PairSide, other: pairValue_PairSide, offset: number, rules: pairValue_PairRules, utilityBound: number, otherUtilityBound: number): boolean {
+  //@ ensures \result === true
+  return !(side.utility <= utilityBound && other.utility <= otherUtilityBound) || pairValue_pairValue(side, other, offset, rules) <= pairValue_pairValue(({ ...side, utility: utilityBound } as pairValue_PairSide), ({ ...other, utility: otherUtilityBound } as pairValue_PairSide), offset, rules);
+}
+
+/** Story: Search only where a pair can have a value / A bound is never below the value of the pair it covers (spec/candidateSearch.md) */
 //@ pure
 export function bucketValueBound(utilityBound: number, otherUtilityBound: number, leastPenalty: number): number {
   const local_0 = exact_candidateSearch(pairValue_harmonicValue(utilityBound, otherUtilityBound) - leastPenalty);
   return local_0 > 0 ? local_0 : 0;
 }
 
-/** Story: Search only where a pair can have a value / A bucket bound is never below the value of a pair inside the bucket (spec/candidateSearch.md) */
+/** Story: Search only where a pair can have a value / A bound is never below the value of the pair it covers (spec/candidateSearch.md) */
 //@ pure
 export function lawBucketBoundSound(utility: number, otherUtility: number, penalty: number, utilityBound: number, otherUtilityBound: number, leastPenalty: number): boolean {
   //@ ensures \result === true
   const local_1 = exact_candidateSearch(pairValue_harmonicValue(utility, otherUtility) - penalty);
   const local_2 = local_1 > 0 ? local_1 : 0;
   return !(utility <= utilityBound && otherUtility <= otherUtilityBound && penalty >= leastPenalty && leastPenalty >= 0) || local_2 <= bucketValueBound(utilityBound, otherUtilityBound, leastPenalty);
+}
+
+/** Story: Search only where a pair can have a value / A bound is never below the value of the pair it covers (spec/candidateSearch.md) */
+//@ pure
+export function unseenValueBound(utilityBound: number, otherUtilityBound: number, exchangeBound: number, otherExchangeBound: number, rules: pairValue_PairRules): number {
+  const local_3 = utilityBound < rules.utilityFloor || otherUtilityBound < rules.utilityFloor;
+  const local_4 = rules.balanceRequired && (exchangeBound < rules.exchangeFloor || otherExchangeBound < rules.exchangeFloor);
+  return local_3 || local_4 ? pairValue_noPairValue : bucketValueBound(utilityBound, otherUtilityBound, 0);
+}
+
+/** Story: Search only where a pair can have a value / A bound is never below the value of the pair it covers (spec/candidateSearch.md) */
+//@ pure
+export function lawUnseenBoundSound(side: pairValue_PairSide, other: pairValue_PairSide, offset: number, rules: pairValue_PairRules, utilityBound: number, otherUtilityBound: number, exchangeBound: number, otherExchangeBound: number): boolean {
+  //@ ensures \result === true
+  return !(side.utility <= utilityBound && other.utility <= otherUtilityBound && side.exchange <= exchangeBound && other.exchange <= otherExchangeBound) || pairValue_pairValue(side, other, offset, rules) <= unseenValueBound(utilityBound, otherUtilityBound, exchangeBound, otherExchangeBound, rules);
 }
 
 /** Story: Keep the best candidates within a fixed number of pair checks / A search starts once with a positive limit and a budget no smaller than the limit (spec/candidateSearch.md) */
@@ -178,8 +202,8 @@ export function sometimesDroppedCandidate(s: CandidateSearch): boolean {
 /** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
 //@ pure
 export function alwaysKeptRankAboveDropped(s: CandidateSearch): boolean {
-  const local_3: RankedCandidate = searchDroppedRank(s);
-  return !(s.bestDropped > pairValue_noPairValue) || !s.kept.some((c: RankedCandidate) => !candidateRanksAbove(c, local_3));
+  const local_5: RankedCandidate = searchDroppedRank(s);
+  return !(s.bestDropped > pairValue_noPairValue) || !s.kept.some((c: RankedCandidate) => !candidateRanksAbove(c, local_5));
 }
 
 /** Story: Keep the best candidates within a fixed number of pair checks / Each check counts once and keeps the candidate only when it ranks among the best (spec/candidateSearch.md) */
@@ -196,12 +220,12 @@ export function checkCandidate(s: CandidateSearch, value: number, ordinal: numbe
   //@ ensures (inv(s) && canCheckCandidate(s, ordinal)) ==> alwaysExactBeatsUnseen(\result)
   //@ ensures (inv(s) && canCheckCandidate(s, ordinal)) ==> stepEachCheckCountsOnce(s, "checkCandidate", \result)
   //@ ensures (inv(s) && canCheckCandidate(s, ordinal)) ==> stepClosedSearchStaysClosed(s, \result)
-  const local_4: RankedCandidate = { value: value, ordinal: ordinal };
-  const local_5: WorstKeptScan = worstKeptScan(s.kept);
-  const local_6: RankedCandidate = searchHigherRanked(searchDroppedRank(s), local_5.worst);
-  const local_7: RankedCandidate = searchHigherRanked(searchDroppedRank(s), local_4);
-  const local_8: CandidateSearch = { ...s, checks: exact_candidateSearch(s.checks + 1) };
-  return value < 0 ? local_8 : (s.kept.length < s.limit ? ({ ...local_8, kept: s.kept.concat([local_4]) } as CandidateSearch) : (local_5.worstPosition >= 0 && local_5.worstPosition < s.kept.length && candidateRanksAbove(local_4, local_5.worst) ? ({ ...local_8, kept: (0 <= local_5.worstPosition && local_5.worstPosition < s.kept.length ? s.kept.slice(0, local_5.worstPosition).concat(s.kept.slice(local_5.worstPosition + 1)) : s.kept).concat([local_4]), bestDropped: local_6.value, bestDroppedOrdinal: local_6.ordinal } as CandidateSearch) : ({ ...local_8, bestDropped: local_7.value, bestDroppedOrdinal: local_7.ordinal } as CandidateSearch)));
+  const local_6: RankedCandidate = { value: value, ordinal: ordinal };
+  const local_7: WorstKeptScan = worstKeptScan(s.kept);
+  const local_8: RankedCandidate = searchHigherRanked(searchDroppedRank(s), local_7.worst);
+  const local_9: RankedCandidate = searchHigherRanked(searchDroppedRank(s), local_6);
+  const local_10: CandidateSearch = { ...s, checks: exact_candidateSearch(s.checks + 1) };
+  return value < 0 ? local_10 : (s.kept.length < s.limit ? ({ ...local_10, kept: s.kept.concat([local_6]) } as CandidateSearch) : (local_7.worstPosition >= 0 && local_7.worstPosition < s.kept.length && candidateRanksAbove(local_6, local_7.worst) ? ({ ...local_10, kept: (0 <= local_7.worstPosition && local_7.worstPosition < s.kept.length ? s.kept.slice(0, local_7.worstPosition).concat(s.kept.slice(local_7.worstPosition + 1)) : s.kept).concat([local_6]), bestDropped: local_8.value, bestDroppedOrdinal: local_8.ordinal } as CandidateSearch) : ({ ...local_10, bestDropped: local_9.value, bestDroppedOrdinal: local_9.ordinal } as CandidateSearch)));
 }
 
 /** Story: Keep the best candidates within a fixed number of pair checks / An exact search stops only when no unseen candidate can enter the kept list (spec/candidateSearch.md) */
@@ -245,39 +269,39 @@ export function alwaysExactBeatsUnseen(s: CandidateSearch): boolean {
   return !(s.phase === "Exact") || searchStopsExact(s, s.unseenBound);
 }
 
-/** Story: Keep the best candidates within a fixed number of pair checks / A search that spends its budget before it is exact reports the value it may have missed (spec/candidateSearch.md) */
+/** Story: Keep the best candidates within a fixed number of pair checks / A search that spends its budget or its posting walk before it is exact reports the value it may have missed (spec/candidateSearch.md) */
 //@ pure
-export function closeBudgeted(s: CandidateSearch, unseenBound: number): CandidateSearch {
-  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound)) ==> alwaysIdleSearchIsEmpty(\result)
-  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound)) ==> alwaysChecksWithinBudget(\result)
-  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound)) ==> alwaysKeptWithinLimit(\result)
-  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound)) ==> alwaysKeptValuesAreRealPairs(\result)
-  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound)) ==> alwaysDroppedOnlyWhenFull(\result)
-  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound)) ==> alwaysKeptOrdinalsDistinct(\result)
-  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound)) ==> alwaysKeptBeatDropped(\result)
-  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound)) ==> alwaysKeptRankAboveDropped(\result)
-  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound)) ==> alwaysExactBeatsUnseen(\result)
-  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound)) ==> stepEachCheckCountsOnce(s, "closeBudgeted", \result)
-  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound)) ==> stepClosedSearchStaysClosed(s, \result)
+export function closeBudgeted(s: CandidateSearch, unseenBound: number, walkSpent: boolean): CandidateSearch {
+  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent)) ==> alwaysIdleSearchIsEmpty(\result)
+  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent)) ==> alwaysChecksWithinBudget(\result)
+  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent)) ==> alwaysKeptWithinLimit(\result)
+  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent)) ==> alwaysKeptValuesAreRealPairs(\result)
+  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent)) ==> alwaysDroppedOnlyWhenFull(\result)
+  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent)) ==> alwaysKeptOrdinalsDistinct(\result)
+  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent)) ==> alwaysKeptBeatDropped(\result)
+  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent)) ==> alwaysKeptRankAboveDropped(\result)
+  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent)) ==> alwaysExactBeatsUnseen(\result)
+  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent)) ==> stepEachCheckCountsOnce(s, "closeBudgeted", \result)
+  //@ ensures (inv(s) && canCloseBudgeted(s, unseenBound, walkSpent)) ==> stepClosedSearchStaysClosed(s, \result)
   return { ...s, phase: "Budgeted", unseenBound: unseenBound };
 }
 
-/** Story: Keep the best candidates within a fixed number of pair checks / A search that spends its budget before it is exact reports the value it may have missed (spec/candidateSearch.md) */
+/** Story: Keep the best candidates within a fixed number of pair checks / A search that spends its budget or its posting walk before it is exact reports the value it may have missed (spec/candidateSearch.md) */
 //@ pure
 export function stepClosedSearchStaysClosed(before: CandidateSearch, after: CandidateSearch): boolean {
   return !(before.phase === "Exact" || before.phase === "Budgeted") || equal_candidateSearch(after, before);
 }
 
-/** Story: Keep the best candidates within a fixed number of pair checks / A search that spends its budget before it is exact reports the value it may have missed (spec/candidateSearch.md) */
+/** Story: Keep the best candidates within a fixed number of pair checks / A search that spends its budget or its posting walk before it is exact reports the value it may have missed (spec/candidateSearch.md) */
 //@ pure
 export function sometimesBudgeted(s: CandidateSearch): boolean {
   return s.phase === "Budgeted";
 }
 
-/** Story: Keep the best candidates within a fixed number of pair checks / A search that spends its budget before it is exact reports the value it may have missed (spec/candidateSearch.md) */
+/** Story: Keep the best candidates within a fixed number of pair checks / A search that spends its budget or its posting walk before it is exact reports the value it may have missed (spec/candidateSearch.md) */
 //@ pure
-export function canCloseBudgeted(s: CandidateSearch, unseenBound: number): boolean {
-  return s.phase === "Scanning" && s.checks >= s.budget && !searchStopsExact(s, unseenBound);
+export function canCloseBudgeted(s: CandidateSearch, unseenBound: number, walkSpent: boolean): boolean {
+  return s.phase === "Scanning" && (s.checks >= s.budget || walkSpent) && !searchStopsExact(s, unseenBound);
 }
 
 /** Do the rules allow this event in this state? */
@@ -286,7 +310,7 @@ export function enabled(current: CandidateSearch, event: Event): boolean {
   if (event.type === "beginSearch") return canBeginSearch(current, event.limit, event.budget);
   if (event.type === "checkCandidate") return canCheckCandidate(current, event.ordinal);
   if (event.type === "closeExact") return canCloseExact(current, event.unseenBound);
-  if (event.type === "closeBudgeted") return canCloseBudgeted(current, event.unseenBound);
+  if (event.type === "closeBudgeted") return canCloseBudgeted(current, event.unseenBound, event.walkSpent);
   return false;
 }
 
@@ -298,7 +322,7 @@ export function step(current: CandidateSearch, event: Event): CandidateSearch {
   if (event.type === "beginSearch" && canBeginSearch(current, event.limit, event.budget)) return beginSearch(current, event.limit, event.budget);
   if (event.type === "checkCandidate" && canCheckCandidate(current, event.ordinal)) return checkCandidate(current, event.value, event.ordinal);
   if (event.type === "closeExact" && canCloseExact(current, event.unseenBound)) return closeExact(current, event.unseenBound);
-  if (event.type === "closeBudgeted" && canCloseBudgeted(current, event.unseenBound)) return closeBudgeted(current, event.unseenBound);
+  if (event.type === "closeBudgeted" && canCloseBudgeted(current, event.unseenBound, event.walkSpent)) return closeBudgeted(current, event.unseenBound, event.walkSpent);
   return current;
 }
 
@@ -319,7 +343,7 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "beginSearch" && Number.isSafeInteger(raw.limit) && Number.isSafeInteger(raw.budget)) return { type: "beginSearch", limit: raw.limit, budget: raw.budget };
   if (raw.type === "checkCandidate" && Number.isSafeInteger(raw.value) && Number.isSafeInteger(raw.ordinal)) return { type: "checkCandidate", value: raw.value, ordinal: raw.ordinal };
   if (raw.type === "closeExact" && Number.isSafeInteger(raw.unseenBound)) return { type: "closeExact", unseenBound: raw.unseenBound };
-  if (raw.type === "closeBudgeted" && Number.isSafeInteger(raw.unseenBound)) return { type: "closeBudgeted", unseenBound: raw.unseenBound };
+  if (raw.type === "closeBudgeted" && Number.isSafeInteger(raw.unseenBound) && typeof raw.walkSpent === "boolean") return { type: "closeBudgeted", unseenBound: raw.unseenBound, walkSpent: raw.walkSpent };
   return undefined;
 }
 

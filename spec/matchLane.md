@@ -52,7 +52,7 @@ The table below is the starting table. Each number is a decision. Change a numbe
 
 | Lane | utilityFloor | parityBand | parityFreeGap | penalty per point | balance | exchangeFloor | tolerance % | offset | weeklyCapacity | searchLimit | searchBudget | circle min/max/pairFloor |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Friend | 300 | 100 | 100 | 0 | no | 0 | 100 | 0 | 3 | 12 | 600 | 3/6/350 |
+| Friend | 310 | 100 | 100 | 0 | no | 0 | 100 | 0 | 3 | 12 | 600 | 3/6/350 |
 | Date | 350 | 15 | 5 | 10 | no | 0 | 100 | 0 | 2 | 10 | 600 | 0/0/0 |
 | Cofounder | 400 | 20 | 8 | 10 | yes | 200 | 50 | 0 | 2 | 10 | 600 | 0/0/0 |
 | Intro | 350 | 20 | 8 | 10 | yes | 200 | 50 | 0 | 3 | 12 | 600 | 3/6/400 |
@@ -60,7 +60,7 @@ The table below is the starting table. Each number is a decision. Change a numbe
 | Mentor | 350 | 15 | 5 | 10 | no | 0 | 100 | 25 | 2 | 8 | 400 | 0/0/0 |
 | Invest | 400 | 15 | 5 | 15 | no | 0 | 100 | 0 | 2 | 8 | 400 | 0/0/0 |
 
-- **Utility floor.** Decision: each member must get at least this much from the other, so a pair is never one-sided. The work lanes (Cofounder, Hire, Invest) ask for more than the social lanes. The acceptance rate of the two sides of approved probes tunes it; a floor that refuses pairs that both sides accept in the per-app worlds is too high.
+- **Utility floor.** Decision: each member must get at least this much from the other, so a pair is never one-sided. The work lanes (Cofounder, Hire, Invest) ask for more than the social lanes. Friend uses 310, the smallest round number above 300 for which a friend pair must share at least one interest or want (`lawNoSharedTagStaysBelowFloor`): at 300, closeness and pack at full value give exactly 300. The acceptance rate of the two sides of approved probes tunes it; a floor that refuses pairs that both sides accept in the per-app worlds is too high.
 - **Parity band and free gap.** Decision: the private standing gap, after the offset, must stay inside the band plus both uncertainties, and the gap inside the free gap costs nothing. Friend has no vertical standing, so its band is the full range. Date uses a band of 15 points on the private appearance standing, plus both uncertainties. Cofounder and Intro use track record and allow a wider band than Hire and Invest. The reply and acceptance rate by standing gap tunes it, and the parity gate counter (pairs past the band) must stay 0.
 - **Penalty per point.** Decision: each point of gap past the free gap lowers the pair value by this much. Hire and Invest use the largest penalty, because a level mismatch costs both sides most there. The acceptance rate by gap inside the band tunes it.
 - **Balance, exchange floor and tolerance.** Decision: Cofounder and Intro require a balanced exchange. Each side must receive at least 200 and the two values may differ by at most 50 percent of the larger. Mentor has no balance rule, because the Offering side consents to the asymmetry. Hire and Invest use the parity band and offset as their two-way check. The share of accepted introductions that one side reports as one-sided tunes it.
@@ -82,7 +82,7 @@ pure val standingUncertaintyCeiling: int = 20
 pure def laneLimits(lane: MatchLane): LaneLimits =
   match lane {
     | Friend => {
-        rules: { utilityFloor: 300, parityBand: 100, parityFreeGap: 100, parityPenaltyPerPoint: 0,
+        rules: { utilityFloor: 310, parityBand: 100, parityFreeGap: 100, parityPenaltyPerPoint: 0,
                  balanceRequired: false, exchangeFloor: 0, balanceTolerancePercent: 100 },
         standingOffset: 0, weeklyCapacity: 3, searchLimit: 12, searchBudget: 600,
         circleMinimum: 3, circleMaximum: 6, circlePairFloor: 350
@@ -184,6 +184,32 @@ pure def lawLaneWeightsWellFormed(lane: MatchLane): bool =
     0 <= weights.complement, 0 <= weights.affinity, 0 <= weights.closeness, 0 <= weights.pack,
     weights.complement + weights.affinity + weights.closeness + weights.pack > 0,
   }
+```
+
+### A pair without a shared tag stays below the floor
+
+Closeness and the pack term do not come from tags. In a lane where they cannot reach the utility floor alone, a member gets a utility at or above the floor only from a partner with at least one complement hit (the partner offers something that the member seeks) or one affinity hit (a shared interest). That is the case when `pairValueScale` times the closeness and pack weights is below the floor times the sum of the weights. The weighted mean is rounded down, so the utility with both tag terms at 0 is then below the floor for every closeness and pack value up to full value. When a pack supplies no traits or no pack value, the shell gives that term weight 0, which only lowers that utility.
+
+The lanes, by hand: Friend 1000 x (2 + 1) = 3000 < 310 x 10 = 3100; Cofounder 3000 < 4000; Intro 2000 < 3500; Hire 3000 < 4000; Mentor 2000 < 3500; Invest 2000 < 4000. Date fails: 1000 x (2 + 3) = 5000 is not below 350 x 10 = 3500, because the private appearance term (the pack term) and closeness alone can make a date worth proposing. So a search in every lane except Date needs to look only at partners who share a tag with the member ([bounded candidate search](candidateSearch.md)).
+
+```quint
+pure def laneSharedTagRequired(lane: MatchLane): bool =
+  val weights = laneWeights(lane)
+  val weightSum = weights.complement + weights.affinity + weights.closeness + weights.pack
+  pairValueScale * (weights.closeness + weights.pack) < laneLimits(lane).rules.utilityFloor * weightSum
+
+pure val closenessValues = Set(0, 500, 1000)
+pure val packValues = Set(0, 999, 1000)
+
+pure def lawNoSharedTagStaysBelowFloor(lane: MatchLane, closeness: int, pack: int): bool =
+  val weights = laneWeights(lane)
+  val untagged = directedUtility(List(
+    { weight: weights.complement, value: 0 }, { weight: weights.affinity, value: 0 },
+    { weight: weights.closeness, value: closeness }, { weight: weights.pack, value: pack }))
+  laneSharedTagRequired(lane) implies untagged < laneLimits(lane).rules.utilityFloor
+
+pure def lawOnlyDateNeedsNoSharedTag(lane: MatchLane): bool =
+  laneSharedTagRequired(lane) iff lane != Date
 ```
 
 ## Story: Two sides meet across a role

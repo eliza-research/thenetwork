@@ -33,7 +33,7 @@ import {
 import { pairValueScale } from "../../../../core/src/generated/pairValue.ts";
 import { candidateSlots, type TimeSlot } from "../../attention.ts";
 import { DEFAULT_ATTENTION, DEFAULT_PLANS, type AttentionConfig, type PlansConfig } from "../../config.ts";
-import { isMinor, memberReason, pairReason } from "../../filters.ts";
+import { isMinor, memberReason, pairReason, requiredPairValues } from "../../filters.ts";
 import { sha256 } from "../../hash.ts";
 import type { Circle } from "../../match/circles.ts";
 import { activityFit, crewSessionPlan, daypartOf, detectCrews, hasWindow, planFreeProb, planMemberReason, type Crew, type Plan, type PlanEvidence, type PlanOutcomeRecord } from "../../plans.ts";
@@ -175,6 +175,11 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
   const tolOf = (id: MemberId) => info.get(id)?.tolerance ?? 40;
   const eligible = (id: MemberId) => !!w.get(id) && !isMinor(w, id) && !planMemberReason(w, id);
   const venueById = new Map(inp.venues.map(v => [v.id, v]));
+  /** `id` has a pair value in the Friend lane with each of `others` (the one pair gate: blocks, minors and lane rules). */
+  const pairsWithAll = (id: MemberId, others: readonly MemberId[]) => others.every(other => {
+    const values = requiredPairValues(w, { participants: [id, other], lane: "Friend" });
+    return !!values && values.every(value => value >= 0);
+  });
   let week = initialWeek;
   const reserve = (event: WeekEvent) => {
     const next = stepWeek(week, event);
@@ -204,7 +209,11 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
     for (const [id, h] of homes) minutes[id] = at ? transitMinutes(h, at) : 45;
     const fits = (id: MemberId) => (minutes[id] ?? 99) <= tolOf(id) * pol.toleranceSlack;
     const invited = p.invited.filter(fits);
-    const alternates = p.alternates.filter(fits);
+    // An alternate stays only with a pair value with each invitee and each alternate kept before it, so
+    // any table seated from them has a pair value for every pair (spec/models/candidate_pool.md
+    // newPlanSeatsApart, newPlanSeatsValued, noRepeatBlocked).
+    const alternates: MemberId[] = [];
+    for (const id of p.alternates) if (fits(id) && pairsWithAll(id, [...invited, ...alternates])) alternates.push(id);
     // Fill dropped seats from alternates (group plans only).
     while (!p.partner && invited.length < p.invited.length && alternates.length) invited.push(alternates.shift()!);
     if (invited.length < (p.partner ? 2 : Math.min(p.quorum, 3))) return null;
@@ -326,7 +335,11 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
     return best;
   };
 
-  /** Members the circle's own searches kept, who fit the activity and pair with every invitee (blocks win): most links, then value, then id. */
+  /**
+   * Members the circle's own searches kept, who fit the activity, in order (most links, then value,
+   * then id). Each one kept has a pair value with every invitee and every alternate kept before it, so
+   * any seating of the table values every pair (blocks win).
+   */
   const circleAlternates = (circle: Circle, invited: readonly MemberId[], a: ActivityType): MemberId[] => {
     const inCircle = new Set(circle.members);
     const links = new Map<MemberId, { count: number; total: number }>();
@@ -339,9 +352,12 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
         links.set(other.memberId, { count: link.count + 1, total: link.total + value });
       }
     }
-    return [...links].filter(([id]) => open(id) && fitsActivity(id, a) && invited.every(x => pairReason(w, id, x, "social") === null))
-      .sort(([x, lx], [y, ly]) => (ly.count - lx.count) || (ly.total - lx.total) || (x < y ? -1 : 1))
-      .slice(0, pcfg.alternates).map(([id]) => id);
+    const kept: MemberId[] = [];
+    for (const [id] of [...links].sort(([x, lx], [y, ly]) => (ly.count - lx.count) || (ly.total - lx.total) || (x < y ? -1 : 1))) {
+      if (kept.length >= pcfg.alternates) break;
+      if (open(id) && fitsActivity(id, a) && pairsWithAll(id, [...invited, ...kept])) kept.push(id);
+    }
+    return kept;
   };
 
   const circleTable = (circle: Circle): FriendsPlan | null => {
