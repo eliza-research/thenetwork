@@ -1,6 +1,6 @@
 # Outbound provider receipts
 
-The [outbound queue model](models/outbound_queue.md) covers queue admission, opt-out, leases, and delivery. This module owns the provider-facing status and retry transitions. The queue shell stores statuses, claims leases, calls the provider, and accounts for accepted deliveries.
+The [outbound queue model](models/outbound_queue.md) covers queue admission, opt-out, leases, and delivery. This module owns the provider-facing status and retry transitions. The [VibeLang send shell](../packages/core/src/vibe/outboundReceiptShell.vibe) sequences the provider call and its outcome writes. The queue owns immutable content, the lease, receipt lookup, and accepted-delivery accounting.
 
 ## Story: Know whether a queued message reached the provider
 
@@ -50,9 +50,17 @@ pure def lawDeliveredIgnoresFailure(phase: ReceiptPhase): bool =
 
 ### An uncertain send waits for a receipt instead of sending again
 
-After an ambiguous provider response, wait for receipt lookup with the original idempotency key. If the provider confirms it never admitted the key, the queue can retry with that same key. If the lookup remains uncertain past the retention deadline, the queue fails the row without resending.
+After an ambiguous provider response, wait for receipt lookup with the original idempotency key. If a response arrives but its acceptance cannot be validated or committed, retain the request for the same lookup. The queue updates only the send attempt whose lease still owns the row. If the outcome write also fails, leave the lease for recovery. If the provider confirms it never admitted the key, the queue can retry with that same key. If the lookup remains uncertain past the retention deadline, the queue fails the row without resending.
 
 ```quint
+pure def canHoldUnrecordedReceipt(outbound: ReceiptLifecycle): bool = outbound.phase == Sending
+
+pure def holdUnrecordedReceipt(outbound: ReceiptLifecycle): ReceiptLifecycle =
+  { phase: AcceptanceUnknown }
+
+pure def stepUnrecordedReceiptWaits(before: ReceiptLifecycle, via: str, after: ReceiptLifecycle): bool =
+  via == "holdUnrecordedReceipt" implies before.phase == Sending and after.phase == AcceptanceUnknown
+
 pure def canConfirmNeverAdmitted(outbound: ReceiptLifecycle, neverAdmitted: bool): bool =
   outbound.phase == AcceptanceUnknown and neverAdmitted
 

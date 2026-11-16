@@ -1,0 +1,62 @@
+import { apply, initial } from "./generated/outboundReceipt.effect.js"
+import type { FailureKind, ReceiptPhase } from "./generated/outboundReceipt.effect.js"
+
+export type SendDisposition = Extract<ReceiptPhase,
+  "AcceptanceUnknown" | "RetryScheduled" | "WaitingForReply" | "ProviderBlocked" | "ProviderFailed">
+
+interface ClaimedSendEffects<Receipt, Failure, Result> {
+  send(): Promise<Receipt>
+  saveReceipt(receipt: Receipt): Promise<Result>
+  classifyError(cause: unknown): { kind: FailureKind; error: Failure }
+  unrecordedReceipt(): Failure
+  saveDisposition(phase: SendDisposition, error: Failure): Promise<Result>
+}
+
+error SendIOFailure { cause: unknown }
+error UnexpectedSendPhase { phase: ReceiptPhase }
+
+function io<T>(work: () => Promise<T>) {
+  return tryPromise({ try: work, catch: cause => new SendIOFailure({ cause }) })
+}
+
+/** Run only after the queue has committed the send lease. */
+export async function settleClaimedSend<Receipt, Failure, Result>(
+  hasAttemptsLeft: boolean, effects: ClaimedSendEffects<Receipt, Failure, Result>,
+): Promise<Result> {
+  try {
+    return await runPromise(effect {
+      const received = effect {
+        const receipt = try io(() => effects.send())
+        return { kind: "receipt", receipt } as const
+      } catch failure => ({ kind: "providerError", cause: failure.cause } as const)
+
+      if (received.kind === "receipt") {
+        const saved = effect {
+          const result = try io(() => effects.saveReceipt(received.receipt))
+          return { kind: "saved", result } as const
+        } catch () => ({ kind: "unrecorded" } as const)
+        if (saved.kind === "saved") return saved.result
+
+        const held = try apply(initial, { type: "holdUnrecordedReceipt" })
+        if (held.phase !== "AcceptanceUnknown") throw new UnexpectedSendPhase({ phase: held.phase })
+        return try io(() => effects.saveDisposition("AcceptanceUnknown", effects.unrecordedReceipt()))
+      }
+
+      const failure = try Effect.try({ try: () => effects.classifyError(received.cause), catch: cause => new SendIOFailure({ cause }) })
+      const { phase } = try apply(initial, { type: "recordProviderError", failure: failure.kind, hasAttemptsLeft })
+      switch (phase) {
+        case "AcceptanceUnknown":
+        case "RetryScheduled":
+        case "WaitingForReply":
+        case "ProviderBlocked":
+        case "ProviderFailed":
+          return try io(() => effects.saveDisposition(phase, failure.error))
+        default:
+          throw new UnexpectedSendPhase({ phase })
+      }
+    })
+  } catch (error) {
+    if (error instanceof SendIOFailure) throw error.cause
+    throw error
+  }
+}
