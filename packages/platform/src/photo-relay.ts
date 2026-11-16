@@ -3,12 +3,17 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { SQL } from "bun";
 import { canClaimAction, permitsIntentBinding, photoDeliveryStillLive, photoFetchAllowed, providerFetchTtlMs, step as stepPhotoDelivery, type PhotoDelivery } from "../../core/src/generated/photoRelayItem.ts";
+import {
+  canCheckParties, canCheckPhoto, canRecordSelection, canResolveNotice, initial as selectionInitial,
+  photoHeldForReview, photoReviewable, photoReviewMayProceed, relayItemTtlMs, reviewAuthorizationCurrent,
+  reviewNeedsCurrent, reviewPreviewAllowed, step as stepPhotoSelection, type PhotoSelection, type ReviewState,
+} from "../../core/src/generated/photoRelayReview.ts";
 import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import type { AppId } from "./apps.ts";
 import type { PhotoService, PhotoRow, PhotoType } from "./photos.ts";
 import { readCapped } from "./body.ts";
 
-export const PHOTO_RELAY_TTL = 15 * 60_000;
+export const PHOTO_RELAY_TTL = relayItemTtlMs;
 const opaque = () => { for (;;) { const id = randomBytes(16).toString("hex"); if (!/\d{7}/.test(id)) return id; } };
 export interface PhotoRelayParties {
   threadId: string; senderPersonId: string; recipientPersonId: string;
@@ -20,6 +25,15 @@ export interface PhotoRelayItem extends PhotoRelayParties {
   state: "pending" | "approved" | "rejected" | "revoked";
   reviewId: string | null; reviewedAt: number | null; reviewerId: string | null;
   actionId: string | null; deliveryIntent: string | null; deliveryExpiresAt: number | null;
+}
+const storedReview: Record<ReviewState, PhotoRelayItem["state"]> = {
+  PendingReview: "pending", ApprovedReview: "approved", RejectedReview: "rejected", RevokedReview: "revoked",
+};
+const reviewFromRow: Record<PhotoRelayItem["state"], ReviewState> = {
+  pending: "PendingReview", approved: "ApprovedReview", rejected: "RejectedReview", revoked: "RevokedReview",
+};
+function selectionState(item: PhotoRelayItem): PhotoSelection {
+  return { phase: "StoredSelection", review: reviewFromRow[item.state] };
 }
 function deliveryState(item: PhotoRelayItem): PhotoDelivery {
   return {
@@ -117,69 +131,101 @@ export class PhotoRelayService {
     return photo;
   }
   async select(app: AppId, senderPersonId: string, threadId: string, photoId: string, noticeVersion: string, consent: boolean, requestId: string) {
-    if (typeof requestId !== "string" || !/^[A-Za-z0-9_-]{16,80}$/.test(requestId)) return undefined;
-    if (!this.enabled || !/^ph_[a-f0-9]{24}$/.test(photoId) || !threadId || threadId.length > 200) return undefined;
-    if (!consent || noticeVersion !== this.o.policy!.version) return undefined;
+    const inputValid = typeof requestId === "string" && /^[A-Za-z0-9_-]{16,80}$/.test(requestId)
+      && this.enabled && /^ph_[a-f0-9]{24}$/.test(photoId) && !!threadId && threadId.length <= 200;
+    let selection = stepPhotoSelection(selectionInitial, {
+      type: "checkSelection", inputValid, explicitConsent: inputValid && consent && noticeVersion === this.o.policy!.version,
+    });
+    if (!canCheckParties(selection)) return;
     const parties = await this.o.authorize({ app, threadId, senderPersonId });
-    if (!parties || parties.senderPersonId !== senderPersonId || parties.senderPersonId === parties.recipientPersonId || parties.senderMemberId === parties.recipientMemberId) return undefined;
+    selection = stepPhotoSelection(selection, {
+      type: "checkParties", senderMatches: parties?.senderPersonId === senderPersonId,
+      differentPeople: !!parties && parties.senderPersonId !== parties.recipientPersonId,
+      differentMembers: !!parties && parties.senderMemberId !== parties.recipientMemberId,
+    });
+    if (!parties || !canCheckPhoto(selection)) return;
     const photo = await this.o.photos.relayPhoto(senderPersonId, app, photoId);
-    if (!photo) return undefined;
+    selection = stepPhotoSelection(selection, { type: "checkPhoto", currentPhoto: !!photo });
+    if (!photo || !canResolveNotice(selection)) return;
     const thread = (await this.o.threads(app, senderPersonId)).find(t => t.id === threadId);
-    if (!thread || !this.o.policy!.notice.includes("{{recipient}}")) return undefined;
+    selection = stepPhotoSelection(selection, { type: "resolveNotice", readyNotice: !!thread && this.o.policy!.notice.includes("{{recipient}}") });
+    if (!thread || !canRecordSelection(selection)) return;
     const notice = this.o.policy!.notice.replaceAll("{{recipient}}", thread.label);
     const at = this.now();
     const itemId = `pri_${createHmac("sha256", `photo-selection:${this.o.signingKey}`).update(JSON.stringify([app, senderPersonId, requestId])).digest("hex").slice(0, 32)}`;
     const requestHash = createHash("sha256").update(JSON.stringify({ photoId, threadId, noticeVersion, consent, parties, sha256: photo.sha256, bytes: photo.bytes, contentType: photo.contentType, policyNotice: this.o.policy!.notice, notice })).digest("hex");
     const item: PhotoRelayItem = { ...parties, threadId, id: itemId, app, photoId, sha256: photo.sha256, bytes: photo.bytes,
       contentType: photo.contentType, consentId: `prc_${opaque()}`, consentedAt: at, expiresAt: at + PHOTO_RELAY_TTL,
-      policyVersion: this.o.policy!.version, policyNotice: this.o.policy!.notice, notice, state: "pending", reviewId: null, reviewedAt: null, reviewerId: null, actionId: null, deliveryIntent: null, deliveryExpiresAt: null };
+      policyVersion: this.o.policy!.version, policyNotice: this.o.policy!.notice, notice, state: storedReview[selection.review], reviewId: null, reviewedAt: null, reviewerId: null, actionId: null, deliveryIntent: null, deliveryExpiresAt: null };
     const created = await this.o.store.create(item, requestId, requestHash);
     if (created.conflict) throw new SelectionConflict();
     const saved = created.item;
     if (!saved) return undefined;
+    selection = stepPhotoSelection(selection, { type: "recordSelection" });
+    if (selection.phase !== "StoredSelection") return;
     // Replay returns the original immutable consent/deadline, never a fresh item.
     if (!(await this.current(saved))) return { itemId: saved.id, state: saved.expiresAt <= this.now() ? "expired" : saved.state, expiresAt: saved.expiresAt };
     return { itemId: saved.id, state: saved.state, expiresAt: saved.expiresAt };
   }
   async revoke(app: AppId, personId: string, id: string): Promise<boolean> {
     return this.o.store.locked(id, async (r, save) => {
-      if (!r || r.app !== app || r.senderPersonId !== personId) return false;
-      await save({ ...r, state: "revoked" }); return true;
+      if (!r) return false;
+      const selection = selectionState(r);
+      const next = stepPhotoSelection(selection, { type: "revokeSelection", ownerMatches: r.app === app && r.senderPersonId === personId });
+      if (next === selection) return false;
+      await save({ ...r, state: storedReview[next.review] }); return true;
     });
   }
   /** Item-scoped review: never a fabricated report and never an appearance rating. Unknown stays pending. */
   async review(id: string, reviewerId: string, decision: "safe" | "unsafe" | "unknown", tx?: SQL): Promise<boolean> {
     return this.o.store.locked(id, async (r, save, context) => {
-      if (!r || !this.enabled || r.policyVersion !== this.o.policy!.version || r.policyNotice !== this.o.policy!.notice || (r.state !== "pending" && r.state !== "approved") || !(await this.o.policy!.authorizeReviewer(reviewerId, r, context))) return false;
-      if ((decision !== "safe" && decision !== "unsafe") || this.now() >= r.expiresAt) return false;
-      if (decision === "safe" && (r.state !== "pending" || !(await this.current(r, context)))) return false;
-      if (this.now() >= r.expiresAt) return false;
+      if (!r || !this.enabled || r.policyVersion !== this.o.policy!.version || r.policyNotice !== this.o.policy!.notice) return false;
+      const selection = selectionState(r);
+      if (!photoReviewable(selection)) return false;
+      const reviewerAuthorized = await this.o.policy!.authorizeReviewer(reviewerId, r, context);
+      const choice = decision === "safe" ? "ApprovePhoto" : decision === "unsafe" ? "RejectPhoto" : "KeepPending";
+      const initiallyLive = reviewerAuthorized && choice !== "KeepPending" && !(this.now() >= r.expiresAt);
+      if (!photoReviewMayProceed(selection, choice, reviewerAuthorized, initiallyLive)) return false;
+      const currentItem = !reviewNeedsCurrent(choice) || !!(await this.current(r, context));
+      const next = stepPhotoSelection(selection, {
+        type: "recordReview", choice, reviewerAuthorized, currentItem, itemLive: currentItem && !(this.now() >= r.expiresAt),
+      });
+      if (next === selection) return false;
       // A safety rejection can revoke even a claimed item; retain its action/intent bindings.
-      await save({ ...r, state: decision === "safe" ? "approved" : r.state === "approved" ? "revoked" : "rejected", reviewId: `prv_${opaque()}`, reviewedAt: this.now(), reviewerId });
+      await save({ ...r, state: storedReview[next.review], reviewId: `prv_${opaque()}`, reviewedAt: this.now(), reviewerId });
       return true;
     }, tx);
   }
   /** Release/retry authorization, including inside the queue claim transaction. No bytes are read. */
   async reviewAuthorized(id: string, reviewerId: string, tx?: SQL): Promise<boolean> {
     return this.o.store.locked(id, async (r, _save, context) => {
-      if (!r || (r.state !== "pending" && r.state !== "approved") || !(await this.current(r, context)) || !(await this.o.policy!.authorizeReviewer(reviewerId, r, context))) return false;
-      return this.enabled && r.expiresAt > this.now() && r.policyVersion === this.o.policy!.version && r.policyNotice === this.o.policy!.notice;
+      if (!r) return false;
+      const selection = selectionState(r);
+      if (!photoReviewable(selection) || !(await this.current(r, context))) return false;
+      const reviewerAuthorized = await this.o.policy!.authorizeReviewer(reviewerId, r, context);
+      const enabled = reviewerAuthorized && this.enabled;
+      const itemLive = enabled && r.expiresAt > this.now();
+      const samePolicy = itemLive && r.policyVersion === this.o.policy!.version && r.policyNotice === this.o.policy!.notice;
+      return reviewAuthorizationCurrent(selection, enabled, reviewerAuthorized, itemLive, samePolicy);
     }, tx);
   }
   /** Called only by the existing authenticated safety console after item-scoped authorization. */
   async reviewBytes(id: string, reviewerId: string) {
     return this.o.store.locked(id, async (r, _save, context) => {
-      if (!r || !(r.state === "pending" || (r.state === "approved" && r.actionId === null)) || !(await this.current(r, context)) || !(await this.o.policy!.authorizeReviewer(reviewerId, r, context))) return;
-      if (r.expiresAt <= this.now()) return;
+      if (!r) return;
+      const selection = selectionState(r), claimed = r.actionId !== null;
+      if (!photoHeldForReview(selection, claimed) || !(await this.current(r, context))) return;
+      const reviewerAuthorized = await this.o.policy!.authorizeReviewer(reviewerId, r, context);
+      if (!reviewPreviewAllowed(selection, claimed, reviewerAuthorized, reviewerAuthorized && !(r.expiresAt <= this.now()))) return;
       const bytes = await this.o.photos.relayBytes(r.senderPersonId, r.app, r.photoId, r, context);
-      return r.expiresAt > this.now() ? bytes : undefined;
+      return reviewPreviewAllowed(selection, claimed, reviewerAuthorized, r.expiresAt > this.now()) ? bytes : undefined;
     });
   }
   /** Internal console/queue only; never returned by a member API or the model. */
   async item(id: string) { return this.o.store.locked(id, async r => r); }
   async held(app: AppId) {
     const rows = await this.o.store.list(app), held: { id: string; app: AppId; photoId: string; threadId: string; senderMemberId: string; recipientMemberId: string; createdAt: number }[] = [];
-    for (const r of rows) if ((r.state === "pending" || (r.state === "approved" && r.actionId === null)) && await this.current(r)) held.push({ id: r.id, app: r.app, photoId: r.photoId, threadId: r.threadId, senderMemberId: r.senderMemberId, recipientMemberId: r.recipientMemberId, createdAt: r.consentedAt });
+    for (const r of rows) if (photoHeldForReview(selectionState(r), r.actionId !== null) && await this.current(r)) held.push({ id: r.id, app: r.app, photoId: r.photoId, threadId: r.threadId, senderMemberId: r.senderMemberId, recipientMemberId: r.recipientMemberId, createdAt: r.consentedAt });
     return held;
   }
   async approvedForParty(app: AppId, threadId: string, senderMemberId: string): Promise<ApprovedRelayPhoto | undefined> {

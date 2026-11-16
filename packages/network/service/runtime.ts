@@ -24,6 +24,10 @@ import type { City, Clock, MemberId, WorldSnapshot } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import type { NetworkContext, SimMessage } from "@thenetwork/core";
 import { matchingDisabledByRegistry, startupPlan, tickRepairsProjection, tickRunsFollowup } from "../../core/src/generated/runtimeUnit.ts";
+import {
+  contextFacetEligible, contextFacetLimit, contextFacetSizeLimit, contextMode, contextSinglePlayer,
+  initial as initialContext, step as stepContext, type ContextMode,
+} from "../../core/src/generated/sharedContext.ts";
 import { ConsentNetwork, presentInNyc, relayDispatchCheck, type NetworkOptions, type NetworkState } from "../src/network.ts";
 import type { RelayCanonical } from "../src/relay.ts";
 import { loadRelayRows, PgStore, runStored, runTick, type NetworkStore } from "../src/store.ts";
@@ -702,18 +706,24 @@ export class NetworkRuntime {
       await this.refresh();
       const e164 = this.addressOf(memberId);
       const accounts = this.host.accounts;
-      if (!e164 || !accounts) return null;
+      // spec/sharedContext.md, "Only the canonical member of the requested app can receive context"
+      const account = stepContext(initialContext, { type: "checkAccount", canReadAccount: !!e164 && !!accounts });
+      if (account.phase !== "CheckingMembership" || !e164 || !accounts) return null;
       const binding = await accounts.activeMembership(this.app, {e164, personId: null});
-      if (!binding || binding.membership.memberId !== memberId) return null;
+      const membership = stepContext(account, { type: "checkMembership", exactMember: binding?.membership.memberId === memberId });
+      if (membership.phase !== "CheckingMember" || !binding) return null;
       const snapshot = this.snap!;
       const member = snapshot.members.find(m => m.id === memberId);
       if (!member) return null;
       const [canonical] = await this.scoped(tx => tx`select participation_state,participation_window,opted_out from network.members where app_id=${this.app.id} and id=${memberId}`);
       if (!canonical) return null;
       const participation = effectiveParticipation(canonical as {participation_state: typeof member.state; participation_window?:unknown; opted_out?:boolean},snapshot.now);
-      const state = participation.active ? participation.window!.state : participation.state === "normal" || participation.state === "open" || participation.state === "receiving" ? "open"
-        : participation.state === "quiet" ? "busy" : participation.state === "paused" ? "paused" : null;
-      if (!state) return null;
+      const stateByMode = {
+        ModeOpen: "open", ModeBusy: "busy", ModeTraveling: "traveling", ModePaused: "paused", ModeUnavailable: null,
+      } as const satisfies Record<ContextMode, TurnContext["state"] | null>;
+      const state = stateByMode[contextMode(participation.active, participation.window?.state ?? "", participation.state)];
+      const memberContext = stepContext(membership, { type: "checkMember", memberAndModeExist: state !== null });
+      if (memberContext.phase !== "CheckingLabels" || state === null) return null;
       const firstName = member.name.trim().split(/\s+/)[0] ?? "";
       const forbidden = [e164, binding.person.id, ...snapshot.facets.map(f => f.id), ...snapshot.members.flatMap(m => {
         const first = m.name.trim().split(/\s+/)[0] ?? "";
@@ -723,15 +733,20 @@ export class NetworkRuntime {
       })];
       const facts = [...snapshot.facets.filter(f => f.scope === "agent_private").map(f => f.value),...(participation.window?.note?[participation.window.note]:[])];
       const safe = (text: string) => outputLeaks(text, {forbidden, facts, contacts: true}).length === 0;
-      if (!safe(firstName) || !safe(member.homeCity)) return null;
-      const facets = snapshot.facets.filter(f => f.memberId === memberId && f.scope === "shareable" && f.confirmedByMember === true
-        && !f.sensitive && (f.validFrom === undefined || f.validFrom <= snapshot.now) && (f.validTo === undefined || f.validTo > snapshot.now)
-        && safe(f.value)).map(f => f.value);
+      // spec/sharedContext.md, "Check the public labels and each confirmed shareable fact"
+      const labels = stepContext(memberContext, { type: "checkLabels", labelsSafe: safe(firstName) && safe(member.homeCity) });
+      if (labels.phase !== "CheckingFacets") return null;
+      const facets = snapshot.facets.filter(f => contextFacetEligible(f.memberId === memberId, f.scope === "shareable", f.confirmedByMember === true,
+        !!f.sensitive, (f.validFrom === undefined || f.validFrom <= snapshot.now) && (f.validTo === undefined || f.validTo > snapshot.now)) && safe(f.value)).map(f => f.value);
       // The deployed plugin contract rejects larger context. Withhold it whole; never truncate a fact.
-      if (facets.length > 50 || facets.some(f => f.length > 300)) return null;
+      const ready = stepContext(labels, { type: "checkFacets", facetCount: facets.length,
+        oversized: facets.length <= contextFacetLimit && facets.some(f => f.length > contextFacetSizeLimit),
+      });
+      if (ready.phase !== "ContextReady") return null;
+      const present = presentInNyc(snapshot, member.id, snapshot.now, snapshot.now + 6 * DAY);
       return {
         firstName, city: member.homeCity, state, stateFrom: participation.active?participation.window!.from:null, stateUntil: participation.active?participation.window!.until:null, facets,
-        activeItems: null, singlePlayer: !presentInNyc(snapshot, member.id, snapshot.now, snapshot.now + 6 * DAY) || !canBeMatched(await accounts.lowestAge(e164, binding.person)),
+        activeItems: null, singlePlayer: contextSinglePlayer(present, present && canBeMatched(await accounts.lowestAge(e164, binding.person))),
       };
     });
   }
