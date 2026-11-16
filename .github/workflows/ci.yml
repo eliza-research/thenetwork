@@ -188,11 +188,12 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
         timeout-minutes: 5
-      - name: Require Postgres
-        # REQUIRE_PG=1: a missing Postgres fails here, so no Postgres suite can skip silently.
+      - name: Initialize integration Postgres
+        # Install cluster-wide roles once before workers migrate their separate databases.
         run: |
           pg_isready -h localhost -p 54339
           node --import tsx scripts/require-pg.ts
+          node --import tsx packages/observatory/db/dev-pg.ts up
       - name: Integration suite (includes the security suite)
         run: |
           if [ -n "${LIVE_TESTS:-}" ]; then echo "LIVE_TESTS must be unset in CI"; exit 1; fi
