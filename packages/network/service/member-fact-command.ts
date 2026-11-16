@@ -121,9 +121,10 @@ export function memberFactListText({ page, hasMore, facts }: { page: number; has
   }
   if (!groups.size) return page === 1 ? "You have no saved facts to show here." : "There are no saved facts on this page. Use SHOW MY FACTS to start again.";
   const body = [
-    `Your saved facts · Page ${page}`,
+    "Your saved facts",
     ...[...groups].flatMap(([kind, lines]) => [kindLabel[kind], ...lines]),
     "Edit with CORRECT FACT <ref> TO <text>, REMOVE FACT <ref>, or SET FACT SCOPE <ref> TO agent_private, matchable or shareable.",
+    `Page ${page}`,
     ...((hasMore || facts.length > MEMBER_FACT_PAGE_SIZE) && page < LAST_PAGE ? [`Next page: SHOW MY FACTS PAGE ${page + 1}`] : []),
   ].join("\n");
   return body.length <= REPLY_LENGTH ? body : replies.unavailable;
