@@ -10,6 +10,8 @@ Check candidate eligibility, profile corrections, consent flow, matching budgets
 
 The [global selection spec](../selectionRun.md) generates the default selector’s phase and reservation transitions. The [Slop assignment spec](../slopAssignment.md) generates the pack’s round and pair reservations. The [Slop onboarding spec](../slopOnboarding.md) generates read-back and question routing and confirmation decisions. The [Peon capacity spec](../peonCapacity.md) generates the seat occupancy and remaining-capacity rules. This reference model also includes the downstream service gate.
 
+The [candidate screening spec](../candidateScreening.md) generates the ordered hard-check transitions and the first refusal used before scoring.
+
 Imported from `quint/matching_engine.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint

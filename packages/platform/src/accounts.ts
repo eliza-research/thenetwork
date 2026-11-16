@@ -21,6 +21,9 @@ import { randomUUID } from "node:crypto";
 import type { City } from "../../core/src/types.ts";
 import { DAY } from "../../core/src/clock.ts";
 import {
+  hasAgeToPreserve, hasScopedMembership, initial as accountPrivacyInitial, step as stepPrivacy,
+} from "../../core/src/generated/accountPrivacy.ts";
+import {
   initial as phoneChangeInitial, phoneChangesPerDay, phoneChangeLifetimeMs, step as stepPhoneChange, type PhoneChangeFailure,
 } from "../../core/src/generated/phoneChange.ts";
 import { step as stepEnrollment, typedJoinEntry, type Enrollment } from "../../core/src/generated/siteEnrollment.ts";
@@ -473,10 +476,14 @@ export class Accounts {
   /** Leave one app: the forget path. The phone and other memberships stay. */
   async leave(app: AppInfo, who: Who): Promise<void> {
     const at = this.now();
+    const request = stepPrivacy(accountPrivacyInitial, { type: "beginPrivacyRequest", operation: "LeaveApp" });
     const person = await this.personFor(who.e164);
     const m = person && (await this.store.getMembership(person.id, app.id));
     await this.store.addConsent({ e164: who.e164, app: app.id, state: "opted_out", source: "leave", at });
-    if (!person || !m || m.state === "removed") return;
+    const optedOut = stepPrivacy(request, {
+      type: "recordLeaveConsent", membershipBound: hasScopedMembership(!!person, !!m, m?.state === "removed"),
+    });
+    if (optedOut.phase !== "AwaitingAppForget" || !person || !m) return;
     await this.hooks.onForget?.({ app, personId: person.id, memberId: m.memberId, e164: who.e164 });
     await this.store.forgetMembership(person.id, app.id, at);
   }
@@ -484,24 +491,36 @@ export class Accounts {
   /** Delete everything: every membership (forget path each), the phone, grants, own blocks, sessions; keep a tombstone and the suppression hash. */
   async deleteAll(who: Who): Promise<void> {
     const at = this.now();
+    const request = stepPrivacy(accountPrivacyInitial, { type: "beginPrivacyRequest", operation: "DeleteAccount" });
     const person = await this.personFor(who.e164);
     // The age stays on the phone's age floor (a safety fact, not profile data): deleting everything
     // and joining again with an older age is refused.
-    if (person?.lowestAge != null) await this.store.noteAgeFloor(this.phoneHash(who.e164), person.lowestAge, at);
+    const lowestAge = person?.lowestAge;
+    if (hasAgeToPreserve(!!person, lowestAge != null) && lowestAge != null)
+      await this.store.noteAgeFloor(this.phoneHash(who.e164), lowestAge, at);
+    const ageChecked = stepPrivacy(request, { type: "recordAgeCheck" });
+    if (ageChecked.phase !== "AwaitingAccountCleanup") return;
     if (person) {
       for (const m of await this.store.memberships(person.id)) {
-        if (m.state !== "removed") await this.hooks.onForget?.({ app: this.opts.apps(m.app), personId: person.id, memberId: m.memberId, e164: who.e164 });
+        if (hasScopedMembership(true, true, m.state === "removed"))
+          await this.hooks.onForget?.({ app: this.opts.apps(m.app), personId: person.id, memberId: m.memberId, e164: who.e164 });
       }
     }
-    await this.store.deleteAll(person?.id ?? null, who.e164, this.phoneHash(who.e164), at);
+    const cleaned = stepPrivacy(ageChecked, { type: "recordAccountCleanup" });
+    if (cleaned.phase === "AwaitingAccountErasure") await this.store.deleteAll(person?.id ?? null, who.e164, this.phoneHash(who.e164), at);
   }
 
   /** This app's own data. Nothing from another app, not even its name. */
   async exportApp(app: AppInfo, who: Who): Promise<Record<string, unknown>> {
+    const request = stepPrivacy(accountPrivacyInitial, { type: "beginPrivacyRequest", operation: "ExportApp" });
     const person = await this.personFor(who.e164);
     const m = person && (await this.store.getMembership(person.id, app.id));
+    const checked = stepPrivacy(request, {
+      type: "checkAppExport", membershipBound: hasScopedMembership(!!person, !!m, m?.state === "removed"),
+    });
     const consent = (await this.store.consentEvents(who.e164, app.id)).map(e => ({ state: e.state, source: e.source, wording: e.wording ?? null, at: new Date(e.at).toISOString() }));
-    const live = m && m.state !== "removed" ? m : undefined;
+    const exported = stepPrivacy(checked, { type: "recordConsentExport" });
+    const live = exported.phase === "CompletePrivacyRequest" && exported.includeMembership ? m : undefined;
     return {
       app: app.id,
       exportedAt: new Date(this.now()).toISOString(),

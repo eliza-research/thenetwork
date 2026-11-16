@@ -17,6 +17,10 @@ import { initial as enrollmentInitial, step as stepEnrollment } from "../../core
 import {
   cloudIssuedAtWithinSkew, cloudSessionStartedAt, initial as cloudSignInInitial, liveBeforeDeadline, step as stepCloudSignIn,
 } from "../../core/src/generated/cloudSignIn.ts";
+import {
+  type AuthorityCheck, type CloudResponse, canCheckGrantDelegation, canCheckGrantOwner, canFinishCloudCheck,
+  grantExpiresAt, grantResourceMatches, initial as authorityInitial, step as stepAuthority,
+} from "../../core/src/generated/cloudAuthority.ts";
 import { productionCloudDelegation } from "./cloud-delegation.ts";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { type AccountHooks, Accounts, type HomeInput, type MemberHookContext, parseHome, parseJoin, publicMembership, type Who } from "./accounts.ts";
@@ -31,6 +35,13 @@ import type { PeopleStore } from "./store.ts";
 import type { TurnstileVerifier } from "./turnstile.ts";
 import type { PhotoService } from "./photos.ts";
 import type { PhotoRelayService } from "./photo-relay.ts";
+
+type CloudStatus = "valid" | "invalid" | "unavailable";
+const cloudResponse: Record<CloudStatus, CloudResponse> = { valid: "CloudAccepted", invalid: "CloudDenied", unavailable: "CloudUnavailable" };
+function authorityStatus(check: AuthorityCheck): CloudStatus {
+  if (check.phase === "AuthorityValid") return "valid";
+  return check.phase === "AuthorityUnavailable" ? "unavailable" : "invalid";
+}
 
 export interface PublicApiOptions extends AccountHooks {
   store: PeopleStore;
@@ -266,24 +277,33 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   // cost a round trip on every request. A denial is never cached.
   const VALIDATION_TTL_MS = o.cloudValidationTtlMs ?? 60_000;
   const validated = new Map<string, number>();
-  async function cloudSessionStatus(app: AppId, jar: Map<string, string>, token: string): Promise<"valid" | "invalid" | "unavailable"> {
+  async function cloudSessionStatus(app: AppId, jar: Map<string, string>, token: string): Promise<CloudStatus> {
     const cloud = cloudFor(app);
-    if (!cloud) return token.startsWith("cloud.") ? "invalid" : "valid";
+    if (!cloud) return authorityStatus(stepAuthority(authorityInitial, {type: "useLocalSession", cloudToken: token.startsWith("cloud.")}));
     const identity = unseal("cloud-identity", jar.get(identityName(app)));
     const sessionHash = tokenHash(token, sessionSecret);
-    if (!identity || identity.app !== app || identity.sessionHash !== sessionHash
-      || typeof identity.expiresAt !== "number" || identity.expiresAt <= now()) { validated.delete(sessionHash); return "invalid"; }
-    if (!productionCloud && (validated.get(sessionHash) ?? 0) > now()) return "valid";
+    const bindingValid = !!identity && identity.app === app && identity.sessionHash === sessionHash;
+    const expiresAt = identity?.expiresAt;
+    const proofLive = bindingValid && typeof expiresAt === "number" && !(expiresAt <= now());
+    const check = stepAuthority(authorityInitial, {
+      type: "checkSiteProof", bindingValid, proofLive, productionCloud,
+      cacheLive: proofLive && !productionCloud && (validated.get(sessionHash) ?? 0) > now(),
+    });
+    if (check.fromCache) return authorityStatus(check);
+    if (!canFinishCloudCheck(check) || !identity || typeof expiresAt !== "number") {
+      validated.delete(sessionHash);
+      return "invalid";
+    }
     const {kind: _kind, ...proof} = identity;
-    const status = await validate(cloud, proof);
-    if(identity.expiresAt<=now()){validated.delete(sessionHash);return "invalid";}
+    const answer = cloudResponse[await validate(cloud, proof)];
+    const status = authorityStatus(stepAuthority(check, {type: "finishCloudCheck", answer, proofLive: !(expiresAt <= now())}));
     if (status === "valid") {
       if (validated.size > 10_000) validated.clear();
       validated.set(sessionHash, now() + VALIDATION_TTL_MS);
     } else validated.delete(sessionHash);
     return status;
   }
-  async function validate(cloud: NonNullable<typeof cloudAuth>, identity: Record<string, unknown>): Promise<"valid" | "invalid" | "unavailable"> {
+  async function validate(cloud: NonNullable<typeof cloudAuth>, identity: Record<string, unknown>): Promise<CloudStatus> {
     if (productionDelegation) return productionDelegation.validate(identity.app as AppId, identity);
     try {
       const response = await (o.cloudAuthFetch ?? fetch)(new Request(`${cloud.apiOrigin}/api/auth/sso-bridge/network-validate`, {
@@ -688,7 +708,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       return sessions.authenticate(app,token,false);
     },
     async cloudGrantAuthority(app,req,resource) {
-      if(!productionCloud || ![`${cloudSites[app]}/mcp`,`${cloudSites[app]}/mcp/openai`].includes(resource))return;
+      if(!grantResourceMatches(productionCloud,resource,`${cloudSites[app]}/mcp`,`${cloudSites[app]}/mcp/openai`))return;
       const jar=parseCookies(req.headers.get("cookie")),token=jar.get(cookieName(app));
       if(!token)return;
       const status=await cloudSessionStatus(app,jar,token);
@@ -697,25 +717,39 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       const session=await sessions.authenticate(app,token,false),identity=unseal("cloud-identity",jar.get(identityName(app)));
       if(!session || !identity || !Number.isSafeInteger(identity.expiresAt) || typeof identity.issuedAt!=="number")return;
       const authority={version:1 as const,app,resource,phoneKey:accounts.phoneHash(session.session.e164),issuedAt:identity.issuedAt,
-        expiresAt:Math.min(session.session.expiresAt,identity.expiresAt as number)};
+        expiresAt:grantExpiresAt(session.session.expiresAt,identity.expiresAt as number)};
       return {...authority,sealed:seal("cloud-grant",{...authority,delegation:identity})};
     },
     async validateCloudGrant(grant) {
       const authority=grant.cloudAuthority;
-      if(!productionDelegation || !authority || authority.version!==1 || authority.app!==grant.app || authority.resource!==grant.resource
-        || authority.phoneKey!==grant.phoneKey || !Number.isSafeInteger(authority.issuedAt) || authority.issuedAt*1000>now()
-        || !Number.isSafeInteger(authority.expiresAt) || authority.expiresAt<=now()
-        || typeof authority.sealed!=="string" || authority.sealed.length>16000)return "invalid";
+      if (!productionDelegation || !authority) return "invalid";
+      const envelope = stepAuthority(authorityInitial, {
+        type: "checkGrantEnvelope",
+        envelopeValid: authority.version===1 && authority.app===grant.app && authority.resource===grant.resource
+          && authority.phoneKey===grant.phoneKey && Number.isSafeInteger(authority.issuedAt) && !(authority.issuedAt*1000>now())
+          && Number.isSafeInteger(authority.expiresAt) && !(authority.expiresAt<=now())
+          && typeof authority.sealed==="string" && authority.sealed.length<=16000,
+      });
+      if (!canCheckGrantDelegation(envelope)) return authorityStatus(envelope);
       const value=unseal("cloud-grant",authority.sealed);
-      if(!value || ["version","app","resource","phoneKey","issuedAt","expiresAt"].some(key=>value[key]!==authority[key as keyof CloudGrantAuthority])
-        || !value.delegation || typeof value.delegation!=="object")return "invalid";
-      const delegation=value.delegation as Record<string,unknown>;
-      if(typeof delegation.e164!=="string" || accounts.phoneHash(delegation.e164)!==grant.phoneKey)return "invalid";
+      const sealedFieldsMatch = !!value && ["version","app","resource","phoneKey","issuedAt","expiresAt"]
+        .every(key=>value[key]===authority[key as keyof CloudGrantAuthority]);
+      const delegation = sealedFieldsMatch && value.delegation && typeof value.delegation === "object"
+        ? value.delegation as Record<string, unknown> : undefined;
+      const phone = delegation?.e164;
+      const bound = stepAuthority(envelope, {
+        type: "checkGrantDelegation", delegationBound: typeof phone === "string" && accounts.phoneHash(phone) === grant.phoneKey,
+      });
+      if (!canCheckGrantOwner(bound) || !delegation || typeof phone !== "string") return authorityStatus(bound);
       const owner=await accounts.byPhoneHash(grant.phoneKey);
-      if((grant.personId!==null && grant.personId!==owner?.person.id) || await accounts.held(delegation.e164) || await accounts.banned(delegation.e164)
-        || await o.store.isSuppressed(grant.phoneKey))return "invalid";
-      const status=await productionDelegation.validate(grant.app,value.delegation as Record<string,unknown>);
-      return now()<authority.expiresAt?status:"invalid";
+      const owned = stepAuthority(bound, {
+        type: "checkGrantOwner",
+        phoneEligible: (grant.personId === null || grant.personId === owner?.person.id)
+          && !await accounts.held(phone) && !await accounts.banned(phone) && !await o.store.isSuppressed(grant.phoneKey),
+      });
+      if (!canFinishCloudCheck(owned)) return authorityStatus(owned);
+      const answer = cloudResponse[await productionDelegation.validate(grant.app, delegation)];
+      return authorityStatus(stepAuthority(owned, {type: "finishCloudCheck", answer, proofLive: now() < authority.expiresAt}));
     },
     async fetch(req: Request, server?: PeerInfo) {
       const url = new URL(req.url);

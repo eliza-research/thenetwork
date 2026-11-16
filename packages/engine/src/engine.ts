@@ -6,7 +6,7 @@ import type { LLM, MemberId, WorldSnapshot } from "@thenetwork/core";
 import { configHash, ENGINE_VERSION, resolveConfig, type EngineConfigInput } from "./config.ts";
 import { localEmbed, type EmbedFn } from "./embed.ts";
 import { explain, privateVocabulary } from "./explain.ts";
-import { candidateReason, involvesMinor, memberReason } from "./filters.ts";
+import { involvesMinor, memberReason, screenCandidate } from "./filters.ts";
 import type { GenCtx } from "./genkit.ts";
 import { JudgeCache, judgeCandidates, runCachedPass } from "./judge.ts";
 import { checkMemberFacing, redactPrivate } from "./judgeCommon.ts";
@@ -126,8 +126,9 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   const anchorReasons = new Map<string, Map<string, number>>();
   const passed: Candidate[] = [];
   for (const c of cands) {
-    const r = candidateReason(w, c);
-    if (r) {
+    const screening = screenCandidate(w, c);
+    if (screening.phase === "Refused") {
+      const r = screening.refusal;
       f.rejectedBy[r] = (f.rejectedBy[r] ?? 0) + 1;
       if (c.anchor?.type === "intent") {
         if (!anchorReasons.has(c.anchor.id)) anchorReasons.set(c.anchor.id, new Map());

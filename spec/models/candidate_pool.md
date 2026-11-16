@@ -10,6 +10,8 @@ Check pool eligibility, pair exclusions, group sizes, and seat uniqueness. The m
 
 The [candidate exposure floor](../exposureFloor.md) supplies the generated allocation transitions used by the engine’s intent and embedding retrieval paths. The [group formation spec](../groupFormation.md) generates the beam composer’s admission decisions, primary selection, and alternate reservations. This model treats retrieval channels as an oracle and follows groups into the service.
 
+The [candidate screening spec](../candidateScreening.md) generates the ordered hard-check transitions and the first refusal used before scoring.
+
 Imported from `quint/candidate_pool.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint

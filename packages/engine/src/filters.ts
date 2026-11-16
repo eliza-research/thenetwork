@@ -2,6 +2,7 @@
 // failing any of these is dropped before scoring, and the reason is counted in the run funnel.
 import type { Category, MemberId } from "@thenetwork/core";
 import { ADULT_AGE as CORE_ADULT_AGE, canBeMatched, DAY, HOUR } from "@thenetwork/core";
+import { initial, step, type CheckPhase } from "../../core/src/generated/candidateScreening.ts";
 import type { EngineConfig } from "./config.ts";
 import type { Candidate } from "./types.ts";
 import { pairKey, type World } from "./world.ts";
@@ -157,48 +158,76 @@ export function isHomeEntry(cfg: EngineConfig, text: string): boolean {
 
 export interface RunUsage { proactive: Map<MemberId, number>; contribution: Map<MemberId, number> }
 
-/**
- * Full hard-filter check for a candidate configuration. Also resolves the city and window
- * (presence overlap). Returns the first failing reason or null.
- */
+export type CandidateScreenResult = { phase: "Passed" } | { phase: "Refused"; refusal: FilterReason };
+
+type ScreeningCheck = Exclude<CheckPhase, CandidateScreenResult["phase"]>;
+
+/** The full ordered screen. Passing presence also resolves the candidate's city and window. */
+export function screenCandidate(w: World, c: Candidate, usage?: RunUsage): CandidateScreenResult {
+  let screen = initial;
+  // spec/candidateScreening.md, "Hard checks run in a fixed order"
+  while (screen.phase !== "Passed" && screen.phase !== "Refused") {
+    const checked = screen.phase;
+    screen = step(screen, { type: "recordCheck", checked, reason: screeningReason(checked, w, c, usage) ?? "" });
+  }
+  return screen.phase === "Passed" ? { phase: "Passed" } : { phase: "Refused", refusal: screen.refusal };
+}
+
+/** Returns the first failing reason or null for callers that need only the original reason. */
 export function candidateReason(w: World, c: Candidate, usage?: RunUsage): FilterReason | null {
+  const result = screenCandidate(w, c, usage);
+  return result.phase === "Refused" ? result.refusal : null;
+}
+
+function screeningReason(check: ScreeningCheck, w: World, c: Candidate, usage?: RunUsage): FilterReason | null {
+  switch (check) {
+    case "Duplicates":
+      return new Set(c.participants).size !== c.participants.length ? "duplicate_participant" : null;
+    case "PackPre":
+    case "PackPost": {
+      const rules = check === "PackPre" ? w.pack.eligibility.candidatePreRules : w.pack.eligibility.candidatePostRules;
+      for (const rule of rules) {
+        const reason = rule.check(w, c);
+        if (reason) return reason;
+      }
+      return null;
+    }
+    case "Age":
+      return involvesMinor(w, c) ? "underage" : null;
+    case "Intermediary": {
+      // The warm-path intermediary is named to both sides and asked to vouch.
+      if (!c.via) return null;
+      const v = w.get(c.via);
+      if (!v) return "unknown_member";
+      if (w.holds.has(c.via)) return "safety_hold";
+      if (v.m.state === "paused") return "state_paused";
+      return c.participants.some(id => w.blocked.has(pairKey(id, c.via!))) ? "blocked" : null;
+    }
+    case "Members":
+      for (const id of c.participants) {
+        const own = c.anchor?.type === "intent" ? w.intentById.get(c.anchor.id) : undefined;
+        const reason = memberReason(w, id, {
+          category: c.category, role: c.roles[id] ?? "peer", format: c.format, timeSensitive: c.timeSensitive,
+          extraProactive: usage?.proactive.get(id), extraContribution: usage?.contribution.get(id),
+          ownIntentCreatedAt: own && own.memberId === id ? own.createdAt : undefined,
+        });
+        if (reason) return reason;
+      }
+      return null;
+    case "Pairs":
+      for (let i = 0; i < c.participants.length; i++) for (let j = i + 1; j < c.participants.length; j++) {
+        const reason = pairReason(w, c.participants[i]!, c.participants[j]!, c.category);
+        if (reason) return reason;
+      }
+      return null;
+    case "Presence":
+      return presenceReason(w, c);
+  }
+}
+
+/** Resolve the shared city and window after the other checks (ME-011). */
+function presenceReason(w: World, c: Candidate): FilterReason | null {
   const cfg = w.cfg;
-  if (new Set(c.participants).size !== c.participants.length) return "duplicate_participant";
-  // Pack rules that run before the core participant checks (networkPack: group_size, high_risk).
-  for (const r of w.pack.eligibility.candidatePreRules) {
-    const reason = r.check(w, c);
-    if (reason) return reason;
-  }
-  // Minors policy: no one under 18 in any role (participant, alternate, via/connector).
-  if (involvesMinor(w, c)) return "underage";
-  // The warm-path intermediary is named to both sides and asked to vouch: never someone on a
-  // safety hold, paused, or blocked by either participant.
-  if (c.via) {
-    const v = w.get(c.via);
-    if (!v) return "unknown_member";
-    if (w.holds.has(c.via)) return "safety_hold";
-    if (v.m.state === "paused") return "state_paused";
-    if (c.participants.some(id => w.blocked.has(pairKey(id, c.via!)))) return "blocked";
-  }
-  for (const id of c.participants) {
-    const own = c.anchor?.type === "intent" ? w.intentById.get(c.anchor.id) : undefined;
-    const r = memberReason(w, id, {
-      category: c.category, role: c.roles[id] ?? "peer", format: c.format, timeSensitive: c.timeSensitive,
-      extraProactive: usage?.proactive.get(id), extraContribution: usage?.contribution.get(id),
-      ownIntentCreatedAt: own && own.memberId === id ? own.createdAt : undefined,
-    });
-    if (r) return r;
-  }
-  for (let i = 0; i < c.participants.length; i++) for (let j = i + 1; j < c.participants.length; j++) {
-    const r = pairReason(w, c.participants[i]!, c.participants[j]!, c.category);
-    if (r) return r;
-  }
-  // Pack rules after the member / pair checks (networkPack: the F14 home-entry rule).
-  for (const r of w.pack.eligibility.candidatePostRules) {
-    const reason = r.check(w, c);
-    if (reason) return reason;
-  }
-  // Presence / availability overlap in the opportunity window (ME-011): the core geo filter.
   const start = c.fixedWindow?.start ?? w.now;
   const end = c.fixedWindow?.end ?? w.now + cfg.windowDays * DAY;
   if (end <= w.now) return "no_presence_overlap";
