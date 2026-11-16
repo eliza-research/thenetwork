@@ -1,23 +1,38 @@
-// Right-hand inspector, routed on the focus: Overview (no focus), Member, Opportunity or
-// Neighborhood. Lists and names link through MemberLink / OppLink / AreaLink, so a click anywhere
-// moves the one focus.
+// spec/consoleNavigation.md, "Focus on a new subject keeps the last one in a short history"
+// spec/consoleWorkspace.md, "Each panel shows a loading, refused, unavailable, failed, empty or full view"
+// spec/consoleWorkspace.md, "The world menu exists only in the simulated world"
+// spec/consoleWorkspace.md, "A reveal needs real data, the safety role and a reason"
+// spec/consoleWorkspace.md, "A reveal ends early on request or when its time passes"
 import { CrossAppButton } from "./apps.tsx";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { initial as initialDetail, staffPhotoAllowed, staffPhotoReasonReady, staffPhotoView, step as stepDetail } from "../../core/src/generated/consoleMemberView.ts";
-import type { AppProfile360, BookedPlan, HealthAlert, MemberDetail, MemberPhoto, PeonProfile360, SlopProfile360, MemberTimeline, ObsFeedItem, ObsMember, ObsMessage, OpportunityDetail, SystemEvent, TimeChoice } from "../src/types.ts";
-import { STATE_COLOR } from "./graph.ts";
-import { historyBetween, isBusyElsewhere, ReviewActions, reviewLine, VenueLink, wantsOf } from "./review.tsx";
-import { isMemberActive, OPEN, originLabel, originOf, store, useStore, type DrawerTab, type Fetched, type Opp } from "./store.ts";
+import type { ScoreComponents } from "@thenetwork/core";
 import {
-  ago, AreaLink, Badge, Components, Countdown, Disclosure, dur, humanize, Kpi, MemberLink, num, OppLink, oppDot, pct, Section, sentence, shortDate,
-  stamp, StatusLine, useOutsideClose, WallLeft,
-} from "./ui.tsx";
+  Alert, AreaLink as AreaLinkView, Button, cn, Countdown as CountdownView, Disclosure as DisclosureView, FactLine, InspectorSection, Input, Kpi,
+  KpiGrid as KpiGridView, MemberLink as MemberLinkView, MeterBars, OpportunityLink, Popover, PopoverContent, PopoverTrigger, RevealControl, StatusMark, StatusRow,
+  type KpiTone, type StatusTone,
+} from "@thenetwork/ui";
+import { canTogglePick, type Subject } from "../../core/src/generated/consoleNavigation.ts";
+import { initial as initialDetail, staffPhotoAllowed, staffPhotoReasonReady, staffPhotoView, step as stepDetail } from "../../core/src/generated/consoleMemberView.ts";
+import {
+  canSendWorldEvent, canSubmitReveal, canStartReveal, initial as initialWorkspace, panelView, receiveViewer, revealOffered,
+  step as stepWorkspace, worldMenuShown, type Event as WorkspaceEvent, type PanelAnswer, type PanelView, type RevealForm, type WorkMode, type WorkPanel,
+  type Workspace, type WorldEvent,
+} from "../../core/src/generated/consoleWorkspace.ts";
+import type { AppProfile360, BookedPlan, HealthAlert, MemberDetail, MemberPhoto, PeonProfile360, SlopProfile360, MemberTimeline, ObsFeedItem, ObsMember, ObsMessage, OpportunityDetail, SystemEvent, TimeChoice } from "../src/types.ts";
+import { historyBetween, isBusyElsewhere, ReviewActions, reviewLine, VenueLink, wantsOf } from "./review.tsx";
+import { isMemberActive, OPEN, originLabel, originOf, store, useStore, type DrawerTab, type Fetched, type Focus, type Opp } from "./store.ts";
+import { ago, COMPONENT_SIGN, consoleNav, dur, humanize, jumpTo, num, pct, pickMember, sentence, shortDate, stamp } from "./ui.tsx";
 
+const TONE: Record<string, StatusTone> = { bad: "destructive", warn: "warn", good: "ok", info: "primary", gold: "primary", neutral: "neutral" };
+const tone = (word: string | undefined): StatusTone => TONE[word ?? "neutral"] ?? "neutral";
 const SCOPE_TONE: Record<string, string> = { agent_private: "bad", matchable: "info", shareable: "good", opportunity_specific: "warn" };
 const STATUS_TONE: Record<string, string> = {
   accepted: "good", confirmed: "good", attended: "good", countered: "info", declined: "bad", no_show: "bad", ignored: "warn", expired: "warn",
   cancelled_with_notice: "warn", dropped: "neutral", invited: "info", pending: "neutral",
 };
+const MEMBER_STATE_TONE: Record<string, StatusTone> = { opted_out: "destructive", paused: "neutral", not_joined: "neutral", receiving: "warn" };
+const OPP_STATE_TONE: Record<string, StatusTone> = { IN_REVIEW: "warn", MUTUALLY_ACCEPTED: "ok", QUORUM_MET: "ok", SCHEDULED: "ok" };
+const SEVERITY_TEXT: Record<string, string> = { bad: "text-destructive", warn: "text-warn", good: "text-ok" };
 /** Participant statuses from the reveal on (the member has seen who it is). */
 const REVEALED = new Set(["invited", "accepted", "declined", "countered", "ignored", "expired", "dropped", "confirmed", "attended", "no_show", "cancelled_with_notice"]);
 /** Said yes after the reveal (a later no-show or cancellation still said yes). */
@@ -27,16 +42,80 @@ const STUCK_MS = 72 * 3_600_000, REQUEST_WAIT_MS = 3 * 86_400_000;
 const plural = (n: number, word: string) => `${num(n)} ${word}${n === 1 ? "" : "s"}`;
 export const stateLabel = (s: string) => (s === "IN_REVIEW" ? "In review" : sentence(s));
 
+const SUBJECT: Record<NonNullable<Focus>["kind"], Subject> = { member: "MemberSubject", opportunity: "OpportunitySubject", neighborhood: "NeighborhoodSubject" };
+const panelClass = "flex min-w-0 flex-col gap-4";
+const headClass = "flex flex-col gap-1";
+const titleClass = "text-lg font-semibold text-foreground";
+const quiet = "text-sm text-muted-foreground";
+const peopleClass = "flex flex-wrap gap-x-3 gap-y-1 text-sm";
+const rowClass = "flex flex-wrap items-center gap-2 text-sm";
+
+/** The inspector beside the stage: the overview, or the neighborhood, member or opportunity that has the focus. */
 export function Inspector() {
   const s = useStore();
   const f = s.ui.focus;
+  const subject: Subject = f ? SUBJECT[f.kind] : "Overview";
   return (
-    <aside className="inspector">
-      {f?.kind === "member" ? <MemberPanel id={f.id} key={f.id} />
-        : f?.kind === "opportunity" ? <OpportunityPanel id={f.id} key={f.id} />
-        : f?.kind === "neighborhood" ? <NeighborhoodPanel area={f.id} key={f.id} />
+    <div className={panelClass}>
+      {subject === "MemberSubject" ? <MemberPanel id={f!.id} key={f!.id} />
+        : subject === "OpportunitySubject" ? <OpportunityPanel id={f!.id} key={f!.id} />
+        : subject === "NeighborhoodSubject" ? <NeighborhoodPanel area={f!.id} key={f!.id} />
         : <Overview />}
-    </aside>
+    </div>
+  );
+}
+
+/** The workspace model of this viewer, from the generated `receiveViewer`: the mode for work and the roles. */
+function useWorkspace(): Workspace {
+  const s = useStore();
+  const mode: WorkMode = s.mode === "game" || s.env?.capabilities.hiddenTruth ? "SimulatedWorld" : s.canAct() ? "RealWithService" : "RealWithoutService";
+  return receiveViewer(initialWorkspace, mode, s.can("safety"), s.isAdmin(), s.can("analyst"), s.canSim(), !!s.env?.piiRevealed);
+}
+
+/** The panel answer of a staff read: none yet, a refusal, rows or a failure. */
+function answerOf(r?: Fetched<unknown>): PanelAnswer {
+  return !r ? "NotAnswered" : r.status === 403 ? "AnswerForbidden" : r.data !== undefined ? "AnswerRows" : "AnswerFailed";
+}
+/** The inspector details read like the requests panel: no 404 view of their own. */
+const DETAIL_PANEL: WorkPanel = "RequestsPanel";
+const detailView = (r?: Fetched<unknown>): PanelView => panelView(DETAIL_PANEL, answerOf(r), 1);
+
+/** A member name that moves the focus to the member. */
+function MemberLink({ id, first, children }: { id: string; first?: boolean; children?: ReactNode }) {
+  const m = store.members.get(id);
+  const name = m ? (first ? m.name.split(" ")[0] : m.name) : id;
+  return <MemberLinkView onOpen={() => store.focus({ kind: "member", id })}>{children ?? name}</MemberLinkView>;
+}
+/** An opportunity name ("Maya + Jon") that moves the focus to the opportunity. */
+function OppLink({ o, children }: { o: Opp; children?: ReactNode }) {
+  return <OpportunityLink onOpen={() => store.focus({ kind: "opportunity", id: o.id })}>{children ?? store.oppTitle(o)}</OpportunityLink>;
+}
+/** A neighborhood name that moves the focus to the neighborhood. */
+function AreaLink({ area }: { area?: string }) {
+  if (!area) return null;
+  return <AreaLinkView onOpen={() => store.focus({ kind: "neighborhood", id: area })}>{area}</AreaLinkView>;
+}
+/** The state of an opportunity as a colored shape. */
+function OppMark({ state }: { state: string }) {
+  return <StatusMark tone={OPP_STATE_TONE[state] ?? (OPEN.has(state) ? "primary" : "neutral")} label={stateLabel(state)} />;
+}
+/** The time left to a deadline on the console clock. */
+function Countdown({ deadline, prefix, what }: { deadline: number; prefix?: string; what?: string }) {
+  return <CountdownView deadline={deadline} now={store.now()} prefix={prefix} what={what} deadlineLabel={stamp(deadline)} />;
+}
+/** A disclosure whose open state stays for this viewer (localStorage obs.disclosure.<name>). Its content renders only while it is open. */
+function Disclosure({ name, summary, children, defaultOpen = false }: { name: string; summary: ReactNode; children: ReactNode; defaultOpen?: boolean }) {
+  const key = `obs.disclosure.${name}`;
+  const [open, setOpen] = useState<boolean>(() => {
+    try { const v = localStorage.getItem(key); return v === null ? defaultOpen : v === "1"; } catch { return defaultOpen; }
+  });
+  return (
+    <DisclosureView summary={summary} open={open} onOpenChange={o => {
+      setOpen(o);
+      try { localStorage.setItem(key, o ? "1" : "0"); } catch { return; }
+    }}>
+      {open ? children : null}
+    </DisclosureView>
   );
 }
 
@@ -92,9 +171,8 @@ function memberKey(id: string): string {
   for (const o of store.opps.values()) if (o.participants.includes(id)) k += `|${o.id}:${o.state}:${o.updatedAt}`;
   return k;
 }
-const forbidden = (r?: Fetched<unknown>) => r?.status === 403;
 
-// ---------------------------------------------------------------- overview
+/** The overview: alerts, the six numbers and what needs attention. */
 function Overview() {
   const s = useStore();
   const st = s.stats;
@@ -108,18 +186,18 @@ function Overview() {
   const holds = [...s.members.values()].filter(m => m.trust === "hold" && s.inBorough(m)).length;
   const prompt = s.game?.prompts[0];
   const toReview = (view: "pending" | "decided") => {
-    if (s.showReviewTab()) store.setUI({ drawer: "review", drawerOpen: true, reviewView: view });
-    else { store.setFilters({ stateGroup: view === "pending" ? "review" : "closed" }); store.setUI({ drawer: "pipeline", drawerOpen: true }); }
+    if (jumpTo("review")) store.setUI({ reviewView: view });
+    else { store.setFilters({ stateGroup: view === "pending" ? "review" : "closed" }); jumpTo("pipeline"); }
   };
   const server = st.alerts;
   const go = (drawer: DrawerTab) => store.setUI({ drawer, drawerOpen: true });
   const alerts: ReactNode[] = server ? [
-    s.env?.error && <div className="alert bad" key="err">{s.env.error}</div>,
+    s.env?.error && <Alert variant="destructive" key="err">{s.env.error}</Alert>,
     ...server.map(a => <AlertLink key={a.key} tone={a.level} onClick={() => alertGo(a, toReview, go)}>{a.text}</AlertLink>),
     holds > 0 && <AlertLink key="hold" tone="bad" onClick={() => { store.setFilters({ members: "hold" }); go("safety"); }}>{plural(holds, "member")} on hold</AlertLink>,
     s.clock?.waitingForPlayer && prompt && <AlertLink key="you" tone="gold" onClick={() => store.focus({ kind: "member", id: prompt.memberId })}>Waiting for you as {s.firstName(prompt.memberId)}</AlertLink>,
   ].filter(Boolean) : [
-    s.env?.error && <div className="alert bad" key="err">{s.env.error}</div>,
+    s.env?.error && <Alert variant="destructive" key="err">{s.env.error}</Alert>,
     violations > 0 && <AlertLink key="inv" tone="bad" onClick={() => store.setUI({ drawer: "safety", drawerOpen: true })}>{plural(violations, "invariant violation")}</AlertLink>,
     !!j?.canaryLeaks && <AlertLink key="canary" tone="bad" onClick={() => store.setUI({ drawer: "safety", drawerOpen: true })}>{plural(j.canaryLeaks, "canary leak")}</AlertLink>,
     !!j?.minorContacts && <AlertLink key="minor" tone="bad" onClick={() => store.setUI({ drawer: "safety", drawerOpen: true })}>{plural(j.minorContacts, "minor contact")}</AlertLink>,
@@ -129,11 +207,11 @@ function Overview() {
     s.clock?.waitingForPlayer && prompt && <AlertLink key="you" tone="gold" onClick={() => store.focus({ kind: "member", id: prompt.memberId })}>Waiting for you as {s.firstName(prompt.memberId)}</AlertLink>,
   ].filter(Boolean);
   return (
-    <div className="panel">
-      {alerts.length > 0 && <div className="alert-strip">{alerts}</div>}
+    <>
+      {alerts.length > 0 && <div className="flex flex-col gap-2">{alerts}</div>}
       <KpiGrid />
       <NeedsAttention />
-    </div>
+    </>
   );
 }
 
@@ -149,9 +227,18 @@ function alertGo(a: HealthAlert, toReview: (v: "pending" | "decided") => void, g
   else go("safety");
 }
 
-function AlertLink({ tone, onClick, children }: { tone: string; onClick(): void; children: ReactNode }) {
-  return <button type="button" className={`alert ${tone}`} onClick={onClick}>{children} →</button>;
+/** One alert that opens the place to act on it. */
+function AlertLink({ tone: word, onClick, children }: { tone: string; onClick(): void; children: ReactNode }) {
+  const t = tone(word);
+  return (
+    <Button variant="outline" size="sm" className="h-auto justify-start py-2 text-left whitespace-normal" onClick={onClick}>
+      <StatusMark tone={t} label={word === "bad" ? "Alert" : word === "warn" ? "Warning" : "Note"} />
+      <span>{children} →</span>
+    </Button>
+  );
 }
+
+const KPI_TONE: Record<string, KpiTone> = { good: "ok", warn: "warn", bad: "destructive" };
 
 /** The six KPIs. With `area` they are scoped to one neighborhood instead of the borough filter. */
 function KpiGrid({ area }: { area?: string }) {
@@ -182,19 +269,20 @@ function KpiGrid({ area }: { area?: string }) {
     if (drawer) store.setUI({ drawer, drawerOpen: true });
   };
   return (
-    <div className="kpis six">
-      <Kpi label="Active members" value={num(active)} title="Joined, not paused or opted out (current state)" onClick={() => go({ members: "active" })} />
+    <KpiGridView>
+      <Kpi label="Active members" value={num(active)} title="Joined, not paused or opted out (current state)" onSelect={() => go({ members: "active" })} />
       {reviewOff
-        ? <Kpi label={`Proposals · ${range}`} value={num(proposals)} title="Opportunities created in the range" onClick={() => store.setUI({ drawer: "pipeline", drawerOpen: true })} />
-        : <Kpi label="In review" value={num(inReview.length)} tone={dueSoon ? "warn" : undefined} title="Waiting for a human reviewer before anyone is contacted (PRD 32.8). Amber: one is due in under 1 h." onClick={() => store.setUI(s.showReviewTab() ? { drawer: "review", drawerOpen: true, reviewView: "pending" } : { drawer: "pipeline", drawerOpen: true })} />}
-      <Kpi label="Everyone-yes" value={yesRate === undefined ? "–" : pct(yesRate)} tone={yesRate !== undefined && yesRate >= 0.85 ? "good" : undefined} title={`Of ${revealed.length} opportunities revealed in the range, the share where every participant said yes. Target 85%.`} onClick={() => store.setUI({ drawer: "pipeline", drawerOpen: true })} />
-      <Kpi label={`Meetings · ${range}`} value={num(met)} title={`Meetings held in the range. ${upcoming} scheduled.`} onClick={() => go({ stateGroup: "met" }, "pipeline")} />
-      <Kpi label="Open requests" value={num(requests)} tone={requests ? "warn" : undefined} title="People requests still being worked on (probing or waiting)" onClick={() => go({ origin: "request" }, "pipeline")} />
-      <Kpi label="Safety holds" value={num(holds)} tone={holds ? "bad" : undefined} title="Members on trust hold (never matched until cleared)" onClick={() => go({ members: "hold" }, "safety")} />
-    </div>
+        ? <Kpi label={`Proposals · ${range}`} value={num(proposals)} title="Opportunities created in the range" onSelect={() => store.setUI({ drawer: "pipeline", drawerOpen: true })} />
+        : <Kpi label="In review" value={num(inReview.length)} tone={dueSoon ? KPI_TONE.warn : undefined} title="Waiting for a human reviewer before anyone is contacted (PRD 32.8). Amber: one is due in under 1 h." onSelect={() => (jumpTo("review") ? store.setUI({ reviewView: "pending" }) : jumpTo("pipeline"))} />}
+      <Kpi label="Everyone-yes" value={yesRate === undefined ? "–" : pct(yesRate)} tone={yesRate !== undefined && yesRate >= 0.85 ? KPI_TONE.good : undefined} title={`Of ${revealed.length} opportunities revealed in the range, the share where every participant said yes. Target 85%.`} onSelect={() => store.setUI({ drawer: "pipeline", drawerOpen: true })} />
+      <Kpi label={`Meetings · ${range}`} value={num(met)} title={`Meetings held in the range. ${upcoming} scheduled.`} onSelect={() => go({ stateGroup: "met" }, "pipeline")} />
+      <Kpi label="Open requests" value={num(requests)} tone={requests ? KPI_TONE.warn : undefined} title="People requests still being worked on (probing or waiting)" onSelect={() => go({ origin: "request" }, "pipeline")} />
+      <Kpi label="Safety holds" value={num(holds)} tone={holds ? KPI_TONE.bad : undefined} title="Members on trust hold (never matched until cleared)" onSelect={() => go({ members: "hold" }, "safety")} />
+    </KpiGridView>
   );
 }
 
+/** At most five items to act on: review due, requests that wait, opportunities with no update. */
 function NeedsAttention({ area }: { area?: string }) {
   const s = useStore();
   const now = s.now();
@@ -204,51 +292,58 @@ function NeedsAttention({ area }: { area?: string }) {
   for (const o of s.reviewPending().filter(scoped)) {
     if (rows.length >= 5) break;
     seen.add(o.id);
-    rows.push(<div className="attn" key={o.id}>{oppDot(o.state)}<OppLink o={o} /><span className="spacer" />{o.review && <Countdown deadline={o.review.deadline} prefix="due in " />}</div>);
+    rows.push(<div className={rowClass} key={o.id}><OppMark state={o.state} /><OppLink o={o} />{o.review && <span className="ml-auto"><Countdown deadline={o.review.deadline} prefix="due in " /></span>}</div>);
   }
   const open = [...s.opps.values()].filter(o => o.source !== "shadow" && OPEN.has(o.state) && o.state !== "IN_REVIEW" && !seen.has(o.id) && scoped(o));
   for (const o of open.filter(o => originOf(o) === "request" && now - o.createdAt > REQUEST_WAIT_MS).sort((a, b) => a.createdAt - b.createdAt)) {
     if (rows.length >= 5) break;
     seen.add(o.id);
-    rows.push(<div className="attn" key={o.id}>{oppDot(o.state)}<MemberLink id={o.participants[0]!} /><span className="muted small">request waiting {dur(now - o.createdAt)}</span><span className="spacer" /><OppLink o={o}>open</OppLink></div>);
+    rows.push(<div className={rowClass} key={o.id}><OppMark state={o.state} /><MemberLink id={o.participants[0]!} /><span className="text-muted-foreground">request waiting {dur(now - o.createdAt)}</span><span className="ml-auto"><OppLink o={o}>open</OppLink></span></div>);
   }
   for (const o of open.filter(o => o.state !== "SCHEDULED" && !seen.has(o.id) && now - o.updatedAt > STUCK_MS).sort((a, b) => a.updatedAt - b.updatedAt)) {
     if (rows.length >= 5) break;
-    rows.push(<div className="attn" key={o.id}>{oppDot(o.state)}<OppLink o={o} /><span className="muted small">{stateLabel(o.state).toLowerCase()} · no update for {dur(now - o.updatedAt)}</span></div>);
+    rows.push(<div className={rowClass} key={o.id}><OppMark state={o.state} /><OppLink o={o} /><span className="text-muted-foreground">{stateLabel(o.state).toLowerCase()} · no update for {dur(now - o.updatedAt)}</span></div>);
   }
   if (!rows.length) return null;
-  return <Section title="Needs attention">{rows}</Section>;
+  return <InspectorSection title="Needs attention">{rows}</InspectorSection>;
 }
 
-// ---------------------------------------------------------------- neighborhood
+/** The trust level of a member as a colored shape, or nothing when there is no hold or watch. */
+function TrustMark({ trust }: { trust?: string }) {
+  if (trust === "hold") return <StatusMark tone="destructive" label="Hold" showLabel title="Trust hold: never matched until cleared" />;
+  if (trust === "watch") return <StatusMark tone="warn" label="Watch" showLabel title="Trust watch" />;
+  return null;
+}
+
+/** One neighborhood: its numbers, what needs attention, its open opportunities and its members. */
 function NeighborhoodPanel({ area }: { area: string }) {
   const s = useStore();
   const members = [...s.members.values()].filter(m => m.area === area);
   const activity = (m: ObsMember) => m.counters.meetings * 2 + m.counters.accepted + m.counters.proposals * 0.2;
   const opps = [...s.opps.values()].filter(o => OPEN.has(o.state) && o.source !== "shadow" && o.participants.some(id => s.members.get(id)?.area === area));
   return (
-    <div className="panel">
-      <div className="panel-head">
-        <h2>{area}</h2>
-        <StatusLine parts={[s.borough(area), `${members.length} members`, `${members.filter(isMemberActive).length} active`]} />
+    <>
+      <div className={headClass}>
+        <h2 className={titleClass}>{area}</h2>
+        <FactLine parts={[s.borough(area), `${members.length} members`, `${members.filter(isMemberActive).length} active`]} />
       </div>
       <KpiGrid area={area} />
       <NeedsAttention area={area} />
-      <Section title={`Open opportunities (${opps.length})`}><OppList opps={opps} /></Section>
-      <Section title="Members">
+      <InspectorSection title={`Open opportunities (${opps.length})`}><OppList opps={opps} /></InspectorSection>
+      <InspectorSection title="Members">
         {members.length ? (
-          <div className="people">
+          <div className={peopleClass}>
             {members.sort((a, b) => activity(b) - activity(a)).slice(0, 60).map(m => (
-              <span key={m.id} className="person-row"><MemberLink id={m.id} />{m.minor && <Badge tone="bad">Under 18</Badge>}{m.trust === "hold" ? <Badge tone="bad">Hold</Badge> : m.trust === "watch" ? <Badge tone="warn">Watch</Badge> : null}</span>
+              <span key={m.id} className="inline-flex items-center gap-1"><MemberLink id={m.id} />{m.minor && <StatusMark tone="destructive" label="Under 18" />}<TrustMark trust={m.trust} /></span>
             ))}
           </div>
-        ) : <div className="muted small">{s.nothing()}</div>}
-      </Section>
-    </div>
+        ) : <p className={quiet}>{s.nothing()}</p>}
+      </InspectorSection>
+    </>
   );
 }
 
-// ---------------------------------------------------------------- member
+/** One member: the facts, the controls, what they want, open items, the timeline and the detail behind disclosures. */
 function MemberPanel({ id }: { id: string }) {
   const s = useStore();
   const m = s.members.get(id);
@@ -256,12 +351,11 @@ function MemberPanel({ id }: { id: string }) {
   const res = useLive<MemberDetail>(() => store.member(id), key, () => detailScope(id, !!store.truth, store.revealFor(id)?.until));
   const tl = useLive<MemberTimeline>(() => store.timeline(id), key, () => detailScope(id, store.revealFor(id)?.until));
   const d = res?.data;
-  if (!m) return <div className="panel muted">Member not found.</div>;
+  if (!m) return <p className={quiet}>Member not found.</p>;
   const game = !!s.env?.capabilities.canIntervene && s.canSim();
   const controlled = s.game?.controlled.includes(id);
   const picked = s.ui.picks.includes(id);
   const now = s.now();
-  // Live opportunities from the store, plus any older ones only the detail has.
   const oppMap = new Map<string, Opp>();
   for (const o of d?.opportunities ?? []) oppMap.set(o.id, o);
   for (const o of s.opps.values()) if (o.participants.includes(id)) oppMap.set(o.id, o);
@@ -274,64 +368,66 @@ function MemberPanel({ id }: { id: string }) {
   const intents = d?.intents ?? [];
   const activeIntents = intents.filter(i => i.status === "active");
   const pastIntents = intents.filter(i => i.status !== "active");
+  const view = detailView(res);
   return (
-    <div className="panel">
-      <div className="panel-head">
-        <div className="title-row">
-          <h2>{m.name}</h2>
+    <>
+      <div className={headClass}>
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className={titleClass}>{m.name}</h2>
           {m.minor && (m.ageUnknown
-            ? <Badge tone="warn" title="No valid age yet: treated as under 18 until they say. Never matched or introduced.">Age unknown</Badge>
-            : <Badge tone="bad" title="Never matched or introduced. Chat and events only.">Under 18</Badge>)}
-          {m.trust === "hold" && <Badge tone="bad" title="Trust hold: never matched until cleared">Hold</Badge>}
-          {m.trust === "watch" && <Badge tone="warn" title="Trust watch">Watch</Badge>}
-          {m.weekly && <Badge tone="info" title="Said WEEKLY: gets &quot;What's your week like?&quot; on Sundays in their send window; the answer counts as their availability for 7 days">Weekly check-in</Badge>}
-          {m.calendar && <Badge tone="info" title="Said CALENDAR: free/busy consent recorded. No calendar source is connected yet.">Calendar consent</Badge>}
-          <RevealControl id={id} />
+            ? <StatusMark tone="warn" label="Age unknown" showLabel title="No valid age yet: treated as under 18 until they say. Never matched or introduced." />
+            : <StatusMark tone="destructive" label="Under 18" showLabel title="Never matched or introduced. Chat and events only." />)}
+          <TrustMark trust={m.trust} />
+          {m.weekly && <StatusMark tone="primary" label="Weekly check-in" showLabel title="Said WEEKLY: gets &quot;What's your week like?&quot; on Sundays in their send window; the answer counts as their availability for 7 days" />}
+          {m.calendar && <StatusMark tone="primary" label="Calendar consent" showLabel title="Said CALENDAR: free/busy consent recorded. No calendar source is connected yet." />}
+          <MemberReveal id={id} />
           <CrossAppButton memberId={id} />
         </div>
-        <StatusLine parts={[
+        <FactLine parts={[
           <AreaLink area={m.area} />,
-          <span><span className="dot" style={{ background: STATE_COLOR[m.state] }} />{humanize(m.state)}</span>,
+          <StatusMark tone={MEMBER_STATE_TONE[m.state] ?? "ok"} label={humanize(m.state)} showLabel />,
           open.length > 0 && `in ${open.length} open opportunit${open.length > 1 ? "ies" : "y"}`,
           m.joinedAt && `joined ${shortDate(m.joinedAt)}`,
           m.invitedBy && <span>invited by <MemberLink id={m.invitedBy} /></span>,
         ]} />
-        <StatusLine parts={[
+        <FactLine parts={[
           `${m.counters.proposals} proposals`, `${m.counters.accepted} yes`, `${m.counters.meetings} met`,
           meanEnj !== undefined && `${pct(meanEnj)} enjoyed`,
         ]} />
       </div>
       {game && (
-        <div className="actions">
-          <button className={picked ? "btn gold" : "btn"} disabled={m.minor && !picked} title={m.minor ? "Members under 18 are never introduced" : "Pick for an intro (shift-click on the map)"} onClick={() => store.togglePick(id)}>{picked ? "Picked ✓" : "Pick for intro"}</button>
-          <button className={controlled ? "btn gold" : "btn"} onClick={() => store.control({ type: "takeover", memberId: id, on: !controlled })}>{controlled ? "Let go" : "Play as"}</button>
-          <GodMenu id={id} />
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant={picked ? "primary" : "outline"} size="sm" disabled={!canTogglePick(consoleNav(), picked, !!m.minor)} title={m.minor ? "Members under 18 are never introduced" : "Pick for an intro (shift-click on the map)"} onClick={() => pickMember(id)}>{picked ? "Picked ✓" : "Pick for intro"}</Button>
+          <Button variant={controlled ? "primary" : "outline"} size="sm" onClick={() => store.control({ type: "takeover", memberId: id, on: !controlled })}>{controlled ? "Let go" : "Play as"}</Button>
+          <WorldMenu id={id} />
         </div>
       )}
       {(request || activeIntents.length > 0 || pastIntents.length > 0) && (
-        <Section title="Wants">
-          {request && <div className="intent"><OppLink o={request}><b>Request</b></OppLink> <span className="muted small">· waiting {dur(now - request.createdAt)}</span></div>}
+        <InspectorSection title="Wants">
+          {request && <div className="text-sm"><OppLink o={request}><b>Request</b></OppLink> <span className="text-muted-foreground">· waiting {dur(now - request.createdAt)}</span></div>}
           {activeIntents.map(i => (
-            <div className="intent" key={i.id} title={i.details}><b>{i.objective}</b> <span className="muted small">· {i.category} · {dur(Math.max(0, now - i.createdAt))}</span></div>
+            <div className="text-sm" key={i.id} title={i.details}><b>{i.objective}</b> <span className="text-muted-foreground">· {i.category} · {dur(Math.max(0, now - i.createdAt))}</span></div>
           ))}
           {pastIntents.length > 0 && (
             <Disclosure name="past-intents" summary={`+${pastIntents.length} past`}>
-              {pastIntents.map(i => <div className="intent muted" key={i.id} title={i.details}>{i.objective} <span className="small">· {i.category} · {i.status}</span></div>)}
+              {pastIntents.map(i => <div className="text-muted-foreground" key={i.id} title={i.details}>{i.objective} · {i.category} · {i.status}</div>)}
             </Disclosure>
           )}
-        </Section>
+        </InspectorSection>
       )}
       {(open.length > 0 || prompts.length > 0) && (
-        <Section title="Open items">
+        <InspectorSection title="Open items">
           {open.length > 0 && <OppList opps={open} me={id} />}
           {prompts.map(p => (
-            <div className="attn" key={p.id}><span className="busy gold">waiting for your reply</span><span className="muted small ellipsis">{p.body}</span></div>
+            <div className={cn(rowClass, "flex-nowrap")} key={p.id}><StatusMark tone="primary" label="waiting for your reply" showLabel /><span className="min-w-0 truncate text-muted-foreground">{p.body}</span></div>
           ))}
-        </Section>
+        </InspectorSection>
       )}
-      {forbidden(res) ? <div className="muted small">Your role cannot open this member.</div> : !d ? <div className="muted small">{res?.error ?? "Loading…"}</div> : (
+      {view === "PanelForbidden" ? <p className={quiet}>Your role cannot open this member.</p> : view !== "PanelRows" || !d ? <StatusRow view={view} error={res?.error} /> : (
         <>
-          <Section title="Timeline">{tl?.data ? <MemberTimelineView t={tl.data} d={d} /> : <div className="muted small">{tl?.error ?? "Loading…"}</div>}</Section>
+          <InspectorSection title="Timeline">
+            {tl?.data && detailView(tl) === "PanelRows" ? <MemberTimelineView t={tl.data} d={d} /> : <StatusRow view={detailView(tl)} error={tl?.error} />}
+          </InspectorSection>
           {past.length > 0 && <Disclosure name="past-opps" summary={`Past opportunities (${past.length})`}><OppList opps={past} me={id} /></Disclosure>}
           <Disclosure name="connections" summary={`Connections (${d.edges.length})`}><Connections d={d} id={id} /></Disclosure>
           <Disclosure name="profile" summary="Profile"><Profile d={d} /></Disclosure>
@@ -340,69 +436,132 @@ function MemberPanel({ id }: { id: string }) {
           {s.truth && d.truth && <Disclosure name="truth" summary="Hidden truth"><Truth d={d} /></Disclosure>}
           {d.staffAccess && (
             <Disclosure name="staff-access" summary={`Staff who opened (${d.staffAccess.length})`}>
-              {d.staffAccess.map((a, i) => <div className="small" key={i}>{a.actor.replace(/^token:/, "")} <span className="muted">· {humanize(a.action)} · {stamp(a.at)}</span></div>)}
+              {d.staffAccess.map((a, i) => <div key={i}>{a.actor.replace(/^token:/, "")} <span className="text-muted-foreground">· {humanize(a.action)} · {stamp(a.at)}</span></div>)}
             </Disclosure>
           )}
         </>
       )}
-    </div>
+    </>
   );
 }
 
-function GodMenu({ id }: { id: string }) {
+const WORLD_EVENTS: { event: WorldEvent; action: "go_silent" | "force_flake" | "opt_out"; label: string }[] = [
+  { event: "GoSilent", action: "go_silent", label: "Go silent (stops replying)" },
+  { event: "ForceFlake", action: "force_flake", label: "Flake on next meeting" },
+  { event: "TextStop", action: "opt_out", label: "Text STOP" },
+];
+
+/** The world menu of a simulated member: go silent, flake or text STOP. Its open state is the store popover, so Escape closes it first. */
+function WorldMenu({ id }: { id: string }) {
   const s = useStore();
+  const staff = useWorkspace();
   const key = `god:${id}`;
   const open = s.ui.popover === key;
-  const ref = useRef<HTMLDivElement>(null);
-  useOutsideClose(ref, open);
-  const act = (action: "go_silent" | "force_flake" | "opt_out") => { store.control({ type: "god", action, memberId: id }); store.setUI({ popover: null }); };
+  const w: Workspace = { ...staff, worldMenuOpen: open };
+  if (!worldMenuShown(w.staff)) return null;
+  const act = (event: WorldEvent, action: "go_silent" | "force_flake" | "opt_out") => {
+    if (!canSendWorldEvent(w, event)) return;
+    store.control({ type: "god", action, memberId: id });
+    store.setUI({ popover: null });
+  };
   return (
-    <div className="menu" ref={ref}>
-      <button className="btn" onClick={() => store.setUI({ popover: open ? null : key })}>World ▾</button>
-      {open && (
-        <div className="menu-pop">
-          <button onClick={() => act("go_silent")}>Go silent (stops replying)</button>
-          <button onClick={() => act("force_flake")}>Flake on next meeting</button>
-          <button onClick={() => act("opt_out")}>Text STOP</button>
-        </div>
-      )}
-    </div>
+    <Popover open={open} onOpenChange={o => store.setUI({ popover: o ? key : null })}>
+      <PopoverTrigger asChild><Button variant="outline" size="sm">World ▾</Button></PopoverTrigger>
+      <PopoverContent align="start" aria-label="World" className="w-auto gap-1 p-1">
+        {WORLD_EVENTS.map(x => <Button key={x.event} variant="ghost" size="sm" className="justify-start" onClick={() => act(x.event, x.action)}>{x.label}</Button>)}
+      </PopoverContent>
+    </Popover>
   );
 }
 
+/** A wall-clock time that changes every 15 s while `on`: reveals end in real time, not in simulated time. */
+function useWallClock(on: boolean): number {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!on) return;
+    const h = setInterval(() => tick(x => x + 1), 15_000);
+    return () => clearInterval(h);
+  }, [on]);
+  return Date.now();
+}
+
+/** Per-member PII reveal (admin-console 4.4): the generated reveal form over the store's grants. The server grant is the truth; a grant past its time shows as hidden. */
+function MemberReveal({ id }: { id: string }) {
+  const s = useStore();
+  const staff = useWorkspace();
+  const [form, setForm] = useState<RevealForm>(initialWorkspace.reveal);
+  const [reason, setReason] = useState("");
+  const grant = s.revealFor(id);
+  const now = useWallClock(!!grant);
+  const shown: RevealForm = grant ? { ...form, phase: "RevealGranted" } : form.phase === "RevealGranted" ? stepWorkspace({ ...staff, reveal: form }, { type: "expireReveal" }).reveal : form;
+  const w: Workspace = { ...staff, reveal: shown };
+  if (!revealOffered(w.staff)) return null;
+  const send = (e: WorkspaceEvent) => setForm(stepWorkspace(w, e).reveal);
+  const submit = async () => {
+    if (!canSubmitReveal(w)) return;
+    const sending = stepWorkspace(w, { type: "submitReveal" });
+    setForm(sending.reveal);
+    const granted = await store.reveal(id, reason.trim(), sending.reveal.minutes);
+    setForm(stepWorkspace(sending, { type: "receiveRevealAnswer", granted }).reveal);
+    if (granted) setReason("");
+  };
+  const left = grant ? grant.until - now : 0;
+  return (
+    <RevealControl
+      reveal={shown}
+      canStart={canStartReveal(w)}
+      canSubmit={canSubmitReveal(w)}
+      reason={reason}
+      onReasonChange={r => { setReason(r); send({ type: "typeRevealReason", reasonChars: r.trim().length }); }}
+      onMinutesChange={minutes => send({ type: "chooseRevealMinutes", minutes })}
+      onStart={() => send({ type: "startReveal" })}
+      onSubmit={submit}
+      onCancel={() => send({ type: "cancelReveal" })}
+      onEnd={() => { store.unreveal(id); send({ type: "endReveal" }); }}
+      minutesLeft={grant ? (left <= 0 ? 0 : Math.max(1, Math.ceil(left / 60_000))) : undefined}
+      grantedReason={grant?.reason}
+    />
+  );
+}
+
+/** The member's own profile: bio, work, pronouns, availability and where they spend time. */
 function Profile({ d }: { d: MemberDetail }) {
   const p = d.profile;
   return (
-    <>
-      {p?.bio && <p className="bio">{p.bio}</p>}
-      <StatusLine className="small" parts={[p?.occupation, p?.pronouns, p?.availability]} />
+    <div className="flex flex-col gap-1">
+      {p?.bio && <p className="text-foreground">{p.bio}</p>}
+      <FactLine parts={[p?.occupation, p?.pronouns, p?.availability]} />
       {d.presence.map((x, i) => (
-        <div className="small" key={i}>{humanize(x.type)} · {x.areas.join(", ")}{x.from ? ` · ${shortDate(x.from)}–${shortDate(x.to ?? x.from)}` : ""}</div>
+        <div key={i}>{humanize(x.type)} · {x.areas.join(", ")}{x.from ? ` · ${shortDate(x.from)}–${shortDate(x.to ?? x.from)}` : ""}</div>
       ))}
-    </>
+    </div>
   );
 }
 
+/** The known facts by kind; the shape and color of each fact is its scope. */
 function Facts({ d }: { d: MemberDetail }) {
   const byKind = new Map<string, typeof d.facets>();
   for (const f of d.facets) { if (!byKind.has(f.kind)) byKind.set(f.kind, []); byKind.get(f.kind)!.push(f); }
-  if (!byKind.size) return <div className="muted small">None.</div>;
+  if (!byKind.size) return <p className={quiet}>None.</p>;
   return (
-    <>
+    <div className="flex flex-col gap-2">
       {[...byKind.entries()].map(([kind, fs]) => (
-        <div className="facet-group" key={kind}>
-          <div className="facet-kind">{humanize(kind)}</div>
-          <div className="facet-list">
+        <div key={kind} className="flex flex-col gap-1">
+          <div className="font-medium text-muted-foreground">{humanize(kind)}</div>
+          <ul className="flex flex-wrap gap-x-3 gap-y-1">
             {fs.map(f => (
-              <span className={`facet scope-${SCOPE_TONE[f.scope]}`} key={f.id} title={`${humanize(f.scope)} · ${f.provenance}${f.source ? ` via ${f.source}` : ""} · confidence ${f.confidence}`}>{f.value}</span>
+              <li className="inline-flex items-center gap-1" key={f.id} title={`${humanize(f.scope)} · ${f.provenance}${f.source ? ` via ${f.source}` : ""} · confidence ${f.confidence}`}>
+                <StatusMark tone={tone(SCOPE_TONE[f.scope])} label={humanize(f.scope)} />{f.value}
+              </li>
             ))}
-          </div>
+          </ul>
         </div>
       ))}
-    </>
+    </div>
   );
 }
 
+/** The member's connections by type: invited, vouched for, blocked. */
 function Connections({ d, id }: { d: MemberDetail; id: string }) {
   const groups = new Map<string, string[]>();
   for (const e of d.edges) {
@@ -411,39 +570,42 @@ function Connections({ d, id }: { d: MemberDetail; id: string }) {
     if (!groups.has(label)) groups.set(label, []);
     groups.get(label)!.push(other);
   }
-  if (!groups.size) return <div className="muted small">None.</div>;
+  if (!groups.size) return <p className={quiet}>None.</p>;
   return (
-    <>
+    <div className="flex flex-col gap-2">
       {[...groups.entries()].map(([label, ids]) => (
-        <div className="conn-group" key={label}>
-          <span className="muted small">{label} ({ids.length})</span>
-          <div className="people">{ids.map(o => <MemberLink key={o} id={o} />)}</div>
+        <div key={label} className="flex flex-col gap-1">
+          <span className="text-muted-foreground">{label} ({ids.length})</span>
+          <div className={peopleClass}>{ids.map(o => <MemberLink key={o} id={o} />)}</div>
         </div>
       ))}
-    </>
+    </div>
   );
 }
 
+/** A list of opportunities; a row opens the opportunity. With `me`, the names are the other people and the status is this member's. */
 export function OppList({ opps, me }: { opps: Opp[]; me?: string }) {
   const s = useStore();
-  if (!opps.length) return <div className="muted small">{s.nothing()}</div>;
+  if (!opps.length) return <p className={quiet}>{s.nothing()}</p>;
   return (
-    <div className="opp-list">
+    <ul className="flex flex-col">
       {opps.slice(0, 60).map(o => (
-        <button className="opp-row" key={o.id} onClick={() => store.focus({ kind: "opportunity", id: o.id })}>
-          {oppDot(o.state)}
-          <span className="opp-main">
-            <span className="opp-title">{me ? o.participants.filter(x => x !== me).map(x => s.firstName(x)).join(", ") : s.oppTitle(o)} <span className="muted">· {humanize(o.kind)}</span></span>
-            <StatusLine className="small" parts={[
-              stateLabel(o.state).toLowerCase(),
-              me && o.status[me] && `you: ${humanize(o.status[me]!)}`,
-              originLabel(originOf(o)),
-            ]} />
-          </span>
-          {o.state === "IN_REVIEW" && o.review ? <Countdown deadline={o.review.deadline} /> : <span className="muted small">{ago(o.createdAt)}</span>}
-        </button>
+        <li key={o.id}>
+          <Button variant="ghost" className="h-auto w-full justify-start px-2 py-1 text-left font-normal whitespace-normal" onClick={() => store.focus({ kind: "opportunity", id: o.id })}>
+            <OppMark state={o.state} />
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="truncate font-medium text-foreground">{me ? o.participants.filter(x => x !== me).map(x => s.firstName(x)).join(", ") : s.oppTitle(o)} <span className="font-normal text-muted-foreground">· {humanize(o.kind)}</span></span>
+              <FactLine parts={[
+                stateLabel(o.state).toLowerCase(),
+                me && o.status[me] && `you: ${humanize(o.status[me]!)}`,
+                originLabel(originOf(o)),
+              ]} />
+            </span>
+            {o.state === "IN_REVIEW" && o.review ? <Countdown deadline={o.review.deadline} /> : <span className={quiet}>{ago(o.createdAt)}</span>}
+          </Button>
+        </li>
       ))}
-    </div>
+    </ul>
   );
 }
 
@@ -474,33 +636,38 @@ function eventIcon(e: SystemEvent): string {
 function GuardMark({ g }: { g?: ObsMessage["guard"] }) {
   if (!g) return null;
   return g === "passed"
-    ? <span className="guard ok" title="Leak check passed: sent as written"> · ✓ leak check</span>
-    : <span className="guard warn" title="The leak check stopped the first text: this generic version went out"> · leak check: generic sent</span>;
+    ? <StatusMark tone="ok" label="leak check" showLabel title="Leak check passed: sent as written" />
+    : <StatusMark tone="warn" label="leak check: generic sent" showLabel title="The leak check stopped the first text: this generic version went out" />;
 }
 /** Messages and feed events in time order: the latest 30, then "Show earlier". */
 function TimelineList({ items, who }: { items: TimelineItem[]; who: (m: ObsMessage & { memberId?: string }) => string }) {
   const [n, setN] = useState(30);
   const s = useStore();
-  if (!items.length) return <div className="muted small">{s.nothing()}</div>;
+  if (!items.length) return <p className={quiet}>{s.nothing()}</p>;
   const sorted = items.sort((a, b) => a.t - b.t);
   const shown = sorted.slice(-n);
   return (
-    <div className="timeline">
-      {sorted.length > n && <button className="link small" onClick={() => setN(n + 30)}>Show earlier ({sorted.length - n})</button>}
+    <div className="flex flex-col gap-2 text-sm">
+      {sorted.length > n && <Button variant="ghost" size="sm" className="self-start" onClick={() => setN(n + 30)}>Show earlier ({sorted.length - n})</Button>}
       {shown.map(x => x.msg ? (
-        <div key={x.key} className={`msg ${x.msg.direction} ${x.msg.system ? "system" : ""}`}>
-          <div className="msg-meta">{who(x.msg)} · {stamp(x.msg.ts)}{x.msg.type ? ` · ${humanize(x.msg.type)}` : ""}{x.msg.proactive ? <span className="proactive" title="Proactive: the Network started this"> · proactive</span> : null}{x.msg.status !== "delivered" ? ` · ${humanize(x.msg.status)}` : ""}<GuardMark g={x.msg.guard} /></div>
-          <div className={`msg-body ${x.msg.hiddenLength !== undefined ? "muted" : ""}`}>{x.msg.body}{x.msg.hiddenLength !== undefined ? ` · ${x.msg.hiddenLength} chars` : ""}</div>
-          {x.msg.timeOptions && <TimeChips offered={x.msg.timeOptions} />}
-          {x.msg.booked && <div className="small muted">Booked for {stamp(x.msg.booked.at)} · silence for {x.msg.booked.optOutHours} h counts as yes; &quot;can't&quot; cancels</div>}
+        <div key={x.key} className={cn("flex flex-col gap-1 rounded-md p-2", x.msg.direction === "outbound" ? "bg-muted" : "border border-border", x.msg.system && "text-muted-foreground")}>
+          <div className="flex flex-wrap items-center gap-x-1 text-muted-foreground">
+            {who(x.msg)} · {stamp(x.msg.ts)}{x.msg.type ? ` · ${humanize(x.msg.type)}` : ""}
+            {x.msg.proactive ? <span title="Proactive: the Network started this"> · proactive</span> : null}
+            {x.msg.status !== "delivered" ? ` · ${humanize(x.msg.status)}` : ""}
+            <GuardMark g={x.msg.guard} />
+          </div>
+          <div className={cn("whitespace-pre-wrap", x.msg.hiddenLength !== undefined ? "text-muted-foreground" : "text-foreground")}>{x.msg.body}{x.msg.hiddenLength !== undefined ? ` · ${x.msg.hiddenLength} chars` : ""}</div>
+          {x.msg.timeOptions && <TimeChoices offered={x.msg.timeOptions} />}
+          {x.msg.booked && <div className="text-muted-foreground">Booked for {stamp(x.msg.booked.at)} · silence for {x.msg.booked.optOutHours} h counts as yes; &quot;can't&quot; cancels</div>}
         </div>
       ) : x.sys ? (
-        <div key={x.key} className={`tl-event sev-${x.sys.severity ?? "info"}`} title={x.sys.detail ? Object.entries(x.sys.detail).map(([k, v]) => `${k}: ${v}`).join(" · ") : x.sys.type}>
-          <span className="tl-icon" aria-hidden>{eventIcon(x.sys)}</span><span className="muted">{stamp(x.sys.t)}</span> {x.sys.text}
+        <div key={x.key} className={SEVERITY_TEXT[x.sys.severity ?? "info"] ?? "text-foreground"} title={x.sys.detail ? Object.entries(x.sys.detail).map(([k, v]) => `${k}: ${v}`).join(" · ") : x.sys.type}>
+          <span className="mr-1" aria-hidden>{eventIcon(x.sys)}</span><span className="text-muted-foreground">{stamp(x.sys.t)}</span> {x.sys.text}
           {x.sys.opportunityId && store.opps.has(x.sys.opportunityId) && !(store.ui.focus?.kind === "opportunity" && store.ui.focus.id === x.sys.opportunityId) && <> <OppLink o={store.opps.get(x.sys.opportunityId)!}>→</OppLink></>}
         </div>
       ) : (
-        <div key={x.key} className={`tl-event sev-${x.ev!.severity ?? "info"}`}><span className="muted">{stamp(x.ev!.t)} · {humanize(x.ev!.kind)}</span> {x.ev!.text}</div>
+        <div key={x.key} className={SEVERITY_TEXT[x.ev!.severity ?? "info"] ?? "text-foreground"}><span className="text-muted-foreground">{stamp(x.ev!.t)} · {humanize(x.ev!.kind)}</span> {x.ev!.text}</div>
       ))}
     </div>
   );
@@ -516,18 +683,22 @@ function MemberTimelineView({ t, d }: { t: MemberTimeline; d: MemberDetail }) {
   return (
     <>
       <TimelineList items={items} who={m => (m.direction === "outbound" ? "Network" : d.member.name.split(" ")[0]!)} />
-      {waiting.size > 0 && <div className="small muted" title="Deferred to the member's sending window">Waiting to send: {[...waiting].map(([k, n]) => (n > 1 ? `${k} ×${n}` : k)).join(", ")}</div>}
+      {waiting.size > 0 && <p className={quiet} title="Deferred to the member's sending window">Waiting to send: {[...waiting].map(([k, n]) => (n > 1 ? `${k} ×${n}` : k)).join(", ")}</p>}
     </>
   );
 }
 
 /** The times a message offered, with the picks marked (keys a, b, c). */
-function TimeChips({ offered, picked }: { offered: TimeChoice[]; picked?: string[] }) {
+function TimeChoices({ offered, picked }: { offered: TimeChoice[]; picked?: string[] }) {
   return (
-    <span className="time-chips">
+    <span className="inline-flex flex-wrap gap-x-3 gap-y-1 text-sm">
       {offered.map(x => {
         const on = picked?.includes(x.key);
-        return <span key={x.key} className={`chip small ${on ? "active" : picked ? "muted" : ""}`} title={stamp(x.start)}><kbd>{x.key}</kbd> {x.label}{on ? " ✓" : ""}</span>;
+        return (
+          <span key={x.key} className={cn("inline-flex items-center gap-1", on ? "font-medium text-foreground" : "text-muted-foreground")} title={stamp(x.start)}>
+            <kbd className="font-mono">{x.key}</kbd> {x.label}{on && <StatusMark tone="ok" label="picked" />}
+          </span>
+        );
       })}
     </span>
   );
@@ -542,17 +713,17 @@ function BookedPlanView({ o, b }: { o: Opp; b: BookedPlan }) {
   const now = s.now();
   return (
     <>
-      <div className="small">Booked for {stamp(b.at)}{o.venue ? <> at <VenueLink venue={o.venue} /></> : null}. Each member can say they can't within {b.optOutHours} h; silence is a yes.</div>
+      <div className="text-sm">Booked for {stamp(b.at)}{o.venue ? <> at <VenueLink venue={o.venue} /></> : null}. Each member can say they can't within {b.optOutHours} h; silence is a yes.</div>
       {o.participants.map(x => {
         const told = b.told[x], off = b.cancelled[x];
         const closes = told === undefined ? undefined : Math.min(told + b.optOutHours * 3_600_000, b.at);
         return (
-          <div className="small participant" key={x}>
+          <div className={rowClass} key={x}>
             <MemberLink id={x} first />
-            {off ? <Badge tone="warn" title={off.told ? "They told us they can't make it" : "They dropped out without replying to us"}>called off {stamp(off.at)}{off.told ? "" : " · silently"}</Badge>
-              : told === undefined ? <span className="muted">not told yet</span>
-              : closes! > now ? <span><span className="muted">told {stamp(told)} · opt-out closes </span><Countdown deadline={closes!} prefix="in " what="Opt-out window closes" /></span>
-              : <Badge tone="good" title="The opt-out window passed: silence counts as confirmed">confirmed</Badge>}
+            {off ? <StatusMark tone="warn" showLabel label={`called off ${stamp(off.at)}${off.told ? "" : " · silently"}`} title={off.told ? "They told us they can't make it" : "They dropped out without replying to us"} />
+              : told === undefined ? <span className="text-muted-foreground">not told yet</span>
+              : closes! > now ? <span><span className="text-muted-foreground">told {stamp(told)} · opt-out closes </span><Countdown deadline={closes!} prefix="in " what="Opt-out window closes" /></span>
+              : <StatusMark tone="ok" showLabel label="confirmed" title="The opt-out window passed: silence counts as confirmed" />}
           </div>
         );
       })}
@@ -560,33 +731,10 @@ function BookedPlanView({ o, b }: { o: Opp; b: BookedPlan }) {
   );
 }
 
-/** Per-member PII reveal (admin-console 4.4): safety and admin, real mode, a reason, at most 15 minutes, logged before it is granted. */
-function RevealControl({ id }: { id: string }) {
-  const s = useStore();
-  const [open, setOpen] = useState(false);
-  const [reason, setReason] = useState("");
-  const [minutes, setMinutes] = useState(15);
-  if (!s.can("safety") || s.env?.capabilities.hiddenTruth || s.env?.piiRevealed) return null;
-  const g = s.revealFor(id);
-  if (g) return <><Badge tone="warn" title={`Revealed: ${g.reason}`}>Revealed · <WallLeft until={g.until} /></Badge><button className="btn small-btn" title="End the reveal now (logged)" onClick={() => store.unreveal(id)}>End</button></>;
-  if (!open) return <button className="btn small-btn" title="Show names and this member's own words for up to 15 minutes. Logged." onClick={() => setOpen(true)}>Reveal</button>;
-  const submit = async () => { if (reason.trim().length >= 5 && await store.reveal(id, reason.trim(), minutes)) { setOpen(false); setReason(""); } };
-  return (
-    <form className="reveal-form" onSubmit={e => { e.preventDefault(); submit(); }}>
-      <input className="input grow" autoFocus placeholder="Reason (logged)" value={reason} onChange={e => setReason(e.target.value)} onKeyDown={e => { if (e.key === "Escape") { e.stopPropagation(); setOpen(false); } }} />
-      <select className="input" value={minutes} onChange={e => setMinutes(Number(e.target.value))} aria-label="Minutes">{[5, 10, 15].map(n => <option key={n} value={n}>{n} min</option>)}</select>
-      <button className="btn primary" type="submit" disabled={reason.trim().length < 5} title="At least 5 characters">Reveal</button>
-      <button className="btn ghost" type="button" onClick={() => setOpen(false)}>Cancel</button>
-    </form>
-  );
-}
-
-// ---------------------------------------------------------------- per-app Member 360 (admin-console 3.3.1)
 /** The app's own panel: slop (dating preferences behind a reveal, the photo rule) or peon (roles, applications). */
 function AppSection({ id }: { id: string }) {
   const s = useStore();
   const has = s.app === "slop" || s.app === "peon";
-  // Only the apps with a panel ask (each ask is an audited read).
   const r = useLive<AppProfile360>(() => (has ? store.memberApp(id) : Promise.resolve({ status: 200 as const, data: { app: s.app, none: true as const } })), memberKey(id), () => detailScope(id, store.revealFor(id)?.until));
   const p = r?.data;
   if (!has || !p || "none" in p) return null;
@@ -601,6 +749,7 @@ const PHOTO_TEXT: Record<SlopProfile360["photos"], string> = {
   reason_required: "Photos: admin or safety, with a reason (logged).",
 };
 
+/** The slop panel: age, dating preferences, and the photos behind a logged reason. */
 function SlopPanel({ id, p }: { id: string; p: SlopProfile360 }) {
   const s = useStore();
   const [reason, setReason] = useState("");
@@ -625,26 +774,27 @@ function SlopPanel({ id, p }: { id: string; p: SlopProfile360 }) {
     if (r.data?.photos) { setPhotos(r.data.photos); setError(null); } else setError(r.error ?? r.data?.error ?? "refused");
   };
   return (
-    <>
-      <div className="small">{p.adult ? "Adult" : "Under 18 or age unknown: never matched"} · age {p.ageVerified ? "verified" : "not verified"}</div>
+    <div className="flex flex-col gap-2">
+      <div>{p.adult ? "Adult" : "Under 18 or age unknown: never matched"} · age {p.ageVerified ? "verified" : "not verified"}</div>
       {p.prefs.hidden
-        ? <div className="muted small">Dating preferences hidden ({p.prefs.count} facts). {s.env?.capabilities.hiddenTruth ? "Simulated world: the truth lens shows hidden facts." : s.can("safety") ? "Reveal this member (logged) to see them." : "Safety or admin only."}</div>
+        ? <p className={quiet}>Dating preferences hidden ({p.prefs.count} facts). {s.env?.capabilities.hiddenTruth ? "Simulated world: the truth lens shows hidden facts." : s.can("safety") ? "Reveal this member (logged) to see them." : "Safety or admin only."}</p>
         : <SlopPrefsView prefs={p.prefs.prefs} />}
-      <div className="muted small">{PHOTO_TEXT[p.photos]} Scores and ratings are never shown.</div>
+      <p className={quiet}>{PHOTO_TEXT[p.photos]} Scores and ratings are never shown.</p>
       {view === "ShowPhotoForm" && (
-        <form className="person-reason" onSubmit={e => { e.preventDefault(); show(); }}>
-          <input className="input grow" placeholder="Reason (logged)" value={reason} onChange={e => setReason(e.target.value)} aria-label="Reason to see photos" />
-          <button className="btn" type="submit" disabled={!reasonReady}>Show photos</button>
-          {error && <span className="bad small" role="alert">{error}</span>}
+        <form className="flex flex-wrap items-center gap-2" onSubmit={e => { e.preventDefault(); show(); }}>
+          <Input className="min-w-40 flex-1" placeholder="Reason (logged)" value={reason} onChange={e => setReason(e.target.value)} aria-label="Reason to see photos" />
+          <Button variant="outline" size="sm" type="submit" disabled={!reasonReady}>Show photos</Button>
+          {error && <span className="text-sm text-destructive" role="alert">{error}</span>}
         </form>
       )}
       {view === "ShowGallery" && photos && (photos.length
-        ? <div className="photos">{photos.map(ph => <img key={ph.id} src={ph.url} alt="Member photo" referrerPolicy="no-referrer" loading="lazy" />)}</div>
-        : <div className="muted small">No photos.</div>)}
-    </>
+        ? <div className="grid grid-cols-3 gap-2">{photos.map(ph => <img key={ph.id} className="aspect-square w-full rounded-md object-cover" src={ph.url} alt="Member photo" referrerPolicy="no-referrer" loading="lazy" />)}</div>
+        : <p className={quiet}>No photos.</p>)}
+    </div>
   );
 }
 
+/** The dating preferences the member gave, one line each. */
 function SlopPrefsView({ prefs }: { prefs: NonNullable<Extract<SlopProfile360["prefs"], { hidden: false }>["prefs"]> }) {
   const rows: [string, string | undefined][] = [
     ["Is", prefs.is], ["Seeks", prefs.seeks.join(", ") || undefined], ["Age range", prefs.ageRange?.join("-")],
@@ -653,65 +803,73 @@ function SlopPrefsView({ prefs }: { prefs: NonNullable<Extract<SlopProfile360["p
     ["Dealbreakers", prefs.dealbreakers.map(humanize).join(", ") || undefined], ["First dates", prefs.activities.map(humanize).join(", ") || undefined],
     ["Usually free", prefs.free.join(", ") || undefined], ["Verification", prefs.verification.join(", ") || undefined], ["Safety cues", prefs.safety.join(", ") || undefined],
   ];
-  return <>{rows.filter(([, v]) => v).map(([k, v]) => <div className="small" key={k}><span className="muted">{k}</span> {v}</div>)}</>;
+  return <dl className="flex flex-col gap-1">{rows.filter(([, v]) => v).map(([k, v]) => <div className="flex gap-3" key={k}><dt className="w-24 shrink-0 text-muted-foreground">{k}</dt><dd className="min-w-0">{v}</dd></div>)}</dl>;
 }
 
+/** The peon panel: the job seat or candidate, the roles and the introductions. */
 function PeonPanel({ p }: { p: PeonProfile360 }) {
   const s = useStore();
   return (
-    <>
-      <div className="small">{p.entity === "job" ? "Job seat (hiring manager)" : p.entity === "candidate" ? "Candidate" : "Not set up yet"}</div>
+    <div className="flex flex-col gap-1">
+      <div>{p.entity === "job" ? "Job seat (hiring manager)" : p.entity === "candidate" ? "Candidate" : "Not set up yet"}</div>
       {p.roles.map((r, i) => (
-        <div className="small" key={i}>
+        <div key={i}>
           <b>{r.title ?? humanize(r.family ?? "role")}</b>
-          <span className="muted">{[r.family && r.title ? humanize(r.family) : undefined, r.seniority !== undefined ? `level ${r.seniority}` : undefined, r.pay, r.mode, r.market?.toUpperCase(), r.openings !== undefined ? `${r.openings} open` : undefined, r.verified === undefined ? undefined : r.verified ? "employer verified" : "employer not verified"].filter(Boolean).map(x => ` · ${x}`).join("")}</span>
+          <span className="text-muted-foreground">{[r.family && r.title ? humanize(r.family) : undefined, r.seniority !== undefined ? `level ${r.seniority}` : undefined, r.pay, r.mode, r.market?.toUpperCase(), r.openings !== undefined ? `${r.openings} open` : undefined, r.verified === undefined ? undefined : r.verified ? "employer verified" : "employer not verified"].filter(Boolean).map(x => ` · ${x}`).join("")}</span>
         </div>
       ))}
       {p.applications.length
-        ? p.applications.map(a => <div className="small" key={a.opportunityId}>{s.opps.has(a.opportunityId) ? <OppLink o={s.opps.get(a.opportunityId)!} /> : a.opportunityId} <span className="muted">· {humanize(a.state)}{a.status ? ` · ${humanize(a.status)}` : ""}</span></div>)
-        : <div className="muted small">No introductions yet.</div>}
-    </>
+        ? p.applications.map(a => <div key={a.opportunityId}>{s.opps.has(a.opportunityId) ? <OppLink o={s.opps.get(a.opportunityId)!} /> : a.opportunityId} <span className="text-muted-foreground">· {humanize(a.state)}{a.status ? ` · ${humanize(a.status)}` : ""}</span></div>)
+        : <p className={quiet}>No introductions yet.</p>}
+    </div>
   );
 }
 
+/** The simulated persona's hidden truth, shown only under the truth lens. */
 function Truth({ d }: { d: MemberDetail }) {
   const t = d.truth!;
   return (
-    <>
-      <div className="small">
-        {humanize(t.archetype)} · <span className={t.trueAge < 18 ? "bad" : ""}>{t.trueAge}</span> · flaky {pct(t.flakiness)} · energy {pct(t.socialEnergy)} · capacity {pct(t.capacity)} · honest {pct(t.honesty)}
+    <div className="flex flex-col gap-3">
+      <div>
+        {humanize(t.archetype)} · <span className={t.trueAge < 18 ? "text-destructive" : undefined}>{t.trueAge}</span> · flaky {pct(t.flakiness)} · energy {pct(t.socialEnergy)} · capacity {pct(t.capacity)} · honest {pct(t.honesty)}
       </div>
-      {t.adversarial && <div className="callout bad small">Adversarial: {humanize(t.adversarial)}</div>}
-      <Section title="What they actually want">
-        {t.desires.map((x, i) => <div key={i} className="small">{x.text} <span className="muted">· {x.category} · strength {pct(x.strength)}</span></div>)}
-      </Section>
-      <Section title="True interests and skills"><div className="facet-list">{[...t.interests, ...t.skills].map(x => <span className="facet" key={x}>{humanize(x)}</span>)}</div></Section>
-      <Section title="Boundaries"><div className="small">{t.boundaries.join(" · ") || "none"}</div></Section>
-      <Section title="Romance"><div className="small">{t.romanceOptIn ? "open to dating" : "not dating"}</div></Section>
-      {t.privateFact && <Section title="Told the agent in confidence"><div className="small private">{t.privateFact}</div></Section>}
+      {t.adversarial && <Alert variant="destructive">Adversarial: {humanize(t.adversarial)}</Alert>}
+      <InspectorSection title="What they actually want">
+        {t.desires.map((x, i) => <div key={i}>{x.text} <span className="text-muted-foreground">· {x.category} · strength {pct(x.strength)}</span></div>)}
+      </InspectorSection>
+      <InspectorSection title="True interests and skills"><div className="flex flex-wrap gap-x-3 gap-y-1">{[...t.interests, ...t.skills].map(x => <span key={x}>{humanize(x)}</span>)}</div></InspectorSection>
+      <InspectorSection title="Boundaries"><div>{t.boundaries.join(" · ") || "none"}</div></InspectorSection>
+      <InspectorSection title="Romance"><div>{t.romanceOptIn ? "open to dating" : "not dating"}</div></InspectorSection>
+      {t.privateFact && <InspectorSection title="Told the agent in confidence"><div className="italic">{t.privateFact}</div></InspectorSection>}
       {d.memory && Object.keys(d.memory).length > 0 && (
-        <Section title="Private decisions on proposals">
-          {Object.entries(d.memory).map(([pid, v]) => <div className="small" key={pid}>{pid.slice(0, 18)}… {v.decision} · plans to show: {v.plannedShow ? "yes" : "no"} · would enjoy {pct(v.enjoyment)}</div>)}
-        </Section>
+        <InspectorSection title="Private decisions on proposals">
+          {Object.entries(d.memory).map(([pid, v]) => <div key={pid}>{pid.slice(0, 18)}… {v.decision} · plans to show: {v.plannedShow ? "yes" : "no"} · would enjoy {pct(v.enjoyment)}</div>)}
+        </InspectorSection>
       )}
-    </>
+    </div>
   );
 }
 
-// ---------------------------------------------------------------- opportunity
+/** The score parts of a proposal: gains as green bars, costs as red bars, each from 0 to 1. */
+function ScoreParts({ c }: { c: ScoreComponents }) {
+  const rows = (Object.keys(COMPONENT_SIGN) as (keyof ScoreComponents)[]).map(k => ({
+    key: k, label: humanize(k.replace(/([A-Z])/g, "_$1")), value: c[k], tone: COMPONENT_SIGN[k] < 0 ? "destructive" as const : "ok" as const, title: `${k}: ${c[k]}`,
+  }));
+  return <MeterBars rows={rows} ranked={false} max={1} format={v => v.toFixed(2)} />;
+}
+
+/** One opportunity: its state, review actions, people, plan, times, booked plan, feedback, history and score. */
 function OpportunityPanel({ id }: { id: string }) {
   const s = useStore();
   const live = s.opps.get(id);
   const res = useLive<OpportunityDetail>(() => store.opportunity(id), `${live?.state}|${live?.updatedAt}|${live?.review?.decision}|${live?.participants.join(",")}`, () => detailScope(id, !!store.truth));
   const d = res?.data;
-  // The store copy is the freshest (review state); the detail can carry more (the oracle under the lens).
   const o: Opp | undefined = live && d?.opportunity ? { ...d.opportunity, ...live, oracle: live.oracle ?? d.opportunity.oracle } : live ?? d?.opportunity;
-  if (!o) return <div className="panel muted">Opportunity not found.</div>;
+  if (!o) return <p className={quiet}>Opportunity not found.</p>;
   const resolved = !OPEN.has(o.state);
   const shadow = o.source === "shadow";
   const showActions = o.state === "IN_REVIEW" && s.reviewMode() === "human" && s.canReview();
   const hist = historyBetween(o);
-  // The full event history (oldest first) when the server sends it; else the feed items in memory.
   const items: TimelineItem[] = [
     ...(d?.messages ?? []).map(m => ({ t: m.ts, key: `m${m.memberId}-${m.id}`, msg: m })),
     ...(d?.events
@@ -720,90 +878,93 @@ function OpportunityPanel({ id }: { id: string }) {
   ];
   const now = s.now();
   const statusParts: ReactNode[] = [
-    <span>{oppDot(o.state)}{stateLabel(o.state)}{!resolved && o.stateSince !== undefined ? <span title="Time in this state"> · {dur(Math.max(0, now - o.stateSince))}</span> : null}</span>,
+    <span className="inline-flex items-center gap-1"><OppMark state={o.state} />{stateLabel(o.state)}{!resolved && o.stateSince !== undefined ? <span title="Time in this state"> · {dur(Math.max(0, now - o.stateSince))}</span> : null}</span>,
     shadow ? "Shadow · not sent" : originLabel(originOf(o)),
     humanize(o.kind), o.category, resolved ? `open ${dur(Math.max(0, o.updatedAt - o.createdAt))}` : ago(o.createdAt),
     resolved && o.reason && o.state !== "REJECTED_IN_REVIEW" && humanize(o.reason),
   ];
+  const oracleTone = o.oracle ? (o.oracle.unsafe ? "destructive" : o.oracle.compatible ? "ok" : "warn") : "info";
   return (
-    <div className="panel">
-      <div className="panel-head">
-        <h2>{s.oppTitle(o)}</h2>
-        <StatusLine parts={statusParts} />
-        {o.review && <div className="status-line">{reviewLine(o)}</div>}
+    <>
+      <div className={headClass}>
+        <h2 className={titleClass}>{s.oppTitle(o)}</h2>
+        <FactLine parts={statusParts} />
+        {o.review && <p className={quiet}>{reviewLine(o)}</p>}
       </div>
       {showActions && <ReviewActions o={o} />}
-      <Section title="People">
+      <InspectorSection title="People">
         {o.participants.map(x => {
           const m = s.members.get(x);
           const want = wantsOf(o, x);
+          const status = o.status[x] ?? "pending";
           return (
-            <div className="participant" key={x}>
-              <MemberLink id={x} />
-              <Badge tone={STATUS_TONE[o.status[x] ?? "pending"]}>{humanize(o.status[x] ?? "pending")}</Badge>
-              {o.enjoyment[x] !== undefined && <span className="small">enjoyed {pct(o.enjoyment[x]!)}</span>}
-              {m?.minor && <Badge tone="bad" title="Members under 18 are never introduced. This must not happen.">Under 18</Badge>}
-              {OPEN.has(o.state) && isBusyElsewhere(o, x) && <Badge tone="warn" title="In another open opportunity">busy</Badge>}
-              {m?.trust === "hold" ? <Badge tone="bad">Hold</Badge> : m?.trust === "watch" ? <Badge tone="warn">Watch</Badge> : null}
-              {want && <div className="small full"><span className="muted">wants:</span> {want}</div>}
-              {o.explanations[x] && <div className="why" title="Shown to this member">“{o.explanations[x]}”</div>}
+            <div className="flex flex-col gap-1 text-sm" key={x}>
+              <div className={rowClass}>
+                <MemberLink id={x} />
+                <StatusMark tone={tone(STATUS_TONE[status])} label={humanize(status)} showLabel />
+                {o.enjoyment[x] !== undefined && <span>enjoyed {pct(o.enjoyment[x]!)}</span>}
+                {m?.minor && <StatusMark tone="destructive" label="Under 18" showLabel title="Members under 18 are never introduced. This must not happen." />}
+                {OPEN.has(o.state) && isBusyElsewhere(o, x) && <StatusMark tone="warn" label="busy" showLabel title="In another open opportunity" />}
+                <TrustMark trust={m?.trust} />
+              </div>
+              {want && <div><span className="text-muted-foreground">wants:</span> {want}</div>}
+              {o.explanations[x] && <div className="text-muted-foreground italic" title="Shown to this member">“{o.explanations[x]}”</div>}
             </div>
           );
         })}
-      </Section>
-      <Section title="Plan">
-        <div className="small">“{o.objective}”</div>
-        <StatusLine className="small" parts={[o.venue && <VenueLink venue={o.venue} />, o.meetingAt && stamp(o.meetingAt)]} />
-      </Section>
+      </InspectorSection>
+      <InspectorSection title="Plan">
+        <div className="text-sm">“{o.objective}”</div>
+        <FactLine parts={[o.venue && <VenueLink venue={o.venue} />, o.meetingAt && stamp(o.meetingAt)]} />
+      </InspectorSection>
       {o.times && Object.keys(o.times).length > 0 && (
-        <Section title="Times">
+        <InspectorSection title="Times">
           {o.participants.filter(x => o.times![x]).map(x => {
             const t = o.times![x]!;
             return (
-              <div className="small time-row" key={x}>
-                <MemberLink id={x} first />{" "}
-                {t.offered.length ? <TimeChips offered={t.offered} picked={t.picked} /> : null}
-                <span className="muted">{t.picked === undefined ? " · no answer yet" : t.picked.length ? (t.offered.length ? "" : ` · picked ${t.picked.join(", ")}`) : " · none of these fit"}</span>
+              <div className={rowClass} key={x}>
+                <MemberLink id={x} first />
+                {t.offered.length ? <TimeChoices offered={t.offered} picked={t.picked} /> : null}
+                <span className="text-muted-foreground">{t.picked === undefined ? " · no answer yet" : t.picked.length ? (t.offered.length ? "" : ` · picked ${t.picked.join(", ")}`) : " · none of these fit"}</span>
               </div>
             );
           })}
-        </Section>
+        </InspectorSection>
       )}
-      {o.booked && <Section title="Booked plan"><BookedPlanView o={o} b={o.booked} /></Section>}
+      {o.booked && <InspectorSection title="Booked plan"><BookedPlanView o={o} b={o.booked} /></InspectorSection>}
       {o.feedback?.length ? (
-        <Section title="Feedback">{o.feedback.map((f, i) => <div className="small" key={i}><MemberLink id={f.memberId} first />: “{f.text}”</div>)}</Section>
+        <InspectorSection title="Feedback">{o.feedback.map((f, i) => <div className="text-sm" key={i}><MemberLink id={f.memberId} first />: “{f.text}”</div>)}</InspectorSection>
       ) : null}
-      {forbidden(res) && <div className="muted small">Your role cannot open this opportunity's messages.</div>}
-      <Section title="History">
+      {detailView(res) === "PanelForbidden" && <p className={quiet}>Your role cannot open this opportunity's messages.</p>}
+      <InspectorSection title="History">
         <TimelineList items={items} who={m => (m.direction === "outbound" ? `Network → ${s.firstName(m.memberId ?? "")}` : s.firstName(m.memberId ?? ""))} />
-      </Section>
+      </InspectorSection>
       {o.source !== "player" && o.components && (
-        <Disclosure name="score" summary={<>Score {o.score.toFixed(2)}{d?.run ? <> · <button className="mlink" onClick={e => { e.preventDefault(); store.setUI({ drawer: "engine", drawerOpen: true }); }}>run {d.run.id.slice(0, 4)} →</button></> : null}</>}>
-          {o.exploration && <div className="small muted" title="Picked partly to explore, not only exploit">exploration</div>}
-          <Components c={o.components} />
+        <Disclosure name="score" summary={<>Score {o.score.toFixed(2)}{d?.run ? <> · <Button variant="ghost" size="sm" className="h-auto px-1" onClick={e => { e.preventDefault(); store.setUI({ drawer: "engine", drawerOpen: true }); }}>run {d.run.id.slice(0, 4)} →</Button></> : null}</>}>
+          {o.exploration && <p className={quiet} title="Picked partly to explore, not only exploit">exploration</p>}
+          <ScoreParts c={o.components} />
         </Disclosure>
       )}
       {o.alternates.length > 0 && (
         <Disclosure name="alternates" summary={`Alternates (${o.alternates.length})`}>
-          <div className="people">{o.alternates.map(a => <MemberLink key={a} id={a} />)}</div>
+          <div className={peopleClass}>{o.alternates.map(a => <MemberLink key={a} id={a} />)}</div>
         </Disclosure>
       )}
       {o.oracle && (
-        <details className="disclosure" open={!!s.truth || resolved}>
-          <summary>Oracle</summary>
-          <div className={`callout ${o.oracle.unsafe ? "bad" : o.oracle.compatible ? "good" : "warn"} small`}>
+        <DisclosureView summary="Oracle" open={!!s.truth || resolved}>
+          <Alert variant={oracleTone}>
             {o.oracle.unsafe ? `Unsafe: ${o.oracle.flags.join(", ")}` : o.oracle.compatible ? "Truly compatible" : "Not a real fit"} · quality {pct(o.oracle.quality)}
-          </div>
+          </Alert>
           {Object.entries(o.oracle.participants).map(([x, p]) => (
-            <div className="small" key={x}>{s.firstName(x)}: accept {pct(p.acceptProb)} · show {pct(p.showProb)} · would enjoy {pct(p.enjoyment)}</div>
+            <div key={x}>{s.firstName(x)}: accept {pct(p.acceptProb)} · show {pct(p.showProb)} · would enjoy {pct(p.enjoyment)}</div>
           ))}
-        </details>
+        </DisclosureView>
       )}
       {hist.length > 0 && (
         <Disclosure name="history" summary={`History between them (${hist.length})`}>
           <OppList opps={hist} />
         </Disclosure>
       )}
-    </div>
+    </>
   );
 }

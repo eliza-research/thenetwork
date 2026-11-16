@@ -10,22 +10,44 @@
 // other apps, and the build fails if "slop" or "dating" is left anywhere in plugins/openai.
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { type Plugin, pluginEndpoint, pluginListsSkill, skillFor } from "../packages/core/src/generated/agentEntry.ts";
+import { type AppKey, appKeys, brandFor } from "../packages/core/src/generated/brandIdentity.ts";
 import { DEFAULT_BACKEND_ORIGIN, DEFAULT_TEXT_LINE } from "../sites/skills.config.ts";
 import { RESPONSE_STYLE } from "../sites/skill-responses.ts";
 
 const ROOT = import.meta.dir;
 const SOURCE = join(ROOT, "..", "sites", "skills");
 
-export const SITE: Record<string, string> = { "ntwrk-party": "ntwrk.party", "slop-date": "slop.date", "peon-biz": "peon.biz", "friends-help": "friends.help" };
+/** Each skill name and the domain of its app (spec/brandIdentity.md:9). */
+export const SITE: Record<string, string> = Object.fromEntries(appKeys.map(app => [skillFor(app), brandFor(app).domain]));
 /** The one MCP endpoint of the OpenAI plugin (OpenAI allows one server per plugin). It never lists slop. */
 export const OPENAI_MCP_URL = "https://ntwrk.party/mcp/openai";
 /** Each site is its own MCP resource: a connection covers that one app. */
 export const siteMcpUrl = (skill: string) => `https://${SITE[skill]}/mcp`;
 
-export const PLUGINS = {
-  openai: { skills: ["ntwrk-party", "peon-biz", "friends-help"], mcpUrl: (_: string) => OPENAI_MCP_URL },
-  claude: { skills: ["ntwrk-party", "slop-date", "peon-biz", "friends-help"], mcpUrl: siteMcpUrl },
-} as const;
+/** The MCP URL of one listed skill, as the generated endpoint decision selects it (spec/agentEntry.md:9). */
+function endpointUrl(plugin: Plugin, app: AppKey): string {
+  const endpoint = pluginEndpoint(plugin, app);
+  if (endpoint === "SiteEndpoint") return siteMcpUrl(skillFor(app));
+  if (endpoint === "OpenAiEndpoint") return OPENAI_MCP_URL;
+  throw new Error(`${plugin} lists ${skillFor(app)} but has no MCP endpoint for it`);
+}
+
+/** The skills one plugin lists, in brand order, and the MCP URL of each (spec/agentEntry.md:9). */
+function pluginSkills(plugin: Plugin): { skills: string[]; mcpUrl: (skill: string) => string } {
+  const listed = appKeys.filter(app => pluginListsSkill(plugin, app));
+  const urls = new Map(listed.map(app => [skillFor(app), endpointUrl(plugin, app)]));
+  return {
+    skills: [...urls.keys()],
+    mcpUrl: skill => {
+      const url = urls.get(skill);
+      if (url === undefined) throw new Error(`${plugin} does not list ${skill}`);
+      return url;
+    },
+  };
+}
+
+export const PLUGINS = { openai: pluginSkills("OpenAiPlugin"), claude: pluginSkills("ClaudePlugin") };
 
 const fill = (text: string, mcpUrl: string) =>
   text.replaceAll("{{RESPONSE_STYLE}}", RESPONSE_STYLE.trim()).replaceAll("{{BACKEND_ORIGIN}}", DEFAULT_BACKEND_ORIGIN).replaceAll("{{MCP_URL}}", mcpUrl).replaceAll("{{TEXT_LINE}}", DEFAULT_TEXT_LINE);

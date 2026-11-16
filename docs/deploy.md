@@ -9,7 +9,7 @@ This is how The Network goes online. Read it with [runbook-platform.md](runbook-
 **User decisions this round (2026-10-08).**
 
 - All four sites are deployed: ntwrk.party, slop.date, peon.biz and friends.help.
-- **Hosting (founder decision 8, AGENTS.md; it supersedes "Workers static assets").** Each site is a classic Cloudflare Pages project in the ntwrk.party Cloudflare account (`CLOUDFLARE_ACCOUNT_ID`): `ntwrk-party`, `slop-date`, `peon-biz`, `friends-help` (production branch `main`, served on `<project>.pages.dev`). The forwarding of `/api/*`, `/mcp`, `/oauth/*` and `/.well-known/oauth-*` to the shared backend is an advanced-mode `_worker.js` that the build makes from `deploy/router.ts`, with `_routes.json` so only those paths run it.
+- **Hosting (founder decision 8, AGENTS.md; it supersedes "Workers static assets").** Each site is a classic Cloudflare Pages project in the ntwrk.party Cloudflare account (`CLOUDFLARE_ACCOUNT_ID`): `ntwrk-party`, `slop-date`, `peon-biz`, `friends-help` (production branch `main`, served on `<project>.pages.dev`). The forwarding of `/api/*`, `/mcp`, `/oauth/*` and `/.well-known/oauth-*` to the shared backend is an advanced-mode `_worker.js` that the build makes from `deploy/router.ts`, with `_routes.json` so only those paths and the retired settings and join paths run it.
 - The shared backend is one process on Railway: `https://api.ntwrk.party`.
 - slop.date and friends.help stay in the Eliza Labs Cloudflare account for 10 days; their DNS points at the `slop-date.pages.dev` and `friends-help.pages.dev` projects. Every config takes the account id from the environment (`CLOUDFLARE_ACCOUNT_ID`), default the ntwrk.party account.
 - The backend treats each project's production name (`<project>.pages.dev`) as a host of its app (packages/platform `siteHosts`): the Origin check and Turnstile accept it, so a site works there before its own domain points at it. Preview deployments (`<hash>.<project>.pages.dev`) are not hosts.
@@ -77,9 +77,10 @@ How a site request reaches the backend:
 
 - Base: `oven/bun:1.4.2-slim`, pinned by its index digest. The repo tests with Bun 1.4.2.
 - `bun install --frozen-lockfile --production --ignore-scripts`. The runtime has no npm dependencies of its own; this only links the workspaces.
+- Then Bun builds the design-system CSS (`packages/design-system/build.ts`, with the toolkit token CLI from `tools/vibestack/vibestack/design`) and the connector-page CSS (`packages/mcp/src/pages/build-css.ts`), and removes the toolkit. Both outputs are build output and are not committed. The server does not start when `packages/mcp/src/pages/generated/connector.css` is missing or empty.
 - Runs as the image's `bun` user (uid 1000), never root.
 - `CMD ["bun", "run", "deploy/backend/server.ts"]` in exec form, so Bun is PID 1 and gets SIGTERM itself.
-- `Dockerfile.dockerignore` sits next to the Dockerfile. BuildKit reads it, so the build context holds only `package.json`, `bun.lock`, `tsconfig.json`, `packages/`, `prototypes/` and `deploy/`, and never `.env`. **Verify:** on the first Railway build, check that the build log shows a context of a few MB, not the whole repo. If Railway ignores the file, add the same rules to a root `.dockerignore`.
+- `Dockerfile.dockerignore` sits next to the Dockerfile. BuildKit reads it, so the build context holds only `package.json`, `bun.lock`, `tsconfig.json`, `packages/`, `deploy/`, `evals/relay/clef-relay-weights.json` and `tools/vibestack/vibestack/design/`, and never `.env` or local build output. **Verify:** on the first Railway build, check that the build log shows a context of a few MB, not the whole repo. If Railway ignores the file, add the same rules to a root `.dockerignore`.
 
 **What `server.ts` does at boot:**
 
@@ -282,14 +283,15 @@ Notes for this smoke:
 - To call `/api/app` as each site, sign the headers the way the Worker does: `signProxyHeaders(secret, { method: "GET", path: "/api/app", host: "slop.date", ip: "203.0.113.5" })` from `packages/platform/src/proxy.ts`, then fetch with them.
 - `deploy/backend/backend.test.ts` does all of this against a real boot of `server.ts`.
 
-Without a container runtime, run `bun run start:backend` with the same variables (`localhost` for the host). Locally, without `PLATFORM_ENV=staging`, it binds `127.0.0.1` only.
+Without a container runtime, run `bun run start:backend` (it builds the design-system and connector CSS first; it needs Node 26 from `.nvmrc`) with the same variables (`localhost` for the host). Locally, without `PLATFORM_ENV=staging`, it binds `127.0.0.1` only.
 
 ## 3. Cloudflare Pages: the sites
 
 Each site is one Pages project (founder decision 8):
 
 - `sites/<domain>/wrangler.toml`: `name = "<project>"`, `pages_build_output_dir = "./dist"`, and `[vars]` `APP_ID`, `SITE_HOST`, `BACKEND_ORIGIN = "https://api.ntwrk.party"`. No `account_id`, no routes: the account comes from `CLOUDFLARE_ACCOUNT_ID`.
-- `bun run sites/sites.ts <app>` writes `sites/<domain>/dist`: the pages, `_headers`, the skill files, `_worker.js` (the router, `deploy/router.ts`, bundled through `deploy/pages-worker.ts`: the default export only, as workerd requires, with the site's `APP_ID`, `SITE_HOST` and `BACKEND_ORIGIN` built in; a project variable still wins) and `_routes.json` (the Worker runs on `/api`, `/api/*`, `/mcp`, `/mcp/*`, `/oauth/*`, `/.well-known/oauth-*` only; every other path is a static file).
+- `bun run sites:build <app>` builds the design-system CSS (`bun run design:build`, Node 26 from `.nvmrc`), then `sites/sites.ts` writes `sites/<domain>/dist`: the pages, `_headers`, the skill files, `_worker.js` (the router, `deploy/router.ts`, bundled through `deploy/pages-worker.ts`: the default export only, as workerd requires, with the site's `APP_ID`, `SITE_HOST` and `BACKEND_ORIGIN` built in; a project variable still wins) and `_routes.json` (the Worker runs on `/api`, `/api/*`, `/mcp`, `/mcp/*`, `/oauth/*`, `/.well-known/oauth-*` and the retired `/settings` and `/join` paths only; every other path is a static file).
+- The router answers the retired paths with the generated `routeFor` and `answerFor` of spec/sitePages.md: a settings path is a `no-store` 404 on every site; on a site without the browser join, GET or HEAD to a join path is a `no-store` 302 to `/` and another method is 405. peon.biz serves its join page. An unknown `APP_ID` answers 503 `proxy_not_configured` on every path that the router decides.
 - The router answers 413 for a body over 9 MB and 503 `proxy_not_configured` without `PLATFORM_PROXY_SECRET`. It never forwards unsigned.
 
 | Site | Pages project | Served on | Its own domain |
@@ -302,7 +304,7 @@ Each site is one Pages project (founder decision 8):
 ### 3.1 By hand (founder approval only)
 
 ```bash
-bun run sites/sites.ts slop                                   # dist with _worker.js and _routes.json
+bun run sites:build slop                                     # the design-system CSS, then dist with _worker.js and _routes.json
 # check it locally first (nothing is uploaded): scripts/wrangler.sh pages dev --port 8811 --binding PLATFORM_PROXY_SECRET=<test value> --binding BACKEND_ORIGIN=http://127.0.0.1:8790 (run in sites/slop.date)
 # once per project: the same value as the backend
 NTWRK_ALLOW_DEPLOY=1 scripts/wrangler.sh pages secret put PLATFORM_PROXY_SECRET --project-name slop-date

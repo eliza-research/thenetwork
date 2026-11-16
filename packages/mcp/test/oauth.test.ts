@@ -326,10 +326,16 @@ describe("the person's consent records", () => {
     const list = await env.fetch(new Request(`${origin(PEON)}/oauth/consents`, { headers: { cookie: site } }));
     const html = await list.text();
     expect(html).toContain("Test Assistant");
-    const grantId = /name="grant" value="([^"]+)"/.exec(html)![1]!;
+    const chosen = /name="remove" value="([^"]+)"/.exec(html)![1]!;
+    const confirm = await (await env.fetch(new Request(`${origin(PEON)}/oauth/consents?remove=${encodeURIComponent(chosen)}`, { headers: { cookie: site } }))).text();
+    expect(html).not.toContain('name="grant"');
+    const grantId = /name="grant" value="([^"]+)"/.exec(confirm)![1]!;
+    expect(grantId).toBe(chosen);
+    expect(confirm).toContain("Keep access");
     const post = (o: string) => env.fetch(new Request(`${origin(PEON)}/oauth/consents/revoke`, { method: "POST", headers: { cookie: site, origin: o, "content-type": "application/x-www-form-urlencoded" }, body: `grant=${grantId}` }));
     expect((await post("https://evil.example")).status).toBe(403);
     expect(await (await post(origin(PEON))).text()).toContain("Access removed.");
+    expect(await (await post(origin(PEON))).text()).not.toContain("Access removed.");
     expect((await call(env, `${origin(PEON)}/mcp`, "check_status", {}, { token: c.token.access_token })).res.status).toBe(401);
     expect((await env.fetch(new Request(`${origin(PEON)}/oauth/consents`))).status).toBe(401);
   });

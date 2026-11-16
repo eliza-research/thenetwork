@@ -5,9 +5,18 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "dev": "bun run src/dev-server.ts"
+    "build:css": "cd ../design-system && bun run build && cd ../mcp && bun run src/pages/build-css.ts",
+    "dev": "bun run build:css && bun run src/dev-server.ts"
   },
   "dependencies": {
-    "@thenetwork/platform": "workspace:*"
+    "@tailwindcss/node": "^4.3.5",
+    "@thenetwork/platform": "workspace:*",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "tailwindcss": "catalog:"
+  },
+  "devDependencies": {
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:"
   }
 }

@@ -2,7 +2,8 @@
 // check_status and get_updates need membership:read and return only the signed-in person's own state
 // or updates in the one app the client is bound to. No tool takes a phone number, a code or an age, and every
 // input schema refuses properties it does not list. prepare_signup alone takes approved Join name/home city.
-import { appsOn, type McpApp, type McpAppId, type Surface } from "./apps.ts";
+import { type MemberStatus, type NextStep, nextStepFor, toolAllowedFor, toolListed } from "../../core/src/generated/connectorTools.ts";
+import { appsOn, connectorApp, connectorSurface, type McpApp, type McpAppId, type Surface } from "./apps.ts";
 import type { AssistantKind, PlatformHooks, PublicStatus } from "./hooks.ts";
 import type { Grant, Scope, OAuthStore, SignupDraftFields } from "./store.ts";
 import { outputLeaks } from "./leaks.ts";
@@ -35,7 +36,7 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
   const ownApp = { type: "string", enum: [host.id] };
   const joinMode = { type: "string", enum: ["invite", "open", "waitlist"] };
   const ages = object({ join: { type: "integer" }, matching: { type: "integer" } });
-  const status = { type: "string", enum: Object.keys(NEXT) };
+  const status = { type: "string", enum: Object.keys(memberStatus) };
   const publicApp = object({
     id: appId, name: text, site: text, what: text, powered_by: text,
     join: object({ mode: joinMode, url: text, keyword: nullableText, how: text }),
@@ -64,9 +65,9 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
       securitySchemes: noauth,
       _meta: { securitySchemes: noauth },
     },
-    ...(host.id === "friends" || host.id === "ntwrk" ? [{
+    ...(toolListed(connectorApp[host.id], connectorSurface[surface], "PrepareSignupTool") ? [{
       name: "prepare_signup", title: "Prepare my Join form",
-      description: "After verified phone sign-in and OAuth approval, save only the first name and optional home city the person explicitly approved for this app. They must open Join, review or edit every field and consent themselves. Never creates a person, membership or text consent. One draft per grant; no age, phone, code, gender or dating preferences.",
+      description: "After verified phone sign-in and OAuth approval, save only the first name and optional home city the person explicitly approved for this app. The draft is only for a Join page, and ntwrk.party and friends.help have no Join page now: do not send the person to one. The person enters their age and gives text consent themselves. Never creates a person, membership or text consent. One draft per grant; no age, phone, code, gender or dating preferences.",
       inputSchema: { type: "object", properties: { app: { type: "string", enum: [host.id] }, firstName: { type: "string", minLength: 1, maxLength: 50 }, homeCity: { type: "string", enum: ["nyc", "sf"] } }, required: ["firstName"], additionalProperties: false },
       outputSchema: object({ prepared: { type: "boolean", const: true }, app: ownApp, url: text, next_step: text }),
       annotations: { title: "Prepare my Join form", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
@@ -203,7 +204,7 @@ function publicInfo(a: McpApp, surface: Surface) {
       url: `${a.links.join}?via=agent`,
       keyword: a.keyword,
       how: a.joinMode === "invite" ? invitationGuidance(a) : a.keyword
-        ? `The person texts "${a.keyword}" as their first message to The Network's line, or opens ${a.links.join} and verifies their own phone there.`
+        ? `The person texts "${a.keyword}" as their first message to The Network's line, or opens ${a.links.site} and follows the steps there.`
         : `The person texts The Network's line with no keyword, or opens ${a.links.join}. The agent asks what they are looking for (${surface === "openai" ? "friends or work" : "friends, dating or work"}) and adds the right apps.`,
     },
     ages: { join: a.ages.join, matching: a.ages.match },
@@ -218,16 +219,21 @@ function publicInfo(a: McpApp, surface: Surface) {
   };
 }
 
-const NEXT: Record<PublicStatus, (a: McpApp) => string> = {
-  not_joined: a => a.joinMode === "invite"
-    ? `Not joined. ${invitationGuidance(a)}`
-    : `Not joined. To join, open ${a.links.join} and sign up there.`,
-  invited: a => `Invited. To accept, open ${a.links.join} or reply to the invitation text.`,
-  onboarding: () => "Joining is not finished. Reply to the last text from the agent to finish.",
-  active: () => "You are signed up.",
-  stopped: () => `Messages are stopped. To start again, text START to the line.`,
-  on_hold: a => `On hold. The person should email ${a.links.support.replace("mailto:", "")}.`,
+/** The generated member status of each public status (spec/connectorTools.md:50). */
+const memberStatus: Record<PublicStatus, MemberStatus> = { not_joined: "NotJoined", invited: "Invited", onboarding: "Onboarding", active: "Active", stopped: "Stopped", on_hold: "OnHold" };
+
+const NEXT_TEXT: Record<NextStep, (a: McpApp) => string> = {
+  GetInvitation: a => `Not joined. ${invitationGuidance(a)}`,
+  JoinOnSite: a => `Not joined. To join, open ${a.links.site} and follow the steps there.`,
+  AcceptInvitation: () => "Invited. To accept, reply to the invitation text.",
+  ReplyToLastText: () => "Joining is not finished. Reply to the last text from the agent to finish.",
+  AlreadySignedUp: () => "You are signed up.",
+  TextStart: () => `Messages are stopped. To start again, text START to the line.`,
+  EmailSupport: a => `On hold. The person should email ${a.links.support.replace("mailto:", "")}.`,
 };
+
+/** The next-step text for a status (spec/connectorTools.md:50). */
+const nextStep = (status: PublicStatus, a: McpApp): string => NEXT_TEXT[nextStepFor(memberStatus[status], a.joinMode === "invite")](a);
 
 export interface CallContext {
   apps: Record<McpAppId, McpApp>;
@@ -277,18 +283,18 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
     case "prepare_signup": {
       const g = c.grant, store = c.store;
       if (!g || !store) return { kind: "invalid_grant" };
-      if (!c.hooks.withSignupAgePolicy || !c.hooks.setSignupAgeCleanup) return { kind: "error", message: "Use the normal Join form to enter your details." };
+      if (!c.hooks.withSignupAgePolicy || !c.hooks.setSignupAgeCleanup) return { kind: "error", message: "We cannot prepare this draft here." };
       const started = performance.now(), requestedAt = c.now ?? Date.now();
       return c.hooks.withSignupAgePolicy(g.phoneKey, g.app, async allowed => {
         if (!allowed) return { kind: "error", message: "We cannot prepare this Join form. Check the joining requirements on the site." };
         const person = await c.hooks.personForKey(g.phoneKey);
         if (!grantStillTheirs(g.personId, person)) return { kind: "invalid_grant" };
         const status = person === null ? "not_joined" : await c.hooks.status(person, g.app);
-        if (status !== "not_joined" && status !== "invited") return { kind: "error", message: "Use your existing profile; this form is for joining." };
+        if (!toolAllowedFor("PrepareSignupTool", memberStatus[status])) return { kind: "error", message: "Use your existing profile; this form is for joining." };
         const at = requestedAt + Math.ceil(performance.now() - started);
         const saved = await store.putSignupDraft({ grantId: g.id, app: g.app, phoneKey: g.phoneKey, fields: chk.draft!, expiresAt: Math.min(requestedAt + 10 * 60_000, g.expiresAt), consumedAt: null }, at);
-        return saved ? { kind: "ok", data: { prepared: true, app: g.app, url: `${c.apps[g.app].links.join}?via=agent`, next_step: "Open Join to review or edit your name and home city. Your age and text consent are still yours to enter." } }
-          : { kind: "error", message: "This connection already prepared a draft or is no longer valid. Open Join to enter or edit your details." };
+        return saved ? { kind: "ok", data: { prepared: true, app: g.app, url: `${c.apps[g.app].links.join}?via=agent`, next_step: "The draft has only your name and home city. Your age and text consent are still yours to enter." } }
+          : { kind: "error", message: "This connection already prepared a draft or is no longer valid." };
       });
     }
     case "check_status": {
@@ -298,7 +304,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       if (!grantStillTheirs(g.personId, now)) return { kind: "invalid_grant" };
       const status: PublicStatus = now === null ? "not_joined" : await c.hooks.status(now, g.app);
       const a = c.apps[g.app];
-      return { kind: "ok", data: { app: a.id, status, next_step: NEXT[status](a), manage_url: a.links.support } };
+      return { kind: "ok", data: { app: a.id, status, next_step: nextStep(status, a), manage_url: a.links.support } };
     }
     case "submit_profile": {
       const g = c.grant;
@@ -309,9 +315,9 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       if (!c.hooks.submitProfile) return { kind: "error", message: "Profiles cannot be sent here yet." };
       const status: PublicStatus = now === null ? "not_joined" : await c.hooks.status(now, g.app);
       // Only a joined, live member: the profile never creates a member and never reaches a stopped or held one.
-      if (now === null || (status !== "active" && status !== "onboarding")) return { kind: "ok", data: { app: a.id, submitted: false, status, next_step: NEXT[status](a) } };
+      if (now === null || !toolAllowedFor("SubmitProfileTool", memberStatus[status])) return { kind: "ok", data: { app: a.id, submitted: false, status, next_step: nextStep(status, a) } };
       const r = await c.hooks.submitProfile(now, g.app, g.phoneKey, chk.about!);
-      if (r !== "accepted") return { kind: "ok", data: { app: a.id, submitted: false, status: "not_joined", next_step: NEXT.not_joined(a) } };
+      if (r !== "accepted") return { kind: "ok", data: { app: a.id, submitted: false, status: "not_joined", next_step: nextStep("not_joined", a) } };
       return { kind: "ok", data: { app: a.id, submitted: true, next_step: `${a.name} has it. It may text the person a short question or two.` } };
     }
     case "get_updates": {

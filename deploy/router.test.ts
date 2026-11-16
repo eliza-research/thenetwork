@@ -254,3 +254,31 @@ test("retired signup routes cannot expose cached forms or forward writes", async
     expect(seen).toHaveLength(0); expect(assets).toHaveLength(0);
   }
 });
+
+test("retired settings paths answer 404 with no page and no cache on every site, and never reach the backend or the assets", async () => {
+  for (const app of ["ntwrk", "slop", "peon", "friends"]) {
+    const { env, seen, assets, run } = setup(); env.APP_ID = app;
+    for (const path of ["/settings", "/settings/", "/settings.html"]) {
+      for (const method of ["GET", "HEAD", "POST"]) {
+        const r = await run(path, { method });
+        expect([app, path, method, r.status, r.headers.get("cache-control")]).toEqual([app, path, method, 404, "no-store"]);
+        expect(await r.text()).toBe(method === "HEAD" ? "" : "Not found");
+      }
+    }
+    expect(seen).toHaveLength(0); expect(assets).toHaveLength(0);
+  }
+});
+
+test("peon.biz keeps its browser join page: the join paths are static files, for every method", async () => {
+  const { env, seen, assets, run } = setup(); env.APP_ID = "peon";
+  for (const path of ["/join", "/join/", "/join.html"]) for (const method of ["GET", "HEAD", "POST"]) expect((await run(path, { method })).status).toBe(200);
+  expect(seen).toHaveLength(0);
+  expect(assets).toHaveLength(9);
+});
+
+test("an app id that is not known fails closed on every path the Worker decides", async () => {
+  const { env, seen, assets, run } = setup(); env.APP_ID = "unknown-app";
+  for (const path of ["/api/app", "/join", "/settings"]) expect((await run(path)).status).toBe(503);
+  expect(await (await run("/")).text()).toBe("asset");
+  expect(seen).toHaveLength(0); expect(assets).toEqual(["/"]);
+});

@@ -1,0 +1,121 @@
+// GENERATED from spec/brandIdentity.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
+//@ backend dafny
+
+/** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md:9) */
+export type JoinMode = "InviteOnly" | "OpenJoin";
+/** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md:9) */
+export type Accent = "Black" | "Chartreuse" | "Orange" | "Green";
+/** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md:9) */
+export type AppKey = "Ntwrk" | "Slop" | "Peon" | "Friends";
+/** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md:9) */
+export type LogoMark = "GraphMark" | "HeartMark" | "NecktieMark" | "TwoCirclesMark";
+/** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md:9) */
+export interface Brand { app: AppKey; name: string; domain: string; keyword: string; joinMode: JoinMode; accent: Accent; logo: LogoMark; headlineLead: string; headlineMark: string; headlineTail: string; skillName: string }
+/** Story: Know which app I am joining / Each accent has one color for light mode and one for dark mode (spec/brandIdentity.md:90) */
+export interface AccentTokens { light: string; lightInk: string; dark: string; darkInk: string }
+/** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md:112) */
+export type Surface = "LandingSurface" | "LegalSurface" | "NotFoundSurface" | "JoinSurface" | "SkillSurface" | "CatalogSurface";
+/** Story: One component set for every brand / Every site uses the same parts, and only peon.biz adds the browser join flow (spec/brandIdentity.md:144) */
+export type SharedPart = "PartMark" | "PartHeadline" | "PartPrompt" | "PartAgentRow" | "PartMessages" | "PartStatus" | "PartFooter" | "PartLegalText" | "PartNotFound" | "PartJoinFlow";
+
+/** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md:112) */
+export const supportEmail: string = "help@ntwrk.party";
+/** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md:9) */
+export const joinModes: JoinMode[] = ["InviteOnly", "OpenJoin"];
+/** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md:9) */
+export const accents: Accent[] = ["Black", "Chartreuse", "Orange", "Green"];
+/** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md:9) */
+export const logoMarks: LogoMark[] = ["GraphMark", "HeartMark", "NecktieMark", "TwoCirclesMark"];
+/** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md:9) */
+export const ntwrkBrand: Brand = { app: "Ntwrk", name: "The Network", domain: "ntwrk.party", keyword: "network", joinMode: "InviteOnly", accent: "Black", logo: "GraphMark", headlineLead: "Build your ", headlineMark: "network", headlineTail: ".", skillName: "ntwrk-party" };
+/** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md:9) */
+export const slopBrand: Brand = { app: "Slop", name: "slop.date", domain: "slop.date", keyword: "slop", joinMode: "OpenJoin", accent: "Chartreuse", logo: "HeartMark", headlineLead: "Let your agent find you the perfect ", headlineMark: "date", headlineTail: ".", skillName: "slop-date" };
+/** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md:9) */
+export const peonBrand: Brand = { app: "Peon", name: "peon.biz", domain: "peon.biz", keyword: "peon", joinMode: "OpenJoin", accent: "Orange", logo: "NecktieMark", headlineLead: "Let your agent find you the perfect ", headlineMark: "job", headlineTail: ".", skillName: "peon-biz" };
+/** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md:9) */
+export const friendsBrand: Brand = { app: "Friends", name: "friends.help", domain: "friends.help", keyword: "friends", joinMode: "OpenJoin", accent: "Green", logo: "TwoCirclesMark", headlineLead: "Let your agent find your best ", headlineMark: "friends", headlineTail: ".", skillName: "friends-help" };
+/** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md:9) */
+export const appKeys: AppKey[] = ["Ntwrk", "Slop", "Peon", "Friends"];
+
+/** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md:9) */
+//@ pure
+export function brandFor(app: AppKey): Brand {
+  return app === "Ntwrk" ? ntwrkBrand : (app === "Slop" ? slopBrand : (app === "Peon" ? peonBrand : friendsBrand));
+}
+
+/** Story: Know which app I am joining / Each site has one brand record with its name, domain, app, keyword, join mode, accent, logo and headline (spec/brandIdentity.md:9) */
+//@ pure
+export function lawBrandNamesItsApp(app: AppKey): boolean {
+  //@ ensures \result === true
+  return brandFor(app).app === app;
+}
+
+/** Story: Know which app I am joining / Two sites never share a name, domain, keyword, accent, logo or skill (spec/brandIdentity.md:67) */
+//@ pure
+export function lawBrandsAreDistinct(a: AppKey, b: AppKey): boolean {
+  //@ ensures \result === true
+  const local_0 = brandFor(a);
+  const local_1 = brandFor(b);
+  return !(a !== b) || (local_0.name !== local_1.name && local_0.domain !== local_1.domain && local_0.keyword !== local_1.keyword && local_0.accent !== local_1.accent && local_0.logo !== local_1.logo && local_0.skillName !== local_1.skillName);
+}
+
+/** Story: Know which app I am joining / Only The Network asks for an invitation (spec/brandIdentity.md:81) */
+//@ pure
+export function lawOnlyTheNetworkIsInviteOnly(app: AppKey): boolean {
+  //@ ensures \result === true
+  return (brandFor(app).joinMode === "InviteOnly") === (app === "Ntwrk");
+}
+
+/** Story: Know which app I am joining / Each accent has one color for light mode and one for dark mode (spec/brandIdentity.md:90) */
+//@ pure
+export function accentTokens(accent: Accent): AccentTokens {
+  return accent === "Black" ? ({ light: "oklch(0.16 0 0)", lightInk: "oklch(0.985 0 0)", dark: "oklch(0.96 0 0)", darkInk: "oklch(0.15 0 0)" } as AccentTokens) : (accent === "Chartreuse" ? ({ light: "oklch(0.2 0.04 118)", lightInk: "oklch(0.91 0.2 118)", dark: "oklch(0.91 0.2 118)", darkInk: "oklch(0.2 0.04 118)" } as AccentTokens) : (accent === "Orange" ? ({ light: "oklch(0.2 0.04 62)", lightInk: "oklch(0.78 0.16 62)", dark: "oklch(0.78 0.16 62)", darkInk: "oklch(0.2 0.04 62)" } as AccentTokens) : ({ light: "oklch(0.5 0.13 150)", lightInk: "oklch(0.985 0 0)", dark: "oklch(0.72 0.17 150)", darkInk: "oklch(0.17 0.04 150)" } as AccentTokens)));
+}
+
+/** Story: Know which app I am joining / Each accent has one color for light mode and one for dark mode (spec/brandIdentity.md:90) */
+//@ pure
+export function lawAccentInkDiffersFromAccent(accent: Accent): boolean {
+  //@ ensures \result === true
+  const local_2 = accentTokens(accent);
+  return local_2.light !== local_2.lightInk && local_2.dark !== local_2.darkInk;
+}
+
+/** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md:112) */
+//@ pure
+export function mayName(site: AppKey, named: AppKey, surface: Surface): boolean {
+  return site === named || (site === "Ntwrk" && (surface === "LegalSurface" || surface === "CatalogSurface"));
+}
+
+/** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md:112) */
+//@ pure
+export function lawAppSiteNeverNamesTheNetwork(site: AppKey, surface: Surface): boolean {
+  //@ ensures \result === true
+  return !(site !== "Ntwrk") || !mayName(site, "Ntwrk", surface);
+}
+
+/** Story: Each site keeps its own brand / An app site never names The Network or another app (spec/brandIdentity.md:112) */
+//@ pure
+export function lawAppSiteNamesNoOtherApp(site: AppKey, named: AppKey, surface: Surface): boolean {
+  //@ ensures \result === true
+  return !(site !== "Ntwrk" && named !== site) || !mayName(site, named, surface);
+}
+
+/** Story: Each site keeps its own brand / ntwrk.party names no app on its landing page, its not-found page or its own skill (spec/brandIdentity.md:131) */
+//@ pure
+export function lawHubLandingNamesNoApp(named: AppKey, surface: Surface): boolean {
+  //@ ensures \result === true
+  return !(named !== "Ntwrk" && surface !== "LegalSurface" && surface !== "CatalogSurface") || !mayName("Ntwrk", named, surface);
+}
+
+/** Story: One component set for every brand / Every site uses the same parts, and only peon.biz adds the browser join flow (spec/brandIdentity.md:144) */
+//@ pure
+export function siteUsesPart(app: AppKey, part: SharedPart): boolean {
+  return part !== "PartJoinFlow" || app === "Peon";
+}
+
+/** Story: One component set for every brand / Every site uses the same parts, and only peon.biz adds the browser join flow (spec/brandIdentity.md:144) */
+//@ pure
+export function lawSitesShareParts(a: AppKey, b: AppKey, part: SharedPart): boolean {
+  //@ ensures \result === true
+  return !(part !== "PartJoinFlow") || siteUsesPart(a, part) === siteUsesPart(b, part);
+}

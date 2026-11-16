@@ -112,6 +112,12 @@ from The Network root.
 | `pnpm accept` | `bun run accept` | Product owner sign-off after a fresh check. |
 | `pnpm selftest` | `bun run spec:selftest` | Exercise the vendored toolchain against its fixtures. |
 | `pnpm demo` | `bun run spec:demo` | Run the standalone order example. |
+| `pnpm build`, `pnpm check` in `@repo/design-system` | `bun run design:build`, `bun run design:check` | Build and check the design tokens. |
+| `pnpm gen` in `@repo/ui` | `bun run ui:gen` | Generate the component stories. |
+| `pnpm storybook` in `@repo/ui` | `bun run ui:storybook` | Open the components in Storybook. |
+| `pnpm test` in `@repo/ui` | `bun run ui:test` | Mount and play every story. |
+| `pnpm test:browser` in `@repo/ui` | `cd packages/ui && bun run test:browser` | Play every story in Chromium with axe. |
+| `pnpm lint` | `bun run lint:ui` | Lint the components and the apps. |
 | | `bun run spec:sync` | Generate and publish the production copies. |
 | | `bun run spec:check-generated` | Compare the production copies with fresh generation. |
 | | `bun run quint:check` | Exercise the action-based flows in `spec/models/`. |

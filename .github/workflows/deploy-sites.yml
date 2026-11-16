@@ -3,7 +3,7 @@
 # sites/<domain>/dist with the static pages, _headers, the skill files, and an advanced-mode _worker.js
 # (deploy/router.ts) with _routes.json, so only the backend paths run the Worker.
 #
-#   push to main -> typecheck and build, then for each site: build, deploy its dist behind the "production"
+#   push to main -> typecheck and build (the design-system CSS first), then for each site: build, deploy its dist behind the "production"
 #                   GitHub environment (required reviewers are set by the founder), then a smoke check.
 #   pull request -> typecheck and build only. There are no preview deployments: a preview would run code
 #                   from the pull request next to a deploy token and the production proxy secret
@@ -23,9 +23,9 @@ name: deploy-sites
 on:
   push:
     branches: [main]
-    paths: ["sites/**", "deploy/router.ts", "deploy/smoke.ts", "packages/platform/src/proxy.ts", "packages/platform/src/apps.ts", ".github/workflows/deploy-sites.yml"]
+    paths: ["sites/**", "deploy/router.ts", "deploy/smoke.ts", "packages/platform/src/proxy.ts", "packages/platform/src/apps.ts", "apps/site/**", "packages/ui/**", "packages/design-system/**", "packages/core/src/generated/**", "tools/vibestack/vibestack/design/**", ".nvmrc", ".github/workflows/deploy-sites.yml"]
   pull_request:
-    paths: ["sites/**", "deploy/router.ts", "deploy/smoke.ts", "packages/platform/src/proxy.ts", "packages/platform/src/apps.ts", ".github/workflows/deploy-sites.yml"]
+    paths: ["sites/**", "deploy/router.ts", "deploy/smoke.ts", "packages/platform/src/proxy.ts", "packages/platform/src/apps.ts", "apps/site/**", "packages/ui/**", "packages/design-system/**", "packages/core/src/generated/**", "tools/vibestack/vibestack/design/**", ".nvmrc", ".github/workflows/deploy-sites.yml"]
   workflow_dispatch:
     inputs:
       pages_operation:
@@ -72,7 +72,12 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
       - run: bun install --frozen-lockfile
+      - name: Design-system CSS (build output, not committed; the site app imports theme.css)
+        run: bun run design:build
       - name: Production build (refuses draft legal text and unfilled placeholders)
         run: bun run sites/sites.ts
         env:
@@ -104,6 +109,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
       - run: bun install --frozen-lockfile
       # Inspect this canonical project only. Only main receives the existing production credential.
       # PATCH merges only selected env keys. Existing secret values are never read or resubmitted.
@@ -179,6 +187,7 @@ jobs:
         if: github.event_name != 'workflow_dispatch' || (inputs.pages_operation == 'repair-and-deploy' || inputs.pages_operation == 'repair-proxy-and-deploy')
         run: |
           test -n "$TURNSTILE_SITE_KEY" || { echo "Missing real public Turnstile key"; exit 1; }
+          bun run design:build
           bun run sites/sites.ts ${{ matrix.app }}
         env:
           DEPLOY_TARGET: production

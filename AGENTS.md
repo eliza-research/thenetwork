@@ -106,6 +106,15 @@ bun run security             # the security subset of the integration suite (11 
 bun run clef <fit|calibrate|features|audit|synth>   # P2 Clef weight fitting (docs/results/2026-10-09-clef-fitting.md); only `features --live` calls Workers AI
 bun run relay-eval [rules|fit] [--live]   # the relay classifier report; only --live calls Workers AI
 
+# The shared design system and components (packages/design-system, packages/ui)
+bun run design:build         # build the token CSS from tokens.json
+bun run design:check         # check token contrast and the token table in design.md
+bun run ui:gen               # generate the component stories, the catalog and the story tests
+bun run ui:storybook         # Storybook, with a theme switch and a brand switch
+bun run ui:test              # mount every story and run its play (happy-dom)
+cd packages/ui && bun run test:browser   # play every story in Chromium with axe (needs a Playwright Chromium)
+bun run lint:ui              # lint packages/ui and apps/ with the design-system rules
+
 # The ConsentNetwork on the NYC world (docs/runbook-simulation.md)
 bun run packages/network/harness/experiment.ts --days 21 --seed 1
 bun run packages/network/harness/scenarios.ts [scenario_id]
@@ -183,10 +192,19 @@ Screen and synthesize the designs before implementing.
 The Network uses Bun for its application and tests. Node 26 and pnpm
 bootstrap the vendored Vibestack toolchain. Pure rules, transitions and
 validation types come from Quint. Existing services consume its generated
-TypeScript at their boundaries. Use the existing app framework and component
-system in each package. Read the [Network command map](README.md#commands)
-when an imported skill refers to the standalone template's pnpm commands,
-VibeLang shell, React design system, or Vitest setup.
+TypeScript at their boundaries. Every web interface uses React 19 and one
+design system. `packages/design-system` (`@thenetwork/design-system`) holds
+the tokens and the brand colors. `packages/ui` (`@thenetwork/ui`) holds the
+shared components: Radix primitives, Tailwind CSS v4 and the token utilities,
+with stories that the Vibestack story generator writes. A brand changes only
+colors, logos and text: set `data-brand` (`network`, `slop`, `friends` or
+`peon`) on an ancestor, and the `light` or `dark` class for the theme. Put
+web applications in `apps/`. An application imports components from
+`@thenetwork/ui`. Its CSS entry imports `@thenetwork/design-system/theme.css`,
+`@thenetwork/design-system/brands.css` and `@thenetwork/ui/styles.css`.
+Read the [Network command map](README.md#commands) when an imported skill
+refers to the standalone template's pnpm commands, VibeLang shell, React
+design system, or Vitest setup.
 
 ## Who does what
 

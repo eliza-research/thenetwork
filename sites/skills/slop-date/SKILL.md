@@ -7,7 +7,7 @@ metadata:
   app: slop
   site: https://slop.date
   operator: Eliza Research Corporation
-  version: "1.2.5"
+  version: "1.2.6"
 ---
 
 # slop.date
@@ -64,8 +64,9 @@ Do not send them to a website Join page, another assistant, connector settings,
 or a text conversation to finish signup. The person receives a verification text
 and enters its code here; they must never have to send a text to receive a code.
 If existing tools cannot perform HTTPS POST and retain a private session under
-this client's default permissions, explain that signup cannot currently finish
-in this agent. Stop before requesting a number or code. Never claim that reading
+this client's default permissions, explain that signup cannot currently finish <!-- agentSignup: chooseTransport -->
+in this agent. Do this check first, before step 1, and stop before you ask for
+a profile, a number or a code. Never claim that reading
 this skill grants tools, permissions or a session. Do not change security settings,
 use a different origin, or pretend signup/profile saving succeeded.
 Do not ask the person to change a domain allowlist, enable tools, install anything,
@@ -75,46 +76,55 @@ Give technical diagnostics only when the person explicitly asks for them.
 
 ## Join in this conversation
 
-1. GET `/api/app`. Confirm `id` is `slop`. Keep the returned `consent.text` and
+1. GET `/api/app`. Confirm `id` is `slop`. Keep the returned `consent.text` and <!-- agentSignup: readAppFacts -->
    `consent.version` for this signup; do not invent or reuse another app's wording.
    Respect `joinMode`, `minJoinAge` and `minMatchAge`. If the person is below the
    join age, explain that and stop before collecting their number.
-2. Draft the profile from confirmed facts: first name, explicitly stated age,
+2. Draft the profile from confirmed facts: first name, explicitly stated age, <!-- agentSignup: draftProfile -->
    home city/region and neighbourhood, interests, availability, what relationship they want,
    and whom they hope to meet (only preferences they explicitly choose to include).
    Adult dating preferences can include adult age range and travel radius; never infer them.
-   Ask only what is missing, one or two questions at a time. Show a short draft
+   Ask only what is missing, one or two questions at a time. Use the lowest age
+   that the person states. Under 13, tell them that they cannot join and stop:
+   ask for no number and save nothing. At 13 to 17, continue and tell them that
+   matching and introductions are for adults 18 and older only. Show a short draft
    for approval. Keep this a dating profile; leave out information intended for other apps.
    The current Join API accepts the complete approved profile in `about`; do not
    invent separate gender, orientation, age-range or distance API fields.
-3. Explain that joining accepts recurring texts, with variable frequency and
+3. Explain that joining accepts recurring texts, with variable frequency and <!-- agentSignup: decideApproval -->
    possible message/data rates, STOP to stop and HELP for help. Link the
    [text terms](https://slop.date/terms#sms), [Terms](https://slop.date/terms)
    and [privacy policy](https://slop.date/privacy). Obtain explicit approval
    for this exact profile and text consent before the Join request. If approval
    is missing, do not submit it. Never infer consent from a code or a draft.
-4. If a private session for this site already exists, GET `/api/me` first.
-   Otherwise, or after a 401, ask for the person's own mobile number. Do not
-   infer a number from contacts or past conversations. GET `/api/auth/mode`:
+4. If a private session for this site already exists, GET `/api/me` first. <!-- agentSignup: checkSession readAuthMode -->
+   Otherwise, or after a 401, GET `/api/auth/mode` before you ask for a number:
    continue with the code steps only for `mode: "otp"`. If another sign-in mode
    is required, explain that this agent's direct sign-in is unavailable and stop;
-   do not offer a website fallback or bypass it.
-5. With the number the person provided, POST `/api/auth/otp/start` once:
-   `{"phone":"<their own number in E.164>"}`. A 200/`ok:true` means a code was
-   requested, not that verification succeeded. Ask for the genuine texted code.
+   do not ask for a number, offer a website fallback or bypass it. Only for
+   `mode: "otp"`, ask for the person's own mobile number. Do not infer a number
+   from contacts or past conversations.
+5. With the number the person provided, POST `/api/auth/otp/start` once: <!-- agentSignup: startCode -->
+   `{"phone":"<their own number in E.164>"}`. Request a code at most once in
+   each attempt. A 200/`ok:true` means a code was requested, not that
+   verification succeeded. Ask for the genuine texted code. If the site refuses
+   the request (a malformed number or a rate limit), stop this attempt and tell
+   the person the reason; only the person can start a new attempt.
    Never invent, brute-force or automatically resend codes. If the site requires
    a security check unavailable in this agent, stop and explain the limitation;
    do not offer a website signup or fake a token.
-6. POST `/api/auth/otp/verify` exactly once with `phone` and the code the person
+6. POST `/api/auth/otp/verify` exactly once with `phone` and the code the person <!-- agentSignup: checkCode -->
    supplied. Keep the code out of files and output; retain only the returned
    session cookie in the private jar. On rejection explain it; only the person
    can authorize a new code request. On success, GET `/api/me` with that jar.
-7. Check the reply and confirm its app is slop; never submit across apps.
+7. Check the reply and confirm its app is slop; never submit across apps. <!-- agentSignup: readAccount -->
+   If the account is for another app, stop.
    If a membership already exists, do not POST Join
    again to overwrite it: that endpoint does not update existing profiles. Read
    the existing account as described below and report its actual state. Do not
    claim a newly drafted profile was saved over an existing membership.
-8. For a new membership, require `canJoin:true` and the person's explicit profile
+   If the account is on hold for review, report the hold and stop; do not POST Join.
+8. For a new membership, require `canJoin:true` and the person's explicit profile <!-- agentSignup: joinApp -->
    and text-consent approval from step 3. POST `/api/join` once with the approved
    fields, the latest `/api/me` `signupView` when present, and current consent:
    `firstName`, integer `age`, `neighborhood`, `homeCity` (`sf` or `nyc`
@@ -130,7 +140,10 @@ Give technical diagnostics only when the person explicitly asks for them.
    an incorrect supported region for someone elsewhere.
    Use `consent:{"sms":true,"version":"<current consent.version>","wording":"<current consent.text>"}`.
    Never send placeholders or guessed fields. Do not silently omit the profile.
-9. After Join succeeds, GET `/api/me` again, then GET `/api/me/export` using the
+   If Join refuses, report the true reason and stop: an age below the join age,
+   a missing invitation, an account on hold, or a profile that was not saved.
+   Never report a refusal as a saved profile, and do not POST Join again.
+9. After Join succeeds, GET `/api/me` again, then GET `/api/me/export` using the <!-- agentSignup: readBack -->
    SAME private session. The export is this person's own app data: parse it in
    memory, never print/store the raw export or expose identifiers/phone numbers.
    Check `app`, `membership.firstName`, `membership.state` and

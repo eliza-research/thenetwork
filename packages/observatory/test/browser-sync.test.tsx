@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { Window, type HTMLInputElement as TestInput } from "happy-dom";
 import { act, createElement } from "react";
 import type { ClockInfo, ObsDelta, ObsFeedItem, ObsOpportunity } from "../src/types.ts";
+import { byRole, installDom } from "./dom.ts";
 
 const clock = (now: number): ClockInfo => ({ now, start: 0, day: 1, playing: false, speed: 0, waitingForPlayer: false });
 const item = (seq: number): ObsFeedItem => ({ seq, t: seq, kind: "review", text: `review ${seq}` });
@@ -47,7 +48,7 @@ test("the console keeps the current view, live feed, and review draft", async ()
   const nativeSocket = globalThis.WebSocket;
   const sockets: WebSocket[] = [];
   const globals = {
-    window, document: window.document, navigator: window.navigator, HTMLElement: window.HTMLElement,
+    window, document: window.document, navigator: window.navigator,
     location: window.location, history: window.history, localStorage: window.localStorage, sessionStorage: window.sessionStorage,
     IS_REACT_ACT_ENVIRONMENT: true,
     WebSocket: class extends nativeSocket {
@@ -57,8 +58,7 @@ test("the console keeps the current view, live feed, and review draft", async ()
       }
     },
   };
-  const saved = Object.keys(globals).map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
-  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
+  const restoreDom = installDom(window, globals);
   globalThis.fetch = ((input: Parameters<typeof fetch>[0], init?: RequestInit) =>
     nativeFetch(typeof input === "string" ? new URL(input, api.url) : input, init)) as typeof fetch;
   const until = async (predicate: () => boolean) => {
@@ -107,7 +107,7 @@ test("the console keeps the current view, live feed, and review draft", async ()
     window.document.body.append(box);
     const root = createRoot(box as unknown as HTMLElement);
     const button = (text: string) => [...box.querySelectorAll("button")].find(b => b.textContent === text)!;
-    const note = () => box.querySelector<TestInput>(".note")!;
+    const note = () => byRole<TestInput>(box, "textbox", "Note")!;
     const writeNote = async (value: string) => {
       await act(async () => {
         const input = note();
@@ -139,10 +139,7 @@ test("the console keeps the current view, live feed, and review draft", async ()
     decisionRelease.resolve();
     for (const socket of sockets) { socket.onclose = null; socket.close(); }
     globalThis.fetch = nativeFetch;
-    for (const [key, descriptor] of saved) {
-      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
-      else Reflect.deleteProperty(globalThis, key);
-    }
+    restoreDom();
     api.stop(true);
     await window.happyDOM.close();
   }

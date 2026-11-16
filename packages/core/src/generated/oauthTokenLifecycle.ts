@@ -16,7 +16,6 @@ export type Revocation = "NoChange" | "EndAccess" | "EndGrant";
 
 /** One variant per transition in the spec. */
 export type Event =
-  | { type: "refuse"; reason: TokenReason }
   | { type: "readCode"; clientMatches: boolean; used: boolean; live: boolean }
   | { type: "readCodeBinding"; redirectMatches: boolean; verifierMatches: boolean; resourceMatches: boolean }
   | { type: "readRefresh"; refreshMatches: boolean }
@@ -38,8 +37,7 @@ export function inv(current: TokenFlow): boolean {
 
 /** Story: Use and renew an approved connector grant / Each token request must match its own credential binding (spec/oauthTokenLifecycle.md:9) */
 //@ pure
-export function refuse(flow: TokenFlow, reason: TokenReason): TokenFlow {
-  //@ ensures (inv(flow)) ==> stepTokensRequireStorage(flow, "refuse", \result)
+export function refuse(reason: TokenReason, flow: TokenFlow): TokenFlow {
   return { ...flow, phase: "Refused", reason: reason };
 }
 
@@ -65,21 +63,21 @@ export function canReadRefresh(flow: TokenFlow): boolean {
 //@ pure
 export function readCode(flow: TokenFlow, clientMatches: boolean, used: boolean, live: boolean): TokenFlow {
   //@ ensures (inv(flow) && canReadCode(flow)) ==> stepTokensRequireStorage(flow, "readCode", \result)
-  return !clientMatches ? refuse(flow, "InvalidGrant") : (used ? ({ ...flow, phase: "RevokeGrant" } as TokenFlow) : (!live ? refuse(flow, "CodeExpired") : ({ ...flow, phase: "CheckingCodeBinding" } as TokenFlow)));
+  return !clientMatches ? refuse("InvalidGrant", flow) : (used ? ({ ...flow, phase: "RevokeGrant" } as TokenFlow) : (!live ? refuse("CodeExpired", flow) : ({ ...flow, phase: "CheckingCodeBinding" } as TokenFlow)));
 }
 
 /** Story: Use and renew an approved connector grant / Each token request must match its own credential binding (spec/oauthTokenLifecycle.md:9) */
 //@ pure
 export function readCodeBinding(flow: TokenFlow, redirectMatches: boolean, verifierMatches: boolean, resourceMatches: boolean): TokenFlow {
   //@ ensures (inv(flow) && canReadCodeBinding(flow)) ==> stepTokensRequireStorage(flow, "readCodeBinding", \result)
-  return !redirectMatches ? refuse(flow, "RedirectMismatch") : (!verifierMatches ? refuse(flow, "VerifierMismatch") : (!resourceMatches ? refuse(flow, "InvalidTarget") : ({ ...flow, phase: "CheckingGrant" } as TokenFlow)));
+  return !redirectMatches ? refuse("RedirectMismatch", flow) : (!verifierMatches ? refuse("VerifierMismatch", flow) : (!resourceMatches ? refuse("InvalidTarget", flow) : ({ ...flow, phase: "CheckingGrant" } as TokenFlow)));
 }
 
 /** Story: Use and renew an approved connector grant / Each token request must match its own credential binding (spec/oauthTokenLifecycle.md:9) */
 //@ pure
 export function readRefresh(flow: TokenFlow, refreshMatches: boolean): TokenFlow {
   //@ ensures (inv(flow) && canReadRefresh(flow)) ==> stepTokensRequireStorage(flow, "readRefresh", \result)
-  return refreshMatches ? ({ ...flow, phase: "CheckingGrant", refresh: true } as TokenFlow) : refuse(flow, "InvalidGrant");
+  return refreshMatches ? ({ ...flow, phase: "CheckingGrant", refresh: true } as TokenFlow) : refuse("InvalidGrant", flow);
 }
 
 /** Story: Use and renew an approved connector grant / The request needs current grant authority and must stay within its consent (spec/oauthTokenLifecycle.md:42) */
@@ -110,21 +108,21 @@ export function codeCanBeConsumed(flow: TokenFlow, bothLive: boolean): boolean {
 //@ pure
 export function readGrant(flow: TokenFlow, grantLive: boolean, eligible: boolean): TokenFlow {
   //@ ensures (inv(flow) && canReadGrant(flow)) ==> stepTokensRequireStorage(flow, "readGrant", \result)
-  return grantLive && eligible ? ({ ...flow, phase: "CheckingAuthority" } as TokenFlow) : refuse(flow, "InvalidGrant");
+  return grantLive && eligible ? ({ ...flow, phase: "CheckingAuthority" } as TokenFlow) : refuse("InvalidGrant", flow);
 }
 
 /** Story: Use and renew an approved connector grant / The request needs current grant authority and must stay within its consent (spec/oauthTokenLifecycle.md:42) */
 //@ pure
 export function readAuthority(flow: TokenFlow, credentialLive: boolean, authority: TokenAuthority): TokenFlow {
   //@ ensures (inv(flow) && canReadAuthority(flow)) ==> stepTokensRequireStorage(flow, "readAuthority", \result)
-  return !credentialLive ? refuse(flow, "InvalidGrant") : (authority === "Unavailable" ? ({ ...flow, phase: "RetryAuthority" } as TokenFlow) : (authority === "Invalid" ? refuse(flow, "InvalidGrant") : ({ ...flow, phase: flow.refresh ? "CheckingRefreshBinding" : "AwaitingConsumption" } as TokenFlow)));
+  return !credentialLive ? refuse("InvalidGrant", flow) : (authority === "Unavailable" ? ({ ...flow, phase: "RetryAuthority" } as TokenFlow) : (authority === "Invalid" ? refuse("InvalidGrant", flow) : ({ ...flow, phase: flow.refresh ? "CheckingRefreshBinding" : "AwaitingConsumption" } as TokenFlow)));
 }
 
 /** Story: Use and renew an approved connector grant / The request needs current grant authority and must stay within its consent (spec/oauthTokenLifecycle.md:42) */
 //@ pure
 export function readRefreshBinding(flow: TokenFlow, scopeAllowed: boolean, resourceMatches: boolean, bothLive: boolean): TokenFlow {
   //@ ensures (inv(flow) && canReadRefreshBinding(flow)) ==> stepTokensRequireStorage(flow, "readRefreshBinding", \result)
-  return !scopeAllowed ? refuse(flow, "InvalidScope") : (!resourceMatches ? refuse(flow, "InvalidTarget") : (!bothLive ? refuse(flow, "InvalidGrant") : ({ ...flow, phase: "AwaitingRotation" } as TokenFlow)));
+  return !scopeAllowed ? refuse("InvalidScope", flow) : (!resourceMatches ? refuse("InvalidTarget", flow) : (!bothLive ? refuse("InvalidGrant", flow) : ({ ...flow, phase: "AwaitingRotation" } as TokenFlow)));
 }
 
 /** Story: Use and renew an approved connector grant / Token issuance requires consumption or rotation in storage (spec/oauthTokenLifecycle.md:70) */
@@ -181,7 +179,7 @@ export function sometimesCanRefresh(flow: TokenFlow): boolean {
 //@ pure
 export function readConsumption(flow: TokenFlow, consumption: CodeConsumption, bothLive: boolean): TokenFlow {
   //@ ensures (inv(flow) && canReadConsumption(flow)) ==> stepTokensRequireStorage(flow, "readConsumption", \result)
-  return consumption === "PreviousUse" ? ({ ...flow, phase: "RevokeGrant" } as TokenFlow) : (consumption !== "CodeConsumed" || !bothLive ? refuse(flow, "InvalidGrant") : ({ ...flow, phase: "AwaitingTokenWrite" } as TokenFlow));
+  return consumption === "PreviousUse" ? ({ ...flow, phase: "RevokeGrant" } as TokenFlow) : (consumption !== "CodeConsumed" || !bothLive ? refuse("InvalidGrant", flow) : ({ ...flow, phase: "AwaitingTokenWrite" } as TokenFlow));
 }
 
 /** Story: Use and renew an approved connector grant / Revocation affects credentials owned by the authenticated client (spec/oauthTokenLifecycle.md:98) */
@@ -193,7 +191,6 @@ export function tokenRevocation(clientOwns: boolean, refresh: boolean): Revocati
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: TokenFlow, event: Event): boolean {
-  if (event.type === "refuse") return true;
   if (event.type === "readCode") return canReadCode(current);
   if (event.type === "readCodeBinding") return canReadCodeBinding(current);
   if (event.type === "readRefresh") return canReadRefresh(current);
@@ -211,7 +208,6 @@ export function enabled(current: TokenFlow, event: Event): boolean {
 export function step(current: TokenFlow, event: Event): TokenFlow {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "refuse") return refuse(current, event.reason);
   if (event.type === "readCode" && canReadCode(current)) return readCode(current, event.clientMatches, event.used, event.live);
   if (event.type === "readCodeBinding" && canReadCodeBinding(current)) return readCodeBinding(current, event.redirectMatches, event.verifierMatches, event.resourceMatches);
   if (event.type === "readRefresh" && canReadRefresh(current)) return readRefresh(current, event.refreshMatches);
@@ -238,7 +234,6 @@ export function parseEvent(x: unknown): Event | undefined {
     return undefined;
   }
   if (typeof raw !== "object" || raw === null) return undefined;
-  if (raw.type === "refuse" && (raw.reason === "NoReason" || raw.reason === "InvalidGrant" || raw.reason === "CodeExpired" || raw.reason === "RedirectMismatch" || raw.reason === "VerifierMismatch" || raw.reason === "InvalidScope" || raw.reason === "InvalidTarget")) return { type: "refuse", reason: raw.reason };
   if (raw.type === "readCode" && typeof raw.clientMatches === "boolean" && typeof raw.used === "boolean" && typeof raw.live === "boolean") return { type: "readCode", clientMatches: raw.clientMatches, used: raw.used, live: raw.live };
   if (raw.type === "readCodeBinding" && typeof raw.redirectMatches === "boolean" && typeof raw.verifierMatches === "boolean" && typeof raw.resourceMatches === "boolean") return { type: "readCodeBinding", redirectMatches: raw.redirectMatches, verifierMatches: raw.verifierMatches, resourceMatches: raw.resourceMatches };
   if (raw.type === "readRefresh" && typeof raw.refreshMatches === "boolean") return { type: "readRefresh", refreshMatches: raw.refreshMatches };

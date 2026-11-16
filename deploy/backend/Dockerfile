@@ -17,6 +17,12 @@ COPY deploy ./deploy
 COPY evals/relay/clef-relay-weights.json ./evals/relay/clef-relay-weights.json
 # The runtime has no npm dependencies of its own: this links the workspaces. No lifecycle scripts run.
 RUN bun install --frozen-lockfile --production --ignore-scripts
+# The connector pages inline the design-system CSS; the server refuses to start without it.
+# Bun runs both builds, and the design-system build runs the toolkit's token CLI with Bun too. The toolkit is not shipped.
+COPY tools/vibestack/vibestack/design ./tools/vibestack/vibestack/design
+RUN bun packages/design-system/build.ts build \
+ && bun packages/mcp/src/pages/build-css.ts \
+ && rm -rf tools
 # The simulator, the judges, the eval corpora, the synthetic worlds and the Eliza plugin never run here:
 # the backend and the real-only console import none of them (bun run sim, block ops, checks this line).
 RUN rm -rf packages/sim packages/judge packages/evals packages/worlds packages/plugin-network
