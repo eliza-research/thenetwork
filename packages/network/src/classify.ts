@@ -772,21 +772,24 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   if (!options.length) return { answer: c.answer === "no" ? "no" : c.answer === "yes" || c.answer === "counter" ? "yes" : "unclear", keys: [], why: c.why };
   const all = options.map(o => o.key);
   // Every mention of an option, as a pick or a refusal. A key both picked and refused counts as picked.
-  const pos = new Set<string>(), neg = new Set<string>(), strong = new Set<string>();
+  // `named` is the subset picked by naming the offered option itself (a day name, a letter, an
+  // ordinal) rather than a bare clock time, which a relative day can claim ("tomorrow 7pm").
+  const pos = new Set<string>(), neg = new Set<string>(), strong = new Set<string>(), named = new Set<string>();
   const onlyPick = (i: number, len: number) => /^[\s\W]*(?:the\s+)?$/.test(t.slice(0, i)) && /^[\s\W]*(?:one|option|works?|please|pls|lol)?[\s\W]*$/.test(t.slice(i + len));
-  const mark = (keys: string[], i: number, len: number) => {
+  const mark = (keys: string[], i: number, len: number, namesOption = false) => {
     for (const k of keys) {
       if (negatedAt(t, i, len)) { neg.add(k); continue; }
       pos.add(k);
+      if (namesOption) named.add(k);
       const cl = clauseAt(t, i, len);
       if (onlyPick(i, len) || (POSITIVE_PICK.test(cl) && !/\?/.test(t.slice(i + len, i + len + 2)))) strong.add(k);
     }
   };
   // Option letters only where they cannot be the article "a": "a or b", "(b)", "option c", or alone.
-  for (const m of t.matchAll(/\b([abc])\s*(?:or|and|&|,|\/)\s*([abc])\b/g)) mark([m[1]!, m[2]!], m.index!, m[0].length);
-  for (const m of t.matchAll(/(?:\boption\s+|\()([abc])\b/g)) mark([m[1]!], m.index!, m[0].length);
+  for (const m of t.matchAll(/\b([abc])\s*(?:or|and|&|,|\/)\s*([abc])\b/g)) mark([m[1]!, m[2]!], m.index!, m[0].length, true);
+  for (const m of t.matchAll(/(?:\boption\s+|\()([abc])\b/g)) mark([m[1]!], m.index!, m[0].length, true);
   const alone = /^\s*([abc])[\s.!,)]*$/.exec(t);
-  if (alone) { pos.add(alone[1]!); strong.add(alone[1]!); }
+  if (alone) { pos.add(alone[1]!); strong.add(alone[1]!); named.add(alone[1]!); }
   // Ordinals only as a pick ("the first", "second one", or alone): "tell me about them first" is not option a.
   const ord = (w: string) => new RegExp(`\\bthe (?:${w})\\b|\\b(?:${w}) (?:one|option|time|slot)\\b|^\\W*(?:${w})\\W*$`, "g");
   const ordinals: [RegExp, number][] = [
@@ -794,10 +797,10 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     [ord("second|2nd|middle"), 1], [/(?<![\d:])\b2\b(?!\s*(am|pm|:|\d|of|more|people|person|hours?|mins?))/g, 1],
     [ord("third|3rd"), 2], [/(?<![\d:])\b3\b(?!\s*(am|pm|:|\d|of|more|people|hours?|mins?))/g, 2], [/\b(last|later|latest) one\b/g, options.length - 1],
   ];
-  for (const [re, i] of ordinals) if (options[i]) for (const m of t.matchAll(re)) mark([options[i]!.key], m.index!, m[0].length);
+  for (const [re, i] of ordinals) if (options[i]) for (const m of t.matchAll(re)) mark([options[i]!.key], m.index!, m[0].length, true);
   for (const [re, dayName] of DAY_WORDS) {
     const keys = options.filter(o => o.label.startsWith(dayName)).map(o => o.key);
-    if (keys.length) for (const m of t.matchAll(re)) mark(keys, m.index!, m[0].length);
+    if (keys.length) for (const m of t.matchAll(re)) mark(keys, m.index!, m[0].length, true);
   }
   for (const m of t.matchAll(/\b(\d{1,2})(?::\d\d)?\s*(am|pm)\b/g)) {
     const label = `${Number(m[1])}${m[2]}`;
@@ -817,7 +820,10 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // A relative day ("tomorrow", "today", "tonight") names no offered day: the parser has no
   // reference time to bind it to, so even a clock time or daypart next to it ("tomorrow 7pm
   // works", "tomorrow evening works") must not pick an offered slot. Ask again instead.
-  if (/\b(?:tomorrow|tmrw|today|tonight)\b/.test(t)) return unclear;
+  // But a firm pick of an offered day named in the same reply ("Saturday works, and tomorrow
+  // works too") is still a booking: the relative day there is a counter-offer for another day,
+  // not the answer. Only a bare clock time can be claimed by the relative day.
+  if (/\b(?:tomorrow|tmrw|today|tonight)\b/.test(t) && ![...named].some(k => strong.has(k))) return unclear;
   // A time they name and do not refuse is a yes to it ("no plans Thursday, so Thursday works").
   // A named time with a yes or a firm pick ("Saturday works"); a bare mention ("I'm at a wedding saturday") is not a yes.
   if (picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return { answer: "yes", keys: picked.filter(k => strong.has(k) || c.answer === "yes"), why: c.why };

@@ -326,3 +326,5 @@
 {"text":"tonight works","label":"unclear"}
 {"text":"tomorrow evening works","label":"unclear"}
 {"text":"tomorrow 7pm works","label":"unclear"}
+{"text":"Saturday works, and tomorrow works too","label":"yes","keys":["b"]}
+{"text":"Thursday 7pm works, tomorrow evening works","label":"yes","keys":["a"]}
