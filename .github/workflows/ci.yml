@@ -78,6 +78,9 @@ jobs:
         run: |
           pg_isready -h localhost -p 54339
           node --import tsx scripts/require-pg.ts
+      - name: Generate design and connector CSS
+        run: pnpm run connector:css
+        timeout-minutes: 5
       - name: Typecheck (packages, deploy, tests, scripts/sim)
         run: pnpm exec tsc --noEmit -p .
         timeout-minutes: 5
@@ -104,9 +107,40 @@ jobs:
         run: |
           if git grep -n -I -E 'ntwrk[.]love' -- .; then echo "use ntwrk.party / api.ntwrk.party instead"; exit 1; fi
       - name: Production build of the four sites (refuses draft legal text and unfilled placeholders)
-        run: node --import tsx sites/sites.ts
+        run: pnpm run sites:build
         env:
           DEPLOY_TARGET: production
+
+  ui:
+    # The design system and the component library: the brand tokens agree with design.md, the generated stories
+    # are current, the stories pass in happy-dom, and ESLint (tokens-only styling) passes with no warnings.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - run: npm install --global corepack@0.35.0 && corepack enable pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+        timeout-minutes: 5
+      - name: Install the toolkit (tools/vibestack)
+        run: pnpm run spec:setup
+        timeout-minutes: 5
+      - name: Design tokens agree with design.md (design:check)
+        run: pnpm run design:check
+      - name: Design-system CSS (design:build)
+        run: pnpm run design:build
+      - name: Generated stories are current (ui:gen, --check)
+        run: pnpm run ui:gen
+      - name: Component stories (ui:test)
+        run: pnpm run ui:test
+        timeout-minutes: 10
+      - name: ESLint for packages/ui and apps (lint:ui)
+        run: pnpm run lint:ui
 
   integration:
     # The integration suite (real Postgres, real HTTP servers, several packages together, the full

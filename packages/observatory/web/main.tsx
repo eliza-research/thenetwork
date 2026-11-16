@@ -1,46 +1,53 @@
-// The Network Observatory web app: top bar, filter bar, stage (NYC map or social graph) with the
-// inspector, and the drawer. One focus (member, opportunity or neighborhood) and one set of
-// filters drive every panel (store.ts).
+// spec/consoleNavigation.md, "The console view follows the page"
+// spec/consoleNavigation.md, "Escape closes one thing at a time"
+// spec/consoleNavigation.md, "Search offers names and places from two characters and ids from three"
+// spec/consoleNavigation.md, "The filter bar dims the filters that do not apply to the open tab"
+// spec/staffSignIn.md, "Each sign-in phase has one view"
+// spec/consoleWorkspace.md, "The propose tray sends a proposal for two to six adults with a spark left"
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { Category } from "@thenetwork/core";
 import { NEIGHBORHOODS } from "@thenetwork/network/geo";
-import type { EnvInfo, SearchHit } from "../src/types.ts";
-import { AppPage, AppSwitcher } from "./apps.tsx";
-import { Drawer, filterApplies, TAB_LABEL } from "./drawer.tsx";
-import { EDGE_STYLE, GraphView, OPP_COLOR } from "./graph.ts";
+import {
+  Alert, AppSwitcher, BrandMark, Button, ConsoleShell, DataCell, DataTable, FilterBar, FilterBarFocus, Input, Legend, LegendItem, ModeIndicator, Popover, PopoverContent,
+  PopoverTrigger, ProposeTray, SearchBox, Segments, Select, SelectItem, SignInNotice, Spinner, TableRow, Toast, Toaster, TopBar,
+  type DataColumn, type FilterBarItem,
+} from "@thenetwork/ui";
+import { ntwrkBrand } from "../../core/src/generated/brandIdentity.ts";
+import {
+  backShown, type ConsoleNav, conversationSearchShown, type HitGroups, hitGroups, modeSwitchShown, searchShown, switcherShown, tabNow, viewFor,
+} from "../../core/src/generated/consoleNavigation.ts";
+import { canReceiveProposalAnswer, canSubmitProposal, initial as initialWorkspace, receiveProposalAnswer, submitProposal, trayShown, type TrayPhase } from "../../core/src/generated/consoleWorkspace.ts";
+import { signInView } from "../../core/src/generated/staffSignIn.ts";
+import type { EnvInfo, Mode, SearchHit } from "../src/types.ts";
+import { AppPage } from "./apps.tsx";
+import { Drawer } from "./drawer.tsx";
+import { EDGE_STYLE, GraphView } from "./graph.ts";
 import { MapView } from "./map.ts";
 import { Inspector } from "./panels.tsx";
 import {
   BOROUGHS, DAY, EDGE_TYPES, HOUR, MEMBER_FILTERS, originLabel, RANGES, STATE_GROUPS, store, useStore,
-  type ColorLens, type FilterKey, type Filters, type MemberFilter, type StateGroup,
+  type ColorLens, type Filters, type MemberFilter, type RangeKey, type StateGroup,
 } from "./store.ts";
-import { humanize, localDate, localTime, stamp, useOutsideClose } from "./ui.tsx";
+import { consoleNav, humanize, localDate, localTime, NAV_FILTER, pickMember, staffSignIn, staffView, stamp } from "./ui.tsx";
 
 const SPEEDS: [string, number][] = [["1h/s", HOUR], ["6h/s", 6 * HOUR], ["1d/s", DAY], ["2d/s", 2 * DAY]];
 const CATEGORIES: Category[] = ["social", "professional", "hobby", "help", "romance", "growth", "events"];
-
-/** Esc does one step: close a popover or menu, clear the search, clear the picks, clear the focus. */
-function escape() {
-  const ui = store.ui;
-  if (ui.popover) store.setUI({ popover: null });
-  else if (ui.query) store.setUI({ query: "" });
-  else if (ui.picks.length) store.setUI({ picks: [] });
-  else if (ui.focus) store.clearFocus();
-}
+const TOAST_VARIANT = { info: "info", good: "ok", bad: "destructive" } as const;
 
 function App() {
   const s = useStore();
+  const [token, setToken] = useState("");
   useEffect(() => { store.load(); store.connect(); }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const field = (e.target as Element | null)?.closest?.("input, textarea, select");
-      if (e.key === "Escape") { escape(); if (field && !store.ui.query) (field as HTMLElement).blur(); return; }
+      if (e.key === "Escape") { store.escape(); if (field && !store.ui.query) (field as HTMLElement).blur(); return; }
       if (field || e.metaKey || e.ctrlKey || e.altKey) return;
       const canStep = !!store.env?.capabilities.canStep && store.canSim();
       if (e.key === "/") { e.preventDefault(); document.getElementById("obs-search")?.focus(); }
-      else if (e.key === "?") store.setUI({ popover: store.ui.popover === "help" ? null : "help" });
-      else if (e.key === "g") store.setUI({ view: store.ui.view === "map" ? "graph" : "map" });
+      else if (e.key === "?") store.toggleHelp();
+      else if (e.key === "g") store.showStage(store.ui.view === "map" ? "graph" : "map");
       else if (e.key === " " && canStep) { e.preventDefault(); store.control({ type: store.clock?.playing ? "pause" : "play" }); }
       else if (e.key === "n" && canStep) store.control({ type: "step", ms: HOUR });
       else if (e.key === "d" && canStep) store.control({ type: "step", ms: DAY });
@@ -48,105 +55,142 @@ function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+  const signIn = staffSignIn(s);
+  if (signInView(signIn.phase) !== "ShowConsole") {
+    return (
+      <main className="flex h-full items-center justify-center bg-background p-4 font-sans text-foreground">
+        <SignInNotice
+          signIn={signIn} token={token} onTokenChange={setToken} brand={<ConsoleBrand />}
+          onSubmitToken={t => { store.setToken(t); setToken(""); }} onSignInAgain={() => location.reload()} onRetry={() => store.load()}
+        />
+        <Toasts />
+      </main>
+    );
+  }
+  const nav = consoleNav(s);
+  const view = viewFor(nav);
   return (
-    <div className={`app mode-${s.mode}`}>
-      <TopBar />
-      {s.page.kind === "app" && <FilterBar />}
-      {s.page.kind !== "app" || (s.me && !s.apps().length) ? <AppPage /> : null}
-      <div className="main" hidden={s.page.kind !== "app" || (!!s.me && !s.apps().length)}>
-        <div className="stage">
-          <GraphStage />
-          <Legend />
-          {s.game?.prompts.length && s.canSim() ? <Prompts /> : null}
-          {s.ui.picks.length > 0 && s.env?.capabilities.canIntervene && s.canSim() && <ProposeTray />}
-          {s.loading && !s.authNeeded && <div className="loading">Loading…</div>}
-        </div>
-        <Inspector />
-      </div>
-      {s.page.kind === "app" && <Drawer />}
-      {s.authNeeded && <AuthPrompt />}
-      <Toast />
-    </div>
+    <ConsoleShell
+      view={view}
+      topBar={<ConsoleTopBar nav={nav} />}
+      filterBar={<ConsoleFilterBar nav={nav} />}
+      stage={<Stage nav={nav} />}
+      inspector={<Inspector />}
+      drawer={<Drawer />}
+      page={<AppPage view={view} />}
+      overlay={<Toasts />}
+    />
   );
 }
 
-// ---------------------------------------------------------------- top bar
-/**
- * Short banner with the app: "SLOP · SIM · seed 1", "SLOP · LOCAL DB · read-only" or "NTWRK · PROD · read-only".
- * The full label goes in the title.
- */
+function ConsoleBrand() {
+  return <><BrandMark logo={ntwrkBrand.logo} className="size-6" /> Observatory</>;
+}
+
+/** The short banner of the app and the data, such as "SLOP · SIM · seed 1" or "NTWRK · PROD · read-only"; the full label goes on hover. */
 function banner(env?: EnvInfo): { text: string; title: string } {
   if (!env) return { text: "…", title: "" };
   const app = env.app ? `${env.app.toUpperCase()} · ` : "";
   const title = [env.label, env.dataset, env.database, env.appIsolation === "rls_role" ? "app read role" : env.appIsolation === "app_filter" ? "app filter" : "", env.piiRevealed ? "PII revealed" : "", env.authRequired ? "Token required" : ""].filter(Boolean).join(" · ");
   if (env.capabilities.canStep) { const seed = /seed (\d+)/.exec(env.label)?.[1]; return { text: `${app}${seed ? `SIM · seed ${seed}` : "SIM"}`, title }; }
-  // Say which database it is: the server labels local and named (OBSERVATORY_ENV_LABEL) environments.
   const where = /^LOCAL/.test(env.label) ? "LOCAL DB" : /^PRODUCTION/.test(env.label) ? "PROD" : /not connected/i.test(env.label) ? "NOT CONNECTED" : env.label.split(" · ")[0]!;
   return { text: `${app}${where}${/not connected/i.test(env.label) ? "" : " · read-only"}${env.piiRevealed ? " · PII" : ""}`, title };
 }
 
-function TopBar() {
+function ConsoleTopBar({ nav }: { nav: ConsoleNav }) {
+  const s = useStore();
+  const c = s.clock;
+  const canStep = !!s.env?.capabilities.canStep;
+  const b = s.page.kind === "app" ? banner(s.env) : { text: `ALL APPS · ${s.mode === "real" ? "real data" : "simulation"}`, title: "Every app you hold a role for" };
+  const me = s.me;
+  const onApp = searchShown(nav);
+  const end = (
+    <>
+      {onApp && (
+        <Segments
+          aria-label="View" value={s.ui.view} onValueChange={v => store.showStage(v as "map" | "graph")}
+          options={[{ value: "map", label: "Map" }, { value: "graph", label: "Graph" }]}
+        />
+      )}
+      {onApp && <Search nav={nav} />}
+      {me && (
+        <span className="text-sm whitespace-nowrap text-muted-foreground" title={`${me.id} · ${me.via === "sso" ? "single sign-on" : "token"} · ${(me.grants ?? []).map(g => `${g.role}@${g.app}`).join(", ")}`}>
+          {(s.rolesHere().length ? s.rolesHere() : me.roles).join(" · ")}
+        </span>
+      )}
+      <HelpPopover nav={nav} />
+    </>
+  );
+  return (
+    <TopBar brand={<ConsoleBrand />} end={end}>
+      {switcherShown(nav) && (
+        <AppSwitcher page={nav.page} app={s.app} apps={s.apps().map(a => ({ id: a.id, title: a.domain }))} onSelectApp={id => store.setApp(id)} onOpenAllApps={() => store.setApp("all")} />
+      )}
+      {modeSwitchShown(nav) && (
+        <Segments aria-label="Mode" value={s.mode} onValueChange={v => store.setMode(v as Mode)} options={[{ value: "game", label: "Game" }, { value: "real", label: "Real" }]} />
+      )}
+      <ModeIndicator mode={nav.viewer.mode} label={b.text} details={b.title} connected={s.connected} />
+      {c && <span className="text-sm font-semibold whitespace-nowrap tabular-nums">{canStep ? `Day ${c.day} · ` : ""}{localDate(c.now)} · {localTime(c.now)}</span>}
+      <Transport />
+    </TopBar>
+  );
+}
+
+const icon = { "aria-hidden": true, viewBox: "0 0 16 16", className: "size-4" } as const;
+
+/** Play, step and speed in the simulated world; refresh and the shadow run on real data. */
+function Transport() {
   const s = useStore();
   const c = s.clock, env = s.env;
-  const canStep = !!env?.capabilities.canStep;
-  const b = s.page.kind === "app" ? banner(env) : { text: `ALL APPS · ${s.mode === "real" ? "real data" : "simulation"}`, title: "Every app you hold a role for" };
-  const me = s.me;
-  return (
-    <header className="topbar">
-      <div className="brand"><span className="logo">◎</span> Observatory</div>
-      <AppSwitcher />
-      {s.isAdmin() && !s.realOnly() && (
-        <div className="mode-switch" role="tablist" aria-label="Mode">
-          <button role="tab" aria-selected={s.mode === "game"} className={s.mode === "game" ? "active" : ""} onClick={() => store.setMode("game")}>Game</button>
-          <button role="tab" aria-selected={s.mode === "real"} className={s.mode === "real" ? "active" : ""} onClick={() => store.setMode("real")}>Real</button>
-        </div>
-      )}
-      <div className={`env-banner ${s.mode}`} title={b.title}>{b.text}</div>
-      {!s.connected && <span className="dot live-off" title="Reconnecting" aria-label="Reconnecting" />}
-      {c && <div className="clock">{canStep ? `Day ${c.day} · ` : ""}{localDate(c.now)} · {localTime(c.now)}</div>}
-      {!env ? null : canStep && c ? (s.canSim() ? (
-        <div className="transport">
-          <button className="btn icon play" aria-label={c.playing ? "Pause" : "Play"} title="Play or pause (space)" onClick={() => store.control({ type: c.playing ? "pause" : "play" })}>{c.playing ? "❚❚" : "▶"}</button>
-          <button className="btn" onClick={() => store.control({ type: "step", ms: HOUR })} title="Step one hour (n)">+1h</button>
-          <button className="btn" onClick={() => store.control({ type: "step", ms: DAY })} title="Step one day (d)">+1d</button>
-          <select className="input" value={c.speed} onChange={e => store.control({ type: "speed", speed: Number(e.target.value) })} aria-label="Speed">
-            {SPEEDS.map(([l, v]) => <option key={l} value={v}>{l}</option>)}
-          </select>
-          {c.busy && <span className="busy">{c.busy}…</span>}
-          {c.waitingForPlayer && <span className="busy gold">waiting for you</span>}
-        </div>
-      ) : c.busy ? <span className="busy">{c.busy}…</span> : null) : (
-        <div className="transport">
-          <button className="btn icon" title="Refresh" aria-label="Refresh" onClick={() => store.control({ type: "refresh" })}>↻</button>
-          {s.can("analyst") && <button className="btn" title="Run engine-v1 on this data without sending anything" onClick={async () => { const r = await store.control({ type: "shadow_run" }); if (r.ok) store.toast(`Shadow run: ${(r.data as { proposals?: number } | undefined)?.proposals ?? 0} proposals (nothing sent)`, "good"); }}>Shadow run</button>}
-          {c?.busy && <span className="busy">{c.busy}…</span>}
-        </div>
-      )}
-      <div className="lenses">
-        <div className="mode-switch small-switch" role="tablist" aria-label="View">
-          <button role="tab" aria-selected={s.ui.view === "map"} className={s.ui.view === "map" ? "active" : ""} onClick={() => store.setUI({ view: "map" })}>Map</button>
-          <button role="tab" aria-selected={s.ui.view === "graph"} className={s.ui.view === "graph" ? "active" : ""} onClick={() => store.setUI({ view: "graph" })}>Graph</button>
-        </div>
-        <Search />
-        {me && <span className="who" title={`${me.id} · ${me.via === "sso" ? "single sign-on" : "token"} · ${(me.grants ?? []).map(g => `${g.role}@${g.app}`).join(", ")}`}>{(s.rolesHere().length ? s.rolesHere() : me.roles).join(" · ")}</span>}
-        <HelpPopover />
+  if (!env) return null;
+  const busy = c?.busy ? <span className="animate-pulse text-sm whitespace-nowrap text-primary">{c.busy}…</span> : null;
+  if (env.capabilities.canStep && c) {
+    if (!s.canSim()) return busy;
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="icon" aria-label={c.playing ? "Pause" : "Play"} title="Play or pause (space)" onClick={() => store.control({ type: c.playing ? "pause" : "play" })}>
+          <svg {...icon} fill="currentColor">{c.playing ? <path d="M4 3h3v10H4zM9 3h3v10H9z" /> : <path d="M4 2.5v11L13 8z" />}</svg>
+        </Button>
+        <Button variant="outline" size="sm" title="Step one hour (n)" onClick={() => store.control({ type: "step", ms: HOUR })}>+1h</Button>
+        <Button variant="outline" size="sm" title="Step one day (d)" onClick={() => store.control({ type: "step", ms: DAY })}>+1d</Button>
+        <Select className="h-8 w-24" aria-label="Speed" value={String(c.speed)} onValueChange={v => store.control({ type: "speed", speed: Number(v) })}>
+          {SPEEDS.map(([l, v]) => <SelectItem key={l} value={String(v)}>{l}</SelectItem>)}
+        </Select>
+        {busy}
+        {c.waitingForPlayer && <span className="animate-pulse text-sm whitespace-nowrap text-warn">waiting for you</span>}
       </div>
-    </header>
+    );
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Button variant="outline" size="icon" title="Refresh" aria-label="Refresh" onClick={() => store.control({ type: "refresh" })}>
+        <svg {...icon} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 8a5 5 0 1 1-1.5-3.5M13 2v3h-3" /></svg>
+      </Button>
+      {s.can("analyst") && (
+        <Button
+          variant="outline" size="sm" title="Run engine-v1 on this data without sending anything"
+          onClick={async () => { const r = await store.control({ type: "shadow_run" }); if (r.ok) store.toast(`Shadow run: ${(r.data as { proposals?: number } | undefined)?.proposals ?? 0} proposals (nothing sent)`, "good"); }}
+        >
+          Shadow run
+        </Button>
+      )}
+      {busy}
+    </div>
   );
 }
 
 type Hit = { key: string; label: string; meta: string; go(): void };
-/** Members, neighborhoods and opportunity ids that match the query (at most 5 + 3 + 3). */
-function searchHits(query: string): Hit[] {
-  const q = query.trim().toLowerCase();
+/** The members, neighborhoods and opportunity ids that match the query (at most 5 + 3 + 3), in the groups that the generated `hitGroups` allows. */
+function searchHits(query: string, groups: HitGroups): Hit[] {
   const hits: Hit[] = [];
-  if (q.length < 2) return hits;
+  if (groups === "NoHits") return hits;
+  const q = query.trim().toLowerCase();
   for (const m of store.members.values()) {
     if (hits.length >= 5) break;
     if (m.name.toLowerCase().includes(q) || m.id === q) hits.push({ key: `m${m.id}`, label: m.name, meta: m.area ?? "", go: () => store.focus({ kind: "member", id: m.id }) });
   }
   for (const n of NEIGHBORHOODS.filter(n => n.name.toLowerCase().includes(q)).slice(0, 3)) hits.push({ key: `n${n.name}`, label: n.name, meta: n.borough, go: () => store.focus({ kind: "neighborhood", id: n.name }) });
-  if (q.length >= 3) {
+  if (groups === "NamesPlacesAndIds") {
     let k = 0;
     for (const o of store.opps.values()) {
       if (k >= 3) break;
@@ -156,20 +200,16 @@ function searchHits(query: string): Hit[] {
   return hits;
 }
 
-/**
- * Names, neighborhoods and ids as you type. Safety and admin can also search conversations (the
- * Network's own messages and system events; never what a member wrote): the last row, or Shift+Enter.
- * Every conversation search is logged.
- */
-function Search() {
+/** Names, neighborhoods and ids as staff type. Safety staff can also search the conversations (the messages of the Network and system events, never what a member wrote); every such search is logged. */
+function Search({ nav }: { nav: ConsoleNav }) {
   const s = useStore();
   const q = s.ui.query.trim();
   const [conv, setConv] = useState<{ q: string; hits?: SearchHit[]; error?: string } | null>(null);
-  useEffect(() => { if (conv && conv.q !== q) setConv(null); }, [q]);
-  const canConv = s.can("safety") && q.length >= 2;
-  const hits = conv ? [] : searchHits(s.ui.query);
-  const done = () => { store.setUI({ query: "" }); setConv(null); (document.getElementById("obs-search") as HTMLInputElement | null)?.blur(); };
-  const pickHit = (h: Hit) => { h.go(); done(); };
+  const shown = conv && conv.q === q ? conv : null;
+  const groups = hitGroups(nav.queryChars);
+  const canConv = conversationSearchShown(nav.viewer.safety, nav.queryChars);
+  const hits = shown ? [] : searchHits(s.ui.query, groups);
+  const done = () => { store.setUI({ query: "" }); setConv(null); document.getElementById("obs-search")?.blur(); };
   const runConv = async () => {
     if (!canConv) return;
     setConv({ q });
@@ -181,55 +221,32 @@ function Search() {
     else store.focus({ kind: "member", id: h.memberId });
     done();
   };
+  const conversation = shown && {
+    query: shown.q,
+    error: shown.error,
+    hits: shown.hits?.map((h, i) => ({
+      key: String(i), label: h.memberName, snippet: h.snippet,
+      meta: `${stamp(h.t)} · ${h.kind === "message" ? `Network${h.type ? ` · ${humanize(h.type)}` : ""}` : humanize(h.type ?? "event")}`,
+    })),
+  };
   return (
-    <div className="search">
-      <input
-        id="obs-search" className="input" placeholder="Search" value={s.ui.query} aria-label="Search members, neighborhoods and opportunity ids"
-        title={s.can("safety") ? "Members, neighborhoods, ids (/). Shift+Enter: search conversations (logged)" : "Members, neighborhoods, opportunity ids (/)"}
-        onChange={e => store.setUI({ query: e.target.value })}
-        onKeyDown={e => {
-          if (e.key !== "Enter") return;
-          if (e.shiftKey || (conv && !conv.hits)) { runConv(); return; }
-          if (conv?.hits?.[0]) { openHit(conv.hits[0]); return; }
-          const h = searchHits(store.ui.query)[0];
-          if (h) pickHit(h); else runConv();
-        }}
-      />
-      {(hits.length > 0 || canConv || conv) && q.length >= 2 && (
-        <div className="search-pop">
-          {conv ? (
-            <>
-              <div className="search-head muted small">Conversations · “{conv.q}”{conv.hits ? ` · ${conv.hits.length}` : ""} <button className="link small" onClick={() => setConv(null)}>back</button></div>
-              {conv.error && <div className="pad bad small">{conv.error}</div>}
-              {!conv.hits && !conv.error && <div className="pad muted small">Searching…</div>}
-              {conv.hits?.length === 0 && <div className="pad muted small">No matches.</div>}
-              <div className="search-results">
-                {conv.hits?.map((h, i) => (
-                  <button key={i} onClick={() => openHit(h)}>
-                    <span>{h.memberName}</span> <span className="muted small">· {stamp(h.t)} · {h.kind === "message" ? `Network${h.type ? ` · ${humanize(h.type)}` : ""}` : humanize(h.type ?? "event")}</span>
-                    <div className="small snippet">{h.snippet}</div>
-                  </button>
-                ))}
-              </div>
-            </>
-          ) : (
-            <>
-              {hits.map(h => <button key={h.key} onClick={() => pickHit(h)}>{h.label} <span className="muted">· {h.meta}</span></button>)}
-              {canConv && <button className="search-conv" onClick={runConv} title="The Network's messages and system events. Logged.">Search conversations for “{q}” <kbd>⇧↵</kbd></button>}
-            </>
-          )}
-        </div>
-      )}
-    </div>
+    <SearchBox
+      value={s.ui.query} onValueChange={v => store.setUI({ query: v })} groups={groups} hits={hits}
+      onPick={h => { hits.find(x => x.key === h.key)?.go(); done(); }}
+      conversationSearch={canConv} onSearchConversations={runConv} conversation={conversation}
+      onPickConversation={h => { const x = shown?.hits?.[Number(h.key)]; if (x) openHit(x); }} onCloseConversation={() => setConv(null)}
+      hint={nav.viewer.safety ? "Members, neighborhoods, ids (/). Shift+Enter: search conversations (logged)" : "Members, neighborhoods, opportunity ids (/)"}
+    />
   );
 }
 
-/** The "?" popover: how to play (game), the keyboard map and the symbol key. */
-function HelpPopover() {
+/** The help popover: how to play (game), the keyboard map and the symbol key. */
+/** The columns of the keyboard table in the help popover. */
+const HELP_COLUMNS: DataColumn[] = [{ key: "keys", label: "Keys", hideLabel: true }, { key: "action", label: "Action", hideLabel: true }];
+
+function HelpPopover({ nav }: { nav: ConsoleNav }) {
   const s = useStore();
-  const open = s.ui.popover === "help";
-  const ref = useRef<HTMLDivElement>(null);
-  useOutsideClose(ref, open);
+  const open = nav.popoverOpen && s.ui.popover === "help";
   const game = !!s.env?.capabilities.canIntervene;
   const keys: [string, string][] = [
     ["/", "Search"], ["Esc", "Close, clear search, clear picks, clear focus"], ["g", "Map or graph"], ["?", "This help"],
@@ -238,93 +255,80 @@ function HelpPopover() {
     ["s 1-6", "Review: re-roll (swap that person)"], ["n · x · Enter", "Review: note, score, open"],
   ];
   return (
-    <div className="menu" ref={ref}>
-      <button className="btn icon" aria-label="Help" title="Help (?)" onClick={() => store.setUI({ popover: open ? null : "help" })}>?</button>
-      {open && (
-        <div className="menu-pop help-pop" role="dialog" aria-label="Help">
-          {game && (
-            <ol className="help-list">
-              <li>Press play. Lines are open opportunities.</li>
-              <li>Shift-click 2-6 people, then Propose.</li>
-              <li>Play as a member. The world pauses for you.</li>
-              <li>Yeses, meetings and enjoyment score. Unsafe intros cost 150.</li>
-            </ol>
-          )}
-          {game && <div className="small muted">+10 per yes · −2 per no · +100 × enjoyment per meeting · −15 per no-show · −150 per unsafe intro · −25 per peek</div>}
-          <table className="keys"><tbody>{keys.map(([k, v]) => <tr key={k + v}><td><kbd>{k}</kbd></td><td>{v}</td></tr>)}</tbody></table>
-          <div className="small muted">
-            {s.ui.view === "map"
-              ? "● member at home · gold dot = public venue · green circle = meetings · red = hold · orange = watch · dotted line = in review"
-              : "◆ under 18 · white ring = busy · gold ring = you · double-click to fit"}
-          </div>
-          <div className="small muted">Fact border: green shareable · blue matchable · red agent private</div>
-        </div>
-      )}
-    </div>
+    <Popover open={open} onOpenChange={o => store.setUI({ popover: o ? "help" : null })}>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="icon" aria-label="Help" title="Help (?)">?</Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" aria-label="Help" className="flex w-80 flex-col gap-2 text-sm">
+        {game && (
+          <ol className="flex list-decimal flex-col gap-1 pl-5">
+            <li>Press play. Lines are open opportunities.</li>
+            <li>Shift-click 2-6 people, then Propose.</li>
+            <li>Play as a member. The world pauses for you.</li>
+            <li>Yeses, meetings and enjoyment score. Unsafe intros cost 150.</li>
+          </ol>
+        )}
+        {game && <p className="text-muted-foreground">+10 per yes · −2 per no · +100 × enjoyment per meeting · −15 per no-show · −150 per unsafe intro · −25 per peek</p>}
+        <DataTable columns={HELP_COLUMNS}>
+          {keys.map(([k, v]) => (
+            <TableRow key={k + v}>
+              <DataCell className="align-top"><kbd className="rounded-sm border border-border px-1 font-mono text-muted-foreground">{k}</kbd></DataCell>
+              <DataCell>{v}</DataCell>
+            </TableRow>
+          ))}
+        </DataTable>
+        <p className="text-muted-foreground">
+          {s.ui.view === "map"
+            ? "● member at home · small faint dot = public venue · green circle = meetings · red = hold · amber = watch · dotted line = in review"
+            : "◆ under 18 · thin ring = busy · amber ring = you · double-click to fit"}
+        </p>
+        <p className="text-muted-foreground">Fact border: green shareable · blue matchable · red agent private</p>
+      </PopoverContent>
+    </Popover>
   );
 }
 
-
-// ---------------------------------------------------------------- filter bar
-function FilterBar() {
+function ConsoleFilterBar({ nav }: { nav: ConsoleNav }) {
   const s = useStore();
   const f = s.ui.filters;
   const game = !!s.env?.capabilities.canIntervene;
-  const tab = s.ui.drawer;
-  const dim = (k: FilterKey) => (s.ui.drawerOpen && !filterApplies(tab, k) ? { className: "fb-item na", title: `Does not apply to ${TAB_LABEL[tab]}` } : { className: "fb-item" });
   const origins = ["engine", "request", "plans", "second_encounter", "newcomer_welcome", game ? "player" : "shadow"];
+  const choose = (label: string, value: string, onChange: (v: string) => void, options: [string, string][]) => (
+    <Select className="h-8 w-36" aria-label={label} value={value} onValueChange={onChange}>
+      {options.map(([k, l]) => <SelectItem key={k} value={k}>{l}</SelectItem>)}
+    </Select>
+  );
+  const items: FilterBarItem[] = [
+    { filterKey: NAV_FILTER.range, control: <Segments aria-label="Range" value={f.range} onValueChange={v => store.setFilters({ range: v as RangeKey })} options={RANGES.map(([k, l]) => ({ value: k, label: l }))} /> },
+    { filterKey: NAV_FILTER.borough, label: "Borough", control: choose("Borough", f.borough, v => store.setFilters({ borough: v as Filters["borough"] }), [["all", "All"], ...BOROUGHS.map(b => [b, b] as [string, string])]) },
+    { filterKey: NAV_FILTER.members, label: "Members", control: choose("Members", f.members, v => store.setFilters({ members: v as MemberFilter }), MEMBER_FILTERS) },
+    { filterKey: NAV_FILTER.origin, label: "Origin", control: choose("Origin", f.origin, v => store.setFilters({ origin: v }), [["all", "All"], ...origins.map(o => [o, originLabel(o)] as [string, string])]) },
+    { filterKey: NAV_FILTER.stateGroup, label: "State", control: choose("State", f.stateGroup, v => store.setFilters({ stateGroup: v as "all" | StateGroup }), [["all", "All"], ...STATE_GROUPS.map(([k, l]) => [k, l] as [string, string])]) },
+  ];
+  const focus = s.ui.focus;
+  const o = focus?.kind === "opportunity" ? s.opps.get(focus.id) : undefined;
+  const label = !focus ? null : focus.kind === "member" ? s.name(focus.id) : o ? `${s.oppTitle(o)} · ${humanize(o.kind)}` : focus.id;
   return (
-    <div className="filterbar">
-      <FocusChip />
-      <div {...dim("range")}>
-        <div className="seg" role="radiogroup" aria-label="Range">
-          {RANGES.map(([k, l]) => <button key={k} className={f.range === k ? "active" : ""} onClick={() => store.setFilters({ range: k })}>{l}</button>)}
-        </div>
-      </div>
-      <label {...dim("borough")}><span>Borough</span>
-        <select className="input" value={f.borough} onChange={e => store.setFilters({ borough: e.target.value as Filters["borough"] })}>
-          <option value="all">All</option>{BOROUGHS.map(b => <option key={b} value={b}>{b}</option>)}
-        </select>
-      </label>
-      <label {...dim("members")}><span>Members</span>
-        <select className="input" value={f.members} onChange={e => store.setFilters({ members: e.target.value as MemberFilter })}>
-          {MEMBER_FILTERS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-        </select>
-      </label>
-      <label {...dim("origin")}><span>Origin</span>
-        <select className="input" value={f.origin} onChange={e => store.setFilters({ origin: e.target.value })}>
-          <option value="all">All</option>{origins.map(o => <option key={o} value={o}>{originLabel(o)}</option>)}
-        </select>
-      </label>
-      <label {...dim("stateGroup")}><span>State</span>
-        <select className="input" value={f.stateGroup} onChange={e => store.setFilters({ stateGroup: e.target.value as "all" | StateGroup })}>
-          <option value="all">All</option>{STATE_GROUPS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-        </select>
-      </label>
-      {s.filtersChanged() && <button className="link small" onClick={() => store.resetFilters()}>Reset</button>}
-    </div>
+    <FilterBar
+      drawerOpen={nav.drawerOpen} tab={tabNow(nav)} items={items}
+      focus={label === null ? undefined : <FilterBarFocus label={label} backShown={backShown(nav)} onBack={() => store.back()} onClear={() => store.clearFocus()} />}
+      onReset={s.filtersChanged() ? () => store.resetFilters() : undefined}
+    />
   );
 }
 
-function FocusChip() {
+/** The map or the graph, with the layers, the member prompt, the propose tray and the load spinner over it. */
+function Stage({ nav }: { nav: ConsoleNav }) {
   const s = useStore();
-  const f = s.ui.focus;
-  if (!f) return null;
-  const o = f.kind === "opportunity" ? s.opps.get(f.id) : undefined;
-  const label = f.kind === "member" ? s.name(f.id) : o ? `${s.oppTitle(o)} · ${humanize(o.kind)}` : f.id;
   return (
-    <span className="focus-chip">
-      {s.focusHistory.length > 0 && <button aria-label="Back" title="Back to the last focus" onClick={() => store.back()}>←</button>}
-      <span className="focus-label">{label}</span>
-      <button aria-label="Clear focus" title="Clear focus (Esc)" onClick={() => store.clearFocus()}>×</button>
-    </span>
+    <>
+      {nav.stage === "MapStage" ? <MapStage /> : <GraphCanvas />}
+      <ConsoleLegend />
+      {s.game?.prompts.length && s.canSim() ? <Prompts /> : null}
+      {trayShown(staffView(s), s.ui.picks.length) && <Tray />}
+      {s.loading && <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center"><Spinner label="Loading" /></div>}
+    </>
   );
-}
-
-// ---------------------------------------------------------------- stage: NYC map or social graph
-function GraphStage() {
-  const s = useStore();
-  return s.ui.view === "map" ? <MapStage /> : <GraphCanvas />;
 }
 
 function MapStage() {
@@ -334,7 +338,7 @@ function MapStage() {
     store.stage = m;
     return () => { m.destroy(); if (store.stage === m) store.stage = null; };
   }, []);
-  return <div ref={ref} className="nyc-map" aria-label="Map of members in New York" />;
+  return <div ref={ref} data-map className="absolute inset-0 isolate bg-muted" aria-label="Map of members in New York" />;
 }
 
 function GraphCanvas() {
@@ -350,100 +354,92 @@ function GraphCanvas() {
   const m = tip ? s.members.get(tip.id) : undefined;
   return (
     <>
-      <canvas ref={ref} className="graph" aria-label="Social graph of members" />
+      <canvas ref={ref} className="absolute inset-0 size-full cursor-grab touch-none" aria-label="Social graph of members" />
       {m && tip && (
-        <div className="tooltip" style={{ left: tip.x + 14, top: tip.y + 14 }}>
-          <b>{m.name}</b> <span className="muted">· {m.area}</span>
-          {m.minor && <span className="bad"> · Under 18</span>}
-          {m.trust === "hold" && <span className="bad"> · hold</span>}
+        <div className="pointer-events-none absolute z-10 max-w-72 rounded-md border border-border bg-popover px-2.5 py-2 text-sm text-popover-foreground shadow-md" style={{ left: tip.x + 14, top: tip.y + 14 }}>
+          <span className="font-semibold">{m.name}</span> <span className="text-muted-foreground">· {m.area}</span>
+          {m.minor && <span className="text-destructive"> · Under 18</span>}
+          {m.trust === "hold" && <span className="text-destructive"> · hold</span>}
         </div>
       )}
     </>
   );
 }
 
-function Legend() {
+function ConsoleLegend() {
   const s = useStore();
-  const open = s.ui.legendOpen;
-  const env = s.env;
   return (
-    <div className={`legend ${open ? "" : "closed"}`}>
-      <button className="legend-head" onClick={() => store.setUI({ legendOpen: !open })}>Layers {open ? "▾" : "▸"}</button>
-      {open && (
-        <>
-          <select className="input" value={s.ui.colorBy} onChange={e => store.setUI({ colorBy: e.target.value as ColorLens })} aria-label="Color by">
-            <option value="community">Community</option><option value="state">State</option><option value="activity">Activity</option>
-            {s.truth && <option value="truth">Truth</option>}
-          </select>
-          {env?.capabilities.hiddenTruth && s.can("safety") && (
-            <label className="legend-item" title="Reveal hidden ground truth to you only (audited; marks your score as assisted)">
-              <input type="checkbox" checked={!!s.truth} onChange={async e => { const on = e.target.checked; if (!on && s.ui.colorBy === "truth") store.setUI({ colorBy: "community" }); if ((await store.control({ type: "lens", on })).ok) store.load(); }} /> Truth lens
-            </label>
-          )}
-          {EDGE_TYPES.map(t => (
-            <label key={t} className="legend-item">
-              <input type="checkbox" checked={!!s.ui.edgeTypes[t]} onChange={e => store.setUI({ edgeTypes: { ...s.ui.edgeTypes, [t]: e.target.checked } })} />
-              <span className="swatch" style={{ background: EDGE_STYLE[t]?.color }} />{humanize(t)} <span className="muted">{s.stats?.edgesByType[t] ?? 0}</span>
-            </label>
-          ))}
-          <label className="legend-item">
-            <input type="checkbox" checked={s.ui.showOpps} onChange={e => store.setUI({ showOpps: e.target.checked })} />
-            <span className="swatch dashed" style={{ borderColor: OPP_COLOR.INVITING }} />open opportunities
-          </label>
-        </>
+    <Legend className="absolute top-2.5 left-14 z-20" open={s.ui.legendOpen} onOpenChange={open => store.setUI({ legendOpen: open })}>
+      <Select aria-label="Color by" value={s.ui.colorBy} onValueChange={v => store.setUI({ colorBy: v as ColorLens })}>
+        <SelectItem value="community">Community</SelectItem>
+        <SelectItem value="state">State</SelectItem>
+        <SelectItem value="activity">Activity</SelectItem>
+        {s.truth && <SelectItem value="truth">Truth</SelectItem>}
+      </Select>
+      {s.env?.capabilities.hiddenTruth && s.can("safety") && (
+        <LegendItem
+          label="Truth lens" title="Reveal hidden ground truth to you only (audited; marks your score as assisted)" checked={!!s.truth}
+          onCheckedChange={async on => { if (!on && s.ui.colorBy === "truth") store.setUI({ colorBy: "community" }); if ((await store.control({ type: "lens", on })).ok) store.load(); }}
+        />
       )}
-    </div>
+      {EDGE_TYPES.map(t => (
+        <LegendItem
+          key={t} label={humanize(t)} tone={EDGE_STYLE[t].ink} count={s.stats?.edgesByType[t] ?? 0} checked={!!s.ui.edgeTypes[t]}
+          onCheckedChange={on => store.setUI({ edgeTypes: { ...s.ui.edgeTypes, [t]: on } })}
+        />
+      ))}
+      <LegendItem label="open opportunities" tone="primary" dashedLine checked={s.ui.showOpps} onCheckedChange={on => store.setUI({ showOpps: on })} />
+    </Legend>
   );
 }
 
-// ---------------------------------------------------------------- play
 interface Peek { unsafe: boolean; compatible: boolean; flags: string[]; quality: number; participants: Record<string, { acceptProb: number }> }
-function ProposeTray() {
+
+function Tray() {
   const s = useStore();
   const [category, setCategory] = useState<Category>("social");
   const [objective, setObjective] = useState("");
   const [why, setWhy] = useState("");
   const [peek, setPeek] = useState<Peek | null>(null);
+  const [tray, setTray] = useState<TrayPhase>("TrayIdle");
   const picks = s.ui.picks;
   const busy = s.busy();
-  const group = picks.length > 2;
   const g = s.game;
   const minor = picks.some(id => s.members.get(id)?.minor);
+  const sparks = g?.sparksLeft ?? 0;
+  const over = !!g?.over;
+  const w = { ...initialWorkspace, staff: staffView(s), tray };
   const submit = async () => {
+    if (!canSubmitProposal(w, picks.length, minor, sparks, over)) return;
+    const sending = submitProposal(w, picks.length, minor, sparks, over);
+    setTray(sending.tray);
     const r = await store.control({ type: "propose", participants: picks, category, objective, why });
+    if (canReceiveProposalAnswer(sending)) setTray(receiveProposalAnswer(sending, r.ok).tray);
     if (r.ok) { store.toast(`Proposed. It ${(r.data as { dispatch?: string } | undefined)?.dispatch ?? "goes out soon"}.`, "good"); store.setUI({ picks: [] }); setPeek(null); setWhy(""); setObjective(""); }
   };
   return (
-    <div className="tray">
-      <div className="tray-people">
-        {picks.map(id => {
-          const m = s.members.get(id);
-          return (
-            <span key={id} className={`pick ${m?.minor ? "minor" : busy.has(id) ? "busy" : ""}`}>
-              {m?.name ?? id}{busy.has(id) ? " · busy" : ""}{m?.minor ? " · under 18" : ""}
-              <button aria-label="Remove" onClick={() => store.togglePick(id)}>×</button>
-            </span>
-          );
-        })}
-        {picks.length < 2 && <span className="muted small">Shift-click 1-5 more</span>}
-      </div>
-      {picks.length >= 2 && (
-        <div className="tray-form">
-          <select className="input" value={category} onChange={e => setCategory(e.target.value as Category)} aria-label="Category">{CATEGORIES.map(c => <option key={c}>{c}</option>)}</select>
-          <input className="input grow" placeholder={group ? "Plan" : "Intro for"} value={objective} onChange={e => setObjective(e.target.value)} />
-          <input className="input grow" placeholder="Why (shown to them)" value={why} onChange={e => setWhy(e.target.value)} />
-          <button className="btn primary" disabled={!g || g.sparksLeft <= 0 || g.over || minor} title={minor ? "Members under 18 are never introduced" : undefined} onClick={submit}>Propose {group ? "group" : "intro"} · {g?.sparksLeft ?? 0} sparks</button>
-          <button className="btn" onClick={async () => { const r = await store.control({ type: "peek", participants: picks }); if (r.ok) setPeek(r.data as Peek); }} title="Ask the oracle (−25 points)">Peek −25</button>
-          <button className="btn ghost" onClick={() => { store.setUI({ picks: [] }); setPeek(null); }}>Clear</button>
-        </div>
-      )}
-      {peek && (
-        <div className={`callout small ${peek.unsafe ? "bad" : peek.compatible ? "good" : "warn"}`}>
+    <ProposeTray
+      className="absolute inset-x-4 bottom-4 z-20 mx-auto max-w-3xl"
+      phase={tray}
+      picks={picks.map(id => { const m = s.members.get(id); return { id, name: m?.name ?? id, minor: m?.minor, busy: busy.has(id) }; })}
+      canPropose={canSubmitProposal(w, picks.length, minor, sparks, over)}
+      minorPicked={minor}
+      sparksLeft={sparks}
+      categories={CATEGORIES}
+      category={category} onCategoryChange={c => setCategory(c as Category)}
+      objective={objective} onObjectiveChange={setObjective}
+      why={why} onWhyChange={setWhy}
+      onPropose={submit}
+      onPeek={async () => { const r = await store.control({ type: "peek", participants: picks }); if (r.ok) setPeek(r.data as Peek); }}
+      onClear={() => { store.setUI({ picks: [] }); setPeek(null); }}
+      onRemove={id => pickMember(id)}
+      peek={peek && (
+        <Alert variant={peek.unsafe ? "destructive" : peek.compatible ? "ok" : "warn"}>
           Oracle: {peek.unsafe ? `unsafe (${peek.flags.join(", ")})` : peek.compatible ? "a real fit" : "not a real fit"} · quality {(peek.quality * 100).toFixed(0)}% ·{" "}
           {Object.entries(peek.participants).map(([id, p]) => `${s.firstName(id)}: ${(p.acceptProb * 100).toFixed(0)}% yes`).join(" · ")}
-        </div>
+        </Alert>
       )}
-    </div>
+    />
   );
 }
 
@@ -454,44 +450,40 @@ function Prompts() {
   const p = prompts[0];
   if (!p) return null;
   const m = s.members.get(p.memberId);
+  const first = m?.name.split(" ")[0];
   const reply = (t?: string, auto?: boolean) => { store.control({ type: "reply", promptId: p.id, text: t, auto }); setText(""); };
   const quick = p.type === "proposal" ? ["Yes, I'm in!", "No thanks, not right now."]
     : p.type === "feedback_request" ? ["It was great, would meet again.", "It was fine.", "Not a good fit honestly."]
     : p.type === "reminder" || p.type === "scheduling" ? ["Sounds good, see you then.", "Sorry, I can't make it."]
     : ["Thanks!"];
   return (
-    <div className="prompt-card" role="dialog" aria-label={`Message for ${m?.name}`}>
-      <div className="prompt-head"><b>As {m?.name.split(" ")[0]}</b> · paused{prompts.length > 1 ? ` · ${prompts.length} waiting` : ""}</div>
-      <div className="msg outbound"><div className="msg-meta">The Network{p.type ? ` · ${humanize(p.type)}` : ""}</div><div className="msg-body">{p.body}</div></div>
-      <div className="quick">{quick.map(q => <button key={q} className="chip" onClick={() => reply(q)}>{q}</button>)}</div>
-      <form className="reply" onSubmit={e => { e.preventDefault(); if (text.trim()) reply(text); }}>
-        <input className="input grow" autoFocus placeholder={`Reply as ${m?.name.split(" ")[0]}…`} value={text} onChange={e => setText(e.target.value)} />
-        <button className="btn primary" type="submit">Send</button>
-        <button className="btn ghost" type="button" onClick={() => reply(undefined, true)} title="Let the persona's own policy answer">Let them decide</button>
+    <div role="dialog" aria-label={`Message for ${m?.name}`} className="absolute top-4 right-4 z-20 flex w-full max-w-sm flex-col gap-2 rounded-lg border border-border bg-popover p-3 text-sm text-popover-foreground shadow-lg">
+      <p className="text-muted-foreground"><span className="font-semibold text-foreground">As {first}</span> · paused{prompts.length > 1 ? ` · ${prompts.length} waiting` : ""}</p>
+      <div className="flex flex-col gap-1 rounded-md bg-muted p-2">
+        <span className="text-muted-foreground">The Network{p.type ? ` · ${humanize(p.type)}` : ""}</span>
+        <span className="break-words whitespace-pre-wrap">{p.body}</span>
+      </div>
+      <div className="flex flex-wrap gap-2">{quick.map(q => <Button key={q} variant="outline" size="sm" onClick={() => reply(q)}>{q}</Button>)}</div>
+      <form className="flex flex-wrap gap-2" onSubmit={e => { e.preventDefault(); if (text.trim()) reply(text); }}>
+        <Input className="min-w-40 flex-1" autoFocus aria-label={`Reply as ${first}`} placeholder={`Reply as ${first}…`} value={text} onChange={e => setText(e.target.value)} />
+        <Button type="submit">Send</Button>
+        <Button variant="ghost" title="Let the persona's own policy answer" onClick={() => reply(undefined, true)}>Let them decide</Button>
       </form>
     </div>
   );
 }
 
-/** Shown when the API answers 401: paste the observatory token (kept for this tab only). */
-function AuthPrompt() {
-  const [t, setT] = useState("");
-  return (
-    <form className="auth-prompt" onSubmit={e => { e.preventDefault(); if (t.trim()) store.setToken(t); }}>
-      <span>Token required</span>
-      <input className="input" type="password" autoFocus placeholder="Paste token" aria-label="Observatory token" value={t} onChange={e => setT(e.target.value)} />
-      <button className="btn primary" type="submit" disabled={!t.trim()}>Use</button>
-    </form>
-  );
-}
-
-function Toast() {
+function Toasts() {
   const s = useStore();
   const t = s.ui.toast;
   const [, force] = useState(0);
   useEffect(() => { if (!t) return; const h = setTimeout(() => force(x => x + 1), 4200); return () => clearTimeout(h); }, [t?.at]);
-  if (!t || Date.now() - t.at > 4000) return null;
-  return <div className={`toast ${t.tone}`} role="status">{t.text}</div>;
+  const shown = t && Date.now() - t.at <= 4000 ? t : null;
+  return (
+    <Toaster>
+      {shown && <Toast variant={TOAST_VARIANT[shown.tone]} onDismiss={() => store.setUI({ toast: undefined })}>{shown.text}</Toast>}
+    </Toaster>
+  );
 }
 
 createRoot(document.getElementById("root")!).render(<App />);

@@ -77,9 +77,10 @@ How a site request reaches the backend:
 
 - Base: `node:26.13.0-bookworm-slim`, pinned by its index digest and aligned with `.nvmrc`.
 - `corepack pnpm install --frozen-lockfile --prod --ignore-scripts` installs the locked production dependencies and links the workspaces.
+- The Node build stage generates design-system CSS and connector CSS before it copies the runtime files into the final image.
 - Runs as the image's `node` user (uid 1000).
 - `CMD ["node", "--import", "tsx", "deploy/backend/server.ts"]` runs in exec form and receives SIGTERM directly.
-- `Dockerfile.dockerignore` sits next to the Dockerfile. BuildKit reads it, so the build context holds only `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `tsconfig.json`, `packages/`, `deploy/` and the fitted Clef relay weights, and never `.env`. **Verify:** on the first Railway build, check that the build log shows a context of a few MB, not the whole repo. If Railway ignores the file, add the same rules to a root `.dockerignore`.
+- `Dockerfile.dockerignore` sits next to the Dockerfile. BuildKit reads it, so the build context holds only `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `tsconfig.json`, `packages/`, `deploy/`, the design token compiler and the fitted Clef relay weights, and never `.env`. **Verify:** on the first Railway build, check that the build log shows a context of a few MB, not the whole repo. If Railway ignores the file, add the same rules to a root `.dockerignore`.
 
 **What `server.ts` does at boot:**
 
@@ -282,14 +283,14 @@ Notes for this smoke:
 - To call `/api/app` as each site, sign the headers the way the Worker does: `signProxyHeaders(secret, { method: "GET", path: "/api/app", host: "slop.date", ip: "203.0.113.5" })` from `packages/platform/src/proxy.ts`, then fetch with them.
 - `deploy/backend/backend.test.ts` does all of this against a real boot of `server.ts`.
 
-Without a container runtime, run `pnpm run start:backend` with the same variables (`localhost` for the host). Locally, without `PLATFORM_ENV=staging`, it binds `127.0.0.1` only.
+Without a container runtime, run `pnpm run start:backend` to build the CSS and start the service with the same variables (`localhost` for the host). Locally, without `PLATFORM_ENV=staging`, it binds `127.0.0.1` only.
 
 ## 3. Cloudflare Pages: the sites
 
 Each site is one Pages project (founder decision 8):
 
 - `sites/<domain>/wrangler.toml`: `name = "<project>"`, `pages_build_output_dir = "./dist"`, and `[vars]` `APP_ID`, `SITE_HOST`, `BACKEND_ORIGIN = "https://api.ntwrk.party"`. No `account_id`, no routes: the account comes from `CLOUDFLARE_ACCOUNT_ID`.
-- `node --import tsx --env-file-if-exists=.env sites/sites.ts <app>` writes `sites/<domain>/dist`: the pages, `_headers`, the skill files, `_worker.js` (the router, `deploy/router.ts`, bundled through `deploy/pages-worker.ts`: the default export only, as workerd requires, with the site's `APP_ID`, `SITE_HOST` and `BACKEND_ORIGIN` built in; a project variable still wins) and `_routes.json` (the Worker runs on `/api`, `/api/*`, `/mcp`, `/mcp/*`, `/oauth/*`, `/.well-known/oauth-*` only; every other path is a static file).
+- `pnpm run sites:build <app>` writes `sites/<domain>/dist`: the pages, `_headers`, the skill files, `_worker.js` (the router, `deploy/router.ts`, bundled through `deploy/pages-worker.ts`: the default export only, as workerd requires, with the site's `APP_ID`, `SITE_HOST` and `BACKEND_ORIGIN` built in; a project variable still wins) and `_routes.json` (the Worker runs on `/api`, `/api/*`, `/mcp`, `/mcp/*`, `/oauth/*`, `/.well-known/oauth-*` only; every other path is a static file).
 - The router answers 413 for a body over 9 MB and 503 `proxy_not_configured` without `PLATFORM_PROXY_SECRET`. It never forwards unsigned.
 
 | Site | Pages project | Served on | Its own domain |
@@ -302,7 +303,7 @@ Each site is one Pages project (founder decision 8):
 ### 3.1 By hand (founder approval only)
 
 ```bash
-node --import tsx --env-file-if-exists=.env sites/sites.ts slop                                   # dist with _worker.js and _routes.json
+pnpm run sites:build slop                                   # dist with _worker.js and _routes.json
 # check it locally first (nothing is uploaded): scripts/wrangler.sh pages dev --port 8811 --binding PLATFORM_PROXY_SECRET=<test value> --binding BACKEND_ORIGIN=http://127.0.0.1:8790 (run in sites/slop.date)
 # once per project: the same value as the backend
 NTWRK_ALLOW_DEPLOY=1 scripts/wrangler.sh pages secret put PLATFORM_PROXY_SECRET --project-name slop-date

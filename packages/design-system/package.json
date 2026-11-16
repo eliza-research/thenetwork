@@ -1,0 +1,19 @@
+{
+  "name": "@thenetwork/design-system",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./theme.css": "./generated/theme.css",
+    "./brands.css": "./generated/brands.css",
+    "./brands": "./src/brands.ts",
+    "./network/tokens.json": "./brands/network/tokens.json",
+    "./slop/tokens.json": "./brands/slop/tokens.json",
+    "./friends/tokens.json": "./brands/friends/tokens.json",
+    "./peon/tokens.json": "./brands/peon/tokens.json"
+  },
+  "scripts": {
+    "build": "node build.ts build",
+    "check": "node build.ts check"
+  }
+}

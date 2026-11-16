@@ -1,14 +1,19 @@
-// Human review queue (PRD 32.8, PRD 35 review module). Every network-composed opportunity waits
-// here before any member is contacted. Cards sort by deadline; the selected card expands.
-// Keyboard (Review tab open, no input focused): j/k move, a approve, r then 1-8 reject with a
-// reason, e edit what each person is told, s then 1-n re-roll (swap that person), n note, x score,
-// Enter open, Esc leaves the current mode. The time from opening a card to the decision is sent with it.
+// spec/staffReview.md, "The visible card follows focus and queue order"
+// spec/staffReview.md, "A changed card or revision starts a fresh draft"
+// spec/staffReview.md, "A mode change applies only to a bound card"
+// spec/staffReview.md, "An old response cannot clear or move a newer selection"
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { initial as initialReview, ownsReviewResponse, selectedReviewCard, step as stepReview, type ReviewCtl as ReviewState, type ReviewMode } from "../../core/src/generated/staffReview.ts";
+import {
+  AreaLink as AreaLinkView, Countdown, Disclosure, FactLine, MemberLink as MemberLinkView, MeterBars, OpportunityLink, ReviewActions as ReviewActionsView,
+  ReviewCard, ReviewPerson, Segments, StatusMark, VenueLink as VenueLinkView, type MeterRow, type ReviewFlag, type StatusTone,
+} from "@thenetwork/ui";
+import type { ScoreComponents } from "@thenetwork/core";
 import type { ReviewReason } from "../src/types.ts";
 import { VENUES } from "@thenetwork/network/geo";
-import { OPEN, originLabel, originOf, REVIEW_REASONS, store, useStore, type DecideOpts, type Opp } from "./store.ts";
-import { AreaLink, Badge, Components, Countdown, dur, humanize, MemberLink, OppLink, oppDot, stamp, StatusLine } from "./ui.tsx";
+import { OPEN, originLabel, originOf, REVIEW_REASONS, stateGroupOf, store, useStore, type DecideOpts, type Opp, type StateGroup } from "./store.ts";
+import { stateLabel } from "./panels.tsx";
+import { COMPONENT_SIGN, dur, humanize, stamp } from "./ui.tsx";
 
 /** "you" for the signed-in reviewer, "sim" for the simulated one, else the staff id without the token prefix. */
 export const reviewerName = (r?: string) =>
@@ -20,6 +25,39 @@ function reasonOf(rv: { reason?: string; note?: string }): { reason?: string; no
   return m && store.reasons().some(x => x[0] === m[1]) ? { reason: m[1], note: m[2] || undefined } : { reason: rv.reason, note: rv.note };
 }
 
+/** A member name that opens the member. `first` shows the first name only. */
+export function MemberName({ id, first = false, children }: { id: string; first?: boolean; children?: ReactNode }) {
+  const m = store.members.get(id);
+  return <MemberLinkView onOpen={() => store.focus({ kind: "member", id })}>{children ?? (m ? (first ? m.name.split(" ")[0] : m.name) : id)}</MemberLinkView>;
+}
+
+/** A neighborhood name that opens the neighborhood. Nothing shows without a neighborhood. */
+export function AreaName({ area }: { area?: string }) {
+  if (!area) return null;
+  return <AreaLinkView onOpen={() => store.focus({ kind: "neighborhood", id: area })}>{area}</AreaLinkView>;
+}
+
+/** An opportunity name ("Maya + Jon") that opens the opportunity. */
+export function OppName({ o, children }: { o: Opp; children?: ReactNode }) {
+  return <OpportunityLink onOpen={() => store.focus({ kind: "opportunity", id: o.id })}>{children ?? store.oppTitle(o)}</OpportunityLink>;
+}
+
+const groupTone: Record<StateGroup, StatusTone> = { review: "warn", open: "primary", met: "ok", closed: "neutral" };
+
+/** The state of an opportunity as a colored shape, with the state name as its accessible name. */
+export function OppStateMark({ state }: { state: string }) {
+  return <StatusMark tone={groupTone[stateGroupOf(state)]} label={stateLabel(state)} />;
+}
+
+/** The score parts of a proposal: a bar each, red for a cost. */
+export function ScoreParts({ c }: { c?: ScoreComponents }) {
+  if (!c) return null;
+  const rows: MeterRow[] = (Object.keys(COMPONENT_SIGN) as (keyof ScoreComponents)[]).map(k => ({
+    key: k, label: humanize(k.replace(/([A-Z])/g, "_$1")), value: c[k], title: `${k}: ${c[k]}`, tone: COMPONENT_SIGN[k] < 0 ? "destructive" : "primary",
+  }));
+  return <MeterBars aria-label="Score parts" rows={rows} ranked={false} max={1} format={v => v.toFixed(2)} />;
+}
+
 /** One line for the review state: countdown while queued, then the decision. */
 export function reviewLine(o: Opp): ReactNode {
   const rv = o.review;
@@ -29,11 +67,11 @@ export function reviewLine(o: Opp): ReactNode {
     rv.rerolls ? `re-rolled ${rv.rerolls}×` : "",
     rv.secondsSpent ? `${rv.secondsSpent < 60 ? `${rv.secondsSpent}s` : dur(rv.secondsSpent * 1000)} on it` : "",
   ].filter(Boolean).join(" · ");
-  const tail = extra ? <span className="muted"> · {extra}</span> : null;
-  if (!rv.decision) return <span><Countdown deadline={rv.deadline} prefix="Due in " />{tail}</span>;
-  if (rv.decision === "expired") return <span className="bad">Expired unsent</span>;
+  const tail = extra ? <span className="text-muted-foreground"> · {extra}</span> : null;
+  if (!rv.decision) return <span><Countdown deadline={rv.deadline} now={store.now()} deadlineLabel={stamp(rv.deadline)} prefix="Due in " />{tail}</span>;
+  if (rv.decision === "expired") return <span className="text-destructive">Expired unsent</span>;
   const after = rv.decidedAt ? ` · ${dur(Math.max(0, rv.decidedAt - rv.queuedAt))} after queue` : "";
-  if (rv.invalidated) return <span className="warn-text">Approved by {reviewerName(rv.reviewer) || "reviewer"}, stopped on re-check ({humanize(rv.invalidated)}){tail}</span>;
+  if (rv.invalidated) return <span className="text-warn">Approved by {reviewerName(rv.reviewer) || "reviewer"}, stopped on re-check ({humanize(rv.invalidated)}){tail}</span>;
   if (rv.decision === "approve") return <span>Approved by {reviewerName(rv.reviewer) || "reviewer"}{after}{tail}</span>;
   const why = reasonOf(rv);
   return <span>Rejected in review{why.reason ? ` · ${reasonLabel(why.reason)}` : ""}{rv.reviewer ? ` · by ${reviewerName(rv.reviewer)}` : ""}{why.note ? ` · “${why.note}”` : ""}{tail}</span>;
@@ -53,9 +91,10 @@ export function wantsOf(o: Opp, id: string): string | undefined {
 /** Who a re-roll can swap out: everyone but the requester of a member request. */
 export const swappable = (o: Opp) => o.participants.filter((id, i) => !(originOf(o) === "request" && i === 0));
 
-// ---------------------------------------------------------------- actions
 type ReviewError = { code?: string; text: string; oppId?: string };
-interface ReviewCtl {
+interface ReviewDraft {
+  /** The generated review controller state, bound to the card. */
+  state: ReviewState;
   mode: ReviewMode; setMode(v: ReviewMode, toggle?: boolean): ReviewMode;
   note: string; setNote(v: string): void;
   awaitingOther: boolean; requireNote(): void;
@@ -68,7 +107,7 @@ interface ReviewCtl {
 }
 const reviewKey = (o: Opp | undefined) => o ? JSON.stringify([store.app, store.mode, store.authEpoch, o.id, o.review?.deadline, o.review?.rerolls, o.participants]) : "";
 
-function useReviewCtl(cardKey: string): ReviewCtl {
+function useReviewCtl(cardKey: string): ReviewDraft {
   const [model, setModel] = useState<ReviewState>(initialReview);
   const [note, setNote] = useState("");
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -111,7 +150,7 @@ function useReviewCtl(cardKey: string): ReviewCtl {
   };
   const changed = bound !== model;
   return {
-    mode: bound.mode, setMode, note: changed ? "" : note, setNote, awaitingOther: bound.noteNeeded, requireNote,
+    state: bound, mode: bound.mode, setMode, note: changed ? "" : note, setNote, awaitingOther: bound.noteNeeded, requireNote,
     noteRef, drafts: changed ? {} : drafts, setDrafts, error: changed ? null : error, setError, response,
   };
 }
@@ -134,27 +173,25 @@ function editsOf(o: Opp, drafts: Record<string, string>): Pick<DecideOpts, "expl
   return { ...(Object.keys(explanations).length ? { explanations } : {}), ...(objective !== undefined ? { objective } : {}) };
 }
 
-/** Send a decision with the controller's note and edits; errors stay on the card. */
-async function act(o: Opp, c: ReviewCtl, decision: "approve" | "reject" | "reroll", extra: DecideOpts = {}): Promise<boolean> {
+/** Sends a decision with the draft note and edits. Errors stay on the card; a second press while the first is on its way sends nothing and shows nothing. */
+async function act(o: Opp, c: ReviewDraft, decision: "approve" | "reject" | "reroll", extra: DecideOpts = {}): Promise<boolean> {
   const response = c.response();
   const edits = decision === "approve" && c.mode === "EditReview" ? editsOf(o, c.drafts) : undefined;
   const r = await store.decide(o, edits ? "edit" : decision, { ...extra, ...edits, note: c.note }, true);
   if (!response.current()) return false;
   if (r.ok) { response.settle(); return true; }
-  // A second press while the first is on its way: nothing was sent.
   if (r.code !== "in_flight") c.setError({ code: r.code, text: r.error ?? "refused", oppId: o.id });
   return false;
 }
 
-/** Approve, edit, re-roll and reject with one of the app's reason codes. Shared by the queue and the opportunity view. */
-export function ReviewActions({ o, ctl, onDone }: { o: Opp; ctl?: ReviewCtl; onDone?: () => void }) {
+/** Approve, edit, re-roll and reject with one of the app's reason codes. Shared by the queue and the opportunity view. A re-roll keeps the item open with the new person, so the queue stays on it. */
+export function ReviewActions({ o, ctl, onDone }: { o: Opp; ctl?: ReviewDraft; onDone?: () => void }) {
   const local = useReviewCtl(ctl ? "" : reviewKey(o));
   const c = ctl ?? local;
   useEffect(() => { store.reviewOpen(o.id); }, [o.id]);
   if (!store.canReview()) return null;
   const block = approveBlock(o);
   const edits = c.mode === "EditReview" ? editsOf(o, c.drafts) : undefined;
-  const swap = swappable(o);
   const toggle = (m: ReviewMode) => {
     c.setError(null);
     if (c.setMode(m, true) === "EditReview") c.setDrafts({ ...Object.fromEntries(o.participants.map(id => [id, o.explanations[id] ?? ""])), "": o.objective });
@@ -164,58 +201,35 @@ export function ReviewActions({ o, ctl, onDone }: { o: Opp; ctl?: ReviewCtl; onD
     if (await act(o, c, "reject", { reason })) onDone?.();
   };
   const approve = async () => { if (!block && await act(o, c, "approve")) onDone?.(); };
-  // A re-roll keeps the item waiting with the new person (or closes it): stay on it.
-  const reroll = (out: string) => act(o, c, "reroll", { swapOut: out });
   return (
-    <div className="review-act">
-      {c.mode === "EditReview" && (
-        <div className="review-edit">
-          {o.participants.map(id => (
-            <label key={id} className="edit-row">
-              <span className="muted small">Told {store.firstName(id)}</span>
-              <textarea className="input" rows={2} value={c.drafts[id] ?? ""} onChange={e => c.setDrafts({ ...c.drafts, [id]: e.target.value })} />
-            </label>
-          ))}
-          <label className="edit-row">
-            <span className="muted small">Plan</span>
-            <input className="input" value={c.drafts[""] ?? ""} onChange={e => c.setDrafts({ ...c.drafts, "": e.target.value })} />
-          </label>
-        </div>
-      )}
-      {c.mode === "RerollReview" && (
-        <div className="review-actions">
-          <span className="muted small">Swap out</span>
-          {swap.map((id, i) => <button key={id} className="chip" onClick={() => reroll(id)}><kbd>{i + 1}</kbd> {store.firstName(id)}</button>)}
-          <span className="muted small">{o.alternates.length ? `${o.alternates.length} alternate${o.alternates.length > 1 ? "s" : ""}` : "No alternates: it closes and the engine composes again"}</span>
-        </div>
-      )}
-      <div className={`review-actions ${c.mode === "RejectReview" ? "rejecting" : ""}`}>
-        <button className="btn primary" disabled={!!block} title={block ?? "Approve (a)"} onClick={approve}>{edits ? "Approve with edits" : "Approve"}</button>
-        <button className={c.mode === "EditReview" ? "btn active" : "btn"} title="Edit what each person is told (e)" onClick={() => toggle("EditReview")}>Edit</button>
-        <button className={c.mode === "RerollReview" ? "btn active" : "btn"} disabled={!swap.length} title={swap.length ? "Swap a participant for an alternate (s)" : "Nobody can be swapped"} onClick={() => toggle("RerollReview")}>Re-roll</button>
-        <button className={c.mode === "RejectReview" ? "btn active" : "btn"} title="Reject with a reason (r)" onClick={() => toggle("RejectReview")}>Reject ▾</button>
-        {c.mode === "RejectReview" && (
-          <span className="reasons">
-            {store.reasons().map(([k, label], i) => (
-              <button key={k} className={c.awaitingOther && k === "other" ? "chip active" : "chip"} onClick={() => reject(k as ReviewReason)}><kbd>{i + 1}</kbd> {label}</button>
-            ))}
-          </span>
-        )}
-        <input
-          ref={c.noteRef} className="input grow note" placeholder={c.awaitingOther ? "Note (required for Other)" : "Note"} value={c.note}
-          onChange={e => c.setNote(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === "Enter") { e.preventDefault(); if (c.awaitingOther && c.note.trim()) reject("other"); }
-            if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); (e.target as HTMLInputElement).blur(); if (c.mode !== "IdleReview") c.setMode("IdleReview"); }
-          }}
-        />
-      </div>
-      {c.error && c.error.oppId === o.id && <div className="callout bad small" role="alert">{c.error.text}{c.error.code ? <span className="muted"> · {c.error.code}</span> : null}</div>}
-    </div>
+    <ReviewActionsView
+      ctl={c.state}
+      approveBlock={block}
+      edited={!!edits}
+      reasons={store.reasons().map(([code, label]) => ({ code, label }))}
+      swaps={swappable(o).map(id => ({ id, name: store.firstName(id) }))}
+      alternates={o.alternates.length}
+      edits={o.participants.map(id => ({ id, label: `Told ${store.firstName(id)}`, value: c.drafts[id] ?? "" }))}
+      plan={c.drafts[""] ?? ""}
+      note={c.note}
+      onNoteChange={c.setNote}
+      noteRef={c.noteRef}
+      onEditChange={(id, value) => c.setDrafts({ ...c.drafts, [id]: value })}
+      onPlanChange={value => c.setDrafts({ ...c.drafts, "": value })}
+      onApprove={() => void approve()}
+      onToggleMode={toggle}
+      onLeaveMode={() => { if (c.mode !== "IdleReview") c.setMode("IdleReview"); }}
+      onReject={code => void reject(code as ReviewReason)}
+      onReroll={id => void act(o, c, "reroll", { swapOut: id })}
+      error={c.error && c.error.oppId === o.id ? c.error : undefined}
+    />
   );
 }
 
-// ---------------------------------------------------------------- queue
+/**
+ * The human review queue (PRD 32.8, PRD 35 review module). Every network-composed opportunity waits here before any member is contacted. Cards sort by deadline; the selected card opens.
+ * Keys, while the Review tab is open and no field has focus: j and k move, a approves, r then 1 to 8 rejects with a reason, e edits what each person is told, s then 1 to n swaps a person, n goes to the note, x opens the score, Enter opens the opportunity, Esc leaves the mode. The queue reads the keys in the capture phase, so Esc leaves a mode before the global keys see it. The time from opening a card to the decision goes with the decision.
+ */
 export function ReviewQueue() {
   const s = useStore();
   const game = !!s.env?.capabilities.canIntervene;
@@ -238,7 +252,6 @@ export function ReviewQueue() {
   const next = () => { const i = sel ? pending.indexOf(sel) : -1; return pending[i + 1] ?? pending[i - 1]; };
   const afterDecision = () => { const n = live.current.next(); if (n) live.current.select(n); else setSelId(undefined); };
 
-  // The queue owns its keyboard while mounted (capture phase, so Esc leaves a mode before the global chain).
   const live = useRef({ pending, sel, ctl, view, select, next, afterDecision });
   useLayoutEffect(() => { live.current = { pending, sel, ctl, view, select, next, afterDecision }; });
   useEffect(() => {
@@ -283,47 +296,59 @@ export function ReviewQueue() {
   }, []);
 
   const mode = s.reviewMode();
+  const empty = <p className="py-2 text-sm text-muted-foreground">{s.nothing()}</p>;
   return (
-    <div className="review">
-      <div className="filters">
-        {game && s.isAdmin() && (
-          <div className="seg" role="radiogroup" aria-label="Reviewer" title="Who approves network-composed opportunities before anyone is contacted">
-            <span className="muted small">Reviewer</span>
-            <button className={mode === "auto" ? "active" : ""} onClick={() => store.control({ type: "review_mode", mode: "auto" })}>Sim</button>
-            <button className={mode === "human" ? "active" : ""} onClick={() => store.control({ type: "review_mode", mode: "human" })}>You</button>
-          </div>
-        )}
-        <span className="muted small">approved {counts.approved} · rejected {counts.rejected} · expired {counts.expired}</span>
-        {s.network?.matchingEnabled === false && <Badge tone="warn" title="An admin turned proactive matching off: approvals wait">matching off</Badge>}
-        {!s.canAct() && <span className="muted small">read-only</span>}
-        <span className="spacer" />
-        <div className="seg" role="radiogroup" aria-label="Review view">
-          <button className={view === "pending" ? "active" : ""} onClick={() => store.setUI({ reviewView: "pending" })}>Pending</button>
-          <button className={view === "decided" ? "active" : ""} onClick={() => store.setUI({ reviewView: "decided" })}>Decided</button>
-        </div>
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-3 text-sm">
+        {game && s.isAdmin() && <ReviewerSwitch mode={mode} title="Who approves network-composed opportunities before anyone is contacted" />}
+        <span className="text-muted-foreground">approved {counts.approved} · rejected {counts.rejected} · expired {counts.expired}</span>
+        {s.network?.matchingEnabled === false && <StatusMark tone="warn" label="matching off" title="An admin turned proactive matching off: approvals wait" showLabel />}
+        {!s.canAct() && <span className="text-muted-foreground">read-only</span>}
+        <Segments
+          className="ml-auto"
+          aria-label="Review view"
+          value={view}
+          onValueChange={v => store.setUI({ reviewView: v as "pending" | "decided" })}
+          options={[{ value: "pending", label: "Pending" }, { value: "decided", label: "Decided" }]}
+        />
       </div>
       {view === "pending" ? (
         pending.length ? (
-          <div className="review-list">
+          <div className="flex flex-col gap-2">
             {pending.map(o => (
-              <ReviewCard key={o.id} o={o} selected={o.id === sel?.id} onSelect={() => select(o)} ctl={ctl} scoreOpen={scoreOpen} setScoreOpen={setScoreOpen} onDone={afterDecision} />
+              <QueueCard key={o.id} o={o} selected={o.id === sel?.id} onSelect={() => select(o)} ctl={ctl} scoreOpen={scoreOpen} setScoreOpen={setScoreOpen} onDone={afterDecision} />
             ))}
           </div>
-        ) : <div className="muted small pad">{s.nothing()}</div>
+        ) : empty
       ) : (
         decided.length ? (
-          <div className="review-list">
+          <ul className="flex flex-col gap-1">
             {decided.slice(0, 100).map(o => (
-              <div className="review-row" key={o.id}>
-                {oppDot(o.state)}<OppLink o={o} /> <span className="muted small">{originLabel(originOf(o))}</span>
-                <span className="small">{reviewLine(o)}</span>
-                <span className="spacer" /><span className="muted small">{o.review?.decidedAt ? stamp(o.review.decidedAt) : ""}</span>
-              </div>
+              <li className="flex flex-wrap items-center gap-2 text-sm" key={o.id}>
+                <OppStateMark state={o.state} /><OppName o={o} /> <span className="text-muted-foreground">{originLabel(originOf(o))}</span>
+                <span>{reviewLine(o)}</span>
+                <span className="ml-auto text-muted-foreground">{o.review?.decidedAt ? stamp(o.review.decidedAt) : ""}</span>
+              </li>
             ))}
-          </div>
-        ) : <div className="muted small pad">{s.nothing()}</div>
+          </ul>
+        ) : empty
       )}
     </div>
+  );
+}
+
+/** Who approves network-composed opportunities in the simulated world: the simulated reviewer or the viewer. */
+export function ReviewerSwitch({ mode, title }: { mode: "human" | "auto" | undefined; title: string }) {
+  return (
+    <span className="flex items-center gap-2" title={title}>
+      <span className="text-sm text-muted-foreground">Reviewer</span>
+      <Segments
+        aria-label="Reviewer"
+        value={mode ?? ""}
+        onValueChange={v => store.control({ type: "review_mode", mode: v as "human" | "auto" })}
+        options={[{ value: "auto", label: "Sim" }, { value: "human", label: "You" }]}
+      />
+    </span>
   );
 }
 
@@ -336,65 +361,69 @@ function countDecisions() {
   return c;
 }
 
-function ReviewCard({ o, selected, onSelect, ctl, scoreOpen, setScoreOpen, onDone }: {
-  o: Opp; selected: boolean; onSelect(): void; ctl: ReviewCtl; scoreOpen: boolean; setScoreOpen(v: boolean): void; onDone(): void;
+/** The reviewer flags of one participant: under 18, hold, watch and busy elsewhere. */
+function flagsOf(o: Opp, id: string): ReviewFlag[] {
+  const m = store.members.get(id);
+  const flags: ReviewFlag[] = [];
+  if (m?.minor) flags.push({ tone: "destructive", label: "Under 18", title: "Never matched or introduced. Approval is blocked." });
+  if (m?.trust === "hold") flags.push({ tone: "destructive", label: "Hold" });
+  if (m?.trust === "watch") flags.push({ tone: "warn", label: "Watch" });
+  if (isBusyElsewhere(o, id)) flags.push({ tone: "warn", label: "busy", title: "In another open opportunity" });
+  return flags;
+}
+
+/** One card of the queue. The selected card scrolls into view, also after a re-roll gives it a new deadline and moves it. */
+function QueueCard({ o, selected, onSelect, ctl, scoreOpen, setScoreOpen, onDone }: {
+  o: Opp; selected: boolean; onSelect(): void; ctl: ReviewDraft; scoreOpen: boolean; setScoreOpen(v: boolean): void; onDone(): void;
 }) {
   const s = store;
   const ref = useRef<HTMLDivElement>(null);
-  // A re-roll gives a new deadline and moves the card: follow it.
   useEffect(() => { if (selected) ref.current?.scrollIntoView({ block: "nearest" }); }, [selected, o.review?.deadline]);
   const hist = selected ? historyBetween(o) : [];
   const editing = selected && ctl.mode === "EditReview";
   return (
-    <div ref={ref} className={`review-card ${selected ? "selected" : ""} ${selected && ctl.mode === "RejectReview" ? "rejecting" : ""}`}>
-      <button type="button" className="review-head" onClick={onSelect}>
-        {o.review ? <Countdown deadline={o.review.deadline} /> : <span className="countdown">–</span>}
-        <span className="review-title">{s.oppTitle(o)}</span>
-        <span className="muted small">{humanize(o.kind)}{o.category ? ` · ${o.category}` : ""} · {originLabel(originOf(o))}{o.review?.rerolls ? ` · re-rolled ${o.review.rerolls}×` : ""}</span>
-        <span className="spacer" />
-        {o.source !== "player" && <span className="muted small">score {o.score.toFixed(2)}</span>}
-        <span className="muted">{selected ? "▾" : "▸"}</span>
-      </button>
-      {selected && (
-        <div className="review-body">
-          {o.participants.map(id => {
-            const m = s.members.get(id);
-            const want = wantsOf(o, id);
-            return (
-              <div className="review-person" key={id}>
-                <div className="review-person-head">
-                  <MemberLink id={id} /> <span className="muted small"><AreaLink area={m?.area} /></span>
-                  {m?.minor && <Badge tone="bad" title="Never matched or introduced. Approval is blocked.">Under 18</Badge>}
-                  {m?.trust === "hold" && <Badge tone="bad">Hold</Badge>}
-                  {m?.trust === "watch" && <Badge tone="warn">Watch</Badge>}
-                  {isBusyElsewhere(o, id) && <Badge tone="warn" title="In another open opportunity">busy</Badge>}
-                </div>
-                {want && <div className="small"><span className="muted">wants:</span> “{want}”</div>}
-                {!editing && o.explanations[id] && <div className="small why" title="Shown to this member"><span className="muted">told:</span> “{o.explanations[id]}”</div>}
-              </div>
-            );
-          })}
-          {!editing && (
-            <StatusLine className="small" parts={[
-              <span><span className="muted">Plan:</span> {o.objective}</span>,
-              o.venue && <VenueLink venue={o.venue} />,
-              o.meetingAt && stamp(o.meetingAt),
-            ]} />
-          )}
-          <StatusLine className="small" parts={[
-            <span><span className="muted">History:</span> {hist.length ? hist.slice(0, 3).map((h, i) => <span key={h.id}>{i > 0 && ", "}<OppLink o={h}>{humanize(h.state)} {stamp(h.createdAt)}</OppLink></span>) : "none"}</span>,
-            o.alternates.length > 0 && <span><span className="muted">Alternates:</span> {o.alternates.map((a, i) => <span key={a}>{i > 0 && ", "}<MemberLink id={a} /></span>)}</span>,
-          ]} />
-          {o.source !== "player" && o.components && (
-            <details className="disclosure" open={scoreOpen} onToggle={e => { const v = (e.currentTarget as HTMLDetailsElement).open; if (v !== scoreOpen) setScoreOpen(v); }}>
-              <summary>Score {o.score.toFixed(2)}{o.exploration ? " · exploration" : ""}</summary>
-              <Components c={o.components} />
-            </details>
-          )}
-          <ReviewActions o={o} ctl={ctl} onDone={onDone} />
-        </div>
+    <ReviewCard
+      ref={ref}
+      ctl={ctl.state}
+      selected={selected}
+      onSelect={onSelect}
+      title={s.oppTitle(o)}
+      meta={`${humanize(o.kind)}${o.category ? ` · ${o.category}` : ""} · ${originLabel(originOf(o))}${o.review?.rerolls ? ` · re-rolled ${o.review.rerolls}×` : ""}`}
+      score={o.source !== "player" ? `score ${o.score.toFixed(2)}` : undefined}
+      due={o.review ? <Countdown deadline={o.review.deadline} now={s.now()} deadlineLabel={stamp(o.review.deadline)} /> : <span className="text-muted-foreground">–</span>}
+    >
+      {o.participants.map(id => (
+        <ReviewPerson
+          key={id}
+          name={<MemberName id={id} />}
+          place={<AreaName area={s.members.get(id)?.area} />}
+          flags={flagsOf(o, id)}
+          wants={wantsOf(o, id)}
+          told={editing ? undefined : o.explanations[id]}
+        />
+      ))}
+      {!editing && (
+        <FactLine parts={[
+          <span><span className="text-muted-foreground">Plan:</span> <span className="text-foreground">{o.objective}</span></span>,
+          o.venue && <VenueLink venue={o.venue} />,
+          o.meetingAt && stamp(o.meetingAt),
+        ]} />
       )}
-    </div>
+      <FactLine parts={[
+        <span>History: {hist.length ? hist.slice(0, 3).map((h, i) => <span key={h.id}>{i > 0 && ", "}<OppName o={h}>{humanize(h.state)} {stamp(h.createdAt)}</OppName></span>) : "none"}</span>,
+        o.alternates.length > 0 && <span>Alternates: {o.alternates.map((a, i) => <span key={a}>{i > 0 && ", "}<MemberName id={a} /></span>)}</span>,
+      ]} />
+      {o.source !== "player" && o.components && (
+        <Disclosure
+          open={scoreOpen}
+          onOpenChange={setScoreOpen}
+          summary={`Score ${o.score.toFixed(2)}${o.exploration ? " · exploration" : ""}`}
+        >
+          <ScoreParts c={o.components} />
+        </Disclosure>
+      )}
+      <ReviewActions o={o} ctl={ctl} onDone={onDone} />
+    </ReviewCard>
   );
 }
 
@@ -407,5 +436,5 @@ export function isBusyElsewhere(o: Opp, id: string) {
 /** A venue name that flies the map to it, then its neighborhood as a focus link. */
 export function VenueLink({ venue }: { venue: { name: string; lat: number; lng: number } }) {
   const area = VENUES.find(v => v.name === venue.name)?.neighborhood;
-  return <span><button type="button" className="mlink" title="Show on the map" onClick={() => store.flyTo(venue.lat, venue.lng)}>{venue.name}</button>{area && <> · <AreaLink area={area} /></>}</span>;
+  return <span><VenueLinkView onShow={() => store.flyTo(venue.lat, venue.lng)}>{venue.name}</VenueLinkView>{area && <> · <AreaName area={area} /></>}</span>;
 }

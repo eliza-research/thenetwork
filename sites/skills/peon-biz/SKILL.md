@@ -39,7 +39,7 @@ peon.biz's text line is {{TEXT_LINE}}. Its MCP server is at {{MCP_URL}}.
 
 ## Phone or computer
 
-The steps differ by device. If you cannot tell which the person is on, ask once.
+The steps differ by device. If you cannot tell which the person is on, ask once. <!-- agentSignup: chooseTransport -->
 
 - **On a phone.** A phone app usually cannot add a connector, so do not send the person to connector
   settings. Do step 1, including their stated age. Then give them one link that opens their messages app with the approved
@@ -54,12 +54,12 @@ You never send a text for the person, and you never see their number.
 
 The person signs up through you, in this conversation:
 
-1. Build the profile: whether they are looking for work or hiring, the kind of role, the neighborhood or remote, when they can start, and the skills that matter (no salary history, no Social Security number, no bank details). Start from what you already know about the person: draft the profile from your memory of them and show it. Ask only for what is missing, one or two questions at a time. Never ask for a phone number, a code, an
+1. Build the profile: whether they are looking for work or hiring, the kind of role, the neighborhood or remote, when they can start, and the skills that matter (no salary history, no Social Security number, no bank details). Start from what you already know about the person: draft the profile from your memory of them and show it. Ask only for what is missing, one or two questions at a time. Never ask for a phone number, a code, an <!-- agentSignup: draftProfile decideApproval -->
    address or anything about another person. Read the profile back and change it until they agree.
 2. Give them one link to confirm their own phone (prefill it as described in "A shorter browser handoff"): https://peon.biz/join?via=agent. On that page they type
    their own number and code, review their first name and age, and agree to the texts. You
    never see the number or the code.
-3. Ask the person to return to this same agent conversation when they finish on the site.
+3. Ask the person to return to this same agent conversation when they finish on the site. <!-- agentSignup ConnectorHandoff: checkSiteStatus submitProfile confirmProfile -->
    If this app's MCP tools are not available, they must add {{MCP_URL}} in their client's connector settings.
    In ChatGPT, add https://peon.biz/mcp/openai instead; /mcp does not authorize ChatGPT clients.
    Reading this file does not install a connector or authorize access. If the client cannot add it,

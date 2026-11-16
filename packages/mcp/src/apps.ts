@@ -3,6 +3,7 @@
 // (packages/platform/src/apps.ts) when it has the app, so the server and the sites cannot drift.
 import { APPS as PLATFORM_APPS, PAGES_PROJECT, SUPPORT_EMAIL } from "@thenetwork/platform";
 import { APP_IDS as MCP_APP_IDS, isAppId as isMcpAppId, type AppId as McpAppId } from "../../core/src/types.ts";
+import { type AppId as ConnectorApp, type Surface as ConnectorSurface, appOffered } from "../../core/src/generated/connectorTools.ts";
 
 export { MCP_APP_IDS, isMcpAppId, type McpAppId };
 
@@ -11,6 +12,12 @@ export { MCP_APP_IDS, isMcpAppId, type McpAppId };
  * OpenAI requires plugins that suit people aged 13-17, so slop (dating) is hidden there.
  */
 export type Surface = "full" | "openai";
+
+/** The generated app name of each registry id (spec/connectorTools.md:9). */
+export const connectorApp: Record<McpAppId, ConnectorApp> = { ntwrk: "Ntwrk", slop: "Slop", peon: "Peon", friends: "Friends" };
+
+/** The generated surface name of each client surface (spec/connectorTools.md:9). */
+export const connectorSurface: Record<Surface, ConnectorSurface> = { full: "FullSurface", openai: "OpenAiSurface" };
 
 export interface McpApp {
   id: McpAppId;
@@ -25,11 +32,11 @@ export interface McpApp {
   /** Rules that apply to adults only, in plain words. */
   adultsOnly: string[];
   links: { site: string; join: string; privacy: string; terms: string; smsTerms: string | null; support: string };
-  /** False: never listed or offered on the OpenAI surface. */
+  /** False: never listed or offered on the OpenAI surface (spec/connectorTools.md:9). */
   openai: boolean;
 }
 
-function app(id: McpAppId, name: string, domain: string, what: string, keyword: string | null, extra: { adultsOnly?: string[]; smsTerms?: boolean; openai?: boolean }): McpApp {
+function app(id: McpAppId, name: string, domain: string, what: string, keyword: string | null, extra: { adultsOnly?: string[]; smsTerms?: boolean }): McpApp {
   const p = PLATFORM_APPS[id];
   const site = `https://${domain}`;
   return {
@@ -42,7 +49,7 @@ function app(id: McpAppId, name: string, domain: string, what: string, keyword: 
       smsTerms: extra.smsTerms === false ? null : `${site}/terms#sms`,
       support: `mailto:${SUPPORT_EMAIL}`,
     },
-    openai: extra.openai ?? true,
+    openai: appOffered(connectorSurface.openai, connectorApp[id]),
   };
 }
 
@@ -52,7 +59,6 @@ export function defaultApps(): Record<McpAppId, McpApp> {
     ntwrk: app("ntwrk", "The Network", "ntwrk.party", "The home of every app below: an agent you text that helps with people, plans and events you ask for.", null, { smsTerms: false }),
     slop: app("slop", "slop.date", "slop.date", "Dating by text message. A matchmaker suggests one person now and then, and nobody is introduced unless both say yes.", "slop", {
       adultsOnly: ["Photos and any rating of looks are for adults (18+) only; the stated age counts (no ID check). They are never asked of, stored for or shown to anyone under 18."],
-      openai: false,
     }),
     peon: app("peon", "peon.biz", "peon.biz", "Work and hiring by text message. It introduces people looking for work to people hiring, and a person makes every decision.", "peon", {}),
     friends: app("friends", "friends.help", "friends.help", "Friends and plans in New York City by text message, in small groups at public places.", "friends", {}),
@@ -61,7 +67,7 @@ export function defaultApps(): Record<McpAppId, McpApp> {
 
 /** The apps a surface may name, in registry order. */
 export const appsOn = (apps: Record<McpAppId, McpApp>, surface: Surface): McpApp[] =>
-  MCP_APP_IDS.map(id => apps[id]).filter(a => a && (surface === "full" || a.openai));
+  MCP_APP_IDS.map(id => apps[id]).filter(a => a && appOffered(connectorSurface[surface], connectorApp[a.id]));
 
 /** The default Host header map: each domain, its www name and its Pages name. Dev ports are added by the caller. */
 export function defaultHostMap(apps: Record<McpAppId, McpApp>): Record<string, McpAppId> {
