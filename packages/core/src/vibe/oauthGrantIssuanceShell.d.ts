@@ -5,6 +5,15 @@ interface PendingApproval {
     expiresAt: number;
 }
 type AuthorityStatus = "valid" | "invalid" | "unavailable";
+interface ConfirmApproval {
+    /** @throws {never} */
+    (approval: PendingApproval): Promise<boolean>;
+}
+interface PreparedIssuance {
+    code: string;
+    /** @throws {never} */
+    commit(at: number, confirm: ConfirmApproval): Promise<boolean>;
+}
 interface GrantIssuanceEffects<Grant> {
     /** @throws {never} */
     now(): number;
@@ -13,15 +22,9 @@ interface GrantIssuanceEffects<Grant> {
     /** @throws {never} */
     checkAuthority(grant: Grant): Promise<AuthorityStatus>;
     /** @throws {never} */
-    consumeApproval(at: number): Promise<PendingApproval | undefined>;
-    /** @throws {never} */
-    putGrant(grant: Grant): Promise<void>;
-    /** @throws {never} */
-    putCode(grant: Grant, at: number): Promise<string>;
-    /** @throws {never} */
-    audit(grant: Grant, at: number): Promise<void>;
+    prepareIssuance(grant: Grant, at: number): PreparedIssuance;
 }
-type GrantIssuanceResult = {
+type GrantIssuanceResult<Grant> = {
     kind: "expired";
 } | {
     kind: "retry";
@@ -29,6 +32,7 @@ type GrantIssuanceResult = {
     kind: "denied";
 } | {
     kind: "issued";
+    grant: Grant;
     code: string;
 };
 /**
@@ -39,5 +43,5 @@ export declare function issueConnectorGrant<Grant extends {
     expiresAt: number;
 }>(request: PendingApproval & {
     e164: string;
-}, effects: GrantIssuanceEffects<Grant>): Promise<GrantIssuanceResult>;
+}, effects: GrantIssuanceEffects<Grant>): Promise<GrantIssuanceResult<Grant>>;
 export {};

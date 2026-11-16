@@ -1,6 +1,6 @@
 // Generated from packages/core/src/vibe/oauthGrantIssuanceShell.vibe. Run pnpm run spec:sync.
 import { runPromise, tryPromise } from "effect/Effect";
-import { $schemaErrorMatcher, TaggedError } from "vibelang-runtime/internal";
+import { $catchExpression, $schemaErrorMatcher, TaggedError } from "vibelang-runtime/internal";
 import * as Effect from "effect/Effect";
 import * as runtime from "vibelang-runtime/internal";
 import { Machine, machine, requestIsLive } from "./generated/oauthGrantIssuance.effect.js";
@@ -37,28 +37,31 @@ export async function issueConnectorGrant(request, effects) {
                     completion_1 = { kind: "return", value: { kind: "retry" } };
                     return completion_1.value;
                 }
-                if (checked.phase !== "AwaitingConsumption") {
+                if (checked.phase !== "AwaitingApproval") {
                     completion_1 = { kind: "return", value: { kind: "denied" } };
                     return completion_1.value;
                 }
+                const prepared = yield* io(() => effects.prepareIssuance(grant, at));
                 const approvalAt = yield* io(() => effects.now());
-                const approved = yield* io(() => effects.consumeApproval(approvalAt));
-                const ownerMatches = !!approved?.e164 && approved.e164 === request.e164 && approved.personId === request.personId;
-                const consumedRequestLive = ownerMatches && requestIsLive(yield* io(() => effects.now()), approved.expiresAt);
-                const pendingGrantLive = consumedRequestLive && requestIsLive(yield* io(() => effects.now()), grant.expiresAt);
-                const consumed = yield* issuance.send({ type: "checkConsumption", consumption: { ownerMatches, consumedRequestLive, pendingGrantLive } });
-                if (consumed.phase !== "AwaitingPersistence") {
-                    completion_1 = { kind: "return", value: { kind: "expired" } };
-                    return completion_1.value;
+                const committed = yield* runtime.$catch(yield* (() => { return Effect.sync(() => { return io(() => prepared.commit(approvalAt, approval => runPromise(Effect.gen(function* () {
+                    const checkedAt = yield* io(() => effects.now());
+                    const state = yield* issuance.send({ type: "checkLockedApproval", approval: {
+                            ownerMatches: approval.e164 === request.e164 && approval.personId === request.personId,
+                            lockedRequestLive: requestIsLive(checkedAt, approval.expiresAt),
+                            pendingGrantLive: requestIsLive(checkedAt, grant.expiresAt),
+                        } });
+                    return state.phase === "AwaitingCommit";
+                })))); }); })(), () => Effect.sync(() => { return undefined; }));
+                if (committed === undefined) {
+                    yield* issuance.send({ type: "recordStorageFailure" });
+                    {
+                        completion_1 = { kind: "return", value: { kind: "retry" } };
+                        return completion_1.value;
+                    }
                 }
-                yield* io(() => effects.putGrant(grant));
-                yield* issuance.send({ type: "recordGrant" });
-                const code = yield* io(() => effects.putCode(grant, at));
-                yield* issuance.send({ type: "recordCode" });
-                yield* io(() => effects.audit(grant, at));
-                const issued = yield* issuance.send({ type: "recordIssuance" });
+                const issued = yield* issuance.send({ type: "recordCommit", committed });
                 {
-                    completion_1 = { kind: "return", value: issued.phase === "GrantIssued" ? { kind: "issued", code } : { kind: "expired" } };
+                    completion_1 = { kind: "return", value: issued.phase === "GrantIssued" ? { kind: "issued", grant, code: prepared.code } : { kind: "expired" } };
                     return completion_1.value;
                 }
             })(), machine());

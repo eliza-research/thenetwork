@@ -97,6 +97,12 @@ export type AuditKind =
 /** One audit row. Never a token, a code, a secret or a phone number. */
 export interface AuditRow { at: number; kind: AuditKind; clientId: string | null; grantId: string | null; app: McpAppId | null; detail: string | null }
 
+export interface ConsentGrantWrites {
+  grant: Grant;
+  code: AuthCode;
+  audit: readonly [AuditRow, AuditRow];
+}
+
 /** Approved editable Join fields only. No phone, age, consent or dating preferences. */
 export interface SignupDraftFields { firstName: string; homeCity?: "nyc" | "sf" }
 export interface SignupDraft { grantId: string; app: McpAppId; phoneKey: string; fields: SignupDraftFields; expiresAt: number; consumedAt: number | null }
@@ -114,8 +120,9 @@ export interface OAuthStore {
   putAuthRequest(r: AuthRequest): Promise<void>;
   getAuthRequest(id: string): Promise<AuthRequest | undefined>;
   updateAuthRequest(id: string, patch: Partial<Pick<AuthRequest, "e164" | "personId" | "step">>): Promise<void>;
-  /** Atomically consume one unexpired, phone-verified client approval. */
-  takeConsentRequest(id: string, at: number): Promise<AuthRequest | undefined>;
+  /** Check the current approval, then consume it and persist the grant, code and audit together.
+   * False leaves no issuance. The callback must inspect the approval only. */
+  commitConsentGrant(id: string, at: number, confirm: (approval: AuthRequest) => Promise<boolean>, writes: ConsentGrantWrites): Promise<boolean>;
   deleteAuthRequest(id: string): Promise<void>;
 
   putGrant(g: Grant): Promise<void>;
@@ -200,19 +207,30 @@ export class MemoryOAuthStore implements OAuthStore {
   async getAuthRequest(id: string) { return copy(this.requests.get(id)); }
   async updateAuthRequest(id: string, patch: Partial<Pick<AuthRequest, "e164" | "personId" | "step">>) {
     const r = this.requests.get(id);
-    if (r) Object.assign(r, patch);
+    if (r) this.requests.set(id, { ...r, ...patch });
   }
-  async takeConsentRequest(id: string, at: number) {
-    const r = this.requests.get(id);
-    if (!r || r.step !== "consent" || !r.e164 || r.expiresAt <= at) return undefined;
+  async commitConsentGrant(id: string, at: number, confirm: (approval: AuthRequest) => Promise<boolean>, writes: ConsentGrantWrites) {
+    const pending = this.requests.get(id);
+    if (!pending || pending.step !== "consent" || !pending.e164 || pending.expiresAt <= at) return false;
+    if (!await confirm(structuredClone(pending)) || this.requests.get(id) !== pending) return false;
+
+    const prepared = structuredClone(writes);
+    this.requireNewGrant(prepared.grant);
+    if (this.codes.has(prepared.code.hash)) throw new Error("Authorization code already exists");
     this.requests.delete(id);
-    return structuredClone(r);
+    this.grants.set(prepared.grant.id, prepared.grant);
+    this.codes.set(prepared.code.hash, prepared.code);
+    this.rows.push(...prepared.audit);
+    return true;
   }
   async deleteAuthRequest(id: string) { this.requests.delete(id); }
 
+  private requireNewGrant(grant: Grant) {
+    if (grant.id.startsWith("grant_cloud_") && grant.cloudAuthority?.version !== 1) throw new Error("Cloud grant authority required");
+    if (this.grants.has(grant.id)) throw new Error("Grant already exists");
+  }
   async putGrant(g: Grant) {
-    if(g.id.startsWith("grant_cloud_") && (!g.cloudAuthority || g.cloudAuthority.version!==1))throw new Error("Cloud grant authority required");
-    if(this.grants.has(g.id))throw new Error("Grant already exists");
+    this.requireNewGrant(g);
     this.grants.set(g.id, structuredClone(g));
   }
   async getGrant(id: string) { return copy(this.grants.get(id)); }

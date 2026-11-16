@@ -196,8 +196,12 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   /** Tell the inbox an assistant was connected or disconnected for the grant's person (never blocks OAuth). */
   async function linked(grant: Grant | undefined, active: boolean) {
     if (!grant?.personId || !o.platform.assistantLinked) return;
-    const client = await store.getClient(grant.clientId);
-    await o.platform.assistantLinked(grant.personId, client ? assistantOf(client) : "web", active).catch(e => log(`[mcp] assistant ${active ? "link" : "unlink"} not recorded: ${(e as Error).message}`));
+    try {
+      const client = await store.getClient(grant.clientId);
+      await o.platform.assistantLinked(grant.personId, client ? assistantOf(client) : "web", active);
+    } catch (error) {
+      log(`[mcp] assistant ${active ? "link" : "unlink"} not recorded: ${(error as Error).message}`);
+    }
   }
   /** Every revocation goes through here, so the inbox always hears about it. */
   async function revokeGrant(id: string, at: number) {
@@ -593,7 +597,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     return redirectTo(r.redirectUri, { error: "access_denied", error_description: "Connection cancelled", state: r.state, iss: c.issuer }, 303, { "set-cookie": clearCookie });
   }
 
-  /** Validate Cloud authority before single-use consumption so outages remain retryable. */
+  /** Validate Cloud authority before the atomic issuance so outages remain retryable. */
   async function finishAuthorization(c: Ctx, r: AuthRequest & { e164: string }, client: OAuthClient, authority?: Grant["cloudAuthority"]): Promise<Response> {
     const clearCookie = `${browserCookie(c.app)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies(c.app) ? "; Secure" : ""}`;
     const issued = await issueConnectorGrant<Grant>(r, {
@@ -612,24 +616,24 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
         ...(authority ? { cloudAuthority: authority } : {}),
       }),
       checkAuthority: cloudGrantCurrent,
-      consumeApproval: at => store.takeConsentRequest(r.id, at),
-      putGrant: async grant => {
-        await store.putGrant(grant);
-        await linked(grant, true);
-      },
-      putCode: async (grant, at) => {
+      prepareIssuance: (grant, at) => {
         const code = randomToken("ntwc_");
-        const ac: AuthCode = {
+        const record: AuthCode = {
           hash: sha256hex(code), grantId: grant.id, clientId: client.id, redirectUri: r.redirectUri,
           codeChallenge: r.codeChallenge, resource: r.resource, scopes: r.scopes,
           createdAt: at, expiresAt: at + ttl.codeMs, usedAt: null,
         };
-        await store.putCode(ac);
-        return code;
-      },
-      audit: async (grant, at) => {
-        await store.audit({ at, kind: "consent_granted", clientId: client.id, grantId: grant.id, app: c.app.id, detail: r.scopes.join(" ") });
-        await store.audit({ at, kind: "code_issued", clientId: client.id, grantId: grant.id, app: c.app.id, detail: null });
+        const audit = { at, clientId: client.id, grantId: grant.id, app: c.app.id };
+        return {
+          code,
+          commit: (approvalAt, confirm) => store.commitConsentGrant(r.id, approvalAt, confirm, {
+            grant, code: record,
+            audit: [
+              { ...audit, kind: "consent_granted", detail: r.scopes.join(" ") },
+              { ...audit, kind: "code_issued", detail: null },
+            ],
+          }),
+        };
       },
     });
     switch (issued.kind) {
@@ -640,6 +644,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       case "denied":
         return messagePage(c.app, "Connect again", "This connection is no longer valid. Return to your agent or text conversation and connect again.", 403);
       case "issued":
+        await linked(issued.grant, true);
         return redirectTo(r.redirectUri, { code: issued.code, state: r.state, iss: c.issuer }, 303, { "set-cookie": clearCookie });
     }
   }

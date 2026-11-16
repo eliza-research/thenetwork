@@ -1,7 +1,7 @@
 // Generated from spec/oauthGrantIssuance.md via Vibestack and VibeLang. Run pnpm run spec:sync.
-import type { AuthorityResult, Issuance, ConsumedApproval, Event } from "./oauthGrantIssuance.ts";
-/** Story: Connect my agent after I approve access / Consumed approval must still match the owner and both deadlines (spec/oauthGrantIssuance.md:47) @throws {never} */
-export declare const validConsumption: ConsumedApproval;
+import type { AuthorityResult, Issuance, LockedApproval, Event } from "./oauthGrantIssuance.ts";
+/** Story: Connect my agent after I approve access / Locked approval must still match the owner and both deadlines (spec/oauthGrantIssuance.md:47) @throws {never} */
+export declare const eligibleApproval: LockedApproval;
 /** Story: Connect my agent after I approve access / An expired request cannot begin issuance (spec/oauthGrantIssuance.md:9) @throws {never} */
 export declare const initial: Issuance;
 /** Every `always` rule at once. Holds initially and after every transition. @throws {never} */
@@ -14,37 +14,35 @@ export declare function canBeginApproval(issuance: Issuance): boolean;
 export declare function beginApproval(issuance: Issuance, requestLive: boolean): Issuance;
 /** Story: Connect my agent after I approve access / An expired request cannot begin issuance (spec/oauthGrantIssuance.md:9) @throws {never} */
 export declare function lawDeadlineExcludesExpiry(expiresAt: number): boolean;
-/** Story: Connect my agent after I approve access / Authority is checked before the consent request is consumed (spec/oauthGrantIssuance.md:32) @throws {never} */
+/** Story: Connect my agent after I approve access / Authority is checked before the consent request is locked (spec/oauthGrantIssuance.md:32) @throws {never} */
 export declare function canCheckGrantAuthority(issuance: Issuance): boolean;
-/** Story: Connect my agent after I approve access / Authority is checked before the consent request is consumed (spec/oauthGrantIssuance.md:32) @throws {never} */
+/** Story: Connect my agent after I approve access / Authority is checked before the consent request is locked (spec/oauthGrantIssuance.md:32) @throws {never} */
 export declare function checkGrantAuthority(issuance: Issuance, authority: AuthorityResult): Issuance;
-/** Story: Connect my agent after I approve access / Consumed approval must still match the owner and both deadlines (spec/oauthGrantIssuance.md:47) @throws {never} */
-export declare function canCheckConsumption(issuance: Issuance): boolean;
-/** Story: Connect my agent after I approve access / Consumed approval must still match the owner and both deadlines (spec/oauthGrantIssuance.md:47) @throws {never} */
-export declare function checkConsumption(issuance: Issuance, consumption: ConsumedApproval): Issuance;
-/** Story: Connect my agent after I approve access / A successful response follows the grant, code and audit writes (spec/oauthGrantIssuance.md:68) @throws {never} */
-export declare function canRecordGrant(issuance: Issuance): boolean;
-/** Story: Connect my agent after I approve access / A successful response follows the grant, code and audit writes (spec/oauthGrantIssuance.md:68) @throws {never} */
-export declare function recordGrant(issuance: Issuance): Issuance;
-/** Story: Connect my agent after I approve access / A successful response follows the grant, code and audit writes (spec/oauthGrantIssuance.md:68) @throws {never} */
-export declare function canRecordCode(issuance: Issuance): boolean;
-/** Story: Connect my agent after I approve access / A successful response follows the grant, code and audit writes (spec/oauthGrantIssuance.md:68) @throws {never} */
-export declare function recordCode(issuance: Issuance): Issuance;
-/** Story: Connect my agent after I approve access / A successful response follows the grant, code and audit writes (spec/oauthGrantIssuance.md:68) @throws {never} */
-export declare function canRecordIssuance(issuance: Issuance): boolean;
-/** Story: Connect my agent after I approve access / A successful response follows the grant, code and audit writes (spec/oauthGrantIssuance.md:68) @throws {never} */
-export declare function recordIssuance(issuance: Issuance): Issuance;
-/** Story: Connect my agent after I approve access / A successful response follows the grant, code and audit writes (spec/oauthGrantIssuance.md:68) @throws {never} */
-export declare function stepIssuanceFollowsAudit(before: Issuance, via: string, after: Issuance): boolean;
-/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:89) @throws {never} */
+/** Story: Connect my agent after I approve access / Locked approval must still match the owner and both deadlines (spec/oauthGrantIssuance.md:47) @throws {never} */
+export declare function canCheckLockedApproval(issuance: Issuance): boolean;
+/** Story: Connect my agent after I approve access / Locked approval must still match the owner and both deadlines (spec/oauthGrantIssuance.md:47) @throws {never} */
+export declare function checkLockedApproval(issuance: Issuance, approval: LockedApproval): Issuance;
+/** Story: Connect my agent after I approve access / A successful response follows one atomic commit (spec/oauthGrantIssuance.md:68) @throws {never} */
+export declare function canRecordCommit(issuance: Issuance, committed: boolean): boolean;
+/** Story: Connect my agent after I approve access / A successful response follows one atomic commit (spec/oauthGrantIssuance.md:68) @throws {never} */
+export declare function recordCommit(issuance: Issuance, committed: boolean): Issuance;
+/** Story: Connect my agent after I approve access / A successful response follows one atomic commit (spec/oauthGrantIssuance.md:68) @throws {never} */
+export declare function canRecordStorageFailure(issuance: Issuance): boolean;
+/** Story: Connect my agent after I approve access / A successful response follows one atomic commit (spec/oauthGrantIssuance.md:68) @throws {never} */
+export declare function recordStorageFailure(issuance: Issuance): Issuance;
+/** Story: Connect my agent after I approve access / A successful response follows one atomic commit (spec/oauthGrantIssuance.md:68) @throws {never} */
+export declare function stepIssuanceFollowsCommit(before: Issuance, via: string, after: Issuance): boolean;
+/** Story: Connect my agent after I approve access / A successful response follows one atomic commit (spec/oauthGrantIssuance.md:68) @throws {never} */
+export declare function sometimesRetriesIssuance(issuance: Issuance): boolean;
+/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:91) @throws {never} */
 export declare function alwaysIssuanceRequiresCurrentApproval(issuance: Issuance): boolean;
-/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:89) @throws {never} */
+/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:91) @throws {never} */
 export declare function sometimesIssuesGrant(issuance: Issuance): boolean;
-/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:89) @throws {never} */
+/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:91) @throws {never} */
 export declare function sometimesRetriesAuthority(issuance: Issuance): boolean;
-/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:89) @throws {never} */
+/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:91) @throws {never} */
 export declare function sometimesDeniesAuthority(issuance: Issuance): boolean;
-/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:89) @throws {never} */
+/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:91) @throws {never} */
 export declare function sometimesExpiresApproval(issuance: Issuance): boolean;
 /** Do the rules allow this event in this state? @throws {never} */
 export declare function enabled(current: Issuance, event: Event): boolean;

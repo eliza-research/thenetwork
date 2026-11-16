@@ -2,7 +2,7 @@
 // loopback fixture, dropped afterwards. The refresh regression uses real HTTP.
 import { fetchWithHost } from "../../core/src/runtime/fetch.ts";
 import { serveHttp } from "../../core/src/runtime/http.ts";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { randomUUID } from "node:crypto";
 import { APPS, createPublicApi, PgPeopleStore } from "@thenetwork/platform";
@@ -10,10 +10,11 @@ import { migrate } from "../../observatory/db/migrate.ts";
 import { DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { pgAvailable } from "../../observatory/test/pg.ts";
 import { PgOAuthStore } from "../src/pg-store.ts";
+import type { AuthRequest, ConsentGrantWrites } from "../src/store.ts";
 import { createMcpHandler } from "../src/handler.ts";
 import { platformHooks } from "../src/hooks.ts";
 import { sha256hex } from "../src/util.ts";
-import { addMember, call, connect, origin, PHONE_A, register, setup, tokenRequest } from "./harness.ts";
+import { addMember, call, CHALLENGE, connect, origin, PHONE_A, register, setup, tokenRequest, VERIFIER } from "./harness.ts";
 
 const USER = process.env.USER ?? "postgres";
 // An admitted Linux fixture may provide its already-running, isolated loopback PG.
@@ -49,26 +50,135 @@ describe.skipIf(!EXPLICIT_PG && !pgAvailable)("PgOAuthStore", () => {
     const env = setup({ store });
     const client = await register(env, "peon.biz");
     const at = env.clock.t;
-    const pending: import("../src/store.ts").AuthRequest = {
+    const pending: AuthRequest = {
       id: `approval_${randomUUID()}`, browserHash: sha256hex("browser-cookie"),
       clientId: client.body.client_id, app: "peon", redirectUri: "https://client.example/callback",
       state: "state", codeChallenge: sha256hex("challenge"), scopes: ["membership:read"],
       resource: "https://peon.biz/mcp", e164: PHONE_A, personId: null,
       step: "consent", createdAt: at, expiresAt: at + 60_000,
     };
+    const grantId = `grant_${randomUUID()}`;
+    const { clientId, app, scopes, resource } = pending;
+    const audit = { at, clientId, grantId, app, detail: null };
+    const writes: ConsentGrantWrites = {
+      grant: { id: grantId, clientId, app, phoneKey: env.accounts.phoneHash(PHONE_A), personId: null, scopes, resource, createdAt: at, expiresAt: at + 60_000, revokedAt: null },
+      code: { hash: sha256hex(grantId), grantId, clientId, redirectUri: pending.redirectUri, codeChallenge: pending.codeChallenge, resource, scopes, createdAt: at, expiresAt: at + 60_000, usedAt: null },
+      audit: [{ ...audit, kind: "consent_granted" }, { ...audit, kind: "code_issued" }],
+    };
     const other = new PgOAuthStore(testUrl.toString());
     try {
       await store.putAuthRequest(pending);
-      const results = await Promise.all([store, other].map(s => s.takeConsentRequest(pending.id, at)));
-      expect(results.filter(Boolean)).toEqual([pending]);
+      const results = await Promise.all([store, other].map(s => s.commitConsentGrant(pending.id, at, async request => {
+        expect(request).toEqual(pending);
+        return true;
+      }, writes)));
+      expect(results.sort()).toEqual([false, true]);
       expect(await store.getAuthRequest(pending.id)).toBeUndefined();
       for (const patch of [{ step: "code" as const }, { e164: null }, { expiresAt: at }]) {
         const refused = { ...pending, ...patch, id: `approval_${randomUUID()}` };
         await store.putAuthRequest(refused);
-        expect(await other.takeConsentRequest(refused.id, at)).toBeUndefined();
+        expect(await other.commitConsentGrant(refused.id, at, async () => true, writes)).toBe(false);
         expect(await store.getAuthRequest(refused.id)).toEqual(refused);
       }
+
+      // Hold an approved request lock while app erasure starts on a separate connection.
+      const second = { ...pending, id: `approval_${randomUUID()}` };
+      const secondId = `grant_${randomUUID()}`;
+      await store.putAuthRequest(second);
+      const acquired = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const issuing = store.commitConsentGrant(second.id, at, async () => {
+        acquired.resolve();
+        await release.promise;
+        return true;
+      }, {
+        grant: { ...writes.grant, id: secondId },
+        code: { ...writes.code, grantId: secondId, hash: sha256hex(secondId) },
+        audit: [{ ...writes.audit[0], grantId: secondId }, { ...writes.audit[1], grantId: secondId }],
+      });
+      await Promise.race([acquired.promise, issuing]);
+      const erasing = other.forgetPhone(writes.grant.phoneKey, PHONE_A, app);
+      try {
+        await vi.waitFor(async () => {
+          const [row] = await store.sql<{ blocked: boolean }[]>`select exists (
+            select 1 from pg_stat_activity where datname = current_database()
+              and wait_event_type = 'Lock' and query like 'delete from oauth.auth_requests where e164%'
+          ) as blocked`;
+          expect(row?.blocked).toBe(true);
+        });
+      } finally {
+        release.resolve();
+        await Promise.all([issuing, erasing]);
+      }
+      expect(await issuing).toBe(true);
+      expect(await erasing).toBe(2);
+      expect(await store.getAuthRequest(second.id)).toBeUndefined();
+      expect(await store.getGrant(secondId)).toBeUndefined();
+      expect(await store.getCode(sha256hex(secondId))).toBeUndefined();
     } finally { await other.close(); }
+  });
+
+  // spec/oauthGrantIssuance.md, "A successful response follows one atomic commit"
+  test("consent issuance over HTTP rolls back when the final audit fails", async () => {
+    const env = setup({ store });
+    const domain = "peon.biz";
+    const personId = await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]);
+    const session = await env.sessions.create("peon", PHONE_A, personId);
+    const server = await serveHttp({ hostname: "127.0.0.1", port: 0, fetch: env.handler.fetch });
+    env.fetch = async req => {
+      const original = new URL(req.url);
+      const headers = new Headers(req.headers);
+      headers.set("host", original.host);
+      return fetchWithHost(new URL(original.pathname + original.search, server.url), {
+        method: req.method, headers, redirect: "manual",
+        ...(req.method === "GET" ? {} : { body: await req.arrayBuffer() }),
+      });
+    };
+    try {
+      const client = await register(env, domain);
+      const redirectUri = "https://client.example/callback";
+      const query = new URLSearchParams({
+        response_type: "code", client_id: client.body.client_id, redirect_uri: redirectUri,
+        code_challenge: CHALLENGE, code_challenge_method: "S256", scope: "membership:read",
+      });
+      const start = await env.fetch(new Request(`${origin(domain)}/oauth/authorize?${query}`, { headers: { cookie: `sid_peon=${session.token}` } }));
+      const rid = /name="rid" value="([^"]+)"/.exec(await start.text())?.[1];
+      const browser = /((?:__Host-)?mcp_auth=[^;]+)/.exec(start.headers.get("set-cookie") ?? "")?.[1];
+      const pending = rid && await store.getAuthRequest(rid);
+      const approve = () => env.fetch(new Request(`${origin(domain)}/oauth/authorize/consent`, {
+        method: "POST", headers: {
+          cookie: `${browser}; sid_peon=${session.token}`, origin: origin(domain), "content-type": "application/x-www-form-urlencoded",
+        }, body: new URLSearchParams({ rid: rid ?? "", decision: "approve" }),
+      }));
+      const grants = () => store.sql`select id from oauth.grants where client_id = ${client.body.client_id}`;
+      const codes = () => store.sql`select hash from oauth.codes where client_id = ${client.body.client_id}`;
+      const audit = () => store.sql`select kind from oauth.audit where client_id = ${client.body.client_id} order by id`;
+      expect(pending).toMatchObject({ step: "consent", personId });
+      await store.sql`alter table oauth.audit add constraint fixture_issuance_audit
+        check (kind <> 'code_issued') not valid`;
+      try {
+        const failed = await approve();
+        expect(failed.headers.has("location")).toBe(false);
+        expect(await store.getAuthRequest(rid!)).toEqual(pending);
+        expect(await grants()).toEqual([]);
+        expect(await codes()).toEqual([]);
+        expect(await audit()).toEqual([{ kind: "client_registered" }]);
+        expect(failed.status).toBe(503);
+      } finally {
+        await store.sql`alter table oauth.audit drop constraint fixture_issuance_audit`;
+      }
+      const retries = await Promise.all([approve(), approve()]);
+      expect(retries.map(response => response.status).sort()).toEqual([303, 400]);
+      expect(await store.getAuthRequest(rid!)).toBeUndefined();
+      expect(await grants()).toHaveLength(1);
+      expect(await codes()).toHaveLength(1);
+      expect(await audit()).toEqual([{ kind: "client_registered" }, { kind: "consent_granted" }, { kind: "code_issued" }]);
+      const code = new URL(retries.find(response => response.status === 303)!.headers.get("location")!).searchParams.get("code")!;
+      const token = await tokenRequest(env, domain, {
+        grant_type: "authorization_code", code, client_id: client.body.client_id, redirect_uri: redirectUri, code_verifier: VERIFIER,
+      });
+      expect(token.res.status).toBe(200);
+    } finally { await server.stop(true); }
   });
 
   test("authenticated pre-Join draft persists for retries, discards once and rejects wrong app/phone and revoked grants", async () => {
