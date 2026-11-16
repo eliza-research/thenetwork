@@ -138,6 +138,9 @@ conformance inputs under `test/`. The
 signed HTTP and isolated local Postgres databases on port 54339. Run
 `pnpm run spec:conformance` with `sharedLineConsentJourney`,
 `savedProfileJourney`, or `turnReceiptJourney`. Run
+`pnpm run spec:conformance reviewContactJourney` to compare a signed
+Friends request, scoped staff review, and dry-run probe records against
+the [review-to-contact rules](spec/reviewContactJourney.md). Run
 `pnpm run spec:conformance memberRequestJourney` to compare the request
 and review flow through the dry-run ConsentNetwork harness. The checker saves
 a minimal failing trace under `test/counterexamples/` and replays it on

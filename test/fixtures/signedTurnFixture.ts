@@ -13,19 +13,24 @@ import { APPS } from "../../packages/platform/src/apps.ts";
 export type FixtureApp = "slop" | "friends";
 export type FixtureMember = { phone: string; personId: string };
 type FixtureTurn = Pick<TurnRequest, "app" | "receivedAt">;
+type FixtureSignup = { firstName?: string; apps?: readonly FixtureApp[]; interests?: string[]; neighborhood?: string };
 
-type SignedTurnFixture = {
+export type SignedTurnFixture = {
+  clock: SimClock;
   service: NetworkService;
-  createMember(about?: Partial<Record<FixtureApp, string>>): Promise<FixtureMember>;
+  createMember(about?: Partial<Record<FixtureApp, string>>, signup?: FixtureSignup): Promise<FixtureMember>;
   sendTurn(phone: string, text: string, options?: Partial<FixtureTurn>): Promise<{ response: TurnResponse; receivedAt: number; messageId: string }>;
   sendReceipt(input: TurnReceiptRequest): Promise<Response>;
+  reviewQueue(): Promise<Response>;
+  decideReview(oppId: string, decision: "approve" | "reject", reason?: string): Promise<Response>;
 };
 
-export async function withSignedTurnFixture(run: (fixture: SignedTurnFixture) => Promise<void>) {
+export async function withSignedTurnFixture(run: (fixture: SignedTurnFixture) => Promise<void>, options: { friendsReview?: boolean } = {}) {
   const database = `network_journey_${randomUUID().replaceAll("-", "")}`;
   const address = `postgres://${encodeURIComponent(process.env.USER || "postgres")}@127.0.0.1:${DEV_PG_PORT}`;
   const url = `${address}/${database}`;
   const secret = "synthetic-signed-turn-journey-secret";
+  const reviewer = "synthetic-friends-review-journey-token";
   const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
   const hosts = { slop: "localhost:5102", friends: "localhost:5104" };
   let phoneCounter = 0;
@@ -48,9 +53,10 @@ export async function withSignedTurnFixture(run: (fixture: SignedTurnFixture) =>
       networks: [
         { id: "ntwrk:nyc", matchingEnabled: false },
         { id: "slop:nyc", matchingEnabled: false },
-        { id: "friends:nyc", matchingEnabled: false },
+        { id: "friends:nyc", matchingEnabled: options.friendsReview === true },
       ],
-      network: { seed: 1 },
+      ...(options.friendsReview ? { devMatching: ["friends:nyc"], tokens: `reviewer@friends:${reviewer}` } : {}),
+      network: { seed: 1, ...(options.friendsReview ? { maxNewPerDay: 0, plans: false, growth: false } : {}) },
       publicApi: { minStartMs: 0, minVerifyMs: 0, otp: { name: "fixture", send: async () => ({ code: "314159" }) } },
       adapter: () => new DryRunAdapter(() => { adapterCalls++; }),
       log: () => {},
@@ -73,17 +79,17 @@ export async function withSignedTurnFixture(run: (fixture: SignedTurnFixture) =>
       return response;
     }
 
-    async function createMember(about: Partial<Record<FixtureApp, string>> = {}): Promise<FixtureMember> {
+    async function createMember(about: Partial<Record<FixtureApp, string>> = {}, signup: FixtureSignup = {}): Promise<FixtureMember> {
       if (phoneCounter >= 100) throw new Error("Fixture ran out of reserved fictional phone numbers");
       const phone = `+1212555${String(100 + phoneCounter++).padStart(4, "0")}`;
-      for (const appId of ["slop", "friends"] as const) {
+      for (const appId of signup.apps ?? ["slop", "friends"]) {
         clock.advance(HOUR); // Give each signup its own normal OTP send window.
         await call(appId, "/api/auth/otp/start", { phone });
         const login = await call(appId, "/api/auth/otp/verify", { phone, code: "314159" });
         const cookie = login.headers.get("set-cookie")?.split(";")[0];
         if (!cookie) throw new Error("Phone verification did not establish a session");
         await call(appId, "/api/join", {
-          firstName: "Ari", age: 29, about: about[appId],
+          firstName: signup.firstName ?? "Ari", age: 29, about: about[appId], interests: signup.interests, neighborhood: signup.neighborhood,
           consent: { sms: true, wording: APPS[appId].consent.text },
         }, cookie);
       }
@@ -121,7 +127,18 @@ export async function withSignedTurnFixture(run: (fixture: SignedTurnFixture) =>
       return response;
     }
 
-    await run({ service: app, createMember, sendTurn, sendReceipt: input => postSigned(TURN_RECEIPT_PATH, `${input.messageId}:receipt`, input) });
+    function review(path: string, body?: { decision: "approve" | "reject"; reason?: string }) {
+      return fetch(new URL(`/apps/friends/review${path}`, http.url), {
+        signal: AbortSignal.timeout(10_000),
+        headers: { authorization: `Bearer ${reviewer}`, "content-type": "application/json" },
+        ...(body ? { method: "POST", body: JSON.stringify(body) } : {}),
+      });
+    }
+
+    await run({
+      clock, service: app, createMember, sendTurn, sendReceipt: input => postSigned(TURN_RECEIPT_PATH, `${input.messageId}:receipt`, input),
+      reviewQueue: () => review(""), decideReview: (oppId, decision, reason) => review(`/${encodeURIComponent(oppId)}`, { decision, reason }),
+    });
   } finally {
     await server?.stop(true);
     try {
