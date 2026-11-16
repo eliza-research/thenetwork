@@ -1,4 +1,5 @@
 import { initial, step as stepProfileRead, type ProfileRead } from "../../core/src/generated/savedProfileRead.ts";
+import { savedProfileFitsReply, savedProfileLocation } from "../../core/src/generated/savedProfileJourney.ts";
 import { APPS, keywordApp, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import type { Membership } from "../../platform/src/store.ts";
 
@@ -57,14 +58,12 @@ export function profileReadRequest(
 /** Stored member-supplied fields only; no inferred facts, suggestions or model call. */
 export function savedProfileText(app: AppInfo, membership: Membership, age?: number): string {
   const p = membership.profile;
-  const location =
-    typeof p.neighborhood === "string" && p.neighborhood.trim()
-      ? p.neighborhood
-      : p.homeCity === "sf"
-        ? "San Francisco / Bay Area"
-        : p.homeCity === "nyc"
-          ? "New York City"
-          : undefined;
+  const neighborhood = typeof p.neighborhood === "string" ? p.neighborhood : undefined;
+  const label = savedProfileLocation(!!neighborhood?.trim(), typeof p.homeCity === "string" ? p.homeCity : "");
+  const location = label === "NeighborhoodLabel" ? neighborhood
+    : label === "BayAreaLabel" ? "San Francisco / Bay Area"
+      : label === "NewYorkLabel" ? "New York City"
+        : undefined;
   const title = [membership.firstName, age === undefined ? undefined : String(age), location]
     .filter(Boolean)
     .join(" · ");
@@ -79,5 +78,5 @@ export function savedProfileText(app: AppInfo, membership: Membership, age?: num
   const text = `Here is your saved ${app.name} profile:\n${fields.join("\n")}\n\nI left it unchanged.`;
   // The existing signed Cloud delivery contract caps a handled reply at 1,600.
   // Refuse the oversized display explicitly; never truncate saved user fields.
-  return text.length <= 1600 ? text : "Your saved profile is too long for one text. I left it unchanged.";
+  return savedProfileFitsReply(text.length) ? text : "Your saved profile is too long for one text. I left it unchanged.";
 }

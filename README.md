@@ -120,10 +120,11 @@ from The Network root.
 
 The spec checker uses an executable projection of `spec/` and the
 conformance inputs under `test/`. The
-[shared-line consent journey](spec/sharedLineConsentJourney.md) runs
-against the signed turn endpoint and an isolated local Postgres database
-on port 54339. Run it with
-`bun run spec:conformance sharedLineConsentJourney`. The checker saves
+[shared-line consent journey](spec/sharedLineConsentJourney.md) and the
+[saved profile journey](spec/savedProfileJourney.md) run against the
+signed turn endpoint and isolated local Postgres databases on port 54339.
+Run either with `bun run spec:conformance sharedLineConsentJourney` or
+`bun run spec:conformance savedProfileJourney`. The checker saves
 a minimal failing trace under `test/counterexamples/` and replays it on
 later runs. Product prose, historical sources, and action-based flow
 models stay in `spec/product/` and `spec/models/`. The review ledger,
