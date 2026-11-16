@@ -1,6 +1,6 @@
 # Record a signed turn receipt
 
-The [signed turn model](models/turn_consent.md) follows the gateway turn, its collected replies, and the consent projection. This module decides which acknowledgments can update a completed handled turn. Signature verification, exact reply comparison, and the transaction remain in the service.
+The [signed turn model](models/turn_consent.md) follows the gateway turn, its collected replies, and the consent projection. The [VibeLang receipt shell](../packages/core/src/vibe/turnReceiptShell.vibe) uses the generated transitions to decide which acknowledgments can update a completed handled turn. The service verifies the signature, compares signed receipt values, and supplies the effects under one database transaction.
 
 ## Story: Record the gateway's delivery result once
 
@@ -47,13 +47,22 @@ pure def checkDelivery(receipt: TurnReceipt, accepted: bool, providerIds: bool, 
   if (if (accepted) providerIds and (history or accountFree) else not(history)) { phase: AwaitingReplyWrite }
   else { phase: DeliveryInvalid }
 
-pure def noHistoryAllowed(accountFree: bool, compliance: bool, canonicalJoinPrompt: bool): bool =
-  accountFree and (compliance or canonicalJoinPrompt)
+pure def receiptReplyIdsMatch(loadedIds: List[str], submittedIds: List[str]): bool = loadedIds == submittedIds
+
+pure def noHistoryAllowed(accountFree: bool, replyKind: str, reason: str, memberAbsent: bool, knownApp: bool): bool =
+  accountFree and (replyKind == "compliance" or
+    (replyKind == "reply" and reason == "onboarding_asked" and memberAbsent and knownApp))
+
+pure def lawReceiptRequiresExactOrder(firstId: str, secondId: str): bool =
+  firstId != secondId implies not(receiptReplyIdsMatch(List(firstId, secondId), List(secondId, firstId)))
+
+pure def lawAccountBoundReceiptNeedsHistory(replyKind: str, reason: str, memberAbsent: bool, knownApp: bool): bool =
+  not(noHistoryAllowed(false, replyKind, reason, memberAbsent, knownApp))
 ```
 
 ### Update the turn and the reply history together
 
-Store the validated receipt. For a turn with replies also update each collected or unknown reply in the same transaction. Accepted results record the send, unknown results leave it pending, and rejected results end it. Replayed receipts need no new write.
+Store the validated receipt. For a turn with replies also update each collected or unknown reply in the same transaction. Accepted results record the send, unknown results leave it pending, and rejected results end it. A receipt replay skips receipt and reply writes. An accepted result can retry the notification projection after the transaction.
 
 ```quint
 pure def canRecordReceipt(receipt: TurnReceipt): bool = receipt.phase == AwaitingEmptyWrite or receipt.phase == AwaitingReplyWrite

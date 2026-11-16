@@ -468,6 +468,19 @@ test("accepted handled replies repair the single Notify projection after faults,
   expect((await receipt(ack)).status).toBe(200);
   expect((await sql`select delivery_id from notify.deliveries where delivery_id='net:scheduling:handled-notify'`).length).toBe(0);
   const accepted={...ack,outcome:"accepted" as const,providerMessageIds:["handled-proof-1","handled-proof-2"],historyRecorded:true};
+  // The signed receipt, collected message status and notification projection must stay consistent if the write fails.
+  await sql`alter table platform.inbound add constraint reject_fixture_receipt
+    check (id <> 'msg:blooio:handled-notify' or receipt->>'outcome' is distinct from 'accepted')`;
+  try {
+    expect((await receipt(accepted)).status).toBe(500);
+    const [original] = await sql`select receipt from platform.inbound where id = 'msg:blooio:handled-notify'`;
+    expect(original.receipt).toEqual(ack);
+    const [collected] = await sql`select status from network.messages where id = 'scheduling:handled-notify'`;
+    expect(collected.status).toBe("send_unknown");
+    expect((await sql`select delivery_id from notify.deliveries where delivery_id = 'net:scheduling:handled-notify'`).length).toBe(0);
+  } finally {
+    await sql`alter table platform.inbound drop constraint reject_fixture_receipt`;
+  }
   expect((await receipt(accepted)).status).toBe(200);
   const [message]=await sql`select ts,notification_recorded_at from network.messages where id='scheduling:handled-notify'`;
   expect(message.notification_recorded_at).toBeNull();

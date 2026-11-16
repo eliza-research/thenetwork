@@ -65,8 +65,14 @@ export function canCheckTurn(receipt: TurnReceipt): boolean {
 
 /** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md:35) */
 //@ pure
-export function noHistoryAllowed(accountFree: boolean, compliance: boolean, canonicalJoinPrompt: boolean): boolean {
-  return accountFree && (compliance || canonicalJoinPrompt);
+export function receiptReplyIdsMatch(loadedIds: string[], submittedIds: string[]): boolean {
+  return equal_turnReceipt(loadedIds, submittedIds);
+}
+
+/** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md:35) */
+//@ pure
+export function noHistoryAllowed(accountFree: boolean, replyKind: string, reason: string, memberAbsent: boolean, knownApp: boolean): boolean {
+  return accountFree && (replyKind === "compliance" || (replyKind === "reply" && reason === "onboarding_asked" && memberAbsent && knownApp));
 }
 
 /** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md:35) */
@@ -95,50 +101,64 @@ export function checkDelivery(receipt: TurnReceipt, accepted: boolean, providerI
   return (accepted ? providerIds && (history || accountFree) : !history) ? ({ phase: "AwaitingReplyWrite" } as TurnReceipt) : ({ phase: "DeliveryInvalid" } as TurnReceipt);
 }
 
-/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md:54) */
+/** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md:35) */
+//@ pure
+export function lawReceiptRequiresExactOrder(firstId: string, secondId: string): boolean {
+  //@ ensures \result === true
+  return !(firstId !== secondId) || !receiptReplyIdsMatch(([firstId, secondId] as string[]), ([secondId, firstId] as string[]));
+}
+
+/** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md:35) */
+//@ pure
+export function lawAccountBoundReceiptNeedsHistory(replyKind: string, reason: string, memberAbsent: boolean, knownApp: boolean): boolean {
+  //@ ensures \result === true
+  return !noHistoryAllowed(false, replyKind, reason, memberAbsent, knownApp);
+}
+
+/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md:63) */
 //@ pure
 export function receiptAccepted(delivery: string): boolean {
   return delivery === "accepted";
 }
 
-/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md:54) */
+/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md:63) */
 //@ pure
 export function canRecordReceipt(receipt: TurnReceipt): boolean {
   return receipt.phase === "AwaitingEmptyWrite" || receipt.phase === "AwaitingReplyWrite";
 }
 
-/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md:54) */
+/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md:63) */
 //@ pure
 export function recordReceipt(receipt: TurnReceipt): TurnReceipt {
   //@ ensures (inv(receipt) && canRecordReceipt(receipt)) ==> stepReceiptNeedsAdmission(receipt, "recordReceipt", \result)
   return { phase: "Stored" };
 }
 
-/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md:54) */
+/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md:63) */
 //@ pure
 export function receiptFinal(delivery: string): boolean {
   return receiptAccepted(delivery) || delivery === "rejected";
 }
 
-/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md:54) */
+/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md:63) */
 //@ pure
 export function receiptMessageStatus(delivery: string): string {
   return receiptAccepted(delivery) ? "sent" : (delivery === "unknown" ? "send_unknown" : "refused_gateway");
 }
 
-/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md:54) */
+/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md:63) */
 //@ pure
 export function sometimesCanStoreReceipt(receipt: TurnReceipt): boolean {
   return receipt.phase === "Stored";
 }
 
-/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md:54) */
+/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md:63) */
 //@ pure
 export function sometimesCanReplayReceipt(receipt: TurnReceipt): boolean {
   return receipt.phase === "Replayed";
 }
 
-/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md:54) */
+/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md:63) */
 //@ pure
 export function stepReceiptNeedsAdmission(before: TurnReceipt, via: string, after: TurnReceipt): boolean {
   return !(after.phase === "Stored") || (via === "recordReceipt" && canRecordReceipt(before));
@@ -216,4 +236,12 @@ export function parseState(x: unknown): TurnReceipt | undefined {
 export function initialHolds(): TurnReceipt {
   //@ ensures inv(\result)
   return initial;
+}
+
+/** Equality by structure, as Quint and the proof compare records, lists, maps and variants (none holds a set). */
+export function equal_turnReceipt(a: unknown, b: unknown): boolean {
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return a === b;
+  const keys = Object.keys(a);
+  return Array.isArray(a) === Array.isArray(b) && keys.length === Object.keys(b).length
+    && keys.every((k) => Object.hasOwn(b, k) && equal_turnReceipt((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
 }
