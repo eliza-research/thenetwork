@@ -47,7 +47,7 @@ export function canReadProfile(s: ProfileMemberships, app: ProfileApp, kind: Pro
 export function readProfile(s: ProfileMemberships, app: ProfileApp, kind: ProfileReadKind): ProfileTurn {
   //@ ensures (inv(s) && canReadProfile(s, app, kind)) ==> stepReadingKeepsMemberships(s, "readProfile", \result.state)
   const local_0 = app === "Slop" ? s.inSlop : s.inFriends;
-  return { state: s, out: kind === "ReadOwn" && local_0 ? [app === "Slop" ? "SlopProfile" : "FriendsProfile"] : ([] as ProfileShown[]) };
+  return { state: s, out: kind === "ReadOwn" && local_0 ? ([app === "Slop" ? "SlopProfile" : "FriendsProfile"] as ProfileShown[]) : ([] as ProfileShown[]) };
 }
 
 /** Story: See only my saved profile for the app I use / An app leave removes that app's profile from later reads (spec/savedProfileJourney.md:40) */

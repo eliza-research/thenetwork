@@ -47,7 +47,7 @@ export function sometimesBothAppsStop(s: LineConsent): boolean {
 //@ pure
 export function textStop(s: LineConsent): Turn {
   //@ ensures (inv(s) && canTextStop(s)) ==> stepOneTextCannotRestoreBoth(s, \result.state)
-  return { state: ({ slopMayText: false, friendsMayText: false } as LineConsent), out: ["AllOptedOut"] };
+  return { state: ({ slopMayText: false, friendsMayText: false } as LineConsent), out: (["AllOptedOut"] as ConsentUpdate[]) };
 }
 
 /** Story: Stop the shared line and resume one app / A new START permits texts in the chosen app only (spec/sharedLineConsentJourney.md:43) */
@@ -85,7 +85,7 @@ export function mayTextAfterStart(alreadyAllowed: boolean, sentWithLastStop: boo
 export function textStart(s: LineConsent, app: AppUnderObservation, sentWithLastStop: boolean): Turn {
   //@ ensures (inv(s) && canTextStart(s, app, sentWithLastStop)) ==> stepOneTextCannotRestoreBoth(s, \result.state)
   const local_0 = mayTextAfterStart(app === "Slop" ? s.slopMayText : s.friendsMayText, sentWithLastStop);
-  return { state: app === "Slop" ? ({ ...s, slopMayText: local_0 } as LineConsent) : ({ ...s, friendsMayText: local_0 } as LineConsent), out: local_0 ? [app === "Slop" ? "SlopOptedIn" : "FriendsOptedIn"] : ([] as ConsentUpdate[]) };
+  return { state: app === "Slop" ? ({ ...s, slopMayText: local_0 } as LineConsent) : ({ ...s, friendsMayText: local_0 } as LineConsent), out: local_0 ? ([app === "Slop" ? "SlopOptedIn" : "FriendsOptedIn"] as ConsentUpdate[]) : ([] as ConsentUpdate[]) };
 }
 
 /** Do the rules allow this event in this state? */

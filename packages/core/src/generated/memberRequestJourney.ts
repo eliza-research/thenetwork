@@ -48,7 +48,7 @@ export function offerFor(candidateAvailable: boolean): RequestView {
 /** Story: Keep control of my request for an introduction / A repeat ask keeps the current request (spec/memberRequestJourney.md:9) */
 //@ pure
 export function effectsFor(candidateAvailable: boolean): RequestEffect[] {
-  return candidateAvailable ? ["ReviewQueued"] : ([] as RequestEffect[]);
+  return candidateAvailable ? (["ReviewQueued"] as RequestEffect[]) : ([] as RequestEffect[]);
 }
 
 /** Story: Keep control of my request for an introduction / A repeat ask keeps the current request (spec/memberRequestJourney.md:9) */
@@ -80,7 +80,7 @@ export function sometimesRetriesExistingRequest(s: MemberRequestJourney): boolea
 //@ pure
 export function candidateArrives(s: MemberRequestJourney): RequestUpdate {
   //@ ensures (inv(s) && canCandidateArrives(s)) ==> stepAWithdrawnRequestNeedsNewAsk(s, "candidateArrives", \result.state)
-  return s.candidateAvailable ? ({ state: s, out: ([] as RequestEffect[]) } as RequestUpdate) : (s.request === "WaitingForCandidate" ? ({ state: ({ ...s, candidateAvailable: true, request: "PendingHumanReview", attempts: exact_memberRequestJourney(s.attempts + 1) } as MemberRequestJourney), out: ["ReviewQueued"] } as RequestUpdate) : ({ state: ({ ...s, candidateAvailable: true } as MemberRequestJourney), out: ([] as RequestEffect[]) } as RequestUpdate));
+  return s.candidateAvailable ? ({ state: s, out: ([] as RequestEffect[]) } as RequestUpdate) : (s.request === "WaitingForCandidate" ? ({ state: ({ ...s, candidateAvailable: true, request: "PendingHumanReview", attempts: exact_memberRequestJourney(s.attempts + 1) } as MemberRequestJourney), out: (["ReviewQueued"] as RequestEffect[]) } as RequestUpdate) : ({ state: ({ ...s, candidateAvailable: true } as MemberRequestJourney), out: ([] as RequestEffect[]) } as RequestUpdate));
 }
 
 /** Story: Keep control of my request for an introduction / Withdrawal clears a waiting review and remains closed after restart (spec/memberRequestJourney.md:51) */
@@ -132,7 +132,7 @@ export function textWithdrawal(s: MemberRequestJourney): RequestUpdate {
   //@ ensures (inv(s) && canTextWithdrawal(s)) ==> stepAWithdrawnRequestNeedsNewAsk(s, "textWithdrawal", \result.state)
   const local_0 = s.request === "PendingHumanReview" ? "probing" : "none";
   const local_1 = memberRequest_memberRequestWithdrawable(true, s.request !== "NoRequest", true, s.request === "WithdrawnRequest", local_0);
-  return { state: local_1 ? ({ ...s, request: "WithdrawnRequest" } as MemberRequestJourney) : s, out: s.request === "PendingHumanReview" ? ["ReviewCleared"] : ([] as RequestEffect[]) };
+  return { state: local_1 ? ({ ...s, request: "WithdrawnRequest" } as MemberRequestJourney) : s, out: s.request === "PendingHumanReview" ? (["ReviewCleared"] as RequestEffect[]) : ([] as RequestEffect[]) };
 }
 
 /** Do the rules allow this event in this state? */

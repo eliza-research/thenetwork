@@ -51,7 +51,7 @@ export function allowedByRole(roles: string[], requiredRoles: string[]): boolean
 /** Story: Work within my assigned staff role / App admission requires an applicable role and the requested capability (spec/staffPermissions.md:30) */
 //@ pure
 export function mayOpenCrossApp(globalRoles: string[]): boolean {
-  return allowedByRole(globalRoles, ["cross_app_safety"]);
+  return allowedByRole(globalRoles, (["cross_app_safety"] as string[]));
 }
 
 /** Story: Work within my assigned staff role / App admission requires an applicable role and the requested capability (spec/staffPermissions.md:30) */
@@ -116,13 +116,13 @@ export function authorizeRoute(check: RouteCheck, routeFacts: RouteFacts, roles:
 /** Story: See only the detail my role permits / The analyst view shows counts and shapes rather than people (spec/staffPermissions.md:88) */
 //@ pure
 export function fullStaffView(roles: string[]): boolean {
-  return allowedByRole(roles, ["reviewer", "safety", "engineer"]);
+  return allowedByRole(roles, (["reviewer", "safety", "engineer"] as string[]));
 }
 
 /** Story: See only the detail my role permits / The analyst view shows counts and shapes rather than people (spec/staffPermissions.md:88) */
 //@ pure
 export function staffMemberAccess(roles: string[], realMode: boolean): MemberAccess {
-  return allowedByRole(roles, ["safety"]) || (!realMode && roles.includes("engineer")) ? "AnyMember" : (roles.includes("reviewer") ? "OpenReviewMember" : "MemberRefused");
+  return allowedByRole(roles, (["safety"] as string[])) || (!realMode && roles.includes("engineer")) ? "AnyMember" : (roles.includes("reviewer") ? "OpenReviewMember" : "MemberRefused");
 }
 
 /** Do the rules allow this event in this state? */
