@@ -275,7 +275,9 @@ Migration `0042` creates the catalog and its restricted ingest role. Give the fe
 node --import tsx packages/network/service/import-public-events.ts
 ```
 
-The command fetches the city dataset once and publishes the normalized scan in one transaction. The daily source expires from matching after two days without a successful refresh. The repo's backend starts with the catalog empty. A recurring production refresh requires an operator to schedule this command with the ingest login. [Catalog rules](../../../spec/publicEventCatalog.md)
+The command fetches the city dataset once and publishes the normalized scan in one transaction. The daily source expires from matching after two days without a successful refresh. The backend starts with an empty catalog on a new database. [Catalog rules](../../../spec/publicEventCatalog.md)
+
+For a recurring refresh, use a separate Railway cron service with the repository root as its build context. Set `RAILWAY_DOCKERFILE_PATH=/deploy/backend/Dockerfile` and use the command above as its start command. Set `Cron Schedule` to `5 12 * * *` for a daily run at 12:05 UTC, and set the restart policy to `Never`. Apply migration `0042` before the first run and supply the ingest URL to this service. The importer closes its connection and exits after one scan. [Railway cron jobs](https://docs.railway.com/cron-jobs), [Dockerfile settings](https://docs.railway.com/builds/dockerfiles)
 
 ### Isolated signed-route receiver
 
