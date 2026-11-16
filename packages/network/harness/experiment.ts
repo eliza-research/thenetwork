@@ -100,6 +100,8 @@ export async function runArm(arm: "push_baseline" | "push_v2" | "consent", o: { 
   const consent = arm === "push_baseline" ? undefined : new ConsentNetwork({
     seed: o.seed, review: "auto", ...(arm === "push_v2" ? { probes: false, selective: false, growth: false, plans: false } : {}), ...o.network,
     ...(cap ? { onLedger: cap.onLedger, capital: cap.capital } : {}),
+    // The NYC world is one market.
+    engine: { cities: ["nyc"], ...o.network?.engine },
   });
   const simPlans = o.simPlans ?? (arm === "consent" && o.network?.plans !== false);
   const network: NetworkUnderTest = consent ?? new StubNetwork({ seed: o.seed, randomIntros: false });

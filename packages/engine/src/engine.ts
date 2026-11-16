@@ -18,7 +18,7 @@ import { blockingPairs, fairnessMetrics, planAsks, selectProposals, updateExposu
 import { EngineRng as Rng } from "@thenetwork/core";
 import { sha256, stableStringify } from "./hash.ts";
 import { scoreCandidate, type Scored } from "./scoring.ts";
-import type { Candidate, EngineAsk, EngineInput, EngineProposal, JudgeVerdict, MatchingRunLog } from "./types.ts";
+import type { Candidate, EngineAsk, EngineInput, EngineProposal, JudgeVerdict, MatchingRunLog, MemberStandingRow } from "./types.ts";
 import type { AppPack } from "./pack.ts";
 import { networkPack } from "./packs/network/index.ts";
 import { World } from "./world.ts";
@@ -45,9 +45,15 @@ export interface EngineDeps {
  * `asks` (v1.2, config.ask / config.romance.requireStatedPrefs): questions to send instead of, or
  * before, proposals. Empty when both flags are off.
  */
-export interface EngineResult { proposals: EngineProposal[]; asks: EngineAsk[]; runLog: MatchingRunLog }
+export interface EngineResult {
+  proposals: EngineProposal[];
+  asks: EngineAsk[];
+  runLog: MatchingRunLog;
+  /** Private standing inserts and updates. The caller persists them separately from matching logs. */
+  memberStanding?: readonly MemberStandingRow[];
+}
 
-function hashInput(input: EngineInput): string {
+function hashInput({ memberStanding: _privateStanding, ...input }: EngineInput): string {
   const strip = (x: unknown) => JSON.parse(JSON.stringify(x, (k, v) => (k === "embedding" ? undefined : v)));
   return sha256(stableStringify(strip(input))).slice(0, 16);
 }
@@ -151,6 +157,7 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
       continue;
     }
     if (!pack.geo.markets(cfg).includes(c.city!)) { f.rejectedBy.city_not_in_run = (f.rejectedBy.city_not_in_run ?? 0) + 1; continue; }
+    c.alternates = screening.alternates;
     passed.push(c);
   }
   f.passedHardFilters = passed.length;
@@ -186,7 +193,7 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   if (judgment.phase !== "Complete" && llm && J) {
     const byScore = (xs: Scored[]) => [...xs].sort((a, b) => (b.score - a.score) || (a.c.key < b.c.key ? -1 : 1));
     const pickTop = (xs: Scored[], k: number, gk: number) => [...xs.filter(s => s.c.participants.length <= 2).slice(0, k), ...xs.filter(s => s.c.participants.length > 2).slice(0, gk)];
-    let pool = byScore(scored.filter(s => !s.reason || s.reason === "below_threshold"));
+    let pool = byScore(scored.filter(s => (!s.reason || s.reason === "below_threshold") && (J.reviewCandidate?.(s.c) ?? true)));
     if (judgment.phase === "Screening" && screen) {
       const sc = cfg.judge.screen;
       const toScreen = pickTop(pool, sc.topK, sc.groupTopK).map(s => s.c);
@@ -205,13 +212,15 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
     if (judgment.phase === "Rubric") {
       const toJudge = pickTop(pool, cfg.judge.topK, cfg.judge.groupTopK).map(s => s.c);
       const verdicts = await judgeCandidates(w, toJudge, llm, deps.judgeCache ?? new JudgeCache(cfg.judge.ttlMs), runLog.judge, runLog.judge.verdicts);
-      // Pass 2 can only remove (engine-pipeline-7): a configuration that was below its bar before the
-      // judge stays ineligible even if the blended score now clears it.
+      // Pass 2 can only lower or remove (engine-pipeline-7): a verdict that would raise the score keeps
+      // the pre-judge score and components; a floor the verdict breaks still removes the configuration;
+      // a configuration below its bar before the judge stays ineligible.
       scored = scored.map(s => {
         const v = verdicts.get(s.c.key);
         if (!v) return s;
         const r = scoreCandidate(w, s.c, v);
-        return s.eligible || !r.eligible ? r : { ...r, eligible: false, reason: s.reason ?? "below_threshold" };
+        const judged = r.score > s.score ? { ...s, verdict: v, eligible: r.eligible, reason: r.reason } : r;
+        return s.eligible ? judged : { ...judged, eligible: false, reason: s.reason ?? "below_threshold" };
       });
       t = lap("judge", t);
       judgment = stepJudgmentRun(judgment, {
@@ -263,7 +272,8 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   const askPlan = planAsks(w, input);
   f.asks = askPlan.asks.length;
   f.askFirst = askPlan.exclude.size;
-  const selection = selectProposals(w, scored, rng.fork("select"), priorDebt, { exclude: askPlan.exclude, extraProactive: askPlan.extraProactive });
+  const selectionOptions = { exclude: askPlan.exclude, extraProactive: askPlan.extraProactive };
+  const selection = selectProposals(w, scored, rng.fork("select"), priorDebt, selectionOptions);
   // Minors policy, last line of defence: hard filters already drop these, so this never fires
   // in a correct build. If it ever does, the configuration is withheld (fail closed), not sent.
   const selected = selection.selected.filter(x => !involvesMinor(w, x.s.c));
@@ -277,6 +287,8 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   if (runLog.judge.calls + runLog.judge.cacheHits + runLog.judge.failures > 0) {
     runLog.judge.coverage = { selected: selected.length, judged: selected.filter(s => !!s.s.verdict).length };
   }
+  const search = w.match.tally();
+  if (search.members > 0) runLog.search = search;
   t = lap("select", t);
 
   // 6. Proposals with shareable-only explanations.
@@ -295,6 +307,8 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
       anchor: c.anchor ? { ...c.anchor } : undefined, via: c.via, safetyClass: c.safetyClass, threshold,
       channels: [...c.channels].sort(), judged: !!verdict, selectorRank: sel.rank, selectionProbability: round(sel.probability),
       acceptance: Object.fromEntries(c.participants.map(id => [id, round(w.get(id)?.acceptance ?? cfg.acceptance.prior)])),
+      ...(c.lane ? { lane: c.lane } : {}), ...(c.entities ? { entities: { ...c.entities } } : {}),
+      ...(c.cofounderIntents ? { cofounderIntents: { ...c.cofounderIntents } } : {}),
     };
   });
   for (const p of proposals) runLog.proposalsByGenerator[p.generator] = (runLog.proposalsByGenerator[p.generator] ?? 0) + 1;
@@ -303,10 +317,9 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   runLog.scored = scored.map(s => ({
     key: s.c.key, generator: s.c.generator, participants: s.c.participants, components: roundAll(s.components),
     score: round(s.score), eligible: s.eligible, reason: s.reason, judged: !!s.verdict,
-    ...(s.complementarity !== undefined ? { complementarity: round(s.complementarity) } : {}),
   }));
   runLog.fairness = fairnessMetrics(w, selected, scored);
-  runLog.blockingPairs = blockingPairs(selected, scored);
+  runLog.blockingPairs = blockingPairs(w, selected, scored, selectionOptions);
   runLog.exposureDebt = updateExposureDebt(w, priorDebt, scored, selected);
   const inProposal = new Set(proposals.flatMap(p => p.participants));
   const eligibleByIntent = new Map<string, boolean>();
@@ -324,7 +337,8 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   }
   lap("finalize", t);
   timings.total = Math.round((performance.now() - t0) * 100) / 100;
-  return { proposals, asks: askPlan.asks, runLog };
+  const memberStanding = input.memberStanding === undefined ? undefined : w.match.memberStanding;
+  return { proposals, asks: askPlan.asks, runLog, ...(memberStanding === undefined ? {} : { memberStanding }) };
 }
 
 const round = (x: number) => Math.round(x * 1e6) / 1e6;

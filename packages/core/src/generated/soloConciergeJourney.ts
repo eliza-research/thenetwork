@@ -2,26 +2,26 @@
 //@ backend dafny
 import { maxSoloEventOptions as soloConcierge_maxSoloEventOptions, soloEventPrecedes as soloConcierge_soloEventPrecedes, soloReplyReplayAllowed as soloConcierge_soloReplyReplayAllowed, soloEventCityAllowed as soloConcierge_soloEventCityAllowed, soloEventEligible as soloConcierge_soloEventEligible, lawTripAwayPreventsLocalSuggestion as soloConcierge_lawTripAwayPreventsLocalSuggestion, lawChangedSoloReplyCannotReplay as soloConcierge_lawChangedSoloReplyCannotReplay, soloEventAgeAllowed as soloConcierge_soloEventAgeAllowed, lawYoungSoloListingsNeedAllAges as soloConcierge_lawYoungSoloListingsNeedAllAges } from "./soloConcierge.ts";
 
-/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md:9) */
+/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
 export type Audience = "AdultMember" | "YoungerMember";
-/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md:9) */
+/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
 export type PublicListing = "NatureWalk" | "ArtTour" | "HistoryTour";
-/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md:9) */
+/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
 export type PublishedCatalog = "NoPublishedEvents" | "FullCatalog" | "ReducedCatalog";
-/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md:9) */
+/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
 export type ConciergeReplay = "NoReplay" | "ReplayedAnswer" | "RefusedStaleAnswer";
-/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md:9) */
+/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
 export type CollectedAnswer =
   | { tag: "NoAnswer" }
   | { tag: "Answered"; listings: PublicListing[] };
-/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md:9) */
+/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
 export type ConciergeEffect =
   | { tag: "Recommendations"; listings: PublicListing[] }
   | { tag: "NoFittingEvent" }
   | { tag: "ReplayObserved"; result: ConciergeReplay };
-/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md:9) */
+/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
 export interface SoloConciergeJourney { catalog: PublishedCatalog; adultAnswer: CollectedAnswer; youngerAnswer: CollectedAnswer; lastReplay: ConciergeReplay; requests: number; opportunities: number }
-/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md:9) */
+/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
 export interface ConciergeStep { state: SoloConciergeJourney; out: ConciergeEffect[] }
 
 /** One variant per transition in the spec. */
@@ -30,7 +30,7 @@ export type Event =
   | { type: "askForIdeas"; who: Audience }
   | { type: "retryIdeas"; who: Audience };
 
-/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md:9) */
+/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
 export const initial: SoloConciergeJourney = { catalog: "NoPublishedEvents", adultAnswer: ({ tag: "NoAnswer" } as CollectedAnswer), youngerAnswer: ({ tag: "NoAnswer" } as CollectedAnswer), lastReplay: "NoReplay", requests: 0, opportunities: 0 };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -39,61 +39,61 @@ export function inv(current: SoloConciergeJourney): boolean {
   return alwaysSoloDoesNotRecruit(current) && alwaysTheYoungerMemberOnlyReceivesAllAges(current);
 }
 
-/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md:9) */
+/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
 //@ pure
 export function eligibleListings(catalog: PublishedCatalog, who: Audience): PublicListing[] {
   return catalog === "NoPublishedEvents" ? ([] as PublicListing[]) : (who === "YoungerMember" ? (["NatureWalk"] as PublicListing[]) : (catalog === "FullCatalog" ? (["NatureWalk", "ArtTour", "HistoryTour"] as PublicListing[]) : (["NatureWalk", "HistoryTour"] as PublicListing[])));
 }
 
-/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md:9) */
+/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
 //@ pure
 export function answerFor(s: SoloConciergeJourney, who: Audience): CollectedAnswer {
   return who === "AdultMember" ? s.adultAnswer : s.youngerAnswer;
 }
 
-/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md:9) */
+/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
 //@ pure
 export function canPublishCatalog(s: SoloConciergeJourney, catalog: PublishedCatalog): boolean {
   return true;
 }
 
-/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md:9) */
+/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
 //@ pure
 export function canAskForIdeas(s: SoloConciergeJourney, who: Audience): boolean {
   return true;
 }
 
-/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md:9) */
+/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
 //@ pure
 export function alwaysSoloDoesNotRecruit(s: SoloConciergeJourney): boolean {
   return s.requests === 0 && s.opportunities === 0;
 }
 
-/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md:9) */
+/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
 //@ pure
 export function alwaysTheYoungerMemberOnlyReceivesAllAges(s: SoloConciergeJourney): boolean {
   return equal_soloConciergeJourney(s.youngerAnswer, ({ tag: "NoAnswer" } as CollectedAnswer)) || equal_soloConciergeJourney(s.youngerAnswer, ({ tag: "Answered", listings: ([] as PublicListing[]) } as CollectedAnswer)) || equal_soloConciergeJourney(s.youngerAnswer, ({ tag: "Answered", listings: (["NatureWalk"] as PublicListing[]) } as CollectedAnswer));
 }
 
-/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md:9) */
+/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
 //@ pure
 export function sometimesRecommendsThreeEventsToTheAdult(s: SoloConciergeJourney): boolean {
   return equal_soloConciergeJourney(s.adultAnswer, ({ tag: "Answered", listings: (["NatureWalk", "ArtTour", "HistoryTour"] as PublicListing[]) } as CollectedAnswer));
 }
 
-/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md:9) */
+/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
 //@ pure
 export function sometimesRecommendsAnAllAgesEvent(s: SoloConciergeJourney): boolean {
   return equal_soloConciergeJourney(s.youngerAnswer, ({ tag: "Answered", listings: (["NatureWalk"] as PublicListing[]) } as CollectedAnswer));
 }
 
-/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md:9) */
+/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
 //@ pure
 export function sometimesReportsNoFittingEvents(s: SoloConciergeJourney): boolean {
   return equal_soloConciergeJourney(s.adultAnswer, ({ tag: "Answered", listings: ([] as PublicListing[]) } as CollectedAnswer));
 }
 
-/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md:9) */
+/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
 //@ pure
 export function publishCatalog(s: SoloConciergeJourney, catalog: PublishedCatalog): ConciergeStep {
   //@ ensures (inv(s) && canPublishCatalog(s, catalog)) ==> alwaysSoloDoesNotRecruit(\result.state)
@@ -101,7 +101,7 @@ export function publishCatalog(s: SoloConciergeJourney, catalog: PublishedCatalo
   return { state: ({ ...s, catalog: catalog } as SoloConciergeJourney), out: ([] as ConciergeEffect[]) };
 }
 
-/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md:9) */
+/** Story: Get current public ideas without involving other members / Rank public events and collect the result for the requesting member (spec/soloConciergeJourney.md) */
 //@ pure
 export function askForIdeas(s: SoloConciergeJourney, who: Audience): ConciergeStep {
   //@ ensures (inv(s) && canAskForIdeas(s, who)) ==> alwaysSoloDoesNotRecruit(\result.state)
@@ -111,25 +111,25 @@ export function askForIdeas(s: SoloConciergeJourney, who: Audience): ConciergeSt
   return { state: who === "AdultMember" ? ({ ...s, adultAnswer: local_1 } as SoloConciergeJourney) : ({ ...s, youngerAnswer: local_1 } as SoloConciergeJourney), out: ([local_0.length === 0 ? ({ tag: "NoFittingEvent" } as ConciergeEffect) : ({ tag: "Recommendations", listings: local_0 } as ConciergeEffect)] as ConciergeEffect[]) };
 }
 
-/** Story: Get current public ideas without involving other members / An exact retry must still have the same answer (spec/soloConciergeJourney.md:59) */
+/** Story: Get current public ideas without involving other members / An exact retry must still have the same answer (spec/soloConciergeJourney.md) */
 //@ pure
 export function sometimesReplaysACurrentAnswer(s: SoloConciergeJourney): boolean {
   return s.lastReplay === "ReplayedAnswer";
 }
 
-/** Story: Get current public ideas without involving other members / An exact retry must still have the same answer (spec/soloConciergeJourney.md:59) */
+/** Story: Get current public ideas without involving other members / An exact retry must still have the same answer (spec/soloConciergeJourney.md) */
 //@ pure
 export function sometimesRefusesAStaleAnswer(s: SoloConciergeJourney): boolean {
   return s.lastReplay === "RefusedStaleAnswer";
 }
 
-/** Story: Get current public ideas without involving other members / An exact retry must still have the same answer (spec/soloConciergeJourney.md:59) */
+/** Story: Get current public ideas without involving other members / An exact retry must still have the same answer (spec/soloConciergeJourney.md) */
 //@ pure
 export function canRetryIdeas(s: SoloConciergeJourney, who: Audience): boolean {
   return !equal_soloConciergeJourney(answerFor(s, who), ({ tag: "NoAnswer" } as CollectedAnswer));
 }
 
-/** Story: Get current public ideas without involving other members / An exact retry must still have the same answer (spec/soloConciergeJourney.md:59) */
+/** Story: Get current public ideas without involving other members / An exact retry must still have the same answer (spec/soloConciergeJourney.md) */
 //@ pure
 export function retryIdeas(s: SoloConciergeJourney, who: Audience): ConciergeStep {
   //@ ensures (inv(s) && canRetryIdeas(s, who)) ==> alwaysSoloDoesNotRecruit(\result.state)

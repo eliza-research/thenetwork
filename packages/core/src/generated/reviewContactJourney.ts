@@ -1,15 +1,15 @@
 // GENERATED from spec/reviewContactJourney.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 import { type OpportunityPhase as opportunityLifecycle_OpportunityPhase, type OpportunityLifecycle as opportunityLifecycle_OpportunityLifecycle, groupCanContinue as opportunityLifecycle_groupCanContinue, canBook as opportunityLifecycle_canBook, book as opportunityLifecycle_book, lawAGroupNeedsAtLeastThree as opportunityLifecycle_lawAGroupNeedsAtLeastThree, closesForMinor as opportunityLifecycle_closesForMinor, canComplete as opportunityLifecycle_canComplete, complete as opportunityLifecycle_complete, canClose as opportunityLifecycle_canClose, close as opportunityLifecycle_close, stepTerminalOpportunityCannotReopen as opportunityLifecycle_stepTerminalOpportunityCannotReopen, sometimesCanBook as opportunityLifecycle_sometimesCanBook, sometimesCanComplete as opportunityLifecycle_sometimesCanComplete, sometimesCanCloseBeforeContact as opportunityLifecycle_sometimesCanCloseBeforeContact, initial as opportunityLifecycle_initial, canStartProbing as opportunityLifecycle_canStartProbing, startProbing as opportunityLifecycle_startProbing, alwaysContactStagesRequireApproval as opportunityLifecycle_alwaysContactStagesRequireApproval, lawMinorContactClosesAnUnbookedOpportunity as opportunityLifecycle_lawMinorContactClosesAnUnbookedOpportunity } from "./opportunityLifecycle.ts";
-import { reviewLate as reviewDeadline_reviewLate, lawReviewDeadlineIsExclusive as reviewDeadline_lawReviewDeadlineIsExclusive } from "./reviewDeadline.ts";
+import { reviewLate as reviewDeadline_reviewLate, reviewRevisionCurrent as reviewDeadline_reviewRevisionCurrent, lawReviewDeadlineIsExclusive as reviewDeadline_lawReviewDeadlineIsExclusive, lawSeenReviewRevisionIsCurrent as reviewDeadline_lawSeenReviewRevisionIsCurrent, lawRerolledReviewIsStale as reviewDeadline_lawRerolledReviewIsStale } from "./reviewDeadline.ts";
 
-/** Story: Ask about an introduction only after a person approves / A pending proposal sends no probe (spec/reviewContactJourney.md:9) */
+/** Story: Ask about an introduction only after a person approves / A pending proposal sends no probe (spec/reviewContactJourney.md) */
 export type ReviewReply = "DecisionAccepted" | "DeadlinePassed" | "NoLongerPending";
-/** Story: Ask about an introduction only after a person approves / A pending proposal sends no probe (spec/reviewContactJourney.md:9) */
+/** Story: Ask about an introduction only after a person approves / A pending proposal sends no probe (spec/reviewContactJourney.md) */
 export type ContactReview = "AwaitingReviewer" | "ReviewerApproved" | "ReviewerRejected" | "ReviewExpired";
-/** Story: Ask about an introduction only after a person approves / A pending proposal sends no probe (spec/reviewContactJourney.md:9) */
+/** Story: Ask about an introduction only after a person approves / A pending proposal sends no probe (spec/reviewContactJourney.md) */
 export interface ReviewContactJourney { review: ContactReview; probeCount: number }
-/** Story: Ask about an introduction only after a person approves / A pending proposal sends no probe (spec/reviewContactJourney.md:9) */
+/** Story: Ask about an introduction only after a person approves / A pending proposal sends no probe (spec/reviewContactJourney.md) */
 export interface ReviewContactStep { state: ReviewContactJourney; out: ReviewReply[] }
 
 /** One variant per transition in the spec. */
@@ -17,7 +17,7 @@ export type Event =
   | { type: "runServiceTick" }
   | { type: "decideProposal"; approve: boolean; atDeadline: boolean };
 
-/** Story: Ask about an introduction only after a person approves / A pending proposal sends no probe (spec/reviewContactJourney.md:9) */
+/** Story: Ask about an introduction only after a person approves / A pending proposal sends no probe (spec/reviewContactJourney.md) */
 export const initial: ReviewContactJourney = { review: "AwaitingReviewer", probeCount: 0 };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -26,13 +26,13 @@ export function inv(current: ReviewContactJourney): boolean {
   return alwaysContactRequiresReview(current);
 }
 
-/** Story: Ask about an introduction only after a person approves / A pending proposal sends no probe (spec/reviewContactJourney.md:9) */
+/** Story: Ask about an introduction only after a person approves / A pending proposal sends no probe (spec/reviewContactJourney.md) */
 //@ pure
 export function canRunServiceTick(s: ReviewContactJourney): boolean {
   return true;
 }
 
-/** Story: Ask about an introduction only after a person approves / A pending proposal sends no probe (spec/reviewContactJourney.md:9) */
+/** Story: Ask about an introduction only after a person approves / A pending proposal sends no probe (spec/reviewContactJourney.md) */
 //@ pure
 export function runServiceTick(s: ReviewContactJourney): ReviewContactStep {
   //@ ensures (inv(s) && canRunServiceTick(s)) ==> alwaysContactRequiresReview(\result.state)
@@ -40,25 +40,25 @@ export function runServiceTick(s: ReviewContactJourney): ReviewContactStep {
   return { state: s, out: ([] as ReviewReply[]) };
 }
 
-/** Story: Ask about an introduction only after a person approves / Timely approval permits one anonymous probe to the requester (spec/reviewContactJourney.md:28) */
+/** Story: Ask about an introduction only after a person approves / Timely approval permits one anonymous probe to the requester (spec/reviewContactJourney.md) */
 //@ pure
 export function alwaysContactRequiresReview(s: ReviewContactJourney): boolean {
   return s.probeCount === (s.review === "ReviewerApproved" ? 1 : 0);
 }
 
-/** Story: Ask about an introduction only after a person approves / Timely approval permits one anonymous probe to the requester (spec/reviewContactJourney.md:28) */
+/** Story: Ask about an introduction only after a person approves / Timely approval permits one anonymous probe to the requester (spec/reviewContactJourney.md) */
 //@ pure
 export function sometimesFirstProbeIsSent(s: ReviewContactJourney): boolean {
   return s.probeCount === 1;
 }
 
-/** Story: Ask about an introduction only after a person approves / Timely approval permits one anonymous probe to the requester (spec/reviewContactJourney.md:28) */
+/** Story: Ask about an introduction only after a person approves / Timely approval permits one anonymous probe to the requester (spec/reviewContactJourney.md) */
 //@ pure
 export function canDecideProposal(s: ReviewContactJourney, approve: boolean, atDeadline: boolean): boolean {
   return true;
 }
 
-/** Story: Ask about an introduction only after a person approves / Timely approval permits one anonymous probe to the requester (spec/reviewContactJourney.md:28) */
+/** Story: Ask about an introduction only after a person approves / Timely approval permits one anonymous probe to the requester (spec/reviewContactJourney.md) */
 //@ pure
 export function decideProposal(s: ReviewContactJourney, approve: boolean, atDeadline: boolean): ReviewContactStep {
   //@ ensures (inv(s) && canDecideProposal(s, approve, atDeadline)) ==> alwaysContactRequiresReview(\result.state)
@@ -66,19 +66,19 @@ export function decideProposal(s: ReviewContactJourney, approve: boolean, atDead
   return s.review !== "AwaitingReviewer" ? ({ state: s, out: (["NoLongerPending"] as ReviewReply[]) } as ReviewContactStep) : (reviewDeadline_reviewLate(atDeadline ? 1 : 0, 1) ? ({ state: ({ ...s, review: "ReviewExpired" } as ReviewContactJourney), out: (["DeadlinePassed"] as ReviewReply[]) } as ReviewContactStep) : (opportunityLifecycle_canStartProbing(opportunityLifecycle_initial, approve, true) ? ({ state: ({ review: "ReviewerApproved", probeCount: 1 } as ReviewContactJourney), out: (["DecisionAccepted"] as ReviewReply[]) } as ReviewContactStep) : ({ state: ({ ...s, review: "ReviewerRejected" } as ReviewContactJourney), out: (["DecisionAccepted"] as ReviewReply[]) } as ReviewContactStep)));
 }
 
-/** Story: Ask about an introduction only after a person approves / Rejected and expired items stay unsent (spec/reviewContactJourney.md:48) */
+/** Story: Ask about an introduction only after a person approves / Rejected and expired items stay unsent (spec/reviewContactJourney.md) */
 //@ pure
 export function stepClosedReviewStaysClosed(before: ReviewContactJourney, after: ReviewContactJourney): boolean {
   return !(before.review !== "AwaitingReviewer") || equal_reviewContactJourney(after, before);
 }
 
-/** Story: Ask about an introduction only after a person approves / Rejected and expired items stay unsent (spec/reviewContactJourney.md:48) */
+/** Story: Ask about an introduction only after a person approves / Rejected and expired items stay unsent (spec/reviewContactJourney.md) */
 //@ pure
 export function sometimesReviewerRejects(s: ReviewContactJourney): boolean {
   return s.review === "ReviewerRejected";
 }
 
-/** Story: Ask about an introduction only after a person approves / Rejected and expired items stay unsent (spec/reviewContactJourney.md:48) */
+/** Story: Ask about an introduction only after a person approves / Rejected and expired items stay unsent (spec/reviewContactJourney.md) */
 //@ pure
 export function sometimesReviewExpires(s: ReviewContactJourney): boolean {
   return s.review === "ReviewExpired";

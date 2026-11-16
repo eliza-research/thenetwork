@@ -3,46 +3,46 @@
 
 
 
-/** Story: Respect a member's participation limits / The limit includes use already reserved for the decision (spec/matchingBudgets.md:9) */
+/** Story: Respect a member's participation limits / The limit includes use already reserved for the decision (spec/matchingBudgets.md) */
 //@ pure
 export function budgetReached(used: number, extra: number, limit: number): boolean {
   return exact_matchingBudgets(used + extra) >= limit;
 }
 
-/** Story: Respect a member's participation limits / The limit includes use already reserved for the decision (spec/matchingBudgets.md:9) */
+/** Story: Respect a member's participation limits / The limit includes use already reserved for the decision (spec/matchingBudgets.md) */
 //@ pure
 export function lawBudgetHeld(used: number, extra: number, limit: number): boolean {
   //@ ensures \result === true
   return !(!budgetReached(used, extra, limit)) || exact_matchingBudgets(used + extra) < limit;
 }
 
-/** Story: Wait after a decline or negative feedback / An applicable event blocks proposals until its cooldown ends (spec/matchingBudgets.md:24) */
+/** Story: Wait after a decline or negative feedback / An applicable event blocks proposals until its cooldown ends (spec/matchingBudgets.md) */
 //@ pure
 export function inCooldown(now: number, has: boolean, at: number, window: number): boolean {
   return has && exact_matchingBudgets(now - at) < window;
 }
 
-/** Story: Wait after a decline or negative feedback / An applicable event blocks proposals until its cooldown ends (spec/matchingBudgets.md:24) */
+/** Story: Wait after a decline or negative feedback / An applicable event blocks proposals until its cooldown ends (spec/matchingBudgets.md) */
 //@ pure
 export function lawCategoryCooldownHeld(now: number, has: boolean, at: number, window: number): boolean {
   //@ ensures \result === true
   return !(has && exact_matchingBudgets(now - at) < window) || inCooldown(now, has, at, window);
 }
 
-/** Story: Wait after a decline or negative feedback / An applicable event blocks proposals until its cooldown ends (spec/matchingBudgets.md:24) */
+/** Story: Wait after a decline or negative feedback / An applicable event blocks proposals until its cooldown ends (spec/matchingBudgets.md) */
 //@ pure
 export function lawCooldownEndsAtWindow(now: number, at: number, window: number): boolean {
   //@ ensures \result === true
   return !(exact_matchingBudgets(now - at) >= window) || !inCooldown(now, true, at, window);
 }
 
-/** Story: Wait after a decline or negative feedback / A recent decline, expiry, or cancellation blocks another pair proposal (spec/matchingBudgets.md:39) */
+/** Story: Wait after a decline or negative feedback / A recent decline, expiry, or cancellation blocks another pair proposal (spec/matchingBudgets.md) */
 //@ pure
 export function pairInteractionCooling(disposition: string, now: number, at: number, window: number): boolean {
   return (disposition === "declined" || disposition === "expired" || disposition === "cancelled") && inCooldown(now, true, at, window);
 }
 
-/** Story: Wait after a decline or negative feedback / A recent decline, expiry, or cancellation blocks another pair proposal (spec/matchingBudgets.md:39) */
+/** Story: Wait after a decline or negative feedback / A recent decline, expiry, or cancellation blocks another pair proposal (spec/matchingBudgets.md) */
 //@ pure
 export function lawPairCooldownHeld(now: number, at: number, window: number): boolean {
   //@ ensures \result === true

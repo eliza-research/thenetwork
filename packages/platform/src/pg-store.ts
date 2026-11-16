@@ -168,8 +168,16 @@ export class PgPeopleStore implements PeopleStore {
   }
 
   async ban(b: Ban) {
-    await this.sql`insert into platform.bans (id, scope, person_id, phone_hash, reason, report_id, banned_by, at)
-      values (${b.id}, ${b.scope}, ${b.personId}, ${b.phoneHash}, ${b.reason}, ${b.reportId}, ${b.bannedBy}, ${ts(b.at)}) on conflict (id) do nothing`;
+    // spec/safetyCase.md, "A ban allows only carrier commands and app leave"
+    await this.sql.begin(async tx => {
+      // The same key as Accounts.share's withLock: a share in flight finishes first or sees the ban.
+      if (b.personId) await tx`select pg_advisory_xact_lock(hashtext(${`platform:profile-share:${b.personId}`}))`;
+      await tx`insert into platform.bans (id, scope, person_id, phone_hash, reason, report_id, banned_by, at)
+        values (${b.id}, ${b.scope}, ${b.personId}, ${b.phoneHash}, ${b.reason}, ${b.reportId}, ${b.bannedBy}, ${ts(b.at)}) on conflict (id) do nothing`;
+      if (b.personId) await tx`update platform.share_grants set revoked_at = ${ts(b.at)} where person_id = ${b.personId} and revoked_at is null`;
+      await tx`delete from platform.pending_texts where phone_hash = ${b.phoneHash}
+        or phone_hash in (select phone_hash from platform.people where id = ${b.personId}::uuid and phone_hash is not null)`;
+    });
   }
   async isBanned(phoneHash: string, personId?: string | null) {
     const [r] = await this.sql`select 1 from platform.bans where phone_hash = ${phoneHash} or (scope = 'person' and ${personId ?? null}::uuid is not null and person_id = ${personId ?? null}::uuid) limit 1`;

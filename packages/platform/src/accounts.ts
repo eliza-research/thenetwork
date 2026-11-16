@@ -26,12 +26,13 @@ import {
 import {
   initial as phoneChangeInitial, phoneChangesPerDay, phoneChangeLifetimeMs, step as stepPhoneChange, type PhoneChangeFailure,
 } from "../../core/src/generated/phoneChange.ts";
-import { step as stepEnrollment, typedJoinEntry, type Enrollment } from "../../core/src/generated/siteEnrollment.ts";
+import { profileJoinAge, step as stepEnrollment, typedJoinEntry, type Enrollment } from "../../core/src/generated/siteEnrollment.ts";
 import { validAge } from "../../core/src/policy.ts";
 import { canJoinApp, joinAgeCheck, lowestAge } from "./age.ts";
 import type { AppId, AppInfo } from "./apps.ts";
 import { type ConsentEvent, resolveConsent, type StopScope, stopScope } from "./consent.ts";
 import { InvitationUnavailable, type ReferralJoin } from "./invite-links.ts";
+import type { SeedInvitationReferral } from "./seed-invitations.ts";
 import { keyedHash } from "./phone.ts";
 import type { Membership, PeopleStore, Person, PhoneIdentity, PhoneMethod } from "./store.ts";
 
@@ -125,14 +126,27 @@ export function parseJoin(body: unknown): JoinInput | undefined {
   return out;
 }
 
-export interface JoinHookContext { app: AppInfo; person: Person; membership: Membership; e164: string; age: number; input: JoinInput; referral?: ReferralJoin }
+/**
+ * The approved profile as one text for the Network's readers: the about text, then the home area and
+ * ZIP the request names, so onboarding does not ask for them again. Undefined without an about text:
+ * the home area and ZIP alone stay on the member record (createMember) and never answer a question.
+ */
+// spec/siteEnrollment.md, "The approved profile reaches onboarding and its stated age counts"
+export function joinProfileText(input: Pick<JoinInput, "about" | "neighborhood" | "zip">): string | undefined {
+  if (!input.about) return undefined;
+  return [input.about, input.neighborhood && `I live in ${input.neighborhood}.`, input.zip && `My zip is ${input.zip}.`].filter(Boolean).join("\n");
+}
+
+export type EnrollmentReferral = ReferralJoin | SeedInvitationReferral;
+
+export interface JoinHookContext { app: AppInfo; person: Person; membership: Membership; e164: string; age: number; input: JoinInput; referral?: EnrollmentReferral }
 export interface MemberHookContext { app: AppInfo; personId: string; memberId: string; e164: string }
 
 export interface AccountHooks {
-  /** Resolve an explicit member invitation for this app after the account and consent gates. */
-  findInvitation?(app: AppId, token: string, at: number): Promise<ReferralJoin | undefined>;
+  /** Resolve an explicit invitation for this app after the account and consent gates. */
+  findInvitation?(app: AppId, token: string, at: number, verifiedPhone: string): Promise<EnrollmentReferral | undefined>;
   /** Commit the referred membership, opt-in, session attachment, Network member and invitation together. */
-  commitReferredJoin?(ctx: JoinHookContext & { referral: ReferralJoin }): Promise<void>;
+  commitReferredJoin?(ctx: JoinHookContext & { referral: EnrollmentReferral }): Promise<void>;
   /** Create the network member (the service mounts this). A throw undoes the join. */
   onJoin?(ctx: JoinHookContext): Promise<void> | void;
   /** STOP from the web. memberId is this app's member, when there is one (a global stop runs without one). */
@@ -144,6 +158,8 @@ export interface AccountHooks {
   /** The person's lowest age went down (a stated age on any app): every app's member must follow (a minor is never matched anywhere). */
   /** Reconcile app state with the stored minimum after each age statement; must be idempotent. */
   onAgeLowered?(ctx: { personId: string; age: number }): Promise<void> | void;
+  /** The ages a profile text states about the person (the Network's own reader). The join's age check counts them. */
+  profileAges?(text: string): number[];
 }
 
 export interface Who { e164: string; personId: string | null }
@@ -318,6 +334,14 @@ export class Accounts {
     return { ok: true, e164: newE164, personId: person.id };
   }
 
+  /** The age a join states: the typed age, or a lower one that the profile text states about the person. */
+  private statedJoinAge(input: JoinInput): number {
+    const text = joinProfileText(input);
+    const ages = text ? (this.hooks.profileAges?.(text) ?? []).filter(validAge) : [];
+    // spec/siteEnrollment.md, "The approved profile reaches onboarding and its stated age counts"
+    return ages.reduce((age, stated) => profileJoinAge(age, stated, true), input.age);
+  }
+
   /** The lowest age known for this phone: the person's (any app) and the phone's age floor. */
   async lowestAge(e164: string, person?: Person): Promise<number | undefined> {
     return lowestAge(person?.lowestAge ?? undefined, await this.store.ageFloor(this.phoneHash(e164)));
@@ -405,7 +429,7 @@ export class Accounts {
     const existingMember = !!existing && existing.state !== "removed" && existing.state !== "invited";
     const attemptedReferral = !existingMember && inviteToken !== undefined;
     const referral = attemptedReferral && app.joinMode !== "waitlist" && this.hooks.commitReferredJoin
-      ? await this.hooks.findInvitation?.(app.id, inviteToken, at) : undefined;
+      ? await this.hooks.findInvitation?.(app.id, inviteToken, at, who.e164) : undefined;
     const membershipCheck = stepEnrollment(eligibility, {
       type: "checkMembership",
       membershipFacts: {
@@ -416,20 +440,21 @@ export class Accounts {
       },
     });
     if (membershipCheck.phase === "NeedsInvite") return { ok: false, error: "invite_only" };
+    const statedAge = this.statedJoinAge(input);
     // A repeated join propagates a lower age and keeps the membership and consent.
-    if (membershipCheck.rejoin) await this.recordAge(who.e164, person, input.age);
-    const age = joinAgeCheck(input.age, await this.lowestAge(who.e164, person), app);
+    if (membershipCheck.rejoin) await this.recordAge(who.e164, person, statedAge);
+    const age = joinAgeCheck(statedAge, await this.lowestAge(who.e164, person), app);
     const ageCheck = stepEnrollment(membershipCheck, { type: "checkJoinAge", ageEligible: age.ok });
     if (ageCheck.phase === "BelowJoinAge") {
       // Nothing is stored for this app: only the age, on the phone's age floor (and the person, if any).
-      if (!membershipCheck.rejoin) await this.recordAge(who.e164, person, input.age);
+      if (!membershipCheck.rejoin) await this.recordAge(who.e164, person, statedAge);
       return { ok: false, error: "under_age" };
     }
     if (ageCheck.phase === "ReturnExisting" && existing) return { ok: true, membership: existing };
     if (ageCheck.phase === "InvalidInvitation") return { ok: false, error: "invalid_invitation" };
     if (ageCheck.phase !== "AwaitingPersistence") return { ok: false, error: "invalid" };
-    if (!person) person = await this.createPerson(who.e164, "otp_sms", age.effective ?? input.age);
-    await this.recordAge(who.e164, person, input.age);
+    if (!person) person = await this.createPerson(who.e164, "otp_sms", age.effective ?? statedAge);
+    await this.recordAge(who.e164, person, statedAge);
     const membership: Membership = {
       // An invited membership keeps its member id (the invite may already name it).
       app: app.id, personId: person.id, memberId: membershipCheck.invited && existing ? existing.memberId : `${app.id}_${randomUUID()}`,
@@ -449,7 +474,7 @@ export class Accounts {
     let hook: { ok: true } | { ok: false; error: unknown };
     try {
       // The network member gets the person's lowest age, not the one typed now (a minor anywhere is a minor here).
-      const ctx = { app, person, membership, e164: who.e164, age: age.effective ?? input.age, input };
+      const ctx = { app, person, membership, e164: who.e164, age: age.effective ?? statedAge, input };
       if (referredJoin) await this.hooks.commitReferredJoin!({ ...ctx, referral: referredJoin });
       else await this.hooks.onJoin?.(ctx);
       hook = { ok: true };
@@ -569,10 +594,14 @@ export class Accounts {
     if (fromApp === app.id || !fields.length || fields.some(f => !(SHAREABLE_FIELDS as readonly string[]).includes(f))) return false;
     const person = await this.personFor(who.e164);
     if (!person) return false;
-    const [to, from] = await Promise.all([this.store.getMembership(person.id, app.id), this.store.getMembership(person.id, fromApp)]);
-    const live = (m?: Membership) => !!m && m.state !== "removed" && m.state !== "invited";
-    if (!live(to) || !live(from)) return false;
-    await this.store.putShareGrant({ personId: person.id, fromApp, toApp: app.id, fields: [...new Set(fields)], grantedAt: this.now(), revokedAt: null });
-    return true;
+    // spec/safetyCase.md, "A ban allows only carrier commands and app leave"
+    return this.store.withLock(`profile-share:${person.id}`, async () => {
+      if (await this.banned(who.e164, person)) return false;
+      const [to, from] = await Promise.all([this.store.getMembership(person.id, app.id), this.store.getMembership(person.id, fromApp)]);
+      const live = (m?: Membership) => !!m && m.state !== "removed" && m.state !== "invited" && m.state !== "restricted";
+      if (!live(to) || !live(from)) return false;
+      await this.store.putShareGrant({ personId: person.id, fromApp, toApp: app.id, fields: [...new Set(fields)], grantedAt: this.now(), revokedAt: null });
+      return true;
+    });
   }
 }

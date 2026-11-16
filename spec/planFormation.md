@@ -37,7 +37,7 @@ pure def searchForPlanPartner(hasGroup: bool, partnerEnabled: bool, activityMini
 
 ### Alternates must fit the entire offered group
 
-An alternate must be an eligible adult and compatible with every invitee and previously chosen alternate. A partner plan may list one alternate. A group plan uses its configured alternate limit.
+An alternate must be an eligible adult and compatible with every invitee and previously chosen alternate. A partner plan may list one alternate. A group plan uses its configured alternate limit. For a new or repeated Friends table, each of those pairs must have a value in the Friend lane. Check the ranked candidates before applying the alternate limit. If transit removes an invitee, only a compatible alternate already selected for that table can fill the seat.
 
 ```quint
 pure def isPlanAlternate(adult: bool, compatibleWithEveryone: bool): bool = adult and compatibleWithEveryone

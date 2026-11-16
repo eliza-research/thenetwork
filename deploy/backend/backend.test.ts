@@ -209,15 +209,19 @@ describe("logs", () => {
 function fakeService() {
   const calls: { kind: string; host: string | null; path: string; ip: string | null }[] = [];
   let release: () => void = () => {};
-  const svc: ServiceLike & { closed: boolean; ticks: number; slowTick: boolean } = {
-    closed: false, ticks: 0, slowTick: false,
+  const svc: ServiceLike & { closed: boolean; ticks: number; slowTick: boolean; rounds: string[] } = {
+    closed: false, ticks: 0, slowTick: false, rounds: [],
     async fetch(req) { calls.push({ kind: "staff", host: req.headers.get("host"), path: new URL(req.url).pathname, ip: null }); return Response.json({ ok: true, staff: true }); },
     async publicFetch(req) { calls.push({ kind: "public", host: req.headers.get("host"), path: new URL(req.url).pathname, ip: req.headers.get(CLIENT_IP) }); return Response.json({ ok: true }); },
     runtimes: new Map([["ntwrk:nyc", { id: "ntwrk:nyc", tick: async () => {
       svc.ticks++;
+      svc.rounds.push("network:ntwrk:nyc");
       if (svc.slowTick) await new Promise<void>(r => { release = r; });
       return true;
     } }]]),
+    async inboxTick() { svc.rounds.push("inbox"); },
+    async purge() { svc.rounds.push("retention"); },
+    async notifyTick() { svc.rounds.push("notify"); },
     async close() { svc.closed = true; },
   };
   return { svc, calls, release: () => release() };
@@ -344,6 +348,31 @@ describe("router to backend (deploy/router.ts, the real Worker code)", () => {
       expect(res.status).toBe(200);
       expect(calls.at(-1)).toEqual({ kind: "public", host, path: "/api/app", ip: "203.0.113.20" });
     }
+  });
+});
+
+describe("deployed tick round", () => {
+  // spec/platformRetention.md, "Platform rows and inbox payloads have separate cutoffs"
+  // spec/backendLifecycle.md, "Reserve each tick worker before starting its work"
+  test("redrives inbound work, ticks networks, purges expired data, and then runs notifications", async () => {
+    const { svc } = fakeService();
+    const b = createBackend({ svc, config: cfg(), log: silent, ping: async () => true });
+    const round = ["inbox", "network:ntwrk:nyc", "retention", "notify"];
+    await b.tickAll();
+    await b.tickAll();
+    expect(svc.rounds).toEqual([...round, ...round]);
+  });
+
+  test("a redrive or retention error does not stop the remaining workers", async () => {
+    const { svc } = fakeService();
+    const lines: string[] = [];
+    svc.inboxTick = async () => { svc.rounds.push("inbox"); throw new Error("inbox unavailable"); };
+    svc.purge = async () => { svc.rounds.push("retention"); throw new Error("retention unavailable"); };
+    const b = createBackend({ svc, config: cfg(), log: jsonLogger(s => lines.push(s)), ping: async () => true });
+    await b.tickAll();
+    expect(svc.rounds).toEqual(["inbox", "network:ntwrk:nyc", "retention", "notify"]);
+    expect(lines.join("\n")).toMatch(/"msg":"inbox tick failed"/);
+    expect(lines.join("\n")).toMatch(/"msg":"retention tick failed"/);
   });
 });
 

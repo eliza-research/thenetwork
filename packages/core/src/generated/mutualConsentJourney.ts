@@ -3,17 +3,17 @@
 import { type ProbeTiming as probeDispatch_ProbeTiming, type ProbeAvailability as probeDispatch_ProbeAvailability, type ReplacementRoute as probeDispatch_ReplacementRoute, type ProbePhase as probeDispatch_ProbePhase, type ParticipantProbe as probeDispatch_ParticipantProbe, questionHoldMs as probeDispatch_questionHoldMs, probeResponseMs as probeDispatch_probeResponseMs, probeIsInvite as probeDispatch_probeIsInvite, probeQuestionHoldUntil as probeDispatch_probeQuestionHoldUntil, needsOtherTimes as probeDispatch_needsOtherTimes, probeExpiryDeadline as probeDispatch_probeExpiryDeadline, probeExpired as probeDispatch_probeExpired, mayTryAlternate as probeDispatch_mayTryAlternate, alternateAllowed as probeDispatch_alternateAllowed, openTurn as probeDispatch_openTurn, needsProbeSend as probeDispatch_needsProbeSend, probeTiming as probeDispatch_probeTiming, probeAvailability as probeDispatch_probeAvailability, canMarkUnavailable as probeDispatch_canMarkUnavailable, markUnavailable as probeDispatch_markUnavailable, canRecordReply as probeDispatch_canRecordReply, recordReply as probeDispatch_recordReply, shouldLookForOtherTimes as probeDispatch_shouldLookForOtherTimes, initial as probeDispatch_initial, canOfferOtherTimes as probeDispatch_canOfferOtherTimes, offerOtherTimes as probeDispatch_offerOtherTimes, canExpireProbe as probeDispatch_canExpireProbe, expireProbe as probeDispatch_expireProbe, stepUnavailableNeverReopens as probeDispatch_stepUnavailableNeverReopens, sometimesAgreed as probeDispatch_sometimesAgreed, sometimesSettledNo as probeDispatch_sometimesSettledNo, replacementRoute as probeDispatch_replacementRoute, probePending as probeDispatch_probePending, usePriorIntent as probeDispatch_usePriorIntent, turnReached as probeDispatch_turnReached, lawProbeWaitsForOpenQuestion as probeDispatch_lawProbeWaitsForOpenQuestion, lawRequiredParticipantCannotBeReplaced as probeDispatch_lawRequiredParticipantCannotBeReplaced, mayUsePriorIntent as probeDispatch_mayUsePriorIntent, canOpenTurn as probeDispatch_canOpenTurn, lawLaterTurnRequiresFirst as probeDispatch_lawLaterTurnRequiresFirst, canUsePriorIntent as probeDispatch_canUsePriorIntent } from "./probeDispatch.ts";
 import { type OpportunityPhase as opportunityLifecycle_OpportunityPhase, type OpportunityLifecycle as opportunityLifecycle_OpportunityLifecycle, groupCanContinue as opportunityLifecycle_groupCanContinue, canBook as opportunityLifecycle_canBook, book as opportunityLifecycle_book, lawAGroupNeedsAtLeastThree as opportunityLifecycle_lawAGroupNeedsAtLeastThree, closesForMinor as opportunityLifecycle_closesForMinor, canComplete as opportunityLifecycle_canComplete, complete as opportunityLifecycle_complete, canClose as opportunityLifecycle_canClose, close as opportunityLifecycle_close, stepTerminalOpportunityCannotReopen as opportunityLifecycle_stepTerminalOpportunityCannotReopen, sometimesCanBook as opportunityLifecycle_sometimesCanBook, sometimesCanComplete as opportunityLifecycle_sometimesCanComplete, sometimesCanCloseBeforeContact as opportunityLifecycle_sometimesCanCloseBeforeContact, initial as opportunityLifecycle_initial, canStartProbing as opportunityLifecycle_canStartProbing, startProbing as opportunityLifecycle_startProbing, alwaysContactStagesRequireApproval as opportunityLifecycle_alwaysContactStagesRequireApproval, lawMinorContactClosesAnUnbookedOpportunity as opportunityLifecycle_lawMinorContactClosesAnUnbookedOpportunity } from "./opportunityLifecycle.ts";
 
-/** Story: Book the introduction only after both members agree / A reply can advance only the probe addressed to that participant (spec/mutualConsentJourney.md:9) */
+/** Story: Book the introduction only after both members agree / A reply can advance only the probe addressed to that participant (spec/mutualConsentJourney.md) */
 export type ConsentAnswer = "ExplicitYes" | "QualifiedAnswer";
-/** Story: Book the introduction only after both members agree / A reply can advance only the probe addressed to that participant (spec/mutualConsentJourney.md:9) */
+/** Story: Book the introduction only after both members agree / A reply can advance only the probe addressed to that participant (spec/mutualConsentJourney.md) */
 export type ConsentPhase = "WaitingForRequester" | "WaitingForPartnerWindow" | "WaitingForPartner" | "MeetingScheduled";
-/** Story: Book the introduction only after both members agree / A reply can advance only the probe addressed to that participant (spec/mutualConsentJourney.md:9) */
+/** Story: Book the introduction only after both members agree / A reply can advance only the probe addressed to that participant (spec/mutualConsentJourney.md) */
 export type ConsentSide = "Requester" | "Partner";
-/** Story: Book the introduction only after both members agree / A reply can advance only the probe addressed to that participant (spec/mutualConsentJourney.md:9) */
+/** Story: Book the introduction only after both members agree / A reply can advance only the probe addressed to that participant (spec/mutualConsentJourney.md) */
 export type ReceiptResult = "BookingReceiptStored" | "BookingReceiptReplayed";
-/** Story: Book the introduction only after both members agree / A reply can advance only the probe addressed to that participant (spec/mutualConsentJourney.md:9) */
+/** Story: Book the introduction only after both members agree / A reply can advance only the probe addressed to that participant (spec/mutualConsentJourney.md) */
 export interface MutualConsentJourney { phase: ConsentPhase; partnerReplies: number; lateWindow: boolean; partnerProbeCount: number; bookingCount: number; partnerBookingSent: boolean }
-/** Story: Book the introduction only after both members agree / A reply can advance only the probe addressed to that participant (spec/mutualConsentJourney.md:9) */
+/** Story: Book the introduction only after both members agree / A reply can advance only the probe addressed to that participant (spec/mutualConsentJourney.md) */
 export interface ConsentStep { state: MutualConsentJourney; out: ReceiptResult[] }
 
 /** One variant per transition in the spec. */
@@ -22,7 +22,7 @@ export type Event =
   | { type: "reachLateSendWindow" }
   | { type: "recordBookingReceipt" };
 
-/** Story: Book the introduction only after both members agree / A reply can advance only the probe addressed to that participant (spec/mutualConsentJourney.md:9) */
+/** Story: Book the introduction only after both members agree / A reply can advance only the probe addressed to that participant (spec/mutualConsentJourney.md) */
 export const initial: MutualConsentJourney = { phase: "WaitingForRequester", partnerReplies: 3, lateWindow: false, partnerProbeCount: 0, bookingCount: 0, partnerBookingSent: false };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -31,37 +31,37 @@ export function inv(current: MutualConsentJourney): boolean {
   return alwaysPartnerProbeFollowsRequesterAgreement(current) && alwaysBookingFollowsBothAgreements(current) && alwaysReplySamplesAreBounded(current);
 }
 
-/** Story: Book the introduction only after both members agree / A reply can advance only the probe addressed to that participant (spec/mutualConsentJourney.md:9) */
+/** Story: Book the introduction only after both members agree / A reply can advance only the probe addressed to that participant (spec/mutualConsentJourney.md) */
 //@ pure
 export function alwaysPartnerProbeFollowsRequesterAgreement(s: MutualConsentJourney): boolean {
   return s.partnerProbeCount === (s.phase === "WaitingForRequester" || s.phase === "WaitingForPartnerWindow" ? 0 : 1);
 }
 
-/** Story: Book the introduction only after both members agree / A reply can advance only the probe addressed to that participant (spec/mutualConsentJourney.md:9) */
+/** Story: Book the introduction only after both members agree / A reply can advance only the probe addressed to that participant (spec/mutualConsentJourney.md) */
 //@ pure
 export function alwaysBookingFollowsBothAgreements(s: MutualConsentJourney): boolean {
   return s.bookingCount === (s.phase === "MeetingScheduled" ? 2 : 0);
 }
 
-/** Story: Book the introduction only after both members agree / A reply can advance only the probe addressed to that participant (spec/mutualConsentJourney.md:9) */
+/** Story: Book the introduction only after both members agree / A reply can advance only the probe addressed to that participant (spec/mutualConsentJourney.md) */
 //@ pure
 export function sometimesPartnerGetsAProbe(s: MutualConsentJourney): boolean {
   return s.phase === "WaitingForPartner";
 }
 
-/** Story: Book the introduction only after both members agree / A reply can advance only the probe addressed to that participant (spec/mutualConsentJourney.md:9) */
+/** Story: Book the introduction only after both members agree / A reply can advance only the probe addressed to that participant (spec/mutualConsentJourney.md) */
 //@ pure
 export function sometimesBothAgreeToBook(s: MutualConsentJourney): boolean {
   return s.phase === "MeetingScheduled";
 }
 
-/** Story: Book the introduction only after both members agree / A reply can advance only the probe addressed to that participant (spec/mutualConsentJourney.md:9) */
+/** Story: Book the introduction only after both members agree / A reply can advance only the probe addressed to that participant (spec/mutualConsentJourney.md) */
 //@ pure
 export function canReplyToProbe(s: MutualConsentJourney, byMember: ConsentSide, answer: ConsentAnswer): boolean {
   return true;
 }
 
-/** Story: Book the introduction only after both members agree / A reply can advance only the probe addressed to that participant (spec/mutualConsentJourney.md:9) */
+/** Story: Book the introduction only after both members agree / A reply can advance only the probe addressed to that participant (spec/mutualConsentJourney.md) */
 //@ pure
 export function replyToProbe(s: MutualConsentJourney, byMember: ConsentSide, answer: ConsentAnswer): ConsentStep {
   //@ ensures (inv(s) && canReplyToProbe(s, byMember, answer)) ==> alwaysPartnerProbeFollowsRequesterAgreement(\result.state)
@@ -76,25 +76,25 @@ export function replyToProbe(s: MutualConsentJourney, byMember: ConsentSide, ans
   return { state: local_4, out: ([] as ReceiptResult[]) };
 }
 
-/** Story: Book the introduction only after both members agree / The partner probe waits for their send window (spec/mutualConsentJourney.md:50) */
+/** Story: Book the introduction only after both members agree / The partner probe waits for their send window (spec/mutualConsentJourney.md) */
 //@ pure
 export function canReachLateSendWindow(s: MutualConsentJourney): boolean {
   return true;
 }
 
-/** Story: Book the introduction only after both members agree / The partner probe waits for their send window (spec/mutualConsentJourney.md:50) */
+/** Story: Book the introduction only after both members agree / The partner probe waits for their send window (spec/mutualConsentJourney.md) */
 //@ pure
 export function alwaysReplySamplesAreBounded(s: MutualConsentJourney): boolean {
   return s.partnerReplies >= 3 && s.partnerReplies <= 5;
 }
 
-/** Story: Book the introduction only after both members agree / The partner probe waits for their send window (spec/mutualConsentJourney.md:50) */
+/** Story: Book the introduction only after both members agree / The partner probe waits for their send window (spec/mutualConsentJourney.md) */
 //@ pure
 export function sometimesPartnerWaitsForLearnedWindow(s: MutualConsentJourney): boolean {
   return s.phase === "WaitingForPartnerWindow";
 }
 
-/** Story: Book the introduction only after both members agree / The partner probe waits for their send window (spec/mutualConsentJourney.md:50) */
+/** Story: Book the introduction only after both members agree / The partner probe waits for their send window (spec/mutualConsentJourney.md) */
 //@ pure
 export function reachLateSendWindow(s: MutualConsentJourney): ConsentStep {
   //@ ensures (inv(s) && canReachLateSendWindow(s)) ==> alwaysPartnerProbeFollowsRequesterAgreement(\result.state)
@@ -104,25 +104,25 @@ export function reachLateSendWindow(s: MutualConsentJourney): ConsentStep {
   return { state: s.phase === "WaitingForPartnerWindow" ? ({ ...s, lateWindow: true, phase: "WaitingForPartner", partnerProbeCount: 1 } as MutualConsentJourney) : ({ ...s, lateWindow: true } as MutualConsentJourney), out: ([] as ReceiptResult[]) };
 }
 
-/** Story: Book the introduction only after both members agree / Collection and gateway acceptance remain distinct (spec/mutualConsentJourney.md:64) */
+/** Story: Book the introduction only after both members agree / Collection and gateway acceptance remain distinct (spec/mutualConsentJourney.md) */
 //@ pure
 export function canRecordBookingReceipt(s: MutualConsentJourney): boolean {
   return s.phase === "MeetingScheduled";
 }
 
-/** Story: Book the introduction only after both members agree / Collection and gateway acceptance remain distinct (spec/mutualConsentJourney.md:64) */
+/** Story: Book the introduction only after both members agree / Collection and gateway acceptance remain distinct (spec/mutualConsentJourney.md) */
 //@ pure
 export function stepNoOtherActionChangesDelivery(before: MutualConsentJourney, via: string, after: MutualConsentJourney): boolean {
   return (!(via !== "recordBookingReceipt") || before.partnerBookingSent === after.partnerBookingSent) && (!before.partnerBookingSent || after.partnerBookingSent);
 }
 
-/** Story: Book the introduction only after both members agree / Collection and gateway acceptance remain distinct (spec/mutualConsentJourney.md:64) */
+/** Story: Book the introduction only after both members agree / Collection and gateway acceptance remain distinct (spec/mutualConsentJourney.md) */
 //@ pure
 export function sometimesGatewayAcceptsTheBooking(s: MutualConsentJourney): boolean {
   return s.partnerBookingSent;
 }
 
-/** Story: Book the introduction only after both members agree / Collection and gateway acceptance remain distinct (spec/mutualConsentJourney.md:64) */
+/** Story: Book the introduction only after both members agree / Collection and gateway acceptance remain distinct (spec/mutualConsentJourney.md) */
 //@ pure
 export function recordBookingReceipt(s: MutualConsentJourney): ConsentStep {
   //@ ensures (inv(s) && canRecordBookingReceipt(s)) ==> alwaysPartnerProbeFollowsRequesterAgreement(\result.state)

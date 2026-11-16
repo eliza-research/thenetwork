@@ -585,8 +585,10 @@ describe.skipIf(!pgAvailable)("the service as the platform's channel (Postgres)"
     const call = (method: string, path: string, b?: unknown) => s.fetch(new Request(`http://127.0.0.1${path}`, { method, headers: { authorization: "Bearer adm-tok", "content-type": "application/json" }, ...(b !== undefined ? { body: JSON.stringify(b) } : {}) }));
     const before = await count(sql`select count(*)::int as n from network.staff_audit`);
     expect((await call("POST", "/review/%E0%A4%A", { decision: "approve" })).status).toBe(400);
-    expect((await call("POST", "/review/o1", { decision: "approve", note: 7 })).status).toBe(400);
-    expect((await call("POST", "/review/o1", { decision: "approve", explanations: ["x"] })).status).toBe(400);
+    expect((await call("POST", "/review/o1", { decision: "approve", note: 7, revision: 0 })).status).toBe(400);
+    expect((await call("POST", "/review/o1", { decision: "approve", explanations: ["x"], revision: 0 })).status).toBe(400);
+    // spec/reviewDeadline.md, "A decision applies only to the revision the reviewer saw": a staff decision carries a revision.
+    for (const revision of [undefined, -1, 1.5, "0"]) expect((await call("POST", "/review/o1", { decision: "approve", revision })).status).toBe(400);
     expect((await call("POST", "/safety/lift", { memberId: "m", note: { x: 1 } })).status).toBe(400);
     expect(await count(sql`select count(*)::int as n from network.staff_audit`)).toBe(before);
     const saved = async () => (await one(sql`select saved_at from network.network_state where id = 'ntwrk:nyc'`)).saved_at.getTime();
@@ -637,7 +639,8 @@ describe("PLAT-06 the production boot check", () => {
     };
     const missing = await run({ PLATFORM_ENV: "production", OTP_PROVIDER: "dev", DATABASE_URL: "postgres://x@db.invalid/none" });
     expect(missing.code).not.toBe(0);
-    for (const word of ["refusing to start", "OTP_PROVIDER=twilio", "TURNSTILE_SECRET_KEY", "PLATFORM_PROXY_SECRET", "PLATFORM_SESSION_SECRET"]) expect(missing.err).toContain(word);
+    // The network boot policy requires a real provider. Blooio's app allow-list is optional.
+    for (const word of ["refusing to start", "OTP_PROVIDER=twilio or blooio", "TURNSTILE_SECRET_KEY", "PLATFORM_PROXY_SECRET", "PLATFORM_HASH_KEY", "PLATFORM_SESSION_SECRET"]) expect(missing.err).toContain(word);
     const undeclared = await run({ DATABASE_URL: "postgres://x@db.invalid/none" });
     expect(undeclared.code).not.toBe(0);
     expect(undeclared.err).toContain("PLATFORM_ENV");

@@ -1,19 +1,19 @@
 // GENERATED from spec/meetingSettlement.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md:9) */
+/** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md) */
 export interface ConfirmationChanges { recordWords: boolean; emitConfirmation: boolean }
-/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md:34) */
+/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
 export type SettlementPhase = "BeforeFeedback" | "AwaitingAttendance" | "SettlementComplete";
-/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md:34) */
+/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
 export interface MeetingSettlement { phase: SettlementPhase }
-/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md:67) */
+/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 export type AttendanceMark = "Attended" | "Absent" | "Ghosted" | "NoFinding";
-/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md:67) */
+/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 export interface AttendanceEvidence { saidAttended: boolean; saidAbsent: boolean; hasFeedback: boolean; counterpartVerified: boolean; organizerVerified: boolean; pairMeeting: boolean; reportedMissing: boolean; explicitReply: boolean }
-/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md:67) */
+/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 export interface AttendanceFinding { mark: AttendanceMark; logFeedback: boolean; reliabilityNoShow: boolean }
-/** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md:91) */
+/** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md) */
 export type CheckInSource = "NoCheckIn" | "MissingNames" | "PresentNames" | "BookedParticipants";
 
 /** One variant per transition in the spec. */
@@ -21,15 +21,15 @@ export type Event =
   | { type: "requestFeedback"; unsent: boolean; asOf: number; feedbackAt: number }
   | { type: "resolveAttendance"; timedOut: boolean; everyoneResponded: boolean };
 
-/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md:34) */
+/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
 export const feedbackDelayHours: number = 3;
-/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md:34) */
+/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
 export const settlementDelayDays: number = 4;
-/** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md:9) */
+/** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md) */
 export const confirmationWindowHours: number = 48;
-/** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md:9) */
+/** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md) */
 export const confirmationWindowMs: number = exact_meetingSettlement(confirmationWindowHours * 3600000);
-/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md:34) */
+/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
 export const initial: MeetingSettlement = { phase: "BeforeFeedback" };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -38,102 +38,102 @@ export function inv(current: MeetingSettlement): boolean {
   return true;
 }
 
-/** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md:9) */
+/** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md) */
 //@ pure
 export function confirmationChanges(accepted: boolean, bookingDelivered: boolean, wordsRecorded: boolean, confirmed: boolean, explicitReply: boolean): ConfirmationChanges {
   const local_0 = accepted && bookingDelivered;
   return { recordWords: local_0 && explicitReply && !wordsRecorded, emitConfirmation: local_0 && !confirmed };
 }
 
-/** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md:9) */
+/** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md) */
 //@ pure
 export function silentConfirmationDue(accepted: boolean, bookingDelivered: boolean, confirmed: boolean, elapsedMs: number, meetingStarted: boolean): boolean {
   return accepted && bookingDelivered && !confirmed && (elapsedMs >= confirmationWindowMs || meetingStarted);
 }
 
-/** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md:9) */
+/** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md) */
 //@ pure
 export function lawConfirmedDoesNotRepeat(accepted: boolean, bookingDelivered: boolean, wordsRecorded: boolean, explicitReply: boolean): boolean {
   //@ ensures \result === true
   return !confirmationChanges(accepted, bookingDelivered, wordsRecorded, true, explicitReply).emitConfirmation;
 }
 
-/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md:34) */
+/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
 //@ pure
 export function restoreAttendance(resolved: boolean): MeetingSettlement {
   return { phase: resolved ? "SettlementComplete" : "AwaitingAttendance" };
 }
 
-/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md:34) */
+/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
 //@ pure
 export function canRequestFeedback(s: MeetingSettlement, unsent: boolean, asOf: number, feedbackAt: number): boolean {
   return s.phase === "BeforeFeedback" && unsent && asOf >= feedbackAt;
 }
 
-/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md:34) */
+/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
 //@ pure
 export function requestFeedback(s: MeetingSettlement, unsent: boolean, asOf: number, feedbackAt: number): MeetingSettlement {
   //@ ensures (inv(s) && canRequestFeedback(s, unsent, asOf, feedbackAt)) ==> stepSettlementStaysClosed(s, \result)
   return { phase: "AwaitingAttendance" };
 }
 
-/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md:34) */
+/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
 //@ pure
 export function canResolveAttendance(s: MeetingSettlement, timedOut: boolean, everyoneResponded: boolean): boolean {
   return s.phase === "AwaitingAttendance" && (timedOut || everyoneResponded);
 }
 
-/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md:34) */
+/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
 //@ pure
 export function resolveAttendance(s: MeetingSettlement, timedOut: boolean, everyoneResponded: boolean): MeetingSettlement {
   //@ ensures (inv(s) && canResolveAttendance(s, timedOut, everyoneResponded)) ==> stepSettlementStaysClosed(s, \result)
   return { phase: "SettlementComplete" };
 }
 
-/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md:34) */
+/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
 //@ pure
 export function stepSettlementStaysClosed(before: MeetingSettlement, after: MeetingSettlement): boolean {
   return !(before.phase === "SettlementComplete") || after.phase === "SettlementComplete";
 }
 
-/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md:34) */
+/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
 //@ pure
 export function sometimesResolvesAttendance(s: MeetingSettlement): boolean {
   return s.phase === "SettlementComplete";
 }
 
-/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md:67) */
+/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 //@ pure
 export function deliveredInvitee(accepted: boolean, bookingDelivered: boolean): boolean {
   return accepted && bookingDelivered;
 }
 
-/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md:67) */
+/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md) */
 //@ pure
 export function countAttendance(evidence: AttendanceEvidence): AttendanceFinding {
   const local_1: AttendanceMark = evidence.saidAttended || (!evidence.saidAbsent && (evidence.counterpartVerified || evidence.organizerVerified)) ? "Attended" : (evidence.saidAbsent ? "Absent" : (evidence.pairMeeting && evidence.reportedMissing ? (evidence.explicitReply ? "Absent" : "Ghosted") : "NoFinding"));
   return { mark: local_1, logFeedback: local_1 === "Attended" && evidence.hasFeedback, reliabilityNoShow: local_1 !== "Attended" && !evidence.hasFeedback && evidence.reportedMissing };
 }
 
-/** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md:91) */
+/** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md) */
 //@ pure
 export function organizerCanVerify(booked: boolean, came: boolean): boolean {
   return booked && came;
 }
 
-/** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md:91) */
+/** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md) */
 //@ pure
 export function counterpartConfirmsAttendance(came: boolean, reportsMissing: boolean): boolean {
   return came && !reportsMissing;
 }
 
-/** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md:91) */
+/** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md) */
 //@ pure
 export function requestAttendanceSatisfied(requesterAttended: boolean, anotherAttended: boolean): boolean {
   return requesterAttended && anotherAttended;
 }
 
-/** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md:91) */
+/** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md) */
 //@ pure
 export function chooseCheckIn(hostResponded: boolean, hostReportsMissing: boolean, hasNames: boolean): CheckInSource {
   return !hostResponded ? "NoCheckIn" : (hostReportsMissing ? "MissingNames" : (hasNames ? "PresentNames" : "BookedParticipants"));

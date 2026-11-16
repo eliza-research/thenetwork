@@ -34,15 +34,16 @@ const APPS_RUN: AppId[] = ["ntwrk", FR];
 const SECRET = "whsec_crossapp";
 const CANARY: Record<string, string> = { ntwrk: "zqntwrkcanary", [FR]: "zqfriendscanary" };
 const CLIMB = "find a regular climbing partner";
+const SAIL = "find a regular sailing partner";
 const ONBOARD = ["hi!", "More time outdoors.", "Weekends, mostly.", "One-on-one is good."];
 
 /** Who is in which app, and what they are into there. Ana and Ben are in both apps; in the friends app Ben is the only other climber. */
-interface Person { key: string; name: string; apps: AppId[]; interests: Partial<Record<AppId, string[]>>; wants?: AppId[] }
+interface Person { key: string; name: string; apps: AppId[]; interests: Partial<Record<AppId, string[]>>; networkWant?: string }
 const PEOPLE: Person[] = [
-  { key: "a", name: "Ana Diaz", apps: ["ntwrk", FR], interests: { ntwrk: ["climbing", "hiking"], [FR]: ["climbing", "hiking"] }, wants: ["ntwrk"] },
-  { key: "b", name: "Ben Ito", apps: ["ntwrk", FR], interests: { ntwrk: ["climbing", "hiking"], [FR]: ["climbing", "hiking"] }, wants: ["ntwrk"] },
-  { key: "c", name: "Cy Moss", apps: ["ntwrk", FR], interests: { ntwrk: ["climbing", "hiking"], [FR]: ["board_games", "cooking"] }, wants: ["ntwrk"] },
-  { key: "d", name: "Dee Park", apps: ["ntwrk"], interests: { ntwrk: ["climbing", "hiking"] }, wants: ["ntwrk"] },
+  { key: "a", name: "Ana Diaz", apps: ["ntwrk", FR], interests: { ntwrk: ["climbing", "climbing_belay"], [FR]: ["climbing", "hiking"] }, networkWant: CLIMB },
+  { key: "b", name: "Ben Ito", apps: ["ntwrk", FR], interests: { ntwrk: ["climbing", "climbing_belay"], [FR]: ["climbing", "hiking"] }, networkWant: CLIMB },
+  { key: "c", name: "Cy Moss", apps: ["ntwrk", FR], interests: { ntwrk: ["sailing", "running", "cycling", "sailing_instructor"], [FR]: ["board_games", "cooking"] }, networkWant: SAIL },
+  { key: "d", name: "Dee Park", apps: ["ntwrk"], interests: { ntwrk: ["sailing", "running", "cycling", "sailing_instructor"] }, networkWant: SAIL },
   { key: "e", name: "Eve Ruiz", apps: [FR], interests: { [FR]: ["board_games", "cooking"] } },
 ];
 const phone = (key: string) => `+1212555${String(200 + PEOPLE.findIndex(p => p.key === key)).padStart(4, "0")}`;
@@ -74,7 +75,7 @@ async function seed(svc: NetworkService) {
         await tx`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, source, confidence, status, valid_from) values
           (${app}, ${`${memberId}:canary:m`}, ${memberId}, 'interest', ${`${CANARY[app]}${p.key}`}, ${tx.array([`${CANARY[app]}${p.key}`], "TEXT")}, 'matchable', 'said', 'chat', 0.9, 'confirmed', ${joined}),
           (${app}, ${`${memberId}:canary:p`}, ${memberId}, 'note', ${`${CANARY[app]} private ${p.key}`}, ${tx.array(["note"], "TEXT")}, 'agent_private', 'said', 'chat', 0.9, 'confirmed', ${joined})`;
-        if (p.wants?.includes(app)) await tx`insert into network.intents (app_id, id, member_id, objective, category, horizon_days, status, created_at) values (${app}, ${`${memberId}:want`}, ${memberId}, ${CLIMB}, 'hobby', 60, 'active', ${joined})`;
+        if (app === "ntwrk" && p.networkWant) await tx`insert into network.intents (app_id, id, member_id, objective, category, horizon_days, status, created_at) values (${app}, ${`${memberId}:want`}, ${memberId}, ${p.networkWant}, 'hobby', 60, 'active', ${joined})`;
       });
     }
   }
@@ -126,7 +127,7 @@ async function run(block: boolean) {
     for (const app of APPS_RUN) {
       const q = await (await staff(svc, "GET", `/apps/${app}/review`)).json();
       queues[app] = [...(queues[app] ?? []), ...q.items];
-      for (const item of q.items) await staff(svc, "POST", `/apps/${app}/review/${encodeURIComponent(item.oppId)}`, { decision: "approve", secondsSpent: 5 });
+      for (const item of q.items) await staff(svc, "POST", `/apps/${app}/review/${encodeURIComponent(item.oppId)}`, { decision: "approve", secondsSpent: 5, revision: item.revision });
     }
     await svc.tick();
   }
@@ -208,7 +209,10 @@ describe.skipIf(!pgAvailable)("cross_app_leak: two apps, shared people (Postgres
     for (const app of APPS_RUN) {
       expect((await sql`select count(*)::int as n from network.messages where app_id = ${app} and direction = 'outbound'`)[0].n).toBeGreaterThan(10);
     }
-    expect(queues.ntwrk!.length).toBeGreaterThan(0);
+    // Cy and Dee's independent ntwrk pair keeps the cross-app review and proposal checks exercised.
+    const c = ids.c!.ntwrk!, d = ids.d!.ntwrk!;
+    expect(queues.ntwrk!.some(i => i.proposal.participants.includes(c) && i.proposal.participants.includes(d)),
+      JSON.stringify(svc.runtimeFor("ntwrk")!.net.gateReasons)).toBe(true);
     // The friends app: Ana's request finds Ben (control), or nobody once Ben is blocked (the request stays open, nobody is contacted).
     expect(queues[FR]!.map(i => i.origin)).toEqual(block ? [] : ["request"]);
     expect((await sql`select member_id, outcome from network.requests where app_id = ${FR}`).map((r: any) => [r.member_id, r.outcome])).toEqual([[a, block ? "none" : "probing"]]);

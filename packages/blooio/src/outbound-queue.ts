@@ -129,6 +129,8 @@ export interface AppChecks {
   recipient?(row: QueueRow, agentInitiated: boolean): RecipientCheck | Promise<RecipientCheck>;
   /** The leak lists for this recipient (never their own facts). */
   leaks?(row: QueueRow): LeakSources | Promise<LeakSources>;
+  /** Close a blocked private payload without retaining its content for staff review. */
+  privatePayload?(row: QueueRow): boolean;
   /** Take a slot of the person's daily cap of proactive messages. False: the cap refuses it. */
   capTake?(row: QueueRow): Promise<boolean>;
   /** Give the slot back (the message did not go out). */
@@ -141,6 +143,8 @@ export interface AppChecks {
    * The Network checks a relayed item's match and both members here (runtime.ts relayAdmission).
    */
   admit?(row: QueueRow, tx: SQL): Promise<RecipientCheck>;
+  /** Commit app-owned attempt evidence only if this transaction claimed the outbound row. */
+  claimed?(row: QueueRow, tx: SQL): Promise<void>;
 }
 
 export interface QueueOptions {
@@ -464,6 +468,7 @@ export class OutboundQueue {
     const leaks = row.leakReleased ? [] : await this.leakReasons(row);
     if (textPolicy(leaks.length > 0) === "LeakReview") {
       this.o.onAlert?.(row.id, "leak_blocked");
+      if (c.privatePayload?.(row)) return this.end(row, "dropped_leak_review", "private payload refused");
       return this.end(row, "parked_leak_review", `leak: ${leaks.join(",")}`);
     }
     return this.send(row, isNew, conversation.reengage);
@@ -529,7 +534,10 @@ export class OutboundQueue {
         lease_until=${new Date(start+this.opt("leaseMs",5*MINUTE))},updated_at=${new Date(start)},new_conversation=${isNew},reengagement=${reengagement}
         where id=${row.id} and app_id=${row.app} and line=${this.line} and status=${row.status} and lease_until is null
         and to_address=${row.to} and body=${row.text} and fingerprint=${fingerprint(row.to,row.text,row.mediaUrls,row.kind,row.approvedPhotos)} returning id`;
-      if (claimed.length) return "admitted";
+      if (claimed.length) {
+        await this.o.checks.claimed?.(row, tx);
+        return "admitted";
+      }
       // Another worker claimed or ended the row since this drain read it: leave it to that worker.
       const [now] = await tx`select status,lease_until from platform.outbound where id=${row.id}`;
       if (now && (now.status!==row.status || now.lease_until!==null)) return {busy:String(now.status)};

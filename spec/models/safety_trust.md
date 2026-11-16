@@ -117,6 +117,10 @@ module safety_trust {
     pendingHold: Set[Mid],
     pendingWho: Mid -> Who,
     relayLog: Set[(Mid, str)],
+    // platform.share_grants with revoked_at null, by the person whose profile is shared, and
+    // platform.pending_texts of the person's number (a share that waits for the member's yes)
+    shareGrants: Set[str],
+    pendingTexts: Set[str],
     // units that a service request still has to run (each await is a point where the process can stop)
     leaving: Set[Mid],
     banning: Set[Mid],
@@ -490,6 +494,8 @@ module safety_trust {
     pendingHold: Set(),
     pendingWho: ALL_MIDS.mapBy(_ => NO_WHO),
     relayLog: Set(),
+    shareGrants: Set(),
+    pendingTexts: Set(),
     leaving: Set(),
     banning: Set(),
     clearing: Set(),
@@ -593,6 +599,11 @@ module safety_trust {
   // as no report: the corpus evals/network/check-in-reports.jsonl (gate in scripts/sim/evals.ts) checks the
   // reader on direct answers, so the model takes `checkInReaderSound` as a named assumption for this path. The
   // reader on a later free text (disclose) has no such assumption (W3-224).
+  // spec/safetyCase.md, "A ban allows only carrier commands and app leave" (inboundAllowedAfterBan): after the
+  // ban rows exist, an ordinary text of the person (a check-in answer, a disclosure, block or report, the answer
+  // to "Who do you mean?", any other message) is held: no engagement, no flow. STOP, HELP and "leave <app>"
+  // still work (leaveStart and leave have no such guard; STOP is in turn_consent).
+  pure def inboundOk(st: State, p: str): bool = not(st.banned.contains(p))
   pure def checkInReaderSound(intent: str, reader: str): bool =
     if (intent == "report") REPORT_KINDS.contains(reader) else reader == "none"
   action checkIn(k: str, m: Mid, intent: str, reader: str): bool = {
@@ -606,7 +617,7 @@ module safety_trust {
     val s2 = if (reportKind == "none") s1
       else others.fold(s1, (acc, x) => blockAndReport(acc, m, reportKind, x, "check_in", intent == "report", x.p))
     all {
-      o.stage == "done", o.going.contains(m), not(o.feedbackFrom.contains(m)), s.live.get(m),
+      o.stage == "done", o.going.contains(m), not(o.feedbackFrom.contains(m)), s.live.get(m), inboundOk(s, m.p),
       lvl(s0, m) != "hold",          // a held member's text stops at the hold return
       s.now - o.meetingAt < 7,       // feedbackDue: within 7 days
       intent != "selfNoShow" or o.absent.contains(m),
@@ -644,7 +655,7 @@ module safety_trust {
         opps: s0.opps.set(k, { ...o, feedbackFrom: o.feedbackFrom.union(Set(m)) }),
         inters: s0.inters.union(Set(recordOf(o, m, false))) } else s0
     all {
-      s.live.get(m), lvl(s0, m) != "hold", meant != p, REPORT_KINDS.contains(kind),
+      s.live.get(m), inboundOk(s, p), lvl(s0, m) != "hold", meant != p, REPORT_KINDS.contains(kind),
       if (win == Set())
         // routed to an app with no date in the window: nothing is filed (W3-220)
         all { k == "o1", APPS.exists(a => a != app and inWindowOn(s0, midOf(s0, a, p)) != Set()),
@@ -672,7 +683,7 @@ module safety_trust {
     val meantMet = APPS.exists(a => usedOpps(s0).exists(o => o.app == a and metPair(o, midOf(s0, a, r), midOf(s0, a, t))))
     val w = if (verb == "report" and meantMet and not(ambiguous)) s0.wanted.union(Set((r, t))) else s0.wanted
     all {
-      r != t, s.live.get(rm),
+      r != t, s.live.get(rm), inboundOk(s, r),
       mine.size() <= 1 or best < 0 or metAtOn(s0, app, r, t) == best,
       if (ambiguous) s' = { ...s0, pendingWho: s0.pendingWho.set(rm, { asked: true, at: s0.now, verb: verb, kind: kind, target: t }), lastAction: "reportAsk" }
       else if (not(s0.live.get(tm))) s' = { ...s0, wanted: w, lastAction: "reportUnresolved" }
@@ -687,7 +698,7 @@ module safety_trust {
     val tm = midOf(s0, m.app, p.target)
     val meantMet = usedOpps(s0).exists(o => metPair(o, m, tm))
     all {
-      p.asked, s.live.get(m),
+      p.asked, s.live.get(m), inboundOk(s, m.p),
       s.now - p.at <= 1,
       if (s0.live.get(tm) and counterpart(s0, m, tm))
         s' = { ...blockAndReport({ ...s0, pendingWho: s0.pendingWho.set(m, NO_WHO) }, m, if (p.verb == "report") p.kind else "none", tm, "message", true, p.target),
@@ -705,7 +716,7 @@ module safety_trust {
     val other = midOf(s, app, m.p)
     val meantMet = APPS.exists(a => usedOpps(s).exists(o => o.app == a and metPair(o, midOf(s, a, m.p), midOf(s, a, p.target))))
     all {
-      p.asked, s.live.get(m), s.now - p.at <= 1, app != m.app, s.live.get(other),
+      p.asked, s.live.get(m), inboundOk(s, m.p), s.now - p.at <= 1, app != m.app, s.live.get(other),
       s' = { ...s, wanted: if (p.verb == "report" and meantMet) s.wanted.union(Set((m.p, p.target))) else s.wanted,
              lastAction: "answerWhoElsewhere" },
     }
@@ -716,7 +727,7 @@ module safety_trust {
     val s0 = sync(s, m)
     val clean = s0.trust.get(m).score <= 0
     all {
-      s.live.get(m), lvl(s0, m) != "hold",
+      s.live.get(m), inboundOk(s, m.p), lvl(s0, m) != "hold",
       s' = { ...addPts(s0, m, if (clean) imin(risk, HOLD - 1) else risk, "abuse", NOBODY, "reply"), lastAction: "abuse" },
     }
   }
@@ -843,7 +854,10 @@ module safety_trust {
     all {
       s.banning == Set(), ms != Set(),
       not(p.in(s.banned)) or ms.exists(x => not(s.restricted.contains(x))),
-      s' = { ...s, banned: s.banned.union(Set(p)), banning: ms.filter(x => not(s.restricted.contains(x))), lastAction: "banStart" },
+      // spec/safetyCase.md, "A ban allows only carrier commands and app leave": the ban rows, the revocation of
+      // the person's share grants and the delete of the number's pending texts are one transaction (pg-store addBan).
+      s' = { ...s, banned: s.banned.union(Set(p)), banning: ms.filter(x => not(s.restricted.contains(x))),
+             shareGrants: s.shareGrants.exclude(Set(p)), pendingTexts: s.pendingTexts.exclude(Set(p)), lastAction: "banStart" },
     }
   }
   action banApply(x: Mid): bool = all {
@@ -855,8 +869,21 @@ module safety_trust {
     val ms = liveMidsOf(s, p)
     all {
       not(p.in(s.banned)), ms != Set(),
-      s' = { ...ms.fold(s, (acc, x) => markBanned(acc, x)), banned: s.banned.union(Set(p)), lastAction: "ban" },
+      s' = { ...ms.fold(s, (acc, x) => markBanned(acc, x)), banned: s.banned.union(Set(p)),
+             shareGrants: s.shareGrants.exclude(Set(p)), pendingTexts: s.pendingTexts.exclude(Set(p)), lastAction: "ban" },
     }
+  }
+
+  // A profile share (Accounts.share): the share request stores a pending text that waits for the member's yes,
+  // and the yes writes the grant. Both take the person's profile-share lock, which the ban transaction also
+  // takes, and read the ban first: a banned person gets no pending share and no grant.
+  action shareAsk(p: str): bool = all {
+    inboundOk(s, p), liveMidsOf(s, p) != Set(), not(s.pendingTexts.contains(p)),
+    s' = { ...s, pendingTexts: s.pendingTexts.union(Set(p)), lastAction: "shareAsk" },
+  }
+  action shareYes(p: str): bool = all {
+    inboundOk(s, p), s.pendingTexts.contains(p),
+    s' = { ...s, pendingTexts: s.pendingTexts.exclude(Set(p)), shareGrants: s.shareGrants.union(Set(p)), lastAction: "shareYes" },
   }
 
   // "leave <app>" (service.ts:921 forget): (1) leaveStart: readState(safetyHeld) in one lock, and when it was
@@ -910,7 +937,8 @@ module safety_trust {
     }
   }
 
-  // trust.ts:125 decay
+  // trust.ts:125 decay. Each drop is a negative `decay` trust event; caseEvent adds it to a live case only and
+  // never changes the case phase (spec/safetyCase.md recordCaseEvent with decayEvent), so caseSt is unchanged.
   pure def decayOne(t: Trust, now: int): Trust =
     if (t.lastDecay < 0) { ...t, lastDecay: now }
     else {
@@ -984,6 +1012,8 @@ module safety_trust {
       clearMinorApply(m),
       banStart(a),
       banApply(m),
+      shareAsk(a),
+      shareYes(a),
       leaveStart(app, a),
       leaveFinish(m),
       join(app, a),
@@ -1089,6 +1119,10 @@ module safety_trust {
   // app (W3-223: the ban writes no person_holds row, so an app the loop did not reach is matchable).
   val bannedNeverMatchable = s.banned.forall(p => liveMidsOf(s, p).forall(x => not(matchable(s, x))))
 
+  // spec/safetyCase.md, "A ban allows only carrier commands and app leave" (upstream PR #496): a banned person has
+  // no live profile-share grant and no pending text flow; the ban transaction removes both and a share reads the ban.
+  val banRevokesShares = s.banned.forall(p => not(s.shareGrants.contains(p)) and not(s.pendingTexts.contains(p)))
+
   // AGENTS.md founder decision 1 "Minors (13-17) are never matched"; "Age is a person-level fact (the lowest age
   // ever stated or recorded wins)"; engine relay.ts:128 "the platform re-checks the person's lowest age". A
   // member whose own relayed text says they are a minor is out of matching until staff clear it (W3-232,
@@ -1171,6 +1205,7 @@ module safety_trust {
     everyMetReportFiled,
     relayBlockReachesSafety,
     safetyNoticeImmediate,
+    banRevokesShares,
     // wave 4: rules that fail on the code now (code items; see docs/research/quint-findings/safety_trust.md)
     reportSubjectMeant,
     bannedNeverMatchable,
@@ -1219,6 +1254,8 @@ module safety_trust {
   val witness_watch = not(ALL_MIDS.exists(m => lvl(s, m) == "watch"))
   val witness_rejoin = not(ALL_MIDS.exists(m => m.g == 1 and s.live.get(m)))
   val witness_ban = not(s.banned != Set())
+  // A profile-share grant is live (the ban revokes it).
+  val witness_shareGrant = not(s.shareGrants != Set())
   // new paths of the fixes
   val witness_carryoverHold = not(ALL_MIDS.exists(m => m.g == 1 and s.live.get(m) and lvl(s, m) == "hold" and s.personHolds.exists(h => h._1 == m.p and h._2 == m.app)))
   val witness_callOffElsewhere = not(OPP_IDS.exists(k => s.opps.get(k).closedBy == "blocked_elsewhere"))
@@ -1345,13 +1382,14 @@ module safety_trust {
       .then(report("cy", "slop", "ana", "report", "harassment", false))
       .expect(metIsReal and matchable(s, ANA_S) and s.reports.exists(r => r.reporter == CY_S and not(r.met)))
 
-  // SD-072 (fixed): a banned member who met ana reports her: the report is open for staff, ana is matchable.
+  // SD-072 (fixed): a banned member who met ana cannot take her out of matching. Since the ban rule
+  // (spec/safetyCase.md, "A ban allows only carrier commands and app leave") the report text is held: no report.
   run sd072BannedReporterTest =
     init
       .then(bookDate("o1", "slop", "ana", "ben"))
       .then(ban("ben"))
-      .then(report("ben", "slop", "ana", "report", "harassment", false))
-      .expect(reporterNotHeld and matchable(s, ANA_S) and s.reports.exists(r => r.subject == ANA_S and r.status == "open"))
+      .expect(reporterNotHeld and matchable(s, ANA_S))
+      .then(report("ben", "slop", "ana", "report", "harassment", false).fail())
 
   // NEW-2: a held reporter's report holds nobody until the reporter leaves the app.
   run new2HeldReporterLeavesTest =
@@ -1458,6 +1496,22 @@ module safety_trust {
       .then(tick(1))
       .then(checkIn("o1", ANA_S, "fine", "none"))
       .expect(slotFromMeeting and s.inters.forall(i => i.at == 0))
+
+  // Upstream PR #496: ben shares his profile, then staff ban him. The ban revokes the grant and the pending text in
+  // its transaction. A later report or share text is held; "leave <app>" still works.
+  run banRevokesSharesTest =
+    init
+      .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(shareAsk("ben"))
+      .then(shareYes("ben"))
+      .then(shareAsk("ben"))
+      .expect(s.shareGrants.contains("ben") and s.pendingTexts.contains("ben"))
+      .then(ban("ben"))
+      .expect(s.shareGrants == Set() and s.pendingTexts == Set() and banRevokesShares)
+      .then(report("ben", "slop", "ana", "report", "harassment", false).fail())
+      .then(shareAsk("ben").fail())
+      .then(leave("slop", "ben"))
+      .expect(not(s.live.get(BEN_S)) and banRevokesShares)
 
   // SD-253 (skipped): ben met ana, then ben is banned: ana is never told.
   run sd253BanNoticeTest =
@@ -1665,14 +1719,15 @@ module safety_trust {
       .expect(s.opps.get("o1").stage == "closed" and s.opps.get("o2").stage == "probing" and blockClosesAllApps)
       .then(confirm("o2").fail())
 
-  // W3-234 (NEW-2 path b): ana is banned, staff lift her slop hold (liftHold does not check the ban), and her
-  // report holds ben again.
+  // W3-234 (NEW-2 path b): ana reports ben, then ana is banned (her hold stops the report from counting), staff
+  // lift her slop hold (liftHold does not check the ban), and her report holds ben again. A report sent after
+  // the ban is held (inboundOk), so the report must come first.
   run w3_234BannedReporterLiftedTest =
     init
       .then(bookDate("o1", "slop", "ana", "ben"))
+      .then(report("ana", "slop", "ben", "report", "harassment", false))
       .then(ban("ana"))
       .then(liftHold(ANA_S))
-      .then(report("ana", "slop", "ben", "report", "harassment", false))
       .expect(not(reporterStandingKept) and not(matchable(s, BEN_S)))
 }
 ```

@@ -68,9 +68,6 @@ Imported from `quint/candidate_pool.qnt` at `30d950e`. See [model index](README.
 //   noSessionBlocked         planner.ts:244-255: a crew session invites every eligible crew member and
 //                            has no block check. A block made after the crew formed is not seen.
 //   noOfferBlocked           planner.ts:266-279 and plans.ts:662 detectCrews: a crew offer has no block check.
-//   noRepeatBlocked          planner.ts:287-298: the repeat pass checks blocks among `ids` only; the
-//                            alternates (o.attended, line 298) are not checked, and finish() moves an
-//                            alternate into `invited` when an invitee is dropped for transit.
 //   oneCrewPerWeek           planner.ts:244-255: the crew session pass does not read `taken`, so a
 //                            member in two live crews gets two crew sessions in one week. Two live
 //                            crews are possible: detectCrews keys "already in a crew" by activity,
@@ -422,13 +419,14 @@ module candidate_pool {
   }
 
   // Pass 3 (planner.ts:280-306): pos = positive, eligible, not taken; at least 2; ids = up to MAX_G of
-  // them (slice); skip when a pair in ids is blocked; alternates = attended - ids, eligible, not taken
-  // (none for a partner pair, up to 2 for a group), with no block check; finish() drops `dropped` for
-  // transit and fills the seats from the alternates; taken += invited + alternates.
+  // them (slice). Every pair in the table, including up to 2 eligible alternates from prior
+  // attendees, needs a Friend value. The model abstracts value and order but keeps the block
+  // and compatibility guards. finish() drops members for transit and fills from compatible alternates.
   action repeatPlan(o: Outcome, ids: Set[str], alts: Set[str], dropped: Set[str], fill: Set[str]): bool = {
     val pos = o.positive.filter(m => planEligible(m) and not(wk.taken.contains(m)))
     val partner = ids.size() == 2
-    val altPool = o.attended.exclude(ids).filter(m => planEligible(m) and not(wk.taken.contains(m)))
+    val altPool = o.attended.exclude(ids).filter(m => planEligible(m) and not(wk.taken.contains(m))
+      and ids.forall(p => compat(m, p, "social")))
     val invited = ids.exclude(dropped).union(fill)
     val altsLeft = alts.exclude(fill)
     val quorum = if (partner) 2 else 3
@@ -437,7 +435,8 @@ module candidate_pool {
       pos.size() >= 2,
       ids.subseteq(pos), ids.size() == (if (pos.size() < MAX_G) pos.size() else MAX_G),
       pairwiseOk(blocked, ids),
-      alts.subseteq(altPool), alts.size() == (if (partner) 0 else (if (altPool.size() < 2) altPool.size() else 2)),
+      alts.subseteq(altPool), alts.size() <= (if (partner) 0 else 2),
+      alts.forall(x => alts.forall(y => x == y or compat(x, y, "social"))),
       dropped.subseteq(ids), fill.subseteq(alts),
       fill.size() == (if (partner) 0 else (if (dropped.size() < alts.size()) dropped.size() else alts.size())),
       invited.size() >= quorum,
@@ -623,7 +622,7 @@ module candidate_pool {
   // filters.ts:71-73 pairReason (blocks win), group.ts:32 makeCompat, plans.ts:176 scorePlanGroup,
   // network.ts:4279 distinctAlternates. The engine-level gaps are the values below `safety`.
   val blockedApart = not(h.introBlocked or h.introViaUnsafe or h.groupBlocked or h.groupAltBlockedWithPrimary
-                         or h.submittedBlocked or h.planBlocked or h.partnerBlocked)
+                         or h.submittedBlocked or h.repeatBlocked or h.planBlocked or h.partnerBlocked)
   // Romance needs mutual opt-in: packs/network/rules.ts:67-69 romance_incompatible, rules.ts:20
   // romance_opt_out, complementarity.ts:63 romanceMutual (the score gate, also for a pool pair that
   // no hard filter saw: scorePair); friends.help never matches romance
@@ -645,7 +644,6 @@ module candidate_pool {
   val noAltPairBlockedEngine = not(h.altPairBlockedEngine)
   val noSessionBlocked = not(h.sessionBlocked)
   val noOfferBlocked = not(h.offerBlocked)
-  val noRepeatBlocked = not(h.repeatBlocked)
   val oneCrewPerWeek = not(h.crewTwice)
   val sessionSizeOk = not(h.sessionUnderMin)
 
@@ -721,8 +719,8 @@ module candidate_pool {
     .then(crewOffer({ id: "o2", act: "dinner", attended: Set("b", "d", "e", "f"), positive: Set("d", "e", "f") }, Set("d", "e", "f"), false))
     .expect(safety and not(noOfferBlocked))
 
-  // Repeat of o2: a, b and e would do it again, d attended and did not; d blocked e after it. ids is
-  // {a, b, e} (no blocked pair), and d, an attendee, is an alternate with no block check.
+  // Repeat of o2: a, b and e would do it again. d blocked e after the previous plan, so the new
+  // table keeps the three compatible attendees without an alternate.
   run repeatBlockTest = initWith("friends")
     .then(meetup("o2", "dinner", Set("a", "b", "d", "e"), Set("a", "b", "e")))
     .then(blockPair("d", "e"))
@@ -730,10 +728,9 @@ module candidate_pool {
     .then(crewSession({ act: "run", members: Set("a", "b", "c") }, Set(), true))
     .then(nextPhase)
     .then(nextPhase)
-    // b is dropped for transit; finish() moves the alternate d into `invited` next to e.
     .then(repeatPlan({ id: "o2", act: "dinner", attended: Set("a", "b", "d", "e"), positive: Set("a", "b", "e") },
-                     Set("a", "b", "e"), Set("d"), Set("b"), Set("d")))
-    .expect(safety and not(noRepeatBlocked))
+                     Set("a", "b", "e"), Set(), Set(), Set()))
+    .expect(safety and n.repeats == 1)
 
   // Two live crews for a: the run session of week 1 is refused (finish() null), so a is not taken
   // and gets the dinner crew offer; a opts in; in week 2 a has two crew sessions.

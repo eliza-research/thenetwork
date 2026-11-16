@@ -1,118 +1,118 @@
 // Generated from spec/outboundReceipt.md via Vibestack and VibeLang. Run pnpm run spec:sync.
 // GENERATED from spec/outboundReceipt.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md:9) */
+/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
 export const initial = { phase: "Sending" };
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current) {
     return true;
 }
-/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md:9) */
+/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
 //@ pure
 export function receiptRank(phase) {
     return phase === "ProviderAccepted" || phase === "LegacyQueued" ? 1 : (phase === "ProviderSent" ? 2 : (phase === "ProviderDelivered" ? 3 : (phase === "ProviderRead" ? 4 : 0)));
 }
-/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md:9) */
+/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
 //@ pure
 export function recordAcceptance(outbound, providerPhase) {
     //@ ensures (inv(outbound) && canRecordAcceptance(outbound, providerPhase)) ==> stepReceiptsDoNotRegress(outbound, "recordAcceptance", \result)
     //@ ensures (inv(outbound) && canRecordAcceptance(outbound, providerPhase)) ==> stepUnrecordedReceiptWaits(outbound, "recordAcceptance", \result)
     return { phase: providerPhase };
 }
-/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md:9) */
+/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
 //@ pure
 export function applyReceipt(outbound, providerPhase) {
     //@ ensures (inv(outbound) && canApplyReceipt(outbound, providerPhase)) ==> stepReceiptsDoNotRegress(outbound, "applyReceipt", \result)
     //@ ensures (inv(outbound) && canApplyReceipt(outbound, providerPhase)) ==> stepUnrecordedReceiptWaits(outbound, "applyReceipt", \result)
     return { phase: providerPhase };
 }
-/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md:9) */
+/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
 //@ pure
 export function canRecordAcceptance(outbound, providerPhase) {
     return (outbound.phase === "Sending" || outbound.phase === "AcceptanceUnknown") && ((receiptRank(providerPhase) > 0 && providerPhase !== "LegacyQueued") || providerPhase === "ProviderFailed");
 }
-/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md:9) */
+/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
 //@ pure
 export function stepReceiptsDoNotRegress(before, via, after) {
     return !(via === "applyReceipt" && after.phase !== "ProviderFailed") || receiptRank(after.phase) > receiptRank(before.phase);
 }
-/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md:9) */
+/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
 //@ pure
 export function canApplyReceipt(outbound, providerPhase) {
     const local_0 = receiptRank(outbound.phase);
     return local_0 > 0 && (providerPhase === "ProviderFailed" ? outbound.phase === "ProviderAccepted" || outbound.phase === "ProviderSent" : receiptRank(providerPhase) > local_0);
 }
-/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md:9) */
+/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) */
 //@ pure
 export function lawDeliveredIgnoresFailure(phase) {
     //@ ensures \result === true
     return !(phase === "ProviderDelivered" || phase === "ProviderRead") || !canApplyReceipt({ phase: phase }, "ProviderFailed");
 }
-/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:51) */
+/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md) */
 //@ pure
 export function canHoldUnrecordedReceipt(outbound) {
     return outbound.phase === "Sending";
 }
-/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:51) */
+/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md) */
 //@ pure
 export function holdUnrecordedReceipt(outbound) {
     //@ ensures (inv(outbound) && canHoldUnrecordedReceipt(outbound)) ==> stepReceiptsDoNotRegress(outbound, "holdUnrecordedReceipt", \result)
     //@ ensures (inv(outbound) && canHoldUnrecordedReceipt(outbound)) ==> stepUnrecordedReceiptWaits(outbound, "holdUnrecordedReceipt", \result)
     return { phase: "AcceptanceUnknown" };
 }
-/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:51) */
+/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md) */
 //@ pure
 export function stepUnrecordedReceiptWaits(before, via, after) {
     return !(via === "holdUnrecordedReceipt") || (before.phase === "Sending" && after.phase === "AcceptanceUnknown");
 }
-/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:51) */
+/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md) */
 //@ pure
 export function canConfirmNeverAdmitted(outbound, neverAdmitted) {
     return outbound.phase === "AcceptanceUnknown" && neverAdmitted;
 }
-/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:51) */
+/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md) */
 //@ pure
 export function confirmNeverAdmitted(outbound, neverAdmitted) {
     //@ ensures (inv(outbound) && canConfirmNeverAdmitted(outbound, neverAdmitted)) ==> stepReceiptsDoNotRegress(outbound, "confirmNeverAdmitted", \result)
     //@ ensures (inv(outbound) && canConfirmNeverAdmitted(outbound, neverAdmitted)) ==> stepUnrecordedReceiptWaits(outbound, "confirmNeverAdmitted", \result)
     return { phase: "RetryScheduled" };
 }
-/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:51) */
+/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md) */
 //@ pure
 export function canExpireUnknown(outbound, pastLimit) {
     return outbound.phase === "AcceptanceUnknown" && pastLimit;
 }
-/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:51) */
+/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md) */
 //@ pure
 export function expireUnknown(outbound, pastLimit) {
     //@ ensures (inv(outbound) && canExpireUnknown(outbound, pastLimit)) ==> stepReceiptsDoNotRegress(outbound, "expireUnknown", \result)
     //@ ensures (inv(outbound) && canExpireUnknown(outbound, pastLimit)) ==> stepUnrecordedReceiptWaits(outbound, "expireUnknown", \result)
     return { phase: "AcceptanceExpired" };
 }
-/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:51) */
+/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md) */
 //@ pure
 export function sometimesCanCheckUnknown(outbound) {
     return outbound.phase === "AcceptanceUnknown";
 }
-/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:51) */
+/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md) */
 //@ pure
 export function sometimesCanRead(outbound) {
     return outbound.phase === "ProviderRead";
 }
-/** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md:80) */
+/** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md) */
 //@ pure
 export function canRecordProviderError(outbound) {
     return outbound.phase === "Sending";
 }
-/** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md:80) */
+/** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md) */
 //@ pure
 export function recordProviderError(outbound, failure, hasAttemptsLeft) {
     //@ ensures (inv(outbound) && canRecordProviderError(outbound)) ==> stepReceiptsDoNotRegress(outbound, "recordProviderError", \result)
     //@ ensures (inv(outbound) && canRecordProviderError(outbound)) ==> stepUnrecordedReceiptWaits(outbound, "recordProviderError", \result)
     return { phase: failure === "UnknownResult" ? "AcceptanceUnknown" : (failure === "NeedReply" ? "WaitingForReply" : (failure === "BlockedNumber" ? "ProviderBlocked" : (failure === "Retryable" && hasAttemptsLeft ? "RetryScheduled" : "ProviderFailed"))) };
 }
-/** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md:80) */
+/** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md) */
 //@ pure
 export function lawAnUnknownResultDoesNotRetry(hasAttemptsLeft) {
     //@ ensures \result === true

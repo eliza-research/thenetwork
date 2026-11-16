@@ -35,7 +35,7 @@ needs approval. Link the specific story or rule when you propose a change.
   maintainer approval and an update to the product specification.
 - Add or update the story and its rules in `spec/<name>.md`. Put the Quint
   for a rule immediately below its prose. Follow the
-  [sync skill](.claude/skills/sync/SKILL.md) and the
+  [sync skill](.agents/skills/sync/SKILL.md) and the
   [spec reference](SPEC.md#writing-a-spec).
 - Use the generated TypeScript for the decision in the owning package.
   Run `pnpm run spec:sync` to publish the generated modules. Commit the

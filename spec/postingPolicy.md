@@ -29,7 +29,7 @@ pure def openingsInRange(openings: int): bool =
 
 ### The low end of the pay range comes first
 
-The pay range is in thousands of dollars per year. The low end is at least ten and the high end is at most 999. The staff endpoint can supply a fractional value within those bounds.
+The pay range is in thousands of dollars per year. The low end is at least ten and the high end is at most 999. The text reader and the staff endpoint can supply a fractional value within those bounds, so a stated range such as $90,500-$120,750 is kept in full.
 
 ```quint
 pure def payRangeAllowed(low: int, high: int): bool =
@@ -37,4 +37,38 @@ pure def payRangeAllowed(low: int, high: int): bool =
 
 pure def lawPayRangeIsOrdered(low: int, high: int): bool =
   payRangeAllowed(low, high) implies low <= high
+```
+
+### Confirm only the posting shown in the read-back
+
+Save a text draft only after an affirmative reply to its read-back. A reply that also changes a field needs another read-back. The shell reads the fields of the reply and passes `edited`. When a draft edits or closes a saved posting, the posting shown in the read-back must still be current and open. The shell compares the exact stored fields with the revision that the read-back showed and passes `revisionMatches`. A human hiring team still makes every hiring decision: this rule only decides whether the manager's own posting text is saved.
+
+```quint
+pure def confirmPosting(ready: bool, affirmative: bool, edited: bool, revisionMatches: bool): bool =
+  ready and affirmative and not(edited) and revisionMatches
+
+pure def lawEditedPostingNeedsReadback(ready: bool, affirmative: bool, revisionMatches: bool): bool =
+  not(confirmPosting(ready, affirmative, true, revisionMatches))
+
+pure def lawStalePostingCannotBeConfirmed(ready: bool, affirmative: bool, edited: bool): bool =
+  not(confirmPosting(ready, affirmative, edited, false))
+```
+
+### A stale yes never reopens or overwrites a posting that staff changed or closed
+
+A draft that read back a saved posting carries that posting's revision. It is current only while the stored posting exists, is open, and is unchanged. A new draft is current only while no posting with its id exists, and a new draft never closes a posting. So a yes to an old read-back cannot reopen a closed job or replace the fields that staff changed after the read-back.
+
+```quint
+pure def postingDraftCurrent(readsSavedPosting: bool, storedExists: bool, storedOpen: bool, storedUnchanged: bool, isClose: bool): bool =
+  if (readsSavedPosting) storedExists and storedOpen and storedUnchanged
+  else not(storedExists) and not(isClose)
+
+pure def lawClosedPostingIsNeverCurrent(readsSavedPosting: bool, storedUnchanged: bool, isClose: bool): bool =
+  not(postingDraftCurrent(readsSavedPosting, true, false, storedUnchanged, isClose))
+
+pure def lawChangedPostingIsNeverCurrent(readsSavedPosting: bool, storedOpen: bool, isClose: bool): bool =
+  not(postingDraftCurrent(readsSavedPosting, true, storedOpen, false, isClose))
+
+pure def lawNewDraftNeverOverwrites(storedOpen: bool, storedUnchanged: bool, isClose: bool): bool =
+  not(postingDraftCurrent(false, true, storedOpen, storedUnchanged, isClose))
 ```

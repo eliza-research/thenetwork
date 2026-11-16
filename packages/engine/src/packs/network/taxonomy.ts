@@ -1,5 +1,5 @@
 // Objective taxonomy (engine-side product knowledge): what each kind of stated want needs from
-// another member. Used by the structured complementarity term (complementarity.ts). Inputs are
+// another member. Read by the network lane vectors (vectors.ts) and plan activity fit. Inputs are
 // engine-visible only: an intent's objective text, its `details` ("tags: a,b" when the agent
 // captured them) and goal/desire facets. Nothing here reads hidden truth.
 //

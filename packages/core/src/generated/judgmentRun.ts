@@ -1,11 +1,11 @@
 // GENERATED from spec/judgmentRun.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Review the strongest possible matches in order / The rubric pass enables the run (spec/judgmentRun.md:9) */
+/** Story: Review the strongest possible matches in order / The rubric pass enables the run (spec/judgmentRun.md) */
 export interface PassOption { enabled: boolean; limit: number; supported: boolean }
-/** Story: Review the strongest possible matches in order / The rubric pass enables the run (spec/judgmentRun.md:9) */
+/** Story: Review the strongest possible matches in order / The rubric pass enables the run (spec/judgmentRun.md) */
 export type JudgmentPhase = "AwaitingSetup" | "Screening" | "Rubric" | "DeepReview" | "Complete";
-/** Story: Review the strongest possible matches in order / The rubric pass enables the run (spec/judgmentRun.md:9) */
+/** Story: Review the strongest possible matches in order / The rubric pass enables the run (spec/judgmentRun.md) */
 export interface JudgmentRun { phase: JudgmentPhase; deepAllowed: boolean }
 
 /** One variant per transition in the spec. */
@@ -15,7 +15,7 @@ export type Event =
   | { type: "finishRubric"; deepOption: PassOption }
   | { type: "finishDeepReview" };
 
-/** Story: Review the strongest possible matches in order / The rubric pass enables the run (spec/judgmentRun.md:9) */
+/** Story: Review the strongest possible matches in order / The rubric pass enables the run (spec/judgmentRun.md) */
 export const initial: JudgmentRun = { phase: "AwaitingSetup", deepAllowed: false };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -24,19 +24,19 @@ export function inv(current: JudgmentRun): boolean {
   return alwaysDeepReviewWasEnabled(current);
 }
 
-/** Story: Review the strongest possible matches in order / The rubric pass enables the run (spec/judgmentRun.md:9) */
+/** Story: Review the strongest possible matches in order / The rubric pass enables the run (spec/judgmentRun.md) */
 //@ pure
 export function passAvailable(option: PassOption): boolean {
   return option.enabled && option.limit > 0 && option.supported;
 }
 
-/** Story: Review the strongest possible matches in order / The rubric pass enables the run (spec/judgmentRun.md:9) */
+/** Story: Review the strongest possible matches in order / The rubric pass enables the run (spec/judgmentRun.md) */
 //@ pure
 export function canConfigureRun(review: JudgmentRun): boolean {
   return review.phase === "AwaitingSetup";
 }
 
-/** Story: Review the strongest possible matches in order / The rubric pass enables the run (spec/judgmentRun.md:9) */
+/** Story: Review the strongest possible matches in order / The rubric pass enables the run (spec/judgmentRun.md) */
 //@ pure
 export function configureRun(review: JudgmentRun, rubricOption: PassOption, screenOption: PassOption): JudgmentRun {
   //@ ensures (inv(review) && canConfigureRun(review)) ==> alwaysDeepReviewWasEnabled(\result)
@@ -45,13 +45,13 @@ export function configureRun(review: JudgmentRun, rubricOption: PassOption, scre
   return !passAvailable(rubricOption) ? ({ ...review, phase: "Complete" } as JudgmentRun) : ({ ...review, phase: passAvailable(screenOption) ? "Screening" : "Rubric" } as JudgmentRun);
 }
 
-/** Story: Review the strongest possible matches in order / Each completed pass advances the run once (spec/judgmentRun.md:38) */
+/** Story: Review the strongest possible matches in order / Each completed pass advances the run once (spec/judgmentRun.md) */
 //@ pure
 export function canFinishScreen(review: JudgmentRun): boolean {
   return review.phase === "Screening";
 }
 
-/** Story: Review the strongest possible matches in order / Each completed pass advances the run once (spec/judgmentRun.md:38) */
+/** Story: Review the strongest possible matches in order / Each completed pass advances the run once (spec/judgmentRun.md) */
 //@ pure
 export function finishScreen(review: JudgmentRun): JudgmentRun {
   //@ ensures (inv(review) && canFinishScreen(review)) ==> alwaysDeepReviewWasEnabled(\result)
@@ -60,13 +60,13 @@ export function finishScreen(review: JudgmentRun): JudgmentRun {
   return { ...review, phase: "Rubric" };
 }
 
-/** Story: Review the strongest possible matches in order / Each completed pass advances the run once (spec/judgmentRun.md:38) */
+/** Story: Review the strongest possible matches in order / Each completed pass advances the run once (spec/judgmentRun.md) */
 //@ pure
 export function canFinishRubric(review: JudgmentRun): boolean {
   return review.phase === "Rubric";
 }
 
-/** Story: Review the strongest possible matches in order / Each completed pass advances the run once (spec/judgmentRun.md:38) */
+/** Story: Review the strongest possible matches in order / Each completed pass advances the run once (spec/judgmentRun.md) */
 //@ pure
 export function finishRubric(review: JudgmentRun, deepOption: PassOption): JudgmentRun {
   //@ ensures (inv(review) && canFinishRubric(review)) ==> alwaysDeepReviewWasEnabled(\result)
@@ -75,13 +75,13 @@ export function finishRubric(review: JudgmentRun, deepOption: PassOption): Judgm
   return passAvailable(deepOption) ? ({ phase: "DeepReview", deepAllowed: true } as JudgmentRun) : ({ ...review, phase: "Complete" } as JudgmentRun);
 }
 
-/** Story: Review the strongest possible matches in order / Each completed pass advances the run once (spec/judgmentRun.md:38) */
+/** Story: Review the strongest possible matches in order / Each completed pass advances the run once (spec/judgmentRun.md) */
 //@ pure
 export function canFinishDeepReview(review: JudgmentRun): boolean {
   return review.phase === "DeepReview";
 }
 
-/** Story: Review the strongest possible matches in order / Each completed pass advances the run once (spec/judgmentRun.md:38) */
+/** Story: Review the strongest possible matches in order / Each completed pass advances the run once (spec/judgmentRun.md) */
 //@ pure
 export function finishDeepReview(review: JudgmentRun): JudgmentRun {
   //@ ensures (inv(review) && canFinishDeepReview(review)) ==> alwaysDeepReviewWasEnabled(\result)
@@ -90,37 +90,37 @@ export function finishDeepReview(review: JudgmentRun): JudgmentRun {
   return { ...review, phase: "Complete" };
 }
 
-/** Story: Review the strongest possible matches in order / Each completed pass advances the run once (spec/judgmentRun.md:38) */
+/** Story: Review the strongest possible matches in order / Each completed pass advances the run once (spec/judgmentRun.md) */
 //@ pure
 export function alwaysDeepReviewWasEnabled(review: JudgmentRun): boolean {
   return !(review.phase === "DeepReview") || review.deepAllowed;
 }
 
-/** Story: Review the strongest possible matches in order / Each completed pass advances the run once (spec/judgmentRun.md:38) */
+/** Story: Review the strongest possible matches in order / Each completed pass advances the run once (spec/judgmentRun.md) */
 //@ pure
 export function stepDeepReviewFollowsRubric(before: JudgmentRun, after: JudgmentRun): boolean {
   return !(before.phase !== "DeepReview" && after.phase === "DeepReview") || before.phase === "Rubric";
 }
 
-/** Story: Review the strongest possible matches in order / Each completed pass advances the run once (spec/judgmentRun.md:38) */
+/** Story: Review the strongest possible matches in order / Each completed pass advances the run once (spec/judgmentRun.md) */
 //@ pure
 export function stepCompletedRunStaysClosed(before: JudgmentRun, after: JudgmentRun): boolean {
   return !(before.phase === "Complete") || equal_judgmentRun(after, before);
 }
 
-/** Story: Review the strongest possible matches in order / Each completed pass advances the run once (spec/judgmentRun.md:38) */
+/** Story: Review the strongest possible matches in order / Each completed pass advances the run once (spec/judgmentRun.md) */
 //@ pure
 export function sometimesScreening(review: JudgmentRun): boolean {
   return review.phase === "Screening";
 }
 
-/** Story: Review the strongest possible matches in order / Each completed pass advances the run once (spec/judgmentRun.md:38) */
+/** Story: Review the strongest possible matches in order / Each completed pass advances the run once (spec/judgmentRun.md) */
 //@ pure
 export function sometimesDeepReview(review: JudgmentRun): boolean {
   return review.phase === "DeepReview";
 }
 
-/** Story: Review the strongest possible matches in order / Each completed pass advances the run once (spec/judgmentRun.md:38) */
+/** Story: Review the strongest possible matches in order / Each completed pass advances the run once (spec/judgmentRun.md) */
 //@ pure
 export function sometimesComplete(review: JudgmentRun): boolean {
   return review.phase === "Complete";

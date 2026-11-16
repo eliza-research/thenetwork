@@ -1,9 +1,9 @@
 // GENERATED from spec/crewOffer.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Opt in to a recurring crew / An open offer records who was invited (spec/crewOffer.md:9) */
+/** Story: Opt in to a recurring crew / An open offer records who was invited (spec/crewOffer.md) */
 export type CrewOfferPhase = "Unopened" | "Open" | "Resolved";
-/** Story: Opt in to a recurring crew / An open offer records who was invited (spec/crewOffer.md:9) */
+/** Story: Opt in to a recurring crew / An open offer records who was invited (spec/crewOffer.md) */
 export interface CrewOfferState { phase: CrewOfferPhase; offered: string[]; yes: string[]; no: string[] }
 
 /** One variant per transition in the spec. */
@@ -15,9 +15,9 @@ export type Event =
   | { type: "expireCrewOffer"; elapsedMs: number }
   | { type: "forgetCrewInvitee"; memberId: string };
 
-/** Story: Opt in to a recurring crew / An offer resolves after every reply or once more than three days pass (spec/crewOffer.md:47) */
+/** Story: Opt in to a recurring crew / An offer resolves after every reply or once more than three days pass (spec/crewOffer.md) */
 export const crewOfferWindowMs: number = 259200000;
-/** Story: Opt in to a recurring crew / An open offer records who was invited (spec/crewOffer.md:9) */
+/** Story: Opt in to a recurring crew / An open offer records who was invited (spec/crewOffer.md) */
 export const initial: CrewOfferState = { phase: "Unopened", offered: ([] as string[]), yes: ([] as string[]), no: ([] as string[]) };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -26,7 +26,7 @@ export function inv(current: CrewOfferState): boolean {
   return alwaysAnswersComeFromInvitees(current);
 }
 
-/** Story: Opt in to a recurring crew / An open offer records who was invited (spec/crewOffer.md:9) */
+/** Story: Opt in to a recurring crew / An open offer records who was invited (spec/crewOffer.md) */
 //@ pure
 export function extendOffer(offer: CrewOfferState, memberId: string, enjoyedPlan: boolean): CrewOfferState {
   //@ ensures (inv(offer) && canExtendOffer(offer, memberId, enjoyedPlan)) ==> alwaysAnswersComeFromInvitees(\result)
@@ -34,13 +34,13 @@ export function extendOffer(offer: CrewOfferState, memberId: string, enjoyedPlan
   return { ...offer, offered: offer.offered.concat([memberId]) };
 }
 
-/** Story: Opt in to a recurring crew / An open offer records who was invited (spec/crewOffer.md:9) */
+/** Story: Opt in to a recurring crew / An open offer records who was invited (spec/crewOffer.md) */
 //@ pure
 export function canOpenOffer(offer: CrewOfferState): boolean {
   return offer.phase === "Unopened";
 }
 
-/** Story: Opt in to a recurring crew / An open offer records who was invited (spec/crewOffer.md:9) */
+/** Story: Opt in to a recurring crew / An open offer records who was invited (spec/crewOffer.md) */
 //@ pure
 export function openOffer(offer: CrewOfferState, invitees: string[]): CrewOfferState {
   //@ ensures (inv(offer) && canOpenOffer(offer)) ==> alwaysAnswersComeFromInvitees(\result)
@@ -48,19 +48,19 @@ export function openOffer(offer: CrewOfferState, invitees: string[]): CrewOfferS
   return { phase: "Open", offered: invitees, yes: ([] as string[]), no: ([] as string[]) };
 }
 
-/** Story: Opt in to a recurring crew / An open offer records who was invited (spec/crewOffer.md:9) */
+/** Story: Opt in to a recurring crew / An open offer records who was invited (spec/crewOffer.md) */
 //@ pure
 export function canExtendOffer(offer: CrewOfferState, memberId: string, enjoyedPlan: boolean): boolean {
   return offer.phase === "Open" && enjoyedPlan && !offer.offered.includes(memberId);
 }
 
-/** Story: Opt in to a recurring crew / Each invited member can reply once (spec/crewOffer.md:30) */
+/** Story: Opt in to a recurring crew / Each invited member can reply once (spec/crewOffer.md) */
 //@ pure
 export function canRecordCrewAnswer(offer: CrewOfferState, memberId: string): boolean {
   return offer.phase === "Open" && offer.offered.includes(memberId) && !offer.yes.includes(memberId) && !offer.no.includes(memberId);
 }
 
-/** Story: Opt in to a recurring crew / Each invited member can reply once (spec/crewOffer.md:30) */
+/** Story: Opt in to a recurring crew / Each invited member can reply once (spec/crewOffer.md) */
 //@ pure
 export function recordCrewAnswer(offer: CrewOfferState, memberId: string, accepted: boolean): CrewOfferState {
   //@ ensures (inv(offer) && canRecordCrewAnswer(offer, memberId)) ==> alwaysAnswersComeFromInvitees(\result)
@@ -68,19 +68,19 @@ export function recordCrewAnswer(offer: CrewOfferState, memberId: string, accept
   return accepted ? ({ ...offer, yes: offer.yes.concat([memberId]) } as CrewOfferState) : ({ ...offer, no: offer.no.concat([memberId]) } as CrewOfferState);
 }
 
-/** Story: Opt in to a recurring crew / Each invited member can reply once (spec/crewOffer.md:30) */
+/** Story: Opt in to a recurring crew / Each invited member can reply once (spec/crewOffer.md) */
 //@ pure
 export function alwaysAnswersComeFromInvitees(offer: CrewOfferState): boolean {
   return !offer.yes.some((id: string) => !offer.offered.includes(id)) && !offer.no.some((id: string) => !offer.offered.includes(id));
 }
 
-/** Story: Opt in to a recurring crew / An offer resolves after every reply or once more than three days pass (spec/crewOffer.md:47) */
+/** Story: Opt in to a recurring crew / An offer resolves after every reply or once more than three days pass (spec/crewOffer.md) */
 //@ pure
 export function canFinishCrewAnswers(offer: CrewOfferState): boolean {
   return offer.phase === "Open" && exact_crewOffer(offer.yes.length + offer.no.length) >= offer.offered.length;
 }
 
-/** Story: Opt in to a recurring crew / An offer resolves after every reply or once more than three days pass (spec/crewOffer.md:47) */
+/** Story: Opt in to a recurring crew / An offer resolves after every reply or once more than three days pass (spec/crewOffer.md) */
 //@ pure
 export function finishCrewAnswers(offer: CrewOfferState): CrewOfferState {
   //@ ensures (inv(offer) && canFinishCrewAnswers(offer)) ==> alwaysAnswersComeFromInvitees(\result)
@@ -88,13 +88,13 @@ export function finishCrewAnswers(offer: CrewOfferState): CrewOfferState {
   return { ...offer, phase: "Resolved" };
 }
 
-/** Story: Opt in to a recurring crew / An offer resolves after every reply or once more than three days pass (spec/crewOffer.md:47) */
+/** Story: Opt in to a recurring crew / An offer resolves after every reply or once more than three days pass (spec/crewOffer.md) */
 //@ pure
 export function canExpireCrewOffer(offer: CrewOfferState, elapsedMs: number): boolean {
   return offer.phase === "Open" && elapsedMs > crewOfferWindowMs;
 }
 
-/** Story: Opt in to a recurring crew / An offer resolves after every reply or once more than three days pass (spec/crewOffer.md:47) */
+/** Story: Opt in to a recurring crew / An offer resolves after every reply or once more than three days pass (spec/crewOffer.md) */
 //@ pure
 export function expireCrewOffer(offer: CrewOfferState, elapsedMs: number): CrewOfferState {
   //@ ensures (inv(offer) && canExpireCrewOffer(offer, elapsedMs)) ==> alwaysAnswersComeFromInvitees(\result)
@@ -102,31 +102,31 @@ export function expireCrewOffer(offer: CrewOfferState, elapsedMs: number): CrewO
   return { ...offer, phase: "Resolved" };
 }
 
-/** Story: Opt in to a recurring crew / An offer resolves after every reply or once more than three days pass (spec/crewOffer.md:47) */
+/** Story: Opt in to a recurring crew / An offer resolves after every reply or once more than three days pass (spec/crewOffer.md) */
 //@ pure
 export function stepResolvedOfferStaysClosed(before: CrewOfferState, after: CrewOfferState): boolean {
   return !(before.phase === "Resolved") || after.phase === "Resolved";
 }
 
-/** Story: Opt in to a recurring crew / An offer resolves after every reply or once more than three days pass (spec/crewOffer.md:47) */
+/** Story: Opt in to a recurring crew / An offer resolves after every reply or once more than three days pass (spec/crewOffer.md) */
 //@ pure
 export function sometimesResolvedWithAllAnswers(offer: CrewOfferState): boolean {
   return offer.phase === "Resolved" && offer.offered.length > 0 && exact_crewOffer(offer.yes.length + offer.no.length) === offer.offered.length;
 }
 
-/** Story: Opt in to a recurring crew / An offer resolves after every reply or once more than three days pass (spec/crewOffer.md:47) */
+/** Story: Opt in to a recurring crew / An offer resolves after every reply or once more than three days pass (spec/crewOffer.md) */
 //@ pure
 export function sometimesCrewOfferClosesWithRepliesMissing(offer: CrewOfferState): boolean {
   return offer.phase === "Resolved" && exact_crewOffer(offer.yes.length + offer.no.length) < offer.offered.length;
 }
 
-/** Story: Opt in to a recurring crew / Erasing a member removes their invitation and answer (spec/crewOffer.md:76) */
+/** Story: Opt in to a recurring crew / Erasing a member removes their invitation and answer (spec/crewOffer.md) */
 //@ pure
 export function canForgetCrewInvitee(offer: CrewOfferState): boolean {
   return offer.phase !== "Unopened";
 }
 
-/** Story: Opt in to a recurring crew / Erasing a member removes their invitation and answer (spec/crewOffer.md:76) */
+/** Story: Opt in to a recurring crew / Erasing a member removes their invitation and answer (spec/crewOffer.md) */
 //@ pure
 export function forgetCrewInvitee(offer: CrewOfferState, memberId: string): CrewOfferState {
   //@ ensures (inv(offer) && canForgetCrewInvitee(offer)) ==> alwaysAnswersComeFromInvitees(\result)

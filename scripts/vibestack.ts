@@ -147,7 +147,7 @@ function saveCounterexamples(project: string, previous: ReadonlySet<string>): vo
 
 async function checkConformance(project: string, module: string, nightly: boolean): Promise<number> {
   const { conformance } = await import("../tools/vibestack/vibestack/conform.ts");
-  const { show, readSpecs, generated, typecheckAll } = await import("../tools/vibestack/vibestack/spec.ts");
+  const { show, readSpecs, generated, typecheckAll } = await import("../tools/vibestack/vibestack/pipeline.ts");
   const { simulation } = await import("../tools/vibestack/vibestack/simulate.ts");
   const { profile } = await import("../tools/vibestack/vibestack/testing/profile.ts");
   const specs = readSpecs(project);
@@ -182,7 +182,8 @@ async function checkConformance(project: string, module: string, nightly: boolea
   const { said, tested } = await simulation(memory, spec, selected, model, domain, profile(mode).seed);
   for (const result of said) console.log(show(result));
   if (!tested || said.some(result => !result.ok)) return 1;
-  const results = await conformance(project, new Map([[module, { model, domain, found: tested }]]), {}, mode);
+  const results = await conformance(project, new Map([[module, { model, domain, found: tested }]]), {},
+    async (_fingerprint, run) => run(), new Map(), mode);
   for (const [ok, stage, summary, detail = "", where] of results) console.log(show({ ok, stage, summary, detail, where }));
   return results.length && results.every(([ok]) => ok) ? 0 : 1;
 }
@@ -204,7 +205,7 @@ export async function runSpec(project: string, args: string[]): Promise<number> 
 
 async function checkBrowser(nightly: boolean): Promise<number> {
   const { explore } = await import("../tools/vibestack/vibestack/explore.ts");
-  const { show } = await import("../tools/vibestack/vibestack/spec.ts");
+  const { show } = await import("../tools/vibestack/vibestack/pipeline.ts");
   const project = mkdtempSync(join(tmpdir(), "thenetwork-browser-"));
   const saved = "test/__traces__/bombadil";
   const retained = join(root, saved);

@@ -286,6 +286,8 @@ export interface ServiceLike {
   fetch(req: Request): Promise<Response>;
   publicFetch(req: Request, server?: { requestIP(req: Request): { address: string } | null }): Promise<Response>;
   runtimes: Map<string, { id: string; tick(): Promise<boolean> }>;
+  inboxTick(): Promise<void>;
+  purge(): Promise<unknown>;
   /** The single inbox's tick (packages/notify): outcome sweep, then due notifications. Optional. */
   notifyTick?(): Promise<void>;
   close(force?: boolean): Promise<void>;
@@ -415,31 +417,31 @@ export function createBackend(d: BackendDeps) {
     return true;
   };
   const releaseTick = (tickKey: string) => { lifecycle = stepBackendLifecycle(lifecycle, { type: "releaseTick", tickKey }); };
-  const networksThenNotify = () => Promise.all([...svc.runtimes.values()].map(async rt => {
-    if (!reserveTick(rt.id)) return;
-    try {
-      if (!(await track(rt.tick()))) log.info("tick skipped: another instance holds the lock", { network: rt.id });
-      tickDone.set(rt.id, now());
-    }
-    catch (e) { log.error("tick failed", { network: rt.id, error: (e as Error).message }); }
-    finally { releaseTick(rt.id); }
-  })).then(() => notifyTick());
-  // The ops round runs beside the networks, so a network tick that hangs does not stop its alert.
-  const opsTick = async () => {
-    if (!d.ops || !reserveTick("ops")) return;
-    try { await track(d.ops.tick()); }
-    catch (e) { log.error("ops tick failed", { error: (e as Error).message }); }
-    finally { releaseTick("ops"); }
+  const serviceTick = async (tickKey: string, work: () => Promise<unknown>) => {
+    if (!reserveTick(tickKey)) return;
+    try { await track(work()); }
+    catch (e) { log.error(`${tickKey} tick failed`, { error: (e as Error).message }); }
+    finally { releaseTick(tickKey); }
   };
-  const tickAll = () => Promise.all([networksThenNotify(), opsTick()]).then(() => undefined);
-  // The inbox ticks once per round, after the networks (their sends are recorded by then). Replicas may overlap: a delivery id is recorded once
-  // (notify.deliveries primary key), so a second replica cancels instead of sending again.
-  const notifyTick = async () => {
-    if (!svc.notifyTick || !reserveTick("notify")) return;
-    try { await track(svc.notifyTick()); }
-    catch (e) { log.error("notify tick failed", { error: (e as Error).message }); }
-    finally { releaseTick("notify"); }
+  const networksThenNotify = async () => {
+    await serviceTick("inbox", () => svc.inboxTick());
+    await Promise.all([...svc.runtimes.values()].map(async rt => {
+      if (!reserveTick(rt.id)) return;
+      try {
+        if (!(await track(rt.tick()))) log.info("tick skipped: another instance holds the lock", { network: rt.id });
+        tickDone.set(rt.id, now());
+      }
+      catch (e) { log.error("tick failed", { network: rt.id, error: (e as Error).message }); }
+      finally { releaseTick(rt.id); }
+    }));
+    await serviceTick("retention", () => svc.purge());
+    // Notify after the networks record their sends. The delivery ID prevents duplicate sends across replicas.
+    const notify = svc.notifyTick;
+    if (notify) await serviceTick("notify", () => notify.call(svc));
   };
+  // A hung service worker leaves the health monitor's own round available.
+  const ops = d.ops;
+  const tickAll = () => Promise.all([networksThenNotify(), ops && serviceTick("ops", () => ops.tick())]).then(() => undefined);
   const startTicks = () => {
     if (!canStartTimer(lifecycle)) return Promise.resolve(undefined);
     lifecycle = stepBackendLifecycle(lifecycle, { type: "startTimer", at: now() });

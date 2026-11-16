@@ -30,7 +30,7 @@ export function setup(o: Partial<McpHandlerOptions> & { store?: OAuthStore; subm
   const otp = new OtpService(people, provider, { hashKey: HASH_KEY, now });
   const appOf = (id: McpAppId) => (APPS as Record<string, AppInfo | undefined>)[id];
   const accounts = new Accounts(people, { hashKey: HASH_KEY, now, apps: id => (APPS as Record<string, AppInfo>)[id]! });
-  const sessions = new SessionService(people, { secret: "test-session-secret", now });
+  const sessions = new SessionService(people, { secret: "test-session-secret", phoneHash: e164 => accounts.phoneHash(e164), now });
   const logs: string[] = [];
   const store = o.store ?? new MemoryOAuthStore();
   const handler = createMcpHandler({

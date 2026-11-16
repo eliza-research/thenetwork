@@ -1,9 +1,9 @@
 // GENERATED from spec/backendLifecycle.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md:9) */
+/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md) */
 export type BackendPhase = "Serving" | "StoppingListeners" | "WaitingForWork" | "ClosingClean" | "ClosingTimedOut" | "ClosedClean" | "ClosedTimedOut";
-/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md:9) */
+/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md) */
 export interface BackendLifecycle { phase: BackendPhase; ticking: string[]; timerStarted: boolean; ticksFrom: number }
 
 /** One variant per transition in the spec. */
@@ -16,7 +16,7 @@ export type Event =
   | { type: "settleWorkDrain"; timedOut: boolean }
   | { type: "recordBackendClose" };
 
-/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md:9) */
+/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md) */
 export const initial: BackendLifecycle = { phase: "Serving", ticking: ([] as string[]), timerStarted: false, ticksFrom: 0 };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -25,13 +25,13 @@ export function inv(current: BackendLifecycle): boolean {
   return true;
 }
 
-/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md:9) */
+/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md) */
 //@ pure
 export function canReleaseTick(s: BackendLifecycle, tickKey: string): boolean {
   return s.ticking.includes(tickKey);
 }
 
-/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md:9) */
+/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md) */
 //@ pure
 export function releaseTick(s: BackendLifecycle, tickKey: string): BackendLifecycle {
   //@ ensures (inv(s) && canReleaseTick(s, tickKey)) ==> stepNewTicksRequireServing(s, "releaseTick", \result)
@@ -40,19 +40,19 @@ export function releaseTick(s: BackendLifecycle, tickKey: string): BackendLifecy
   return { ...s, ticking: s.ticking.filter((set_x: string) => ![tickKey].includes(set_x)) };
 }
 
-/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md:9) */
+/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md) */
 //@ pure
 export function stepNewTicksRequireServing(before: BackendLifecycle, via: string, after: BackendLifecycle): boolean {
   return !(via === "reserveTick") || (before.phase === "Serving" && after.phase === "Serving");
 }
 
-/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md:9) */
+/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md) */
 //@ pure
 export function backendAcceptsWork(s: BackendLifecycle): boolean {
   return s.phase === "Serving";
 }
 
-/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md:9) */
+/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md) */
 //@ pure
 export function reserveTick(s: BackendLifecycle, tickKey: string): BackendLifecycle {
   //@ ensures (inv(s) && canReserveTick(s, tickKey)) ==> stepNewTicksRequireServing(s, "reserveTick", \result)
@@ -61,13 +61,13 @@ export function reserveTick(s: BackendLifecycle, tickKey: string): BackendLifecy
   return { ...s, ticking: s.ticking.concat([tickKey].filter((set_x: string) => !s.ticking.includes(set_x))) };
 }
 
-/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md:9) */
+/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md) */
 //@ pure
 export function canReserveTick(s: BackendLifecycle, tickKey: string): boolean {
   return backendAcceptsWork(s) && !s.ticking.includes(tickKey);
 }
 
-/** Story: Run one tick per worker at a time / A timer start records when tick monitoring began (spec/backendLifecycle.md:34) */
+/** Story: Run one tick per worker at a time / A timer start records when tick monitoring began (spec/backendLifecycle.md) */
 //@ pure
 export function startTimer(s: BackendLifecycle, at: number): BackendLifecycle {
   //@ ensures (inv(s) && canStartTimer(s)) ==> stepNewTicksRequireServing(s, "startTimer", \result)
@@ -76,19 +76,19 @@ export function startTimer(s: BackendLifecycle, at: number): BackendLifecycle {
   return { ...s, timerStarted: true, ticksFrom: at };
 }
 
-/** Story: Run one tick per worker at a time / A timer start records when tick monitoring began (spec/backendLifecycle.md:34) */
+/** Story: Run one tick per worker at a time / A timer start records when tick monitoring began (spec/backendLifecycle.md) */
 //@ pure
 export function sometimesTimerStarts(s: BackendLifecycle): boolean {
   return s.timerStarted;
 }
 
-/** Story: Run one tick per worker at a time / A timer start records when tick monitoring began (spec/backendLifecycle.md:34) */
+/** Story: Run one tick per worker at a time / A timer start records when tick monitoring began (spec/backendLifecycle.md) */
 //@ pure
 export function canStartTimer(s: BackendLifecycle): boolean {
   return backendAcceptsWork(s);
 }
 
-/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
 //@ pure
 export function beginShutdown(s: BackendLifecycle): BackendLifecycle {
   //@ ensures (inv(s) && canBeginShutdown(s)) ==> stepNewTicksRequireServing(s, "beginShutdown", \result)
@@ -97,13 +97,13 @@ export function beginShutdown(s: BackendLifecycle): BackendLifecycle {
   return { ...s, phase: "StoppingListeners" };
 }
 
-/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
 //@ pure
 export function canRecordListenerDrain(s: BackendLifecycle): boolean {
   return s.phase === "StoppingListeners";
 }
 
-/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
 //@ pure
 export function recordListenerDrain(s: BackendLifecycle): BackendLifecycle {
   //@ ensures (inv(s) && canRecordListenerDrain(s)) ==> stepNewTicksRequireServing(s, "recordListenerDrain", \result)
@@ -112,13 +112,13 @@ export function recordListenerDrain(s: BackendLifecycle): BackendLifecycle {
   return { ...s, phase: "WaitingForWork" };
 }
 
-/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
 //@ pure
 export function canSettleWorkDrain(s: BackendLifecycle, timedOut: boolean): boolean {
   return s.phase === "WaitingForWork" || (s.phase === "StoppingListeners" && timedOut);
 }
 
-/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
 //@ pure
 export function settleWorkDrain(s: BackendLifecycle, timedOut: boolean): BackendLifecycle {
   //@ ensures (inv(s) && canSettleWorkDrain(s, timedOut)) ==> stepNewTicksRequireServing(s, "settleWorkDrain", \result)
@@ -127,13 +127,13 @@ export function settleWorkDrain(s: BackendLifecycle, timedOut: boolean): Backend
   return { ...s, phase: timedOut ? "ClosingTimedOut" : "ClosingClean" };
 }
 
-/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
 //@ pure
 export function canRecordBackendClose(s: BackendLifecycle): boolean {
   return s.phase === "ClosingClean" || s.phase === "ClosingTimedOut";
 }
 
-/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
 //@ pure
 export function recordBackendClose(s: BackendLifecycle): BackendLifecycle {
   //@ ensures (inv(s) && canRecordBackendClose(s)) ==> stepNewTicksRequireServing(s, "recordBackendClose", \result)
@@ -142,37 +142,37 @@ export function recordBackendClose(s: BackendLifecycle): BackendLifecycle {
   return { ...s, phase: s.phase === "ClosingClean" ? "ClosedClean" : "ClosedTimedOut" };
 }
 
-/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
 //@ pure
 export function shutdownWasClean(s: BackendLifecycle): boolean {
   return s.phase === "ClosingClean" || s.phase === "ClosedClean";
 }
 
-/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
 //@ pure
 export function stepCleanDrainWaitsForListeners(before: BackendLifecycle, after: BackendLifecycle): boolean {
   return !(before.phase !== "ClosingClean" && after.phase === "ClosingClean") || before.phase === "WaitingForWork";
 }
 
-/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
 //@ pure
 export function sometimesClosesCleanly(s: BackendLifecycle): boolean {
   return s.phase === "ClosedClean";
 }
 
-/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
 //@ pure
 export function sometimesClosesAfterGrace(s: BackendLifecycle): boolean {
   return s.phase === "ClosedTimedOut";
 }
 
-/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
 //@ pure
 export function canBeginShutdown(s: BackendLifecycle): boolean {
   return backendAcceptsWork(s);
 }
 
-/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
 //@ pure
 export function stepDrainNeverReopens(before: BackendLifecycle, after: BackendLifecycle): boolean {
   return !(!backendAcceptsWork(before)) || !backendAcceptsWork(after);

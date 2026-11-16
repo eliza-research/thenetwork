@@ -80,7 +80,7 @@ describe.skipIf(!pgAvailable)("weekly bias monitor: dates by meeting time (Netwo
     let item: any;
     for (let i = 0; i < 12 && !item; i++) { await run(2 * HOUR); item = (await staff(REVIEWER, "GET", "/review")).items?.[0]; }
     expect(item).toBeDefined();
-    expect((await staff(REVIEWER, "POST", `/review/${encodeURIComponent(item.oppId)}`, { decision: "approve", secondsSpent: 20 })).ok).toBe(true);
+    expect((await staff(REVIEWER, "POST", `/review/${encodeURIComponent(item.oppId)}`, { decision: "approve", secondsSpent: 20, revision: item.revision })).ok).toBe(true);
 
     const answered = new Set<string>();
     let booked: any;

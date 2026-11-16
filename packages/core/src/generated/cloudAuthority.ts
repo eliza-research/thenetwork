@@ -1,11 +1,11 @@
 // GENERATED from spec/cloudAuthority.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Keep site access tied to current Cloud authority / The app's authority and proof choose how a site session is checked (spec/cloudAuthority.md:9) */
+/** Story: Keep site access tied to current Cloud authority / The app's authority and proof choose how a site session is checked (spec/cloudAuthority.md) */
 export type CheckPhase = "AwaitingProof" | "AwaitingDelegation" | "AwaitingGrantOwner" | "AwaitingCloud" | "AuthorityValid" | "AuthorityInvalid" | "AuthorityUnavailable";
-/** Story: Keep site access tied to current Cloud authority / The app's authority and proof choose how a site session is checked (spec/cloudAuthority.md:9) */
+/** Story: Keep site access tied to current Cloud authority / The app's authority and proof choose how a site session is checked (spec/cloudAuthority.md) */
 export interface AuthorityCheck { phase: CheckPhase; fromCache: boolean }
-/** Story: Keep site access tied to current Cloud authority / Only a positive live Cloud response updates the cache (spec/cloudAuthority.md:32) */
+/** Story: Keep site access tied to current Cloud authority / Only a positive live Cloud response updates the cache (spec/cloudAuthority.md) */
 export type CloudResponse = "CloudAccepted" | "CloudDenied" | "CloudUnavailable";
 
 /** One variant per transition in the spec. */
@@ -17,7 +17,7 @@ export type Event =
   | { type: "checkGrantDelegation"; delegationBound: boolean }
   | { type: "checkGrantOwner"; phoneEligible: boolean };
 
-/** Story: Keep site access tied to current Cloud authority / The app's authority and proof choose how a site session is checked (spec/cloudAuthority.md:9) */
+/** Story: Keep site access tied to current Cloud authority / The app's authority and proof choose how a site session is checked (spec/cloudAuthority.md) */
 export const initial: AuthorityCheck = { phase: "AwaitingProof", fromCache: false };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -26,13 +26,13 @@ export function inv(current: AuthorityCheck): boolean {
   return alwaysOnlyValidChecksUseCache(current);
 }
 
-/** Story: Keep site access tied to current Cloud authority / The app's authority and proof choose how a site session is checked (spec/cloudAuthority.md:9) */
+/** Story: Keep site access tied to current Cloud authority / The app's authority and proof choose how a site session is checked (spec/cloudAuthority.md) */
 //@ pure
 export function localSessionAllowed(cloudToken: boolean): boolean {
   return !cloudToken;
 }
 
-/** Story: Keep site access tied to current Cloud authority / The app's authority and proof choose how a site session is checked (spec/cloudAuthority.md:9) */
+/** Story: Keep site access tied to current Cloud authority / The app's authority and proof choose how a site session is checked (spec/cloudAuthority.md) */
 //@ pure
 export function checkSiteProof(check: AuthorityCheck, bindingValid: boolean, proofLive: boolean, productionCloud: boolean, cacheLive: boolean): AuthorityCheck {
   //@ ensures (inv(check) && canCheckSiteProof(check)) ==> alwaysOnlyValidChecksUseCache(\result)
@@ -40,19 +40,19 @@ export function checkSiteProof(check: AuthorityCheck, bindingValid: boolean, pro
   return !bindingValid || !proofLive ? ({ ...check, phase: "AuthorityInvalid" } as AuthorityCheck) : (!productionCloud && cacheLive ? ({ phase: "AuthorityValid", fromCache: true } as AuthorityCheck) : ({ ...check, phase: "AwaitingCloud" } as AuthorityCheck));
 }
 
-/** Story: Keep site access tied to current Cloud authority / The app's authority and proof choose how a site session is checked (spec/cloudAuthority.md:9) */
+/** Story: Keep site access tied to current Cloud authority / The app's authority and proof choose how a site session is checked (spec/cloudAuthority.md) */
 //@ pure
 export function alwaysOnlyValidChecksUseCache(check: AuthorityCheck): boolean {
   return !check.fromCache || check.phase === "AuthorityValid";
 }
 
-/** Story: Keep site access tied to current Cloud authority / The app's authority and proof choose how a site session is checked (spec/cloudAuthority.md:9) */
+/** Story: Keep site access tied to current Cloud authority / The app's authority and proof choose how a site session is checked (spec/cloudAuthority.md) */
 //@ pure
 export function canUseLocalSession(check: AuthorityCheck): boolean {
   return check.phase === "AwaitingProof";
 }
 
-/** Story: Keep site access tied to current Cloud authority / The app's authority and proof choose how a site session is checked (spec/cloudAuthority.md:9) */
+/** Story: Keep site access tied to current Cloud authority / The app's authority and proof choose how a site session is checked (spec/cloudAuthority.md) */
 //@ pure
 export function useLocalSession(check: AuthorityCheck, cloudToken: boolean): AuthorityCheck {
   //@ ensures (inv(check) && canUseLocalSession(check)) ==> alwaysOnlyValidChecksUseCache(\result)
@@ -60,19 +60,19 @@ export function useLocalSession(check: AuthorityCheck, cloudToken: boolean): Aut
   return { ...check, phase: localSessionAllowed(cloudToken) ? "AuthorityValid" : "AuthorityInvalid" };
 }
 
-/** Story: Keep site access tied to current Cloud authority / The app's authority and proof choose how a site session is checked (spec/cloudAuthority.md:9) */
+/** Story: Keep site access tied to current Cloud authority / The app's authority and proof choose how a site session is checked (spec/cloudAuthority.md) */
 //@ pure
 export function canCheckSiteProof(check: AuthorityCheck): boolean {
   return check.phase === "AwaitingProof";
 }
 
-/** Story: Keep site access tied to current Cloud authority / Only a positive live Cloud response updates the cache (spec/cloudAuthority.md:32) */
+/** Story: Keep site access tied to current Cloud authority / Only a positive live Cloud response updates the cache (spec/cloudAuthority.md) */
 //@ pure
 export function canFinishCloudCheck(check: AuthorityCheck): boolean {
   return check.phase === "AwaitingCloud";
 }
 
-/** Story: Keep site access tied to current Cloud authority / Only a positive live Cloud response updates the cache (spec/cloudAuthority.md:32) */
+/** Story: Keep site access tied to current Cloud authority / Only a positive live Cloud response updates the cache (spec/cloudAuthority.md) */
 //@ pure
 export function finishCloudCheck(check: AuthorityCheck, answer: CloudResponse, proofLive: boolean): AuthorityCheck {
   //@ ensures (inv(check) && canFinishCloudCheck(check)) ==> alwaysOnlyValidChecksUseCache(\result)
@@ -80,49 +80,49 @@ export function finishCloudCheck(check: AuthorityCheck, answer: CloudResponse, p
   return { ...check, phase: !proofLive || answer === "CloudDenied" ? "AuthorityInvalid" : (answer === "CloudAccepted" ? "AuthorityValid" : "AuthorityUnavailable") };
 }
 
-/** Story: Keep site access tied to current Cloud authority / Only a positive live Cloud response updates the cache (spec/cloudAuthority.md:32) */
+/** Story: Keep site access tied to current Cloud authority / Only a positive live Cloud response updates the cache (spec/cloudAuthority.md) */
 //@ pure
 export function stepOnlyAnAuthorityResultFinishes(before: AuthorityCheck, via: string, after: AuthorityCheck): boolean {
   return !(before.phase === "AwaitingCloud" && after.phase !== "AwaitingCloud") || via === "finishCloudCheck";
 }
 
-/** Story: Keep site access tied to current Cloud authority / Only a positive live Cloud response updates the cache (spec/cloudAuthority.md:32) */
+/** Story: Keep site access tied to current Cloud authority / Only a positive live Cloud response updates the cache (spec/cloudAuthority.md) */
 //@ pure
 export function sometimesChecksCloud(check: AuthorityCheck): boolean {
   return check.phase === "AwaitingCloud";
 }
 
-/** Story: Keep site access tied to current Cloud authority / Only a positive live Cloud response updates the cache (spec/cloudAuthority.md:32) */
+/** Story: Keep site access tied to current Cloud authority / Only a positive live Cloud response updates the cache (spec/cloudAuthority.md) */
 //@ pure
 export function sometimesAcceptsAuthority(check: AuthorityCheck): boolean {
   return check.phase === "AuthorityValid";
 }
 
-/** Story: Keep site access tied to current Cloud authority / Only a positive live Cloud response updates the cache (spec/cloudAuthority.md:32) */
+/** Story: Keep site access tied to current Cloud authority / Only a positive live Cloud response updates the cache (spec/cloudAuthority.md) */
 //@ pure
 export function sometimesCloudIsUnavailable(check: AuthorityCheck): boolean {
   return check.phase === "AuthorityUnavailable";
 }
 
-/** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md:56) */
+/** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md) */
 //@ pure
 export function grantResourceMatches(productionCloud: boolean, resource: string, standardMcp: string, openAiMcp: string): boolean {
   return productionCloud && (resource === standardMcp || resource === openAiMcp);
 }
 
-/** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md:56) */
+/** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md) */
 //@ pure
 export function grantExpiresAt(sessionExpiry: number, identityExpiry: number): number {
   return sessionExpiry <= identityExpiry ? sessionExpiry : identityExpiry;
 }
 
-/** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md:56) */
+/** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md) */
 //@ pure
 export function canCheckGrantEnvelope(check: AuthorityCheck): boolean {
   return check.phase === "AwaitingProof";
 }
 
-/** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md:56) */
+/** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md) */
 //@ pure
 export function checkGrantEnvelope(check: AuthorityCheck, envelopeValid: boolean): AuthorityCheck {
   //@ ensures (inv(check) && canCheckGrantEnvelope(check)) ==> alwaysOnlyValidChecksUseCache(\result)
@@ -130,13 +130,13 @@ export function checkGrantEnvelope(check: AuthorityCheck, envelopeValid: boolean
   return { ...check, phase: envelopeValid ? "AwaitingDelegation" : "AuthorityInvalid" };
 }
 
-/** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md:56) */
+/** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md) */
 //@ pure
 export function canCheckGrantDelegation(check: AuthorityCheck): boolean {
   return check.phase === "AwaitingDelegation";
 }
 
-/** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md:56) */
+/** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md) */
 //@ pure
 export function checkGrantDelegation(check: AuthorityCheck, delegationBound: boolean): AuthorityCheck {
   //@ ensures (inv(check) && canCheckGrantDelegation(check)) ==> alwaysOnlyValidChecksUseCache(\result)
@@ -144,13 +144,13 @@ export function checkGrantDelegation(check: AuthorityCheck, delegationBound: boo
   return { ...check, phase: delegationBound ? "AwaitingGrantOwner" : "AuthorityInvalid" };
 }
 
-/** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md:56) */
+/** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md) */
 //@ pure
 export function canCheckGrantOwner(check: AuthorityCheck): boolean {
   return check.phase === "AwaitingGrantOwner";
 }
 
-/** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md:56) */
+/** Story: Use a grant only for its bound identity / Grant validation checks envelope and owner before asking Cloud (spec/cloudAuthority.md) */
 //@ pure
 export function checkGrantOwner(check: AuthorityCheck, phoneEligible: boolean): AuthorityCheck {
   //@ ensures (inv(check) && canCheckGrantOwner(check)) ==> alwaysOnlyValidChecksUseCache(\result)

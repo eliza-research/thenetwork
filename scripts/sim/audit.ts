@@ -52,7 +52,7 @@ async function networkGates(b: Block) {
   const seed = 3, days = 9;
   const personas = await nycPersonas();
   const start = (await fileAt(`${DATA_DIR}/manifest.json`).json()).snapshotNow as number;
-  const net = new ConsentNetwork({ seed, review: "auto" });
+  const net = new ConsentNetwork({ seed, review: "auto", engine: { cities: ["nyc"] } });
   const R: RunRecord[] = [];
   const rosterAtNo = new Map<Log, readonly MemberId[]>();
   const w = new World({ seed, personas, days, start, writeLog: false, network: net, agent: new PolicyPersonaAgent(start), spawnFriend: friendFactory({ seed }), onRecord: r => {

@@ -162,8 +162,8 @@ Send `Authorization: Bearer <token>`. Tokens are per app: `reviewer@slop:<t>` is
 | Route | Role | Body |
 |---|---|---|
 | `GET /health` | any role for the app | Last tick, lock holder, backlog (review, overdue, deferred, waiting sends), refusals; with several networks, a `networks` summary |
-| `GET /review` | reviewer, safety | The review queue, oldest first |
-| `POST /review/:oppId` | reviewer | `{ decision: "approve" \| "reject" \| "edit" \| "reroll", reason?, note?, secondsSpent?, explanations?, objective?, swapOut? }`. The reviewer of record is the token's staff id, never a field in the body. |
+| `GET /review` | reviewer, safety | The review queue, oldest first, with the current `revision` for each item |
+| `POST /review/:oppId` | reviewer | `{ decision: "approve" \| "reject" \| "edit" \| "reroll", revision, reason?, note?, secondsSpent?, explanations?, objective?, swapOut? }`. Send the revision the reviewer saw. A changed revision returns `review_stale`. The token identifies the reviewer. |
 | `POST /safety/lift` | safety | `{ memberId, note? }` |
 | `POST /safety/close` | safety | `{ caseId, note? }` |
 | `GET /signals` | reviewer, safety | Agent `opt_out` and `safety_concern` signals waiting for a person: `{ id, memberId, kind, evidence, at }`, newest first |
@@ -181,6 +181,10 @@ Send `Authorization: Bearer <token>`. Tokens are per app: `reviewer@slop:<t>` is
 | `GET /members/:id/photos` | safety | `X-Network-Reason: <5+ characters>`. Only with an open safety report (open or held) or an open safety case about the member, as the photo consent promises (403 `no_report`, audited as refused); the report or case id goes in the audit row. Verified adults only (403 `adults_only`); the audit row is written before any link |
 | `GET /bias` | admin, analyst | The newest weekly bias monitor reports of the network (aggregates only) |
 | `POST /matching` | admin | `{ on: true \| false }`. Refused (`matching_not_allowed`) for a network the registry keeps off. Migration 0011 allows slop and peon; their stored switch still starts off. |
+| `GET /postings?managerId=` | admin, reviewer | peon only (404 elsewhere). The job postings of one hiring manager, or all (`postings.ts`). Audited as `read_postings`. |
+| `POST /postings` | admin | peon only. Create, update or reopen a posting `{ managerId, id?, title, payMin, payMax, openings?, mode?, area?, must?, nice?, sponsors? }` through the same checks as a text post (an adult, active, opted-in manager). Audited as `save_posting`. |
+| `POST /postings/:id/close` | admin | peon only. `{ reason: "closed" \| "filled" }`; open seat items that are not booked end at once. Audited as `close_posting`. |
+| `POST /employers/:memberId/verify` | admin | peon only. `{ company, note }` (note 5+ characters): the company fact and `peon:verified` on the manager. peonPack proposes no job of an unverified employer. Audited as `verify_employer`. |
 | `/review-mode` | none | Always 404. Production review is "human" only (PRD 32.8). The service refuses any other mode at start. |
 
 A refused action answers 409 with the Network's reason (for example `participant_minor`, `matching_paused`, `not_in_review`). A new stored state starts with matching off (runbook-real 7.4 check 8). An admin turns it on.
@@ -252,6 +256,46 @@ Rules for the boundary:
 2. **Only this service proposes or contacts members about other members.** The plugin must not send probes, introductions or booked plans. It can read what the Network knows through its own store.
 3. **Joining is a membership.** The platform creates members after a verified join (`POST /api/join`) or a join by text on an open app. A new membership through a forwarding link commits with consent, the Network member, and the app-scoped attribution. An `invited` member still has to complete signup.
 4. **No shared process state.** The two talk only through Postgres (the `network` schema) and the channel gateway. Nothing here imports Eliza, and the plugin does not import this service.
+
+## Founding-cohort invitations
+
+An app admin can issue one batch through `POST /apps/<app>/invite/seed` with a
+UUID `batchId` and `invitations` containing up to 100 rows. Each row supplies
+`phone`, `city` (`nyc` or `sf`) and a private `vouch` of at most 500 UTF-8 bytes.
+Forward the returned links to their intended recipients. An exact replay by
+the same issuer returns the same links until expiry. Changing the rows under
+the same batch ID returns a conflict.
+
+The verified recipient decides whether to join through the existing age and
+consent checks. The first join records the issuer and cohort city separately
+from the member's own profile. Private vouches leave the invitation on
+redemption, signed decline, or expiry. [Seed invitation rules](../../../spec/seedInvitation.md)
+
+## Expected member invitation
+
+A member can take an issued forwarding link and send a private signed turn
+`SEND INVITE <link> TO <phone>`. The service returns a short-lived reference.
+The member replies `CONFIRM EXPECTED INVITE <reference>` only if the recipient
+expects the text. The confirmation reply is the same when the recipient is
+unavailable. The normal vouch review and invitation allowance already apply to
+the link.
+
+The service-send path needs a carrier adapter that admits first contact.
+Eliza Cloud currently requires a Cloud account before it admits a proactive
+delivery. Keep the original link available for forwarding on that adapter.
+
+The existing outbound queue applies consent, quiet hours, line limits and the
+leak check. A sent invitation names the inviter and gives the recipient
+`DECLINE INVITE` and `STOP`. The queue uses the original key for any provider
+receipt lookup. Once queued, the link requires verification of the exact
+recipient phone, along with the existing age and consent checks. [Expected
+invitation rules](../../../spec/expectedMemberInvitation.md)
+
+## Review saved profile facts
+
+In a signed member conversation, send `SHOW MY FACTS` or `WHAT DO YOU KNOW ABOUT ME?` to list the current app's saved facts with their source and privacy scope. Follow the page prompt to see more. `SHOW MY <APP> PROFILE` still reads back the saved signup profile.
+
+Use a reference from the list with `CORRECT FACT <ref> TO <text>`, `REMOVE FACT <ref>`, or `SET FACT SCOPE <ref> TO <scope>`. The service sends an exact edit code that lasts 15 minutes. Reply with `CONFIRM FACT EDIT <code>` to apply it or `CANCEL FACT EDIT <code>` to discard it.
 
 ## Private home-help review
 

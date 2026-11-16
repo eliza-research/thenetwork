@@ -38,10 +38,11 @@ export async function findMemberInvitation(tx: SQL, app: AppId, tokenHash: strin
   if (row) return { tokenHash, inviterMemberId: row.inviter_member_id as string };
 }
 
-export async function consumeMemberInvitation(tx: SQL, app: AppId, referral: ReferralJoin, inviteeMemberId: string, now: number): Promise<void> {
+export async function consumeMemberInvitation(tx: SQL, app: AppId, referral: ReferralJoin, inviteeMemberId: string, now: number, verifiedRecipientHash?: string): Promise<void> {
   const rows = await tx`update platform.member_invitations set redeemed_member_id=${inviteeMemberId}, redeemed_at=${new Date(now)}
     where app_id=${app} and token_hash=${referral.tokenHash} and inviter_member_id=${referral.inviterMemberId}
       and inviter_member_id<>${inviteeMemberId} and redeemed_at is null and issued_at<=${new Date(now)} and expires_at>${new Date(now)}
+      and expected_recipient_hash is not distinct from ${verifiedRecipientHash ?? null}
     returning token_hash`;
   if (rows.length !== 1) throw new InvitationUnavailable();
 }

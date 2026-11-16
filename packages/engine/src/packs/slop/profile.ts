@@ -39,10 +39,8 @@ export interface History {
   yes: number; no: number; silent: number;
   /** Booked first dates that happened, no-shows (either side), back-outs at the reveal by this member. */
   dates: number; noShows: number; backouts: number;
-  /** Feedback this member gave: mean of positive=1 / neutral=0.5 / negative=0, and count. */
-  givenMean: number; given: number;
-  /** Feedback about this member: same scale, count, distinct people who were negative. */
-  receivedMean: number; received: number; negativeFrom: number;
+  /** Distinct people whose feedback about this member was negative. */
+  negativeFrom: number;
   /** Members who blocked this member. */
   blockedBy: number;
   /** Last completed date (ms), and whether this member wanted to see that person again. */
@@ -82,10 +80,10 @@ export interface SlopProfile {
   verification: string[];
   /** Age verification: true = passed, false = failed, undefined = no check recorded. */
   ageVerified?: boolean;
-  /** Appearance rating (iteration 3), read only for adults whose age is not known to be unverified. */
-  appearance?: { face: number; body: number; overall: number; confidence: number; bodyType?: string; bodyTypeConfidence?: number;
-    /** Iteration 5: rank of `overall` among the rated members in this input, 0 (lowest) .. 1. Internal only. */
-    quantile?: number };
+  /** Appearance rating, read only for adults whose age is not known to be unverified. Internal only. */
+  appearance?: { face: number; body: number; overall: number; confidence: number; bodyType?: string; bodyTypeConfidence?: number; photos?: number };
+  /** The private source facets that supply the current appearance rating. */
+  appearanceEvidenceIds?: readonly string[];
   /**
    * Hard-filter questions asked at least `silentAfterDays` ago and never answered (age_range,
    * distance, orientation): the pack proposes on a narrow fallback instead of locking them out.
@@ -148,7 +146,16 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
   const out = new Map<MemberId, SlopProfile>();
   for (const m of [...input.members].sort((a, b) => (a.id < b.id ? -1 : 1))) {
     const fs = (facetsBy.get(m.id) ?? []).slice().sort((a, b) => (a.id < b.id ? -1 : 1));
+    const appearanceFacets = fs.filter(f => f.tags.some(t => t.startsWith(APPEARANCE_PREFIX)));
     const tags = fs.flatMap(f => f.tags.filter(t => !NEVER_USED.test(t)).map(t => ({ t, f })));
+    const ageVerified = tags.some(x => x.t === "verify:age:pass") ? true : tags.some(x => x.t === "verify:age:fail") ? false : undefined;
+    const appearance = canRatePhotos({ age: m.age, ageVerified: tags.some(x => x.t === "verify:age:fail") ? false : undefined })
+      ? parseAppearance(appearanceFacets.flatMap(f => f.tags)) : undefined;
+    const appearanceSources = new Map<string, string>();
+    if (appearance) for (const facet of appearanceFacets) for (const tag of facet.tags) {
+      const key = /^appearance:(face|body|overall|conf|photos)=/.exec(tag)?.[1];
+      if (key && (key !== "photos" || appearance.photos !== undefined)) appearanceSources.set(key, facet.id);
+    }
     const has = (prefix: string) => tags.filter(x => x.t.startsWith(prefix)).map(x => x.t.slice(prefix.length));
     const one = (prefix: string) => has(prefix)[0];
     // The first zip we know (a member may have corrected an unknown one), else the first given.
@@ -198,18 +205,14 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
       identity: one("slop:identity:"), orientation: one("slop:orientation:"),
       safety: [...new Set(tags.filter(x => x.t.startsWith("safety:")).map(x => x.t))].sort(),
       verification: [...new Set(tags.filter(x => x.t.startsWith("verify:")).map(x => x.t))].sort(),
-      ageVerified: tags.some(x => x.t === "verify:age:pass") ? true : tags.some(x => x.t === "verify:age:fail") ? false : undefined,
+      ageVerified,
       // Adults only: a rating on anyone else is ignored, whatever the snapshot says.
-      appearance: canRatePhotos({ age: m.age, ageVerified: tags.some(x => x.t === "verify:age:fail") ? false : undefined })
-        ? parseAppearance(fs.filter(f => f.tags.some(t => t.startsWith(APPEARANCE_PREFIX))).flatMap(f => f.tags)) : undefined,
+      appearance, appearanceEvidenceIds: [...new Set(appearanceSources.values())],
       visiting, interestFacet, silentAsks: silent.get(m.id) ?? [], openAsks: open.get(m.id) ?? [], askCounts: counts.get(m.id) ?? {},
       review: tags.some(x => x.t === "review:confirmed") ? "confirmed" : tags.some(x => x.t === "review:cleared") ? "cleared" : undefined,
       history: hist.get(m.id) ?? emptyHistory(),
     });
   }
-  // Iteration 5: each rating's quantile among the rated members of this input (ties by id).
-  const ratedP = [...out.values()].filter(p => p.appearance).sort((x, y) => (x.appearance!.overall - y.appearance!.overall) || (x.id < y.id ? -1 : 1));
-  ratedP.forEach((p, i) => { p.appearance!.quantile = ratedP.length > 1 ? i / (ratedP.length - 1) : 0.5; });
   // Revealed taste: the self-descriptions of the people a member rated, with the rating.
   for (const p of out.values()) {
     p.history.rated.sort((x, y) => (x.about < y.about ? -1 : x.about > y.about ? 1 : x.v - y.v));
@@ -223,7 +226,7 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
   return out;
 }
 
-const emptyHistory = (): History => ({ yes: 0, no: 0, silent: 0, dates: 0, noShows: 0, backouts: 0, givenMean: 0, given: 0, receivedMean: 0, received: 0, negativeFrom: 0, blockedBy: 0, attendedSlots: [], rated: [], ratedSelf: [], ratedBody: [] });
+const emptyHistory = (): History => ({ yes: 0, no: 0, silent: 0, dates: 0, noShows: 0, backouts: 0, negativeFrom: 0, blockedBy: 0, attendedSlots: [], rated: [], ratedSelf: [], ratedBody: [] });
 const SENT = { positive: 1, neutral: 0.5, negative: 0 } as const;
 
 /** Slot index of a timestamp in the dating week (the slop world's slots: weekday evenings 19:00, weekend 14:00 / 19:00 UTC). */
@@ -258,8 +261,6 @@ function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<Membe
     const k = C(id), cur = lastDate.get(k);
     if (!cur || r.at > cur.at) lastDate.set(k, { at: r.at });
   }
-  const sum = new Map<MemberId, { g: number; gn: number; r: number; rn: number }>();
-  const s = (id: MemberId) => { let x = sum.get(id); if (!x) { x = { g: 0, gn: 0, r: 0, rn: 0 }; sum.set(id, x); } return x; };
   // Order-independent: feedback in (time, id) order, so "the last word on the last date" is stable under shuffles.
   const fbs = [...(input.feedback ?? [])].sort((x, y) => (x.at - y.at) || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
   for (const f of fbs) {
@@ -267,13 +268,10 @@ function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<Membe
     const from = C(f.from), about = C(f.about);
     const v = (SENT[f.sentiment] + (f.wouldMeetAgain === undefined ? SENT[f.sentiment] : f.wouldMeetAgain ? 1 : 0)) / 2;
     h(from).rated.push({ about, v });
-    s(from).g += v; s(from).gn++;
-    s(about).r += v; s(about).rn++;
     if (f.sentiment === "negative") { const set = negFrom.get(about) ?? new Set(); set.add(from); negFrom.set(about, set); }
     const ld = lastDate.get(from);
     if (ld && f.at >= ld.at) ld.liked = f.wouldMeetAgain === true;
   }
-  for (const [id, x] of sum) { const y = h(id); y.given = x.gn; y.givenMean = x.gn ? x.g / x.gn : 0; y.received = x.rn; y.receivedMean = x.rn ? x.r / x.rn : 0; }
   for (const [id, set] of negFrom) h(id).negativeFrom = set.size;
   for (const [id, d] of lastDate) { const y = h(id); y.lastDateAt = d.at; y.lastDateLiked = d.liked; }
   for (const e of input.edges) if (e.type === "blocked") h(C(e.to)).blockedBy++;

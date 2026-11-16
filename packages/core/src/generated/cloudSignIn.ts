@@ -1,11 +1,11 @@
 // GENERATED from spec/cloudSignIn.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md:9) */
+/** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) */
 export type SignInPhase = "AwaitingHandoff" | "AwaitingExchange" | "AwaitingIdentity" | "AwaitingPhone" | "AwaitingSession" | "SignedIn" | "RejectCallback" | "DenySignIn" | "CloudUnavailable";
-/** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md:9) */
+/** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) */
 export interface HandoffFacts { bindingValid: boolean; pendingLive: boolean; codeWellFormed: boolean }
-/** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md:9) */
+/** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) */
 export interface SignIn { phase: SignInPhase; handoffAccepted: boolean; exchangeAccepted: boolean; identityAccepted: boolean; phoneAllowed: boolean }
 
 /** One variant per transition in the spec. */
@@ -16,11 +16,11 @@ export type Event =
   | { type: "checkPhone"; phoneAllowed: boolean }
   | { type: "recordSession" };
 
-/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md:37) */
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 export const cloudClockSkewMs: number = exact_cloudSignIn(30 * 1000);
-/** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md:9) */
+/** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) */
 export const validHandoff: HandoffFacts = { bindingValid: true, pendingLive: true, codeWellFormed: true };
-/** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md:9) */
+/** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) */
 export const initial: SignIn = { phase: "AwaitingHandoff", handoffAccepted: false, exchangeAccepted: false, identityAccepted: false, phoneAllowed: false };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -29,19 +29,19 @@ export function inv(current: SignIn): boolean {
   return alwaysSessionRequiresAcceptedHandoff(current);
 }
 
-/** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md:9) */
+/** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) */
 //@ pure
 export function liveBeforeDeadline(asOf: number, expiresAt: number): boolean {
   return asOf < expiresAt;
 }
 
-/** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md:9) */
+/** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) */
 //@ pure
 export function canCheckHandoff(signIn: SignIn): boolean {
   return signIn.phase === "AwaitingHandoff";
 }
 
-/** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md:9) */
+/** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) */
 //@ pure
 export function checkHandoff(signIn: SignIn, handoffFacts: HandoffFacts): SignIn {
   //@ ensures (inv(signIn) && canCheckHandoff(signIn)) ==> alwaysSessionRequiresAcceptedHandoff(\result)
@@ -49,52 +49,52 @@ export function checkHandoff(signIn: SignIn, handoffFacts: HandoffFacts): SignIn
   return { ...signIn, handoffAccepted: local_0, phase: local_0 ? "AwaitingExchange" : "RejectCallback" };
 }
 
-/** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md:9) */
+/** Story: Use my Cloud identity to sign in to this app / The callback requires a live handoff for this app (spec/cloudSignIn.md) */
 //@ pure
 export function lawAnExpiredHandoffIsNeverLive(expiresAt: number): boolean {
   //@ ensures \result === true
   return !liveBeforeDeadline(expiresAt, expiresAt);
 }
 
-/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md:37) */
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 //@ pure
 export function cloudIssuedAtWithinSkew(issuedAtMs: number, asOf: number): boolean {
   return issuedAtMs <= exact_cloudSignIn(asOf + cloudClockSkewMs);
 }
 
-/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md:37) */
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 //@ pure
 export function cloudSessionStartedAt(issuedAtMs: number, asOf: number): number {
   return issuedAtMs <= asOf ? issuedAtMs : asOf;
 }
 
-/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md:37) */
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 //@ pure
 export function lawSessionStartIsNeverFuture(issuedAtMs: number, asOf: number): boolean {
   //@ ensures \result === true
   return cloudSessionStartedAt(issuedAtMs, asOf) <= asOf;
 }
 
-/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md:37) */
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 //@ pure
 export function canRecordExchange(signIn: SignIn): boolean {
   return signIn.phase === "AwaitingExchange" && signIn.handoffAccepted;
 }
 
-/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md:37) */
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 //@ pure
 export function recordExchange(signIn: SignIn, exchangeAccepted: boolean): SignIn {
   //@ ensures (inv(signIn) && canRecordExchange(signIn)) ==> alwaysSessionRequiresAcceptedHandoff(\result)
   return { ...signIn, exchangeAccepted: exchangeAccepted, phase: exchangeAccepted ? "AwaitingIdentity" : "DenySignIn" };
 }
 
-/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md:37) */
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 //@ pure
 export function canCheckIdentity(signIn: SignIn): boolean {
   return signIn.phase === "AwaitingIdentity" && signIn.exchangeAccepted && signIn.handoffAccepted;
 }
 
-/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md:37) */
+/** Story: Use my Cloud identity to sign in to this app / Cloud must accept the exchange and return a live identity (spec/cloudSignIn.md) */
 //@ pure
 export function checkIdentity(signIn: SignIn, identityAvailable: boolean, identityValid: boolean): SignIn {
   //@ ensures (inv(signIn) && canCheckIdentity(signIn)) ==> alwaysSessionRequiresAcceptedHandoff(\result)
@@ -102,57 +102,57 @@ export function checkIdentity(signIn: SignIn, identityAvailable: boolean, identi
   return { ...signIn, identityAccepted: local_1, phase: !identityAvailable ? "CloudUnavailable" : (local_1 ? "AwaitingPhone" : "DenySignIn") };
 }
 
-/** Story: Use my Cloud identity to sign in to this app / The site checks phone eligibility before issuing a session (spec/cloudSignIn.md:66) */
+/** Story: Use my Cloud identity to sign in to this app / The site checks phone eligibility before issuing a session (spec/cloudSignIn.md) */
 //@ pure
 export function canCheckPhone(signIn: SignIn): boolean {
   return signIn.phase === "AwaitingPhone" && signIn.identityAccepted && signIn.exchangeAccepted && signIn.handoffAccepted;
 }
 
-/** Story: Use my Cloud identity to sign in to this app / The site checks phone eligibility before issuing a session (spec/cloudSignIn.md:66) */
+/** Story: Use my Cloud identity to sign in to this app / The site checks phone eligibility before issuing a session (spec/cloudSignIn.md) */
 //@ pure
 export function checkPhone(signIn: SignIn, phoneAllowed: boolean): SignIn {
   //@ ensures (inv(signIn) && canCheckPhone(signIn)) ==> alwaysSessionRequiresAcceptedHandoff(\result)
   return { ...signIn, phoneAllowed: phoneAllowed, phase: phoneAllowed ? "AwaitingSession" : "DenySignIn" };
 }
 
-/** Story: Use my Cloud identity to sign in to this app / The site checks phone eligibility before issuing a session (spec/cloudSignIn.md:66) */
+/** Story: Use my Cloud identity to sign in to this app / The site checks phone eligibility before issuing a session (spec/cloudSignIn.md) */
 //@ pure
 export function canRecordSession(signIn: SignIn): boolean {
   return signIn.phase === "AwaitingSession" && signIn.phoneAllowed && signIn.identityAccepted && signIn.exchangeAccepted && signIn.handoffAccepted;
 }
 
-/** Story: Use my Cloud identity to sign in to this app / The site checks phone eligibility before issuing a session (spec/cloudSignIn.md:66) */
+/** Story: Use my Cloud identity to sign in to this app / The site checks phone eligibility before issuing a session (spec/cloudSignIn.md) */
 //@ pure
 export function recordSession(signIn: SignIn): SignIn {
   //@ ensures (inv(signIn) && canRecordSession(signIn)) ==> alwaysSessionRequiresAcceptedHandoff(\result)
   return { ...signIn, phase: "SignedIn" };
 }
 
-/** Story: Use my Cloud identity to sign in to this app / A completed callback passed each issuance check (spec/cloudSignIn.md:82) */
+/** Story: Use my Cloud identity to sign in to this app / A completed callback passed each issuance check (spec/cloudSignIn.md) */
 //@ pure
 export function alwaysSessionRequiresAcceptedHandoff(signIn: SignIn): boolean {
   return !(signIn.phase === "AwaitingSession" || signIn.phase === "SignedIn") || (signIn.handoffAccepted && signIn.exchangeAccepted && signIn.identityAccepted && signIn.phoneAllowed);
 }
 
-/** Story: Use my Cloud identity to sign in to this app / A completed callback passed each issuance check (spec/cloudSignIn.md:82) */
+/** Story: Use my Cloud identity to sign in to this app / A completed callback passed each issuance check (spec/cloudSignIn.md) */
 //@ pure
 export function sometimesSignsIn(signIn: SignIn): boolean {
   return signIn.phase === "SignedIn";
 }
 
-/** Story: Use my Cloud identity to sign in to this app / A completed callback passed each issuance check (spec/cloudSignIn.md:82) */
+/** Story: Use my Cloud identity to sign in to this app / A completed callback passed each issuance check (spec/cloudSignIn.md) */
 //@ pure
 export function sometimesRejectsCallback(signIn: SignIn): boolean {
   return signIn.phase === "RejectCallback";
 }
 
-/** Story: Use my Cloud identity to sign in to this app / A completed callback passed each issuance check (spec/cloudSignIn.md:82) */
+/** Story: Use my Cloud identity to sign in to this app / A completed callback passed each issuance check (spec/cloudSignIn.md) */
 //@ pure
 export function sometimesDeniesSignIn(signIn: SignIn): boolean {
   return signIn.phase === "DenySignIn";
 }
 
-/** Story: Use my Cloud identity to sign in to this app / A completed callback passed each issuance check (spec/cloudSignIn.md:82) */
+/** Story: Use my Cloud identity to sign in to this app / A completed callback passed each issuance check (spec/cloudSignIn.md) */
 //@ pure
 export function sometimesCloudUnavailable(signIn: SignIn): boolean {
   return signIn.phase === "CloudUnavailable";

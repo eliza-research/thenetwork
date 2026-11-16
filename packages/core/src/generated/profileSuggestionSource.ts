@@ -1,11 +1,11 @@
 // GENERATED from spec/profileSuggestionSource.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md:9) */
+/** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md) */
 export type SourcePhase = "SourceInitial" | "SourceDenied" | "CheckingCollectionTurn" | "CheckingLiveSources" | "ReadingCollectionReceipt" | "ReplayingCollection" | "SavingCollection" | "CheckingWithdrawalTurn" | "ReadingCleanupReceipt" | "ReplayingCleanup" | "ApplyingCleanup" | "CleanupConfirmed";
-/** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md:9) */
+/** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md) */
 export interface SourceFlow { phase: SourcePhase }
-/** Story: Stop collection or remove data from one connector / Cleanup changes only rows selected by the member's operation (spec/profileSuggestionSource.md:92) */
+/** Story: Stop collection or remove data from one connector / Cleanup changes only rows selected by the member's operation (spec/profileSuggestionSource.md) */
 export type SuggestionCleanupAction = "KeepSuggestion" | "ScrubSuggestion" | "DeleteSuggestion";
 
 /** One variant per transition in the spec. */
@@ -19,7 +19,7 @@ export type Event =
   | { type: "readCleanupReceipt"; prior: boolean; matches: boolean }
   | { type: "confirmSourceCleanup"; authorized: boolean };
 
-/** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md:9) */
+/** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md) */
 export const initial: SourceFlow = { phase: "SourceInitial" };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -28,166 +28,166 @@ export function inv(current: SourceFlow): boolean {
   return true;
 }
 
-/** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md:9) */
+/** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md) */
 //@ pure
 export function canReadCollectionTurn(flow: SourceFlow): boolean {
   return flow.phase === "CheckingCollectionTurn";
 }
 
-/** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md:9) */
+/** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md) */
 //@ pure
 export function readCollectionTurn(flow: SourceFlow, matches: boolean): SourceFlow {
   //@ ensures (inv(flow) && canReadCollectionTurn(flow)) ==> stepCollectionSaveRequiresReceiptCheck(flow, "readCollectionTurn", \result)
   return { phase: matches ? "CheckingLiveSources" : "SourceDenied" };
 }
 
-/** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md:9) */
+/** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md) */
 //@ pure
 export function canReadLiveSourceConsent(flow: SourceFlow): boolean {
   return flow.phase === "CheckingLiveSources";
 }
 
-/** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md:9) */
+/** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md) */
 //@ pure
 export function readLiveSourceConsent(flow: SourceFlow, allowed: boolean): SourceFlow {
   //@ ensures (inv(flow) && canReadLiveSourceConsent(flow)) ==> stepCollectionSaveRequiresReceiptCheck(flow, "readLiveSourceConsent", \result)
   return { phase: allowed ? "ReadingCollectionReceipt" : "SourceDenied" };
 }
 
-/** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md:9) */
+/** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md) */
 //@ pure
 export function canStartSourceCollection(flow: SourceFlow): boolean {
   return flow.phase === "SourceInitial";
 }
 
-/** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md:9) */
+/** Story: Collect suggestions from sources I authorized / Resolve the owner and any claimed collection turn before authorizing live sources (spec/profileSuggestionSource.md) */
 //@ pure
 export function startSourceCollection(flow: SourceFlow, eligible: boolean, claimed: boolean): SourceFlow {
   //@ ensures (inv(flow) && canStartSourceCollection(flow)) ==> stepCollectionSaveRequiresReceiptCheck(flow, "startSourceCollection", \result)
   return { phase: !eligible ? "SourceDenied" : (claimed ? "CheckingCollectionTurn" : "CheckingLiveSources") };
 }
 
-/** Story: Collect suggestions from sources I authorized / A collection replay only returns its original private pending batch (spec/profileSuggestionSource.md:34) */
+/** Story: Collect suggestions from sources I authorized / A collection replay only returns its original private pending batch (spec/profileSuggestionSource.md) */
 //@ pure
 export function collectionRevisionIsOriginal(revision: number): boolean {
   return revision === 1;
 }
 
-/** Story: Collect suggestions from sources I authorized / A collection replay only returns its original private pending batch (spec/profileSuggestionSource.md:34) */
+/** Story: Collect suggestions from sources I authorized / A collection replay only returns its original private pending batch (spec/profileSuggestionSource.md) */
 //@ pure
 export function collectionPreviewUnchanged(sameCount: boolean, onlyPending: boolean): boolean {
   return sameCount && onlyPending;
 }
 
-/** Story: Collect suggestions from sources I authorized / A collection replay only returns its original private pending batch (spec/profileSuggestionSource.md:34) */
+/** Story: Collect suggestions from sources I authorized / A collection replay only returns its original private pending batch (spec/profileSuggestionSource.md) */
 //@ pure
 export function canReadCollectionReceipt(flow: SourceFlow): boolean {
   return flow.phase === "ReadingCollectionReceipt";
 }
 
-/** Story: Collect suggestions from sources I authorized / A collection replay only returns its original private pending batch (spec/profileSuggestionSource.md:34) */
+/** Story: Collect suggestions from sources I authorized / A collection replay only returns its original private pending batch (spec/profileSuggestionSource.md) */
 //@ pure
 export function readCollectionReceipt(flow: SourceFlow, prior: boolean, matches: boolean): SourceFlow {
   //@ ensures (inv(flow) && canReadCollectionReceipt(flow)) ==> stepCollectionSaveRequiresReceiptCheck(flow, "readCollectionReceipt", \result)
   return { phase: !prior ? "SavingCollection" : (matches ? "ReplayingCollection" : "SourceDenied") };
 }
 
-/** Story: Collect suggestions from sources I authorized / A collection replay only returns its original private pending batch (spec/profileSuggestionSource.md:34) */
+/** Story: Collect suggestions from sources I authorized / A collection replay only returns its original private pending batch (spec/profileSuggestionSource.md) */
 //@ pure
 export function stepCollectionSaveRequiresReceiptCheck(before: SourceFlow, via: string, after: SourceFlow): boolean {
   return !(after.phase === "SavingCollection") || (before.phase === "ReadingCollectionReceipt" && via === "readCollectionReceipt");
 }
 
-/** Story: Collect suggestions from sources I authorized / A collection replay only returns its original private pending batch (spec/profileSuggestionSource.md:34) */
+/** Story: Collect suggestions from sources I authorized / A collection replay only returns its original private pending batch (spec/profileSuggestionSource.md) */
 //@ pure
 export function sometimesSavesSourceCollection(flow: SourceFlow): boolean {
   return flow.phase === "SavingCollection";
 }
 
-/** Story: Collect suggestions from sources I authorized / A collection replay only returns its original private pending batch (spec/profileSuggestionSource.md:34) */
+/** Story: Collect suggestions from sources I authorized / A collection replay only returns its original private pending batch (spec/profileSuggestionSource.md) */
 //@ pure
 export function sometimesReplaysSourceCollection(flow: SourceFlow): boolean {
   return flow.phase === "ReplayingCollection";
 }
 
-/** Story: Stop collection or remove data from one connector / Cleanup uses current owner authority and any required stored withdrawal turn (spec/profileSuggestionSource.md:59) */
+/** Story: Stop collection or remove data from one connector / Cleanup uses current owner authority and any required stored withdrawal turn (spec/profileSuggestionSource.md) */
 //@ pure
 export function canStartSourceCleanup(flow: SourceFlow): boolean {
   return flow.phase === "SourceInitial";
 }
 
-/** Story: Stop collection or remove data from one connector / Cleanup uses current owner authority and any required stored withdrawal turn (spec/profileSuggestionSource.md:59) */
+/** Story: Stop collection or remove data from one connector / Cleanup uses current owner authority and any required stored withdrawal turn (spec/profileSuggestionSource.md) */
 //@ pure
 export function startSourceCleanup(flow: SourceFlow, authorized: boolean, ownerWithdrawal: boolean): SourceFlow {
   //@ ensures (inv(flow) && canStartSourceCleanup(flow)) ==> stepCollectionSaveRequiresReceiptCheck(flow, "startSourceCleanup", \result)
   return { phase: !authorized ? "SourceDenied" : (ownerWithdrawal ? "CheckingWithdrawalTurn" : "ReadingCleanupReceipt") };
 }
 
-/** Story: Stop collection or remove data from one connector / Cleanup uses current owner authority and any required stored withdrawal turn (spec/profileSuggestionSource.md:59) */
+/** Story: Stop collection or remove data from one connector / Cleanup uses current owner authority and any required stored withdrawal turn (spec/profileSuggestionSource.md) */
 //@ pure
 export function canReadWithdrawalTurn(flow: SourceFlow): boolean {
   return flow.phase === "CheckingWithdrawalTurn";
 }
 
-/** Story: Stop collection or remove data from one connector / Cleanup uses current owner authority and any required stored withdrawal turn (spec/profileSuggestionSource.md:59) */
+/** Story: Stop collection or remove data from one connector / Cleanup uses current owner authority and any required stored withdrawal turn (spec/profileSuggestionSource.md) */
 //@ pure
 export function readWithdrawalTurn(flow: SourceFlow, matches: boolean): SourceFlow {
   //@ ensures (inv(flow) && canReadWithdrawalTurn(flow)) ==> stepCollectionSaveRequiresReceiptCheck(flow, "readWithdrawalTurn", \result)
   return { phase: matches ? "ReadingCleanupReceipt" : "SourceDenied" };
 }
 
-/** Story: Stop collection or remove data from one connector / Replay returns stored results without mutating the suggestions (spec/profileSuggestionSource.md:73) */
+/** Story: Stop collection or remove data from one connector / Replay returns stored results without mutating the suggestions (spec/profileSuggestionSource.md) */
 //@ pure
 export function ownerCleanupUsesReceipt(operation: string): boolean {
   return operation !== "readback";
 }
 
-/** Story: Stop collection or remove data from one connector / Replay returns stored results without mutating the suggestions (spec/profileSuggestionSource.md:73) */
+/** Story: Stop collection or remove data from one connector / Replay returns stored results without mutating the suggestions (spec/profileSuggestionSource.md) */
 //@ pure
 export function canReadCleanupReceipt(flow: SourceFlow): boolean {
   return flow.phase === "ReadingCleanupReceipt";
 }
 
-/** Story: Stop collection or remove data from one connector / Replay returns stored results without mutating the suggestions (spec/profileSuggestionSource.md:73) */
+/** Story: Stop collection or remove data from one connector / Replay returns stored results without mutating the suggestions (spec/profileSuggestionSource.md) */
 //@ pure
 export function readCleanupReceipt(flow: SourceFlow, prior: boolean, matches: boolean): SourceFlow {
   //@ ensures (inv(flow) && canReadCleanupReceipt(flow)) ==> stepCollectionSaveRequiresReceiptCheck(flow, "readCleanupReceipt", \result)
   return { phase: !prior ? "ApplyingCleanup" : (matches ? "ReplayingCleanup" : "SourceDenied") };
 }
 
-/** Story: Stop collection or remove data from one connector / Replay returns stored results without mutating the suggestions (spec/profileSuggestionSource.md:73) */
+/** Story: Stop collection or remove data from one connector / Replay returns stored results without mutating the suggestions (spec/profileSuggestionSource.md) */
 //@ pure
 export function canConfirmSourceCleanup(flow: SourceFlow): boolean {
   return flow.phase === "ApplyingCleanup" || flow.phase === "ReplayingCleanup";
 }
 
-/** Story: Stop collection or remove data from one connector / Replay returns stored results without mutating the suggestions (spec/profileSuggestionSource.md:73) */
+/** Story: Stop collection or remove data from one connector / Replay returns stored results without mutating the suggestions (spec/profileSuggestionSource.md) */
 //@ pure
 export function confirmSourceCleanup(flow: SourceFlow, authorized: boolean): SourceFlow {
   //@ ensures (inv(flow) && canConfirmSourceCleanup(flow)) ==> stepCollectionSaveRequiresReceiptCheck(flow, "confirmSourceCleanup", \result)
   return { phase: authorized ? "CleanupConfirmed" : "SourceDenied" };
 }
 
-/** Story: Stop collection or remove data from one connector / Replay returns stored results without mutating the suggestions (spec/profileSuggestionSource.md:73) */
+/** Story: Stop collection or remove data from one connector / Replay returns stored results without mutating the suggestions (spec/profileSuggestionSource.md) */
 //@ pure
 export function sometimesConfirmsSourceCleanup(flow: SourceFlow): boolean {
   return flow.phase === "CleanupConfirmed";
 }
 
-/** Story: Stop collection or remove data from one connector / Cleanup changes only rows selected by the member's operation (spec/profileSuggestionSource.md:92) */
+/** Story: Stop collection or remove data from one connector / Cleanup changes only rows selected by the member's operation (spec/profileSuggestionSource.md) */
 //@ pure
 export function suggestionCleanupAction(operation: string, status: string, retainAccepted: boolean): SuggestionCleanupAction {
   return operation === "readback" ? "KeepSuggestion" : (operation === "disconnect" && status === "accepted" && retainAccepted ? "KeepSuggestion" : (operation === "withdraw" && status !== "proposed" ? "KeepSuggestion" : (operation === "delete" ? "DeleteSuggestion" : "ScrubSuggestion")));
 }
 
-/** Story: Stop collection or remove data from one connector / Cleanup changes only rows selected by the member's operation (spec/profileSuggestionSource.md:92) */
+/** Story: Stop collection or remove data from one connector / Cleanup changes only rows selected by the member's operation (spec/profileSuggestionSource.md) */
 //@ pure
 export function lawReadbackPreservesSuggestion(status: string, retainAccepted: boolean): boolean {
   //@ ensures \result === true
   return suggestionCleanupAction("readback", status, retainAccepted) === "KeepSuggestion";
 }
 
-/** Story: Stop collection or remove data from one connector / Cleanup changes only rows selected by the member's operation (spec/profileSuggestionSource.md:92) */
+/** Story: Stop collection or remove data from one connector / Cleanup changes only rows selected by the member's operation (spec/profileSuggestionSource.md) */
 //@ pure
 export function lawWithdrawalPreservesAcceptedSuggestion(retainAccepted: boolean): boolean {
   //@ ensures \result === true

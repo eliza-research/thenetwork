@@ -1,22 +1,32 @@
-// Policy, load balancing, fairness and exploration (Sections 15.4, 33.8). One global selection
-// step per run under constraints (per-member interruption + contribution budgets, no repeated
-// pairs, no time-overlapping fixed-time commitments, per-city caps). Greedy with an in-run load
-// penalty and an amortized exposure-debt lift; an exposure-floor pass first; then a seeded
-// 10-15% exploration slice, logged with selection probabilities for off-policy evaluation.
+// Policy, fairness and exploration (Sections 15.4, 33.8). One global selection per run under
+// constraints (per-member interruption + contribution budgets, no repeated pairs, no
+// time-overlapping fixed-time commitments, per-city caps, the pack's refusals), driven by the
+// generated selectionRun machine: an exposure-floor pass ordered by exposure debt, a seeded
+// exploration slice sized before it reserves and logged with selection probabilities for
+// off-policy evaluation, then one greedy walk over the eligible configurations sorted once by value.
 import { gini } from "@thenetwork/core";
 import { countPublishedQuestions, initial as initialAskRun, questionSubjectAllowed, step as stepAskRun } from "../../core/src/generated/engineAsks.ts";
-import { canReserveSelection, initial, proactiveUsed, selectedBefore, step, type SelectionChoice } from "../../core/src/generated/selectionRun.ts";
+import {
+  initial, selectionMemberFullAt, step,
+  type Event as SelectionEvent, type SelectionChoice, type SelectionMember, type SelectionRun,
+} from "../../core/src/generated/selectionRun.ts";
 export { gini };
 import type { MemberId } from "@thenetwork/core";
 import { isMinor } from "./filters.ts";
 import { sha256 } from "./hash.ts";
 import type { EngineRng as Rng } from "@thenetwork/core";
 import { explorationBar, type Scored } from "./scoring.ts";
-import type { AskReason, Candidate, EngineAsk, EngineInput, FairnessMetrics } from "./types.ts";
+import type { AskReason, EngineAsk, EngineInput, FairnessMetrics } from "./types.ts";
 import { ASK_QUESTIONS as NETWORK_ASK_QUESTIONS } from "./packs/network/copy.ts";
 import { pairKey, type World } from "./world.ts";
 
-export interface Selected { s: Scored; exploration: boolean; rank: number; probability: number }
+/**
+ * A selected configuration. `value` is its greedy order value; absent for exposure-floor,
+ * exploration and pack-assigned picks. An exploration pick's `probability` is its weight over the
+ * draws not yet passed, which still include draws found infeasible only later: a lower bound on the
+ * true propensity among the feasible draws.
+ */
+export interface Selected { s: Scored; exploration: boolean; rank: number; probability: number; value?: number }
 
 export interface SelectionResult { selected: Selected[]; budgetSkips: number }
 
@@ -68,36 +78,34 @@ export function planAsks(w: World, input: EngineInput): AskPlan {
   return plan;
 }
 
+const byKey = (a: Scored, b: Scored) => (a.c.key < b.c.key ? -1 : a.c.key > b.c.key ? 1 : 0);
+const valueOf = (x: Scored) => Math.round(x.score * 1000);
+const bump = <K>(m: Map<K, number>, k: K) => m.set(k, (m.get(k) ?? 0) + 1);
 
-export function selectProposals(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId, number>, opts: SelectOptions = {}): SelectionResult {
-  // A pack's own global assignment (slopPack: stable matching). Absent for networkPack.
-  const assign = w.pack.selection.assign;
-  if (assign) return assign(w, scored, { rng, debt, exclude: opts.exclude, extraProactive: opts.extraProactive });
-  // Dry run without exploration sizes the slice; the real run reserves exploration capacity
-  // before the greedy pass so exploration picks are not starved of member budget.
-  const dry = selectOnce(w, scored, rng, debt, 0, opts);
-  const slots = Math.floor((w.cfg.exploration.rate * dry.selected.length) / (1 - w.cfg.exploration.rate));
-  const res = selectOnce(w, scored, rng, debt, slots, opts);
-  const maxE = Math.floor(w.cfg.exploration.maxShare * res.selected.length);
-  let e = 0;
-  res.selected = res.selected.filter(s => !s.exploration || ++e <= maxE);
-  res.selected.forEach((s, i) => { s.rank = i; });
-  return res;
+/** What a run has used: O(1) mirrors of the machine's counts, plus the fixed windows it holds. */
+interface Use {
+  keys: Set<string>; pairs: Set<string>; cities: Map<string, number>;
+  proactive: Map<MemberId, number>; contribution: Map<MemberId, number>; windows: Map<MemberId, readonly (readonly [number, number])[]>;
 }
+const emptyUse = (): Use => ({ keys: new Set(), pairs: new Set(), cities: new Map(), proactive: new Map(), contribution: new Map(), windows: new Map() });
+const copyUse = (u: Use): Use => ({
+  keys: new Set(u.keys), pairs: new Set(u.pairs), cities: new Map(u.cities),
+  proactive: new Map(u.proactive), contribution: new Map(u.contribution), windows: new Map(u.windows),
+});
 
-function selectOnce(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId, number>, explorationSlots: number, opts: SelectOptions = {}): SelectionResult {
+/**
+ * The shell's checks, each O(1) per member or pair (fixed windows: per window held). A pack's hard
+ * refusal (peonPack: a job's slate cap and a candidate's weekly cap) is its selection hook returning
+ * -Infinity; a refusal must stay a refusal as use grows. Its other lifts do not enter the value.
+ */
+function selectionShell(w: World, opts: SelectOptions) {
   const cfg = w.cfg;
-  let run = initial;
-  const fixedSlots = new Map<MemberId, [number, number][]>();
-  const selected: Selected[] = [];
-  let budgetSkips = 0;
-
-  const choices = new Map<Scored, SelectionChoice>();
+  const cache = new Map<Scored, SelectionChoice>();
   const choiceFor = (x: Scored): SelectionChoice => {
-    const known = choices.get(x);
+    const known = cache.get(x);
     if (known) return known;
     const c = x.c;
-    const members = c.participants.map(id => {
+    const members: SelectionMember[] = c.participants.map(id => {
       const mi = w.get(id)!;
       const role = c.roles[id];
       return {
@@ -113,104 +121,161 @@ function selectOnce(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId,
       pairKeys.push(pairKey(c.participants[i]!, c.participants[j]!));
     }
     const choice = { candidateKey: c.key, city: c.city!, cityLimit: cfg.selection.maxProposalsPerCity, members, pairKeys };
-    choices.set(x, choice);
+    cache.set(x, choice);
     return choice;
   };
-  const timeFree = (c: Candidate) => {
-    const window = c.fixedWindow ? c.window : undefined;
-    return !window || c.participants.every(id => !(fixedSlots.get(id) ?? []).some(([s, e]) => window.start < e && s < window.end));
-  };
+  // spec/selectionRun.md, "A greedy refusal names a member who stays without room"
+  const full = (u: Use, m: SelectionMember) => selectionMemberFullAt(m, u.proactive.get(m.id) ?? 0, u.contribution.get(m.id) ?? 0);
   // spec/selectionRun.md, "Each reservation checks the city, pair, and member limits"
-  const wasSelected = (x: Scored) => selectedBefore(run, x.c.key);
-  const canTake = (x: Scored, exploring = false) =>
-    canReserveSelection(run, choiceFor(x), timeFree(x.c), exploring);
-  const take = (x: Scored, exploration: boolean, probability: number) => {
-    const c = x.c;
-    // spec/selectionRun.md, "Reserving a proposal consumes its slots together"
-    const next = step(run, { type: "reserveSelection", choice: choiceFor(x), timeFree: timeFree(c), exploring: exploration });
-    if (next === run) throw new Error(`Selection reservation refused for ${c.key}`);
-    run = next;
-    if (c.fixedWindow && c.window) {
-      for (const id of c.participants) {
-        if (!fixedSlots.has(id)) fixedSlots.set(id, []);
-        fixedSlots.get(id)!.push([c.window.start, c.window.end]);
-      }
-    }
-    selected.push({ s: x, exploration, rank: run.selectedCount - 1, probability });
-  };
-  const debtLift = (x: Scored) => {
-    const ids = x.c.participants;
-    const d = ids.reduce((s, id) => s + Math.min(cfg.selection.exposureDebtCap, Math.max(0, debt[id] ?? 0)), 0) / ids.length;
-    return cfg.selection.exposureDebtWeight * d;
-  };
-  const adjusted = (x: Scored) => {
-    const ids = x.c.participants;
-    const load = ids.reduce((s, id) => s + proactiveUsed(run, id), 0) / ids.length;
-    const v = x.score - cfg.selection.runLoadPenalty * load + debtLift(x);
-    // Pack lift (slopPack: exposure fairness). Absent for networkPack: the value is unchanged.
+  const limitsOpen = (u: Use, c: SelectionChoice) =>
+    !u.keys.has(c.candidateKey) && (u.cities.get(c.city) ?? 0) < c.cityLimit && c.pairKeys.every(k => !u.pairs.has(k));
+  const hooksAllow = (u: Use, x: Scored) => {
+    const window = x.c.fixedWindow ? x.c.window : undefined;
+    if (window && !x.c.participants.every(id => !(u.windows.get(id) ?? []).some(([s, e]) => window.start < e && s < window.end))) return false;
     const adjust = w.pack.selection.adjust;
-    return adjust ? adjust(w, x.c, v, id => proactiveUsed(run, id)) : v;
+    return !adjust || adjust(w, x.c, x.score, id => u.proactive.get(id) ?? 0) !== -Infinity;
+  };
+  const fits = (u: Use, x: Scored) => {
+    const c = choiceFor(x);
+    return limitsOpen(u, c) && c.members.every(m => !full(u, m)) && hooksAllow(u, x);
+  };
+  // spec/selectionRun.md, "Reserving a proposal consumes its slots together"
+  const record = (u: Use, x: Scored) => {
+    const c = choiceFor(x);
+    u.keys.add(c.candidateKey);
+    for (const k of c.pairKeys) u.pairs.add(k);
+    bump(u.cities, c.city);
+    for (const m of c.members) {
+      bump(u.proactive, m.id);
+      if (m.contributor) bump(u.contribution, m.id);
+    }
+    const window = x.c.fixedWindow ? x.c.window : undefined;
+    if (window) for (const id of x.c.participants) u.windows.set(id, [...(u.windows.get(id) ?? []), [window.start, window.end]]);
+  };
+  return { choiceFor, full, limitsOpen, hooksAllow, fits, record };
+}
+
+/**
+ * One selection run. The shell decides each choice once with O(1) checks and steps the generated
+ * machine only to reserve or refuse, so the shell work is O(S log S + S k) for S scored
+ * configurations of up to k members. Each machine step still copies its maps and scans its
+ * refusals (spec/selectionRun.md), O(selected + refused) per reservation or refusal.
+ */
+export function selectProposals(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId, number>, opts: SelectOptions = {}): SelectionResult {
+  // A pack's own global assignment (slopPack: stable matching). Absent for networkPack.
+  const assign = w.pack.selection.assign;
+  if (assign) return assign(w, scored, { rng, debt, exclude: opts.exclude, extraProactive: opts.extraProactive });
+  const cfg = w.cfg;
+  const shell = selectionShell(w, opts);
+  let run: SelectionRun = initial;
+  const use = emptyUse();
+  const selected: Selected[] = [];
+  const advance = (event: SelectionEvent) => {
+    const next = step(run, event);
+    if (next === run) throw new Error(`selectionRun refused ${event.type} that the shell allowed`);
+    run = next;
+  };
+  const reserve = (x: Scored, exploring: boolean, probability: number, value?: number) => {
+    advance({ type: "reserveSelection", choice: shell.choiceFor(x), timeFree: true, exploring, packAllows: true, value: value ?? valueOf(x) });
+    shell.record(use, x);
+    selected.push({ s: x, exploration: exploring, rank: selected.length, probability, ...(value === undefined ? {} : { value }) });
   };
 
-  const main = scored.filter(x => x.eligible && !x.c.exploration)
-    .sort((a, b) => (b.score - a.score) || (a.c.key < b.c.key ? -1 : 1));
+  // spec/selectionRun.md, "Greedy decisions never rise in value": one order, value descending, key ascending.
+  const greedy = scored.filter(x => x.eligible && !x.c.exploration && Number.isFinite(x.score))
+    .map(x => ({ x, value: valueOf(x) }))
+    .sort((a, b) => (b.value - a.value) || byKey(a.x, b.x));
+  const byMember = new Map<MemberId, Scored[]>();
+  for (const { x } of greedy) for (const id of x.c.participants) {
+    if (!byMember.has(id)) byMember.set(id, []);
+    byMember.get(id)!.push(x);
+  }
 
-  // 1. Exposure floor: low-exposure / newcomer / low-data members get their best viable option first.
-  const floorMembers = w.ids.filter(id => { const mi = w.get(id)!; return mi.lowExposure && (mi.newcomer || mi.lowData || mi.recentExposure30 === 0); });
-  rng.fork("floor").shuffle(floorMembers);
+  // 1. Exposure floor: low-exposure / newcomer / low-data members, highest carried exposure debt
+  // first (seeded order among equal debt), each get their best option that fits.
+  const carried = (id: MemberId) => Math.min(cfg.selection.exposureDebtCap, Math.max(0, debt[id] ?? 0));
+  const floorMembers = rng.fork("floor").shuffle(w.ids.filter(id => {
+    const mi = w.get(id)!;
+    return mi.lowExposure && (mi.newcomer || mi.lowData || mi.recentExposure30 === 0);
+  })).sort((a, b) => carried(b) - carried(a));
   const floorCap = Math.ceil(cfg.selection.exposureFloorShare * cfg.selection.maxProposalsPerCity * w.pack.geo.markets(cfg).length);
   let floorTaken = 0;
   for (const id of floorMembers) {
     if (floorTaken >= floorCap) break;
-    if (selected.some(s => s.s.c.participants.includes(id))) continue;
-    // A pack's selection hook (caps, lifts) applies here too: the adjusted value must clear the
-    // bar, as in the greedy pass. networkPack has no hook, so this pass is unchanged for it.
-    const hooked = !!w.pack.selection.adjust;
-    const best = main.find(x => x.c.participants.includes(id) && canTake(x) && (!hooked || adjusted(x) >= x.threshold));
-    if (best) { take(best, false, 1); floorTaken++; }
+    if ((use.proactive.get(id) ?? 0) > 0) continue;
+    const best = (byMember.get(id) ?? []).find(x => shell.fits(use, x));
+    if (best) { reserve(best, false, 1); floorTaken++; }
   }
 
   // spec/selectionRun.md, "Exposure selection precedes exploration and greedy selection"
-  run = step(run, { type: "beginExploration" });
-  // 2. Exploration slice (10-15% of the total), weighted by novelty x score, seeded; expansion picks favoured.
-  const slots = explorationSlots;
-  const explore = rng.fork("explore");
-  // Allow-list: only eligible or merely below-threshold configurations. Anything a judge pass,
-  // a floor, a dealbreaker or a hard gate rejected (judge_reject, screen_reject, deep_reject,
-  // deep_insufficient, hard_gate:*) never enters the slice, nor does any pass-2 "no" verdict.
-  const pool = scored.filter(x => !wasSelected(x) && (!x.reason || x.reason === "below_threshold") && x.verdict?.verdict !== "no"
-    && x.score >= explorationBar(w, x.c, x.threshold))
-    .sort((a, b) => (a.c.key < b.c.key ? -1 : 1));
-  for (let k = 0; k < slots; k++) {
-    let avail = pool.filter(x => !wasSelected(x) && canTake(x, true));
-    // Alternate draws between dedicated expansion picks (33.4) and the general novelty pool.
-    const expansionOnly = avail.filter(x => x.c.exploration);
-    if (k % 2 === 0 && expansionOnly.length) avail = expansionOnly;
-    if (!avail.length) break;
-    const weights = avail.map(x => Math.max(0.01, x.components.novelty * x.score) * (x.c.exploration ? 8 : 1));
-    const total = weights.reduce((s, v) => s + v, 0);
-    let r = explore.next() * total; let idx = 0;
-    while (idx < avail.length - 1 && r >= weights[idx]!) { r -= weights[idx]!; idx++; }
-    take(avail[idx]!, true, weights[idx]! / total);
-  }
-  // 3. Greedy global selection with in-run load penalty and exposure-debt lift.
-  run = step(run, { type: "beginGreedy" });
-  const remaining = main.filter(x => !wasSelected(x));
-  while (true) {
-    let best: Scored | undefined; let bestV = -Infinity;
-    for (const x of remaining) {
-      if (wasSelected(x)) continue;
-      const v = adjusted(x);
-      if (v < x.threshold) continue; // the adjusted score must still clear the bar
-      if (v > bestV && canTake(x)) { best = x; bestV = v; }
+  advance({ type: "beginExploration" });
+  // 2. Exploration slice: `rate` of the run, at most `maxShare` of it. The run's size is estimated by
+  // one walk of the greedy order on a copy of the use (no machine steps): the greedy picks that
+  // would follow the floor without exploration.
+  const sizing = copyUse(use);
+  let greedyEstimate = 0;
+  for (const { x } of greedy) if (shell.fits(sizing, x)) { shell.record(sizing, x); greedyEstimate++; }
+  const runSize = floorTaken + greedyEstimate;
+  const slots = Math.min(Math.floor((cfg.exploration.rate * runSize) / (1 - cfg.exploration.rate)), Math.floor(cfg.exploration.maxShare * runSize));
+  if (slots > 0) {
+    const explore = rng.fork("explore");
+    // Allow-list: only eligible or merely below-threshold configurations; anything a judge pass, a
+    // floor, a dealbreaker or a hard gate rejected never enters, nor does a pass-2 "no".
+    // Weighted draws without replacement as one seeded order (key log(u) / weight, highest first);
+    // expansion picks (33.4) are weighted x8 and every other draw prefers them.
+    const all = scored.filter(x => Number.isFinite(x.score) && !use.keys.has(x.c.key) && (!x.reason || x.reason === "below_threshold")
+      && x.verdict?.verdict !== "no" && x.score >= explorationBar(w, x.c, x.threshold))
+      .sort(byKey)
+      .map(x => {
+        const weight = Math.max(0.01, x.components.novelty * x.score) * (x.c.exploration ? 8 : 1);
+        return { x, weight, draw: Math.log(1 - explore.next()) / weight };
+      })
+      .sort((a, b) => (b.draw - a.draw) || byKey(a.x, b.x));
+    const expansion = all.filter(d => d.x.c.exploration);
+    type Draw = (typeof all)[number];
+    const passed = new Set<Scored>();
+    let restAll = 0, restExpansion = 0;
+    for (const d of all) restAll += d.weight;
+    for (const d of expansion) restExpansion += d.weight;
+    const pass = (d: Draw) => {
+      if (passed.has(d.x)) return;
+      passed.add(d.x);
+      restAll -= d.weight;
+      if (d.x.c.exploration) restExpansion -= d.weight;
+    };
+    // A draw that does not fit now never fits later: every use in the run only grows.
+    const firstOpen = (queue: Draw[], at: number) => {
+      let i = at;
+      while (i < queue.length && (passed.has(queue[i]!.x) || !shell.fits(use, queue[i]!.x))) pass(queue[i++]!);
+      return i;
+    };
+    let atAll = 0, atExpansion = 0;
+    for (let k = 0; k < slots; k++) {
+      atAll = firstOpen(all, atAll);
+      atExpansion = firstOpen(expansion, atExpansion);
+      const fromExpansion = k % 2 === 0 && atExpansion < expansion.length;
+      const d = fromExpansion ? expansion[atExpansion] : all[atAll];
+      if (!d) break;
+      reserve(d.x, true, d.weight / (fromExpansion ? restExpansion : restAll));
+      pass(d);
     }
-    if (!best) break;
-    take(best, false, 1);
   }
-  run = step(run, { type: "completeRun" });
-  budgetSkips = main.filter(x => !wasSelected(x)).length;
 
-  return { selected, budgetSkips };
+  // 3. Greedy: walk the order once; reserve, or refuse with the member that has no room.
+  advance({ type: "beginGreedy" });
+  const refused = new Set<MemberId>();
+  for (const { x, value } of greedy) {
+    if (x.c.participants.some(id => refused.has(id))) continue;
+    const choice = shell.choiceFor(x);
+    if (!shell.limitsOpen(use, choice) || !shell.hooksAllow(use, x)) continue;
+    const blocked = choice.members.find(m => shell.full(use, m));
+    if (!blocked) { reserve(x, false, 1, value); continue; }
+    // spec/selectionRun.md, "A greedy refusal names a member who stays without room"
+    advance({ type: "refuseSelection", choice, value, blockedMember: blocked });
+    refused.add(blocked.id);
+  }
+  advance({ type: "completeRun" });
+  return { selected, budgetSkips: greedy.filter(({ x }) => !use.keys.has(x.c.key)).length };
 }
 
 
@@ -258,22 +323,30 @@ export function fairnessMetrics(w: World, selected: Selected[], scored: Scored[]
 }
 
 /**
- * Diagnostic only (not used for selection): eligible two-person candidates left unselected whose
- * score exceeds the best score each of its members received this run ("blocking pairs").
+ * Diagnostic only, recomputed from the selected list alone: eligible non-expansion configurations
+ * left out that the city cap, a used pair, a fixed window and the pack still allow, where every
+ * member without room holds a greedy pick of lower value ("blocking pairs"). A correct greedy walk
+ * makes this 0 (spec/selectionRun.md, "A greedy refusal names a member who stays without room");
+ * room taken by exposure-floor and exploration picks is outside it. A pack's own assignment has no
+ * greedy phase. `opts` must be the options the selection ran with. O(S k).
  */
-export function blockingPairs(selected: Selected[], scored: Scored[]): number {
-  const got = new Map<MemberId, number>();
-  for (const s of selected) for (const id of s.s.c.participants) got.set(id, Math.max(got.get(id) ?? -Infinity, s.s.score));
-  const takenKeys = new Set(selected.map(s => s.s.c.key));
-  const seen = new Set<string>();
+export function blockingPairs(w: World, selected: readonly Selected[], scored: readonly Scored[], opts: SelectOptions = {}): number {
+  if (w.pack.selection.assign) return 0;
+  const shell = selectionShell(w, opts);
+  const use = emptyUse();
+  const lowest = new Map<MemberId, number>();
+  for (const s of selected) {
+    shell.record(use, s.s);
+    if (s.value === undefined) continue;
+    for (const id of s.s.c.participants) lowest.set(id, Math.min(lowest.get(id) ?? Infinity, s.value));
+  }
   let n = 0;
   for (const x of scored) {
-    if (!x.eligible || x.c.participants.length !== 2 || takenKeys.has(x.c.key)) continue;
-    const [a, b] = x.c.participants as [MemberId, MemberId];
-    const k = pairKey(a, b);
-    if (seen.has(k)) continue;
-    seen.add(k);
-    if (x.score > (got.get(a) ?? -Infinity) && x.score > (got.get(b) ?? -Infinity)) n++;
+    if (!x.eligible || x.c.exploration || !Number.isFinite(x.score)) continue;
+    const choice = shell.choiceFor(x);
+    if (!shell.limitsOpen(use, choice) || !shell.hooksAllow(use, x)) continue;
+    const value = valueOf(x);
+    if (choice.members.every(m => !shell.full(use, m) || (lowest.get(m.id) ?? Infinity) < value)) n++;
   }
   return n;
 }

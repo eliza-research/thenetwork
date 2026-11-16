@@ -14,7 +14,7 @@ Keep vouch notes outside matching until the invitee joins and consents. Clear no
 
 When someone joins through the invitation, tell the inviter using their first name and join status. Apply the delivery rules and carry the notice on a genuine reply when it cannot go out separately. [Invite join notice](../outreachPolicy.md#an-eligible-join-receipt-can-ride-on-a-current-reply).
 
-[Member invitation rules](../memberInvitation.md) cover the confirmation, allowance, private vouch, and referral. [Join projection](../invitationJoinProjection.md) covers welcome and notice ownership when the two members live in different cities.
+[Member invitation rules](../memberInvitation.md) cover the confirmation, allowance, private vouch, and referral. [Expected invitation delivery](../expectedMemberInvitation.md) covers the separately confirmed service send. [Join projection](../invitationJoinProjection.md) covers welcome and notice ownership when the two members live in different cities.
 
 ## Story F2 — Seed a cohort
 
@@ -22,7 +22,7 @@ When someone joins through the invitation, tell the inviter using their first na
 
 ### Seed invitations use the same acceptance rules
 
-Authorize a staff member to create individually attributable invites with city and vouch context. F1 and F3 still govern who can be contacted and how an invite becomes a membership. The cohort receives no permanent rank or special member status.
+Authorize a staff member to create individually attributable invites with city and vouch context. F1 and F3 still govern who can be contacted and how an invite becomes a membership. The cohort receives no permanent rank or special member status. [Seed invitation rules](../seedInvitation.md) cover the batch and its verified recipient binding.
 
 ## Story F3 — Accept an invite and verify identity
 
@@ -54,7 +54,9 @@ Models: [join flow](../models/join_flow.md), [profile learning](../models/profil
 
 Return the person's own app profile, with source and scope as applicable. Ask for explicit approval to correct, remove or change how a fact may be used. Remove its derived data where required and apply the change at the next relevant engine read. A saved-profile readback must not advance onboarding or claim a pending draft was saved.
 
-Models: [generated saved-profile read](../savedProfileRead.md), [profile isolation and app leave](../savedProfileJourney.md), [profile read flow](../models/profile_read.md), [profile learning](../models/profile_learning.md).
+In the signed text conversation, `SHOW MY FACTS` shows saved facts for the current app. The member can use a fact reference to request a correction, removal, or scope change. The member confirms the exact edit using a short-lived code. A stale fact or a different app or member cannot use that code.
+
+Models: [generated saved-profile read](../savedProfileRead.md), [profile fact review and edits](../profileFactEdit.md), [profile isolation and app leave](../savedProfileJourney.md), [profile read flow](../models/profile_read.md), [profile learning](../models/profile_learning.md).
 
 ## Story F6 — Answer a useful follow-up
 
@@ -94,7 +96,7 @@ Models: [agent loop](../models/chatjson_loop.md), [member request admission](../
 
 Record the objective, essential constraints, source and time horizon. List, pause or close it on request. Re-evaluate when relevant evidence or supply changes. Expire or reconfirm at 60 days. A later suggestion still needs current eligibility and consent.
 
-Models: [profile learning](../models/profile_learning.md), [standing intent freshness](../standingIntent.md), [standing intent management](../standingIntentManagement.md), [public event supply](../publicEventCatalog.md), [request retry and withdrawal](../memberRequest.md), [matching engine](../models/matching_engine.md).
+Models: [profile learning](../models/profile_learning.md), [standing intent freshness](../standingIntent.md), [standing intent management](../standingIntentManagement.md), [cofounder standing intent](../cofounderIntent.md), [public event supply](../publicEventCatalog.md), [request retry and withdrawal](../memberRequest.md), [matching engine](../models/matching_engine.md).
 
 ## Story F10 — Get concierge value
 
@@ -118,6 +120,30 @@ Approve a proposal before any contact. Check budget and eligibility again at dis
 
 Models: [opportunity](../models/opportunity.md), [matching engine](../models/matching_engine.md), [review desk](../models/review_desk.md), [outbound queue](../models/outbound_queue.md).
 
+### A proposed pair is a good exchange in both directions
+
+Propose a pair only when its lane gives it a pair value: both members reach the lane's utility floor, their private standing gap after the lane's offset stays inside the lane's band plus both uncertainties, and a lane that requires balance has a balanced exchange.
+
+Models: [reciprocal pair value](../pairValue.md), [relationship lanes](../matchLane.md), [exact cofounder consent](../cofounderDispatch.md), [Peon cofounder matching](../peonCofounder.md), [matching engine](../models/matching_engine.md).
+
+### Standing stays private and earned
+
+Compute standing only from evidence points (unreviewed points at half weight) and private ratings for an adult with the lane's consent, never from acceptance, reply or popularity counts, and never show it to a member or put it in a reason, probe or relay text.
+
+Models: [private member standing](../memberStanding.md), [matching engine](../models/matching_engine.md).
+
+### Candidate search is bounded and exact when it says so
+
+Check at most the lane's search budget of pairs for each member, and when the search closes as exact, keep the same best candidates that a full scan of the eligible members would keep.
+
+Models: [bounded candidate search](../candidateSearch.md), [candidate pool](../models/candidate_pool.md).
+
+### Greedy selection leaves no blocking pair
+
+Reserve greedy choices in order of non-increasing pair value, never pass a pack refusal in any phase, and refuse a greedy choice only when one of its members has no room left, so every reservation that filled that member has a value at least as high as the refused choice.
+
+Models: [global selection](../selectionRun.md), [matching engine](../models/matching_engine.md).
+
 ## Story F12 — Join a small group
 
 > As a member, I want to join a public activity if enough eligible people accept.
@@ -127,6 +153,12 @@ Models: [opportunity](../models/opportunity.md), [matching engine](../models/mat
 Anchor a group of 3–6 to a public activity, place or event and add a host when needed. Probe anonymously under review. Enforce the approved deadline and quorum, typically three for a plan. Use eligible alternates under review and release members without revealing declines if quorum fails. Book and relay only for consenting participants.
 
 Models: [reviewed group journey](../reviewedGroupJourney.md), [plan run](../models/plan_run.md), [opportunity](../models/opportunity.md), [plan crew](../models/plan_crew.md).
+
+### Every pair in a circle fits
+
+Admit a circle only when its size is inside the lane's circle bounds, every pair in it has a pair value at or above the lane's circle floor, and the spread of private standing stays inside the lane's band plus the members' uncertainties.
+
+Models: [group formation](../groupFormation.md), [reciprocal pair value](../pairValue.md), [relationship lanes](../matchLane.md), [candidate pool](../models/candidate_pool.md).
 
 ## Story F13 — Meet at an event
 
@@ -219,6 +251,12 @@ Models: [shared-line consent journey](../sharedLineConsentJourney.md), [turn con
 If nothing clears the bar for an intent after the configured interval, normally ten days, record the reason. Offer a short relevant question, an outside-world suggestion, another format or a vouch invitation where permitted. Respect category and interruption settings.
 
 Models: [empty intent follow-up](../emptyIntentFollowup.md), [matching engine](../models/matching_engine.md), [profile learning](../models/profile_learning.md).
+
+### An empty or budgeted search is a recorded reason
+
+When a member's candidate search keeps no candidate, or stops at its check budget before it is exact, record that result and its bound on missed value in the matching run log (staff only, never in member-facing text), and never fill the gap with a pair that has no pair value.
+
+Models: [bounded candidate search](../candidateSearch.md), [empty intent follow-up](../emptyIntentFollowup.md), [matching engine](../models/matching_engine.md).
 
 ## Story F22 — Attend a Network gathering
 
@@ -343,6 +381,12 @@ Models: [plan crew](../models/plan_crew.md), [plan run](../models/plan_run.md).
 Only verified employers with pay ranges can reach a candidate. Exclude protected traits and proxies from automated matching. Respect current-employer blocks and qualification filters. Ask candidates first and send unranked slates with must-have checks after consent. Staff review introductions. Hiring teams make the decisions.
 
 Models: [matching engine](../models/matching_engine.md), [candidate pool](../models/candidate_pool.md), [review desk](../models/review_desk.md).
+
+### Role level and candidate level fit both ways
+
+Pair an employer seat with a candidate in the `Hire` lane only when each side reaches the lane's utility floor for the other and the gap between role level and candidate level stays inside the lane's band plus both uncertainties, so a slate holds neither a role far above the candidate nor a candidate far above the role; the role level is a staff-reviewed property of the posting, and the level gap is a pass-or-fail filter that never orders the slate.
+
+Models: [relationship lanes](../matchLane.md), [reciprocal pair value](../pairValue.md), [private member standing](../memberStanding.md), [candidate pool](../models/candidate_pool.md).
 
 ## Story F34 — See my contribution history
 

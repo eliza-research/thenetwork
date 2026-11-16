@@ -1,7 +1,7 @@
 // Generated from spec/backendLifecycle.md via Vibestack and VibeLang. Run pnpm run spec:sync.
-/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md:9) */
+/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md) */
 export type BackendPhase = "Serving" | "StoppingListeners" | "WaitingForWork" | "ClosingClean" | "ClosingTimedOut" | "ClosedClean" | "ClosedTimedOut";
-/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md:9) */
+/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md) */
 export interface BackendLifecycle {
     phase: BackendPhase;
     ticking: string[];
@@ -28,53 +28,53 @@ export type Event = {
 } | {
     type: "recordBackendClose";
 };
-/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md:9) */
+/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md) */
 export declare const initial: BackendLifecycle;
 /** Every `always` rule at once. Holds initially and after every transition. */
 export declare function inv(current: BackendLifecycle): boolean;
-/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md:9) */
+/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md) */
 export declare function canReleaseTick(s: BackendLifecycle, tickKey: string): boolean;
-/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md:9) */
+/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md) */
 export declare function releaseTick(s: BackendLifecycle, tickKey: string): BackendLifecycle;
-/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md:9) */
+/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md) */
 export declare function stepNewTicksRequireServing(before: BackendLifecycle, via: string, after: BackendLifecycle): boolean;
-/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md:9) */
+/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md) */
 export declare function backendAcceptsWork(s: BackendLifecycle): boolean;
-/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md:9) */
+/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md) */
 export declare function reserveTick(s: BackendLifecycle, tickKey: string): BackendLifecycle;
-/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md:9) */
+/** Story: Run one tick per worker at a time / Reserve each tick worker before starting its work (spec/backendLifecycle.md) */
 export declare function canReserveTick(s: BackendLifecycle, tickKey: string): boolean;
-/** Story: Run one tick per worker at a time / A timer start records when tick monitoring began (spec/backendLifecycle.md:34) */
+/** Story: Run one tick per worker at a time / A timer start records when tick monitoring began (spec/backendLifecycle.md) */
 export declare function startTimer(s: BackendLifecycle, at: number): BackendLifecycle;
-/** Story: Run one tick per worker at a time / A timer start records when tick monitoring began (spec/backendLifecycle.md:34) */
+/** Story: Run one tick per worker at a time / A timer start records when tick monitoring began (spec/backendLifecycle.md) */
 export declare function sometimesTimerStarts(s: BackendLifecycle): boolean;
-/** Story: Run one tick per worker at a time / A timer start records when tick monitoring began (spec/backendLifecycle.md:34) */
+/** Story: Run one tick per worker at a time / A timer start records when tick monitoring began (spec/backendLifecycle.md) */
 export declare function canStartTimer(s: BackendLifecycle): boolean;
-/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
 export declare function beginShutdown(s: BackendLifecycle): BackendLifecycle;
-/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
 export declare function canRecordListenerDrain(s: BackendLifecycle): boolean;
-/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
 export declare function recordListenerDrain(s: BackendLifecycle): BackendLifecycle;
-/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
 export declare function canSettleWorkDrain(s: BackendLifecycle, timedOut: boolean): boolean;
-/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
 export declare function settleWorkDrain(s: BackendLifecycle, timedOut: boolean): BackendLifecycle;
-/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
 export declare function canRecordBackendClose(s: BackendLifecycle): boolean;
-/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
 export declare function recordBackendClose(s: BackendLifecycle): BackendLifecycle;
-/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
 export declare function shutdownWasClean(s: BackendLifecycle): boolean;
-/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
 export declare function stepCleanDrainWaitsForListeners(before: BackendLifecycle, after: BackendLifecycle): boolean;
-/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
 export declare function sometimesClosesCleanly(s: BackendLifecycle): boolean;
-/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
 export declare function sometimesClosesAfterGrace(s: BackendLifecycle): boolean;
-/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
 export declare function canBeginShutdown(s: BackendLifecycle): boolean;
-/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md:50) */
+/** Story: Drain work before closing the backend / The grace period covers listener and work drain (spec/backendLifecycle.md) */
 export declare function stepDrainNeverReopens(before: BackendLifecycle, after: BackendLifecycle): boolean;
 /** Do the rules allow this event in this state? */
 export declare function enabled(current: BackendLifecycle, event: Event): boolean;

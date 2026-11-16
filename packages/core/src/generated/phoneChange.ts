@@ -1,17 +1,17 @@
 // GENERATED from spec/phoneChange.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md:9) */
+/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
 export type CurrentPhone = "OwnedPhone" | "UnavailablePhone" | "WrongPerson";
-/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md:9) */
+/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
 export type MovePolicy = "MoveAllowed" | "MoveBlocked" | "NumberTaken";
-/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md:9) */
+/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
 export type PhoneChangePhase = "Beginning" | "CheckingStartOwner" | "CheckingConfirmOwner" | "CheckingStartPolicy" | "AwaitingRateLimit" | "AwaitingCodeSend" | "AwaitingPendingWrite" | "PendingRecorded" | "AwaitingPendingRead" | "AwaitingVerification" | "AwaitingMovePolicy" | "AwaitingMove" | "Moved" | "Refused";
-/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md:9) */
+/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
 export type MoveOutcome = "MoveApplied" | "MoveNumberTaken" | "MoveMissingPhone";
-/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md:9) */
+/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
 export type PhoneChangeFailure = "NoFailure" | "SameNumber" | "ReviewNeeded" | "NoPerson" | "RateLimited" | "NoPendingChange" | "InvalidCode" | "NumberInUse";
-/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md:9) */
+/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
 export interface PhoneChange { phase: PhoneChangePhase; failure: PhoneChangeFailure; codeVerified: boolean; moveAllowed: boolean }
 
 /** One variant per transition in the spec. */
@@ -28,11 +28,11 @@ export type Event =
   | { type: "checkMovePolicy"; policy: MovePolicy }
   | { type: "recordMove"; moveResult: MoveOutcome };
 
-/** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md:50) */
+/** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md) */
 export const phoneChangesPerDay: number = 3;
-/** Story: Keep my account when my phone changes / A live pending request needs a valid code (spec/phoneChange.md:71) */
+/** Story: Keep my account when my phone changes / A live pending request needs a valid code (spec/phoneChange.md) */
 export const phoneChangeLifetimeMs: number = exact_phoneChange(exact_phoneChange(15 * 60) * 1000);
-/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md:9) */
+/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
 export const initial: PhoneChange = { phase: "Beginning", failure: "NoFailure", codeVerified: false, moveAllowed: false };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -41,187 +41,187 @@ export function inv(current: PhoneChange): boolean {
   return alwaysMoveRequiresProof(current);
 }
 
-/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md:9) */
+/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
 //@ pure
 export function canRequestChallenge(change: PhoneChange): boolean {
   return change.phase === "Beginning";
 }
 
-/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md:9) */
+/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
 //@ pure
 export function requestChallenge(change: PhoneChange, sameNumber: boolean): PhoneChange {
   //@ ensures (inv(change) && canRequestChallenge(change)) ==> alwaysMoveRequiresProof(\result)
   return sameNumber ? ({ ...change, phase: "Refused", failure: "SameNumber" } as PhoneChange) : ({ ...change, phase: "CheckingStartOwner" } as PhoneChange);
 }
 
-/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md:9) */
+/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
 //@ pure
 export function canBeginConfirmation(change: PhoneChange): boolean {
   return change.phase === "Beginning";
 }
 
-/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md:9) */
+/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
 //@ pure
 export function beginConfirmation(change: PhoneChange): PhoneChange {
   //@ ensures (inv(change) && canBeginConfirmation(change)) ==> alwaysMoveRequiresProof(\result)
   return { ...change, phase: "CheckingConfirmOwner" };
 }
 
-/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md:9) */
+/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
 //@ pure
 export function canCheckCurrentPhone(change: PhoneChange): boolean {
   return change.phase === "CheckingStartOwner" || change.phase === "CheckingConfirmOwner";
 }
 
-/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md:9) */
+/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
 //@ pure
 export function checkCurrentPhone(change: PhoneChange, ownership: CurrentPhone): PhoneChange {
   //@ ensures (inv(change) && canCheckCurrentPhone(change)) ==> alwaysMoveRequiresProof(\result)
   return ownership === "UnavailablePhone" ? ({ ...change, phase: "Refused", failure: "ReviewNeeded" } as PhoneChange) : (ownership === "WrongPerson" ? ({ ...change, phase: "Refused", failure: "NoPerson" } as PhoneChange) : ({ ...change, phase: change.phase === "CheckingStartOwner" ? "CheckingStartPolicy" : "AwaitingPendingRead" } as PhoneChange));
 }
 
-/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md:9) */
+/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
 //@ pure
 export function canCheckStartPolicy(change: PhoneChange): boolean {
   return change.phase === "CheckingStartPolicy";
 }
 
-/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md:9) */
+/** Story: Keep my account when my phone changes / The request uses the existing account (spec/phoneChange.md) */
 //@ pure
 export function checkStartPolicy(change: PhoneChange, oldNumberAllowed: boolean): PhoneChange {
   //@ ensures (inv(change) && canCheckStartPolicy(change)) ==> alwaysMoveRequiresProof(\result)
   return oldNumberAllowed ? ({ ...change, phase: "AwaitingRateLimit" } as PhoneChange) : ({ ...change, phase: "Refused", failure: "ReviewNeeded" } as PhoneChange);
 }
 
-/** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md:50) */
+/** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md) */
 //@ pure
 export function canCheckStartRate(change: PhoneChange): boolean {
   return change.phase === "AwaitingRateLimit";
 }
 
-/** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md:50) */
+/** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md) */
 //@ pure
 export function checkStartRate(change: PhoneChange, slotGranted: boolean): PhoneChange {
   //@ ensures (inv(change) && canCheckStartRate(change)) ==> alwaysMoveRequiresProof(\result)
   return slotGranted ? ({ ...change, phase: "AwaitingCodeSend" } as PhoneChange) : ({ ...change, phase: "Refused", failure: "RateLimited" } as PhoneChange);
 }
 
-/** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md:50) */
+/** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md) */
 //@ pure
 export function canRecordCodeSend(change: PhoneChange): boolean {
   return change.phase === "AwaitingCodeSend";
 }
 
-/** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md:50) */
+/** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md) */
 //@ pure
 export function recordCodeSend(change: PhoneChange, sendAccepted: boolean): PhoneChange {
   //@ ensures (inv(change) && canRecordCodeSend(change)) ==> alwaysMoveRequiresProof(\result)
   return sendAccepted ? ({ ...change, phase: "AwaitingPendingWrite" } as PhoneChange) : ({ ...change, phase: "Refused", failure: "RateLimited" } as PhoneChange);
 }
 
-/** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md:50) */
+/** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md) */
 //@ pure
 export function canRecordPendingWrite(change: PhoneChange): boolean {
   return change.phase === "AwaitingPendingWrite";
 }
 
-/** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md:50) */
+/** Story: Keep my account when my phone changes / A challenge needs a send slot and a persisted request (spec/phoneChange.md) */
 //@ pure
 export function recordPendingWrite(change: PhoneChange): PhoneChange {
   //@ ensures (inv(change) && canRecordPendingWrite(change)) ==> alwaysMoveRequiresProof(\result)
   return { ...change, phase: "PendingRecorded" };
 }
 
-/** Story: Keep my account when my phone changes / A live pending request needs a valid code (spec/phoneChange.md:71) */
+/** Story: Keep my account when my phone changes / A live pending request needs a valid code (spec/phoneChange.md) */
 //@ pure
 export function pendingWindowOpen(elapsedMs: number): boolean {
   return !(elapsedMs > phoneChangeLifetimeMs);
 }
 
-/** Story: Keep my account when my phone changes / A live pending request needs a valid code (spec/phoneChange.md:71) */
+/** Story: Keep my account when my phone changes / A live pending request needs a valid code (spec/phoneChange.md) */
 //@ pure
 export function lawWindowIncludesDeadline(offsetMs: number): boolean {
   //@ ensures \result === true
   return !(offsetMs === phoneChangeLifetimeMs) || pendingWindowOpen(offsetMs);
 }
 
-/** Story: Keep my account when my phone changes / A live pending request needs a valid code (spec/phoneChange.md:71) */
+/** Story: Keep my account when my phone changes / A live pending request needs a valid code (spec/phoneChange.md) */
 //@ pure
 export function canReadPending(change: PhoneChange): boolean {
   return change.phase === "AwaitingPendingRead";
 }
 
-/** Story: Keep my account when my phone changes / A live pending request needs a valid code (spec/phoneChange.md:71) */
+/** Story: Keep my account when my phone changes / A live pending request needs a valid code (spec/phoneChange.md) */
 //@ pure
 export function readPending(change: PhoneChange, hasTarget: boolean, elapsedMs: number): PhoneChange {
   //@ ensures (inv(change) && canReadPending(change)) ==> alwaysMoveRequiresProof(\result)
   return hasTarget && pendingWindowOpen(elapsedMs) ? ({ ...change, phase: "AwaitingVerification" } as PhoneChange) : ({ ...change, phase: "Refused", failure: "NoPendingChange" } as PhoneChange);
 }
 
-/** Story: Keep my account when my phone changes / A live pending request needs a valid code (spec/phoneChange.md:71) */
+/** Story: Keep my account when my phone changes / A live pending request needs a valid code (spec/phoneChange.md) */
 //@ pure
 export function canRecordVerification(change: PhoneChange): boolean {
   return change.phase === "AwaitingVerification";
 }
 
-/** Story: Keep my account when my phone changes / A live pending request needs a valid code (spec/phoneChange.md:71) */
+/** Story: Keep my account when my phone changes / A live pending request needs a valid code (spec/phoneChange.md) */
 //@ pure
 export function recordVerification(change: PhoneChange, otpVerified: boolean): PhoneChange {
   //@ ensures (inv(change) && canRecordVerification(change)) ==> alwaysMoveRequiresProof(\result)
   return otpVerified ? ({ ...change, phase: "AwaitingMovePolicy", codeVerified: true } as PhoneChange) : ({ ...change, phase: "Refused", failure: "InvalidCode" } as PhoneChange);
 }
 
-/** Story: Keep my account when my phone changes / The verified request can move only when both numbers allow it (spec/phoneChange.md:94) */
+/** Story: Keep my account when my phone changes / The verified request can move only when both numbers allow it (spec/phoneChange.md) */
 //@ pure
 export function canCheckMovePolicy(change: PhoneChange): boolean {
   return change.phase === "AwaitingMovePolicy" && change.codeVerified;
 }
 
-/** Story: Keep my account when my phone changes / The verified request can move only when both numbers allow it (spec/phoneChange.md:94) */
+/** Story: Keep my account when my phone changes / The verified request can move only when both numbers allow it (spec/phoneChange.md) */
 //@ pure
 export function checkMovePolicy(change: PhoneChange, policy: MovePolicy): PhoneChange {
   //@ ensures (inv(change) && canCheckMovePolicy(change)) ==> alwaysMoveRequiresProof(\result)
   return policy === "MoveBlocked" ? ({ ...change, phase: "Refused", failure: "ReviewNeeded" } as PhoneChange) : (policy === "NumberTaken" ? ({ ...change, phase: "Refused", failure: "NumberInUse" } as PhoneChange) : ({ ...change, phase: "AwaitingMove", moveAllowed: true } as PhoneChange));
 }
 
-/** Story: Keep my account when my phone changes / The verified request can move only when both numbers allow it (spec/phoneChange.md:94) */
+/** Story: Keep my account when my phone changes / The verified request can move only when both numbers allow it (spec/phoneChange.md) */
 //@ pure
 export function canRecordMove(change: PhoneChange): boolean {
   return change.phase === "AwaitingMove" && change.codeVerified && change.moveAllowed;
 }
 
-/** Story: Keep my account when my phone changes / The verified request can move only when both numbers allow it (spec/phoneChange.md:94) */
+/** Story: Keep my account when my phone changes / The verified request can move only when both numbers allow it (spec/phoneChange.md) */
 //@ pure
 export function recordMove(change: PhoneChange, moveResult: MoveOutcome): PhoneChange {
   //@ ensures (inv(change) && canRecordMove(change)) ==> alwaysMoveRequiresProof(\result)
   return moveResult === "MoveApplied" ? ({ ...change, phase: "Moved" } as PhoneChange) : (moveResult === "MoveNumberTaken" ? ({ ...change, phase: "Refused", failure: "NumberInUse" } as PhoneChange) : ({ ...change, phase: "Refused", failure: "ReviewNeeded" } as PhoneChange));
 }
 
-/** Story: Keep my account when my phone changes / Reporting a move requires both the new code and current move authority (spec/phoneChange.md:114) */
+/** Story: Keep my account when my phone changes / Reporting a move requires both the new code and current move authority (spec/phoneChange.md) */
 //@ pure
 export function alwaysMoveRequiresProof(change: PhoneChange): boolean {
   return !(change.phase === "AwaitingMove" || change.phase === "Moved") || (change.codeVerified && change.moveAllowed);
 }
 
-/** Story: Keep my account when my phone changes / Reporting a move requires both the new code and current move authority (spec/phoneChange.md:114) */
+/** Story: Keep my account when my phone changes / Reporting a move requires both the new code and current move authority (spec/phoneChange.md) */
 //@ pure
 export function sometimesPendingRecorded(change: PhoneChange): boolean {
   return change.phase === "PendingRecorded";
 }
 
-/** Story: Keep my account when my phone changes / Reporting a move requires both the new code and current move authority (spec/phoneChange.md:114) */
+/** Story: Keep my account when my phone changes / Reporting a move requires both the new code and current move authority (spec/phoneChange.md) */
 //@ pure
 export function sometimesMoved(change: PhoneChange): boolean {
   return change.phase === "Moved";
 }
 
-/** Story: Keep my account when my phone changes / Reporting a move requires both the new code and current move authority (spec/phoneChange.md:114) */
+/** Story: Keep my account when my phone changes / Reporting a move requires both the new code and current move authority (spec/phoneChange.md) */
 //@ pure
 export function sometimesRefusesCode(change: PhoneChange): boolean {
   return change.failure === "InvalidCode";
 }
 
-/** Story: Keep my account when my phone changes / Reporting a move requires both the new code and current move authority (spec/phoneChange.md:114) */
+/** Story: Keep my account when my phone changes / Reporting a move requires both the new code and current move authority (spec/phoneChange.md) */
 //@ pure
 export function sometimesRefusesTakenNumber(change: PhoneChange): boolean {
   return change.failure === "NumberInUse";

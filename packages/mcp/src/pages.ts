@@ -2,7 +2,7 @@
 import { createElement as h, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { type AuthPage, type Reply, alwaysFieldErrorStaysOnItsPage, initial, showReply } from "../../core/src/generated/authorizationPages.ts";
-import { type AppKey, appKeys, brandFor } from "../../core/src/generated/brandIdentity.ts";
+import type { AppKey } from "../../core/src/generated/brandIdentity.ts";
 import { type RemoveReply, canChooseRemoval, canConfirmRemoval, chooseRemoval, confirmRemoval, initial as consentsInitial, load } from "../../core/src/generated/connectedAssistants.ts";
 import { brandIdFor } from "../../ui/src/brand/landing.ts";
 import { AuthCodeView, type CodeFieldError } from "../../ui/src/components/AuthCodeView.tsx";
@@ -16,14 +16,9 @@ import type { Grant, Scope } from "./store.ts";
 
 const TURNSTILE = "https://challenges.cloudflare.com";
 
-/**
- * The brand record of the app that serves the page, by its registry id. The id, not the host, names the brand:
- * a staging or development host (STAGING_SITE_ORIGINS) serves the same app as its production domain.
- */
+/** The brand record of the app that serves the page. */
 export function appKeyOf(app: McpApp): AppKey {
-  const key = appKeys.find(k => k === connectorApp[app.id] && brandFor(k).app === k);
-  if (!key) throw new Error(`No brand record for app ${app.id}`);
-  return key;
+  return connectorApp[app.id];
 }
 
 interface Respond { turnstileSiteKey?: string; formTargets?: string[]; status?: number }

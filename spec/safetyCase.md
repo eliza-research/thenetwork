@@ -8,7 +8,9 @@ The Network stores one open case at a time for a member and records each report 
 
 ### An event opens a case or adds to its current record
 
-If a member has no open case, the next event opens one. An event after a lift reopens the case, except for the event that records the lift itself. A closed case stays closed. The shell starts a new case for a later event instead of changing the old record.
+If a member has no open case, the next event opens one, except a trust decay event. An event after a lift reopens the case, except for the event that records the lift itself. A closed case stays closed. The shell starts a new case for a later event instead of changing the old record.
+
+A decay event (see [trust levels](trustLevel.md)) never changes the phase. Clean time alone never opens a case and never reopens a lifted one. The shell adds a decay event to a live case and records nothing when the result has no case.
 
 ```quint
 type CasePhase = NoCase | CaseOpen | CaseHeld | CaseLifted | CaseClosed
@@ -17,8 +19,13 @@ pure val initial: SafetyCase = { phase: NoCase }
 
 pure def canRecordCaseEvent(c: SafetyCase): bool = c.phase != CaseClosed
 
-pure def recordCaseEvent(c: SafetyCase, liftEvent: bool): SafetyCase =
-  if (c.phase == NoCase or (c.phase == CaseLifted and not(liftEvent))) { phase: CaseOpen } else c
+pure def recordCaseEvent(c: SafetyCase, liftEvent: bool, decayEvent: bool): SafetyCase =
+  if (decayEvent) c
+  else if (c.phase == NoCase or (c.phase == CaseLifted and not(liftEvent))) { phase: CaseOpen }
+  else c
+
+pure def lawDecayNeverOpensCase(liftEvent: bool): bool =
+  recordCaseEvent(initial, liftEvent, true) == initial
 ```
 
 ### A recorded hold or lift updates the open case
@@ -92,6 +99,17 @@ pure def reportRestrictsMatching(reportPhase: ReportPhase, metBefore: bool, urge
 
 pure def lawDismissedReportStaysDismissed(decision: ReportDecision, sameMember: bool, reportMatches: bool): bool =
   reportAfterDecision(ReportDismissed, decision, sameMember, reportMatches) == ReportDismissed
+```
+
+### A ban allows only carrier commands and app leave
+
+A banned person cannot start or continue ordinary work on the text line. An ordinary text, a reaction, or a photo does not count as engagement and opens no flow. STOP and HELP still work. The person can leave an app that they are a member of. The shell records the ban, revokes the person's profile-share grants, and deletes the phone's pending text flows in one database transaction. A share request takes the same lock and reads the ban first, so a share cannot complete after the ban.
+
+```quint
+pure def inboundAllowedAfterBan(banned: bool, compliance: bool): bool = not(banned) or compliance
+
+pure def lawBanBlocksOrdinaryInbound(compliance: bool): bool =
+  inboundAllowedAfterBan(true, compliance) == compliance
 ```
 
 ## Story: Clear a mistaken minor signal after checking ages

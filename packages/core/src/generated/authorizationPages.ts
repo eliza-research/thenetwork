@@ -1,25 +1,25 @@
 // GENERATED from spec/authorizationPages.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md:9) */
+/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
 export type Reply = "ReplyPhone" | "ReplyCode" | "ReplyConsent" | "ReplyConsentRetry" | "ReplyCloud" | "ReplyApproved" | "ReplyDeclined" | "ReplyCheckFailed" | "ReplyPhoneInvalid" | "ReplyTooManyCodes" | "ReplySendUnavailable" | "ReplyCodeRejected" | "ReplyLinkInvalid" | "ReplyTooManyTries" | "ReplyNotAvailable" | "ReplyExpired" | "ReplyAlreadySignedIn" | "ReplyCheckNumber" | "ReplyConnectAgain" | "ReplyRetryLater" | "ReplySignInUnavailable" | "ReplyNotAllowed";
-/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md:9) */
+/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
 export type AuthView = "Opening" | "PhoneView" | "CodeView" | "ConsentView" | "ConsentRetryView" | "CloudView" | "ApprovedView" | "DeclinedView" | "LinkInvalidView" | "TooManyTriesView" | "NotAvailableView" | "PageExpiredView" | "AlreadySignedInView" | "CheckNumberView" | "ConnectAgainView" | "PleaseRetryView" | "SignInUnavailableView" | "NotAllowedView";
-/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md:9) */
+/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
 export type FieldError = "NoFieldError" | "CheckNotPassed" | "PhoneNotValid" | "CodesRateLimited" | "CodeSendFailed" | "CodeNotAccepted";
-/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md:9) */
+/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
 export type SecurityCheck = "CheckOff" | "CheckWaiting" | "CheckSolved" | "CheckExpired";
-/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md:9) */
+/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
 export interface Offers { sendCode: boolean; continueCode: boolean; allow: boolean; retryAllow: boolean; dontAllow: boolean; cancel: boolean; retryLink: boolean }
-/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md:9) */
+/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
 export interface AuthPage { view: AuthView; fieldError: FieldError; securityCheck: SecurityCheck; turnstileOn: boolean; codeSent: boolean; consentSeen: boolean; approved: boolean }
-/** Story: Decide what my assistant can do / The consent page names the client as its claim and lists every scope (spec/authorizationPages.md:217) */
+/** Story: Decide what my assistant can do / The consent page names the client as its claim and lists every scope (spec/authorizationPages.md) */
 export type ClientLabel = "ProvidedName" | "UnnamedAssistant" | "NoClientShown";
-/** Story: Decide what my assistant can do / The consent page names the client as its claim and lists every scope (spec/authorizationPages.md:217) */
+/** Story: Decide what my assistant can do / The consent page names the client as its claim and lists every scope (spec/authorizationPages.md) */
 export interface ConsentParts { client: ClientLabel; claimNote: boolean; returnHost: boolean; scopeList: boolean; unavailableNotice: boolean }
-/** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md:240) */
+/** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
 export type Scope = "AppsRead" | "MembershipRead" | "ProfileWrite";
-/** Story: Understand a page that stops the connection / Every page shows the brand mark and the legal links (spec/authorizationPages.md:319) */
+/** Story: Understand a page that stops the connection / Every page shows the brand mark and the legal links (spec/authorizationPages.md) */
 export interface PageChrome { brandMark: boolean; legalLinks: boolean }
 
 /** One variant per transition in the spec. */
@@ -34,11 +34,11 @@ export type Event =
   | { type: "approve"; reply: Reply }
   | { type: "cancelRequest"; reply: Reply };
 
-/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md:9) */
+/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
 export const noOffers: Offers = { sendCode: false, continueCode: false, allow: false, retryAllow: false, dontAllow: false, cancel: false, retryLink: false };
-/** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md:240) */
+/** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
 export const scopes: Scope[] = ["AppsRead", "MembershipRead", "ProfileWrite"];
-/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md:9) */
+/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
 export const initial: AuthPage = { view: "Opening", fieldError: "NoFieldError", securityCheck: "CheckOff", turnstileOn: false, codeSent: false, consentSeen: false, approved: false };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -47,86 +47,86 @@ export function inv(current: AuthPage): boolean {
   return alwaysSecurityCheckOnlyOnPhonePage(current) && alwaysFieldErrorStaysOnItsPage(current) && alwaysCodePageFollowsSentCode(current) && alwaysApprovalFollowsConsent(current) && alwaysConsentPageIsRecorded(current);
 }
 
-/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md:9) */
+/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
 //@ pure
 export function viewFor(reply: Reply): AuthView {
   return reply === "ReplyPhone" || reply === "ReplyCheckFailed" || reply === "ReplyPhoneInvalid" || reply === "ReplyTooManyCodes" || reply === "ReplySendUnavailable" ? "PhoneView" : (reply === "ReplyCode" || reply === "ReplyCodeRejected" ? "CodeView" : (reply === "ReplyConsent" ? "ConsentView" : (reply === "ReplyConsentRetry" ? "ConsentRetryView" : (reply === "ReplyCloud" ? "CloudView" : (reply === "ReplyApproved" ? "ApprovedView" : (reply === "ReplyDeclined" ? "DeclinedView" : (reply === "ReplyLinkInvalid" ? "LinkInvalidView" : (reply === "ReplyTooManyTries" ? "TooManyTriesView" : (reply === "ReplyNotAvailable" ? "NotAvailableView" : (reply === "ReplyExpired" ? "PageExpiredView" : (reply === "ReplyAlreadySignedIn" ? "AlreadySignedInView" : (reply === "ReplyCheckNumber" ? "CheckNumberView" : (reply === "ReplyConnectAgain" ? "ConnectAgainView" : (reply === "ReplyRetryLater" ? "PleaseRetryView" : (reply === "ReplySignInUnavailable" ? "SignInUnavailableView" : "NotAllowedView")))))))))))))));
 }
 
-/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md:9) */
+/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
 //@ pure
 export function errorFor(reply: Reply): FieldError {
   return reply === "ReplyCheckFailed" ? "CheckNotPassed" : (reply === "ReplyPhoneInvalid" ? "PhoneNotValid" : (reply === "ReplyTooManyCodes" ? "CodesRateLimited" : (reply === "ReplySendUnavailable" ? "CodeSendFailed" : (reply === "ReplyCodeRejected" ? "CodeNotAccepted" : "NoFieldError"))));
 }
 
-/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md:9) */
+/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
 //@ pure
 export function checkFor(view: AuthView, turnstileOn: boolean): SecurityCheck {
   return view === "PhoneView" && turnstileOn ? "CheckWaiting" : "CheckOff";
 }
 
-/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md:9) */
+/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
 //@ pure
 export function isConsentView(view: AuthView): boolean {
   return view === "ConsentView" || view === "ConsentRetryView";
 }
 
-/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md:9) */
+/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
 //@ pure
 export function isMessageView(view: AuthView): boolean {
   return view === "LinkInvalidView" || view === "TooManyTriesView" || view === "NotAvailableView" || view === "PageExpiredView" || view === "AlreadySignedInView" || view === "CheckNumberView" || view === "ConnectAgainView" || view === "PleaseRetryView" || view === "SignInUnavailableView" || view === "NotAllowedView";
 }
 
-/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md:9) */
+/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
 //@ pure
 export function rendersPage(view: AuthView): boolean {
   return !(view === "Opening" || view === "CloudView" || view === "ApprovedView" || view === "DeclinedView");
 }
 
-/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md:9) */
+/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
 //@ pure
 export function showsPhoneField(view: AuthView): boolean {
   return view === "PhoneView";
 }
 
-/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md:9) */
+/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
 //@ pure
 export function showsCodeField(view: AuthView): boolean {
   return view === "CodeView";
 }
 
-/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md:9) */
+/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
 //@ pure
 export function isFinal(view: AuthView): boolean {
   return view === "ApprovedView" || view === "DeclinedView" || (isMessageView(view) && view !== "PleaseRetryView");
 }
 
-/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md:9) */
+/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
 //@ pure
 export function offersFor(view: AuthView): Offers {
   return { sendCode: view === "PhoneView", continueCode: view === "CodeView", allow: view === "ConsentView", retryAllow: view === "ConsentRetryView", dontAllow: isConsentView(view), cancel: view === "PhoneView" || view === "CodeView", retryLink: view === "PleaseRetryView" };
 }
 
-/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md:9) */
+/** Story: See one clear page at each step of connecting my assistant / The server reply selects the page view (spec/authorizationPages.md) */
 //@ pure
 export function showReply(reply: Reply, page: AuthPage): AuthPage {
   const local_0: AuthView = viewFor(reply);
   return { view: local_0, fieldError: errorFor(reply), securityCheck: checkFor(local_0, page.turnstileOn), turnstileOn: page.turnstileOn, codeSent: page.codeSent || reply === "ReplyCode", consentSeen: page.consentSeen || isConsentView(local_0), approved: page.approved || reply === "ReplyApproved" };
 }
 
-/** Story: See one clear page at each step of connecting my assistant / Opening the connection link shows sign-in, consent, Cloud sign-in or a message (spec/authorizationPages.md:117) */
+/** Story: See one clear page at each step of connecting my assistant / Opening the connection link shows sign-in, consent, Cloud sign-in or a message (spec/authorizationPages.md) */
 //@ pure
 export function isOpenReply(reply: Reply): boolean {
   return reply === "ReplyPhone" || reply === "ReplyConsent" || reply === "ReplyCloud" || reply === "ReplyRetryLater" || reply === "ReplyLinkInvalid" || reply === "ReplyTooManyTries" || reply === "ReplyNotAvailable" || reply === "ReplySignInUnavailable";
 }
 
-/** Story: See one clear page at each step of connecting my assistant / Opening the connection link shows sign-in, consent, Cloud sign-in or a message (spec/authorizationPages.md:117) */
+/** Story: See one clear page at each step of connecting my assistant / Opening the connection link shows sign-in, consent, Cloud sign-in or a message (spec/authorizationPages.md) */
 //@ pure
 export function canOpenPage(page: AuthPage, reply: Reply): boolean {
   return page.view === "Opening" && isOpenReply(reply);
 }
 
-/** Story: See one clear page at each step of connecting my assistant / Opening the connection link shows sign-in, consent, Cloud sign-in or a message (spec/authorizationPages.md:117) */
+/** Story: See one clear page at each step of connecting my assistant / Opening the connection link shows sign-in, consent, Cloud sign-in or a message (spec/authorizationPages.md) */
 //@ pure
 export function openPage(page: AuthPage, reply: Reply, turnstileOn: boolean): AuthPage {
   //@ ensures (inv(page) && canOpenPage(page, reply)) ==> alwaysSecurityCheckOnlyOnPhonePage(\result)
@@ -142,25 +142,25 @@ export function openPage(page: AuthPage, reply: Reply, turnstileOn: boolean): Au
   return showReply(reply, ({ ...page, turnstileOn: turnstileOn } as AuthPage));
 }
 
-/** Story: See one clear page at each step of connecting my assistant / The return from Cloud sign-in and the retry link resume the same request (spec/authorizationPages.md:132) */
+/** Story: See one clear page at each step of connecting my assistant / The return from Cloud sign-in and the retry link resume the same request (spec/authorizationPages.md) */
 //@ pure
 export function isCloudReturnReply(reply: Reply): boolean {
   return reply === "ReplyConsent" || reply === "ReplyRetryLater" || reply === "ReplyExpired" || reply === "ReplyLinkInvalid" || reply === "ReplyConnectAgain";
 }
 
-/** Story: See one clear page at each step of connecting my assistant / The return from Cloud sign-in and the retry link resume the same request (spec/authorizationPages.md:132) */
+/** Story: See one clear page at each step of connecting my assistant / The return from Cloud sign-in and the retry link resume the same request (spec/authorizationPages.md) */
 //@ pure
 export function canReturnFromCloud(page: AuthPage, reply: Reply): boolean {
   return page.view === "CloudView" && isCloudReturnReply(reply);
 }
 
-/** Story: See one clear page at each step of connecting my assistant / The return from Cloud sign-in and the retry link resume the same request (spec/authorizationPages.md:132) */
+/** Story: See one clear page at each step of connecting my assistant / The return from Cloud sign-in and the retry link resume the same request (spec/authorizationPages.md) */
 //@ pure
 export function canRetryConnection(page: AuthPage, reply: Reply): boolean {
   return page.view === "PleaseRetryView" && isCloudReturnReply(reply);
 }
 
-/** Story: See one clear page at each step of connecting my assistant / The return from Cloud sign-in and the retry link resume the same request (spec/authorizationPages.md:132) */
+/** Story: See one clear page at each step of connecting my assistant / The return from Cloud sign-in and the retry link resume the same request (spec/authorizationPages.md) */
 //@ pure
 export function returnFromCloud(page: AuthPage, reply: Reply): AuthPage {
   //@ ensures (inv(page) && canReturnFromCloud(page, reply)) ==> alwaysSecurityCheckOnlyOnPhonePage(\result)
@@ -176,7 +176,7 @@ export function returnFromCloud(page: AuthPage, reply: Reply): AuthPage {
   return showReply(reply, page);
 }
 
-/** Story: See one clear page at each step of connecting my assistant / The return from Cloud sign-in and the retry link resume the same request (spec/authorizationPages.md:132) */
+/** Story: See one clear page at each step of connecting my assistant / The return from Cloud sign-in and the retry link resume the same request (spec/authorizationPages.md) */
 //@ pure
 export function retryConnection(page: AuthPage, reply: Reply): AuthPage {
   //@ ensures (inv(page) && canRetryConnection(page, reply)) ==> alwaysSecurityCheckOnlyOnPhonePage(\result)
@@ -192,13 +192,13 @@ export function retryConnection(page: AuthPage, reply: Reply): AuthPage {
   return showReply(reply, page);
 }
 
-/** Story: Prove my phone on this page / The phone page shows a security check only when the site has one (spec/authorizationPages.md:152) */
+/** Story: Prove my phone on this page / The phone page shows a security check only when the site has one (spec/authorizationPages.md) */
 //@ pure
 export function canSolveCheck(page: AuthPage): boolean {
   return page.view === "PhoneView" && (page.securityCheck === "CheckWaiting" || page.securityCheck === "CheckExpired");
 }
 
-/** Story: Prove my phone on this page / The phone page shows a security check only when the site has one (spec/authorizationPages.md:152) */
+/** Story: Prove my phone on this page / The phone page shows a security check only when the site has one (spec/authorizationPages.md) */
 //@ pure
 export function solveCheck(page: AuthPage): AuthPage {
   //@ ensures (inv(page) && canSolveCheck(page)) ==> alwaysSecurityCheckOnlyOnPhonePage(\result)
@@ -214,13 +214,13 @@ export function solveCheck(page: AuthPage): AuthPage {
   return { ...page, securityCheck: "CheckSolved" };
 }
 
-/** Story: Prove my phone on this page / The phone page shows a security check only when the site has one (spec/authorizationPages.md:152) */
+/** Story: Prove my phone on this page / The phone page shows a security check only when the site has one (spec/authorizationPages.md) */
 //@ pure
 export function canExpireCheck(page: AuthPage): boolean {
   return page.view === "PhoneView" && page.securityCheck === "CheckSolved";
 }
 
-/** Story: Prove my phone on this page / The phone page shows a security check only when the site has one (spec/authorizationPages.md:152) */
+/** Story: Prove my phone on this page / The phone page shows a security check only when the site has one (spec/authorizationPages.md) */
 //@ pure
 export function expireCheck(page: AuthPage): AuthPage {
   //@ ensures (inv(page) && canExpireCheck(page)) ==> alwaysSecurityCheckOnlyOnPhonePage(\result)
@@ -236,37 +236,37 @@ export function expireCheck(page: AuthPage): AuthPage {
   return { ...page, securityCheck: "CheckExpired" };
 }
 
-/** Story: Prove my phone on this page / The phone page shows a security check only when the site has one (spec/authorizationPages.md:152) */
+/** Story: Prove my phone on this page / The phone page shows a security check only when the site has one (spec/authorizationPages.md) */
 //@ pure
 export function alwaysSecurityCheckOnlyOnPhonePage(page: AuthPage): boolean {
   return (page.securityCheck !== "CheckOff") === (page.view === "PhoneView" && page.turnstileOn);
 }
 
-/** Story: Prove my phone on this page / The phone page sends a code or tells why it did not (spec/authorizationPages.md:168) */
+/** Story: Prove my phone on this page / The phone page sends a code or tells why it did not (spec/authorizationPages.md) */
 //@ pure
 export function alwaysFieldErrorStaysOnItsPage(page: AuthPage): boolean {
   return (!(page.fieldError === "CodeNotAccepted") || page.view === "CodeView") && (!(page.fieldError === "CheckNotPassed" || page.fieldError === "PhoneNotValid" || page.fieldError === "CodesRateLimited" || page.fieldError === "CodeSendFailed") || page.view === "PhoneView") && (!(page.fieldError === "CheckNotPassed") || page.turnstileOn);
 }
 
-/** Story: Prove my phone on this page / The phone page sends a code or tells why it did not (spec/authorizationPages.md:168) */
+/** Story: Prove my phone on this page / The phone page sends a code or tells why it did not (spec/authorizationPages.md) */
 //@ pure
 export function isPhoneReply(reply: Reply): boolean {
   return reply === "ReplyCode" || reply === "ReplyCheckFailed" || reply === "ReplyPhoneInvalid" || reply === "ReplyTooManyCodes" || reply === "ReplySendUnavailable" || reply === "ReplyExpired" || reply === "ReplyAlreadySignedIn" || reply === "ReplyNotAllowed" || reply === "ReplyNotAvailable";
 }
 
-/** Story: Prove my phone on this page / The phone page sends a code or tells why it did not (spec/authorizationPages.md:168) */
+/** Story: Prove my phone on this page / The phone page sends a code or tells why it did not (spec/authorizationPages.md) */
 //@ pure
 export function stepPhoneSubmitNeedsSolvedCheck(before: AuthPage, via: string, after: AuthPage): boolean {
   return !(via === "submitPhone") || (before.securityCheck === "CheckOff" || before.securityCheck === "CheckSolved");
 }
 
-/** Story: Prove my phone on this page / The phone page sends a code or tells why it did not (spec/authorizationPages.md:168) */
+/** Story: Prove my phone on this page / The phone page sends a code or tells why it did not (spec/authorizationPages.md) */
 //@ pure
 export function canSubmitPhone(page: AuthPage, reply: Reply): boolean {
   return page.view === "PhoneView" && (page.securityCheck === "CheckOff" || page.securityCheck === "CheckSolved") && isPhoneReply(reply) && (!(reply === "ReplyCheckFailed") || page.turnstileOn);
 }
 
-/** Story: Prove my phone on this page / The phone page sends a code or tells why it did not (spec/authorizationPages.md:168) */
+/** Story: Prove my phone on this page / The phone page sends a code or tells why it did not (spec/authorizationPages.md) */
 //@ pure
 export function submitPhone(page: AuthPage, reply: Reply): AuthPage {
   //@ ensures (inv(page) && canSubmitPhone(page, reply)) ==> alwaysSecurityCheckOnlyOnPhonePage(\result)
@@ -282,31 +282,31 @@ export function submitPhone(page: AuthPage, reply: Reply): AuthPage {
   return showReply(reply, page);
 }
 
-/** Story: Prove my phone on this page / The code page appears only after this request sent a code (spec/authorizationPages.md:195) */
+/** Story: Prove my phone on this page / The code page appears only after this request sent a code (spec/authorizationPages.md) */
 //@ pure
 export function isCodeReply(reply: Reply): boolean {
   return reply === "ReplyConsent" || reply === "ReplyCodeRejected" || reply === "ReplyCheckNumber" || reply === "ReplyExpired" || reply === "ReplyNotAllowed" || reply === "ReplyNotAvailable";
 }
 
-/** Story: Prove my phone on this page / The code page appears only after this request sent a code (spec/authorizationPages.md:195) */
+/** Story: Prove my phone on this page / The code page appears only after this request sent a code (spec/authorizationPages.md) */
 //@ pure
 export function stepCodePageOnlyAfterPhoneSubmit(before: AuthPage, via: string, after: AuthPage): boolean {
   return !(after.view === "CodeView" && before.view !== "CodeView") || (via === "submitPhone" && before.view === "PhoneView");
 }
 
-/** Story: Prove my phone on this page / The code page appears only after this request sent a code (spec/authorizationPages.md:195) */
+/** Story: Prove my phone on this page / The code page appears only after this request sent a code (spec/authorizationPages.md) */
 //@ pure
 export function canSubmitCode(page: AuthPage, reply: Reply): boolean {
   return page.view === "CodeView" && page.codeSent && isCodeReply(reply);
 }
 
-/** Story: Prove my phone on this page / The code page appears only after this request sent a code (spec/authorizationPages.md:195) */
+/** Story: Prove my phone on this page / The code page appears only after this request sent a code (spec/authorizationPages.md) */
 //@ pure
 export function alwaysCodePageFollowsSentCode(page: AuthPage): boolean {
   return !showsCodeField(page.view) || page.codeSent;
 }
 
-/** Story: Prove my phone on this page / The code page appears only after this request sent a code (spec/authorizationPages.md:195) */
+/** Story: Prove my phone on this page / The code page appears only after this request sent a code (spec/authorizationPages.md) */
 //@ pure
 export function submitCode(page: AuthPage, reply: Reply): AuthPage {
   //@ ensures (inv(page) && canSubmitCode(page, reply)) ==> alwaysSecurityCheckOnlyOnPhonePage(\result)
@@ -322,20 +322,20 @@ export function submitCode(page: AuthPage, reply: Reply): AuthPage {
   return showReply(reply, page);
 }
 
-/** Story: Decide what my assistant can do / The consent page names the client as its claim and lists every scope (spec/authorizationPages.md:217) */
+/** Story: Decide what my assistant can do / The consent page names the client as its claim and lists every scope (spec/authorizationPages.md) */
 //@ pure
 export function consentParts(view: AuthView, clientNamed: boolean): ConsentParts {
   return isConsentView(view) ? ({ client: clientNamed ? "ProvidedName" : "UnnamedAssistant", claimNote: true, returnHost: true, scopeList: true, unavailableNotice: view === "ConsentRetryView" } as ConsentParts) : ({ client: "NoClientShown", claimNote: false, returnHost: false, scopeList: false, unavailableNotice: false } as ConsentParts);
 }
 
-/** Story: Decide what my assistant can do / The consent page names the client as its claim and lists every scope (spec/authorizationPages.md:217) */
+/** Story: Decide what my assistant can do / The consent page names the client as its claim and lists every scope (spec/authorizationPages.md) */
 //@ pure
 export function lawOnlyConsentPagesNameAClient(view: AuthView, clientNamed: boolean): boolean {
   //@ ensures \result === true
   return !(!isConsentView(view)) || consentParts(view, clientNamed).client === "NoClientShown";
 }
 
-/** Story: Decide what my assistant can do / The consent page names the client as its claim and lists every scope (spec/authorizationPages.md:217) */
+/** Story: Decide what my assistant can do / The consent page names the client as its claim and lists every scope (spec/authorizationPages.md) */
 //@ pure
 export function lawConsentNamesClientAndScopes(view: AuthView, clientNamed: boolean): boolean {
   //@ ensures \result === true
@@ -343,62 +343,62 @@ export function lawConsentNamesClientAndScopes(view: AuthView, clientNamed: bool
   return !isConsentView(view) || (local_1.client !== "NoClientShown" && local_1.claimNote && local_1.returnHost && local_1.scopeList);
 }
 
-/** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md:240) */
+/** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
 //@ pure
 export function scopeName(scope: Scope): string {
   return scope === "AppsRead" ? "apps:read" : (scope === "MembershipRead" ? "membership:read" : "profile:write");
 }
 
-/** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md:240) */
+/** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
 //@ pure
 export function scopeText(scope: Scope): string {
   return scope === "AppsRead" ? "See which Network apps are available" : (scope === "MembershipRead" ? "Read your membership status and new updates" : "Save your profile and prepare signup details");
 }
 
-/** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md:240) */
+/** Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name (spec/authorizationPages.md) */
 //@ pure
 export function lawScopeTextIsNotTheScopeName(scope: Scope): boolean {
   //@ ensures \result === true
   return scopeText(scope) !== scopeName(scope);
 }
 
-/** Story: Decide what my assistant can do / Only Allow on a consent page returns a code to the assistant (spec/authorizationPages.md:260) */
+/** Story: Decide what my assistant can do / Only Allow on a consent page returns a code to the assistant (spec/authorizationPages.md) */
 //@ pure
 export function isApproveReply(reply: Reply): boolean {
   return reply === "ReplyApproved" || reply === "ReplyConsentRetry" || reply === "ReplyConnectAgain" || reply === "ReplyExpired" || reply === "ReplyNotAllowed" || reply === "ReplyNotAvailable";
 }
 
-/** Story: Decide what my assistant can do / Only Allow on a consent page returns a code to the assistant (spec/authorizationPages.md:260) */
+/** Story: Decide what my assistant can do / Only Allow on a consent page returns a code to the assistant (spec/authorizationPages.md) */
 //@ pure
 export function alwaysApprovalFollowsConsent(page: AuthPage): boolean {
   return page.approved === (page.view === "ApprovedView") && (!page.approved || page.consentSeen);
 }
 
-/** Story: Decide what my assistant can do / Only Allow on a consent page returns a code to the assistant (spec/authorizationPages.md:260) */
+/** Story: Decide what my assistant can do / Only Allow on a consent page returns a code to the assistant (spec/authorizationPages.md) */
 //@ pure
 export function canApprove(page: AuthPage, reply: Reply): boolean {
   return isConsentView(page.view) && isApproveReply(reply);
 }
 
-/** Story: Decide what my assistant can do / Only Allow on a consent page returns a code to the assistant (spec/authorizationPages.md:260) */
+/** Story: Decide what my assistant can do / Only Allow on a consent page returns a code to the assistant (spec/authorizationPages.md) */
 //@ pure
 export function alwaysConsentPageIsRecorded(page: AuthPage): boolean {
   return !isConsentView(page.view) || page.consentSeen;
 }
 
-/** Story: Decide what my assistant can do / Only Allow on a consent page returns a code to the assistant (spec/authorizationPages.md:260) */
+/** Story: Decide what my assistant can do / Only Allow on a consent page returns a code to the assistant (spec/authorizationPages.md) */
 //@ pure
 export function stepApprovalOnlyByAllow(before: AuthPage, via: string, after: AuthPage): boolean {
   return !(after.view === "ApprovedView" && before.view !== "ApprovedView") || (via === "approve" && isConsentView(before.view));
 }
 
-/** Story: Decide what my assistant can do / Only Allow on a consent page returns a code to the assistant (spec/authorizationPages.md:260) */
+/** Story: Decide what my assistant can do / Only Allow on a consent page returns a code to the assistant (spec/authorizationPages.md) */
 //@ pure
 export function stepConsentNeedsKnownPerson(before: AuthPage, via: string, after: AuthPage): boolean {
   return !(isConsentView(after.view) && !isConsentView(before.view)) || ((via === "openPage" && before.view === "Opening") || (via === "returnFromCloud" && before.view === "CloudView") || (via === "retryConnection" && before.view === "PleaseRetryView") || (via === "submitCode" && before.view === "CodeView"));
 }
 
-/** Story: Decide what my assistant can do / Only Allow on a consent page returns a code to the assistant (spec/authorizationPages.md:260) */
+/** Story: Decide what my assistant can do / Only Allow on a consent page returns a code to the assistant (spec/authorizationPages.md) */
 //@ pure
 export function approve(page: AuthPage, reply: Reply): AuthPage {
   //@ ensures (inv(page) && canApprove(page, reply)) ==> alwaysSecurityCheckOnlyOnPhonePage(\result)
@@ -414,19 +414,19 @@ export function approve(page: AuthPage, reply: Reply): AuthPage {
   return showReply(reply, page);
 }
 
-/** Story: Decide what my assistant can do / Cancel or Don't allow returns to the assistant with a refusal (spec/authorizationPages.md:288) */
+/** Story: Decide what my assistant can do / Cancel or Don't allow returns to the assistant with a refusal (spec/authorizationPages.md) */
 //@ pure
 export function isCancelReply(reply: Reply): boolean {
   return reply === "ReplyDeclined" || reply === "ReplyExpired" || reply === "ReplyNotAllowed" || reply === "ReplyNotAvailable";
 }
 
-/** Story: Decide what my assistant can do / Cancel or Don't allow returns to the assistant with a refusal (spec/authorizationPages.md:288) */
+/** Story: Decide what my assistant can do / Cancel or Don't allow returns to the assistant with a refusal (spec/authorizationPages.md) */
 //@ pure
 export function canCancelRequest(page: AuthPage, reply: Reply): boolean {
   return (offersFor(page.view).cancel || offersFor(page.view).dontAllow) && isCancelReply(reply);
 }
 
-/** Story: Decide what my assistant can do / Cancel or Don't allow returns to the assistant with a refusal (spec/authorizationPages.md:288) */
+/** Story: Decide what my assistant can do / Cancel or Don't allow returns to the assistant with a refusal (spec/authorizationPages.md) */
 //@ pure
 export function cancelRequest(page: AuthPage, reply: Reply): AuthPage {
   //@ ensures (inv(page) && canCancelRequest(page, reply)) ==> alwaysSecurityCheckOnlyOnPhonePage(\result)
@@ -442,153 +442,153 @@ export function cancelRequest(page: AuthPage, reply: Reply): AuthPage {
   return showReply(reply, page);
 }
 
-/** Story: Understand a page that stops the connection / A message page shows no credential field and at most a retry link (spec/authorizationPages.md:305) */
+/** Story: Understand a page that stops the connection / A message page shows no credential field and at most a retry link (spec/authorizationPages.md) */
 //@ pure
 export function lawMessagePagesShowNoCredentialField(view: AuthView): boolean {
   //@ ensures \result === true
   return !isMessageView(view) || (!showsPhoneField(view) && !showsCodeField(view) && equal_authorizationPages(offersFor(view), ({ ...noOffers, retryLink: view === "PleaseRetryView" } as Offers)));
 }
 
-/** Story: Understand a page that stops the connection / A message page shows no credential field and at most a retry link (spec/authorizationPages.md:305) */
+/** Story: Understand a page that stops the connection / A message page shows no credential field and at most a retry link (spec/authorizationPages.md) */
 //@ pure
 export function stepFinalViewsStay(before: AuthPage, after: AuthPage): boolean {
   return !isFinal(before.view) || after.view === before.view;
 }
 
-/** Story: Understand a page that stops the connection / Every page shows the brand mark and the legal links (spec/authorizationPages.md:319) */
+/** Story: Understand a page that stops the connection / Every page shows the brand mark and the legal links (spec/authorizationPages.md) */
 //@ pure
 export function chromeFor(view: AuthView): PageChrome {
   return { brandMark: rendersPage(view), legalLinks: rendersPage(view) };
 }
 
-/** Story: Understand a page that stops the connection / Every page shows the brand mark and the legal links (spec/authorizationPages.md:319) */
+/** Story: Understand a page that stops the connection / Every page shows the brand mark and the legal links (spec/authorizationPages.md) */
 //@ pure
 export function lawEveryPageShowsBrandAndLegalLinks(view: AuthView): boolean {
   //@ ensures \result === true
   return !rendersPage(view) || (chromeFor(view).brandMark && chromeFor(view).legalLinks);
 }
 
-/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md:332) */
+/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md) */
 //@ pure
 export function sometimesApproved(page: AuthPage): boolean {
   return page.view === "ApprovedView";
 }
 
-/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md:332) */
+/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md) */
 //@ pure
 export function sometimesDeclined(page: AuthPage): boolean {
   return page.view === "DeclinedView";
 }
 
-/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md:332) */
+/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md) */
 //@ pure
 export function sometimesConsentRetry(page: AuthPage): boolean {
   return page.view === "ConsentRetryView";
 }
 
-/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md:332) */
+/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md) */
 //@ pure
 export function sometimesCloudSignIn(page: AuthPage): boolean {
   return page.view === "CloudView";
 }
 
-/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md:332) */
+/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md) */
 //@ pure
 export function sometimesCodeRejected(page: AuthPage): boolean {
   return page.view === "CodeView" && page.fieldError === "CodeNotAccepted";
 }
 
-/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md:332) */
+/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md) */
 //@ pure
 export function sometimesCheckRejected(page: AuthPage): boolean {
   return page.view === "PhoneView" && page.fieldError === "CheckNotPassed";
 }
 
-/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md:332) */
+/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md) */
 //@ pure
 export function sometimesCheckExpired(page: AuthPage): boolean {
   return page.securityCheck === "CheckExpired";
 }
 
-/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md:332) */
+/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md) */
 //@ pure
 export function sometimesTooManyCodes(page: AuthPage): boolean {
   return page.fieldError === "CodesRateLimited";
 }
 
-/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md:332) */
+/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md) */
 //@ pure
 export function sometimesPhoneRejected(page: AuthPage): boolean {
   return page.fieldError === "PhoneNotValid";
 }
 
-/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md:332) */
+/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md) */
 //@ pure
 export function sometimesSendFailed(page: AuthPage): boolean {
   return page.fieldError === "CodeSendFailed";
 }
 
-/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md:332) */
+/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md) */
 //@ pure
 export function sometimesConsentAfterCode(page: AuthPage): boolean {
   return page.view === "ConsentView" && page.codeSent;
 }
 
-/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md:332) */
+/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md) */
 //@ pure
 export function sometimesLinkInvalid(page: AuthPage): boolean {
   return page.view === "LinkInvalidView";
 }
 
-/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md:332) */
+/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md) */
 //@ pure
 export function sometimesTooManyTries(page: AuthPage): boolean {
   return page.view === "TooManyTriesView";
 }
 
-/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md:332) */
+/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md) */
 //@ pure
 export function sometimesNotAvailable(page: AuthPage): boolean {
   return page.view === "NotAvailableView";
 }
 
-/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md:332) */
+/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md) */
 //@ pure
 export function sometimesPageExpired(page: AuthPage): boolean {
   return page.view === "PageExpiredView";
 }
 
-/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md:332) */
+/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md) */
 //@ pure
 export function sometimesAlreadySignedIn(page: AuthPage): boolean {
   return page.view === "AlreadySignedInView";
 }
 
-/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md:332) */
+/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md) */
 //@ pure
 export function sometimesCheckNumber(page: AuthPage): boolean {
   return page.view === "CheckNumberView";
 }
 
-/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md:332) */
+/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md) */
 //@ pure
 export function sometimesConnectAgain(page: AuthPage): boolean {
   return page.view === "ConnectAgainView";
 }
 
-/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md:332) */
+/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md) */
 //@ pure
 export function sometimesPleaseRetry(page: AuthPage): boolean {
   return page.view === "PleaseRetryView";
 }
 
-/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md:332) */
+/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md) */
 //@ pure
 export function sometimesSignInUnavailable(page: AuthPage): boolean {
   return page.view === "SignInUnavailableView";
 }
 
-/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md:332) */
+/** Story: Understand a page that stops the connection / Each page and each outcome can occur (spec/authorizationPages.md) */
 //@ pure
 export function sometimesNotAllowed(page: AuthPage): boolean {
   return page.view === "NotAllowedView";

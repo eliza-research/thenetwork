@@ -1,54 +1,54 @@
 // GENERATED from spec/consoleWorkspace.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { type StaffActionResult as safetyCase_StaffActionResult, type ReportPhase as safetyCase_ReportPhase, type ReportDecision as safetyCase_ReportDecision, type CasePhase as safetyCase_CasePhase, type SafetyCase as safetyCase_SafetyCase, holdSubjectKnown as safetyCase_holdSubjectKnown, markCaseHeld as safetyCase_markCaseHeld, markCaseLifted as safetyCase_markCaseLifted, closeCase as safetyCase_closeCase, stepClosedCaseStaysClosed as safetyCase_stepClosedCaseStaysClosed, sometimesCaseCloses as safetyCase_sometimesCaseCloses, sometimesCaseWasLifted as safetyCase_sometimesCaseWasLifted, holdLiftResult as safetyCase_holdLiftResult, caseCloseResult as safetyCase_caseCloseResult, holdAuthority as safetyCase_holdAuthority, initial as safetyCase_initial, reportAfterDecision as safetyCase_reportAfterDecision, reportRestrictsMatching as safetyCase_reportRestrictsMatching, minorClearResult as safetyCase_minorClearResult, canRecordCaseEvent as safetyCase_canRecordCaseEvent, recordCaseEvent as safetyCase_recordCaseEvent, liveCase as safetyCase_liveCase, canMarkCaseLifted as safetyCase_canMarkCaseLifted, canCloseCase as safetyCase_canCloseCase, lawDismissedReportStaysDismissed as safetyCase_lawDismissedReportStaysDismissed, canMarkCaseHeld as safetyCase_canMarkCaseHeld } from "./safetyCase.ts";
+import { type StaffActionResult as safetyCase_StaffActionResult, type ReportPhase as safetyCase_ReportPhase, type ReportDecision as safetyCase_ReportDecision, type CasePhase as safetyCase_CasePhase, type SafetyCase as safetyCase_SafetyCase, holdSubjectKnown as safetyCase_holdSubjectKnown, inboundAllowedAfterBan as safetyCase_inboundAllowedAfterBan, liveCase as safetyCase_liveCase, markCaseHeld as safetyCase_markCaseHeld, markCaseLifted as safetyCase_markCaseLifted, closeCase as safetyCase_closeCase, stepClosedCaseStaysClosed as safetyCase_stepClosedCaseStaysClosed, sometimesCaseCloses as safetyCase_sometimesCaseCloses, sometimesCaseWasLifted as safetyCase_sometimesCaseWasLifted, holdLiftResult as safetyCase_holdLiftResult, caseCloseResult as safetyCase_caseCloseResult, holdAuthority as safetyCase_holdAuthority, initial as safetyCase_initial, reportAfterDecision as safetyCase_reportAfterDecision, reportRestrictsMatching as safetyCase_reportRestrictsMatching, lawBanBlocksOrdinaryInbound as safetyCase_lawBanBlocksOrdinaryInbound, canRecordCaseEvent as safetyCase_canRecordCaseEvent, minorClearResult as safetyCase_minorClearResult, recordCaseEvent as safetyCase_recordCaseEvent, canMarkCaseHeld as safetyCase_canMarkCaseHeld, canMarkCaseLifted as safetyCase_canMarkCaseLifted, canCloseCase as safetyCase_canCloseCase, lawDismissedReportStaysDismissed as safetyCase_lawDismissedReportStaysDismissed, lawDecayNeverOpensCase as safetyCase_lawDecayNeverOpensCase } from "./safetyCase.ts";
 
-/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
+/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 export type ReportStep = "HoldPersonStep" | "BanPhoneStep" | "BanPersonStep" | "DismissStep" | "ClearMinorStep";
-/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
+/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 export type RequestSegment = "OpenSegment" | "FulfilledSegment" | "NoneSegment" | "AnsweredSegment" | "AllSegment";
-/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
+/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 export type ConfigPhase = "ConfigLoading" | "ConfigShown" | "ConfigConfirming" | "ConfigSaving" | "ConfigFailed";
-/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
+/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 export type AuditPhase = "AuditClosed" | "AuditLoading" | "AuditShown" | "AuditFailed";
-/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
+/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 export type TrayPhase = "TrayIdle" | "TraySending" | "TrayProposed";
-/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
+/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 export type RevealPhase = "RevealHidden" | "RevealDrafting" | "RevealSending" | "RevealGranted";
-/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
+/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 export type HeldStatus = "HeldEmpty" | "HeldWaiting" | "HeldSending" | "HeldReleased" | "HeldRejected";
-/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
+/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 export type WorkMode = "SimulatedWorld" | "RealWithService" | "RealWithoutService";
-/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
+/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 export type HeldChoice = "ReleaseHeld" | "RejectHeld";
-/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
+/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 export type CaseRowStatus = "CaseRowEmpty" | "CaseRowOpen" | "CaseRowClosed";
-/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
+/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 export type CaseStep = "LiftStep" | "CloseStep";
-/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
+/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 export interface CaseRow { status: CaseRowStatus; onHold: boolean; expanded: boolean; caseSending: boolean; caseStep: CaseStep }
-/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
+/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 export interface ConfigEditor { phase: ConfigPhase; matchingOn: boolean; packLocked: boolean; changeable: boolean; saved: boolean }
-/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
+/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 export interface StaffView { mode: WorkMode; safety: boolean; admin: boolean; analyst: boolean; simRole: boolean; globalPii: boolean }
-/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
+/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 export interface RevealForm { phase: RevealPhase; reasonReady: boolean; minutes: number }
-/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
+/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 export interface HeldRow { status: HeldStatus; choice: HeldChoice; photo: boolean; minorHidden: boolean; reasonReady: boolean; photoLoaded: boolean; photoReviewed: boolean }
-/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
+/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 export interface ReportRow { present: boolean; status: safetyCase_ReportPhase; minorReport: boolean; noteReady: boolean; reportSending: boolean; reportStep: ReportStep }
-/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
+/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 export interface Workspace { staff: StaffView; held: HeldRow; caseRow: CaseRow; report: ReportRow; requestSegment: RequestSegment; config: ConfigEditor; audit: AuditPhase; tray: TrayPhase; worldMenuOpen: boolean; worldEventSent: boolean; reveal: RevealForm }
-/** Story: Work only in the panels my role and mode allow / Each panel shows a loading, refused, unavailable, failed, empty or full view (spec/consoleWorkspace.md:78) */
+/** Story: Work only in the panels my role and mode allow / Each panel shows a loading, refused, unavailable, failed, empty or full view (spec/consoleWorkspace.md) */
 export type WorkPanel = "HeldPanel" | "CasesPanel" | "ReportsPanel" | "RequestsPanel" | "ConfigPanel" | "AuditPanel" | "LabPanel" | "BiasPanel";
-/** Story: Work only in the panels my role and mode allow / Each panel shows a loading, refused, unavailable, failed, empty or full view (spec/consoleWorkspace.md:78) */
+/** Story: Work only in the panels my role and mode allow / Each panel shows a loading, refused, unavailable, failed, empty or full view (spec/consoleWorkspace.md) */
 export type PanelAnswer = "NotAnswered" | "AnswerRows" | "AnswerForbidden" | "AnswerMissing" | "AnswerFailed";
-/** Story: Work only in the panels my role and mode allow / Each panel shows a loading, refused, unavailable, failed, empty or full view (spec/consoleWorkspace.md:78) */
+/** Story: Work only in the panels my role and mode allow / Each panel shows a loading, refused, unavailable, failed, empty or full view (spec/consoleWorkspace.md) */
 export type PanelView = "PanelLoading" | "PanelForbidden" | "PanelUnavailable" | "PanelFailed" | "PanelEmpty" | "PanelRows";
-/** Story: See what members asked for / The request segments group the outcomes (spec/consoleWorkspace.md:315) */
+/** Story: See what members asked for / The request segments group the outcomes (spec/consoleWorkspace.md) */
 export type RequestOutcome = "ProbingOutcome" | "OpenOutcome" | "FulfilledOutcome" | "BookedOutcome" | "NoneOutcome" | "AnsweredOutcome";
-/** Story: Change the matching switch with a confirmation / The switch shows only to an admin who can change it (spec/consoleWorkspace.md:344) */
+/** Story: Change the matching switch with a confirmation / The switch shows only to an admin who can change it (spec/consoleWorkspace.md) */
 export type ConfigControl = "SwitchControl" | "LockedNote" | "AdminOnlyNote" | "ReadOnlyNote";
-/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:471) */
+/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md) */
 export type WorldEvent = "GoSilent" | "ForceFlake" | "TextStop";
 
 /** One variant per transition in the spec. */
@@ -90,13 +90,13 @@ export type Event =
   | { type: "endReveal" }
   | { type: "expireReveal" };
 
-/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
+/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 export const minReasonChars: number = 5;
-/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
+/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 export const maxRevealMinutes: number = 15;
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md) */
 export const revealMinuteChoices: number[] = [5, 10, 15];
-/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
+/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 export const initial: Workspace = { staff: ({ mode: "RealWithoutService", safety: false, admin: false, analyst: false, simRole: false, globalPii: false } as StaffView), held: ({ status: "HeldEmpty", choice: "RejectHeld", photo: false, minorHidden: false, reasonReady: false, photoLoaded: false, photoReviewed: false } as HeldRow), caseRow: ({ status: "CaseRowEmpty", onHold: false, expanded: false, caseSending: false, caseStep: "CloseStep" } as CaseRow), report: ({ present: false, status: "ReportOpen", minorReport: false, noteReady: false, reportSending: false, reportStep: "DismissStep" } as ReportRow), requestSegment: "OpenSegment", config: ({ phase: "ConfigLoading", matchingOn: false, packLocked: false, changeable: false, saved: false } as ConfigEditor), audit: "AuditClosed", tray: "TrayIdle", worldMenuOpen: false, worldEventSent: false, reveal: ({ phase: "RevealHidden", reasonReady: false, minutes: maxRevealMinutes } as RevealForm) };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -105,31 +105,31 @@ export function inv(current: Workspace): boolean {
   return alwaysAdminHoldsEveryRole(current) && alwaysSimulatedWorldShowsNoRealData(current) && alwaysReleaseWasReleasable(current) && alwaysHiddenMinorTextIsNeverReleased(current) && alwaysCaseActionNeedsAnActingSafetyViewer(current) && alwaysBanNeedsTheService(current) && alwaysASentReportDecisionIsAllowed(current) && alwaysReportDecisionNeedsANote(current) && alwaysConfigNeedsTheAnalystRole(current) && alwaysSavedSwitchWasShown(current) && alwaysSavingNeedsTheSwitch(current) && alwaysAuditLogNeedsAnAdmin(current) && alwaysTrayWorkIsSimulated(current) && alwaysWorldMenuIsSimulated(current) && alwaysRevealHasAReasonAndALimit(current) && alwaysRevealLengthIsAChoice(current);
 }
 
-/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
+/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 //@ pure
 export function staffActs(staff: StaffView): boolean {
   return staff.mode !== "RealWithoutService";
 }
 
-/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
+/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 //@ pure
 export function alwaysAdminHoldsEveryRole(w: Workspace): boolean {
   return !w.staff.admin || (w.staff.safety && w.staff.analyst && w.staff.simRole);
 }
 
-/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
+/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 //@ pure
 export function alwaysSimulatedWorldShowsNoRealData(w: Workspace): boolean {
   return !(w.staff.mode === "SimulatedWorld") || !w.staff.globalPii;
 }
 
-/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
+/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 //@ pure
 export function stepNewViewerClosesForms(before: Workspace, via: string, after: Workspace): boolean {
   return !(via === "receiveViewer") || (after.tray === "TrayIdle" && !after.worldMenuOpen && after.reveal.phase === "RevealHidden" && after.audit === "AuditClosed" && after.config.phase === "ConfigLoading");
 }
 
-/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
+/** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md) */
 //@ pure
 export function receiveViewer(w: Workspace, viewMode: WorkMode, safetyRole: boolean, adminRole: boolean, analystRole: boolean, simRoleHeld: boolean, globalPiiShown: boolean): Workspace {
   //@ ensures (inv(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -154,46 +154,46 @@ export function receiveViewer(w: Workspace, viewMode: WorkMode, safetyRole: bool
   return { ...initial, staff: ({ mode: viewMode, admin: adminRole, safety: safetyRole || adminRole, analyst: analystRole || adminRole, simRole: simRoleHeld || adminRole, globalPii: globalPiiShown && viewMode !== "SimulatedWorld" } as StaffView) };
 }
 
-/** Story: Work only in the panels my role and mode allow / Each panel shows a loading, refused, unavailable, failed, empty or full view (spec/consoleWorkspace.md:78) */
+/** Story: Work only in the panels my role and mode allow / Each panel shows a loading, refused, unavailable, failed, empty or full view (spec/consoleWorkspace.md) */
 //@ pure
 export function panelView(panel: WorkPanel, answer: PanelAnswer, rowCount: number): PanelView {
   return answer === "NotAnswered" ? "PanelLoading" : (answer === "AnswerForbidden" ? "PanelForbidden" : (answer === "AnswerMissing" && (panel === "HeldPanel" || panel === "BiasPanel") ? "PanelUnavailable" : (answer !== "AnswerRows" ? "PanelFailed" : (rowCount <= 0 ? "PanelEmpty" : "PanelRows"))));
 }
 
-/** Story: Work only in the panels my role and mode allow / Each panel shows a loading, refused, unavailable, failed, empty or full view (spec/consoleWorkspace.md:78) */
+/** Story: Work only in the panels my role and mode allow / Each panel shows a loading, refused, unavailable, failed, empty or full view (spec/consoleWorkspace.md) */
 //@ pure
 export function lawRefusedPanelShowsNoRows(panel: WorkPanel, rowCount: number): boolean {
   //@ ensures \result === true
   return panelView(panel, "AnswerForbidden", rowCount) === "PanelForbidden";
 }
 
-/** Story: Work only in the panels my role and mode allow / Each panel shows a loading, refused, unavailable, failed, empty or full view (spec/consoleWorkspace.md:78) */
+/** Story: Work only in the panels my role and mode allow / Each panel shows a loading, refused, unavailable, failed, empty or full view (spec/consoleWorkspace.md) */
 //@ pure
 export function lawRowsNeedAnAnswer(panel: WorkPanel, answer: PanelAnswer, rowCount: number): boolean {
   //@ ensures \result === true
   return !(panelView(panel, answer, rowCount) === "PanelRows") || (answer === "AnswerRows" && rowCount > 0);
 }
 
-/** Story: Work only in the panels my role and mode allow / Each panel opens only for the roles that can read it (spec/consoleWorkspace.md:102) */
+/** Story: Work only in the panels my role and mode allow / Each panel opens only for the roles that can read it (spec/consoleWorkspace.md) */
 //@ pure
 export function panelAllowed(panel: WorkPanel, staff: StaffView): boolean {
   return panel === "HeldPanel" || panel === "CasesPanel" || panel === "ReportsPanel" ? staff.safety : (panel === "ConfigPanel" || panel === "LabPanel" ? staff.analyst : (panel === "AuditPanel" ? staff.admin : (panel === "BiasPanel" ? staff.analyst && staff.mode !== "SimulatedWorld" : true)));
 }
 
-/** Story: Work only in the panels my role and mode allow / Each panel opens only for the roles that can read it (spec/consoleWorkspace.md:102) */
+/** Story: Work only in the panels my role and mode allow / Each panel opens only for the roles that can read it (spec/consoleWorkspace.md) */
 //@ pure
 export function lawAuditLogIsAdminOnly(staff: StaffView): boolean {
   //@ ensures \result === true
   return panelAllowed("AuditPanel", staff) === staff.admin;
 }
 
-/** Story: Decide a held text with a reason / A held text waits for a reason of five characters or more (spec/consoleWorkspace.md:128) */
+/** Story: Decide a held text with a reason / A held text waits for a reason of five characters or more (spec/consoleWorkspace.md) */
 //@ pure
 export function canReceiveHeldText(w: Workspace): boolean {
   return w.staff.safety && w.staff.mode === "RealWithService" && w.held.status !== "HeldSending";
 }
 
-/** Story: Decide a held text with a reason / A held text waits for a reason of five characters or more (spec/consoleWorkspace.md:128) */
+/** Story: Decide a held text with a reason / A held text waits for a reason of five characters or more (spec/consoleWorkspace.md) */
 //@ pure
 export function receiveHeldText(w: Workspace, photoItem: boolean, minorItem: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveHeldText(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -218,13 +218,13 @@ export function receiveHeldText(w: Workspace, photoItem: boolean, minorItem: boo
   return { ...w, held: ({ status: "HeldWaiting", choice: "RejectHeld", photo: photoItem, minorHidden: minorItem, reasonReady: false, photoLoaded: false, photoReviewed: false } as HeldRow) };
 }
 
-/** Story: Decide a held text with a reason / A held text waits for a reason of five characters or more (spec/consoleWorkspace.md:128) */
+/** Story: Decide a held text with a reason / A held text waits for a reason of five characters or more (spec/consoleWorkspace.md) */
 //@ pure
 export function canTypeHeldReason(w: Workspace): boolean {
   return w.held.status === "HeldWaiting";
 }
 
-/** Story: Decide a held text with a reason / A held text waits for a reason of five characters or more (spec/consoleWorkspace.md:128) */
+/** Story: Decide a held text with a reason / A held text waits for a reason of five characters or more (spec/consoleWorkspace.md) */
 //@ pure
 export function typeHeldReason(w: Workspace, reasonChars: number): Workspace {
   //@ ensures (inv(w) && canTypeHeldReason(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -249,7 +249,7 @@ export function typeHeldReason(w: Workspace, reasonChars: number): Workspace {
   return { ...w, held: ({ ...w.held, reasonReady: reasonChars >= minReasonChars, photoReviewed: false } as HeldRow) };
 }
 
-/** Story: Decide a held text with a reason / A held photo is released only after staff load it and confirm the review (spec/consoleWorkspace.md:149) */
+/** Story: Decide a held text with a reason / A held photo is released only after staff load it and confirm the review (spec/consoleWorkspace.md) */
 //@ pure
 export function markPhotoReviewed(w: Workspace, reviewed: boolean): Workspace {
   //@ ensures (inv(w) && canMarkPhotoReviewed(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -274,13 +274,13 @@ export function markPhotoReviewed(w: Workspace, reviewed: boolean): Workspace {
   return { ...w, held: ({ ...w.held, photoReviewed: reviewed } as HeldRow) };
 }
 
-/** Story: Decide a held text with a reason / A held photo is released only after staff load it and confirm the review (spec/consoleWorkspace.md:149) */
+/** Story: Decide a held text with a reason / A held photo is released only after staff load it and confirm the review (spec/consoleWorkspace.md) */
 //@ pure
 export function canLoadHeldPhoto(w: Workspace): boolean {
   return w.held.status === "HeldWaiting" && w.held.photo && w.held.reasonReady && !w.held.minorHidden;
 }
 
-/** Story: Decide a held text with a reason / A held photo is released only after staff load it and confirm the review (spec/consoleWorkspace.md:149) */
+/** Story: Decide a held text with a reason / A held photo is released only after staff load it and confirm the review (spec/consoleWorkspace.md) */
 //@ pure
 export function loadHeldPhoto(w: Workspace, loaded: boolean): Workspace {
   //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -305,25 +305,25 @@ export function loadHeldPhoto(w: Workspace, loaded: boolean): Workspace {
   return { ...w, held: ({ ...w.held, photoLoaded: loaded, photoReviewed: false } as HeldRow) };
 }
 
-/** Story: Decide a held text with a reason / A held photo is released only after staff load it and confirm the review (spec/consoleWorkspace.md:149) */
+/** Story: Decide a held text with a reason / A held photo is released only after staff load it and confirm the review (spec/consoleWorkspace.md) */
 //@ pure
 export function canMarkPhotoReviewed(w: Workspace): boolean {
   return w.held.status === "HeldWaiting" && w.held.photoLoaded;
 }
 
-/** Story: Decide a held text with a reason / Release needs a releasable text, and reject needs only a reason (spec/consoleWorkspace.md:168) */
+/** Story: Decide a held text with a reason / Release needs a releasable text, and reject needs only a reason (spec/consoleWorkspace.md) */
 //@ pure
 export function heldReleasable(held: HeldRow): boolean {
   return !held.minorHidden && (!held.photo || (held.photoLoaded && held.photoReviewed));
 }
 
-/** Story: Decide a held text with a reason / Release needs a releasable text, and reject needs only a reason (spec/consoleWorkspace.md:168) */
+/** Story: Decide a held text with a reason / Release needs a releasable text, and reject needs only a reason (spec/consoleWorkspace.md) */
 //@ pure
 export function canDecideHeld(w: Workspace, choice: HeldChoice): boolean {
   return w.held.status === "HeldWaiting" && w.staff.safety && w.staff.mode === "RealWithService" && w.held.reasonReady && (choice === "RejectHeld" || heldReleasable(w.held));
 }
 
-/** Story: Decide a held text with a reason / Release needs a releasable text, and reject needs only a reason (spec/consoleWorkspace.md:168) */
+/** Story: Decide a held text with a reason / Release needs a releasable text, and reject needs only a reason (spec/consoleWorkspace.md) */
 //@ pure
 export function decideHeld(w: Workspace, choice: HeldChoice): Workspace {
   //@ ensures (inv(w) && canDecideHeld(w, choice)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -348,13 +348,13 @@ export function decideHeld(w: Workspace, choice: HeldChoice): Workspace {
   return { ...w, held: ({ ...w.held, status: "HeldSending", choice: choice } as HeldRow) };
 }
 
-/** Story: Decide a held text with a reason / Release needs a releasable text, and reject needs only a reason (spec/consoleWorkspace.md:168) */
+/** Story: Decide a held text with a reason / Release needs a releasable text, and reject needs only a reason (spec/consoleWorkspace.md) */
 //@ pure
 export function canReceiveHeldAnswer(w: Workspace): boolean {
   return w.held.status === "HeldSending";
 }
 
-/** Story: Decide a held text with a reason / Release needs a releasable text, and reject needs only a reason (spec/consoleWorkspace.md:168) */
+/** Story: Decide a held text with a reason / Release needs a releasable text, and reject needs only a reason (spec/consoleWorkspace.md) */
 //@ pure
 export function receiveHeldAnswer(w: Workspace, accepted: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveHeldAnswer(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -379,43 +379,43 @@ export function receiveHeldAnswer(w: Workspace, accepted: boolean): Workspace {
   return { ...w, held: ({ ...w.held, status: !accepted ? "HeldWaiting" : (w.held.choice === "ReleaseHeld" ? "HeldReleased" : "HeldRejected") } as HeldRow) };
 }
 
-/** Story: Decide a held text with a reason / Release needs a releasable text, and reject needs only a reason (spec/consoleWorkspace.md:168) */
+/** Story: Decide a held text with a reason / Release needs a releasable text, and reject needs only a reason (spec/consoleWorkspace.md) */
 //@ pure
 export function alwaysReleaseWasReleasable(w: Workspace): boolean {
   return !(w.held.status === "HeldReleased" || (w.held.status === "HeldSending" && w.held.choice === "ReleaseHeld")) || (heldReleasable(w.held) && w.held.reasonReady);
 }
 
-/** Story: Decide a held text with a reason / Release needs a releasable text, and reject needs only a reason (spec/consoleWorkspace.md:168) */
+/** Story: Decide a held text with a reason / Release needs a releasable text, and reject needs only a reason (spec/consoleWorkspace.md) */
 //@ pure
 export function alwaysHiddenMinorTextIsNeverReleased(w: Workspace): boolean {
   return !w.held.minorHidden || w.held.status !== "HeldReleased";
 }
 
-/** Story: Decide a held text with a reason / Release needs a releasable text, and reject needs only a reason (spec/consoleWorkspace.md:168) */
+/** Story: Decide a held text with a reason / Release needs a releasable text, and reject needs only a reason (spec/consoleWorkspace.md) */
 //@ pure
 export function sometimesHeldTextReleased(w: Workspace): boolean {
   return w.held.status === "HeldReleased";
 }
 
-/** Story: Decide a held text with a reason / Release needs a releasable text, and reject needs only a reason (spec/consoleWorkspace.md:168) */
+/** Story: Decide a held text with a reason / Release needs a releasable text, and reject needs only a reason (spec/consoleWorkspace.md) */
 //@ pure
 export function sometimesHeldPhotoReleased(w: Workspace): boolean {
   return w.held.status === "HeldReleased" && w.held.photo;
 }
 
-/** Story: Decide a held text with a reason / Release needs a releasable text, and reject needs only a reason (spec/consoleWorkspace.md:168) */
+/** Story: Decide a held text with a reason / Release needs a releasable text, and reject needs only a reason (spec/consoleWorkspace.md) */
 //@ pure
 export function sometimesHeldTextRejected(w: Workspace): boolean {
   return w.held.status === "HeldRejected";
 }
 
-/** Story: Act on safety cases and reports / A case row opens, and a safety viewer lifts its hold or closes it (spec/consoleWorkspace.md:207) */
+/** Story: Act on safety cases and reports / A case row opens, and a safety viewer lifts its hold or closes it (spec/consoleWorkspace.md) */
 //@ pure
 export function canReceiveCase(w: Workspace): boolean {
   return w.staff.safety && !w.caseRow.caseSending;
 }
 
-/** Story: Act on safety cases and reports / A case row opens, and a safety viewer lifts its hold or closes it (spec/consoleWorkspace.md:207) */
+/** Story: Act on safety cases and reports / A case row opens, and a safety viewer lifts its hold or closes it (spec/consoleWorkspace.md) */
 //@ pure
 export function receiveCase(w: Workspace, heldCase: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveCase(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -440,13 +440,13 @@ export function receiveCase(w: Workspace, heldCase: boolean): Workspace {
   return { ...w, caseRow: ({ status: "CaseRowOpen", onHold: heldCase, expanded: false, caseSending: false, caseStep: "CloseStep" } as CaseRow) };
 }
 
-/** Story: Act on safety cases and reports / A case row opens, and a safety viewer lifts its hold or closes it (spec/consoleWorkspace.md:207) */
+/** Story: Act on safety cases and reports / A case row opens, and a safety viewer lifts its hold or closes it (spec/consoleWorkspace.md) */
 //@ pure
 export function canToggleCaseRow(w: Workspace): boolean {
   return w.caseRow.status !== "CaseRowEmpty";
 }
 
-/** Story: Act on safety cases and reports / A case row opens, and a safety viewer lifts its hold or closes it (spec/consoleWorkspace.md:207) */
+/** Story: Act on safety cases and reports / A case row opens, and a safety viewer lifts its hold or closes it (spec/consoleWorkspace.md) */
 //@ pure
 export function toggleCaseRow(w: Workspace): Workspace {
   //@ ensures (inv(w) && canToggleCaseRow(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -471,13 +471,13 @@ export function toggleCaseRow(w: Workspace): Workspace {
   return { ...w, caseRow: ({ ...w.caseRow, expanded: !w.caseRow.expanded } as CaseRow) };
 }
 
-/** Story: Act on safety cases and reports / A case row opens, and a safety viewer lifts its hold or closes it (spec/consoleWorkspace.md:207) */
+/** Story: Act on safety cases and reports / A case row opens, and a safety viewer lifts its hold or closes it (spec/consoleWorkspace.md) */
 //@ pure
 export function canActOnCase(w: Workspace, caseStep: CaseStep): boolean {
   return w.caseRow.expanded && w.caseRow.status === "CaseRowOpen" && !w.caseRow.caseSending && w.staff.safety && staffActs(w.staff) && (!(caseStep === "LiftStep") || w.caseRow.onHold);
 }
 
-/** Story: Act on safety cases and reports / A case row opens, and a safety viewer lifts its hold or closes it (spec/consoleWorkspace.md:207) */
+/** Story: Act on safety cases and reports / A case row opens, and a safety viewer lifts its hold or closes it (spec/consoleWorkspace.md) */
 //@ pure
 export function actOnCase(w: Workspace, caseStep: CaseStep): Workspace {
   //@ ensures (inv(w) && canActOnCase(w, caseStep)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -502,13 +502,13 @@ export function actOnCase(w: Workspace, caseStep: CaseStep): Workspace {
   return { ...w, caseRow: ({ ...w.caseRow, caseSending: true, caseStep: caseStep } as CaseRow) };
 }
 
-/** Story: Act on safety cases and reports / A case row opens, and a safety viewer lifts its hold or closes it (spec/consoleWorkspace.md:207) */
+/** Story: Act on safety cases and reports / A case row opens, and a safety viewer lifts its hold or closes it (spec/consoleWorkspace.md) */
 //@ pure
 export function canReceiveCaseAnswer(w: Workspace): boolean {
   return w.caseRow.caseSending;
 }
 
-/** Story: Act on safety cases and reports / A case row opens, and a safety viewer lifts its hold or closes it (spec/consoleWorkspace.md:207) */
+/** Story: Act on safety cases and reports / A case row opens, and a safety viewer lifts its hold or closes it (spec/consoleWorkspace.md) */
 //@ pure
 export function receiveCaseAnswer(w: Workspace, accepted: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveCaseAnswer(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -534,63 +534,63 @@ export function receiveCaseAnswer(w: Workspace, accepted: boolean): Workspace {
   return { ...w, caseRow: ({ ...local_0, caseSending: false, onHold: accepted && local_0.caseStep === "LiftStep" ? false : local_0.onHold, status: accepted && local_0.caseStep === "CloseStep" ? "CaseRowClosed" : local_0.status } as CaseRow) };
 }
 
-/** Story: Act on safety cases and reports / A case row opens, and a safety viewer lifts its hold or closes it (spec/consoleWorkspace.md:207) */
+/** Story: Act on safety cases and reports / A case row opens, and a safety viewer lifts its hold or closes it (spec/consoleWorkspace.md) */
 //@ pure
 export function alwaysCaseActionNeedsAnActingSafetyViewer(w: Workspace): boolean {
   return !w.caseRow.caseSending || (w.staff.safety && staffActs(w.staff) && w.caseRow.status === "CaseRowOpen");
 }
 
-/** Story: Act on safety cases and reports / A case row opens, and a safety viewer lifts its hold or closes it (spec/consoleWorkspace.md:207) */
+/** Story: Act on safety cases and reports / A case row opens, and a safety viewer lifts its hold or closes it (spec/consoleWorkspace.md) */
 //@ pure
 export function sometimesCaseClosed(w: Workspace): boolean {
   return w.caseRow.status === "CaseRowClosed";
 }
 
-/** Story: Act on safety cases and reports / A case row opens, and a safety viewer lifts its hold or closes it (spec/consoleWorkspace.md:207) */
+/** Story: Act on safety cases and reports / A case row opens, and a safety viewer lifts its hold or closes it (spec/consoleWorkspace.md) */
 //@ pure
 export function sometimesHoldLifted(w: Workspace): boolean {
   return w.caseRow.status === "CaseRowOpen" && !w.caseRow.onHold && w.caseRow.caseStep === "LiftStep";
 }
 
-/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md:246) */
+/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md) */
 //@ pure
 export function reportStepAllowed(reportStep: ReportStep, mode: WorkMode, minorReport: boolean): boolean {
   return reportStep === "ClearMinorStep" ? minorReport && mode !== "RealWithoutService" : mode === "RealWithService";
 }
 
-/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md:246) */
+/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md) */
 //@ pure
 export function reportDecision(reportStep: ReportStep): safetyCase_ReportDecision {
   return reportStep === "HoldPersonStep" ? "HoldReport" : (reportStep === "BanPhoneStep" || reportStep === "BanPersonStep" ? "BanReport" : "DismissReport");
 }
 
-/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md:246) */
+/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md) */
 //@ pure
 export function reportOutcome(reportStep: ReportStep): safetyCase_ReportPhase {
   return safetyCase_reportAfterDecision("ReportOpen", reportDecision(reportStep), true, true);
 }
 
-/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md:246) */
+/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md) */
 //@ pure
 export function lawClearMinorNeedsAMinorReport(mode: WorkMode): boolean {
   //@ ensures \result === true
   return !reportStepAllowed("ClearMinorStep", mode, false);
 }
 
-/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md:246) */
+/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md) */
 //@ pure
 export function lawReadOnlyDataTakesNoReportDecision(reportStep: ReportStep, minorReport: boolean): boolean {
   //@ ensures \result === true
   return !reportStepAllowed(reportStep, "RealWithoutService", minorReport);
 }
 
-/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md:246) */
+/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md) */
 //@ pure
 export function canReceiveReport(w: Workspace): boolean {
   return w.staff.safety && !w.report.reportSending;
 }
 
-/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md:246) */
+/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md) */
 //@ pure
 export function receiveReport(w: Workspace, minorKind: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveReport(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -615,13 +615,13 @@ export function receiveReport(w: Workspace, minorKind: boolean): Workspace {
   return { ...w, report: ({ present: true, status: "ReportOpen", minorReport: minorKind, noteReady: false, reportSending: false, reportStep: "DismissStep" } as ReportRow) };
 }
 
-/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md:246) */
+/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md) */
 //@ pure
 export function reportOpen(w: Workspace): boolean {
   return w.report.present && w.report.status === "ReportOpen";
 }
 
-/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md:246) */
+/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md) */
 //@ pure
 export function typeReportNote(w: Workspace, noteChars: number): Workspace {
   //@ ensures (inv(w) && canTypeReportNote(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -646,7 +646,7 @@ export function typeReportNote(w: Workspace, noteChars: number): Workspace {
   return { ...w, report: ({ ...w.report, noteReady: noteChars >= minReasonChars } as ReportRow) };
 }
 
-/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md:246) */
+/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md) */
 //@ pure
 export function actOnReport(w: Workspace, reportStep: ReportStep): Workspace {
   //@ ensures (inv(w) && canActOnReport(w, reportStep)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -671,13 +671,13 @@ export function actOnReport(w: Workspace, reportStep: ReportStep): Workspace {
   return { ...w, report: ({ ...w.report, reportSending: true, reportStep: reportStep } as ReportRow) };
 }
 
-/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md:246) */
+/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md) */
 //@ pure
 export function canReceiveReportAnswer(w: Workspace): boolean {
   return w.report.reportSending;
 }
 
-/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md:246) */
+/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md) */
 //@ pure
 export function receiveReportAnswer(w: Workspace, accepted: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveReportAnswer(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -702,82 +702,82 @@ export function receiveReportAnswer(w: Workspace, accepted: boolean): Workspace 
   return { ...w, report: ({ ...w.report, reportSending: false, status: accepted ? reportOutcome(w.report.reportStep) : w.report.status } as ReportRow) };
 }
 
-/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md:246) */
+/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md) */
 //@ pure
 export function alwaysBanNeedsTheService(w: Workspace): boolean {
   return !(w.report.status === "ReportBanned" || w.report.status === "ReportHeld") || (w.report.present && w.staff.mode === "RealWithService");
 }
 
-/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md:246) */
+/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md) */
 //@ pure
 export function alwaysASentReportDecisionIsAllowed(w: Workspace): boolean {
   return !w.report.reportSending || (w.report.present && reportStepAllowed(w.report.reportStep, w.staff.mode, w.report.minorReport));
 }
 
-/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md:246) */
+/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md) */
 //@ pure
 export function alwaysReportDecisionNeedsANote(w: Workspace): boolean {
   return !(w.report.reportSending || w.report.status !== "ReportOpen") || (w.report.present && w.report.noteReady);
 }
 
-/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md:246) */
+/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md) */
 //@ pure
 export function lawEveryReportStepLeavesTheOpenStatus(reportStep: ReportStep): boolean {
   //@ ensures \result === true
   return reportOutcome(reportStep) !== "ReportOpen";
 }
 
-/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md:246) */
+/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md) */
 //@ pure
 export function sometimesReportBanned(w: Workspace): boolean {
   return w.report.status === "ReportBanned";
 }
 
-/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md:246) */
+/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md) */
 //@ pure
 export function sometimesReportHeld(w: Workspace): boolean {
   return w.report.status === "ReportHeld";
 }
 
-/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md:246) */
+/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md) */
 //@ pure
 export function sometimesReportDismissed(w: Workspace): boolean {
   return w.report.status === "ReportDismissed";
 }
 
-/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md:246) */
+/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md) */
 //@ pure
 export function canTypeReportNote(w: Workspace): boolean {
   return reportOpen(w) && !w.report.reportSending;
 }
 
-/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md:246) */
+/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md) */
 //@ pure
 export function canActOnReport(w: Workspace, reportStep: ReportStep): boolean {
   return reportOpen(w) && !w.report.reportSending && w.staff.safety && w.report.noteReady && reportStepAllowed(reportStep, w.staff.mode, w.report.minorReport);
 }
 
-/** Story: See what members asked for / The request segments group the outcomes (spec/consoleWorkspace.md:315) */
+/** Story: See what members asked for / The request segments group the outcomes (spec/consoleWorkspace.md) */
 //@ pure
 export function requestShown(requestOutcome: RequestOutcome, segment: RequestSegment): boolean {
   return segment === "AllSegment" ? true : (segment === "OpenSegment" ? requestOutcome === "ProbingOutcome" || requestOutcome === "OpenOutcome" : (segment === "FulfilledSegment" ? requestOutcome === "FulfilledOutcome" || requestOutcome === "BookedOutcome" : (segment === "NoneSegment" ? requestOutcome === "NoneOutcome" : requestOutcome === "AnsweredOutcome")));
 }
 
-/** Story: See what members asked for / The request segments group the outcomes (spec/consoleWorkspace.md:315) */
+/** Story: See what members asked for / The request segments group the outcomes (spec/consoleWorkspace.md) */
 //@ pure
 export function lawEveryOutcomeHasASegment(requestOutcome: RequestOutcome): boolean {
   //@ ensures \result === true
   return requestShown(requestOutcome, "OpenSegment") || requestShown(requestOutcome, "FulfilledSegment") || requestShown(requestOutcome, "NoneSegment") || requestShown(requestOutcome, "AnsweredSegment");
 }
 
-/** Story: See what members asked for / The request segments group the outcomes (spec/consoleWorkspace.md:315) */
+/** Story: See what members asked for / The request segments group the outcomes (spec/consoleWorkspace.md) */
 //@ pure
 export function lawAllShowsEveryOutcome(requestOutcome: RequestOutcome): boolean {
   //@ ensures \result === true
   return requestShown(requestOutcome, "AllSegment");
 }
 
-/** Story: See what members asked for / The request segments group the outcomes (spec/consoleWorkspace.md:315) */
+/** Story: See what members asked for / The request segments group the outcomes (spec/consoleWorkspace.md) */
 //@ pure
 export function chooseRequestSegment(w: Workspace, segment: RequestSegment): Workspace {
   //@ ensures (inv(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -802,38 +802,38 @@ export function chooseRequestSegment(w: Workspace, segment: RequestSegment): Wor
   return { ...w, requestSegment: segment };
 }
 
-/** Story: See what members asked for / The request segments group the outcomes (spec/consoleWorkspace.md:315) */
+/** Story: See what members asked for / The request segments group the outcomes (spec/consoleWorkspace.md) */
 //@ pure
 export function sometimesAllRequests(w: Workspace): boolean {
   return w.requestSegment === "AllSegment";
 }
 
-/** Story: Change the matching switch with a confirmation / The switch shows only to an admin who can change it (spec/consoleWorkspace.md:344) */
+/** Story: Change the matching switch with a confirmation / The switch shows only to an admin who can change it (spec/consoleWorkspace.md) */
 //@ pure
 export function configControl(changeable: boolean, adminRole: boolean, packLocked: boolean, matchingOn: boolean): ConfigControl {
   return packLocked && !matchingOn ? "LockedNote" : (changeable && adminRole ? "SwitchControl" : (changeable ? "AdminOnlyNote" : "ReadOnlyNote"));
 }
 
-/** Story: Change the matching switch with a confirmation / The switch shows only to an admin who can change it (spec/consoleWorkspace.md:344) */
+/** Story: Change the matching switch with a confirmation / The switch shows only to an admin who can change it (spec/consoleWorkspace.md) */
 //@ pure
 export function lawOnlyAdminsGetTheSwitch(changeable: boolean, packLocked: boolean, matchingOn: boolean): boolean {
   //@ ensures \result === true
   return configControl(changeable, false, packLocked, matchingOn) !== "SwitchControl";
 }
 
-/** Story: Change the matching switch with a confirmation / The switch shows only to an admin who can change it (spec/consoleWorkspace.md:344) */
+/** Story: Change the matching switch with a confirmation / The switch shows only to an admin who can change it (spec/consoleWorkspace.md) */
 //@ pure
 export function switchShown(w: Workspace): boolean {
   return w.config.phase !== "ConfigLoading" && configControl(w.config.changeable, w.staff.admin, w.config.packLocked, w.config.matchingOn) === "SwitchControl";
 }
 
-/** Story: Change the matching switch with a confirmation / The switch shows only to an admin who can change it (spec/consoleWorkspace.md:344) */
+/** Story: Change the matching switch with a confirmation / The switch shows only to an admin who can change it (spec/consoleWorkspace.md) */
 //@ pure
 export function canReceiveConfig(w: Workspace): boolean {
   return w.staff.analyst && w.config.phase !== "ConfigSaving";
 }
 
-/** Story: Change the matching switch with a confirmation / The switch shows only to an admin who can change it (spec/consoleWorkspace.md:344) */
+/** Story: Change the matching switch with a confirmation / The switch shows only to an admin who can change it (spec/consoleWorkspace.md) */
 //@ pure
 export function receiveConfig(w: Workspace, matchingEnabled: boolean, locked: boolean, canChange: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveConfig(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -858,7 +858,7 @@ export function receiveConfig(w: Workspace, matchingEnabled: boolean, locked: bo
   return { ...w, config: ({ phase: "ConfigShown", matchingOn: matchingEnabled, packLocked: locked, changeable: canChange, saved: false } as ConfigEditor) };
 }
 
-/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:370) */
+/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md) */
 //@ pure
 export function pressMatchingSwitch(w: Workspace): Workspace {
   //@ ensures (inv(w) && canPressMatchingSwitch(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -883,13 +883,13 @@ export function pressMatchingSwitch(w: Workspace): Workspace {
   return { ...w, config: ({ ...w.config, phase: "ConfigConfirming", saved: false } as ConfigEditor) };
 }
 
-/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:370) */
+/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md) */
 //@ pure
 export function canEndConfirmation(w: Workspace): boolean {
   return w.config.phase === "ConfigConfirming";
 }
 
-/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:370) */
+/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md) */
 //@ pure
 export function endConfirmation(w: Workspace): Workspace {
   //@ ensures (inv(w) && canEndConfirmation(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -914,7 +914,7 @@ export function endConfirmation(w: Workspace): Workspace {
   return { ...w, config: ({ ...w.config, phase: "ConfigShown" } as ConfigEditor) };
 }
 
-/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:370) */
+/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md) */
 //@ pure
 export function confirmMatchingSwitch(w: Workspace): Workspace {
   //@ ensures (inv(w) && canConfirmMatchingSwitch(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -939,13 +939,13 @@ export function confirmMatchingSwitch(w: Workspace): Workspace {
   return { ...w, config: ({ ...w.config, phase: "ConfigSaving" } as ConfigEditor) };
 }
 
-/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:370) */
+/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md) */
 //@ pure
 export function canReceiveSwitchAnswer(w: Workspace): boolean {
   return w.config.phase === "ConfigSaving";
 }
 
-/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:370) */
+/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md) */
 //@ pure
 export function receiveSwitchAnswer(w: Workspace, accepted: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveSwitchAnswer(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -970,61 +970,61 @@ export function receiveSwitchAnswer(w: Workspace, accepted: boolean): Workspace 
   return { ...w, config: ({ ...w.config, phase: accepted ? "ConfigShown" : "ConfigFailed", saved: accepted, matchingOn: accepted ? !w.config.matchingOn : w.config.matchingOn } as ConfigEditor) };
 }
 
-/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:370) */
+/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md) */
 //@ pure
 export function alwaysConfigNeedsTheAnalystRole(w: Workspace): boolean {
   return !(w.config.phase !== "ConfigLoading") || w.staff.analyst;
 }
 
-/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:370) */
+/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md) */
 //@ pure
 export function stepSwitchChangesOnlyAfterSaving(before: Workspace, via: string, after: Workspace): boolean {
   return !(after.config.matchingOn !== before.config.matchingOn && via !== "receiveConfig" && via !== "receiveViewer") || (via === "receiveSwitchAnswer" && before.config.phase === "ConfigSaving");
 }
 
-/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:370) */
+/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md) */
 //@ pure
 export function alwaysSavedSwitchWasShown(w: Workspace): boolean {
   return !w.config.saved || (w.staff.admin && w.config.changeable);
 }
 
-/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:370) */
+/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md) */
 //@ pure
 export function sometimesSwitchSaved(w: Workspace): boolean {
   return w.config.saved;
 }
 
-/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:370) */
+/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md) */
 //@ pure
 export function sometimesSwitchRefused(w: Workspace): boolean {
   return w.config.phase === "ConfigFailed";
 }
 
-/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:370) */
+/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md) */
 //@ pure
 export function canPressMatchingSwitch(w: Workspace): boolean {
   return (w.config.phase === "ConfigShown" || w.config.phase === "ConfigFailed") && switchShown(w);
 }
 
-/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:370) */
+/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md) */
 //@ pure
 export function canConfirmMatchingSwitch(w: Workspace): boolean {
   return w.config.phase === "ConfigConfirming" && switchShown(w);
 }
 
-/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:370) */
+/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md) */
 //@ pure
 export function alwaysSavingNeedsTheSwitch(w: Workspace): boolean {
   return !(w.config.phase === "ConfigConfirming" || w.config.phase === "ConfigSaving") || switchShown(w);
 }
 
-/** Story: Read the audit log as an admin / Only an admin loads the audit log (spec/consoleWorkspace.md:418) */
+/** Story: Read the audit log as an admin / Only an admin loads the audit log (spec/consoleWorkspace.md) */
 //@ pure
 export function canLoadAudit(w: Workspace): boolean {
   return w.staff.admin && w.audit !== "AuditLoading";
 }
 
-/** Story: Read the audit log as an admin / Only an admin loads the audit log (spec/consoleWorkspace.md:418) */
+/** Story: Read the audit log as an admin / Only an admin loads the audit log (spec/consoleWorkspace.md) */
 //@ pure
 export function loadAudit(w: Workspace): Workspace {
   //@ ensures (inv(w) && canLoadAudit(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1049,13 +1049,13 @@ export function loadAudit(w: Workspace): Workspace {
   return { ...w, audit: "AuditLoading" };
 }
 
-/** Story: Read the audit log as an admin / Only an admin loads the audit log (spec/consoleWorkspace.md:418) */
+/** Story: Read the audit log as an admin / Only an admin loads the audit log (spec/consoleWorkspace.md) */
 //@ pure
 export function canReceiveAudit(w: Workspace): boolean {
   return w.audit === "AuditLoading";
 }
 
-/** Story: Read the audit log as an admin / Only an admin loads the audit log (spec/consoleWorkspace.md:418) */
+/** Story: Read the audit log as an admin / Only an admin loads the audit log (spec/consoleWorkspace.md) */
 //@ pure
 export function receiveAudit(w: Workspace, loaded: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveAudit(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1080,44 +1080,44 @@ export function receiveAudit(w: Workspace, loaded: boolean): Workspace {
   return { ...w, audit: loaded ? "AuditShown" : "AuditFailed" };
 }
 
-/** Story: Read the audit log as an admin / Only an admin loads the audit log (spec/consoleWorkspace.md:418) */
+/** Story: Read the audit log as an admin / Only an admin loads the audit log (spec/consoleWorkspace.md) */
 //@ pure
 export function alwaysAuditLogNeedsAnAdmin(w: Workspace): boolean {
   return !(w.audit !== "AuditClosed") || w.staff.admin;
 }
 
-/** Story: Read the audit log as an admin / Only an admin loads the audit log (spec/consoleWorkspace.md:418) */
+/** Story: Read the audit log as an admin / Only an admin loads the audit log (spec/consoleWorkspace.md) */
 //@ pure
 export function sometimesAuditShown(w: Workspace): boolean {
   return w.audit === "AuditShown";
 }
 
-/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md:440) */
+/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md) */
 //@ pure
 export function proposeAllowed(pickCount: number, minorPicked: boolean, sparksLeft: number, gameOver: boolean): boolean {
   return pickCount >= 2 && pickCount <= 6 && !minorPicked && sparksLeft > 0 && !gameOver;
 }
 
-/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md:440) */
+/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md) */
 //@ pure
 export function trayShown(staff: StaffView, pickCount: number): boolean {
   return staff.mode === "SimulatedWorld" && staff.simRole && pickCount > 0;
 }
 
-/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md:440) */
+/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md) */
 //@ pure
 export function lawMinorsAreNeverProposed(pickCount: number, sparksLeft: number, gameOver: boolean): boolean {
   //@ ensures \result === true
   return !proposeAllowed(pickCount, true, sparksLeft, gameOver);
 }
 
-/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md:440) */
+/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md) */
 //@ pure
 export function canSubmitProposal(w: Workspace, pickCount: number, minorPicked: boolean, sparksLeft: number, gameOver: boolean): boolean {
   return w.tray !== "TraySending" && trayShown(w.staff, pickCount) && proposeAllowed(pickCount, minorPicked, sparksLeft, gameOver);
 }
 
-/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md:440) */
+/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md) */
 //@ pure
 export function submitProposal(w: Workspace, pickCount: number, minorPicked: boolean, sparksLeft: number, gameOver: boolean): Workspace {
   //@ ensures (inv(w) && canSubmitProposal(w, pickCount, minorPicked, sparksLeft, gameOver)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1142,13 +1142,13 @@ export function submitProposal(w: Workspace, pickCount: number, minorPicked: boo
   return { ...w, tray: "TraySending" };
 }
 
-/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md:440) */
+/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md) */
 //@ pure
 export function canReceiveProposalAnswer(w: Workspace): boolean {
   return w.tray === "TraySending";
 }
 
-/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md:440) */
+/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md) */
 //@ pure
 export function receiveProposalAnswer(w: Workspace, accepted: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveProposalAnswer(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1173,31 +1173,31 @@ export function receiveProposalAnswer(w: Workspace, accepted: boolean): Workspac
   return { ...w, tray: accepted ? "TrayProposed" : "TrayIdle" };
 }
 
-/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md:440) */
+/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md) */
 //@ pure
 export function alwaysTrayWorkIsSimulated(w: Workspace): boolean {
   return !(w.tray !== "TrayIdle") || (w.staff.mode === "SimulatedWorld" && w.staff.simRole);
 }
 
-/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md:440) */
+/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md) */
 //@ pure
 export function sometimesProposed(w: Workspace): boolean {
   return w.tray === "TrayProposed";
 }
 
-/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:471) */
+/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md) */
 //@ pure
 export function worldMenuShown(staff: StaffView): boolean {
   return staff.mode === "SimulatedWorld" && staff.simRole;
 }
 
-/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:471) */
+/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md) */
 //@ pure
 export function canOpenWorldMenu(w: Workspace): boolean {
   return worldMenuShown(w.staff) && !w.worldMenuOpen;
 }
 
-/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:471) */
+/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md) */
 //@ pure
 export function openWorldMenu(w: Workspace): Workspace {
   //@ ensures (inv(w) && canOpenWorldMenu(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1222,13 +1222,13 @@ export function openWorldMenu(w: Workspace): Workspace {
   return { ...w, worldMenuOpen: true };
 }
 
-/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:471) */
+/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md) */
 //@ pure
 export function canCloseWorldMenu(w: Workspace): boolean {
   return w.worldMenuOpen;
 }
 
-/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:471) */
+/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md) */
 //@ pure
 export function closeWorldMenu(w: Workspace): Workspace {
   //@ ensures (inv(w) && canCloseWorldMenu(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1253,13 +1253,13 @@ export function closeWorldMenu(w: Workspace): Workspace {
   return { ...w, worldMenuOpen: false };
 }
 
-/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:471) */
+/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md) */
 //@ pure
 export function canSendWorldEvent(w: Workspace, worldEvent: WorldEvent): boolean {
   return w.worldMenuOpen && worldMenuShown(w.staff);
 }
 
-/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:471) */
+/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md) */
 //@ pure
 export function sendWorldEvent(w: Workspace, worldEvent: WorldEvent): Workspace {
   //@ ensures (inv(w) && canSendWorldEvent(w, worldEvent)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1284,31 +1284,31 @@ export function sendWorldEvent(w: Workspace, worldEvent: WorldEvent): Workspace 
   return { ...w, worldMenuOpen: false, worldEventSent: true };
 }
 
-/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:471) */
+/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md) */
 //@ pure
 export function alwaysWorldMenuIsSimulated(w: Workspace): boolean {
   return !(w.worldMenuOpen || w.worldEventSent) || (w.staff.mode === "SimulatedWorld" && w.staff.simRole);
 }
 
-/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:471) */
+/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md) */
 //@ pure
 export function sometimesWorldEventSent(w: Workspace): boolean {
   return w.worldEventSent;
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md) */
 //@ pure
 export function revealOffered(staff: StaffView): boolean {
   return staff.safety && staff.mode !== "SimulatedWorld" && !staff.globalPii;
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md) */
 //@ pure
 export function canStartReveal(w: Workspace): boolean {
   return revealOffered(w.staff) && w.reveal.phase === "RevealHidden";
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md) */
 //@ pure
 export function startReveal(w: Workspace): Workspace {
   //@ ensures (inv(w) && canStartReveal(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1333,13 +1333,13 @@ export function startReveal(w: Workspace): Workspace {
   return { ...w, reveal: ({ phase: "RevealDrafting", reasonReady: false, minutes: maxRevealMinutes } as RevealForm) };
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md) */
 //@ pure
 export function canTypeRevealReason(w: Workspace): boolean {
   return w.reveal.phase === "RevealDrafting";
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md) */
 //@ pure
 export function typeRevealReason(w: Workspace, reasonChars: number): Workspace {
   //@ ensures (inv(w) && canTypeRevealReason(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1364,13 +1364,13 @@ export function typeRevealReason(w: Workspace, reasonChars: number): Workspace {
   return { ...w, reveal: ({ ...w.reveal, reasonReady: reasonChars >= minReasonChars } as RevealForm) };
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md) */
 //@ pure
 export function canChooseRevealMinutes(w: Workspace, minutes: number): boolean {
   return w.reveal.phase === "RevealDrafting" && revealMinuteChoices.includes(minutes);
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md) */
 //@ pure
 export function chooseRevealMinutes(w: Workspace, minutes: number): Workspace {
   //@ ensures (inv(w) && canChooseRevealMinutes(w, minutes)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1395,13 +1395,13 @@ export function chooseRevealMinutes(w: Workspace, minutes: number): Workspace {
   return { ...w, reveal: ({ ...w.reveal, minutes: minutes } as RevealForm) };
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md) */
 //@ pure
 export function canCancelReveal(w: Workspace): boolean {
   return w.reveal.phase === "RevealDrafting";
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md) */
 //@ pure
 export function cancelReveal(w: Workspace): Workspace {
   //@ ensures (inv(w) && canCancelReveal(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1426,13 +1426,13 @@ export function cancelReveal(w: Workspace): Workspace {
   return { ...w, reveal: ({ ...w.reveal, phase: "RevealHidden" } as RevealForm) };
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md) */
 //@ pure
 export function canSubmitReveal(w: Workspace): boolean {
   return w.reveal.phase === "RevealDrafting" && w.reveal.reasonReady && revealOffered(w.staff);
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md) */
 //@ pure
 export function submitReveal(w: Workspace): Workspace {
   //@ ensures (inv(w) && canSubmitReveal(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1457,13 +1457,13 @@ export function submitReveal(w: Workspace): Workspace {
   return { ...w, reveal: ({ ...w.reveal, phase: "RevealSending" } as RevealForm) };
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md) */
 //@ pure
 export function canReceiveRevealAnswer(w: Workspace): boolean {
   return w.reveal.phase === "RevealSending";
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md) */
 //@ pure
 export function receiveRevealAnswer(w: Workspace, granted: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveRevealAnswer(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1488,31 +1488,31 @@ export function receiveRevealAnswer(w: Workspace, granted: boolean): Workspace {
   return { ...w, reveal: ({ ...w.reveal, phase: granted ? "RevealGranted" : "RevealDrafting" } as RevealForm) };
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md) */
 //@ pure
 export function alwaysRevealHasAReasonAndALimit(w: Workspace): boolean {
   return !(w.reveal.phase === "RevealSending" || w.reveal.phase === "RevealGranted") || (w.reveal.reasonReady && revealMinuteChoices.includes(w.reveal.minutes) && revealOffered(w.staff));
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md) */
 //@ pure
 export function alwaysRevealLengthIsAChoice(w: Workspace): boolean {
   return revealMinuteChoices.includes(w.reveal.minutes);
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md) */
 //@ pure
 export function stepRevealFollowsAGrant(before: Workspace, via: string, after: Workspace): boolean {
   return !(after.reveal.phase === "RevealGranted" && before.reveal.phase !== "RevealGranted") || (via === "receiveRevealAnswer" && before.reveal.phase === "RevealSending");
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal ends early on request or when its time passes (spec/consoleWorkspace.md:555) */
+/** Story: Reveal one member's private data with a logged reason / A reveal ends early on request or when its time passes (spec/consoleWorkspace.md) */
 //@ pure
 export function canEndReveal(w: Workspace): boolean {
   return w.reveal.phase === "RevealGranted";
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal ends early on request or when its time passes (spec/consoleWorkspace.md:555) */
+/** Story: Reveal one member's private data with a logged reason / A reveal ends early on request or when its time passes (spec/consoleWorkspace.md) */
 //@ pure
 export function endReveal(w: Workspace): Workspace {
   //@ ensures (inv(w) && canEndReveal(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1537,13 +1537,13 @@ export function endReveal(w: Workspace): Workspace {
   return { ...w, reveal: ({ ...w.reveal, phase: "RevealHidden" } as RevealForm) };
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal ends early on request or when its time passes (spec/consoleWorkspace.md:555) */
+/** Story: Reveal one member's private data with a logged reason / A reveal ends early on request or when its time passes (spec/consoleWorkspace.md) */
 //@ pure
 export function canExpireReveal(w: Workspace): boolean {
   return w.reveal.phase === "RevealGranted";
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal ends early on request or when its time passes (spec/consoleWorkspace.md:555) */
+/** Story: Reveal one member's private data with a logged reason / A reveal ends early on request or when its time passes (spec/consoleWorkspace.md) */
 //@ pure
 export function expireReveal(w: Workspace): Workspace {
   //@ ensures (inv(w) && canExpireReveal(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1568,7 +1568,7 @@ export function expireReveal(w: Workspace): Workspace {
   return { ...w, reveal: ({ ...w.reveal, phase: "RevealHidden" } as RevealForm) };
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal ends early on request or when its time passes (spec/consoleWorkspace.md:555) */
+/** Story: Reveal one member's private data with a logged reason / A reveal ends early on request or when its time passes (spec/consoleWorkspace.md) */
 //@ pure
 export function sometimesRevealGranted(w: Workspace): boolean {
   return w.reveal.phase === "RevealGranted";

@@ -1,36 +1,36 @@
 // GENERATED from spec/browserJoin.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md:9) */
+/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
 export type JoinScreen = "Opening" | "Loading" | "Phone" | "Code" | "Checking" | "Profile" | "Member" | "Blocked" | "Done" | "LeftForCloud";
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md:9) */
+/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
 export type BlockReason = "NoBlock" | "UnderAge" | "InviteOnly" | "InReview" | "NotValid" | "OtherReason";
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md:9) */
+/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
 export type FlowNotice = "NoNotice" | "ApiUnreachable" | "SessionEnded" | "AccountChanged";
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md:9) */
+/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
 export type InlineError = "NoError" | "InvalidPhone" | "CheckPending" | "CheckFailed" | "CheckRejected" | "CheckAgain" | "RateLimited" | "CodeFormat" | "InvalidCode" | "NewCodeSent" | "ProfileIncomplete" | "CloudUnavailable" | "RequestFailed";
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md:9) */
+/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
 export type AuthMode = "AuthPending" | "OtpMode" | "CloudMode";
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md:9) */
+/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
 export type CheckState = "NoCheck" | "CheckRunning" | "CheckPassed" | "CheckBroken";
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md:9) */
+/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
 export type Pending = "Idle" | "StartingCode" | "VerifyingCode" | "ResendingCode" | "SavingProfile" | "OpeningCloud";
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md:9) */
+/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
 export interface JoinPage { screen: JoinScreen; auth: AuthMode; check: CheckState; pending: Pending; reason: BlockReason; notice: FlowNotice; formError: InlineError; account: number; inviteOnly: boolean; viaAgent: boolean; addressClean: boolean; formHasValues: boolean; consented: boolean }
-/** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md:68) */
+/** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md) */
 export type SessionResult = "SignedOut" | "ReadFailed" | "MayJoin" | "AlreadyIn" | "MayNotJoin";
-/** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md:68) */
+/** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md) */
 export interface SessionView { result: SessionResult; account: number; reason: BlockReason }
-/** Story: Confirm my own phone / The page asks the server which sign-in to use and uses text codes when it cannot tell (spec/browserJoin.md:148) */
+/** Story: Confirm my own phone / The page asks the server which sign-in to use and uses text codes when it cannot tell (spec/browserJoin.md) */
 export type AuthLookup = "LookupFailed" | "ModeOtp" | "ModeCloud";
-/** Story: Confirm my own phone / A sent code opens the code step, and each answer uses up the security check (spec/browserJoin.md:209) */
+/** Story: Confirm my own phone / A sent code opens the code step, and each answer uses up the security check (spec/browserJoin.md) */
 export type StartResult = "CodeSent" | "StartRateLimited" | "StartCheckRejected" | "StartFailed";
-/** Story: Confirm my own phone / Only a well-formed code goes to the server, and only a verified code signs the person in (spec/browserJoin.md:236) */
+/** Story: Confirm my own phone / Only a well-formed code goes to the server, and only a verified code signs the person in (spec/browserJoin.md) */
 export type VerifyResult = "Verified" | "WrongCode" | "VerifyRateLimited" | "VerifyFailed";
-/** Story: Confirm my details and join / The page sends the profile only with a name, an age from 1 to 120 and the text consent ticked (spec/browserJoin.md:318) */
+/** Story: Confirm my details and join / The page sends the profile only with a name, an age from 1 to 120 and the text consent ticked (spec/browserJoin.md) */
 export interface ProfileForm { nameGiven: boolean; age: number; consentTicked: boolean }
-/** Story: Confirm my details and join / The server answer decides between done, blocked and a new sign-in (spec/browserJoin.md:350) */
-export type JoinOutcome = "JoinedOk" | "JoinUnderAge" | "JoinInviteOnly" | "JoinReview" | "JoinAccountChanged" | "JoinUnauthorized" | "JoinFailed";
+/** Story: Confirm my details and join / The server answer decides between done, blocked and a new sign-in (spec/browserJoin.md) */
+export type JoinOutcome = "JoinedOk" | "JoinUnderAge" | "JoinInviteOnly" | "JoinReview" | "JoinAccountChanged" | "JoinUnauthorized" | "JoinInvalidInvitation" | "JoinFailed";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -53,9 +53,9 @@ export type Event =
   | { type: "submitProfile"; form: ProfileForm }
   | { type: "answerJoin"; joinAnswer: JoinOutcome };
 
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md:9) */
+/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
 export const fragmentNameMax: number = 50;
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md:9) */
+/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
 export const initial: JoinPage = { screen: "Opening", auth: "AuthPending", check: "NoCheck", pending: "Idle", reason: "NoBlock", notice: "NoNotice", formError: "NoError", account: 0, inviteOnly: false, viaAgent: false, addressClean: false, formHasValues: false, consented: false };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -64,19 +64,19 @@ export function inv(current: JoinPage): boolean {
   return alwaysAddressCleanAfterOpening(current) && alwaysBlockedHasReason(current) && alwaysPhoneStepsHaveNoAccount(current) && alwaysAccountStepsHaveAccount(current) && alwaysCheckOnlyWithTextCodes(current) && alwaysCodeStepUsesTextCodes(current) && alwaysResendWithoutCheckOnly(current) && alwaysDoneNeedsConsent(current) && alwaysRequestBelongsToItsStep(current);
 }
 
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md:9) */
+/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
 //@ pure
 export function fragmentAgeAccepted(ageDigitsOnly: boolean, ageDigitCount: number, fragmentAge: number): boolean {
   return ageDigitsOnly && ageDigitCount >= 1 && ageDigitCount <= 3 && fragmentAge <= 120;
 }
 
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md:9) */
+/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
 //@ pure
 export function canOpenPage(page: JoinPage): boolean {
   return page.screen === "Opening";
 }
 
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md:9) */
+/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
 //@ pure
 export function openPage(page: JoinPage, viaAgent: boolean, fragmentName: boolean, ageDigitsOnly: boolean, ageDigitCount: number, fragmentAge: number): JoinPage {
   //@ ensures (inv(page) && canOpenPage(page)) ==> alwaysAddressCleanAfterOpening(\result)
@@ -97,82 +97,82 @@ export function openPage(page: JoinPage, viaAgent: boolean, fragmentName: boolea
   return { ...page, screen: "Loading", viaAgent: viaAgent, addressClean: true, formHasValues: fragmentName || fragmentAgeAccepted(ageDigitsOnly, ageDigitCount, fragmentAge) };
 }
 
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md:9) */
+/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
 //@ pure
 export function alwaysAddressCleanAfterOpening(page: JoinPage): boolean {
   return !(page.screen !== "Opening") || page.addressClean;
 }
 
-/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md:9) */
+/** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
 //@ pure
 export function lawFragmentAgeNeverAboveLimit(ageDigitsOnly: boolean, ageDigitCount: number, fragmentAge: number): boolean {
   //@ ensures \result === true
   return !(!ageDigitsOnly || ageDigitCount < 1 || ageDigitCount > 3 || fragmentAge > 120) || !fragmentAgeAccepted(ageDigitsOnly, ageDigitCount, fragmentAge);
 }
 
-/** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md:68) */
+/** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md) */
 //@ pure
 export function minJoinAgeShown(appRead: boolean, appMinAge: number, pageMinAge: number): number {
   return appRead ? appMinAge : pageMinAge;
 }
 
-/** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md:68) */
+/** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md) */
 //@ pure
 export function signedInResult(result: SessionResult): boolean {
   return result === "MayJoin" || result === "AlreadyIn" || result === "MayNotJoin";
 }
 
-/** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md:68) */
+/** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md) */
 //@ pure
 export function screenFor(view: SessionView): JoinScreen {
   return view.result === "MayJoin" ? "Profile" : (view.result === "AlreadyIn" ? "Member" : (view.result === "MayNotJoin" ? "Blocked" : "Phone"));
 }
 
-/** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md:68) */
+/** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md) */
 //@ pure
 export function blockReasonFor(reason: BlockReason, inviteOnly: boolean): BlockReason {
   return reason === "NoBlock" ? (inviteOnly ? "InviteOnly" : "OtherReason") : reason;
 }
 
-/** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md:68) */
+/** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md) */
 //@ pure
 export function sessionConsistent(view: SessionView): boolean {
   return signedInResult(view.result) ? view.account > 0 : view.account === 0;
 }
 
-/** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md:68) */
+/** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md) */
 //@ pure
 export function reasonFor(view: SessionView, inviteOnly: boolean): BlockReason {
   return view.result === "MayNotJoin" ? blockReasonFor(view.reason, inviteOnly) : "NoBlock";
 }
 
-/** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md:68) */
+/** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md) */
 //@ pure
 export function lawSignedOutSeesPhone(view: SessionView): boolean {
   //@ ensures \result === true
   return !(!signedInResult(view.result)) || screenFor(view) === "Phone";
 }
 
-/** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md:68) */
+/** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md) */
 //@ pure
 export function lawBlockedAlwaysHasReason(reason: BlockReason, inviteOnly: boolean): boolean {
   //@ ensures \result === true
   return blockReasonFor(reason, inviteOnly) !== "NoBlock";
 }
 
-/** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md:68) */
+/** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md) */
 //@ pure
 export function routed(view: SessionView, page: JoinPage, inviteOnly: boolean): JoinPage {
   return { ...page, screen: screenFor(view), reason: reasonFor(view, inviteOnly), account: view.account, inviteOnly: inviteOnly, pending: "Idle", formError: "NoError" };
 }
 
-/** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md:68) */
+/** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md) */
 //@ pure
 export function canLoaded(page: JoinPage, view: SessionView): boolean {
   return page.screen === "Loading" && sessionConsistent(view);
 }
 
-/** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md:68) */
+/** Story: See where I stand before I do anything / The page shows the step that the current session allows (spec/browserJoin.md) */
 //@ pure
 export function loaded(page: JoinPage, view: SessionView, appUnreachable: boolean, inviteOnly: boolean): JoinPage {
   //@ ensures (inv(page) && canLoaded(page, view)) ==> alwaysAddressCleanAfterOpening(\result)
@@ -194,67 +194,67 @@ export function loaded(page: JoinPage, view: SessionView, appUnreachable: boolea
   return { ...local_0, notice: appUnreachable ? "ApiUnreachable" : "NoNotice" };
 }
 
-/** Story: See where I stand before I do anything / Only a signed-out page asks for a phone, and only a signed-in page shows a profile (spec/browserJoin.md:126) */
+/** Story: See where I stand before I do anything / Only a signed-out page asks for a phone, and only a signed-in page shows a profile (spec/browserJoin.md) */
 //@ pure
 export function screenHasNoAccount(screen: JoinScreen): boolean {
   return screen === "Opening" || screen === "Loading" || screen === "Phone" || screen === "Code" || screen === "Checking" || screen === "LeftForCloud";
 }
 
-/** Story: See where I stand before I do anything / Only a signed-out page asks for a phone, and only a signed-in page shows a profile (spec/browserJoin.md:126) */
+/** Story: See where I stand before I do anything / Only a signed-out page asks for a phone, and only a signed-in page shows a profile (spec/browserJoin.md) */
 //@ pure
 export function alwaysBlockedHasReason(page: JoinPage): boolean {
   return (page.screen === "Blocked") === (page.reason !== "NoBlock");
 }
 
-/** Story: See where I stand before I do anything / Only a signed-out page asks for a phone, and only a signed-in page shows a profile (spec/browserJoin.md:126) */
+/** Story: See where I stand before I do anything / Only a signed-out page asks for a phone, and only a signed-in page shows a profile (spec/browserJoin.md) */
 //@ pure
 export function alwaysPhoneStepsHaveNoAccount(page: JoinPage): boolean {
   return !screenHasNoAccount(page.screen) || page.account === 0;
 }
 
-/** Story: See where I stand before I do anything / Only a signed-out page asks for a phone, and only a signed-in page shows a profile (spec/browserJoin.md:126) */
+/** Story: See where I stand before I do anything / Only a signed-out page asks for a phone, and only a signed-in page shows a profile (spec/browserJoin.md) */
 //@ pure
 export function alwaysAccountStepsHaveAccount(page: JoinPage): boolean {
   return !(!screenHasNoAccount(page.screen)) || page.account > 0;
 }
 
-/** Story: Confirm my own phone / The page asks the server which sign-in to use and uses text codes when it cannot tell (spec/browserJoin.md:148) */
+/** Story: Confirm my own phone / The page asks the server which sign-in to use and uses text codes when it cannot tell (spec/browserJoin.md) */
 //@ pure
 export function authModeFor(lookup: AuthLookup): AuthMode {
   return lookup === "ModeCloud" ? "CloudMode" : "OtpMode";
 }
 
-/** Story: Confirm my own phone / The page asks the server which sign-in to use and uses text codes when it cannot tell (spec/browserJoin.md:148) */
+/** Story: Confirm my own phone / The page asks the server which sign-in to use and uses text codes when it cannot tell (spec/browserJoin.md) */
 //@ pure
 export function canReadAuthMode(page: JoinPage): boolean {
   return page.auth === "AuthPending" && page.screen !== "Opening" && page.screen !== "Loading";
 }
 
-/** Story: Confirm my own phone / The page asks the server which sign-in to use and uses text codes when it cannot tell (spec/browserJoin.md:148) */
+/** Story: Confirm my own phone / The page asks the server which sign-in to use and uses text codes when it cannot tell (spec/browserJoin.md) */
 //@ pure
 export function phoneFormWaiting(page: JoinPage): boolean {
   return page.screen === "Phone" && page.auth === "AuthPending";
 }
 
-/** Story: Confirm my own phone / The page asks the server which sign-in to use and uses text codes when it cannot tell (spec/browserJoin.md:148) */
+/** Story: Confirm my own phone / The page asks the server which sign-in to use and uses text codes when it cannot tell (spec/browserJoin.md) */
 //@ pure
 export function showsNumberForm(page: JoinPage): boolean {
   return page.screen === "Phone" && page.auth === "OtpMode";
 }
 
-/** Story: Confirm my own phone / The page asks the server which sign-in to use and uses text codes when it cannot tell (spec/browserJoin.md:148) */
+/** Story: Confirm my own phone / The page asks the server which sign-in to use and uses text codes when it cannot tell (spec/browserJoin.md) */
 //@ pure
 export function showsCloudButton(page: JoinPage): boolean {
   return page.screen === "Phone" && page.auth === "CloudMode";
 }
 
-/** Story: Confirm my own phone / The page asks the server which sign-in to use and uses text codes when it cannot tell (spec/browserJoin.md:148) */
+/** Story: Confirm my own phone / The page asks the server which sign-in to use and uses text codes when it cannot tell (spec/browserJoin.md) */
 //@ pure
 export function alwaysCheckOnlyWithTextCodes(page: JoinPage): boolean {
   return !(page.check !== "NoCheck") || page.auth === "OtpMode";
 }
 
-/** Story: Confirm my own phone / The page asks the server which sign-in to use and uses text codes when it cannot tell (spec/browserJoin.md:148) */
+/** Story: Confirm my own phone / The page asks the server which sign-in to use and uses text codes when it cannot tell (spec/browserJoin.md) */
 //@ pure
 export function readAuthMode(page: JoinPage, lookup: AuthLookup, checkOn: boolean): JoinPage {
   //@ ensures (inv(page) && canReadAuthMode(page)) ==> alwaysAddressCleanAfterOpening(\result)
@@ -275,20 +275,20 @@ export function readAuthMode(page: JoinPage, lookup: AuthLookup, checkOn: boolea
   return { ...page, auth: authModeFor(lookup), check: authModeFor(lookup) === "OtpMode" && checkOn ? "CheckRunning" : "NoCheck" };
 }
 
-/** Story: Confirm my own phone / The page asks the server which sign-in to use and uses text codes when it cannot tell (spec/browserJoin.md:148) */
+/** Story: Confirm my own phone / The page asks the server which sign-in to use and uses text codes when it cannot tell (spec/browserJoin.md) */
 //@ pure
 export function lawOnlyCloudAnswerUsesCloud(lookup: AuthLookup): boolean {
   //@ ensures \result === true
   return (authModeFor(lookup) === "CloudMode") === (lookup === "ModeCloud");
 }
 
-/** Story: Confirm my own phone / The page sends a number only when it is valid and the security check passed (spec/browserJoin.md:175) */
+/** Story: Confirm my own phone / The page sends a number only when it is valid and the security check passed (spec/browserJoin.md) */
 //@ pure
 export function canExpireCheck(page: JoinPage): boolean {
   return page.check === "CheckPassed";
 }
 
-/** Story: Confirm my own phone / The page sends a number only when it is valid and the security check passed (spec/browserJoin.md:175) */
+/** Story: Confirm my own phone / The page sends a number only when it is valid and the security check passed (spec/browserJoin.md) */
 //@ pure
 export function expireCheck(page: JoinPage): JoinPage {
   //@ ensures (inv(page) && canExpireCheck(page)) ==> alwaysAddressCleanAfterOpening(\result)
@@ -309,13 +309,13 @@ export function expireCheck(page: JoinPage): JoinPage {
   return { ...page, check: "CheckRunning" };
 }
 
-/** Story: Confirm my own phone / The page sends a number only when it is valid and the security check passed (spec/browserJoin.md:175) */
+/** Story: Confirm my own phone / The page sends a number only when it is valid and the security check passed (spec/browserJoin.md) */
 //@ pure
 export function canSubmitPhone(page: JoinPage): boolean {
   return page.screen === "Phone" && page.auth === "OtpMode" && page.pending === "Idle";
 }
 
-/** Story: Confirm my own phone / The page sends a number only when it is valid and the security check passed (spec/browserJoin.md:175) */
+/** Story: Confirm my own phone / The page sends a number only when it is valid and the security check passed (spec/browserJoin.md) */
 //@ pure
 export function submitPhone(page: JoinPage, phoneValid: boolean): JoinPage {
   //@ ensures (inv(page) && canSubmitPhone(page)) ==> alwaysAddressCleanAfterOpening(\result)
@@ -336,19 +336,19 @@ export function submitPhone(page: JoinPage, phoneValid: boolean): JoinPage {
   return !phoneValid ? ({ ...page, formError: "InvalidPhone" } as JoinPage) : (page.check === "CheckRunning" ? ({ ...page, formError: "CheckPending" } as JoinPage) : (page.check === "CheckBroken" ? ({ ...page, formError: "CheckFailed" } as JoinPage) : ({ ...page, pending: "StartingCode", formError: "NoError" } as JoinPage)));
 }
 
-/** Story: Confirm my own phone / The page sends a number only when it is valid and the security check passed (spec/browserJoin.md:175) */
+/** Story: Confirm my own phone / The page sends a number only when it is valid and the security check passed (spec/browserJoin.md) */
 //@ pure
 export function stepCodeRequestNeedsPassedCheck(before: JoinPage, via: string, after: JoinPage): boolean {
   return !(via === "submitPhone" && after.pending === "StartingCode") || (before.check === "CheckPassed" || before.check === "NoCheck");
 }
 
-/** Story: Confirm my own phone / The page sends a number only when it is valid and the security check passed (spec/browserJoin.md:175) */
+/** Story: Confirm my own phone / The page sends a number only when it is valid and the security check passed (spec/browserJoin.md) */
 //@ pure
 export function canSettleCheck(page: JoinPage): boolean {
   return page.check === "CheckRunning";
 }
 
-/** Story: Confirm my own phone / The page sends a number only when it is valid and the security check passed (spec/browserJoin.md:175) */
+/** Story: Confirm my own phone / The page sends a number only when it is valid and the security check passed (spec/browserJoin.md) */
 //@ pure
 export function settleCheck(page: JoinPage, passed: boolean): JoinPage {
   //@ ensures (inv(page) && canSettleCheck(page)) ==> alwaysAddressCleanAfterOpening(\result)
@@ -371,31 +371,31 @@ export function settleCheck(page: JoinPage, passed: boolean): JoinPage {
   return { ...page, check: passed ? "CheckPassed" : "CheckBroken", formError: local_2 };
 }
 
-/** Story: Confirm my own phone / A sent code opens the code step, and each answer uses up the security check (spec/browserJoin.md:209) */
+/** Story: Confirm my own phone / A sent code opens the code step, and each answer uses up the security check (spec/browserJoin.md) */
 //@ pure
 export function startError(started: StartResult): InlineError {
   return started === "CodeSent" ? "NewCodeSent" : (started === "StartRateLimited" ? "RateLimited" : (started === "StartCheckRejected" ? "CheckRejected" : "RequestFailed"));
 }
 
-/** Story: Confirm my own phone / A sent code opens the code step, and each answer uses up the security check (spec/browserJoin.md:209) */
+/** Story: Confirm my own phone / A sent code opens the code step, and each answer uses up the security check (spec/browserJoin.md) */
 //@ pure
 export function canAnswerCodeStart(page: JoinPage): boolean {
   return page.pending === "StartingCode";
 }
 
-/** Story: Confirm my own phone / A sent code opens the code step, and each answer uses up the security check (spec/browserJoin.md:209) */
+/** Story: Confirm my own phone / A sent code opens the code step, and each answer uses up the security check (spec/browserJoin.md) */
 //@ pure
 export function stepCheckSpentAfterCodeStart(before: JoinPage, via: string, after: JoinPage): boolean {
   return !(via === "answerCodeStart") || after.check !== "CheckPassed";
 }
 
-/** Story: Confirm my own phone / A sent code opens the code step, and each answer uses up the security check (spec/browserJoin.md:209) */
+/** Story: Confirm my own phone / A sent code opens the code step, and each answer uses up the security check (spec/browserJoin.md) */
 //@ pure
 export function alwaysCodeStepUsesTextCodes(page: JoinPage): boolean {
   return !(page.screen === "Code") || page.auth === "OtpMode";
 }
 
-/** Story: Confirm my own phone / A sent code opens the code step, and each answer uses up the security check (spec/browserJoin.md:209) */
+/** Story: Confirm my own phone / A sent code opens the code step, and each answer uses up the security check (spec/browserJoin.md) */
 //@ pure
 export function answerCodeStart(page: JoinPage, started: StartResult): JoinPage {
   //@ ensures (inv(page) && canAnswerCodeStart(page)) ==> alwaysAddressCleanAfterOpening(\result)
@@ -417,13 +417,13 @@ export function answerCodeStart(page: JoinPage, started: StartResult): JoinPage 
   return started === "CodeSent" ? ({ ...page, pending: "Idle", check: local_3, screen: "Code", formError: "NoError" } as JoinPage) : ({ ...page, pending: "Idle", check: local_3, formError: startError(started) } as JoinPage);
 }
 
-/** Story: Confirm my own phone / Only a well-formed code goes to the server, and only a verified code signs the person in (spec/browserJoin.md:236) */
+/** Story: Confirm my own phone / Only a well-formed code goes to the server, and only a verified code signs the person in (spec/browserJoin.md) */
 //@ pure
 export function canSubmitCode(page: JoinPage): boolean {
   return page.screen === "Code" && page.pending === "Idle";
 }
 
-/** Story: Confirm my own phone / Only a well-formed code goes to the server, and only a verified code signs the person in (spec/browserJoin.md:236) */
+/** Story: Confirm my own phone / Only a well-formed code goes to the server, and only a verified code signs the person in (spec/browserJoin.md) */
 //@ pure
 export function submitCode(page: JoinPage, codeWellFormed: boolean): JoinPage {
   //@ ensures (inv(page) && canSubmitCode(page)) ==> alwaysAddressCleanAfterOpening(\result)
@@ -444,13 +444,13 @@ export function submitCode(page: JoinPage, codeWellFormed: boolean): JoinPage {
   return codeWellFormed ? ({ ...page, pending: "VerifyingCode" } as JoinPage) : ({ ...page, formError: "CodeFormat" } as JoinPage);
 }
 
-/** Story: Confirm my own phone / Only a well-formed code goes to the server, and only a verified code signs the person in (spec/browserJoin.md:236) */
+/** Story: Confirm my own phone / Only a well-formed code goes to the server, and only a verified code signs the person in (spec/browserJoin.md) */
 //@ pure
 export function canAnswerVerify(page: JoinPage): boolean {
   return page.pending === "VerifyingCode";
 }
 
-/** Story: Confirm my own phone / Only a well-formed code goes to the server, and only a verified code signs the person in (spec/browserJoin.md:236) */
+/** Story: Confirm my own phone / Only a well-formed code goes to the server, and only a verified code signs the person in (spec/browserJoin.md) */
 //@ pure
 export function answerVerify(page: JoinPage, verifyAnswer: VerifyResult): JoinPage {
   //@ ensures (inv(page) && canAnswerVerify(page)) ==> alwaysAddressCleanAfterOpening(\result)
@@ -471,13 +471,13 @@ export function answerVerify(page: JoinPage, verifyAnswer: VerifyResult): JoinPa
   return verifyAnswer === "Verified" ? ({ ...page, pending: "Idle", screen: "Checking", notice: "NoNotice", formError: "NoError" } as JoinPage) : (verifyAnswer === "WrongCode" ? ({ ...page, pending: "Idle", formError: "InvalidCode" } as JoinPage) : (verifyAnswer === "VerifyRateLimited" ? ({ ...page, pending: "Idle", formError: "RateLimited" } as JoinPage) : ({ ...page, pending: "Idle", formError: "RequestFailed" } as JoinPage)));
 }
 
-/** Story: Confirm my own phone / A new code needs a new security check when the check is on (spec/browserJoin.md:257) */
+/** Story: Confirm my own phone / A new code needs a new security check when the check is on (spec/browserJoin.md) */
 //@ pure
 export function canResendCode(page: JoinPage): boolean {
   return page.screen === "Code" && page.pending === "Idle";
 }
 
-/** Story: Confirm my own phone / A new code needs a new security check when the check is on (spec/browserJoin.md:257) */
+/** Story: Confirm my own phone / A new code needs a new security check when the check is on (spec/browserJoin.md) */
 //@ pure
 export function resendCode(page: JoinPage): JoinPage {
   //@ ensures (inv(page) && canResendCode(page)) ==> alwaysAddressCleanAfterOpening(\result)
@@ -498,19 +498,19 @@ export function resendCode(page: JoinPage): JoinPage {
   return page.check !== "NoCheck" ? ({ ...page, screen: "Phone", formError: "CheckAgain" } as JoinPage) : ({ ...page, pending: "ResendingCode" } as JoinPage);
 }
 
-/** Story: Confirm my own phone / A new code needs a new security check when the check is on (spec/browserJoin.md:257) */
+/** Story: Confirm my own phone / A new code needs a new security check when the check is on (spec/browserJoin.md) */
 //@ pure
 export function canAnswerResend(page: JoinPage): boolean {
   return page.pending === "ResendingCode";
 }
 
-/** Story: Confirm my own phone / A new code needs a new security check when the check is on (spec/browserJoin.md:257) */
+/** Story: Confirm my own phone / A new code needs a new security check when the check is on (spec/browserJoin.md) */
 //@ pure
 export function canChangeNumber(page: JoinPage): boolean {
   return page.screen === "Code" && page.pending === "Idle";
 }
 
-/** Story: Confirm my own phone / A new code needs a new security check when the check is on (spec/browserJoin.md:257) */
+/** Story: Confirm my own phone / A new code needs a new security check when the check is on (spec/browserJoin.md) */
 //@ pure
 export function changeNumber(page: JoinPage): JoinPage {
   //@ ensures (inv(page) && canChangeNumber(page)) ==> alwaysAddressCleanAfterOpening(\result)
@@ -531,13 +531,13 @@ export function changeNumber(page: JoinPage): JoinPage {
   return { ...page, screen: "Phone", formError: "NoError" };
 }
 
-/** Story: Confirm my own phone / A new code needs a new security check when the check is on (spec/browserJoin.md:257) */
+/** Story: Confirm my own phone / A new code needs a new security check when the check is on (spec/browserJoin.md) */
 //@ pure
 export function alwaysResendWithoutCheckOnly(page: JoinPage): boolean {
   return !(page.pending === "ResendingCode") || page.check === "NoCheck";
 }
 
-/** Story: Confirm my own phone / A new code needs a new security check when the check is on (spec/browserJoin.md:257) */
+/** Story: Confirm my own phone / A new code needs a new security check when the check is on (spec/browserJoin.md) */
 //@ pure
 export function answerResend(page: JoinPage, resent: StartResult): JoinPage {
   //@ ensures (inv(page) && canAnswerResend(page)) ==> alwaysAddressCleanAfterOpening(\result)
@@ -558,13 +558,13 @@ export function answerResend(page: JoinPage, resent: StartResult): JoinPage {
   return { ...page, pending: "Idle", formError: startError(resent) };
 }
 
-/** Story: Confirm my own phone / Cloud sign-in leaves the page to confirm the phone (spec/browserJoin.md:281) */
+/** Story: Confirm my own phone / Cloud sign-in leaves the page to confirm the phone (spec/browserJoin.md) */
 //@ pure
 export function canContinueWithPhone(page: JoinPage): boolean {
   return page.screen === "Phone" && page.auth === "CloudMode" && page.pending === "Idle";
 }
 
-/** Story: Confirm my own phone / Cloud sign-in leaves the page to confirm the phone (spec/browserJoin.md:281) */
+/** Story: Confirm my own phone / Cloud sign-in leaves the page to confirm the phone (spec/browserJoin.md) */
 //@ pure
 export function continueWithPhone(page: JoinPage): JoinPage {
   //@ ensures (inv(page) && canContinueWithPhone(page)) ==> alwaysAddressCleanAfterOpening(\result)
@@ -585,13 +585,13 @@ export function continueWithPhone(page: JoinPage): JoinPage {
   return { ...page, pending: "OpeningCloud" };
 }
 
-/** Story: Confirm my own phone / Cloud sign-in leaves the page to confirm the phone (spec/browserJoin.md:281) */
+/** Story: Confirm my own phone / Cloud sign-in leaves the page to confirm the phone (spec/browserJoin.md) */
 //@ pure
 export function canAnswerCloudStart(page: JoinPage): boolean {
   return page.pending === "OpeningCloud";
 }
 
-/** Story: Confirm my own phone / Cloud sign-in leaves the page to confirm the phone (spec/browserJoin.md:281) */
+/** Story: Confirm my own phone / Cloud sign-in leaves the page to confirm the phone (spec/browserJoin.md) */
 //@ pure
 export function answerCloudStart(page: JoinPage, opened: boolean): JoinPage {
   //@ ensures (inv(page) && canAnswerCloudStart(page)) ==> alwaysAddressCleanAfterOpening(\result)
@@ -612,13 +612,13 @@ export function answerCloudStart(page: JoinPage, opened: boolean): JoinPage {
   return opened ? ({ ...page, pending: "Idle", screen: "LeftForCloud" } as JoinPage) : ({ ...page, pending: "Idle", formError: "CloudUnavailable" } as JoinPage);
 }
 
-/** Story: Confirm my own phone / After sign-in the page reads the session again and shows its step (spec/browserJoin.md:298) */
+/** Story: Confirm my own phone / After sign-in the page reads the session again and shows its step (spec/browserJoin.md) */
 //@ pure
 export function canRecheck(page: JoinPage, view: SessionView): boolean {
   return page.screen === "Checking" && sessionConsistent(view);
 }
 
-/** Story: Confirm my own phone / After sign-in the page reads the session again and shows its step (spec/browserJoin.md:298) */
+/** Story: Confirm my own phone / After sign-in the page reads the session again and shows its step (spec/browserJoin.md) */
 //@ pure
 export function recheck(page: JoinPage, view: SessionView): JoinPage {
   //@ ensures (inv(page) && canRecheck(page, view)) ==> alwaysAddressCleanAfterOpening(\result)
@@ -640,19 +640,19 @@ export function recheck(page: JoinPage, view: SessionView): JoinPage {
   return { ...local_4, notice: signedInResult(view.result) || page.notice === "AccountChanged" ? page.notice : (view.result === "SignedOut" ? "SessionEnded" : "ApiUnreachable") };
 }
 
-/** Story: Confirm my details and join / The page sends the profile only with a name, an age from 1 to 120 and the text consent ticked (spec/browserJoin.md:318) */
+/** Story: Confirm my details and join / The page sends the profile only with a name, an age from 1 to 120 and the text consent ticked (spec/browserJoin.md) */
 //@ pure
 export function profileComplete(form: ProfileForm): boolean {
   return form.nameGiven && form.age >= 1 && form.age <= 120 && form.consentTicked;
 }
 
-/** Story: Confirm my details and join / The page sends the profile only with a name, an age from 1 to 120 and the text consent ticked (spec/browserJoin.md:318) */
+/** Story: Confirm my details and join / The page sends the profile only with a name, an age from 1 to 120 and the text consent ticked (spec/browserJoin.md) */
 //@ pure
 export function canEditProfile(page: JoinPage): boolean {
   return page.screen === "Profile" && page.pending === "Idle";
 }
 
-/** Story: Confirm my details and join / The page sends the profile only with a name, an age from 1 to 120 and the text consent ticked (spec/browserJoin.md:318) */
+/** Story: Confirm my details and join / The page sends the profile only with a name, an age from 1 to 120 and the text consent ticked (spec/browserJoin.md) */
 //@ pure
 export function editProfile(page: JoinPage): JoinPage {
   //@ ensures (inv(page) && canEditProfile(page)) ==> alwaysAddressCleanAfterOpening(\result)
@@ -673,13 +673,13 @@ export function editProfile(page: JoinPage): JoinPage {
   return { ...page, formHasValues: true };
 }
 
-/** Story: Confirm my details and join / The page sends the profile only with a name, an age from 1 to 120 and the text consent ticked (spec/browserJoin.md:318) */
+/** Story: Confirm my details and join / The page sends the profile only with a name, an age from 1 to 120 and the text consent ticked (spec/browserJoin.md) */
 //@ pure
 export function canSubmitProfile(page: JoinPage): boolean {
   return page.screen === "Profile" && page.pending === "Idle";
 }
 
-/** Story: Confirm my details and join / The page sends the profile only with a name, an age from 1 to 120 and the text consent ticked (spec/browserJoin.md:318) */
+/** Story: Confirm my details and join / The page sends the profile only with a name, an age from 1 to 120 and the text consent ticked (spec/browserJoin.md) */
 //@ pure
 export function submitProfile(page: JoinPage, form: ProfileForm): JoinPage {
   //@ ensures (inv(page) && canSubmitProfile(page)) ==> alwaysAddressCleanAfterOpening(\result)
@@ -700,26 +700,26 @@ export function submitProfile(page: JoinPage, form: ProfileForm): JoinPage {
   return profileComplete(form) ? ({ ...page, pending: "SavingProfile", consented: true, formError: "NoError" } as JoinPage) : ({ ...page, formError: "ProfileIncomplete" } as JoinPage);
 }
 
-/** Story: Confirm my details and join / The page sends the profile only with a name, an age from 1 to 120 and the text consent ticked (spec/browserJoin.md:318) */
+/** Story: Confirm my details and join / The page sends the profile only with a name, an age from 1 to 120 and the text consent ticked (spec/browserJoin.md) */
 //@ pure
 export function lawProfileNeedsConsent(form: ProfileForm): boolean {
   //@ ensures \result === true
   return !profileComplete(form) || form.consentTicked;
 }
 
-/** Story: Confirm my details and join / The server answer decides between done, blocked and a new sign-in (spec/browserJoin.md:350) */
+/** Story: Confirm my details and join / The server answer decides between done, blocked and a new sign-in (spec/browserJoin.md) */
 //@ pure
 export function joinRefusal(joinAnswer: JoinOutcome): BlockReason {
-  return joinAnswer === "JoinUnderAge" ? "UnderAge" : (joinAnswer === "JoinInviteOnly" ? "InviteOnly" : (joinAnswer === "JoinReview" ? "InReview" : "NoBlock"));
+  return joinAnswer === "JoinUnderAge" ? "UnderAge" : (joinAnswer === "JoinInviteOnly" ? "InviteOnly" : (joinAnswer === "JoinReview" ? "InReview" : (joinAnswer === "JoinInvalidInvitation" ? "NotValid" : "NoBlock")));
 }
 
-/** Story: Confirm my details and join / The server answer decides between done, blocked and a new sign-in (spec/browserJoin.md:350) */
+/** Story: Confirm my details and join / The server answer decides between done, blocked and a new sign-in (spec/browserJoin.md) */
 //@ pure
 export function canAnswerJoin(page: JoinPage): boolean {
   return page.pending === "SavingProfile";
 }
 
-/** Story: Confirm my details and join / The server answer decides between done, blocked and a new sign-in (spec/browserJoin.md:350) */
+/** Story: Confirm my details and join / The server answer decides between done, blocked and a new sign-in (spec/browserJoin.md) */
 //@ pure
 export function answerJoin(page: JoinPage, joinAnswer: JoinOutcome): JoinPage {
   //@ ensures (inv(page) && canAnswerJoin(page)) ==> alwaysAddressCleanAfterOpening(\result)
@@ -742,205 +742,243 @@ export function answerJoin(page: JoinPage, joinAnswer: JoinOutcome): JoinPage {
   return joinAnswer === "JoinedOk" ? ({ ...local_5, screen: "Done", notice: "NoNotice" } as JoinPage) : (local_6 !== "NoBlock" ? ({ ...local_5, screen: "Blocked", reason: local_6 } as JoinPage) : (joinAnswer === "JoinAccountChanged" ? ({ ...local_5, screen: "Checking", account: 0, formHasValues: false, consented: false, notice: "AccountChanged", formError: "NoError" } as JoinPage) : (joinAnswer === "JoinUnauthorized" ? ({ ...local_5, screen: "Phone", account: 0, formHasValues: false, consented: false, notice: "SessionEnded", formError: "NoError" } as JoinPage) : ({ ...local_5, formError: "RequestFailed" } as JoinPage))));
 }
 
-/** Story: Confirm my details and join / Profile values never pass from one account to another (spec/browserJoin.md:377) */
+/** Story: Confirm my details and join / A Peon invitation stays in memory until the verified account agrees to join (spec/browserJoin.md) */
+//@ pure
+export function browserInvitationMayBind(peonApp: boolean, verifiedView: boolean): boolean {
+  return peonApp && verifiedView;
+}
+
+/** Story: Confirm my details and join / A Peon invitation stays in memory until the verified account agrees to join (spec/browserJoin.md) */
+//@ pure
+export function browserInvitationMaySubmit(boundAccount: boolean, addressClean: boolean, consented: boolean): boolean {
+  return boundAccount && addressClean && consented;
+}
+
+/** Story: Confirm my details and join / A Peon invitation stays in memory until the verified account agrees to join (spec/browserJoin.md) */
+//@ pure
+export function browserInvitationKeepsAccount(beforeAccount: number, afterAccount: number): boolean {
+  return beforeAccount === 0 || beforeAccount === afterAccount;
+}
+
+/** Story: Confirm my details and join / A Peon invitation stays in memory until the verified account agrees to join (spec/browserJoin.md) */
+//@ pure
+export function browserInvitationMayRetry(joinAnswer: JoinOutcome): boolean {
+  return joinAnswer === "JoinFailed";
+}
+
+/** Story: Confirm my details and join / A Peon invitation stays in memory until the verified account agrees to join (spec/browserJoin.md) */
+//@ pure
+export function lawBrowserInvitationNeedsCleanConsentedAccount(boundAccount: boolean, addressClean: boolean, consented: boolean): boolean {
+  //@ ensures \result === true
+  return !browserInvitationMaySubmit(boundAccount, addressClean, consented) || (boundAccount && addressClean && consented);
+}
+
+/** Story: Confirm my details and join / A Peon invitation stays in memory until the verified account agrees to join (spec/browserJoin.md) */
+//@ pure
+export function lawBrowserInvitationCannotRideAnotherAccount(beforeAccount: number, afterAccount: number): boolean {
+  //@ ensures \result === true
+  return !(beforeAccount > 0 && beforeAccount !== afterAccount) || !browserInvitationKeepsAccount(beforeAccount, afterAccount);
+}
+
+/** Story: Confirm my details and join / Profile values never pass from one account to another (spec/browserJoin.md) */
 //@ pure
 export function stepFormClearedWhenAccountLeaves(before: JoinPage, after: JoinPage): boolean {
   return !(before.account > 0 && after.account !== before.account) || !after.formHasValues;
 }
 
-/** Story: Confirm my details and join / Profile values never pass from one account to another (spec/browserJoin.md:377) */
+/** Story: Confirm my details and join / Profile values never pass from one account to another (spec/browserJoin.md) */
 //@ pure
 export function stepSignInKeepsFormValues(before: JoinPage, via: string, after: JoinPage): boolean {
   return !(before.account === 0 && (via === "changeNumber" || via === "resendCode" || via === "answerVerify" || via === "recheck")) || after.formHasValues === before.formHasValues;
 }
 
-/** Story: Confirm my details and join / The done step comes only from a saved profile with consent (spec/browserJoin.md:391) */
+/** Story: Confirm my details and join / The done step comes only from a saved profile with consent (spec/browserJoin.md) */
 //@ pure
 export function agentReturnShown(page: JoinPage): boolean {
   return page.screen === "Done" && page.viaAgent;
 }
 
-/** Story: Confirm my details and join / The done step comes only from a saved profile with consent (spec/browserJoin.md:391) */
+/** Story: Confirm my details and join / The done step comes only from a saved profile with consent (spec/browserJoin.md) */
 //@ pure
 export function alwaysDoneNeedsConsent(page: JoinPage): boolean {
   return !(page.screen === "Done") || (page.consented && page.account > 0 && page.notice === "NoNotice");
 }
 
-/** Story: Confirm my details and join / The done step comes only from a saved profile with consent (spec/browserJoin.md:391) */
+/** Story: Confirm my details and join / The done step comes only from a saved profile with consent (spec/browserJoin.md) */
 //@ pure
 export function stepDoneFollowsSavedProfile(before: JoinPage, via: string, after: JoinPage): boolean {
   return !(after.screen === "Done" && before.screen !== "Done") || (via === "answerJoin" && before.pending === "SavingProfile");
 }
 
-/** Story: Send each form only once / A form that waits for an answer refuses a second submit (spec/browserJoin.md:409) */
+/** Story: Send each form only once / A form that waits for an answer refuses a second submit (spec/browserJoin.md) */
 //@ pure
 export function formBusy(page: JoinPage): boolean {
   return page.pending !== "Idle";
 }
 
-/** Story: Send each form only once / A form that waits for an answer refuses a second submit (spec/browserJoin.md:409) */
+/** Story: Send each form only once / A form that waits for an answer refuses a second submit (spec/browserJoin.md) */
 //@ pure
 export function stepOneRequestAtATime(before: JoinPage, after: JoinPage): boolean {
   return !(after.pending !== "Idle" && after.pending !== before.pending) || before.pending === "Idle";
 }
 
-/** Story: Send each form only once / A form that waits for an answer refuses a second submit (spec/browserJoin.md:409) */
+/** Story: Send each form only once / A form that waits for an answer refuses a second submit (spec/browserJoin.md) */
 //@ pure
 export function alwaysRequestBelongsToItsStep(page: JoinPage): boolean {
   return (!(page.pending === "StartingCode") || (page.screen === "Phone" && page.auth === "OtpMode")) && (!(page.pending === "OpeningCloud") || (page.screen === "Phone" && page.auth === "CloudMode")) && (!(page.pending === "VerifyingCode" || page.pending === "ResendingCode") || (page.screen === "Code" && page.auth === "OtpMode")) && (!(page.pending === "SavingProfile") || (page.screen === "Profile" && page.consented));
 }
 
-/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md:430) */
+/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
 //@ pure
 export function sometimesJoined(page: JoinPage): boolean {
   return page.screen === "Done";
 }
 
-/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md:430) */
+/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
 //@ pure
 export function sometimesJoinedWithoutAgentLine(page: JoinPage): boolean {
   return page.screen === "Done" && !page.viaAgent;
 }
 
-/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md:430) */
+/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
 //@ pure
 export function sometimesAlreadyMember(page: JoinPage): boolean {
   return page.screen === "Member";
 }
 
-/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md:430) */
+/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
 //@ pure
 export function sometimesUnderAge(page: JoinPage): boolean {
   return page.screen === "Blocked" && page.reason === "UnderAge";
 }
 
-/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md:430) */
+/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
 //@ pure
 export function sometimesInviteOnly(page: JoinPage): boolean {
   return page.screen === "Blocked" && page.reason === "InviteOnly";
 }
 
-/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md:430) */
+/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
 //@ pure
 export function sometimesInReview(page: JoinPage): boolean {
   return page.screen === "Blocked" && page.reason === "InReview";
 }
 
-/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md:430) */
+/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
 //@ pure
 export function sometimesNotValid(page: JoinPage): boolean {
   return page.screen === "Blocked" && page.reason === "NotValid";
 }
 
-/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md:430) */
+/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
 //@ pure
 export function sometimesOtherReason(page: JoinPage): boolean {
   return page.screen === "Blocked" && page.reason === "OtherReason";
 }
 
-/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md:430) */
+/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
 //@ pure
 export function sometimesCheckRejected(page: JoinPage): boolean {
   return page.screen === "Phone" && page.formError === "CheckRejected";
 }
 
-/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md:430) */
+/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
 //@ pure
 export function sometimesCodeFormat(page: JoinPage): boolean {
   return page.formError === "CodeFormat";
 }
 
-/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md:430) */
+/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
 //@ pure
 export function sometimesProfileIncomplete(page: JoinPage): boolean {
   return page.formError === "ProfileIncomplete";
 }
 
-/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md:430) */
+/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
 //@ pure
 export function sometimesRequestFailed(page: JoinPage): boolean {
   return page.formError === "RequestFailed";
 }
 
-/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md:430) */
+/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
 //@ pure
 export function sometimesLeftForCloud(page: JoinPage): boolean {
   return page.screen === "LeftForCloud";
 }
 
-/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md:430) */
+/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
 //@ pure
 export function sometimesCloudUnavailable(page: JoinPage): boolean {
   return page.formError === "CloudUnavailable";
 }
 
-/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md:430) */
+/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
 //@ pure
 export function sometimesApiUnreachable(page: JoinPage): boolean {
   return page.notice === "ApiUnreachable";
 }
 
-/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md:430) */
+/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
 //@ pure
 export function sometimesSessionEnded(page: JoinPage): boolean {
   return page.screen === "Phone" && page.notice === "SessionEnded";
 }
 
-/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md:430) */
+/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
 //@ pure
 export function sometimesAccountChanged(page: JoinPage): boolean {
   return page.screen !== "Checking" && page.notice === "AccountChanged";
 }
 
-/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md:430) */
+/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
 //@ pure
 export function sometimesInvalidPhone(page: JoinPage): boolean {
   return page.formError === "InvalidPhone";
 }
 
-/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md:430) */
+/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
 //@ pure
 export function sometimesCheckPending(page: JoinPage): boolean {
   return page.formError === "CheckPending";
 }
 
-/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md:430) */
+/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
 //@ pure
 export function sometimesCheckFailed(page: JoinPage): boolean {
   return page.formError === "CheckFailed";
 }
 
-/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md:430) */
+/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
 //@ pure
 export function sometimesCheckAgain(page: JoinPage): boolean {
   return page.screen === "Phone" && page.formError === "CheckAgain";
 }
 
-/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md:430) */
+/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
 //@ pure
 export function sometimesRateLimited(page: JoinPage): boolean {
   return page.formError === "RateLimited";
 }
 
-/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md:430) */
+/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
 //@ pure
 export function sometimesInvalidCode(page: JoinPage): boolean {
   return page.formError === "InvalidCode";
 }
 
-/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md:430) */
+/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
 //@ pure
 export function sometimesNewCodeSent(page: JoinPage): boolean {
   return page.formError === "NewCodeSent";
 }
 
-/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md:430) */
+/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
 //@ pure
 export function sometimesPrefilledProfile(page: JoinPage): boolean {
   return page.screen === "Profile" && page.formHasValues;
 }
 
-/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md:430) */
+/** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */
 //@ pure
 export function sometimesJoinedFromAgent(page: JoinPage): boolean {
   return agentReturnShown(page);
@@ -1029,7 +1067,7 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "recheck" && is_SessionView(raw.view)) return { type: "recheck", view: ({ result: raw.view.result, account: raw.view.account, reason: raw.view.reason }) };
   if (raw.type === "editProfile") return { type: "editProfile" };
   if (raw.type === "submitProfile" && is_ProfileForm(raw.form)) return { type: "submitProfile", form: ({ nameGiven: raw.form.nameGiven, age: raw.form.age, consentTicked: raw.form.consentTicked }) };
-  if (raw.type === "answerJoin" && (raw.joinAnswer === "JoinedOk" || raw.joinAnswer === "JoinUnderAge" || raw.joinAnswer === "JoinInviteOnly" || raw.joinAnswer === "JoinReview" || raw.joinAnswer === "JoinAccountChanged" || raw.joinAnswer === "JoinUnauthorized" || raw.joinAnswer === "JoinFailed")) return { type: "answerJoin", joinAnswer: raw.joinAnswer };
+  if (raw.type === "answerJoin" && (raw.joinAnswer === "JoinedOk" || raw.joinAnswer === "JoinUnderAge" || raw.joinAnswer === "JoinInviteOnly" || raw.joinAnswer === "JoinReview" || raw.joinAnswer === "JoinAccountChanged" || raw.joinAnswer === "JoinUnauthorized" || raw.joinAnswer === "JoinInvalidInvitation" || raw.joinAnswer === "JoinFailed")) return { type: "answerJoin", joinAnswer: raw.joinAnswer };
   return undefined;
 }
 

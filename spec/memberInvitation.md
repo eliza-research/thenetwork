@@ -1,5 +1,7 @@
 # Member invitation
 
+The default is a forwarding link. [Expected invitation delivery](expectedMemberInvitation.md) covers the optional confirmed service send.
+
 ## Story: Forward an invitation for someone I know
 
 > As a member, I want a link I can forward to a person I can vouch for so they can decide whether to join.

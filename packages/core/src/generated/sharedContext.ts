@@ -1,11 +1,11 @@
 // GENERATED from spec/sharedContext.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md:9) */
+/** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md) */
 export type ContextMode = "ModeOpen" | "ModeBusy" | "ModeTraveling" | "ModePaused" | "ModeUnavailable";
-/** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md:9) */
+/** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md) */
 export type ContextPhase = "CheckingAccount" | "CheckingMembership" | "CheckingMember" | "CheckingLabels" | "CheckingFacets" | "ContextReady" | "Withheld";
-/** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md:9) */
+/** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md) */
 export interface SharedContext { phase: ContextPhase }
 
 /** One variant per transition in the spec. */
@@ -16,11 +16,11 @@ export type Event =
   | { type: "checkLabels"; labelsSafe: boolean }
   | { type: "checkFacets"; facetCount: number; oversized: boolean };
 
-/** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md:45) */
+/** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md) */
 export const contextFacetLimit: number = 50;
-/** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md:45) */
+/** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md) */
 export const contextFacetSizeLimit: number = 300;
-/** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md:9) */
+/** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md) */
 export const initial: SharedContext = { phase: "CheckingAccount" };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -29,102 +29,102 @@ export function inv(current: SharedContext): boolean {
   return true;
 }
 
-/** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md:9) */
+/** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md) */
 //@ pure
 export function contextMode(windowActive: boolean, windowMode: string, baseMode: string): ContextMode {
   return windowActive ? (windowMode === "open" ? "ModeOpen" : (windowMode === "busy" ? "ModeBusy" : (windowMode === "traveling" ? "ModeTraveling" : (windowMode === "paused" ? "ModePaused" : "ModeUnavailable")))) : (baseMode === "normal" || baseMode === "open" || baseMode === "receiving" ? "ModeOpen" : (baseMode === "quiet" ? "ModeBusy" : (baseMode === "paused" ? "ModePaused" : "ModeUnavailable")));
 }
 
-/** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md:9) */
+/** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md) */
 //@ pure
 export function canCheckAccount(context: SharedContext): boolean {
   return context.phase === "CheckingAccount";
 }
 
-/** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md:9) */
+/** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md) */
 //@ pure
 export function checkAccount(context: SharedContext, canReadAccount: boolean): SharedContext {
   //@ ensures (inv(context) && canCheckAccount(context)) ==> stepContextRequiresFacetChecks(context, "checkAccount", \result)
   return { phase: canReadAccount ? "CheckingMembership" : "Withheld" };
 }
 
-/** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md:9) */
+/** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md) */
 //@ pure
 export function canCheckMembership(context: SharedContext): boolean {
   return context.phase === "CheckingMembership";
 }
 
-/** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md:9) */
+/** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md) */
 //@ pure
 export function checkMembership(context: SharedContext, exactMember: boolean): SharedContext {
   //@ ensures (inv(context) && canCheckMembership(context)) ==> stepContextRequiresFacetChecks(context, "checkMembership", \result)
   return { phase: exactMember ? "CheckingMember" : "Withheld" };
 }
 
-/** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md:9) */
+/** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md) */
 //@ pure
 export function canCheckMember(context: SharedContext): boolean {
   return context.phase === "CheckingMember";
 }
 
-/** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md:9) */
+/** Story: Let my agent read the safe context for my current account / Only the canonical member of the requested app can receive context (spec/sharedContext.md) */
 //@ pure
 export function checkMember(context: SharedContext, memberAndModeExist: boolean): SharedContext {
   //@ ensures (inv(context) && canCheckMember(context)) ==> stepContextRequiresFacetChecks(context, "checkMember", \result)
   return { phase: memberAndModeExist ? "CheckingLabels" : "Withheld" };
 }
 
-/** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md:45) */
+/** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md) */
 //@ pure
 export function contextFacetEligible(own: boolean, shareable: boolean, confirmed: boolean, sensitive: boolean, withinValidity: boolean): boolean {
   return own && shareable && confirmed && !sensitive && withinValidity;
 }
 
-/** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md:45) */
+/** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md) */
 //@ pure
 export function canCheckLabels(context: SharedContext): boolean {
   return context.phase === "CheckingLabels";
 }
 
-/** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md:45) */
+/** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md) */
 //@ pure
 export function checkLabels(context: SharedContext, labelsSafe: boolean): SharedContext {
   //@ ensures (inv(context) && canCheckLabels(context)) ==> stepContextRequiresFacetChecks(context, "checkLabels", \result)
   return { phase: labelsSafe ? "CheckingFacets" : "Withheld" };
 }
 
-/** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md:45) */
+/** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md) */
 //@ pure
 export function canCheckFacets(context: SharedContext): boolean {
   return context.phase === "CheckingFacets";
 }
 
-/** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md:45) */
+/** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md) */
 //@ pure
 export function checkFacets(context: SharedContext, facetCount: number, oversized: boolean): SharedContext {
   //@ ensures (inv(context) && canCheckFacets(context)) ==> stepContextRequiresFacetChecks(context, "checkFacets", \result)
   return { phase: facetCount <= contextFacetLimit && !oversized ? "ContextReady" : "Withheld" };
 }
 
-/** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md:45) */
+/** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md) */
 //@ pure
 export function stepContextRequiresFacetChecks(before: SharedContext, via: string, after: SharedContext): boolean {
   return !(after.phase === "ContextReady") || (before.phase === "CheckingFacets" && via === "checkFacets");
 }
 
-/** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md:45) */
+/** Story: Let my agent read the safe context for my current account / Check the public labels and each confirmed shareable fact (spec/sharedContext.md) */
 //@ pure
 export function sometimesCanReturnContext(context: SharedContext): boolean {
   return context.phase === "ContextReady";
 }
 
-/** Story: Let my agent read the safe context for my current account / Matching context requires local presence and eligible age (spec/sharedContext.md:70) */
+/** Story: Let my agent read the safe context for my current account / Matching context requires local presence and eligible age (spec/sharedContext.md) */
 //@ pure
 export function contextSinglePlayer(present: boolean, ageEligible: boolean): boolean {
   return !(present && ageEligible);
 }
 
-/** Story: Let my agent read the safe context for my current account / Matching context requires local presence and eligible age (spec/sharedContext.md:70) */
+/** Story: Let my agent read the safe context for my current account / Matching context requires local presence and eligible age (spec/sharedContext.md) */
 //@ pure
 export function lawIneligibleAgeIsSinglePlayer(present: boolean): boolean {
   //@ ensures \result === true

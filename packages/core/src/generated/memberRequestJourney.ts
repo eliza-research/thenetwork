@@ -2,13 +2,13 @@
 //@ backend dafny
 import { type MemberRequestPhase as memberRequest_MemberRequestPhase, type MemberRequestFlow as memberRequest_MemberRequestFlow, immediateRetryMs as memberRequest_immediateRetryMs, scheduledRetryMs as memberRequest_scheduledRetryMs, requesterConfirmCooldownMs as memberRequest_requesterConfirmCooldownMs, scheduledRequestLifetimeMs as memberRequest_scheduledRequestLifetimeMs, learnDuringRequestIntake as memberRequest_learnDuringRequestIntake, sameStandingRequest as memberRequest_sameStandingRequest, requestInReuseWindow as memberRequest_requestInReuseWindow, memberRequestWithdrawable as memberRequest_memberRequestWithdrawable, closeOpportunityForRequestWithdrawal as memberRequest_closeOpportunityForRequestWithdrawal, waitingMemberRequest as memberRequest_waitingMemberRequest, requesterConfirmationAllowsRetry as memberRequest_requesterConfirmationAllowsRetry, requestDesireWithdrawn as memberRequest_requestDesireWithdrawn, primeMemberRequest as memberRequest_primeMemberRequest, initial as memberRequest_initial, canCheckRequestAdmission as memberRequest_canCheckRequestAdmission, checkRequestAdmission as memberRequest_checkRequestAdmission, canRouteRepeatedRequest as memberRequest_canRouteRepeatedRequest, routeRepeatedRequest as memberRequest_routeRepeatedRequest, canRouteNewRequest as memberRequest_canRouteNewRequest, routeNewRequest as memberRequest_routeNewRequest, lawDirectRequestPassesInterview as memberRequest_lawDirectRequestPassesInterview, canApplyRequestWithdrawal as memberRequest_canApplyRequestWithdrawal, applyRequestWithdrawal as memberRequest_applyRequestWithdrawal, immediateRequestRetryReady as memberRequest_immediateRequestRetryReady, scheduledRequestRetryReady as memberRequest_scheduledRequestRetryReady, canRouteImmediateRequestRetry as memberRequest_canRouteImmediateRequestRetry, routeImmediateRequestRetry as memberRequest_routeImmediateRequestRetry, canConsiderScheduledRequestRetry as memberRequest_canConsiderScheduledRequestRetry, considerScheduledRequestRetry as memberRequest_considerScheduledRequestRetry, canRouteScheduledRequestRetry as memberRequest_canRouteScheduledRequestRetry, routeScheduledRequestRetry as memberRequest_routeScheduledRequestRetry, canReadRequestCandidates as memberRequest_canReadRequestCandidates, readRequestCandidates as memberRequest_readRequestCandidates, lawWithdrawalPreventsRequestPriming as memberRequest_lawWithdrawalPreventsRequestPriming, stepRequestReviewFollowsSearch as memberRequest_stepRequestReviewFollowsSearch, sometimesReviewsMemberRequest as memberRequest_sometimesReviewsMemberRequest, sometimesFindsNoRequestCandidate as memberRequest_sometimesFindsNoRequestCandidate, sometimesWithdrawsMemberRequest as memberRequest_sometimesWithdrawsMemberRequest } from "./memberRequest.ts";
 
-/** Story: Keep control of my request for an introduction / A repeat ask keeps the current request (spec/memberRequestJourney.md:9) */
+/** Story: Keep control of my request for an introduction / A repeat ask keeps the current request (spec/memberRequestJourney.md) */
 export type RequestEffect = "ReviewQueued" | "ReviewCleared" | "ParticipantContacted";
-/** Story: Keep control of my request for an introduction / A repeat ask keeps the current request (spec/memberRequestJourney.md:9) */
+/** Story: Keep control of my request for an introduction / A repeat ask keeps the current request (spec/memberRequestJourney.md) */
 export type RequestView = "NoRequest" | "WaitingForCandidate" | "PendingHumanReview" | "WithdrawnRequest";
-/** Story: Keep control of my request for an introduction / A repeat ask keeps the current request (spec/memberRequestJourney.md:9) */
+/** Story: Keep control of my request for an introduction / A repeat ask keeps the current request (spec/memberRequestJourney.md) */
 export interface MemberRequestJourney { candidateAvailable: boolean; request: RequestView; requestCount: number; attempts: number }
-/** Story: Keep control of my request for an introduction / A repeat ask keeps the current request (spec/memberRequestJourney.md:9) */
+/** Story: Keep control of my request for an introduction / A repeat ask keeps the current request (spec/memberRequestJourney.md) */
 export interface RequestUpdate { state: MemberRequestJourney; out: RequestEffect[] }
 
 /** One variant per transition in the spec. */
@@ -18,7 +18,7 @@ export type Event =
   | { type: "restartJourney" }
   | { type: "textWithdrawal" };
 
-/** Story: Keep control of my request for an introduction / A repeat ask keeps the current request (spec/memberRequestJourney.md:9) */
+/** Story: Keep control of my request for an introduction / A repeat ask keeps the current request (spec/memberRequestJourney.md) */
 export const initial: MemberRequestJourney = { candidateAvailable: false, request: "NoRequest", requestCount: 0, attempts: 0 };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -27,106 +27,106 @@ export function inv(current: MemberRequestJourney): boolean {
   return true;
 }
 
-/** Story: Keep control of my request for an introduction / A repeat ask keeps the current request (spec/memberRequestJourney.md:9) */
+/** Story: Keep control of my request for an introduction / A repeat ask keeps the current request (spec/memberRequestJourney.md) */
 //@ pure
 export function sometimesWaits(s: MemberRequestJourney): boolean {
   return s.request === "WaitingForCandidate";
 }
 
-/** Story: Keep control of my request for an introduction / A repeat ask keeps the current request (spec/memberRequestJourney.md:9) */
+/** Story: Keep control of my request for an introduction / A repeat ask keeps the current request (spec/memberRequestJourney.md) */
 //@ pure
 export function sometimesRequestsReview(s: MemberRequestJourney): boolean {
   return s.request === "PendingHumanReview";
 }
 
-/** Story: Keep control of my request for an introduction / A repeat ask keeps the current request (spec/memberRequestJourney.md:9) */
+/** Story: Keep control of my request for an introduction / A repeat ask keeps the current request (spec/memberRequestJourney.md) */
 //@ pure
 export function offerFor(candidateAvailable: boolean): RequestView {
   return candidateAvailable ? "PendingHumanReview" : "WaitingForCandidate";
 }
 
-/** Story: Keep control of my request for an introduction / A repeat ask keeps the current request (spec/memberRequestJourney.md:9) */
+/** Story: Keep control of my request for an introduction / A repeat ask keeps the current request (spec/memberRequestJourney.md) */
 //@ pure
 export function effectsFor(candidateAvailable: boolean): RequestEffect[] {
   return candidateAvailable ? (["ReviewQueued"] as RequestEffect[]) : ([] as RequestEffect[]);
 }
 
-/** Story: Keep control of my request for an introduction / A repeat ask keeps the current request (spec/memberRequestJourney.md:9) */
+/** Story: Keep control of my request for an introduction / A repeat ask keeps the current request (spec/memberRequestJourney.md) */
 //@ pure
 export function canTextRequest(s: MemberRequestJourney): boolean {
   return true;
 }
 
-/** Story: Keep control of my request for an introduction / A repeat ask keeps the current request (spec/memberRequestJourney.md:9) */
+/** Story: Keep control of my request for an introduction / A repeat ask keeps the current request (spec/memberRequestJourney.md) */
 //@ pure
 export function textRequest(s: MemberRequestJourney): RequestUpdate {
   //@ ensures (inv(s) && canTextRequest(s)) ==> stepAWithdrawnRequestNeedsNewAsk(s, "textRequest", \result.state)
   return s.request === "WaitingForCandidate" || s.request === "PendingHumanReview" ? ({ state: s, out: ([] as RequestEffect[]) } as RequestUpdate) : ({ state: ({ ...s, request: offerFor(s.candidateAvailable), requestCount: exact_memberRequestJourney(s.requestCount + 1), attempts: 1 } as MemberRequestJourney), out: effectsFor(s.candidateAvailable) } as RequestUpdate);
 }
 
-/** Story: Keep control of my request for an introduction / A newly available candidate can take the waiting search to review (spec/memberRequestJourney.md:36) */
+/** Story: Keep control of my request for an introduction / A newly available candidate can take the waiting search to review (spec/memberRequestJourney.md) */
 //@ pure
 export function canCandidateArrives(s: MemberRequestJourney): boolean {
   return true;
 }
 
-/** Story: Keep control of my request for an introduction / A newly available candidate can take the waiting search to review (spec/memberRequestJourney.md:36) */
+/** Story: Keep control of my request for an introduction / A newly available candidate can take the waiting search to review (spec/memberRequestJourney.md) */
 //@ pure
 export function sometimesRetriesExistingRequest(s: MemberRequestJourney): boolean {
   return s.request === "PendingHumanReview" && s.requestCount === 1 && s.attempts === 2;
 }
 
-/** Story: Keep control of my request for an introduction / A newly available candidate can take the waiting search to review (spec/memberRequestJourney.md:36) */
+/** Story: Keep control of my request for an introduction / A newly available candidate can take the waiting search to review (spec/memberRequestJourney.md) */
 //@ pure
 export function candidateArrives(s: MemberRequestJourney): RequestUpdate {
   //@ ensures (inv(s) && canCandidateArrives(s)) ==> stepAWithdrawnRequestNeedsNewAsk(s, "candidateArrives", \result.state)
   return s.candidateAvailable ? ({ state: s, out: ([] as RequestEffect[]) } as RequestUpdate) : (s.request === "WaitingForCandidate" ? ({ state: ({ ...s, candidateAvailable: true, request: "PendingHumanReview", attempts: exact_memberRequestJourney(s.attempts + 1) } as MemberRequestJourney), out: (["ReviewQueued"] as RequestEffect[]) } as RequestUpdate) : ({ state: ({ ...s, candidateAvailable: true } as MemberRequestJourney), out: ([] as RequestEffect[]) } as RequestUpdate));
 }
 
-/** Story: Keep control of my request for an introduction / Withdrawal clears a waiting review and remains closed after restart (spec/memberRequestJourney.md:51) */
+/** Story: Keep control of my request for an introduction / Withdrawal clears a waiting review and remains closed after restart (spec/memberRequestJourney.md) */
 //@ pure
 export function canTextWithdrawal(s: MemberRequestJourney): boolean {
   return true;
 }
 
-/** Story: Keep control of my request for an introduction / Withdrawal clears a waiting review and remains closed after restart (spec/memberRequestJourney.md:51) */
+/** Story: Keep control of my request for an introduction / Withdrawal clears a waiting review and remains closed after restart (spec/memberRequestJourney.md) */
 //@ pure
 export function canRestartJourney(s: MemberRequestJourney): boolean {
   return true;
 }
 
-/** Story: Keep control of my request for an introduction / Withdrawal clears a waiting review and remains closed after restart (spec/memberRequestJourney.md:51) */
+/** Story: Keep control of my request for an introduction / Withdrawal clears a waiting review and remains closed after restart (spec/memberRequestJourney.md) */
 //@ pure
 export function sometimesWithdrawsRequest(s: MemberRequestJourney): boolean {
   return s.request === "WithdrawnRequest";
 }
 
-/** Story: Keep control of my request for an introduction / Withdrawal clears a waiting review and remains closed after restart (spec/memberRequestJourney.md:51) */
+/** Story: Keep control of my request for an introduction / Withdrawal clears a waiting review and remains closed after restart (spec/memberRequestJourney.md) */
 //@ pure
 export function sometimesWithdrawsAfterRetry(s: MemberRequestJourney): boolean {
   return s.request === "WithdrawnRequest" && s.attempts === 2;
 }
 
-/** Story: Keep control of my request for an introduction / Withdrawal clears a waiting review and remains closed after restart (spec/memberRequestJourney.md:51) */
+/** Story: Keep control of my request for an introduction / Withdrawal clears a waiting review and remains closed after restart (spec/memberRequestJourney.md) */
 //@ pure
 export function sometimesReopensSearch(s: MemberRequestJourney): boolean {
   return s.requestCount > 1 && s.request === "PendingHumanReview";
 }
 
-/** Story: Keep control of my request for an introduction / Withdrawal clears a waiting review and remains closed after restart (spec/memberRequestJourney.md:51) */
+/** Story: Keep control of my request for an introduction / Withdrawal clears a waiting review and remains closed after restart (spec/memberRequestJourney.md) */
 //@ pure
 export function stepAWithdrawnRequestNeedsNewAsk(before: MemberRequestJourney, via: string, after: MemberRequestJourney): boolean {
   return !(before.request === "WithdrawnRequest" && after.request !== "WithdrawnRequest") || via === "textRequest";
 }
 
-/** Story: Keep control of my request for an introduction / Withdrawal clears a waiting review and remains closed after restart (spec/memberRequestJourney.md:51) */
+/** Story: Keep control of my request for an introduction / Withdrawal clears a waiting review and remains closed after restart (spec/memberRequestJourney.md) */
 //@ pure
 export function restartJourney(s: MemberRequestJourney): RequestUpdate {
   //@ ensures (inv(s) && canRestartJourney(s)) ==> stepAWithdrawnRequestNeedsNewAsk(s, "restartJourney", \result.state)
   return { state: s, out: ([] as RequestEffect[]) };
 }
 
-/** Story: Keep control of my request for an introduction / Withdrawal clears a waiting review and remains closed after restart (spec/memberRequestJourney.md:51) */
+/** Story: Keep control of my request for an introduction / Withdrawal clears a waiting review and remains closed after restart (spec/memberRequestJourney.md) */
 //@ pure
 export function textWithdrawal(s: MemberRequestJourney): RequestUpdate {
   //@ ensures (inv(s) && canTextWithdrawal(s)) ==> stepAWithdrawnRequestNeedsNewAsk(s, "textWithdrawal", \result.state)

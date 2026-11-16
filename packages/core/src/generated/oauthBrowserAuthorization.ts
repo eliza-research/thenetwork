@@ -1,19 +1,19 @@
 // GENERATED from spec/oauthBrowserAuthorization.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Approve access in the browser after proving my phone / A live authorization request is bound to one browser in one app (spec/oauthBrowserAuthorization.md:9) */
+/** Story: Approve access in the browser after proving my phone / A live authorization request is bound to one browser in one app (spec/oauthBrowserAuthorization.md) */
 export type BrowserPhase = "BrowserStarting" | "BrowserExpired" | "CheckingClient" | "BrowserBound" | "ShowingPhone" | "HandingOffToCloud" | "StartingOtp" | "ShowingCode" | "VerifyingOtp" | "RetryingOtp" | "CheckingIdentity" | "ShowingConsent" | "IdentityDenied" | "CheckingConsentOwner" | "CheckingCloudGrant" | "ConsentReady" | "ConsentDeclined" | "OwnerChanged" | "CloudDenied" | "SessionRetry" | "AlreadyVerified";
-/** Story: Approve access in the browser after proving my phone / A live authorization request is bound to one browser in one app (spec/oauthBrowserAuthorization.md:9) */
+/** Story: Approve access in the browser after proving my phone / A live authorization request is bound to one browser in one app (spec/oauthBrowserAuthorization.md) */
 export interface BrowserFlow { phase: BrowserPhase; explicitlyApproved: boolean }
-/** Story: Approve access in the browser after proving my phone / An existing session leads to consent or a new sign-in starts (spec/oauthBrowserAuthorization.md:35) */
+/** Story: Approve access in the browser after proving my phone / An existing session leads to consent or a new sign-in starts (spec/oauthBrowserAuthorization.md) */
 export type EntrySession = "SignedIn" | "SignedOut" | "SessionUnavailable";
-/** Story: Approve access in the browser after proving my phone / The stored page determines what a form can do (spec/oauthBrowserAuthorization.md:49) */
+/** Story: Approve access in the browser after proving my phone / The stored page determines what a form can do (spec/oauthBrowserAuthorization.md) */
 export type StoredPage = "PhonePage" | "CodePage" | "ConsentPage";
-/** Story: Approve access in the browser after proving my phone / The stored page determines what a form can do (spec/oauthBrowserAuthorization.md:49) */
+/** Story: Approve access in the browser after proving my phone / The stored page determines what a form can do (spec/oauthBrowserAuthorization.md) */
 export type BrowserForm = "PhoneForm" | "CodeForm" | "ConsentForm" | "CancelForm" | "CloudReturn";
-/** Story: Approve access in the browser after proving my phone / Only a successful challenge advances phone verification (spec/oauthBrowserAuthorization.md:68) */
+/** Story: Approve access in the browser after proving my phone / Only a successful challenge advances phone verification (spec/oauthBrowserAuthorization.md) */
 export type IdentityStatus = "IdentityPermitted" | "IdentityRejected" | "IdentityUnavailable";
-/** Story: Approve access in the browser after proving my phone / Explicit approval rechecks the owner and the app's required Cloud authority (spec/oauthBrowserAuthorization.md:88) */
+/** Story: Approve access in the browser after proving my phone / Explicit approval rechecks the owner and the app's required Cloud authority (spec/oauthBrowserAuthorization.md) */
 export type ConsentCheck = "CheckAccepted" | "CheckRejected" | "CheckUnavailable";
 
 /** One variant per transition in the spec. */
@@ -28,7 +28,7 @@ export type Event =
   | { type: "readConsentOwner"; verdict: ConsentCheck }
   | { type: "readConsentAuthority"; verdict: ConsentCheck };
 
-/** Story: Approve access in the browser after proving my phone / A live authorization request is bound to one browser in one app (spec/oauthBrowserAuthorization.md:9) */
+/** Story: Approve access in the browser after proving my phone / A live authorization request is bound to one browser in one app (spec/oauthBrowserAuthorization.md) */
 export const initial: BrowserFlow = { phase: "BrowserStarting", explicitlyApproved: false };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -37,19 +37,19 @@ export function inv(current: BrowserFlow): boolean {
   return alwaysIssuanceNeedsExplicitConsent(current);
 }
 
-/** Story: Approve access in the browser after proving my phone / A live authorization request is bound to one browser in one app (spec/oauthBrowserAuthorization.md:9) */
+/** Story: Approve access in the browser after proving my phone / A live authorization request is bound to one browser in one app (spec/oauthBrowserAuthorization.md) */
 //@ pure
 export function mayCompareBrowserDigest(sameApp: boolean, liveRequest: boolean, cookiePresent: boolean): boolean {
   return sameApp && liveRequest && cookiePresent;
 }
 
-/** Story: Approve access in the browser after proving my phone / A live authorization request is bound to one browser in one app (spec/oauthBrowserAuthorization.md:9) */
+/** Story: Approve access in the browser after proving my phone / A live authorization request is bound to one browser in one app (spec/oauthBrowserAuthorization.md) */
 //@ pure
 export function canBindBrowser(flow: BrowserFlow): boolean {
   return flow.phase === "BrowserStarting";
 }
 
-/** Story: Approve access in the browser after proving my phone / A live authorization request is bound to one browser in one app (spec/oauthBrowserAuthorization.md:9) */
+/** Story: Approve access in the browser after proving my phone / A live authorization request is bound to one browser in one app (spec/oauthBrowserAuthorization.md) */
 //@ pure
 export function bindBrowser(flow: BrowserFlow, matchesDigest: boolean): BrowserFlow {
   //@ ensures (inv(flow) && canBindBrowser(flow)) ==> alwaysIssuanceNeedsExplicitConsent(\result)
@@ -57,13 +57,13 @@ export function bindBrowser(flow: BrowserFlow, matchesDigest: boolean): BrowserF
   return { ...flow, phase: matchesDigest ? "CheckingClient" : "BrowserExpired" };
 }
 
-/** Story: Approve access in the browser after proving my phone / A live authorization request is bound to one browser in one app (spec/oauthBrowserAuthorization.md:9) */
+/** Story: Approve access in the browser after proving my phone / A live authorization request is bound to one browser in one app (spec/oauthBrowserAuthorization.md) */
 //@ pure
 export function canReadBrowserClient(flow: BrowserFlow): boolean {
   return flow.phase === "CheckingClient";
 }
 
-/** Story: Approve access in the browser after proving my phone / A live authorization request is bound to one browser in one app (spec/oauthBrowserAuthorization.md:9) */
+/** Story: Approve access in the browser after proving my phone / A live authorization request is bound to one browser in one app (spec/oauthBrowserAuthorization.md) */
 //@ pure
 export function readBrowserClient(flow: BrowserFlow, clientExists: boolean): BrowserFlow {
   //@ ensures (inv(flow) && canReadBrowserClient(flow)) ==> alwaysIssuanceNeedsExplicitConsent(\result)
@@ -71,13 +71,13 @@ export function readBrowserClient(flow: BrowserFlow, clientExists: boolean): Bro
   return { ...flow, phase: clientExists ? "BrowserBound" : "BrowserExpired" };
 }
 
-/** Story: Approve access in the browser after proving my phone / An existing session leads to consent or a new sign-in starts (spec/oauthBrowserAuthorization.md:35) */
+/** Story: Approve access in the browser after proving my phone / An existing session leads to consent or a new sign-in starts (spec/oauthBrowserAuthorization.md) */
 //@ pure
 export function canChooseEntry(flow: BrowserFlow): boolean {
   return flow.phase === "BrowserStarting";
 }
 
-/** Story: Approve access in the browser after proving my phone / An existing session leads to consent or a new sign-in starts (spec/oauthBrowserAuthorization.md:35) */
+/** Story: Approve access in the browser after proving my phone / An existing session leads to consent or a new sign-in starts (spec/oauthBrowserAuthorization.md) */
 //@ pure
 export function chooseEntry(flow: BrowserFlow, session: EntrySession, cloudRequired: boolean): BrowserFlow {
   //@ ensures (inv(flow) && canChooseEntry(flow)) ==> alwaysIssuanceNeedsExplicitConsent(\result)
@@ -85,13 +85,13 @@ export function chooseEntry(flow: BrowserFlow, session: EntrySession, cloudRequi
   return { ...flow, phase: session === "SessionUnavailable" ? "SessionRetry" : (session === "SignedIn" ? "CheckingIdentity" : (cloudRequired ? "HandingOffToCloud" : "ShowingPhone")) };
 }
 
-/** Story: Approve access in the browser after proving my phone / The stored page determines what a form can do (spec/oauthBrowserAuthorization.md:49) */
+/** Story: Approve access in the browser after proving my phone / The stored page determines what a form can do (spec/oauthBrowserAuthorization.md) */
 //@ pure
 export function canReadBrowserForm(flow: BrowserFlow): boolean {
   return flow.phase === "BrowserBound";
 }
 
-/** Story: Approve access in the browser after proving my phone / The stored page determines what a form can do (spec/oauthBrowserAuthorization.md:49) */
+/** Story: Approve access in the browser after proving my phone / The stored page determines what a form can do (spec/oauthBrowserAuthorization.md) */
 //@ pure
 export function readBrowserForm(flow: BrowserFlow, page: StoredPage, hasPhone: boolean, form: BrowserForm, approve: boolean): BrowserFlow {
   //@ ensures (inv(flow) && canReadBrowserForm(flow)) ==> alwaysIssuanceNeedsExplicitConsent(\result)
@@ -99,13 +99,13 @@ export function readBrowserForm(flow: BrowserFlow, page: StoredPage, hasPhone: b
   return form === "PhoneForm" ? ({ ...flow, phase: page === "ConsentPage" ? "AlreadyVerified" : "StartingOtp" } as BrowserFlow) : (form === "CodeForm" ? ({ ...flow, phase: page === "CodePage" && hasPhone ? "VerifyingOtp" : "BrowserExpired" } as BrowserFlow) : (form === "CloudReturn" ? ({ ...flow, phase: page === "PhonePage" ? "CheckingIdentity" : "BrowserExpired" } as BrowserFlow) : (form === "CancelForm" ? ({ ...flow, phase: "ConsentDeclined" } as BrowserFlow) : (page !== "ConsentPage" || !hasPhone ? ({ ...flow, phase: "BrowserExpired" } as BrowserFlow) : (approve ? ({ phase: "CheckingConsentOwner", explicitlyApproved: true } as BrowserFlow) : ({ ...flow, phase: "ConsentDeclined" } as BrowserFlow))))));
 }
 
-/** Story: Approve access in the browser after proving my phone / Only a successful challenge advances phone verification (spec/oauthBrowserAuthorization.md:68) */
+/** Story: Approve access in the browser after proving my phone / Only a successful challenge advances phone verification (spec/oauthBrowserAuthorization.md) */
 //@ pure
 export function canRecordOtpSend(flow: BrowserFlow): boolean {
   return flow.phase === "StartingOtp";
 }
 
-/** Story: Approve access in the browser after proving my phone / Only a successful challenge advances phone verification (spec/oauthBrowserAuthorization.md:68) */
+/** Story: Approve access in the browser after proving my phone / Only a successful challenge advances phone verification (spec/oauthBrowserAuthorization.md) */
 //@ pure
 export function recordOtpSend(flow: BrowserFlow, sent: boolean): BrowserFlow {
   //@ ensures (inv(flow) && canRecordOtpSend(flow)) ==> alwaysIssuanceNeedsExplicitConsent(\result)
@@ -113,13 +113,13 @@ export function recordOtpSend(flow: BrowserFlow, sent: boolean): BrowserFlow {
   return { ...flow, phase: sent ? "ShowingCode" : "ShowingPhone" };
 }
 
-/** Story: Approve access in the browser after proving my phone / Only a successful challenge advances phone verification (spec/oauthBrowserAuthorization.md:68) */
+/** Story: Approve access in the browser after proving my phone / Only a successful challenge advances phone verification (spec/oauthBrowserAuthorization.md) */
 //@ pure
 export function canRecordOtpVerification(flow: BrowserFlow): boolean {
   return flow.phase === "VerifyingOtp";
 }
 
-/** Story: Approve access in the browser after proving my phone / Only a successful challenge advances phone verification (spec/oauthBrowserAuthorization.md:68) */
+/** Story: Approve access in the browser after proving my phone / Only a successful challenge advances phone verification (spec/oauthBrowserAuthorization.md) */
 //@ pure
 export function recordOtpVerification(flow: BrowserFlow, verified: boolean): BrowserFlow {
   //@ ensures (inv(flow) && canRecordOtpVerification(flow)) ==> alwaysIssuanceNeedsExplicitConsent(\result)
@@ -127,13 +127,13 @@ export function recordOtpVerification(flow: BrowserFlow, verified: boolean): Bro
   return { ...flow, phase: verified ? "CheckingIdentity" : "RetryingOtp" };
 }
 
-/** Story: Approve access in the browser after proving my phone / Only a successful challenge advances phone verification (spec/oauthBrowserAuthorization.md:68) */
+/** Story: Approve access in the browser after proving my phone / Only a successful challenge advances phone verification (spec/oauthBrowserAuthorization.md) */
 //@ pure
 export function canRecordBrowserIdentity(flow: BrowserFlow): boolean {
   return flow.phase === "CheckingIdentity";
 }
 
-/** Story: Approve access in the browser after proving my phone / Only a successful challenge advances phone verification (spec/oauthBrowserAuthorization.md:68) */
+/** Story: Approve access in the browser after proving my phone / Only a successful challenge advances phone verification (spec/oauthBrowserAuthorization.md) */
 //@ pure
 export function recordBrowserIdentity(flow: BrowserFlow, identity: IdentityStatus): BrowserFlow {
   //@ ensures (inv(flow) && canRecordBrowserIdentity(flow)) ==> alwaysIssuanceNeedsExplicitConsent(\result)
@@ -141,19 +141,19 @@ export function recordBrowserIdentity(flow: BrowserFlow, identity: IdentityStatu
   return { ...flow, phase: identity === "IdentityPermitted" ? "ShowingConsent" : (identity === "IdentityUnavailable" ? "SessionRetry" : "IdentityDenied") };
 }
 
-/** Story: Approve access in the browser after proving my phone / Explicit approval rechecks the owner and the app's required Cloud authority (spec/oauthBrowserAuthorization.md:88) */
+/** Story: Approve access in the browser after proving my phone / Explicit approval rechecks the owner and the app's required Cloud authority (spec/oauthBrowserAuthorization.md) */
 //@ pure
 export function sessionMatchesConsent(sessionRequired: boolean, samePerson: boolean, samePhone: boolean): boolean {
   return !sessionRequired || (samePerson && samePhone);
 }
 
-/** Story: Approve access in the browser after proving my phone / Explicit approval rechecks the owner and the app's required Cloud authority (spec/oauthBrowserAuthorization.md:88) */
+/** Story: Approve access in the browser after proving my phone / Explicit approval rechecks the owner and the app's required Cloud authority (spec/oauthBrowserAuthorization.md) */
 //@ pure
 export function canReadConsentOwner(flow: BrowserFlow): boolean {
   return flow.phase === "CheckingConsentOwner" && flow.explicitlyApproved;
 }
 
-/** Story: Approve access in the browser after proving my phone / Explicit approval rechecks the owner and the app's required Cloud authority (spec/oauthBrowserAuthorization.md:88) */
+/** Story: Approve access in the browser after proving my phone / Explicit approval rechecks the owner and the app's required Cloud authority (spec/oauthBrowserAuthorization.md) */
 //@ pure
 export function readConsentOwner(flow: BrowserFlow, verdict: ConsentCheck): BrowserFlow {
   //@ ensures (inv(flow) && canReadConsentOwner(flow)) ==> alwaysIssuanceNeedsExplicitConsent(\result)
@@ -161,13 +161,13 @@ export function readConsentOwner(flow: BrowserFlow, verdict: ConsentCheck): Brow
   return { ...flow, phase: verdict === "CheckAccepted" ? "CheckingCloudGrant" : (verdict === "CheckUnavailable" ? "SessionRetry" : "OwnerChanged") };
 }
 
-/** Story: Approve access in the browser after proving my phone / Explicit approval rechecks the owner and the app's required Cloud authority (spec/oauthBrowserAuthorization.md:88) */
+/** Story: Approve access in the browser after proving my phone / Explicit approval rechecks the owner and the app's required Cloud authority (spec/oauthBrowserAuthorization.md) */
 //@ pure
 export function canReadConsentAuthority(flow: BrowserFlow): boolean {
   return flow.phase === "CheckingCloudGrant" && flow.explicitlyApproved;
 }
 
-/** Story: Approve access in the browser after proving my phone / Explicit approval rechecks the owner and the app's required Cloud authority (spec/oauthBrowserAuthorization.md:88) */
+/** Story: Approve access in the browser after proving my phone / Explicit approval rechecks the owner and the app's required Cloud authority (spec/oauthBrowserAuthorization.md) */
 //@ pure
 export function readConsentAuthority(flow: BrowserFlow, verdict: ConsentCheck): BrowserFlow {
   //@ ensures (inv(flow) && canReadConsentAuthority(flow)) ==> alwaysIssuanceNeedsExplicitConsent(\result)
@@ -175,31 +175,31 @@ export function readConsentAuthority(flow: BrowserFlow, verdict: ConsentCheck): 
   return { ...flow, phase: verdict === "CheckAccepted" ? "ConsentReady" : (verdict === "CheckUnavailable" ? "SessionRetry" : "CloudDenied") };
 }
 
-/** Story: Approve access in the browser after proving my phone / Explicit approval rechecks the owner and the app's required Cloud authority (spec/oauthBrowserAuthorization.md:88) */
+/** Story: Approve access in the browser after proving my phone / Explicit approval rechecks the owner and the app's required Cloud authority (spec/oauthBrowserAuthorization.md) */
 //@ pure
 export function alwaysIssuanceNeedsExplicitConsent(flow: BrowserFlow): boolean {
   return !(flow.phase === "CheckingConsentOwner" || flow.phase === "CheckingCloudGrant" || flow.phase === "ConsentReady") || flow.explicitlyApproved;
 }
 
-/** Story: Approve access in the browser after proving my phone / Explicit approval rechecks the owner and the app's required Cloud authority (spec/oauthBrowserAuthorization.md:88) */
+/** Story: Approve access in the browser after proving my phone / Explicit approval rechecks the owner and the app's required Cloud authority (spec/oauthBrowserAuthorization.md) */
 //@ pure
 export function stepReadyFollowsAuthority(before: BrowserFlow, via: string, after: BrowserFlow): boolean {
   return !(after.phase === "ConsentReady") || (before.phase === "CheckingCloudGrant" && via === "readConsentAuthority");
 }
 
-/** Story: Approve access in the browser after proving my phone / Explicit approval rechecks the owner and the app's required Cloud authority (spec/oauthBrowserAuthorization.md:88) */
+/** Story: Approve access in the browser after proving my phone / Explicit approval rechecks the owner and the app's required Cloud authority (spec/oauthBrowserAuthorization.md) */
 //@ pure
 export function sometimesReachesConsent(flow: BrowserFlow): boolean {
   return flow.phase === "ShowingConsent";
 }
 
-/** Story: Approve access in the browser after proving my phone / Explicit approval rechecks the owner and the app's required Cloud authority (spec/oauthBrowserAuthorization.md:88) */
+/** Story: Approve access in the browser after proving my phone / Explicit approval rechecks the owner and the app's required Cloud authority (spec/oauthBrowserAuthorization.md) */
 //@ pure
 export function sometimesApprovesConsent(flow: BrowserFlow): boolean {
   return flow.phase === "ConsentReady";
 }
 
-/** Story: Approve access in the browser after proving my phone / Explicit approval rechecks the owner and the app's required Cloud authority (spec/oauthBrowserAuthorization.md:88) */
+/** Story: Approve access in the browser after proving my phone / Explicit approval rechecks the owner and the app's required Cloud authority (spec/oauthBrowserAuthorization.md) */
 //@ pure
 export function sometimesDeclinesConsent(flow: BrowserFlow): boolean {
   return flow.phase === "ConsentDeclined";

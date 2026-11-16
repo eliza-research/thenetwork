@@ -1,11 +1,11 @@
 // GENERATED from spec/engineAsks.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md:9) */
+/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
 export type QuestionPhase = "AwaitingOptions" | "PlanningQuestions" | "QuestionsPublished";
-/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md:9) */
+/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
 export interface AskRun { phase: QuestionPhase; counts: Record<string, number> }
-/** Story: Ask for the information needed to find a match / Slop finishes required questions before proposing optional ones (spec/engineAsks.md:58) */
+/** Story: Ask for the information needed to find a match / Slop finishes required questions before proposing optional ones (spec/engineAsks.md) */
 export type SlopQuestionTrack = "RequiredQuestions" | "OptionalQuestions";
 
 /** One variant per transition in the spec. */
@@ -14,11 +14,11 @@ export type Event =
   | { type: "setAvailability"; configured: boolean }
   | { type: "reserveQuestion"; memberId: string; adult: boolean; supportedMarket: boolean };
 
-/** Story: Ask for the information needed to find a match / Slop finishes required questions before proposing optional ones (spec/engineAsks.md:58) */
+/** Story: Ask for the information needed to find a match / Slop finishes required questions before proposing optional ones (spec/engineAsks.md) */
 export const requiredQuestionWaitMs: number = 604800000;
-/** Story: Ask for the information needed to find a match / Slop can offer a wider radius or ask about compatibility (spec/engineAsks.md:76) */
+/** Story: Ask for the information needed to find a match / Slop can offer a wider radius or ask about compatibility (spec/engineAsks.md) */
 export const compatibilityWaitMs: number = 1814400000;
-/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md:9) */
+/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
 export const initial: AskRun = { phase: "AwaitingOptions", counts: ({} as Record<string, number>) };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -27,112 +27,112 @@ export function inv(current: AskRun): boolean {
   return true;
 }
 
-/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md:9) */
+/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
 //@ pure
 export function canPublishQuestions(s: AskRun): boolean {
   return s.phase === "PlanningQuestions";
 }
 
-/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md:9) */
+/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
 //@ pure
 export function publishQuestions(s: AskRun): AskRun {
   //@ ensures (inv(s) && canPublishQuestions(s)) ==> stepPublishedQuestionsStayClosed(s, \result)
   return { ...s, phase: "QuestionsPublished" };
 }
 
-/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md:9) */
+/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
 //@ pure
 export function stepPublishedQuestionsStayClosed(before: AskRun, after: AskRun): boolean {
   return !(before.phase === "QuestionsPublished") || equal_engineAsks(after, before);
 }
 
-/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md:9) */
+/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
 //@ pure
 export function canSetAvailability(s: AskRun): boolean {
   return s.phase === "AwaitingOptions";
 }
 
-/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md:9) */
+/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
 //@ pure
 export function setAvailability(s: AskRun, configured: boolean): AskRun {
   //@ ensures (inv(s) && canSetAvailability(s)) ==> stepPublishedQuestionsStayClosed(s, \result)
   return { ...s, phase: configured ? "PlanningQuestions" : "QuestionsPublished" };
 }
 
-/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md:9) */
+/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
 //@ pure
 export function questionSubjectAllowed(s: AskRun, adult: boolean, supportedMarket: boolean): boolean {
   return s.phase === "PlanningQuestions" && adult && supportedMarket;
 }
 
-/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md:9) */
+/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
 //@ pure
 export function countReservedQuestions(s: AskRun, memberId: string): number {
   return ("$" + memberId) in s.counts ? get_engineAsks(s.counts, "$" + memberId) : 0;
 }
 
-/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md:9) */
+/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
 //@ pure
 export function canReserveQuestion(s: AskRun, memberId: string, adult: boolean, supportedMarket: boolean): boolean {
   return questionSubjectAllowed(s, adult, supportedMarket);
 }
 
-/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md:9) */
+/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
 //@ pure
 export function reserveQuestion(s: AskRun, memberId: string, adult: boolean, supportedMarket: boolean): AskRun {
   //@ ensures (inv(s) && canReserveQuestion(s, memberId, adult, supportedMarket)) ==> stepPublishedQuestionsStayClosed(s, \result)
   return { ...s, counts: ({ ...s.counts, ["$" + memberId]: exact_engineAsks(countReservedQuestions(s, memberId) + 1) } as Record<string, number>) };
 }
 
-/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md:9) */
+/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
 //@ pure
 export function countPublishedQuestions(s: AskRun, memberId: string): number {
   return s.phase === "QuestionsPublished" ? countReservedQuestions(s, memberId) : 0;
 }
 
-/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md:9) */
+/** Story: Ask for the information needed to find a match / An enabled run considers adults in a supported market (spec/engineAsks.md) */
 //@ pure
 export function sometimesPublishesQuestions(s: AskRun): boolean {
   return s.phase === "QuestionsPublished" && countReservedQuestions(s, "a") > 0;
 }
 
-/** Story: Ask for the information needed to find a match / The Network asks for dating preferences once (spec/engineAsks.md:49) */
+/** Story: Ask for the information needed to find a match / The Network asks for dating preferences once (spec/engineAsks.md) */
 //@ pure
 export function networkPreferenceQuestion(missingPreferences: boolean, activeIntent: boolean, previouslyAsked: boolean): boolean {
   return missingPreferences && activeIntent && !previouslyAsked;
 }
 
-/** Story: Ask for the information needed to find a match / Slop finishes required questions before proposing optional ones (spec/engineAsks.md:58) */
+/** Story: Ask for the information needed to find a match / Slop finishes required questions before proposing optional ones (spec/engineAsks.md) */
 //@ pure
 export function slopQuestionSubject(adult: boolean, optedIn: boolean, paused: boolean, held: boolean): boolean {
   return adult && optedIn && !paused && !held;
 }
 
-/** Story: Ask for the information needed to find a match / Slop finishes required questions before proposing optional ones (spec/engineAsks.md:58) */
+/** Story: Ask for the information needed to find a match / Slop finishes required questions before proposing optional ones (spec/engineAsks.md) */
 //@ pure
 export function requiredQuestionDue(elapsedMs: number, asked: number, cap: number): boolean {
   return elapsedMs >= requiredQuestionWaitMs && !(cap > 0 && asked >= cap);
 }
 
-/** Story: Ask for the information needed to find a match / Slop finishes required questions before proposing optional ones (spec/engineAsks.md:58) */
+/** Story: Ask for the information needed to find a match / Slop finishes required questions before proposing optional ones (spec/engineAsks.md) */
 //@ pure
 export function slopQuestionTrack(missingFields: boolean): SlopQuestionTrack {
   return missingFields ? "RequiredQuestions" : "OptionalQuestions";
 }
 
-/** Story: Ask for the information needed to find a match / Slop can offer a wider radius or ask about compatibility (spec/engineAsks.md:76) */
+/** Story: Ask for the information needed to find a match / Slop can offer a wider radius or ask about compatibility (spec/engineAsks.md) */
 //@ pure
 export function wideningPoolEligible(wideningEnabled: boolean, degree: number, maximumDegree: number): boolean {
   return wideningEnabled && degree <= maximumDegree;
 }
 
-/** Story: Ask for the information needed to find a match / Slop can offer a wider radius or ask about compatibility (spec/engineAsks.md:76) */
+/** Story: Ask for the information needed to find a match / Slop can offer a wider radius or ask about compatibility (spec/engineAsks.md) */
 //@ pure
 export function widerRadiusQuestion(radius: number, offeredRadius: number, alreadyAsked: boolean): boolean {
   return radius < offeredRadius && !alreadyAsked;
 }
 
-/** Story: Ask for the information needed to find a match / Slop can offer a wider radius or ask about compatibility (spec/engineAsks.md:76) */
+/** Story: Ask for the information needed to find a match / Slop can offer a wider radius or ask about compatibility (spec/engineAsks.md) */
 //@ pure
 export function compatibilityQuestionDue(elapsedMs: number): boolean {
   return elapsedMs >= compatibilityWaitMs;

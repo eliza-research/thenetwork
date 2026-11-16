@@ -1,9 +1,9 @@
 // GENERATED from spec/photoRelayItem.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Deliver only the approved selected photo / A current approved item binds to one action (spec/photoRelayItem.md:9) */
+/** Story: Deliver only the approved selected photo / A current approved item binds to one action (spec/photoRelayItem.md) */
 export type PhotoDeliveryPhase = "PhotoWaiting" | "PhotoApproved";
-/** Story: Deliver only the approved selected photo / A current approved item binds to one action (spec/photoRelayItem.md:9) */
+/** Story: Deliver only the approved selected photo / A current approved item binds to one action (spec/photoRelayItem.md) */
 export interface PhotoDelivery { phase: PhotoDeliveryPhase; expiresAt: number; boundAction: boolean; actionKey: string; boundIntent: boolean; intentKey: string; hasDeadline: boolean; deliveryUntil: number }
 
 /** One variant per transition in the spec. */
@@ -12,9 +12,9 @@ export type Event =
   | { type: "observeApproval"; expiresAt: number }
   | { type: "issueDelivery"; intentKey: string; currentItem: boolean; issueAt: number; checkedAt: number };
 
-/** Story: Deliver only the approved selected photo / Issuing a capability fixes the intent and deadline (spec/photoRelayItem.md:41) */
+/** Story: Deliver only the approved selected photo / Issuing a capability fixes the intent and deadline (spec/photoRelayItem.md) */
 export const providerFetchTtlMs: number = 60000;
-/** Story: Deliver only the approved selected photo / A current approved item binds to one action (spec/photoRelayItem.md:9) */
+/** Story: Deliver only the approved selected photo / A current approved item binds to one action (spec/photoRelayItem.md) */
 export const initial: PhotoDelivery = { phase: "PhotoWaiting", expiresAt: 0, boundAction: false, actionKey: "", boundIntent: false, intentKey: "", hasDeadline: false, deliveryUntil: 0 };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -23,7 +23,7 @@ export function inv(current: PhotoDelivery): boolean {
   return true;
 }
 
-/** Story: Deliver only the approved selected photo / A current approved item binds to one action (spec/photoRelayItem.md:9) */
+/** Story: Deliver only the approved selected photo / A current approved item binds to one action (spec/photoRelayItem.md) */
 //@ pure
 export function claimAction(photo: PhotoDelivery, actionKey: string, currentItem: boolean): PhotoDelivery {
   //@ ensures (inv(photo) && canClaimAction(photo, actionKey, currentItem)) ==> stepAnActionBindingNeverChanges(photo, \result)
@@ -32,19 +32,19 @@ export function claimAction(photo: PhotoDelivery, actionKey: string, currentItem
   return { ...photo, boundAction: true, actionKey: actionKey };
 }
 
-/** Story: Deliver only the approved selected photo / A current approved item binds to one action (spec/photoRelayItem.md:9) */
+/** Story: Deliver only the approved selected photo / A current approved item binds to one action (spec/photoRelayItem.md) */
 //@ pure
 export function stepAnActionBindingNeverChanges(before: PhotoDelivery, after: PhotoDelivery): boolean {
   return !before.boundAction || (after.boundAction && after.actionKey === before.actionKey);
 }
 
-/** Story: Deliver only the approved selected photo / A current approved item binds to one action (spec/photoRelayItem.md:9) */
+/** Story: Deliver only the approved selected photo / A current approved item binds to one action (spec/photoRelayItem.md) */
 //@ pure
 export function canObserveApproval(photo: PhotoDelivery): boolean {
   return photo.phase === "PhotoWaiting";
 }
 
-/** Story: Deliver only the approved selected photo / A current approved item binds to one action (spec/photoRelayItem.md:9) */
+/** Story: Deliver only the approved selected photo / A current approved item binds to one action (spec/photoRelayItem.md) */
 //@ pure
 export function observeApproval(photo: PhotoDelivery, expiresAt: number): PhotoDelivery {
   //@ ensures (inv(photo) && canObserveApproval(photo)) ==> stepAnActionBindingNeverChanges(photo, \result)
@@ -53,49 +53,49 @@ export function observeApproval(photo: PhotoDelivery, expiresAt: number): PhotoD
   return { ...photo, phase: "PhotoApproved", expiresAt: expiresAt };
 }
 
-/** Story: Deliver only the approved selected photo / A current approved item binds to one action (spec/photoRelayItem.md:9) */
+/** Story: Deliver only the approved selected photo / A current approved item binds to one action (spec/photoRelayItem.md) */
 //@ pure
 export function canClaimAction(photo: PhotoDelivery, actionKey: string, currentItem: boolean): boolean {
   return currentItem && photo.phase === "PhotoApproved" && (!photo.boundAction || photo.actionKey === actionKey);
 }
 
-/** Story: Deliver only the approved selected photo / Issuing a capability fixes the intent and deadline (spec/photoRelayItem.md:41) */
+/** Story: Deliver only the approved selected photo / Issuing a capability fixes the intent and deadline (spec/photoRelayItem.md) */
 //@ pure
 export function deadlineForDelivery(photo: PhotoDelivery, at: number): number {
   return photo.hasDeadline ? photo.deliveryUntil : (photo.expiresAt < exact_photoRelayItem(at + providerFetchTtlMs) ? photo.expiresAt : exact_photoRelayItem(at + providerFetchTtlMs));
 }
 
-/** Story: Deliver only the approved selected photo / Issuing a capability fixes the intent and deadline (spec/photoRelayItem.md:41) */
+/** Story: Deliver only the approved selected photo / Issuing a capability fixes the intent and deadline (spec/photoRelayItem.md) */
 //@ pure
 export function permitsIntentBinding(photo: PhotoDelivery, intentKey: string): boolean {
   return photo.phase === "PhotoApproved" && photo.boundAction && photo.actionKey !== "" && (!photo.boundIntent || photo.intentKey === intentKey);
 }
 
-/** Story: Deliver only the approved selected photo / Issuing a capability fixes the intent and deadline (spec/photoRelayItem.md:41) */
+/** Story: Deliver only the approved selected photo / Issuing a capability fixes the intent and deadline (spec/photoRelayItem.md) */
 //@ pure
 export function stepAnIntentBindingNeverChanges(before: PhotoDelivery, after: PhotoDelivery): boolean {
   return !before.boundIntent || (after.boundIntent && after.intentKey === before.intentKey);
 }
 
-/** Story: Deliver only the approved selected photo / Issuing a capability fixes the intent and deadline (spec/photoRelayItem.md:41) */
+/** Story: Deliver only the approved selected photo / Issuing a capability fixes the intent and deadline (spec/photoRelayItem.md) */
 //@ pure
 export function stepAFixedDeadlineNeverChanges(before: PhotoDelivery, after: PhotoDelivery): boolean {
   return !before.hasDeadline || (after.hasDeadline && after.deliveryUntil === before.deliveryUntil);
 }
 
-/** Story: Deliver only the approved selected photo / Issuing a capability fixes the intent and deadline (spec/photoRelayItem.md:41) */
+/** Story: Deliver only the approved selected photo / Issuing a capability fixes the intent and deadline (spec/photoRelayItem.md) */
 //@ pure
 export function sometimesDeliveryWasIssued(photo: PhotoDelivery): boolean {
   return photo.boundIntent && photo.hasDeadline;
 }
 
-/** Story: Deliver only the approved selected photo / Issuing a capability fixes the intent and deadline (spec/photoRelayItem.md:41) */
+/** Story: Deliver only the approved selected photo / Issuing a capability fixes the intent and deadline (spec/photoRelayItem.md) */
 //@ pure
 export function canIssueDelivery(photo: PhotoDelivery, intentKey: string, currentItem: boolean, issueAt: number, checkedAt: number): boolean {
   return currentItem && permitsIntentBinding(photo, intentKey) && deadlineForDelivery(photo, issueAt) > checkedAt;
 }
 
-/** Story: Deliver only the approved selected photo / Issuing a capability fixes the intent and deadline (spec/photoRelayItem.md:41) */
+/** Story: Deliver only the approved selected photo / Issuing a capability fixes the intent and deadline (spec/photoRelayItem.md) */
 //@ pure
 export function issueDelivery(photo: PhotoDelivery, intentKey: string, currentItem: boolean, issueAt: number, checkedAt: number): PhotoDelivery {
   //@ ensures (inv(photo) && canIssueDelivery(photo, intentKey, currentItem, issueAt, checkedAt)) ==> stepAnActionBindingNeverChanges(photo, \result)
@@ -104,13 +104,13 @@ export function issueDelivery(photo: PhotoDelivery, intentKey: string, currentIt
   return { ...photo, boundIntent: true, intentKey: intentKey, hasDeadline: true, deliveryUntil: deadlineForDelivery(photo, issueAt) };
 }
 
-/** Story: Deliver only the approved selected photo / Fetches require the approved item and its exact live capability (spec/photoRelayItem.md:72) */
+/** Story: Deliver only the approved selected photo / Fetches require the approved item and its exact live capability (spec/photoRelayItem.md) */
 //@ pure
 export function photoDeliveryStillLive(photo: PhotoDelivery, deadline: number, at: number): boolean {
   return deadline > at && photo.expiresAt > at;
 }
 
-/** Story: Deliver only the approved selected photo / Fetches require the approved item and its exact live capability (spec/photoRelayItem.md:72) */
+/** Story: Deliver only the approved selected photo / Fetches require the approved item and its exact live capability (spec/photoRelayItem.md) */
 //@ pure
 export function photoFetchAllowed(photo: PhotoDelivery, deadline: number, at: number): boolean {
   return photo.phase === "PhotoApproved" && photo.boundAction && photo.actionKey !== "" && photo.boundIntent && photo.intentKey !== "" && photo.hasDeadline && deadline === photo.deliveryUntil && deadline <= photo.expiresAt && photoDeliveryStillLive(photo, deadline, at);

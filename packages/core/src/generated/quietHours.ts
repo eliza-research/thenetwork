@@ -3,13 +3,13 @@
 
 
 
-/** Story: Avoid unsolicited messages during quiet hours / A quiet window includes its start and excludes its end (spec/quietHours.md:9) */
+/** Story: Avoid unsolicited messages during quiet hours / A quiet window includes its start and excludes its end (spec/quietHours.md) */
 //@ pure
 export function withinQuietHours(localHour: number, startHour: number, endHour: number): boolean {
   return startHour === endHour ? false : (startHour < endHour ? localHour >= startHour && localHour < endHour : localHour >= startHour || localHour < endHour);
 }
 
-/** Story: Avoid unsolicited messages during quiet hours / The boundary remains the same for windows that span midnight (spec/quietHours.md:20) */
+/** Story: Avoid unsolicited messages during quiet hours / The boundary remains the same for windows that span midnight (spec/quietHours.md) */
 //@ pure
 export function lawWindowBoundaries(startHour: number, endHour: number): boolean {
   //@ ensures \result === true

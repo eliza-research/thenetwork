@@ -1,19 +1,19 @@
 // GENERATED from spec/capitalLevers.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Use my past contributions without changing who can match with me / Effort uses four tiers (spec/capitalLevers.md:9) */
+/** Story: Use my past contributions without changing who can match with me / Effort uses four tiers (spec/capitalLevers.md) */
 export type EffortBand = "Baseline" | "First" | "Second" | "Highest";
-/** Story: Use my past contributions without changing who can match with me / Earned organizing reach reserves the extra slots for low exposure (spec/capitalLevers.md:41) */
+/** Story: Use my past contributions without changing who can match with me / Earned organizing reach reserves the extra slots for low exposure (spec/capitalLevers.md) */
 export interface ReachAllowance { max: number; reservedForLowExposure: number }
 
 
-/** Story: Use my past contributions without changing who can match with me / Effort uses four tiers (spec/capitalLevers.md:9) */
+/** Story: Use my past contributions without changing who can match with me / Effort uses four tiers (spec/capitalLevers.md) */
 //@ pure
 export function capitalEffortBand(balance: number, firstThreshold: number, secondThreshold: number, highestThreshold: number): EffortBand {
   return balance >= highestThreshold ? "Highest" : (balance >= secondThreshold ? "Second" : (balance >= firstThreshold ? "First" : "Baseline"));
 }
 
-/** Story: Use my past contributions without changing who can match with me / Vouch capacity stays within its configured limits (spec/capitalLevers.md:23) */
+/** Story: Use my past contributions without changing who can match with me / Vouch capacity stays within its configured limits (spec/capitalLevers.md) */
 //@ pure
 export function vouchCapacityFromCounts(good: number, lost: number, base: number, perGood: number, perLost: number, maxBonus: number, maximum: number): number {
   const local_0 = exact_capitalLevers(good * perGood);
@@ -23,14 +23,27 @@ export function vouchCapacityFromCounts(good: number, lost: number, base: number
   return local_3 > 0 ? local_3 : 0;
 }
 
-/** Story: Use my past contributions without changing who can match with me / Vouch capacity stays within its configured limits (spec/capitalLevers.md:23) */
+/** Story: Use my past contributions without changing who can match with me / Vouch capacity stays within its configured limits (spec/capitalLevers.md) */
 //@ pure
 export function lawVouchCapacityIsBounded(good: number, lost: number, base: number, perGood: number, perLost: number, maxBonus: number, maximum: number): boolean {
   //@ ensures \result === true
   return !(maximum >= 0) || (vouchCapacityFromCounts(good, lost, base, perGood, perLost, maxBonus, maximum) >= 0 && vouchCapacityFromCounts(good, lost, base, perGood, perLost, maxBonus, maximum) <= maximum);
 }
 
-/** Story: Use my past contributions without changing who can match with me / Earned organizing reach reserves the extra slots for low exposure (spec/capitalLevers.md:41) */
+/** Story: Use my past contributions without changing who can match with me / Vouch capacity counts only the vouches and stakes of its rolling period (spec/capitalLevers.md) */
+//@ pure
+export function vouchInPeriod(entryAt: number, asOf: number, periodMs: number): boolean {
+  return entryAt > exact_capitalLevers(asOf - periodMs) && entryAt <= asOf;
+}
+
+/** Story: Use my past contributions without changing who can match with me / Vouch capacity counts only the vouches and stakes of its rolling period (spec/capitalLevers.md) */
+//@ pure
+export function lawVouchPeriodDropsOldEntries(entryAt: number, asOf: number, periodMs: number): boolean {
+  //@ ensures \result === true
+  return !(entryAt <= exact_capitalLevers(asOf - periodMs)) || !vouchInPeriod(entryAt, asOf, periodMs);
+}
+
+/** Story: Use my past contributions without changing who can match with me / Earned organizing reach reserves the extra slots for low exposure (spec/capitalLevers.md) */
 //@ pure
 export function reachFromBands(bands: number, base: number, perBand: number, maximum: number): ReachAllowance {
   const local_4 = exact_capitalLevers(base + exact_capitalLevers(bands * perBand));

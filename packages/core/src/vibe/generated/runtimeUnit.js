@@ -1,99 +1,99 @@
 // Generated from spec/runtimeUnit.md via Vibestack and VibeLang. Run pnpm run spec:sync.
 // GENERATED from spec/runtimeUnit.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md:21) */
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
 export const initial = { phase: "LoadingSnapshot" };
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current) {
     return true;
 }
-/** Story: Work from the latest saved network state / A tick skips a busy store while an inbound or staff action waits (spec/runtimeUnit.md:9) */
+/** Story: Work from the latest saved network state / A tick skips a busy store while an inbound or staff action waits (spec/runtimeUnit.md) */
 //@ pure
 export function tickMayEnter(acquired) {
     return acquired;
 }
-/** Story: Work from the latest saved network state / A tick skips a busy store while an inbound or staff action waits (spec/runtimeUnit.md:9) */
+/** Story: Work from the latest saved network state / A tick skips a busy store while an inbound or staff action waits (spec/runtimeUnit.md) */
 //@ pure
 export function tickMayTryLock(locallyBusy) {
     return !locallyBusy;
 }
-/** Story: Work from the latest saved network state / A tick skips a busy store while an inbound or staff action waits (spec/runtimeUnit.md:9) */
+/** Story: Work from the latest saved network state / A tick skips a busy store while an inbound or staff action waits (spec/runtimeUnit.md) */
 //@ pure
 export function lawBusyTickSkips(locallyBusy) {
     //@ ensures \result === true
     return !locallyBusy || !tickMayTryLock(locallyBusy);
 }
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md:21) */
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
 //@ pure
 export function canRecordAction(unit) {
     return unit.phase === "RunningAction";
 }
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md:21) */
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
 //@ pure
 export function recordAction(unit) {
     //@ ensures (inv(unit) && canRecordAction(unit)) ==> stepSaveFollowsAction(unit, "recordAction", \result)
     return { phase: "SavingState" };
 }
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md:21) */
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
 //@ pure
 export function canRecordSave(unit) {
     return unit.phase === "SavingState";
 }
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md:21) */
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
 //@ pure
 export function recordSave(unit) {
     //@ ensures (inv(unit) && canRecordSave(unit)) ==> stepSaveFollowsAction(unit, "recordSave", \result)
     return { phase: "StateSaved" };
 }
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md:21) */
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
 //@ pure
 export function stepSaveFollowsAction(before, via, after) {
     return !(after.phase === "StateSaved") || (before.phase === "SavingState" && via === "recordSave");
 }
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md:21) */
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
 //@ pure
 export function sometimesCanSave(unit) {
     return unit.phase === "StateSaved";
 }
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md:21) */
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
 //@ pure
 export function canRecordLoad(unit) {
     return unit.phase === "LoadingSnapshot";
 }
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md:21) */
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
 //@ pure
 export function recordLoad(unit, snapshotFound) {
     //@ ensures (inv(unit) && canRecordLoad(unit)) ==> stepSaveFollowsAction(unit, "recordLoad", \result)
     return { phase: snapshotFound ? "RestoringSnapshot" : "RunningAction" };
 }
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md:21) */
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
 //@ pure
 export function canRecordRestore(unit) {
     return unit.phase === "RestoringSnapshot";
 }
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md:21) */
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) */
 //@ pure
 export function recordRestore(unit) {
     //@ ensures (inv(unit) && canRecordRestore(unit)) ==> stepSaveFollowsAction(unit, "recordRestore", \result)
     return { phase: "RunningAction" };
 }
-/** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md:50) */
+/** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) */
 //@ pure
 export function matchingDisabledByRegistry(matchingAllowed) {
     return !matchingAllowed;
 }
-/** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md:50) */
+/** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) */
 //@ pure
 export function tickRepairsProjection(ran, queuedAdapter) {
     return ran && !queuedAdapter;
 }
-/** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md:50) */
+/** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) */
 //@ pure
 export function tickRunsFollowup(ran, hookConfigured) {
     return ran && hookConfigured;
 }
-/** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md:50) */
+/** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) */
 //@ pure
 export function startupPlan(queuedAdapter) {
     return queuedAdapter ? "RecoverDeliveryQueue" : "RepairProjection";

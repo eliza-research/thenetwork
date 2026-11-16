@@ -1,42 +1,42 @@
 // Generated from spec/runtimeUnit.md via Vibestack and VibeLang. Run pnpm run spec:sync.
 import type { RuntimeUnit, StartupPlan, Event } from "./runtimeUnit.ts";
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md:21) @throws {never} */
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) @throws {never} */
 export declare const initial: RuntimeUnit;
 /** Every `always` rule at once. Holds initially and after every transition. @throws {never} */
 export declare function inv(current: RuntimeUnit): boolean;
-/** Story: Work from the latest saved network state / A tick skips a busy store while an inbound or staff action waits (spec/runtimeUnit.md:9) @throws {never} */
+/** Story: Work from the latest saved network state / A tick skips a busy store while an inbound or staff action waits (spec/runtimeUnit.md) @throws {never} */
 export declare function tickMayEnter(acquired: boolean): boolean;
-/** Story: Work from the latest saved network state / A tick skips a busy store while an inbound or staff action waits (spec/runtimeUnit.md:9) @throws {never} */
+/** Story: Work from the latest saved network state / A tick skips a busy store while an inbound or staff action waits (spec/runtimeUnit.md) @throws {never} */
 export declare function tickMayTryLock(locallyBusy: boolean): boolean;
-/** Story: Work from the latest saved network state / A tick skips a busy store while an inbound or staff action waits (spec/runtimeUnit.md:9) @throws {never} */
+/** Story: Work from the latest saved network state / A tick skips a busy store while an inbound or staff action waits (spec/runtimeUnit.md) @throws {never} */
 export declare function lawBusyTickSkips(locallyBusy: boolean): boolean;
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md:21) @throws {never} */
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) @throws {never} */
 export declare function canRecordAction(unit: RuntimeUnit): boolean;
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md:21) @throws {never} */
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) @throws {never} */
 export declare function recordAction(unit: RuntimeUnit): RuntimeUnit;
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md:21) @throws {never} */
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) @throws {never} */
 export declare function canRecordSave(unit: RuntimeUnit): boolean;
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md:21) @throws {never} */
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) @throws {never} */
 export declare function recordSave(unit: RuntimeUnit): RuntimeUnit;
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md:21) @throws {never} */
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) @throws {never} */
 export declare function stepSaveFollowsAction(before: RuntimeUnit, via: string, after: RuntimeUnit): boolean;
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md:21) @throws {never} */
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) @throws {never} */
 export declare function sometimesCanSave(unit: RuntimeUnit): boolean;
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md:21) @throws {never} */
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) @throws {never} */
 export declare function canRecordLoad(unit: RuntimeUnit): boolean;
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md:21) @throws {never} */
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) @throws {never} */
 export declare function recordLoad(unit: RuntimeUnit, snapshotFound: boolean): RuntimeUnit;
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md:21) @throws {never} */
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) @throws {never} */
 export declare function canRecordRestore(unit: RuntimeUnit): boolean;
-/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md:21) @throws {never} */
+/** Story: Work from the latest saved network state / Restore a saved snapshot before running and make one save after success (spec/runtimeUnit.md) @throws {never} */
 export declare function recordRestore(unit: RuntimeUnit): RuntimeUnit;
-/** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md:50) @throws {never} */
+/** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) @throws {never} */
 export declare function matchingDisabledByRegistry(matchingAllowed: boolean): boolean;
-/** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md:50) @throws {never} */
+/** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) @throws {never} */
 export declare function tickRepairsProjection(ran: boolean, queuedAdapter: boolean): boolean;
-/** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md:50) @throws {never} */
+/** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) @throws {never} */
 export declare function tickRunsFollowup(ran: boolean, hookConfigured: boolean): boolean;
-/** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md:50) @throws {never} */
+/** Story: Work from the latest saved network state / Runtime follow-up depends on the adapter and whether the tick ran (spec/runtimeUnit.md) @throws {never} */
 export declare function startupPlan(queuedAdapter: boolean): StartupPlan;
 /** Do the rules allow this event in this state? @throws {never} */
 export declare function enabled(current: RuntimeUnit, event: Event): boolean;

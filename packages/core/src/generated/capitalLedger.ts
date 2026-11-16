@@ -1,11 +1,11 @@
 // GENERATED from spec/capitalLedger.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md:9) */
+/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md) */
 export type CapitalEventPhase = "CapitalEventStarting" | "InvalidCapitalEvent" | "InspectingCapitalEvent" | "DuplicateCapitalEvent" | "OutOfOrderCapitalEvent" | "AppendingCapitalEvent" | "ApplyingCapitalEvent";
-/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md:9) */
+/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md) */
 export interface CapitalEventFlow { phase: CapitalEventPhase }
-/** Story: Count what I contributed once and preserve its history / Participation credit needs eligible members and verified outcomes (spec/capitalLedger.md:39) */
+/** Story: Count what I contributed once and preserve its history / Participation credit needs eligible members and verified outcomes (spec/capitalLedger.md) */
 export type AttendanceEvidence = "AttendanceUnverified" | "AttendanceByCounterpart" | "AttendanceIndependentlyVerified";
 
 /** One variant per transition in the spec. */
@@ -14,7 +14,7 @@ export type Event =
   | { type: "validateLedgerEvent"; valid: boolean }
   | { type: "checkLedgerSource"; duplicate: boolean; inOrder: boolean };
 
-/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md:9) */
+/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md) */
 export const initial: CapitalEventFlow = { phase: "CapitalEventStarting" };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -23,167 +23,167 @@ export function inv(current: CapitalEventFlow): boolean {
   return true;
 }
 
-/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md:9) */
+/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md) */
 //@ pure
 export function canRecordLedgerAppend(flow: CapitalEventFlow): boolean {
   return flow.phase === "AppendingCapitalEvent";
 }
 
-/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md:9) */
+/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md) */
 //@ pure
 export function recordLedgerAppend(flow: CapitalEventFlow): CapitalEventFlow {
   //@ ensures (inv(flow) && canRecordLedgerAppend(flow)) ==> stepApplyFollowsLedgerAppend(flow, "recordLedgerAppend", \result)
   return { phase: "ApplyingCapitalEvent" };
 }
 
-/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md:9) */
+/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md) */
 //@ pure
 export function stepApplyFollowsLedgerAppend(before: CapitalEventFlow, via: string, after: CapitalEventFlow): boolean {
   return !(after.phase === "ApplyingCapitalEvent") || (before.phase === "AppendingCapitalEvent" && via === "recordLedgerAppend");
 }
 
-/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md:9) */
+/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md) */
 //@ pure
 export function sometimesAppliesLedgerEvent(flow: CapitalEventFlow): boolean {
   return flow.phase === "ApplyingCapitalEvent";
 }
 
-/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md:9) */
+/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md) */
 //@ pure
 export function sometimesSkipsDuplicateLedgerEvent(flow: CapitalEventFlow): boolean {
   return flow.phase === "DuplicateCapitalEvent";
 }
 
-/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md:9) */
+/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md) */
 //@ pure
 export function sometimesRejectsTimeOrder(flow: CapitalEventFlow): boolean {
   return flow.phase === "OutOfOrderCapitalEvent";
 }
 
-/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md:9) */
+/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md) */
 //@ pure
 export function canValidateLedgerEvent(flow: CapitalEventFlow): boolean {
   return flow.phase === "CapitalEventStarting";
 }
 
-/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md:9) */
+/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md) */
 //@ pure
 export function validateLedgerEvent(flow: CapitalEventFlow, valid: boolean): CapitalEventFlow {
   //@ ensures (inv(flow) && canValidateLedgerEvent(flow)) ==> stepApplyFollowsLedgerAppend(flow, "validateLedgerEvent", \result)
   return { phase: valid ? "InspectingCapitalEvent" : "InvalidCapitalEvent" };
 }
 
-/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md:9) */
+/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md) */
 //@ pure
 export function canCheckLedgerSource(flow: CapitalEventFlow): boolean {
   return flow.phase === "InspectingCapitalEvent";
 }
 
-/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md:9) */
+/** Story: Count what I contributed once and preserve its history / Validate and deduplicate an event before applying it (spec/capitalLedger.md) */
 //@ pure
 export function checkLedgerSource(flow: CapitalEventFlow, duplicate: boolean, inOrder: boolean): CapitalEventFlow {
   //@ ensures (inv(flow) && canCheckLedgerSource(flow)) ==> stepApplyFollowsLedgerAppend(flow, "checkLedgerSource", \result)
   return { phase: duplicate ? "DuplicateCapitalEvent" : (inOrder ? "AppendingCapitalEvent" : "OutOfOrderCapitalEvent") };
 }
 
-/** Story: Count what I contributed once and preserve its history / Participation credit needs eligible members and verified outcomes (spec/capitalLedger.md:39) */
+/** Story: Count what I contributed once and preserve its history / Participation credit needs eligible members and verified outcomes (spec/capitalLedger.md) */
 //@ pure
 export function capitalHelpSourceMayStart(sameMember: boolean, sourceExists: boolean): boolean {
   return !sameMember && !sourceExists;
 }
 
-/** Story: Count what I contributed once and preserve its history / Participation credit needs eligible members and verified outcomes (spec/capitalLedger.md:39) */
+/** Story: Count what I contributed once and preserve its history / Participation credit needs eligible members and verified outcomes (spec/capitalLedger.md) */
 //@ pure
 export function capitalHelpMayResolve(resolved: boolean, sameRecipient: boolean): boolean {
   return !resolved && sameRecipient;
 }
 
-/** Story: Count what I contributed once and preserve its history / Participation credit needs eligible members and verified outcomes (spec/capitalLedger.md:39) */
+/** Story: Count what I contributed once and preserve its history / Participation credit needs eligible members and verified outcomes (spec/capitalLedger.md) */
 //@ pure
 export function capitalHelpWasUseful(useful: boolean, recipientEligible: boolean): boolean {
   return useful && recipientEligible;
 }
 
-/** Story: Count what I contributed once and preserve its history / Participation credit needs eligible members and verified outcomes (spec/capitalLedger.md:39) */
+/** Story: Count what I contributed once and preserve its history / Participation credit needs eligible members and verified outcomes (spec/capitalLedger.md) */
 //@ pure
 export function capitalAttendanceMayResolve(accepted: boolean, resolved: boolean): boolean {
   return accepted && !resolved;
 }
 
-/** Story: Count what I contributed once and preserve its history / Participation credit needs eligible members and verified outcomes (spec/capitalLedger.md:39) */
+/** Story: Count what I contributed once and preserve its history / Participation credit needs eligible members and verified outcomes (spec/capitalLedger.md) */
 //@ pure
 export function mayEarnCapital(eligible: boolean, removed: boolean, positiveBase: boolean): boolean {
   return eligible && !removed && positiveBase;
 }
 
-/** Story: Count what I contributed once and preserve its history / Participation credit needs eligible members and verified outcomes (spec/capitalLedger.md:39) */
+/** Story: Count what I contributed once and preserve its history / Participation credit needs eligible members and verified outcomes (spec/capitalLedger.md) */
 //@ pure
 export function capitalAttendanceEvidence(hasVerification: boolean, independentlyVerified: boolean): AttendanceEvidence {
   return !hasVerification ? "AttendanceUnverified" : (independentlyVerified ? "AttendanceIndependentlyVerified" : "AttendanceByCounterpart");
 }
 
-/** Story: Count what I contributed once and preserve its history / Participation credit needs eligible members and verified outcomes (spec/capitalLedger.md:39) */
+/** Story: Count what I contributed once and preserve its history / Participation credit needs eligible members and verified outcomes (spec/capitalLedger.md) */
 //@ pure
 export function acceptsCapitalAttendanceProof(evidence: AttendanceEvidence, hasEligibleConfirmer: boolean): boolean {
   return evidence === "AttendanceIndependentlyVerified" || (evidence === "AttendanceByCounterpart" && hasEligibleConfirmer);
 }
 
-/** Story: Count what I contributed once and preserve its history / Organizing and needs use their original contribution source (spec/capitalLedger.md:63) */
+/** Story: Count what I contributed once and preserve its history / Organizing and needs use their original contribution source (spec/capitalLedger.md) */
 //@ pure
 export function organizingCapitalSourceOpen(publicVenue: boolean, alreadyCredited: boolean): boolean {
   return publicVenue && !alreadyCredited;
 }
 
-/** Story: Count what I contributed once and preserve its history / Organizing and needs use their original contribution source (spec/capitalLedger.md:63) */
+/** Story: Count what I contributed once and preserve its history / Organizing and needs use their original contribution source (spec/capitalLedger.md) */
 //@ pure
 export function organizingCapitalQuorum(attendees: number, minimum: number): boolean {
   return attendees >= minimum;
 }
 
-/** Story: Count what I contributed once and preserve its history / Organizing and needs use their original contribution source (spec/capitalLedger.md:63) */
+/** Story: Count what I contributed once and preserve its history / Organizing and needs use their original contribution source (spec/capitalLedger.md) */
 //@ pure
 export function needCapitalSourceOpen(alreadyCredited: boolean, selfConfirmed: boolean, allowedConfirmer: boolean): boolean {
   return !alreadyCredited && !selfConfirmed && allowedConfirmer;
 }
 
-/** Story: Count what I contributed once and preserve its history / A reversal adds a new entry for the original owner (spec/capitalLedger.md:77) */
+/** Story: Count what I contributed once and preserve its history / A reversal adds a new entry for the original owner (spec/capitalLedger.md) */
 //@ pure
 export function mayReverseCapitalEntry(sameOwner: boolean, alreadyReversed: boolean): boolean {
   return sameOwner && !alreadyReversed;
 }
 
-/** Story: Count what I contributed once and preserve its history / A reversal adds a new entry for the original owner (spec/capitalLedger.md:77) */
+/** Story: Count what I contributed once and preserve its history / A reversal adds a new entry for the original owner (spec/capitalLedger.md) */
 //@ pure
 export function isCapitalFraudCandidate(positiveSign: boolean, positiveAmount: boolean, alreadyReversed: boolean): boolean {
   return positiveSign && positiveAmount && !alreadyReversed;
 }
 
-/** Story: Count what I contributed once and preserve its history / A reversal adds a new entry for the original owner (spec/capitalLedger.md:77) */
+/** Story: Count what I contributed once and preserve its history / A reversal adds a new entry for the original owner (spec/capitalLedger.md) */
 //@ pure
 export function capitalFraudReverses(involved: boolean, basisReversed: boolean): boolean {
   return involved || basisReversed;
 }
 
-/** Story: Count what I contributed once and preserve its history / A reversal adds a new entry for the original owner (spec/capitalLedger.md:77) */
+/** Story: Count what I contributed once and preserve its history / A reversal adds a new entry for the original owner (spec/capitalLedger.md) */
 //@ pure
 export function lawCapitalCannotReverseAgain(sameOwner: boolean): boolean {
   //@ ensures \result === true
   return !mayReverseCapitalEntry(sameOwner, true);
 }
 
-/** Story: Count what I contributed once and preserve its history / A reversal restores room only for a credit in the same rolling period (spec/capitalLedger.md:94) */
+/** Story: Count what I contributed once and preserve its history / A reversal restores room only for a credit in the same rolling period (spec/capitalLedger.md) */
 //@ pure
 export function capitalEntryUsesPeriodCap(entryAge: number, period: number, positiveSign: boolean, reversesCurrentCredit: boolean): boolean {
   return entryAge < period && (positiveSign || reversesCurrentCredit);
 }
 
-/** Story: Count what I contributed once and preserve its history / A reversal restores room only for a credit in the same rolling period (spec/capitalLedger.md:94) */
+/** Story: Count what I contributed once and preserve its history / A reversal restores room only for a credit in the same rolling period (spec/capitalLedger.md) */
 //@ pure
 export function capitalPeriodRoom(remaining: number): number {
   return remaining <= 0 ? 0 : remaining;
 }
 
-/** Story: Count what I contributed once and preserve its history / A reversal restores room only for a credit in the same rolling period (spec/capitalLedger.md:94) */
+/** Story: Count what I contributed once and preserve its history / A reversal restores room only for a credit in the same rolling period (spec/capitalLedger.md) */
 //@ pure
 export function lawCapitalPeriodRoomIsNonnegative(remaining: number): boolean {
   //@ ensures \result === true
