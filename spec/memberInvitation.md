@@ -41,6 +41,47 @@ pure def lawUnavailableMemberInviteDoesNotSpend(status: str): bool =
   status == "unavailable" implies not(memberInviteUsesAllowance(status))
 ```
 
+### Confirm private relationship evidence before issuance
+
+Ask the inviter how long and how well they know the person. Read back the reported relationship, duration and depth. A confirmation must come from the inviter's direct turn and refer to that current draft. A draft is valid for fifteen minutes from the request. A cancellation or opt-out ends the draft. Keep only the reported relationship, coarse duration and depth with the invitation. An invitee's phone, profile details and the inviter's raw notes do not go to matching, delivery or staff review.
+
+```quint
+pure val memberInviteDraftMs: int = 900000
+pure val memberInviteMaxMonths: int = 1500
+
+pure def memberInviteDraftCurrent(ageMs: int): bool = ageMs >= 0 and ageMs < memberInviteDraftMs
+
+pure def memberInviteEvidenceValid(durationMonths: int, depth: str): bool =
+  durationMonths >= 0 and durationMonths <= memberInviteMaxMonths and
+    (depth == "met_once" or depth == "somewhat" or depth == "well")
+
+pure def memberInviteConfirmationReady(direct: bool, draftCurrent: bool, evidenceValid: bool, explicitlyConfirmed: bool): bool =
+  direct and draftCurrent and evidenceValid and explicitlyConfirmed
+
+pure def lawMemberInviteRequiresConfirmation(direct: bool, draftCurrent: bool, evidenceValid: bool): bool =
+  not(memberInviteConfirmationReady(direct, draftCurrent, evidenceValid, false))
+```
+
+### Hold weak or unusual invitations for staff
+
+Flag a reported relationship of less than a month or a single meeting, a new invitation after at least two other committed or held invitations in 24 hours, or words that indicate unusual risk. Each flag is enough to hold the request. Save the reasons as categories without retaining the invitation conversation. A held request cannot return a token until staff approve it and the requester presents the current approval in a signed turn.
+
+```quint
+pure val memberInviteBurstWindowMs: int = 86400000
+pure val memberInviteBurstPriorCount: int = 2
+
+pure def memberInviteWithinBurstWindow(ageMs: int): bool = ageMs >= 0 and ageMs < memberInviteBurstWindowMs
+
+pure def memberInviteVouchWeak(durationMonths: int, depth: str): bool = durationMonths < 1 or depth == "met_once"
+
+pure def memberInviteBurst(priorCount: int): bool = priorCount >= memberInviteBurstPriorCount
+
+pure def memberInviteNeedsReview(weak: bool, burst: bool, riskLanguage: bool): bool = weak or burst or riskLanguage
+
+pure def lawUnusualMemberInviteRequiresReview(weak: bool, burst: bool, riskLanguage: bool): bool =
+  (weak or burst or riskLanguage) implies memberInviteNeedsReview(weak, burst, riskLanguage)
+```
+
 ### The link goes to the inviter as a reply
 
 Show the link only to the member who requested it. The member can forward it themselves. The invitee receives no message from this operation. A flagged request waits for staff before it returns a link. Grant an exception to the contact-link check only for the exact, app-owned link provided by the trusted issuer, once in that reply. Keep the bearer out of matching state and internal message logs. The signed delivery record keeps the exact private reply for replay while the invitation is current.

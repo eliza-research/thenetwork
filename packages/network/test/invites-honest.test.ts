@@ -1,7 +1,7 @@
 // Without an invite link (the service sets no NetworkContext.invite), an unmet request offers no
 // invite and does not wait for a friend's name: a one-word reply afterwards is not read as one.
 import { describe, expect, test } from "vitest";
-import { DAY } from "@thenetwork/core";
+import { DAY, MINUTE } from "@thenetwork/core";
 import { memberInvitationLink, type MemberInviteRequest } from "../src/invitation.ts";
 import { Mini } from "./mini.ts";
 
@@ -62,6 +62,7 @@ test("only a direct adult vouch gets an app-owned link and a new verified accept
     { id: "rae", name: "Rae Kim", age: 30 },
     { id: "minor", name: "Pia Lee", age: 17 },
   ], {
+    memberInviteTurnAllowed: (_id, messageId) => messageId !== "unsigned",
     issueMemberInvite: request => {
       requests.push(request);
       return { status: "issued", url: request.firstName === "Eli" ? link : "https://example.org/join" };
@@ -78,14 +79,24 @@ test("only a direct adult vouch gets an app-owned link and a new verified accept
   await w.say("rae", "My friend Eli would love this.");
   await w.say("minor", "Invite my friend Eli");
   await w.net.onInbound({ id: "profile", memberId: "rae", body: "Invite my friend Eli", channel: "sms", ts: w.clock.now(), source: "mcp" });
+  await w.net.onInbound({ id: "unsigned", memberId: "rae", body: "Invite my friend Eli", channel: "sms", ts: w.clock.now() });
   expect(requests).toHaveLength(0);
 
   const start = w.mark();
   await w.say("rae", "Invite my friend Zoe");
+  await w.say("rae", "2 years, well");
+  await w.say("rae", "CONFIRM INVITE");
   expect(w.sent.slice(start).some(message => /https:\/\//.test(message.body))).toBe(false);
   expect(w.net.counters.invitesSent).toBe(0);
   await w.say("rae", "I'd like to invite my cousin Eli.");
-  expect(requests.at(-1)).toMatchObject({ inviterId: "rae", firstName: "Eli", relationship: "family" });
+  await w.say("rae", "CONFIRM INVITE");
+  expect(requests).toHaveLength(1);
+  await w.say("rae", "two years, well");
+  await w.say("rae", "yes");
+  expect(requests).toHaveLength(1);
+  await w.say("rae", "CONFIRM INVITE");
+  expect(requests.at(-1)).toMatchObject({ inviterId: "rae", firstName: "Eli", relationship: "family", durationMonths: 24, depth: "well", disposition: "issue", reviewReasons: [] });
+  expect(requests.at(-1)!.requestId).not.toBe(requests.at(-1)!.messageId);
   expect(w.sent.slice(start).filter(message => message.body.includes(link))).toEqual([
     expect.objectContaining({ to: "rae", reply: true, meta: expect.objectContaining({ approvedInviteLink: link }) }),
   ]);
@@ -97,4 +108,50 @@ test("only a direct adult vouch gets an app-owned link and a new verified accept
   expect(w.net.welcomeJoined("eli", "rae")).toBe(false);
   expect(w.to("rae").filter(message => message.body.includes("Eli just joined."))).toHaveLength(1);
   expect(noticeKeys).toEqual([expect.stringMatching(/^invite-notice:rae:/)]);
+});
+
+test("confirmed weak, unusual or clustered vouches wait for review without storing the invitation conversation", async () => {
+  const attempts: MemberInviteRequest[] = [], privateTurns: string[] = [];
+  const reviewId = `mir_${"a".repeat(32)}`;
+  const w = new Mini([{ id: "rae", name: "Rae Kim", age: 30 }], {
+    memberInviteTurnAllowed: () => true,
+    onPrivateInviteTurn: (_id, messageId) => { privateTurns.push(messageId); },
+    issueMemberInvite: request => {
+      attempts.push(request);
+      return request.disposition === "review" ? { status: "review", reviewId }
+        : { status: "issued", url: memberInvitationLink({ id: "ntwrk", domain: "ntwrk.party" }, "A".repeat(43)) };
+    },
+  });
+  await w.onboard("rae");
+  await w.say("rae", "Invite my friend Colin");
+  await w.say("rae", "2 years, well");
+  await w.run(15 * MINUTE);
+  await w.say("rae", "CONFIRM INVITE");
+  expect(attempts).toHaveLength(0);
+
+  for (const [name, evidence] of [["Luz", "2 years, well"], ["Inez", "3 weeks, met once. We met online."], ["Sol", "1 year, well"]]) {
+    await w.say("rae", `Invite my friend ${name}`);
+    await w.say("rae", evidence!);
+    await w.say("rae", "CONFIRM INVITE");
+  }
+  expect(attempts.map(({ disposition, reviewReasons }) => ({ disposition, reviewReasons }))).toEqual([
+    { disposition: "issue", reviewReasons: [] },
+    { disposition: "review", reviewReasons: ["weak_vouch", "risk_language"] },
+    { disposition: "review", reviewReasons: ["burst"] },
+  ]);
+  expect(w.sent.filter(message => message.body.includes(reviewId))).toHaveLength(2);
+  expect(privateTurns).toHaveLength(12);
+  expect(JSON.stringify(w.net.exportState())).not.toMatch(/met online|Inez|Sol|mir_/);
+});
+
+test("a verified cross-city notice leaves the invitee out of this Network and redacts the saved reply", async () => {
+  const w = new Mini([{ id: "rae", name: "Rae Kim", age: 30 }]);
+  w.net.init({ ...w.ctx(), verifiedJoinedInviteeName: (inviter, invitee) => inviter === "rae" && invitee === "foreign" ? "Orla" : undefined });
+  await w.onboard("rae");
+  w.net.announceVerifiedInviteJoin("rae", "foreign", w.clock.now());
+  w.net.announceVerifiedInviteJoin("rae", "foreign", w.clock.now());
+  const notices = w.to("rae").filter(message => message.meta.invitationJoins);
+  expect(notices).toEqual([expect.objectContaining({ body: expect.stringContaining("Orla just joined."), meta: expect.objectContaining({ invitationJoins: ["foreign"] }) })]);
+  expect(w.net.memberList().some(member => member.id === "foreign")).toBe(false);
+  expect(JSON.stringify(w.net.exportState())).not.toContain("Orla");
 });

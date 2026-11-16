@@ -42,8 +42,9 @@ import {
   step as stepMemberRequest, waitingMemberRequest, type MemberRequestFlow,
 } from "../../core/src/generated/memberRequest.ts";
 import {
-  defaultMemberInviteCapacity, memberInviteCanAttribute, memberInviteCanIssue, memberInviteLinkCanBeShared, memberInviteSourceCurrent,
-  memberInviteUsesAllowance, memberInviteWithinWindow, memberMayRequestInvite,
+  defaultMemberInviteCapacity, memberInviteBurst, memberInviteCanAttribute, memberInviteCanIssue, memberInviteConfirmationReady,
+  memberInviteDraftCurrent, memberInviteEvidenceValid, memberInviteLinkCanBeShared, memberInviteNeedsReview, memberInviteSourceCurrent,
+  memberInviteUsesAllowance, memberInviteVouchWeak, memberInviteWithinBurstWindow, memberInviteWithinWindow, memberMayRequestInvite,
 } from "../../core/src/generated/memberInvitation.ts";
 import {
   chooseCheckIn, confirmationChanges, confirmationWindowHours as OPT_OUT_HOURS, countAttendance, counterpartConfirmsAttendance,
@@ -89,7 +90,10 @@ import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS } from "@thene
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
 import { ageAnswer, availabilityTags, checkinTags, classify, explicitRepeatRequest, extractProfile, feedbackOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, type Classified, type TimeOption } from "./classify.ts";
 import { mergeConsent, type Understand, type Understood } from "./extract.ts";
-import { directInviteVouch, isMemberInvitationLink, type MemberInviteRequest, type MemberInviteResult } from "./invitation.ts";
+import {
+  directInviteVouch, inviteReviewReference, inviteVouchEvidence, inviteVouchRisk, isMemberInvitationLink,
+  type InviteReviewReason, type MemberInviteEvidence, type MemberInviteRequest, type MemberInviteResult,
+} from "./invitation.ts";
 import { brandOf, copy, copyFor, type Copy, whenPhrase } from "./copy.ts";
 import { APPS, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { meetingSpot, nearbyVenues, NEIGHBORHOOD, NEIGHBORHOODS, neighborhood, travelMinutes, VENUES, type Venue } from "./geo.ts";
@@ -225,6 +229,10 @@ export interface NetworkOptions {
   invitesPerMonth?: number;
   /** Stage a member's shareable invite with the current service transaction. Never contacts the invitee. */
   issueMemberInvite?: (input: MemberInviteRequest) => MemberInviteResult | undefined;
+  /** Confirm this is the inviter's exact signed turn before opening, changing or confirming a draft. */
+  memberInviteTurnAllowed?: (memberId: MemberId, messageId: string) => boolean;
+  /** Mark the input for private invitation retention in the current service transaction. */
+  onPrivateInviteTurn?: (memberId: MemberId, messageId: string) => void;
   /** Growth asks per day across the network (default 8). */
   maxGrowthAsksPerDay?: number;
   /** Open a quiet standing request for a specific want named during onboarding (default false). */
@@ -355,6 +363,7 @@ interface MemberState {
   /** A block or report waiting for "Who do you mean?" (ids and kinds only; what they said is not kept). */
   pendingSafety?: { verb: "block" | "report"; kind: ReportKind; at: number; targets?: MemberId[] };
   invitedBy?: MemberId; invites: number[]; invitesBlockedUntil: number; lastGrowthAsk: number;
+  pendingInviteDraft?: MemberInviteDraft;
   pendingInviteJoins?: InviteJoinNotice[];
   /** What the member told us. Desires carry when they were stated: they expire and can be withdrawn. */
   learned: { interests: Set<string>; skills: Set<string>; desires: Map<string, number>; area?: string; eveningsOpen?: boolean; groups?: boolean };
@@ -541,6 +550,10 @@ type SendHook =
   | { t: "invite_notice"; notice: InviteJoinNotice }
   | EmptyIntentNotice;
 type InviteJoinNotice = { inviteeId: MemberId; at: number };
+type MemberInviteDraft = Pick<MemberInviteRequest, "firstName" | "relationship" | "requestId" | "at"> & {
+  evidence?: MemberInviteEvidence;
+  riskLanguage: boolean;
+};
 const INVITE_REPLY_MAX_CHARS = 1600;
 type EmptyIntentNotice = { t: "empty_intent"; intentId: string; statedAt: number; searchDay: string; reason: string };
 interface HookFns { valid?: () => boolean; onSent?: () => void; onRefused?: () => void }
@@ -681,8 +694,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** The app this Network serves, and its member-facing copy. */
   readonly app: AppInfo;
   private readonly copy: Copy;
-  private opts: Required<Omit<NetworkOptions, "app" | "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "plansConfig" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "allowedCategories" | "hooks" | "onPosting" | "issueMemberInvite">>
-    & Pick<NetworkOptions, "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "hooks" | "onPosting" | "issueMemberInvite">;
+  private opts: Required<Omit<NetworkOptions, "app" | "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "plansConfig" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "allowedCategories" | "hooks" | "onPosting" | "issueMemberInvite" | "memberInviteTurnAllowed" | "onPrivateInviteTurn">>
+    & Pick<NetworkOptions, "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "hooks" | "onPosting" | "issueMemberInvite" | "memberInviteTurnAllowed" | "onPrivateInviteTurn">;
   /** The categories this app may start opportunities in (ALLOWED_CATEGORIES). */
   readonly allowedCategories: ReadonlySet<Category>;
   private pcfg: PlansConfig;
@@ -699,6 +712,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       engine: opts.engine, onEngineRun: opts.onEngineRun, store: opts.store, onLedger: opts.onLedger, capital: opts.capital, plans: opts.plans ?? true,
       understand: opts.understand, onAgeStated: opts.onAgeStated, engineLLM: opts.engineLLM, pack: opts.pack, hooks: opts.hooks, onPosting: opts.onPosting,
       issueMemberInvite: opts.issueMemberInvite,
+      memberInviteTurnAllowed: opts.memberInviteTurnAllowed, onPrivateInviteTurn: opts.onPrivateInviteTurn,
     };
     this.allowedCategories = new Set(opts.allowedCategories ?? ALLOWED_CATEGORIES[this.app.id] ?? ALLOWED_CATEGORIES.ntwrk!);
     this.pcfg = resolvePlans(opts.plansConfig ?? {});
@@ -715,8 +729,10 @@ export class ConsentNetwork implements NetworkUnderTest {
   // ================================================================== inbound
   async onInbound(msg: InboundMessage): Promise<"handled" | "open"> {
     if (this.declinedIds.has(msg.memberId)) return "handled"; // declined under 13: never answered again, nothing stored
+    const privateInviteTurn = this.isPrivateInviteTurn(msg);
+    if (privateInviteTurn) this.opts.onPrivateInviteTurn?.(msg.memberId, msg.id);
     // The LLM reader runs before anything changes, so the unit below stays one synchronous step.
-    const u = await this.understandSafely(msg);
+    const u = privateInviteTurn ? undefined : await this.understandSafely(msg);
     if (this.declinedIds.has(msg.memberId)) return "handled";
     // What a member says can change the snapshot (a trip, a setting): read it fresh, never up to 20 minutes stale.
     this.dirty = true;
@@ -739,7 +755,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.replyTo = m.id;
     this.memberReply = !msg.keyword && msg.source !== "mcp";
     this.understood = u;
-    try { return this.handleInbound(m, msg) === "open" ? "open" : "handled"; }
+    try { return this.handleInbound(m, msg, privateInviteTurn) === "open" ? "open" : "handled"; }
     finally { this.replyTo = undefined; this.memberReply = false; this.understood = undefined; }
   }
 
@@ -794,9 +810,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     return c.answer;
   }
 
-  private handleInbound(m: MemberState, msg: InboundMessage) {
+  private handleInbound(m: MemberState, msg: InboundMessage, privateInviteTurn: boolean) {
     const now = this.now();
-    if (msg.keyword === "STOP") { m.optedOut = true; this.dropMember(m.id, "opted out"); return; }
+    if (msg.keyword === "STOP") { m.optedOut = true; m.pendingInviteDraft = undefined; this.dropMember(m.id, "opted out"); return; }
     if (msg.keyword === "START") { m.optedOut = false; this.send(m, copy.stopWelcomeBack, { type: "info" }, "reply"); return; }
     if (msg.keyword === "HELP") return;
     const body = msg.body.trim();
@@ -873,12 +889,12 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (c.disclosure?.length) this.ctx.log("abuse_disclosed", { memberId: m.id, kinds: c.disclosure });
     // Inside a mutual match, "can I get her number?" asks for a number swap (the relay: Eliza's RELAY
     // contact_share, then both must say yes), never the sender's abuse: it goes to the agent unscored.
-    if (c.abuse.length && !mcp && this.swapAsk(m, c, body)) return "open" as const;
+    if (c.abuse.length && !mcp && !privateInviteTurn && this.swapAsk(m, c, body)) return "open" as const;
     if (c.abuse.length && !this.handleAbuse(m, c, body)) return;
 
-    if (this.opts.issueMemberInvite && !mcp && !c.abuse.length) {
-      const vouch = directInviteVouch(body);
-      if (vouch) return this.issueInviteLink(m, msg.id, vouch);
+    if (privateInviteTurn) {
+      if (!c.abuse.length && this.opts.memberInviteTurnAllowed?.(m.id, msg.id)) this.handleInviteVouchTurn(m, msg.id, body);
+      return;
     }
 
     // peon (#9): a job post by text, read back and saved only on the manager's yes (rules only, never an open-turn LLM output).
@@ -1135,18 +1151,35 @@ export class ConsentNetwork implements NetworkUnderTest {
     const inv = m.invitedBy ? this.members.get(m.invitedBy) : undefined;
     if (!inv || inv.optedOut || !this.invitedIds.has(m.id)) return;
     this.counters.inviteesJoined++;
-    const notice: InviteJoinNotice = { inviteeId: m.id, at: this.now() };
+    this.queueInviteJoin(inv, { inviteeId: m.id, at: this.now() });
+  }
+
+  /** Project a verified join from another conversation shard without adding the invitee to this Network. */
+  announceVerifiedInviteJoin(inviterId: MemberId, inviteeId: MemberId, at: number): void {
+    if (inviterId === inviteeId || this.invitedIds.has(inviteeId) || this.declinedIds.has(inviterId)) return;
+    this.dirty = true;
+    if (!this.record(inviterId) || !this.ctx.verifiedJoinedInviteeName?.(inviterId, inviteeId)) return;
+    const inv = this.member(inviterId);
+    this.invitedIds.add(inviteeId);
+    if (inv.optedOut) return;
+    this.counters.inviteesJoined++;
+    this.queueInviteJoin(inv, { inviteeId, at });
+  }
+
+  private queueInviteJoin(inv: MemberState, notice: InviteJoinNotice) {
     if (this.inviteJoinText(inv, notice) === undefined) return;
-    inv.pendingInviteJoins = [...(inv.pendingInviteJoins ?? []).filter(x => notice.at - x.at < inviteJoinNoticeLifetimeMs && x.inviteeId !== m.id), notice];
-    if (!inv.onlyWhenAsked) this.send(inv, "", { type: "info" }, "invite_notice", { about: [m.id], hook: { t: "invite_notice", notice } });
+    inv.pendingInviteJoins = [...(inv.pendingInviteJoins ?? []).filter(x => this.now() - x.at < inviteJoinNoticeLifetimeMs && x.inviteeId !== notice.inviteeId), notice];
+    if (!inv.onlyWhenAsked) this.send(inv, "", { type: "info" }, "invite_notice", { about: [notice.inviteeId], hook: { t: "invite_notice", notice } });
   }
 
   private inviteJoinText(inviter: MemberState, notice: InviteJoinNotice): string | undefined {
     const invitee = this.members.get(notice.inviteeId);
-    if (!invitee) return;
-    const eligible = this.checkRecipient(inviter.id, "invite_notice", { about: [invitee.id], reply: false }).ok;
-    const attributed = invitee.invitedBy === inviter.id && this.invitedIds.has(invitee.id);
-    if (inviteJoinNoticeCurrent(attributed, !invitee.optedOut, eligible, this.now() - notice.at)) return copy.inviteeJoined(invitee.first);
+    const verifiedExternalName = !invitee ? this.ctx.verifiedJoinedInviteeName?.(inviter.id, notice.inviteeId) : undefined;
+    const first = invitee?.first ?? verifiedExternalName;
+    if (!first) return;
+    const eligible = this.checkRecipient(inviter.id, "invite_notice", { about: [notice.inviteeId], reply: false }).ok;
+    const attributed = (invitee?.invitedBy === inviter.id || !!verifiedExternalName) && this.invitedIds.has(notice.inviteeId);
+    if (inviteJoinNoticeCurrent(attributed, !invitee?.optedOut, eligible, this.now() - notice.at)) return copy.inviteeJoined(first);
   }
 
   /**
@@ -2992,6 +3025,8 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** Remove a member from everything open (opt-out, hold, minor signal, decline). */
   private dropMember(id: MemberId, reason: string) {
+    const member = this.members.get(id);
+    if (member) member.pendingInviteDraft = undefined;
     const minor = reason === "minors policy";
     for (const o of this.opps.values()) {
       if (!OPEN_STAGES.has(o.stage)) continue;
@@ -3086,18 +3121,81 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** Only the simulator automatically offers growth invitations. The production issuer serves direct requests. */
   private get invitesWork(): boolean { return this.opts.growth && !!this.ctx.invite; }
 
-  private issueInviteLink(m: MemberState, messageId: string, vouch: Pick<MemberInviteRequest, "firstName" | "relationship">) {
-    if (!memberInviteCanIssue(this.memberReply && this.replyTo === m.id, this.canInvite(m), vouch.relationship)) {
-      this.send(m, this.copy.inviteUnavailable, { type: "info" }, "reply");
-      return;
+  private isPrivateInviteTurn(msg: InboundMessage): boolean {
+    if (!this.opts.issueMemberInvite || msg.keyword || msg.source === "mcp") return false;
+    const body = msg.body.trim();
+    if (directInviteVouch(body) || /^(?:confirm|cancel) invite$/i.test(body)) return true;
+    const m = this.members.get(msg.memberId), draft = m?.pendingInviteDraft;
+    if (!draft || !memberInviteDraftCurrent(this.now() - draft.at)) return false;
+    const competing = m.awaiting?.kind;
+    if (competing === "probe" || competing === "booked" || competing === "crew") {
+      const answer = consentOf(body).answer;
+      if ((answer === "yes" || answer === "no") && !inviteVouchEvidence(body)) return false;
     }
+    return true;
+  }
+
+  private inviteVouchReply(m: MemberState, body: string): SendResult {
+    return this.send(m, body, { type: "info", privateInviteVouch: true }, "reply");
+  }
+
+  private handleInviteVouchTurn(m: MemberState, messageId: string, body: string) {
     const at = this.now();
-    const result = this.opts.issueMemberInvite?.({ inviterId: m.id, messageId, at, ...vouch });
-    if (!result || (result.status === "issued" && !isMemberInvitationLink(this.app, result.url))) {
-      this.send(m, this.copy.inviteUnavailable, { type: "info" }, "reply");
+    const direct = this.memberReply && this.replyTo === m.id;
+    const initial = directInviteVouch(body);
+    if (initial) {
+      if (!memberInviteCanIssue(direct, this.canInvite(m), initial.relationship)) {
+        this.inviteVouchReply(m, this.copy.inviteUnavailable);
+        return;
+      }
+      const draft = { ...initial, at, requestId: messageId, riskLanguage: inviteVouchRisk(body) };
+      if (this.inviteVouchReply(m, this.copy.inviteVouchQuestion(draft.firstName)) === "sent") m.pendingInviteDraft = draft;
       return;
     }
-    if (result.status === "review") this.send(m, this.copy.inviteInReview, { type: "info" }, "reply");
+    if (/^cancel invite$/i.test(body)) {
+      m.pendingInviteDraft = undefined;
+      this.inviteVouchReply(m, this.copy.inviteCancelled);
+      return;
+    }
+    const draft = m.pendingInviteDraft;
+    if (!draft || !memberInviteDraftCurrent(at - draft.at) || !memberInviteCanIssue(direct, this.canInvite(m), draft.relationship)) {
+      m.pendingInviteDraft = undefined;
+      this.inviteVouchReply(m, this.copy.inviteUnavailable);
+      return;
+    }
+    draft.riskLanguage ||= inviteVouchRisk(body);
+    const confirmed = /^confirm invite$/i.test(body);
+    const evidenceValid = !!draft.evidence && memberInviteEvidenceValid(draft.evidence.durationMonths, draft.evidence.depth);
+    if (memberInviteConfirmationReady(direct, true, evidenceValid, confirmed) && draft.evidence) {
+      m.pendingInviteDraft = undefined;
+      this.issueInviteLink(m, messageId, draft, draft.evidence, at);
+      return;
+    }
+    const evidence = inviteVouchEvidence(body);
+    if (!evidence || !memberInviteEvidenceValid(evidence.durationMonths, evidence.depth)) {
+      this.inviteVouchReply(m, draft.evidence ? this.copy.inviteVouchConfirm : this.copy.inviteVouchQuestion(draft.firstName));
+      return;
+    }
+    draft.evidence = undefined;
+    const readback = this.copy.inviteVouchReadback(draft.firstName, draft.relationship, evidence.durationMonths, evidence.depth);
+    if (this.inviteVouchReply(m, readback) === "sent") draft.evidence = evidence;
+  }
+
+  private issueInviteLink(m: MemberState, messageId: string, draft: MemberInviteDraft, evidence: MemberInviteEvidence, at: number) {
+    const weak = memberInviteVouchWeak(evidence.durationMonths, evidence.depth);
+    const burst = memberInviteBurst(m.invites.filter(t => memberInviteWithinBurstWindow(at - t)).length);
+    const reviewReasons: InviteReviewReason[] = [];
+    if (weak) reviewReasons.push("weak_vouch");
+    if (burst) reviewReasons.push("burst");
+    if (draft.riskLanguage) reviewReasons.push("risk_language");
+    const disposition = memberInviteNeedsReview(weak, burst, draft.riskLanguage) ? "review" : "issue";
+    const { firstName, relationship, requestId } = draft;
+    const result = this.opts.issueMemberInvite?.({ inviterId: m.id, messageId, at, firstName, relationship, requestId, ...evidence, reviewReasons, disposition });
+    if (!result || (result.status === "issued" && (disposition === "review" || !isMemberInvitationLink(this.app, result.url)))) {
+      this.inviteVouchReply(m, this.copy.inviteUnavailable);
+      return;
+    }
+    if (result.status === "review") this.inviteVouchReply(m, this.copy.inviteInReview(inviteReviewReference(result.reviewId)));
     else {
       const sent = this.send(m, this.copy.forwardInvite(result.url), { type: "info" }, "reply", { memberInviteLink: result.url });
       if (sent !== "sent") return;
@@ -3785,6 +3883,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     // The member records can change between units (staff edits, the member's settings): read them again first.
     for (const m of [...this.members.values()]) {
       this.syncMember(m);
+      if (m.pendingInviteDraft && !memberInviteDraftCurrent(now - m.pendingInviteDraft.at)) m.pendingInviteDraft = undefined;
       if (m.pendingInviteJoins?.length) m.pendingInviteJoins = m.pendingInviteJoins.filter(notice => now - notice.at < inviteJoinNoticeLifetimeMs);
     }
     for (const o of this.openOpps()) {
@@ -4621,7 +4720,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (o.fallback !== undefined) o = { ...o, fallback: `${ack} ${o.fallback}` };
     }
     // A note for this member ("That plan didn't come together this time.") rides on their next message.
-    const note = m.note && !o.memberInviteLink && kind !== "safety" && kind !== "relay" && now - m.note.at < 7 * DAY ? m.note.text : undefined;
+    const note = m.note && !o.memberInviteLink && !meta.privateInviteVouch && kind !== "safety" && kind !== "relay" && now - m.note.at < 7 * DAY ? m.note.text : undefined;
     if (note) {
       body = `${note} ${body}`;
       if (o.fallback !== undefined) o = { ...o, fallback: `${note} ${o.fallback}` };
@@ -4645,7 +4744,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     const baseBody = body;
     const deliveredInviteJoins: InviteJoinNotice[] = [];
-    if (!standaloneNotice && !o.memberInviteLink && m.pendingInviteJoins?.length && inviteJoinNoticeMayRideReply(this.memberReply && this.replyTo === m.id, reply, kind === "safety" || kind === "relay")) {
+    if (!standaloneNotice && !o.memberInviteLink && !meta.privateInviteVouch && m.pendingInviteJoins?.length && inviteJoinNoticeMayRideReply(this.memberReply && this.replyTo === m.id, reply, kind === "safety" || kind === "relay")) {
       const current: InviteJoinNotice[] = [];
       for (const notice of m.pendingInviteJoins) {
         const status = this.inviteJoinText(m, notice);
@@ -4705,7 +4804,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (deliveredInviteJoins.length) m.pendingInviteJoins = m.pendingInviteJoins?.filter(notice => !deliveredInviteJoins.includes(notice));
     m.pendingAck = undefined;
     if (note || (m.note && now - m.note.at >= 7 * DAY)) m.note = undefined;
-    const storedText = o.memberInviteLink ? text.replace(o.memberInviteLink, "").trimEnd() : text;
+    const storedText = o.memberInviteLink ? text.replace(o.memberInviteLink, "").trimEnd()
+      : meta.privateInviteVouch ? "Private invitation reply"
+      : sentStandaloneNotice ? "Invitation join notice"
+      : deliveredInviteJoins.length ? baseBody : text;
     m.lastSent = { body: storedText, at: now, ...(Array.isArray(meta.approvedPhotos) && meta.approvedPhotos.length ? {photoItemId:(meta.approvedPhotos[0] as {itemId:string}).itemId} : {}) };
     if (!standaloneNotice || sentStandaloneNotice) fns.onSent?.();
     return "sent";
@@ -5008,6 +5110,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         if (x === id) continue;
         if (this.blocked(id, x)) return no("blocked_pair");
         const other = this.members.get(x);
+        if (!other && kind === "invite_notice" && !this.declinedIds.has(x) && this.ctx.verifiedJoinedInviteeName?.(id, x)) continue;
         if (other) this.syncRecord(other);
         if (!other || other.minor || other.account || this.declinedIds.has(x)) return no("other_not_matchable");
         if (this.reportHeld(x)) return no("other_held");
@@ -5215,7 +5318,9 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** At the start of a unit: read the record again, and take a member the record now keeps out of matching out of every open opportunity. */
   private syncMember(m: MemberState) {
-    if (this.syncRecord(m) && this.busy(m.id, undefined, true)) this.dropMember(m.id, m.account ? `account ${m.account}` : "minors policy");
+    if (!this.syncRecord(m)) return;
+    m.pendingInviteDraft = undefined;
+    if (this.busy(m.id, undefined, true)) this.dropMember(m.id, m.account ? `account ${m.account}` : "minors policy");
   }
 
   member(id: MemberId): MemberState {

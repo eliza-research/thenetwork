@@ -44,6 +44,7 @@ import {
 import { inboxKeepMs, platformKeepMs, stopHintWindowMs } from "../../core/src/generated/platformRetention.ts";
 import { stopCoversEveryApp } from "../../core/src/generated/sharedLineConsentJourney.ts";
 import { standingIntentReplayAllowed } from "../../core/src/generated/standingIntentManagement.ts";
+import { projectInvitationWelcome, projectRemoteInvitationNotice } from "../../core/src/generated/invitationJoinProjection.ts";
 import { ageAnswer, agesStated } from "../src/classify.ts";
 import { standingIntentCommand } from "../src/standing-intents.ts";
 import { contributionHistoryReply, contributionHistoryRequest } from "./contribution-history.ts";
@@ -52,7 +53,7 @@ import { saveTravelPresence, travelOwner, travelPresenceCommand } from "./travel
 import { soloReplyReplayAllowed } from "../../core/src/generated/soloConcierge.ts";
 import { soloConciergeReply, soloConciergeRequest } from "./solo-concierge.ts";
 import { NetworkRuntime, type RuntimeHost, type StagedMemberInvitation } from "./runtime.ts";
-import { isMemberInvitationLink, memberInvitationLink, type MemberInviteRequest } from "../src/invitation.ts";
+import { isMemberInvitationLink, memberInvitationLink, type InviteRelationship, type MemberInviteEvidence, type MemberInviteRequest } from "../src/invitation.ts";
 import { effectiveParticipation, automatedFacetPredicate } from "./snapshot.ts";
 import { ProfileSuggestions, type SuggestionAuthorization } from "./profile-suggestions.ts";
 import { profileReviewFromEnv } from "./profile-review-factory.ts";
@@ -65,7 +66,8 @@ import {
   networkEnrollmentAllowed, noticeAllowed, otherAppAllowed, otherAppEnrollment, pendingMatchesApp, shouldReadLookingFor,
   shouldReadPendingAnswer, step as stepTextJoin,
 } from "../../core/src/generated/textEnrollment.ts";
-import { Inbox, type CollectedReply } from "./inbox.ts";
+import { Inbox, type CollectedReply, type InvitationReplyReason } from "./inbox.ts";
+import { staffDecideInvitationReview, staffInvitationReviewQueue } from "./invitation-review.ts";
 import { networkRoutePolicy, routeEnvelopeAllowed, sameNetworkAuthority, type NetworkRoutePolicy } from "./route-authority.ts";
 import { TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH, RELAY_PHOTO_RESOLVE_PATH, parseApprovedRelayPhotos, type SetStateRequest, type TurnReceiptRequest, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
 import { SVC_MIN_SECRET, svcVerify } from "../../core/src/svc/svc-auth.ts";
@@ -75,7 +77,11 @@ import { CostLedger, costRatesFromEnv, PgCostSink } from "./cost.ts";
 import { BlooioAdapter, type ChannelAdapter, type DirectKind, type Outbound } from "./channel.ts";
 import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { Accounts, homeCityOf, type AccountHooks, type HomeInput, type JoinHookContext, type MemberHookContext } from "../../platform/src/accounts.ts";
-import { consumeMemberInvitation, findMemberInvitation, InvitationUnavailable, memberInvitationHash, newMemberInvitation, storeMemberInvitation, type ReferralJoin } from "../../platform/src/invite-links.ts";
+import {
+  consumeMemberInvitation, findApprovedMemberInvitationReview, findMemberInvitation, holdMemberInvitation, InvitationUnavailable,
+  memberInvitationHash, memberInvitationReviewId, memberInvitationReviewStatus, newMemberInvitation, purgeExpiredMemberInvitationReviews,
+  releaseMemberInvitationReview, storeMemberInvitation, type ReferralJoin,
+} from "../../platform/src/invite-links.ts";
 import { joinAgeCheck, lowestAge } from "../../platform/src/age.ts";
 import { detectKeyword as platformKeyword, keywordEvent, leaveTarget, resolveConsent, stopScope, type StopScope } from "../../platform/src/consent.ts";
 import { devShortcutsAllowed, isProduction, platformEnv, type Env } from "../../platform/src/env.ts";
@@ -135,7 +141,7 @@ export function turnSecretProblem(env: Record<string, string | undefined> = proc
 /** The tables the service needs (pnpm run db:migrate). */
 const REQUIRED_TABLES = [
   ...["members", "channel_identities", "facets", "intents", "presence", "edges", "messages", "events", "matching_runs", "staff_audit", "network_state", "opportunities", "review_items", "requests"].map(t => `network.${t}`),
-  ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "app_lines", "share_grants", "eliza_notices", "member_invitations"].map(t => `platform.${t}`),
+  ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "app_lines", "share_grants", "eliza_notices", "member_invitations", "member_invitation_reviews"].map(t => `platform.${t}`),
 ];
 /** The dev-only key for keyed phone hashes (the platform's own default). Production needs PLATFORM_HASH_KEY. */
 const DEV_HASH_KEY = "dev-only-platform-hash-key";
@@ -247,7 +253,7 @@ const NOTIFY_SUMMARY_MAX = 500;
 
 export type InboundOutcome =
   | "open" | "handled" | "duplicate" | "unknown_sender" | "ignored" | "ignored_group" | "status" | "reaction" | "safety"
-  | "invite_only" | "join_asked" | "joined" | "under_age" | "stopped" | "left" | "no_network" | "held" | "standing_intents" | "travel_presence" | "solo_events" | "contribution_history" | "member_invitation";
+  | "invite_only" | "join_asked" | "joined" | "under_age" | "stopped" | "left" | "no_network" | "held" | "standing_intents" | "travel_presence" | "solo_events" | "contribution_history" | InvitationReplyReason;
 
 interface Route { app: AppId; shared: boolean }
 
@@ -441,10 +447,19 @@ export class NetworkService implements RuntimeHost {
 
   /** Only the verified sender of the current signed turn can receive a forwarding link. */
   stageMemberInvitation(rt: NetworkRuntime, request: MemberInviteRequest): StagedMemberInvitation | undefined {
-    const turn = this.inboundTurn();
-    if (!turn || turn.app !== rt.app.id || turn.memberId !== request.inviterId || normalizePhone(turn.from) !== rt.addressOf(request.inviterId)) return;
-    const { token, tokenHash } = newMemberInvitation(this.hashKey, rt.app.id);
-    return { request, url: memberInvitationLink(rt.app, token), referral: { tokenHash, inviterMemberId: request.inviterId } };
+    if (!rt.signedInviteTurn(request.inviterId, request.messageId)) return;
+    if (request.disposition === "review") {
+      const { inviterId: inviterMemberId, relationship, durationMonths, depth, reviewReasons, at } = request;
+      const id = memberInvitationReviewId(this.hashKey, rt.app.id, inviterMemberId, request.requestId);
+      return { status: "review", review: { id, inviterMemberId, relationship, durationMonths, depth, reviewReasons, at } };
+    }
+    return this.invitationLink(rt.app, request.inviterId, request.relationship, request, request.at);
+  }
+
+  private invitationLink(app: AppInfo, inviterMemberId: MemberId, relationship: InviteRelationship,
+    evidence: MemberInviteEvidence, at: number, reviewId?: string): Extract<StagedMemberInvitation, { status: "issued" }> {
+    const { token, tokenHash } = newMemberInvitation(this.hashKey, app.id);
+    return { status: "issued", referral: { tokenHash, inviterMemberId }, url: memberInvitationLink(app, token), relationship, evidence, at, reviewId };
   }
 
   private async invitationOwner(tx: SQL, app: AppInfo, memberId: string, sender?: string): Promise<boolean> {
@@ -466,8 +481,11 @@ export class NetworkService implements RuntimeHost {
 
   async saveMemberInvitation(tx: SQL, rt: NetworkRuntime, staged: StagedMemberInvitation): Promise<void> {
     const turn = this.inboundTurn();
-    if (!turn || !await this.invitationOwner(tx, rt.app, staged.request.inviterId, turn.from)) throw new InvitationUnavailable();
-    await storeMemberInvitation(tx, rt.app.id, staged.referral, staged.request.relationship, staged.request.at);
+    const inviterId = staged.status === "issued" ? staged.referral.inviterMemberId : staged.review.inviterMemberId;
+    if (!turn || !await this.invitationOwner(tx, rt.app, inviterId, turn.from)) throw new InvitationUnavailable();
+    if (staged.status === "review") return holdMemberInvitation(tx, rt.app.id, staged.review);
+    const approval = staged.reviewId && await releaseMemberInvitationReview(tx, rt.app.id, staged.reviewId, inviterId, staged.at);
+    await storeMemberInvitation(tx, rt.app.id, staged.referral, staged.relationship, staged.at, approval ? approval.expiresAt : undefined, staged.evidence);
   }
 
   private async referralFor(app: AppId, token: string, at: number): Promise<ReferralJoin | undefined> {
@@ -551,6 +569,10 @@ export class NetworkService implements RuntimeHost {
     return this.runtimeFor(app, homeCity) ?? this.runtimeFor(app);
   }
 
+  conversationNetworkId(app: AppId, homeCity: string): string | undefined {
+    return this.runtimeForHome(app, homeCity)?.id;
+  }
+
   conversationCities(rt: NetworkRuntime): readonly string[] {
     return ["nyc", "sf", "la"].filter(city => this.runtimeForHome(rt.app.id, city) === rt);
   }
@@ -601,9 +623,12 @@ export class NetworkService implements RuntimeHost {
    */
   async afterTick(rt: NetworkRuntime): Promise<void> {
     await this.recoverInvitationJoins(rt);
-    if (this.runtimeFor(rt.app.id) === rt) await rt.scoped(tx => tx`delete from platform.member_invitations
-      where app_id=${rt.app.id} and expires_at<=${new Date(this.clock.now())} and (redeemed_at is null or projected_at is not null)`)
-      .catch(() => this.log(`[purge] invitations failed (${rt.id})`));
+    if (this.runtimeFor(rt.app.id) === rt) await rt.scoped(async tx => {
+      const now = this.clock.now();
+      await purgeExpiredMemberInvitationReviews(tx, rt.app.id, now);
+      await tx`delete from platform.member_invitations
+        where app_id=${rt.app.id} and expires_at<=${new Date(now)} and (redeemed_at is null or projected_at is not null)`;
+    }).catch(() => this.log(`[purge] invitations failed (${rt.id})`));
     for (const line of slaAlerts(rt.id, rt.net.reviewQueue(), this.clock.now(), DEFAULT_SLA_HOURS[rt.app.id], this.slaAlerted)) this.log(line);
     if (PHOTO_APPS.includes(rt.app.id)) await this.weeklyBias(rt);
   }
@@ -902,15 +927,41 @@ export class NetworkService implements RuntimeHost {
   }
 
   private async projectInvitationJoin(rt: NetworkRuntime, memberId: MemberId): Promise<void> {
+    const remote = await rt.unitOfWork(async net => {
+      const app = rt.app.id;
+      const [pending] = await rt.scoped(tx => tx`select i.token_hash,i.inviter_member_id,i.welcome_projected_at,
+          v.home_city as inviter_home,m.home_city as invitee_home
+        from platform.member_invitations i join network.members m on m.app_id=i.app_id and m.id=i.redeemed_member_id and m.invited_by=i.inviter_member_id
+        join network.members v on v.app_id=i.app_id and v.id=i.inviter_member_id
+        where i.app_id=${app} and i.redeemed_member_id=${memberId}`);
+      if (!pending || !projectInvitationWelcome(true, this.runtimeForHome(app, pending.invitee_home as string) === rt, !!pending.welcome_projected_at)) return;
+      const inviterRuntime = this.runtimeForHome(app, pending.inviter_home as string);
+      const localNotice = inviterRuntime === rt;
+      net.welcomeJoined(memberId, localNotice ? pending.inviter_member_id as MemberId : undefined);
+      rt.unit.memberCommand = async tx => {
+        const at = new Date(this.clock.now());
+        const rows = await tx`update platform.member_invitations set welcome_projected_at=${at},
+          projected_at=case when ${localNotice} then ${at} else projected_at end
+          where app_id=${app} and token_hash=${pending.token_hash as string} and welcome_projected_at is null returning token_hash`;
+        if (rows.length !== 1) throw new InvitationUnavailable();
+      };
+      return localNotice ? undefined : inviterRuntime;
+    });
+    if (remote) await this.projectInvitationNotice(remote, memberId);
+  }
+
+  private async projectInvitationNotice(rt: NetworkRuntime, inviteeId: MemberId): Promise<void> {
     await rt.unitOfWork(async net => {
       const app = rt.app.id;
-      const [pending] = await rt.scoped(tx => tx`select token_hash, inviter_member_id from platform.member_invitations
-        where app_id=${app} and redeemed_member_id=${memberId} and projected_at is null`);
-      if (!pending) return;
-      net.welcomeJoined(memberId, pending.inviter_member_id as MemberId);
+      const [pending] = await rt.scoped(tx => tx`select i.token_hash,i.inviter_member_id,i.redeemed_at,i.welcome_projected_at,i.projected_at,v.home_city
+        from platform.member_invitations i join network.members v on v.app_id=i.app_id and v.id=i.inviter_member_id
+        join network.members m on m.app_id=i.app_id and m.id=i.redeemed_member_id and m.invited_by=v.id
+        where i.app_id=${app} and i.redeemed_member_id=${inviteeId}`);
+      if (!pending || !projectRemoteInvitationNotice(true, this.runtimeForHome(app, pending.home_city as string) === rt, !!pending.welcome_projected_at, !!pending.projected_at)) return;
+      net.announceVerifiedInviteJoin(pending.inviter_member_id as MemberId, inviteeId, new Date(pending.redeemed_at as Date | string).getTime());
       rt.unit.memberCommand = async tx => {
         const rows = await tx`update platform.member_invitations set projected_at=${new Date(this.clock.now())}
-          where app_id=${app} and token_hash=${pending.token_hash as string} and projected_at is null returning token_hash`;
+          where app_id=${app} and token_hash=${pending.token_hash as string} and welcome_projected_at is not null and projected_at is null returning token_hash`;
         if (rows.length !== 1) throw new InvitationUnavailable();
       };
     });
@@ -919,12 +970,16 @@ export class NetworkService implements RuntimeHost {
   private async recoverInvitationJoins(rt: NetworkRuntime): Promise<void> {
     const app = rt.app.id;
     const cities = this.conversationCities(rt);
-    const pending = await rt.scoped(tx => tx`select i.redeemed_member_id from platform.member_invitations i
+    const pending = await rt.scoped(tx => tx`select i.redeemed_member_id,i.welcome_projected_at from platform.member_invitations i
       join network.members m on m.app_id=i.app_id and m.id=i.redeemed_member_id
-      where i.app_id=${app} and i.redeemed_at is not null and i.projected_at is null and m.home_city in ${tx(cities)}
+      join network.members v on v.app_id=i.app_id and v.id=i.inviter_member_id
+      where i.app_id=${app} and i.redeemed_at is not null and i.projected_at is null
+        and ((i.welcome_projected_at is null and m.home_city in ${tx(cities)}) or (i.welcome_projected_at is not null and v.home_city in ${tx(cities)}))
       order by i.redeemed_at, i.token_hash limit 20`);
     for (const row of pending) {
-      await this.projectInvitationJoin(rt, row.redeemed_member_id as string).catch(() => this.log(`[invite] joined projection waits for retry (${rt.id})`));
+      const memberId = row.redeemed_member_id as string;
+      const projection = row.welcome_projected_at ? this.projectInvitationNotice(rt, memberId) : this.projectInvitationJoin(rt, memberId);
+      await projection.catch(() => this.log(`[invite] joined projection waits for retry (${rt.id})`));
     }
   }
 
@@ -1147,7 +1202,7 @@ export class NetworkService implements RuntimeHost {
 
   /** A verified, parsed channel event (Blooio webhook). `app`: the per-app webhook path. */
   inboundTurn = () => this.inbox.currentTurn();
-  collectReplies = (tx: SQL, replies: CollectedReply[], invitation?: boolean) => this.inbox.collect(tx, replies, invitation);
+  collectReplies = (tx: SQL, replies: CollectedReply[], invitation?: InvitationReplyReason) => this.inbox.collect(tx, replies, invitation);
 
   async inbound(ev: ChannelEvent, o: { app?: AppId } = {}): Promise<InboundOutcome> {
     switch (ev.kind) {
@@ -1375,7 +1430,7 @@ export class NetworkService implements RuntimeHost {
     // Not from the thread: a profile from the member's AI assistant, learned but never an answer (InboundMessage.source).
     const out = await this.memberUnit(rt, memberId, ev, rowId, kw, systemReply, !fromThread);
     // The member wrote in the thread: pending notify deliveries count as acted on (an assistant's submit_profile does not).
-    if ((out === "handled" || out === "member_invitation") && fromThread && this.notify && kw !== "stop" && kw !== "stop_all" && !profileReadRequest(ev.text, this.apps)) {
+    if ((out === "handled" || out === "member_invitation" || out === "member_invitation_review") && fromThread && this.notify && kw !== "stop" && kw !== "stop_all" && !profileReadRequest(ev.text, this.apps)) {
       const personId = await this.personOfMember(rt, memberId);
       if (personId) await this.notify.threadReply(personId, ev.transport === "sms" ? "sms" : "imessage", this.clock.now()).catch(e => this.log(`[notify] thread reply not recorded: ${(e as Error).message}`));
     }
@@ -1392,6 +1447,13 @@ export class NetworkService implements RuntimeHost {
       const channel = ev.transport === "sms" ? "sms" : "imessage";
       const inbound = { id: rowId, member_id: memberId, direction: "inbound", channel, body: ev.text, status: "received", type: null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
       const signedDirect = !keyword && !fromAssistant && this.inboundTurn();
+      const inviteReview = signedDirect && /^check invite (mir_[0-9a-f]{32})$/i.exec(ev.text.trim())?.[1]?.toLowerCase();
+      if (inviteReview && rt.signedInviteTurn(memberId, rowId)) {
+        rt.unit.inbound = inbound;
+        rt.unit.privateInviteTurn = true;
+        rt.unit.memberCommand = tx => this.replyToInvitationReview(tx, rt, memberId, signedDirect.from, rowId, inviteReview);
+        return "handled";
+      }
       const travel = signedDirect ? travelPresenceCommand(ev.text) : undefined;
       const soloEvents = signedDirect ? soloConciergeRequest(ev.text) : undefined;
       const contributionPage = signedDirect ? contributionHistoryRequest(ev.text) : undefined;
@@ -1488,11 +1550,29 @@ export class NetworkService implements RuntimeHost {
         for (const s of rt.unit.sends) if (s.memberId === memberId) s.kind = "compliance";
       }
       if (rt.unit.memberInvitation) {
-        rt.unit.inbound = { ...inbound, body: "Requested an invitation link.", type: "member_invitation" };
-        return "member_invitation" as const;
+        rt.unit.privateInviteTurn = true;
+        return rt.unit.memberInvitation.status === "issued" ? "member_invitation" : "member_invitation_review";
       }
       return keyword || systemReply ? "handled" as const : disposition;
     });
+  }
+
+  private async replyToInvitationReview(tx: SQL, rt: NetworkRuntime, memberId: MemberId, sender: string, messageId: string, id: string): Promise<void> {
+    const now = this.clock.now();
+    if (!await this.invitationOwner(tx, rt.app, memberId, sender)) return;
+    const approved = await findApprovedMemberInvitationReview(tx, rt.app.id, id, memberId, now);
+    const replyId = `sys:${messageId}`;
+    if (approved) {
+      const staged = this.invitationLink(rt.app, memberId, approved.relationship, approved, now, id);
+      rt.unit.memberInvitation = staged;
+      rt.collectedMemberReply(memberId, replyId, this.copyOf(rt.app).forwardInvite(staged.url), "member_invitation", [staged.url]);
+      return;
+    }
+    const status = await memberInvitationReviewStatus(tx, rt.app.id, id, memberId, now);
+    const text = status === "pending" ? "Your invitation is still waiting for review."
+      : status === "denied" ? "Your invitation was not approved."
+      : status === "released" ? "You already received the forwarding link." : "I couldn't find a current invitation with that code.";
+    rt.collectedMemberReply(memberId, `invite-vouch:${replyId}`, text, "member_invitation_vouch");
   }
 
   /**
@@ -2396,6 +2476,13 @@ export class NetworkService implements RuntimeHost {
         });
         if (!current) return json({error: "turn_invitation_changed", retryable: false}, 409);
       }
+      if (handled.replyIds?.some(id => id.startsWith("invite-vouch:"))) {
+        const memberId = handled.memberId;
+        const rt = handled.app && memberId ? await this.runtimeOfMember(handled.app, memberId) : undefined;
+        if (!rt || !memberId || !await rt.scoped(tx => this.invitationOwner(tx, rt.app, memberId, input.from))) {
+          return json({error: "turn_invitation_changed", retryable: false}, 409);
+        }
+      }
       const invitationNotices = handled.replyIds?.filter(id => id.startsWith("invite-notice:")) ?? [];
       if (invitationNotices.length) {
         const memberId = handled.memberId;
@@ -2575,6 +2662,21 @@ export class NetworkService implements RuntimeHost {
         const no = need(["safety"]); if (no) return no;
         await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_safety_reports", mode: "real", ok: true, app: rt.app.id });
         return json({ ok: true, network: rt.id, reports: await this.safetyReports(rt) });
+      }
+      if (path === "/review/member-invitations") {
+        const no = need(["reviewer", "safety"]); if (no) return no;
+        const at = this.clock.now();
+        if (req.method === "GET") {
+          const reviews = await rt.scoped(tx => staffInvitationReviewQueue(tx, rt.app.id, user, at));
+          return reviews ? json({ ok: true, reviews }) : json({ error: "forbidden" }, 403);
+        }
+        if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
+        const data = await body(req) as Record<string, unknown> | undefined;
+        const id = data?.id, decision = data?.decision;
+        if (typeof id !== "string" || (decision !== "approve" && decision !== "deny")) return json({ error: "invalid_invitation_decision" }, 400);
+        const resolved = await rt.scoped(tx => staffDecideInvitationReview(tx, rt.app.id, id, decision, user, at));
+        if (resolved === "forbidden") return json({ error: "forbidden" }, 403);
+        return resolved === "decided" ? json({ ok: true }) : json({ error: "invitation_review_unavailable" }, 409);
       }
       if (req.method === "GET" && path === "/signals") {
         // Agent signals that need a person: opt_out and safety_concern proposed from /internal/signals.

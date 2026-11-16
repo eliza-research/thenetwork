@@ -116,7 +116,15 @@ export function copyFor(b: CopyBrand) {
   invitesNotOpen: (friend: string) => `Thanks! I can't send invite links yet, so nothing went to ${friend}. They're welcome to sign up for ${b.name} themselves.`,
   inviteSent: (friend: string) => `Done: here's an invite link for ${friend}. I'll welcome them when they join.`,
   forwardInvite: (url: string) => `You can forward this invite link:\n${url}`,
-  inviteInReview: "Your invite is waiting for review.",
+  inviteVouchQuestion: (first: string) => `How long and how well have you known ${first}? For example, “2 years, well” or “3 weeks, met once”.`,
+  inviteVouchReadback: (first: string, relationship: string, durationMonths: number, depth: "met_once" | "somewhat" | "well") => {
+    const duration = durationMonths === 0 ? "less than a month" : durationMonths === 1 ? "1 month" : `${durationMonths} months`;
+    const level = { met_once: "met once", somewhat: "know somewhat", well: "know well" }[depth];
+    return `Your vouch for ${first} is ${relationship}, ${duration}, ${level}. Reply CONFIRM INVITE to request a link you can forward.`;
+  },
+  inviteVouchConfirm: "Reply CONFIRM INVITE to request the link, or CANCEL INVITE to stop.",
+  inviteCancelled: "I cleared your invitation request.",
+  inviteInReview: (reference?: string) => reference ? `Your invite is waiting for review. To check it, reply CHECK INVITE ${reference}.` : "Your invite is waiting for review.",
   inviteUnavailable: "I couldn't make an invite link right now.",
   inviteeJoined: (friend: string) => `${friend} just joined. Thanks for bringing them in.`,
   secondEncounter: (others: string) => `You and ${others} both said you'd meet again. Want me to find a time?`,

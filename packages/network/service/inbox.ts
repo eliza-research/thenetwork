@@ -66,6 +66,7 @@ export interface InboundTurn {
   onFail?: Array<() => Promise<unknown>>;
 }
 export interface CollectedReply {id: string; body: string; kind: "reply" | "compliance"}
+export type InvitationReplyReason = "member_invitation" | "member_invitation_review";
 
 interface WebhookEnvelope {
   ev: InboundMessage;
@@ -194,14 +195,14 @@ export class Inbox {
   }
 
   /** Persist only causal replies in the same transaction as their Network effects. */
-  async collect(tx: SQL, replies: CollectedReply[], invitation = false): Promise<void> {
+  async collect(tx: SQL, replies: CollectedReply[], invitation?: InvitationReplyReason): Promise<void> {
     const turn = this.currentTurn();
     if (!turn || !replies.length) return;
     if (invitation) {
       if (!turn.app || !turn.memberId || replies.length !== 1 || replies[0]!.kind !== "reply") throw new Error("Invitation collection requires one verified member reply");
       turn.invitationCompletion = true;
       const response: TurnResponse = {outcome: "handled", replies: replies.map(reply => reply.body), replyIds: replies.map(reply => reply.id),
-        delivery: "collected", replyKind: "reply", accountEligible: true, app: turn.app, memberId: turn.memberId, reason: "member_invitation"};
+        delivery: "collected", replyKind: "reply", accountEligible: true, app: turn.app, memberId: turn.memberId, reason: invitation};
       const rows = await tx`update platform.inbound set status='done',response=${response}::jsonb,replies=(${{items: replies}}::jsonb->'items'),
         handled_at=${new Date(this.o.clock.now())},handled_order=nextval('platform.inbound_handled_seq'),event=null,sender=null,
         app_id=${turn.app},member_id=${turn.memberId} where id=${turn.id} and status='processing' and replies='[]'::jsonb returning id`;

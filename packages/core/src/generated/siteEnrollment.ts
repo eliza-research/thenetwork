@@ -1,13 +1,13 @@
 // GENERATED from spec/siteEnrollment.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Save my approved profile in the app I asked for / A submitted account marker must match the authenticated account (spec/siteEnrollment.md:9) */
+/** Story: Save my approved profile in the app I asked for / A submitted account marker must match the authenticated account (spec/siteEnrollment.md:21) */
 export type EnrollmentPhase = "AwaitingAccountView" | "AccountChanged" | "AwaitingProfile" | "InvalidProfile" | "AwaitingConsent" | "ConsentMismatch" | "AwaitingEligibility" | "NeedsReview" | "AwaitingMembership" | "NeedsInvite" | "InvalidInvitation" | "AwaitingAge" | "BelowJoinAge" | "ReturnExisting" | "AwaitingPersistence" | "Created" | "JoinHookFailed";
-/** Story: Save my approved profile in the app I asked for / A submitted account marker must match the authenticated account (spec/siteEnrollment.md:9) */
+/** Story: Save my approved profile in the app I asked for / A submitted account marker must match the authenticated account (spec/siteEnrollment.md:21) */
 export interface Enrollment { phase: EnrollmentPhase; viewChecked: boolean; validProfile: boolean; currentConsent: boolean; currentEligibility: boolean; rejoin: boolean; invited: boolean; referred: boolean; invalidReferral: boolean; ageAllowed: boolean }
-/** Story: Save my approved profile in the app I asked for / The current membership determines whether a join needs an invite (spec/siteEnrollment.md:70) */
+/** Story: Save my approved profile in the app I asked for / The current membership determines whether a join needs an invite (spec/siteEnrollment.md:82) */
 export type ReferralFact = "NoReferral" | "InvalidReferral" | "VerifiedReferral";
-/** Story: Save my approved profile in the app I asked for / The current membership determines whether a join needs an invite (spec/siteEnrollment.md:70) */
+/** Story: Save my approved profile in the app I asked for / The current membership determines whether a join needs an invite (spec/siteEnrollment.md:82) */
 export interface MembershipFacts { existingMember: boolean; inviteRequired: boolean; hasInvite: boolean; referral: ReferralFact }
 
 /** One variant per transition in the spec. */
@@ -20,9 +20,9 @@ export type Event =
   | { type: "checkJoinAge"; ageEligible: boolean }
   | { type: "finishJoin"; hookSucceeded: boolean };
 
-/** Story: Save my approved profile in the app I asked for / A submitted account marker must match the authenticated account (spec/siteEnrollment.md:9) */
+/** Story: Save my approved profile in the app I asked for / A submitted account marker must match the authenticated account (spec/siteEnrollment.md:21) */
 export const initial: Enrollment = { phase: "AwaitingAccountView", viewChecked: false, validProfile: false, currentConsent: false, currentEligibility: false, rejoin: false, invited: false, referred: false, invalidReferral: false, ageAllowed: false };
-/** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md:40) */
+/** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md:52) */
 export const typedJoinEntry: Enrollment = { ...initial, phase: "AwaitingConsent", validProfile: true, viewChecked: true };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -31,13 +31,19 @@ export function inv(current: Enrollment): boolean {
   return alwaysSuccessUsesEligibleProfile(current) && alwaysExistingMembershipStaysExisting(current) && alwaysReferralOnlyOnNewMembership(current);
 }
 
-/** Story: Save my approved profile in the app I asked for / A submitted account marker must match the authenticated account (spec/siteEnrollment.md:9) */
+/** Story: Find the app's public signup entry / Public signup uses the app's supported surface (spec/siteEnrollment.md:9) */
+//@ pure
+export function publicSignupUsesBrowser(app: string): boolean {
+  return app === "peon";
+}
+
+/** Story: Save my approved profile in the app I asked for / A submitted account marker must match the authenticated account (spec/siteEnrollment.md:21) */
 //@ pure
 export function canCheckAccountView(joining: Enrollment): boolean {
   return joining.phase === "AwaitingAccountView";
 }
 
-/** Story: Save my approved profile in the app I asked for / A submitted account marker must match the authenticated account (spec/siteEnrollment.md:9) */
+/** Story: Save my approved profile in the app I asked for / A submitted account marker must match the authenticated account (spec/siteEnrollment.md:21) */
 //@ pure
 export function checkAccountView(joining: Enrollment, viewMatches: boolean): Enrollment {
   //@ ensures (inv(joining) && canCheckAccountView(joining)) ==> alwaysSuccessUsesEligibleProfile(\result)
@@ -46,13 +52,13 @@ export function checkAccountView(joining: Enrollment, viewMatches: boolean): Enr
   return { ...joining, viewChecked: viewMatches, phase: viewMatches ? "AwaitingProfile" : "AccountChanged" };
 }
 
-/** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md:40) */
+/** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md:52) */
 //@ pure
 export function canDecodeProfile(joining: Enrollment): boolean {
   return joining.phase === "AwaitingProfile" && joining.viewChecked;
 }
 
-/** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md:40) */
+/** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md:52) */
 //@ pure
 export function decodeProfile(joining: Enrollment, decoded: boolean): Enrollment {
   //@ ensures (inv(joining) && canDecodeProfile(joining)) ==> alwaysSuccessUsesEligibleProfile(\result)
@@ -61,13 +67,13 @@ export function decodeProfile(joining: Enrollment, decoded: boolean): Enrollment
   return { ...joining, validProfile: decoded, phase: decoded ? "AwaitingConsent" : "InvalidProfile" };
 }
 
-/** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md:40) */
+/** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md:52) */
 //@ pure
 export function canConfirmConsent(joining: Enrollment): boolean {
   return joining.phase === "AwaitingConsent" && joining.validProfile && joining.viewChecked;
 }
 
-/** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md:40) */
+/** Story: Save my approved profile in the app I asked for / Decode the profile and accept current consent before locking the account (spec/siteEnrollment.md:52) */
 //@ pure
 export function confirmConsent(joining: Enrollment, consentMatches: boolean): Enrollment {
   //@ ensures (inv(joining) && canConfirmConsent(joining)) ==> alwaysSuccessUsesEligibleProfile(\result)
@@ -76,13 +82,13 @@ export function confirmConsent(joining: Enrollment, consentMatches: boolean): En
   return { ...joining, currentConsent: consentMatches, phase: consentMatches ? "AwaitingEligibility" : "ConsentMismatch" };
 }
 
-/** Story: Save my approved profile in the app I asked for / A hold or ban prevents enrollment (spec/siteEnrollment.md:58) */
+/** Story: Save my approved profile in the app I asked for / A hold or ban prevents enrollment (spec/siteEnrollment.md:70) */
 //@ pure
 export function canCheckEligibility(joining: Enrollment): boolean {
   return joining.phase === "AwaitingEligibility" && joining.viewChecked && joining.validProfile && joining.currentConsent;
 }
 
-/** Story: Save my approved profile in the app I asked for / A hold or ban prevents enrollment (spec/siteEnrollment.md:58) */
+/** Story: Save my approved profile in the app I asked for / A hold or ban prevents enrollment (spec/siteEnrollment.md:70) */
 //@ pure
 export function checkEligibility(joining: Enrollment, eligible: boolean): Enrollment {
   //@ ensures (inv(joining) && canCheckEligibility(joining)) ==> alwaysSuccessUsesEligibleProfile(\result)
@@ -91,13 +97,13 @@ export function checkEligibility(joining: Enrollment, eligible: boolean): Enroll
   return { ...joining, currentEligibility: eligible, phase: eligible ? "AwaitingMembership" : "NeedsReview" };
 }
 
-/** Story: Save my approved profile in the app I asked for / The current membership determines whether a join needs an invite (spec/siteEnrollment.md:70) */
+/** Story: Save my approved profile in the app I asked for / The current membership determines whether a join needs an invite (spec/siteEnrollment.md:82) */
 //@ pure
 export function canCheckMembership(joining: Enrollment): boolean {
   return joining.phase === "AwaitingMembership" && joining.currentEligibility && joining.viewChecked && joining.validProfile && joining.currentConsent;
 }
 
-/** Story: Save my approved profile in the app I asked for / The current membership determines whether a join needs an invite (spec/siteEnrollment.md:70) */
+/** Story: Save my approved profile in the app I asked for / The current membership determines whether a join needs an invite (spec/siteEnrollment.md:82) */
 //@ pure
 export function checkMembership(joining: Enrollment, membershipFacts: MembershipFacts): Enrollment {
   //@ ensures (inv(joining) && canCheckMembership(joining)) ==> alwaysSuccessUsesEligibleProfile(\result)
@@ -109,13 +115,13 @@ export function checkMembership(joining: Enrollment, membershipFacts: Membership
   return { ...joining, rejoin: membershipFacts.existingMember, invited: membershipFacts.hasInvite, referred: local_0, invalidReferral: local_1, phase: local_2 ? "NeedsInvite" : "AwaitingAge" };
 }
 
-/** Story: Save my approved profile in the app I asked for / The effective age controls the result of a new or repeated join (spec/siteEnrollment.md:97) */
+/** Story: Save my approved profile in the app I asked for / The effective age controls the result of a new or repeated join (spec/siteEnrollment.md:109) */
 //@ pure
 export function canCheckJoinAge(joining: Enrollment): boolean {
   return joining.phase === "AwaitingAge" && joining.currentEligibility && joining.viewChecked && joining.validProfile && joining.currentConsent;
 }
 
-/** Story: Save my approved profile in the app I asked for / The effective age controls the result of a new or repeated join (spec/siteEnrollment.md:97) */
+/** Story: Save my approved profile in the app I asked for / The effective age controls the result of a new or repeated join (spec/siteEnrollment.md:109) */
 //@ pure
 export function checkJoinAge(joining: Enrollment, ageEligible: boolean): Enrollment {
   //@ ensures (inv(joining) && canCheckJoinAge(joining)) ==> alwaysSuccessUsesEligibleProfile(\result)
@@ -124,13 +130,13 @@ export function checkJoinAge(joining: Enrollment, ageEligible: boolean): Enrollm
   return { ...joining, ageAllowed: ageEligible, phase: !ageEligible ? "BelowJoinAge" : (joining.rejoin ? "ReturnExisting" : (joining.invalidReferral ? "InvalidInvitation" : "AwaitingPersistence")) };
 }
 
-/** Story: Save my approved profile in the app I asked for / Success for a new membership follows the join hook (spec/siteEnrollment.md:110) */
+/** Story: Save my approved profile in the app I asked for / Success for a new membership follows the join hook (spec/siteEnrollment.md:122) */
 //@ pure
 export function canFinishJoin(joining: Enrollment): boolean {
   return joining.phase === "AwaitingPersistence" && !joining.rejoin && !joining.invalidReferral && joining.ageAllowed && joining.currentEligibility && joining.viewChecked && joining.validProfile && joining.currentConsent;
 }
 
-/** Story: Save my approved profile in the app I asked for / Success for a new membership follows the join hook (spec/siteEnrollment.md:110) */
+/** Story: Save my approved profile in the app I asked for / Success for a new membership follows the join hook (spec/siteEnrollment.md:122) */
 //@ pure
 export function finishJoin(joining: Enrollment, hookSucceeded: boolean): Enrollment {
   //@ ensures (inv(joining) && canFinishJoin(joining)) ==> alwaysSuccessUsesEligibleProfile(\result)
@@ -139,62 +145,62 @@ export function finishJoin(joining: Enrollment, hookSucceeded: boolean): Enrollm
   return { ...joining, phase: hookSucceeded ? "Created" : "JoinHookFailed" };
 }
 
-/** Story: Save my approved profile in the app I asked for / Success requires an eligible profile with current consent (spec/siteEnrollment.md:123) */
+/** Story: Save my approved profile in the app I asked for / Success requires an eligible profile with current consent (spec/siteEnrollment.md:135) */
 //@ pure
 export function alwaysSuccessUsesEligibleProfile(joining: Enrollment): boolean {
   return !(joining.phase === "Created" || joining.phase === "ReturnExisting") || (joining.viewChecked && joining.validProfile && joining.currentConsent && joining.currentEligibility && joining.ageAllowed);
 }
 
-/** Story: Save my approved profile in the app I asked for / Success requires an eligible profile with current consent (spec/siteEnrollment.md:123) */
+/** Story: Save my approved profile in the app I asked for / Success requires an eligible profile with current consent (spec/siteEnrollment.md:135) */
 //@ pure
 export function alwaysExistingMembershipStaysExisting(joining: Enrollment): boolean {
   return (!(joining.phase === "ReturnExisting") || joining.rejoin) && (!(joining.phase === "Created") || !joining.rejoin);
 }
 
-/** Story: Save my approved profile in the app I asked for / Success requires an eligible profile with current consent (spec/siteEnrollment.md:123) */
+/** Story: Save my approved profile in the app I asked for / Success requires an eligible profile with current consent (spec/siteEnrollment.md:135) */
 //@ pure
 export function alwaysReferralOnlyOnNewMembership(joining: Enrollment): boolean {
   return !joining.referred || !joining.rejoin;
 }
 
-/** Story: Save my approved profile in the app I asked for / Success requires an eligible profile with current consent (spec/siteEnrollment.md:123) */
+/** Story: Save my approved profile in the app I asked for / Success requires an eligible profile with current consent (spec/siteEnrollment.md:135) */
 //@ pure
 export function lawTypedEntryUsesSameConsentGate(consentMatches: boolean): boolean {
   //@ ensures \result === true
   return canConfirmConsent(typedJoinEntry) && confirmConsent(typedJoinEntry, consentMatches).phase === "AwaitingEligibility" === consentMatches;
 }
 
-/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md:143) */
+/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md:155) */
 //@ pure
 export function sometimesEnrolled(joining: Enrollment): boolean {
   return joining.phase === "Created";
 }
 
-/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md:143) */
+/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md:155) */
 //@ pure
 export function sometimesExisting(joining: Enrollment): boolean {
   return joining.phase === "ReturnExisting";
 }
 
-/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md:143) */
+/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md:155) */
 //@ pure
 export function sometimesAccountChanged(joining: Enrollment): boolean {
   return joining.phase === "AccountChanged";
 }
 
-/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md:143) */
+/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md:155) */
 //@ pure
 export function sometimesNeedsInvite(joining: Enrollment): boolean {
   return joining.phase === "NeedsInvite";
 }
 
-/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md:143) */
+/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md:155) */
 //@ pure
 export function sometimesInvalidInvitation(joining: Enrollment): boolean {
   return joining.phase === "InvalidInvitation";
 }
 
-/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md:143) */
+/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md:155) */
 //@ pure
 export function sometimesBelowJoinAge(joining: Enrollment): boolean {
   return joining.phase === "BelowJoinAge";

@@ -6,6 +6,7 @@ import {
   initial as initialDraftPreparation, signupDraftAppEnabled, signupDraftDeadline, signupDraftLifetimeMs,
   signupDraftRequestAllowed, step as stepDraftPreparation,
 } from "../../core/src/generated/mcpSignupDraft.ts";
+import { publicSignupUsesBrowser } from "../../core/src/generated/siteEnrollment.ts";
 import { appsOn, type McpApp, type McpAppId, type Surface } from "./apps.ts";
 import type { AssistantKind, PlatformHooks, PublicStatus } from "./hooks.ts";
 import type { Grant, Scope, OAuthStore, SignupDraftFields } from "./store.ts";
@@ -193,9 +194,13 @@ export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host
   return { ok: true, app: a.app };
 }
 
+const publicSignupUrl = (a: McpApp) => publicSignupUsesBrowser(a.id) ? `${a.links.join}?via=agent` : `${a.links.site}/SKILL.md`;
+const skillSignup = (a: McpApp) => `Read ${publicSignupUrl(a)} in your own agent and follow the signup instructions there.`;
+
 function invitationGuidance(a: McpApp): string {
-  return `${a.name} is invite-only. There is no public sign-up form. Ask a member who knows you, or the team, for an invitation. ` +
-    `Reply to that invitation text to accept. Already a member? Confirm your phone during connector authorization, then return to your agent.`;
+  return `${a.name} is invite-only. Ask a member who knows you, or the team, for an invitation. ` +
+    `Use a forwarded invitation link in your own agent, or reply to the team's invitation text to accept. ` +
+    `Already a member? Confirm your phone during connector authorization, then return to your agent.`;
 }
 
 function publicInfo(a: McpApp, surface: Surface) {
@@ -204,11 +209,12 @@ function publicInfo(a: McpApp, surface: Surface) {
     powered_by: "All of these apps are powered by The Network (https://ntwrk.party).",
     join: {
       mode: a.joinMode,
-      url: `${a.links.join}?via=agent`,
+      url: publicSignupUrl(a),
       keyword: a.keyword,
       how: a.joinMode === "invite" ? invitationGuidance(a) : a.keyword
-        ? `The person texts "${a.keyword}" as their first message to The Network's line, or opens ${a.links.join} and verifies their own phone there.`
-        : `The person texts The Network's line with no keyword, or opens ${a.links.join}. The agent asks what they are looking for (${surface === "openai" ? "friends or work" : "friends, dating or work"}) and adds the right apps.`,
+        ? `The person texts "${a.keyword}" as their first message to The Network's line. ` + (publicSignupUsesBrowser(a.id)
+          ? `They can also open ${publicSignupUrl(a)} and verify their own phone there.` : skillSignup(a))
+        : `The person texts The Network's line with no keyword. The agent asks what they are looking for (${surface === "openai" ? "friends or work" : "friends, dating or work"}) and adds the right apps. ${skillSignup(a)}`,
     },
     ages: { join: a.ages.join, matching: a.ages.match },
     adults_only: a.adultsOnly,
@@ -216,7 +222,7 @@ function publicInfo(a: McpApp, surface: Surface) {
     consent_rules: [
       "Nobody is introduced unless both people say yes.",
       "Nothing crosses from one app to another unless the person shares it.",
-      "The person signs themselves up and types their own code on the site. An assistant never handles the code.",
+      "The person verifies their own phone in the app's signup session. This connector must never receive the code.",
     ],
     links: { privacy: a.links.privacy, terms: a.links.terms, sms_terms: a.links.smsTerms, support: a.links.support },
   };
@@ -225,8 +231,8 @@ function publicInfo(a: McpApp, surface: Surface) {
 const NEXT: Record<PublicStatus, (a: McpApp) => string> = {
   not_joined: a => a.joinMode === "invite"
     ? `Not joined. ${invitationGuidance(a)}`
-    : `Not joined. To join, open ${a.links.join} and sign up there.`,
-  invited: a => `Invited. To accept, open ${a.links.join} or reply to the invitation text.`,
+    : `Not joined. ${publicSignupUsesBrowser(a.id) ? `Open ${publicSignupUrl(a)} to sign up.` : skillSignup(a)}`,
+  invited: a => `Invited. Reply to the invitation text or ${publicSignupUsesBrowser(a.id) ? `open ${publicSignupUrl(a)}.` : `follow ${publicSignupUrl(a)} in your agent.`}`,
   onboarding: () => "Joining is not finished. Reply to the last text from the agent to finish.",
   active: () => "You are signed up.",
   stopped: () => `Messages are stopped. To start again, text START to the line.`,
@@ -268,12 +274,13 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       return {
         kind: "ok",
         data: {
-          app: a.id, join_mode: a.joinMode, url: `${a.links.join}?via=agent`, keyword: a.keyword,
+          app: a.id, join_mode: a.joinMode, url: publicSignupUrl(a), keyword: a.keyword,
           instructions_for_person: a.joinMode === "invite"
-            ? `${invitationGuidance(a)} Never share a verification code with anyone, including this assistant.`
-            : `Open ${a.links.join}?via=agent yourself and enter your own phone number. ` +
-            `A code arrives by text: type it on that page only. Never share the code with anyone, including this assistant.` +
-            (a.keyword ? ` Or text "${a.keyword}" as your first message to The Network's line.` : ""),
+            ? `${invitationGuidance(a)} ${skillSignup(a)} Keep the verification code in that signup session.`
+            : (publicSignupUsesBrowser(a.id)
+              ? `Open ${publicSignupUrl(a)} yourself and enter your own phone number. Never share the code. Enter it on that page.`
+              : `${skillSignup(a)} Keep the verification code in that signup session.`)
+              + (a.keyword ? ` Or text "${a.keyword}" as your first message to The Network's line.` : ""),
           ages: { join: a.ages.join, matching: a.ages.match },
         },
       };

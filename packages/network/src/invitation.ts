@@ -1,16 +1,27 @@
 import type { AppId, MemberId } from "@thenetwork/core";
+import { publicSignupUsesBrowser } from "../../core/src/generated/siteEnrollment.ts";
 
 export type InviteRelationship = "friend" | "coworker" | "roommate" | "family";
+export type InviteDepth = "met_once" | "somewhat" | "well";
+export type InviteReviewReason = "weak_vouch" | "burst" | "risk_language";
 
-export interface MemberInviteRequest {
+export interface MemberInviteEvidence {
+  durationMonths: number;
+  depth: InviteDepth;
+}
+
+export interface MemberInviteRequest extends MemberInviteEvidence {
   inviterId: MemberId;
+  requestId: string;
   messageId: string;
   firstName: string;
   relationship: InviteRelationship;
+  reviewReasons: readonly InviteReviewReason[];
+  disposition: "issue" | "review";
   at: number;
 }
 
-export type MemberInviteResult = { status: "issued"; url: string } | { status: "review" };
+export type MemberInviteResult = { status: "issued"; url: string } | { status: "review"; reviewId?: string };
 
 const personalRelationships = {
   friend: "friend", buddy: "friend", pal: "friend", coworker: "coworker", roommate: "roommate", cousin: "family",
@@ -37,8 +48,38 @@ export function directInviteVouch(body: string): Pick<MemberInviteRequest, "firs
   return undefined;
 }
 
+const inviteDuration = /(?<![\d.])\b(\d{1,4}(?:\.\d{1,2})?|an?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s*(day|week|month|year)s?\b/i;
+const durationWords = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
+const durationPerMonth: Record<string, number> = { day: 1 / 30, week: 7 / 30, month: 1, year: 12 };
+const individualDepths = [
+  [/\b(?:met (?:them |her |him )?(?:just |only )?once|only (?:met|spoken) (?:them |her |him )?once|met one time)\b/i, "met_once"],
+  [/\b(?:somewhat|a little|not (?:very )?(?:close|well))\b/i, "somewhat"],
+  [/\b(?:well|close(?: friends)?|very close)\b/i, "well"],
+] as const;
+
+/** A coarse relationship statement. Keep categories and whole months, never the source text. */
+export function inviteVouchEvidence(body: string): MemberInviteEvidence | undefined {
+  const text = body.normalize("NFKC");
+  const duration = inviteDuration.exec(text);
+  const depth = individualDepths.find(([pattern]) => pattern.test(text))?.[1];
+  if (!duration || !depth) return;
+  const stated = duration[1]!.toLowerCase();
+  const amount = /^\d/.test(stated) ? Number(stated) : stated === "a" || stated === "an" ? 1 : durationWords.indexOf(stated);
+  return { durationMonths: Math.floor(amount * durationPerMonth[duration[2]!.toLowerCase()]!), depth };
+}
+
+const unusualInviteLanguage = /\b(?:strangers?|met online|underage|minors?|pay(?:ing|ment)?|paid|cash|money|deposit|investment|recruit(?:ing|ment)?|mass invit(?:e|es|ing)|promot(?:e|ion|ing)|pitch(?:ing)?)\b/i;
+
+export function inviteVouchRisk(body: string): boolean {
+  return unusualInviteLanguage.test(body.normalize("NFKC"));
+}
+
+export function inviteReviewReference(value: string | undefined): string | undefined {
+  return value?.length === 36 && /^mir_[a-f0-9]{32}$/.test(value) ? value : undefined;
+}
+
 function invitationLinkPrefix(app: { id: AppId; domain: string }): string {
-  const path = app.id === "peon" ? "/join" : "/SKILL.md";
+  const path = publicSignupUsesBrowser(app.id) ? "/join" : "/SKILL.md";
   return `https://${app.domain}${path}#invite=`;
 }
 

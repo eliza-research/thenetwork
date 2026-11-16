@@ -2,6 +2,18 @@
 
 An agent uses the app's authenticated site session to submit a member-approved profile. The same account operation also accepts already validated, typed requests from internal callers. Peon still offers browser signup for its waitlist. Network, Slop and Friends retired their browser Join forms. The API and storage shell still own authentication, input decoding, lock acquisition, persistence and the join hook.
 
+## Story: Find the app's public signup entry
+
+> As a person considering an app, I want the connector to point me to signup instructions the app actually serves.
+
+### Public signup uses the app's supported surface
+
+Send Peon applicants to its browser Join form. Send Network, Slop and Friends applicants to the app's own signup skill. Keep the invite-only requirement and the existing connector scope.
+
+```quint
+pure def publicSignupUsesBrowser(app: str): bool = app == "peon"
+```
+
 ## Story: Save my approved profile in the app I asked for
 
 > As a person enrolling in an app, I want it to use my verified account, honor my consent, and tell me the actual enrollment result.

@@ -2,6 +2,14 @@
 //@ backend dafny
 
 
+/** Story: Forward an invitation for someone I know / Confirm private relationship evidence before issuance (spec/memberInvitation.md:44) */
+export const memberInviteDraftMs: number = 900000;
+/** Story: Forward an invitation for someone I know / Confirm private relationship evidence before issuance (spec/memberInvitation.md:44) */
+export const memberInviteMaxMonths: number = 1500;
+/** Story: Forward an invitation for someone I know / Hold weak or unusual invitations for staff (spec/memberInvitation.md:65) */
+export const memberInviteBurstWindowMs: number = 86400000;
+/** Story: Forward an invitation for someone I know / Hold weak or unusual invitations for staff (spec/memberInvitation.md:65) */
+export const memberInviteBurstPriorCount: number = 2;
 /** Story: Forward an invitation for someone I know / A direct named vouch can use the adult member's allowance (spec/memberInvitation.md:7) */
 export const memberInviteWindowMs: number = 2592000000;
 /** Story: Forward an invitation for someone I know / A direct named vouch can use the adult member's allowance (spec/memberInvitation.md:7) */
@@ -64,26 +72,82 @@ export function lawMemberInviteNeedsDirectRequest(eligible: boolean, relationshi
   return !memberInviteCanIssue(false, eligible, relationship);
 }
 
-/** Story: Forward an invitation for someone I know / The link goes to the inviter as a reply (spec/memberInvitation.md:44) */
+/** Story: Forward an invitation for someone I know / Confirm private relationship evidence before issuance (spec/memberInvitation.md:44) */
+//@ pure
+export function memberInviteDraftCurrent(ageMs: number): boolean {
+  return ageMs >= 0 && ageMs < memberInviteDraftMs;
+}
+
+/** Story: Forward an invitation for someone I know / Confirm private relationship evidence before issuance (spec/memberInvitation.md:44) */
+//@ pure
+export function memberInviteEvidenceValid(durationMonths: number, depth: string): boolean {
+  return durationMonths >= 0 && durationMonths <= memberInviteMaxMonths && (depth === "met_once" || depth === "somewhat" || depth === "well");
+}
+
+/** Story: Forward an invitation for someone I know / Confirm private relationship evidence before issuance (spec/memberInvitation.md:44) */
+//@ pure
+export function memberInviteConfirmationReady(direct: boolean, draftCurrent: boolean, evidenceValid: boolean, explicitlyConfirmed: boolean): boolean {
+  return direct && draftCurrent && evidenceValid && explicitlyConfirmed;
+}
+
+/** Story: Forward an invitation for someone I know / Confirm private relationship evidence before issuance (spec/memberInvitation.md:44) */
+//@ pure
+export function lawMemberInviteRequiresConfirmation(direct: boolean, draftCurrent: boolean, evidenceValid: boolean): boolean {
+  //@ ensures \result === true
+  return !memberInviteConfirmationReady(direct, draftCurrent, evidenceValid, false);
+}
+
+/** Story: Forward an invitation for someone I know / Hold weak or unusual invitations for staff (spec/memberInvitation.md:65) */
+//@ pure
+export function memberInviteWithinBurstWindow(ageMs: number): boolean {
+  return ageMs >= 0 && ageMs < memberInviteBurstWindowMs;
+}
+
+/** Story: Forward an invitation for someone I know / Hold weak or unusual invitations for staff (spec/memberInvitation.md:65) */
+//@ pure
+export function memberInviteVouchWeak(durationMonths: number, depth: string): boolean {
+  return durationMonths < 1 || depth === "met_once";
+}
+
+/** Story: Forward an invitation for someone I know / Hold weak or unusual invitations for staff (spec/memberInvitation.md:65) */
+//@ pure
+export function memberInviteBurst(priorCount: number): boolean {
+  return priorCount >= memberInviteBurstPriorCount;
+}
+
+/** Story: Forward an invitation for someone I know / Hold weak or unusual invitations for staff (spec/memberInvitation.md:65) */
+//@ pure
+export function memberInviteNeedsReview(weak: boolean, burst: boolean, riskLanguage: boolean): boolean {
+  return weak || burst || riskLanguage;
+}
+
+/** Story: Forward an invitation for someone I know / Hold weak or unusual invitations for staff (spec/memberInvitation.md:65) */
+//@ pure
+export function lawUnusualMemberInviteRequiresReview(weak: boolean, burst: boolean, riskLanguage: boolean): boolean {
+  //@ ensures \result === true
+  return !(weak || burst || riskLanguage) || memberInviteNeedsReview(weak, burst, riskLanguage);
+}
+
+/** Story: Forward an invitation for someone I know / The link goes to the inviter as a reply (spec/memberInvitation.md:85) */
 //@ pure
 export function memberInviteLinkCanBeShared(directMemberReply: boolean, issuedLink: boolean, appOwnedLink: boolean, presentOnce: boolean): boolean {
   return directMemberReply && issuedLink && appOwnedLink && presentOnce;
 }
 
-/** Story: Forward an invitation for someone I know / The link goes to the inviter as a reply (spec/memberInvitation.md:44) */
+/** Story: Forward an invitation for someone I know / The link goes to the inviter as a reply (spec/memberInvitation.md:85) */
 //@ pure
 export function lawMemberInviteLinkNeedsDirectReply(issuedLink: boolean, appOwnedLink: boolean, presentOnce: boolean): boolean {
   //@ ensures \result === true
   return !memberInviteLinkCanBeShared(false, issuedLink, appOwnedLink, presentOnce);
 }
 
-/** Story: Forward an invitation for someone I know / A new verified acceptance can be attributed (spec/memberInvitation.md:56) */
+/** Story: Forward an invitation for someone I know / A new verified acceptance can be attributed (spec/memberInvitation.md:97) */
 //@ pure
 export function memberInviteCanAttribute(freshJoin: boolean, trustedAcceptance: boolean, inviterMatches: boolean): boolean {
   return freshJoin && trustedAcceptance && inviterMatches;
 }
 
-/** Story: Forward an invitation for someone I know / A new verified acceptance can be attributed (spec/memberInvitation.md:56) */
+/** Story: Forward an invitation for someone I know / A new verified acceptance can be attributed (spec/memberInvitation.md:97) */
 //@ pure
 export function lawOldMemberInviteCannotBeAttributed(trustedAcceptance: boolean, inviterMatches: boolean): boolean {
   //@ ensures \result === true

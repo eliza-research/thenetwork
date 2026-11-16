@@ -527,10 +527,10 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       const app = await (await st.site("ntwrk", "/api/app")).json() as { joinMode: string };
       expect(app.joinMode).toBe("invite");
       const skill = await (await st.site("ntwrk", "/SKILL.md")).text();
-      expect(skill).toContain("The Network website may require an invitation");
       expect(skill).toContain("`canJoin:false`");
-      expect(skill).toContain("Only continue when this account is actually eligible");
-      expect(skill).toContain("Never invent or accept an invitation");
+      expect(skill).toContain('`reason:"invite_only"`');
+      expect(skill).toContain("provided and approved an invitation for this exact app");
+      expect(skill).toContain("`inviteToken`");
       expect(skill).not.toContain("https://ntwrk.party/settings");
       expect(skill).toContain("/api/auth/otp/verify");
       expect(skill).toContain("/api/me/export");
@@ -538,13 +538,13 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       expect(skill).not.toContain("In ChatGPT, add ");
       const info = toolData(await rpc(st, "ntwrk", "/mcp/openai", "tools/call", { name: "app_info", arguments: { app: "ntwrk" } }));
       expect(info.join.mode).toBe("invite");
-      expect(info.join.how).toContain("Reply to that invitation text to accept");
+      expect(info.join.how).toContain("Use a forwarded invitation link in your own agent");
       expect(info.join.how).toContain("connector authorization");
       expect(info.join.how).not.toContain("The agent asks what they are looking for");
       const signup = (app: AppId) => rpc(st, "ntwrk", "/mcp/openai", "tools/call", { name: "start_signup", arguments: { app } });
       const invite = toolData(await signup("ntwrk"));
-      expect(invite).toMatchObject({ app: "ntwrk", join_mode: "invite", url: "https://ntwrk.party/join?via=agent" });
-      expect(invite.instructions_for_person).toContain("Reply to that invitation text to accept");
+      expect(invite).toMatchObject({ app: "ntwrk", join_mode: "invite", url: "https://ntwrk.party/SKILL.md" });
+      expect(invite.instructions_for_person).toContain("Use a forwarded invitation link in your own agent");
       expect(invite.instructions_for_person).toContain("connector authorization");
       expect(invite.instructions_for_person).not.toMatch(/enter your own phone|code arrives|type it on that page/i);
       for (const app of ["peon", "friends"] as const) {
@@ -552,8 +552,10 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         expect(info.join.how).toContain(`texts "${app}" as their first message`);
         const open = toolData(await signup(app));
         expect(open).toMatchObject({ app, join_mode: "open" });
-        expect(open.instructions_for_person).toContain("enter your own phone number");
-        expect(open.instructions_for_person).toContain("Never share the code");
+        const path = new URL(open.url).pathname;
+        expect(path).toBe(app === "peon" ? "/join" : "/SKILL.md");
+        expect((await st.site(app, path)).status).toBe(200);
+        expect(open.instructions_for_person).toContain(app === "peon" ? "Enter it on that page" : "Keep the verification code in that signup session");
       }
       expect((await signup("slop")).body!.result.isError).toBe(true);
       expect((await sql`select count(*)::int as n from oauth.grants`)[0]!.n).toBe(0);
@@ -575,9 +577,9 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
           if (name === "submit_profile") expect(data.submitted).toBe(false);
           if (app === "ntwrk") {
             expect(data.next_step).toContain("invite-only");
-            expect(data.next_step).toContain("Reply to that invitation text to accept");
+            expect(data.next_step).toContain("Use a forwarded invitation link in your own agent");
             expect(data.next_step).not.toContain("sign up there");
-          } else expect(data.next_step).toBe("Not joined. To join, open https://friends.help/join and sign up there.");
+          } else expect(data.next_step).toContain("https://friends.help/SKILL.md");
         }
         expect(await st.svc.people.getMembership(person.id, app)).toBeUndefined();
       }
