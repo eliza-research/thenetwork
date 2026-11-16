@@ -124,7 +124,9 @@ conformance inputs under `test/`. The
 [saved profile journey](spec/savedProfileJourney.md) run against the
 signed turn endpoint and isolated local Postgres databases on port 54339.
 Run either with `bun run spec:conformance sharedLineConsentJourney` or
-`bun run spec:conformance savedProfileJourney`. The checker saves
+`bun run spec:conformance savedProfileJourney`. Run
+`bun run spec:conformance memberRequestJourney` to compare the request
+and review flow through the dry-run ConsentNetwork harness. The checker saves
 a minimal failing trace under `test/counterexamples/` and replays it on
 later runs. Product prose, historical sources, and action-based flow
 models stay in `spec/product/` and `spec/models/`. The review ledger,

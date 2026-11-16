@@ -80,7 +80,7 @@ Models: [OAuth and MCP](../models/oauth_mcp.md), [profile learning](../models/pr
 
 Classify the request into an answer, a recommendation, a standing intent, or a draft member opportunity. Use available knowledge before spending a person's attention. Explain what will happen and give a likely time when creating a draft. Avoid promising a match. A draft that would contact a person passes review and consent.
 
-Models: [agent loop](../models/chatjson_loop.md), [member request admission](../memberRequest.md), [opportunity](../models/opportunity.md), [review desk](../models/review_desk.md).
+Models: [agent loop](../models/chatjson_loop.md), [member request admission](../memberRequest.md), [request and review journey](../memberRequestJourney.md), [opportunity](../models/opportunity.md), [review desk](../models/review_desk.md).
 
 ## Story F9 — Keep a standing intent
 

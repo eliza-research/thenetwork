@@ -8,12 +8,21 @@ function startWorker(file: string) {
   const child = spawn("bun", ["run", "--no-env-file", join(root, "test/fixtures", file)], {
     cwd: root,
     env: { PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, USER: process.env.USER },
-    stdio: ["pipe", "pipe", "inherit"],
+    stdio: ["pipe", "pipe", "pipe"],
   });
   const replies = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+  let diagnostics = "";
+  child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+    diagnostics = (diagnostics + chunk).slice(-4000);
+  });
   const closed = new Promise<void>((resolve, reject) => {
     child.on("error", reject);
-    child.on("close", (code) => code === 0 ? resolve() : reject(new Error(`${file} exited with code ${code}`)));
+    child.on("close", (code, signal) => {
+      if (code === 0) return resolve();
+      const message = `${file} exited with ${signal ?? `code ${code}`}`;
+      const detail = diagnostics.trim();
+      reject(new Error(detail ? `${message}\n${detail}` : message));
+    });
   });
   // The current exchange reports a failed process. Disposal awaits the same result.
   void closed.catch(() => {});
