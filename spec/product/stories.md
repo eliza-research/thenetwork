@@ -144,7 +144,7 @@ Models: [public event catalog](../publicEventCatalog.md), [matching engine](../m
 
 Try information and services first. Consider adults who opted into that kind of help and have capacity. State the request, time and effort clearly, review it before contacting anyone, and collect feedback afterwards. Requests requiring entry to a home are medium-risk exceptions to the public venue default. Require two or more helpers or a helper already known to the requester, plus review and consent from everyone before revealing an address. Route a request with a single unfamiliar helper to safety review.
 
-Models: [matching engine](../models/matching_engine.md), [review desk](../models/review_desk.md), [safety and trust](../models/safety_trust.md).
+Models: [bounded help admission](../boundedHelp.md), [matching engine](../models/matching_engine.md), [review desk](../models/review_desk.md), [safety and trust](../models/safety_trust.md).
 
 ## Story F15 — Ask for an introduction
 

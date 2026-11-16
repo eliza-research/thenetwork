@@ -51,6 +51,8 @@ import {
   type OpportunityLifecycle, type OpportunityPhase,
 } from "../../core/src/generated/opportunityLifecycle.ts";
 import { queueRepeat, recentRepeatSource, recordsRepeatConsent } from "../../core/src/generated/repeatEncounter.ts";
+import { boundedHelpRoute, openHomeHelpCase } from "../../core/src/generated/boundedHelp.ts";
+import { isHomeEntry, riskTerms } from "../../engine/src/filters.ts";
 import { bookedCapacityReached, bookedOccupies } from "../../core/src/generated/peonCapacity.ts";
 import { initial as initialPlanDispatch, planLaneOpen, planTurnDue, step as stepPlanDispatch } from "../../core/src/generated/planDispatch.ts";
 import {
@@ -1818,7 +1820,45 @@ export class ConsentNetwork implements NetworkUnderTest {
     return changed;
   }
 
+  /** Give a home-entry request to safety staff before it can become a contact. */
+  private routeBoundedHelp(m: MemberState, text: string, quiet: boolean): boolean {
+    const cfg = resolveConfig(this.effectiveEngineConfig());
+    const route = boundedHelpRoute(riskTerms(cfg, text).length > 0, isHomeEntry(cfg, text));
+    if (route === "SearchPublicHelp") return false;
+    if (route === "ReviewHomeEntryHelp" && canBeMatched(this.ageOf(m))) {
+      const kind = "home_entry_help";
+      if (openHomeHelpCase(true, this.openCase(m.id)?.events.some(e => e.kind === kind) === true)) {
+        this.caseEvent(m.id, { at: this.now(), kind, points: 0 });
+        this.ctx.log("request_result", { memberId: m.id, kind: "people", category: "help", outcome: "safety_review", reason: kind });
+      }
+      if (!quiet) this.send(m, copy.homeHelpSafetyReview, { type: "info" }, "reply");
+    } else if (!quiet) {
+      this.send(m, copy.requestOutOfScope, { type: "info" }, "reply");
+    }
+    return true;
+  }
+
+  /** A request saved before the admission check may still identify a home task by its stored goal. */
+  private holdStoredHelp(m: MemberState, req: Request, objective = ""): boolean {
+    if (req.category !== "help") return false;
+    const goal = req.desireId ? desireById.get(req.desireId)?.text : undefined;
+    if (!this.routeBoundedHelp(m, [goal, objective].filter(Boolean).join(". "), true)) return false;
+    req.closed = true;
+    req.outcome = "none";
+    return true;
+  }
+
+  private holdHelpOpportunity(o: Opp): boolean {
+    if (o.origin !== "request" || o.category !== "help" || !o.requester) return false;
+    const requester = this.members.get(o.requester);
+    const request = this.requests.find(req => req.oppId === o.id && req.memberId === o.requester);
+    return !!requester && (request
+      ? this.holdStoredHelp(requester, request, o.objective)
+      : this.routeBoundedHelp(requester, o.objective, true));
+  }
+
   private openRequest(m: MemberState, c: Classified, o: { quiet?: boolean }) {
+    if (c.category === "help" && this.allowedCategories.has("help") && this.routeBoundedHelp(m, c.text ?? "", !!o.quiet)) return;
     const now = this.now();
     const canSearch = this.trust.ok(m.id) && !this.reportHeld(m.id);
     // Repeat asks ("still hoping to...") are the same request: don't open another one while one is
@@ -1847,7 +1887,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       });
       const opp = this.tryRequest(m, prior, search);
       if (opp) { this.send(m, copy.requestAck, { type: "info" }, "reply"); this.submit(opp); return; }
-      this.tellNoneYet(m, prior);
+      if (!prior.closed) this.tellNoneYet(m, prior);
       return;
     }
     // Only what this app does (matching-e2e-2): a request outside its categories is not searched.
@@ -1879,6 +1919,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     const opp = this.tryRequest(m, req, search);
     if (!opp) {
+      if (req.closed) return;
       this.ctx.log("request_result", { requestId: req.id, memberId: m.id, outcome: "waiting", reason: "density_gap" });
       if (o.quiet) req.outcome = "none"; else this.tellNoneYet(m, req);
       return;
@@ -1921,7 +1962,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** Search and, if anyone fits, build the opportunity (the caller submits it). Undefined when no one fits yet. */
   private tryRequest(m: MemberState, req: Request, search: MemberRequestFlow): Opp | undefined {
-    if (search.phase !== "RequestSearching") return undefined;
+    if (search.phase !== "RequestSearching" || this.holdStoredHelp(m, req)) return undefined;
     req.tries = (req.tries ?? 0) + 1; req.lastTry = this.now();
     const cands = this.searchFor(m, req);
     const best = cands[0];
@@ -2262,6 +2303,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    * two. Engine proposals also pass gateReason() again. Undefined when all pass.
    */
   private approvalCheck(o: Opp): string | undefined {
+    if (this.holdHelpOpportunity(o)) return "bounded_help_requires_safety_review";
     const publicEventIssue = this.publicEventRefusal(o);
     if (publicEventIssue) return publicEventIssue;
     for (const id of o.participants) {
@@ -2417,6 +2459,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   private advanceProbes(o: Opp) {
     if (o.plan) return this.planLane(o, this.now());
     if (o.stage !== "probing") return;
+    if (this.holdHelpOpportunity(o)) return this.close(o, "bounded help needs safety review");
     const publicEventIssue = this.publicEventRefusal(o);
     if (publicEventIssue) return this.close(o, publicEventIssue);
     const now = this.now();
@@ -2732,6 +2775,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    * not on the cap, and only while the member has at most 2 messages unanswered.
    */
   private reveal(o: Opp) {
+    if (this.holdHelpOpportunity(o)) return this.close(o, "bounded help needs safety review");
     if (o.origin === "second_encounter" && !this.repeatPreferencesAllow(o.category, o.participants)) return this.close(o, "repeat preferences changed");
     const now = this.now();
     const published = this.currentPublishedEvent(o);
@@ -3683,7 +3727,12 @@ export class ConsentNetwork implements NetworkUnderTest {
     // The member records can change between units (staff edits, the member's settings): read them again first.
     for (const m of [...this.members.values()]) this.syncMember(m);
     for (const o of this.openOpps()) {
-      const publicEventIssue = o.stage === "scheduled" ? undefined : this.publicEventRefusal(o);
+      if (o.stage === "scheduled") continue;
+      if (this.holdHelpOpportunity(o)) {
+        this.close(o, "bounded help needs safety review");
+        continue;
+      }
+      const publicEventIssue = this.publicEventRefusal(o);
       if (publicEventIssue) this.close(o, publicEventIssue);
     }
     // Deferred sends whose window may have come. Each one runs every send-time check again.

@@ -4,6 +4,7 @@
 import { fileAt } from "../../core/src/runtime/files.ts";
 import { findExecutable } from "../../core/src/runtime/process.ts";
 import { afterAll, describe, expect, test } from "vitest";
+import { runEngine } from "@thenetwork/engine";
 import { DAY, HOUR, MINUTE } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import { computeMetrics, PolicyPersonaAgent, World, type InboundMessage, type NetworkContext, type NetworkUnderTest } from "@thenetwork/sim";
@@ -129,6 +130,80 @@ test.each([
   w.restart();
   await w.run(DAY);
   expect(repeat()).toHaveLength(0);
+}, T);
+
+// spec/boundedHelp.md, "A direct home-entry request goes to staff before contacting helpers".
+test("bounded help holds a home request privately and refuses an out-of-scope task", async () => {
+  const w = new Mini([
+    { id: "requester", name: "Ari Park", age: 30, area: "Greenpoint" },
+    { id: "helper", name: "Ben Ito", age: 31, area: "Greenpoint", skills: ["moving_help"] },
+  ], { review: "human" });
+  await w.onboard("requester", "helper");
+  const mark = w.mark();
+  const address = "71 Fictional Street";
+  await w.say("requester", `Find someone to help move a couch from my apartment at ${address}.`);
+
+  const cases = () => w.net.safetyCases().filter(c => c.memberId === "requester");
+  expect(cases()).toMatchObject([{ status: "open", level: "ok", events: [{ kind: "home_entry_help", points: 0 }] }]);
+  expect(w.net.reviewQueue()).toEqual([]);
+  expect(w.net.exportState().requests).toEqual([]);
+  expect(w.sent.slice(mark).map(m => m.to)).toEqual(["requester"]);
+  expect(w.sent.at(-1)?.body).toContain("team member needs to review");
+  for (const records of [w.net.exportState(), w.logs, w.sent.slice(mark)]) expect(JSON.stringify(records)).not.toContain(address);
+
+  w.restart();
+  await w.say("requester", "I still need help moving a couch from my apartment.");
+  expect(cases()).toMatchObject([{ events: [{ kind: "home_entry_help", points: 0 }] }]);
+  await w.say("requester", "Find someone to help move a couch and babysit my child.");
+  expect(w.sent.at(-1)?.body).toContain("won't look for it");
+  expect(cases()).toMatchObject([{ events: [{ kind: "home_entry_help", points: 0 }] }]);
+  expect(w.net.reviewQueue()).toEqual([]);
+  expect(w.net.exportState().requests).toEqual([]);
+  expect(w.sent.slice(mark).every(m => m.to === "requester")).toBe(true);
+}, T);
+
+test("bounded help rechecks an older home request when it would retry", async () => {
+  const w = new Mini([
+    { id: "requester", name: "Ari Park", age: 30, area: "Greenpoint" },
+    { id: "helper", name: "Ben Ito", age: 31, area: "Greenpoint", skills: ["moving_help"] },
+  ], { review: "human" });
+  await w.onboard("requester", "helper");
+  const before = structuredClone(w.net.exportState());
+  before.requests.push({
+    id: "old-home-request", at: w.clock.now() - DAY, kind: "people", category: "help", memberId: "requester",
+    desireId: "moving_help", tags: [], outcome: "none",
+  });
+  w.net.importState(before);
+  const mark = w.mark();
+  await w.run(DAY);
+  expect(w.net.exportState().requests.find(r => r.id === "old-home-request")).toMatchObject({ closed: true, outcome: "none" });
+  expect(w.net.safetyCases()).toMatchObject([{ memberId: "requester", events: [{ kind: "home_entry_help", points: 0 }] }]);
+  expect(w.net.reviewQueue()).toEqual([]);
+  expect(w.sent.slice(mark).some(m => m.meta.type === "proposal" || m.meta.type === "probe")).toBe(false);
+}, T);
+
+// spec/boundedHelp.md, "An unfamiliar helper cannot be the only helper for home entry".
+test("bounded help re-ranks the small-group pool when a home task needs a second helper", async () => {
+  const objective = "Help move a couch from my apartment";
+  const w = new Mini([
+    { id: "requester", name: "Ari Park", age: 30, area: "Greenpoint", wants: [{ objective, category: "help" }] },
+    { id: "helper-a", name: "Ben Ito", age: 30, area: "Greenpoint", skills: ["moving_help"] },
+    { id: "helper-b", name: "Cy Moss", age: 30, area: "Greenpoint", skills: ["moving_help"] },
+    { id: "a-one-only", name: "Dee Yu", age: 30, area: "Greenpoint", skills: ["moving_help"] },
+  ]);
+  for (const m of w.members) m.prefs.formats = m.id === "a-one-only" ? ["one_to_one"] : ["small_group"];
+  for (const f of w.facets) {
+    f.kind = "offer";
+    f.value = f.memberId === "a-one-only" ? objective : "Available to carry furniture and boxes";
+  }
+  const { proposals } = await runEngine(w.ctx().snapshot(), {
+    cities: ["nyc"], retrieval: { minSim: 0 },
+    floors: { fit: 0, mutualBenefit: 0, confidence: 0 },
+    thresholds: { byGenerator: { help_request: 0 } },
+  });
+  expect(proposals.find(p => p.generator === "help_request")).toMatchObject({
+    participants: ["requester", "helper-a", "helper-b"], safetyClass: "medium",
+  });
 }, T);
 
 /** A NetworkUnderTest whose ConsentNetwork can be replaced mid-run (a process restart inside a world run). */

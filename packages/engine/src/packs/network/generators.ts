@@ -3,6 +3,7 @@
 // filters (filters.ts), scoring and policy. ORDER IS PART OF THE CONTRACT (byte-identity rule 3):
 // the run log's funnel.byGenerator serializes in this order, and network_growth consumes the
 // intents the earlier generators left unmatched.
+import { needsSecondHomeHelper } from "../../../../core/src/generated/boundedHelp.ts";
 import { recentRepeatSource, sameEncounterConsent } from "../../../../core/src/generated/repeatEncounter.ts";
 import type { Category, Facet, Intent, MemberId } from "@thenetwork/core";
 import { DAY } from "@thenetwork/core";
@@ -329,24 +330,30 @@ export function helpRequest(ctx: GenCtx): Candidate[] {
     const ma = w.get(a)!;
     for (const intent of ma.intents) {
       if (intent.category !== "help") continue;
-      if (memberReason(w, a, { category: "help", role: "seeker", format: "one_to_one", timeSensitive: false, ownIntentCreatedAt: intent.createdAt })) continue;
       const text = intentText(intent);
       const m = text.match(/\b([1-3])\s*(people|helpers|hands|persons)\b/i) ?? text.match(/\b(one|two|three)\s*(people|helpers|hands)\b/i);
       const words: Record<string, number> = { one: 1, two: 2, three: 3 };
       let need = m ? (Number(m[1]) || words[m[1]!.toLowerCase()] || 1) : 1;
       const home = isHomeEntry(w.cfg, text);
-      const pool = eligibleMembers(ctx, "help", "helper", need > 1 ? "small_group" : "one_to_one", false, new Set([a])).filter(id => w.canMeet([a, id]));
-      const got = retrieveForIntent(ctx, intent, pool, "caps", w.cfg.retrieval.minSim);
-      if (!got.length) { ctx.unmatchedIntents.add(intent.id); continue; }
-      // Load-aware helper ranking: prefer people who enjoy it, penalise recent giving, develop new helpers.
-      const ranked = got.map(r => {
-        const mi = w.get(r.id)!;
-        const acquainted = w.edgeHas(a, r.id, "met") || w.edgeHas(a, r.id, "knows") || w.edgeHas(a, r.id, "helped");
-        const s = (r.rank ?? r.sim) + (r.facet?.kind === "offer" ? 0.1 : 0) - 0.1 * mi.recentContribution + (mi.recentContribution === 0 ? 0.03 : 0) + (home && acquainted ? 0.2 : 0);
-        return { ...r, s, acquainted };
-      }).filter(r => !pairReason(w, a, r.id, "help"))
-        .sort((p, q) => (q.s - p.s) || (p.id < q.id ? -1 : 1));
-      if (home && need === 1 && !ranked[0]?.acquainted) need = 2;
+      const rankHelpers = (format: Format) => {
+        if (!ma.m.prefs.formats.includes(format)
+          || memberReason(w, a, { category: "help", role: "seeker", format, timeSensitive: false, ownIntentCreatedAt: intent.createdAt })) return [];
+        const pool = eligibleMembers(ctx, "help", "helper", format, false, new Set([a]))
+          .filter(id => w.get(id)?.m.prefs.formats.includes(format) && w.canMeet([a, id]));
+        // Prefer people who enjoy the task, give others room, and favor an existing acquaintance.
+        return retrieveForIntent(ctx, intent, pool, "caps", w.cfg.retrieval.minSim).map(r => {
+          const mi = w.get(r.id)!;
+          const acquainted = w.edgeHas(a, r.id, "met") || w.edgeHas(a, r.id, "knows") || w.edgeHas(a, r.id, "helped");
+          const s = (r.rank ?? r.sim) + (r.facet?.kind === "offer" ? 0.1 : 0) - 0.1 * mi.recentContribution + (mi.recentContribution === 0 ? 0.03 : 0) + (home && acquainted ? 0.2 : 0);
+          return { ...r, s, acquainted };
+        }).filter(r => !pairReason(w, a, r.id, "help"))
+          .sort((p, q) => (q.s - p.s) || (p.id < q.id ? -1 : 1));
+      };
+      let ranked = rankHelpers(need > 1 ? "small_group" : "one_to_one");
+      if (needsSecondHomeHelper(home, need, ranked[0]?.acquainted === true)) {
+        need = 2;
+        ranked = rankHelpers("small_group");
+      }
       if (ranked.length < need) { ctx.unmatchedIntents.add(intent.id); continue; }
       // Up to three helper-set variants so one busy helper does not sink the whole request.
       const seenSets = new Set<string>();

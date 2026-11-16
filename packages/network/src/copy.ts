@@ -92,6 +92,7 @@ export function copyFor(b: CopyBrand) {
   /** A member on watch asked for an introduction: nothing starts until a person has looked. */
   requestOnWatch: "I can't start new introductions for you right now. A person on our team will look at your account first.",
   requestAck: "On it. I'll check with a couple of people and get back to you within a day.",
+  homeHelpSafetyReview: "A team member needs to review requests that involve entering a home. I haven't contacted anyone or shared an address.",
   /** Matching is paused (the admin switch): the request waits as a standing request. */
   requestWaiting: "Got it. I'm not starting new introductions right now, but I'll keep your request open and look again soon.",
   /** A standing request found a match on a later try; sent only after a reviewer approved it. */
