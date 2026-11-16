@@ -1,0 +1,208 @@
+// GENERATED from spec/meetingSettlement.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
+//@ backend dafny
+
+/** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md:9) */
+export interface ConfirmationChanges { recordWords: boolean; emitConfirmation: boolean }
+/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md:34) */
+export type SettlementPhase = "BeforeFeedback" | "AwaitingAttendance" | "SettlementComplete";
+/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md:34) */
+export interface MeetingSettlement { phase: SettlementPhase }
+/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md:67) */
+export type AttendanceMark = "Attended" | "Absent" | "Ghosted" | "NoFinding";
+/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md:67) */
+export interface AttendanceEvidence { saidAttended: boolean; saidAbsent: boolean; hasFeedback: boolean; counterpartVerified: boolean; organizerVerified: boolean; pairMeeting: boolean; reportedMissing: boolean; explicitReply: boolean }
+/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md:67) */
+export interface AttendanceFinding { mark: AttendanceMark; logFeedback: boolean; reliabilityNoShow: boolean }
+/** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md:91) */
+export type CheckInSource = "NoCheckIn" | "MissingNames" | "PresentNames" | "BookedParticipants";
+
+/** One variant per transition in the spec. */
+export type Event =
+  | { type: "requestFeedback"; unsent: boolean; asOf: number; feedbackAt: number }
+  | { type: "resolveAttendance"; timedOut: boolean; everyoneResponded: boolean };
+
+/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md:34) */
+export const feedbackDelayHours: number = 3;
+/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md:34) */
+export const settlementDelayDays: number = 4;
+/** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md:9) */
+export const confirmationWindowHours: number = 48;
+/** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md:9) */
+export const confirmationWindowMs: number = exact_meetingSettlement(confirmationWindowHours * 3600000);
+/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md:34) */
+export const initial: MeetingSettlement = { phase: "BeforeFeedback" };
+
+/** Every `always` rule at once. Holds initially and after every transition. */
+//@ pure
+export function inv(current: MeetingSettlement): boolean {
+  return true;
+}
+
+/** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md:9) */
+//@ pure
+export function confirmationChanges(accepted: boolean, bookingDelivered: boolean, wordsRecorded: boolean, confirmed: boolean, explicitReply: boolean): ConfirmationChanges {
+  const local_0 = accepted && bookingDelivered;
+  return { recordWords: local_0 && explicitReply && !wordsRecorded, emitConfirmation: local_0 && !confirmed };
+}
+
+/** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md:9) */
+//@ pure
+export function silentConfirmationDue(accepted: boolean, bookingDelivered: boolean, confirmed: boolean, elapsedMs: number, meetingStarted: boolean): boolean {
+  return accepted && bookingDelivered && !confirmed && (elapsedMs >= confirmationWindowMs || meetingStarted);
+}
+
+/** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md:9) */
+//@ pure
+export function lawConfirmedDoesNotRepeat(accepted: boolean, bookingDelivered: boolean, wordsRecorded: boolean, explicitReply: boolean): boolean {
+  //@ ensures \result === true
+  return !confirmationChanges(accepted, bookingDelivered, wordsRecorded, true, explicitReply).emitConfirmation;
+}
+
+/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md:34) */
+//@ pure
+export function restoreAttendance(resolved: boolean): MeetingSettlement {
+  return { phase: resolved ? "SettlementComplete" : "AwaitingAttendance" };
+}
+
+/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md:34) */
+//@ pure
+export function canRequestFeedback(s: MeetingSettlement, unsent: boolean, asOf: number, feedbackAt: number): boolean {
+  return s.phase === "BeforeFeedback" && unsent && asOf >= feedbackAt;
+}
+
+/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md:34) */
+//@ pure
+export function requestFeedback(s: MeetingSettlement, unsent: boolean, asOf: number, feedbackAt: number): MeetingSettlement {
+  //@ ensures (inv(s) && canRequestFeedback(s, unsent, asOf, feedbackAt)) ==> stepSettlementStaysClosed(s, \result)
+  return { phase: "AwaitingAttendance" };
+}
+
+/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md:34) */
+//@ pure
+export function canResolveAttendance(s: MeetingSettlement, timedOut: boolean, everyoneResponded: boolean): boolean {
+  return s.phase === "AwaitingAttendance" && (timedOut || everyoneResponded);
+}
+
+/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md:34) */
+//@ pure
+export function resolveAttendance(s: MeetingSettlement, timedOut: boolean, everyoneResponded: boolean): MeetingSettlement {
+  //@ ensures (inv(s) && canResolveAttendance(s, timedOut, everyoneResponded)) ==> stepSettlementStaysClosed(s, \result)
+  return { phase: "SettlementComplete" };
+}
+
+/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md:34) */
+//@ pure
+export function stepSettlementStaysClosed(before: MeetingSettlement, after: MeetingSettlement): boolean {
+  return !(before.phase === "SettlementComplete") || after.phase === "SettlementComplete";
+}
+
+/** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md:34) */
+//@ pure
+export function sometimesResolvesAttendance(s: MeetingSettlement): boolean {
+  return s.phase === "SettlementComplete";
+}
+
+/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md:67) */
+//@ pure
+export function deliveredInvitee(accepted: boolean, bookingDelivered: boolean): boolean {
+  return accepted && bookingDelivered;
+}
+
+/** Story: Ask for feedback and close attendance once / Classify each attendee from the available reports (spec/meetingSettlement.md:67) */
+//@ pure
+export function countAttendance(evidence: AttendanceEvidence): AttendanceFinding {
+  const local_1: AttendanceMark = evidence.saidAttended || (!evidence.saidAbsent && (evidence.counterpartVerified || evidence.organizerVerified)) ? "Attended" : (evidence.saidAbsent ? "Absent" : (evidence.pairMeeting && evidence.reportedMissing ? (evidence.explicitReply ? "Absent" : "Ghosted") : "NoFinding"));
+  return { mark: local_1, logFeedback: local_1 === "Attended" && evidence.hasFeedback, reliabilityNoShow: local_1 !== "Attended" && !evidence.hasFeedback && evidence.reportedMissing };
+}
+
+/** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md:91) */
+//@ pure
+export function organizerCanVerify(booked: boolean, came: boolean): boolean {
+  return booked && came;
+}
+
+/** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md:91) */
+//@ pure
+export function counterpartConfirmsAttendance(came: boolean, reportsMissing: boolean): boolean {
+  return came && !reportsMissing;
+}
+
+/** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md:91) */
+//@ pure
+export function requestAttendanceSatisfied(requesterAttended: boolean, anotherAttended: boolean): boolean {
+  return requesterAttended && anotherAttended;
+}
+
+/** Story: Ask for feedback and close attendance once / A host's check-in uses the host's response (spec/meetingSettlement.md:91) */
+//@ pure
+export function chooseCheckIn(hostResponded: boolean, hostReportsMissing: boolean, hasNames: boolean): CheckInSource {
+  return !hostResponded ? "NoCheckIn" : (hostReportsMissing ? "MissingNames" : (hasNames ? "PresentNames" : "BookedParticipants"));
+}
+
+/** Do the rules allow this event in this state? */
+//@ pure
+export function enabled(current: MeetingSettlement, event: Event): boolean {
+  if (event.type === "requestFeedback") return canRequestFeedback(current, event.unsent, event.asOf, event.feedbackAt);
+  if (event.type === "resolveAttendance") return canResolveAttendance(current, event.timedOut, event.everyoneResponded);
+  return false;
+}
+
+/** Apply an event. An event the rules do not allow leaves the state unchanged. */
+//@ pure
+export function step(current: MeetingSettlement, event: Event): MeetingSettlement {
+  //@ requires inv(current)
+  //@ ensures inv(\result)
+  if (event.type === "requestFeedback" && canRequestFeedback(current, event.unsent, event.asOf, event.feedbackAt)) return requestFeedback(current, event.unsent, event.asOf, event.feedbackAt);
+  if (event.type === "resolveAttendance" && canResolveAttendance(current, event.timedOut, event.everyoneResponded)) return resolveAttendance(current, event.timedOut, event.everyoneResponded);
+  return current;
+}
+
+/**
+ * Turn an untrusted value into an event, or undefined if it is not one. Use it wherever events enter the program:
+ * the proofs assume whole numbers and plain data, and this is what makes that true. The result is a fresh copy
+ * with exactly the fields the event has, so nothing the caller keeps can change it afterwards.
+ */
+//@ skip
+export function parseEvent(x: unknown): Event | undefined {
+  let raw: any;
+  try {
+    raw = JSON.parse(JSON.stringify(x));
+  } catch {
+    return undefined;
+  }
+  if (typeof raw !== "object" || raw === null) return undefined;
+  if (raw.type === "requestFeedback" && typeof raw.unsent === "boolean" && Number.isSafeInteger(raw.asOf) && Number.isSafeInteger(raw.feedbackAt)) return { type: "requestFeedback", unsent: raw.unsent, asOf: raw.asOf, feedbackAt: raw.feedbackAt };
+  if (raw.type === "resolveAttendance" && typeof raw.timedOut === "boolean" && typeof raw.everyoneResponded === "boolean") return { type: "resolveAttendance", timedOut: raw.timedOut, everyoneResponded: raw.everyoneResponded };
+  return undefined;
+}
+
+/**
+ * Turn an untrusted value, such as a state loaded from storage, into a state, or undefined if it is not one. It must
+ * have exactly the state's shape (no other fields, whole numbers that are safe integers, sets that hold nothing
+ * twice, maps as records whose keys carry the "$" every key carries here) and satisfy every `always` rule. The
+ * result is a fresh copy, so nothing the caller keeps can change it afterwards.
+ */
+//@ skip
+export function parseState(x: unknown): MeetingSettlement | undefined {
+  let raw: any;
+  try {
+    raw = JSON.parse(JSON.stringify(x));
+  } catch {
+    return undefined;
+  }
+  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "BeforeFeedback" || raw.phase === "AwaitingAttendance" || raw.phase === "SettlementComplete") && Object.keys(raw).length === 1)) return undefined;
+  const parsed: MeetingSettlement = ({ phase: raw.phase });
+  return inv(parsed) ? parsed : undefined;
+}
+
+/** Proof obligation: the initial state satisfies every `always` rule. */
+export function initialHolds(): MeetingSettlement {
+  //@ ensures inv(\result)
+  return initial;
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_meetingSettlement(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
+}

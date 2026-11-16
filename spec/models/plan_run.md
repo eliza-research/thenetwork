@@ -10,6 +10,8 @@ Check quorum, group size, deadlines, alternatives, and contact eligibility. The 
 
 The [single-slot planner](../planFormation.md) checks public venue capacity and reserves invitations before review. The [Friends weekly planner](../friendsWeek.md) assigns its weekly reservations before proposal review, replies, and booking. The [plan dispatch spec](../planDispatch.md) generates invitation eligibility, deferral, and send decisions for approved plans.
 
+The [booked meeting settlement](../meetingSettlement.md) governs confirmation, feedback deadlines, and how the Network classifies attendance.
+
 Imported from `quint/plan_run.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint

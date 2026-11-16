@@ -12,7 +12,7 @@ Production uses the generated [notification delivery rules](../notificationDeliv
 
 This model assumes the store rejects a digest when any item changed after the re-read. The current Postgres store deduplicates by delivery ID in a transaction and marks items that remain unnotified. The scheduler also assumes the recipient still exists when rebuilding a partial digest. The generated machine takes the store's recording result as given and preserves those runtime boundaries.
 
-The model's token action combines redemption and display. In production, an app-scoped read marks only selected unseen items, and a surface that resolves subject IDs may acknowledge their display separately.
+The model's token action combines redemption and display. In production, an app-scoped read marks only selected unseen items, and a surface that resolves subject IDs may acknowledge their display separately. The Network uses [booked meeting settlement](../meetingSettlement.md) to decide which attendance and feedback events to write to the capital ledger.
 
 Imported from `quint/notify_capital.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 

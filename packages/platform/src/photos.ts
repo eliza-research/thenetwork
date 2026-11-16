@@ -40,6 +40,11 @@ import {
   canCheckReturnedScore, canCheckWrittenScore, canRecordScoreRemoval, canRecordScoreWrite, canReceiveScore, canSupplyPhotos,
   initial as ratingInitial, step as stepRating,
 } from "../../core/src/generated/photoRating.ts";
+import {
+  canCheckSlots, canCleanImage, canFinishRerate, canRecordRatingClear, canRecordRemovedBytes, canRecordRemovedRow,
+  canRecordUploadBytes, canRecordUploadRow, canScreenFile,
+  initial as photoChangeInitial, type PhotoChange, step as stepPhotoChange,
+} from "../../core/src/generated/photoRetention.ts";
 import { canBeMatched } from "../../core/src/policy.ts";
 import { PgPeopleStore } from "./pg-store.ts";
 import type { AppId } from "./apps.ts";
@@ -462,21 +467,34 @@ export class PhotoService {
 
   async upload(personId: string, app: AppId, input: Uint8Array, consentVersion: string | undefined): Promise<PhotoResult<{ id: string }>> {
     if (!this.o.storage) return { ok: false, reason: "photos_off" };
-    if (!PHOTO_APPS.includes(app)) return { ok: false, reason: "app_not_allowed" };
-    if (consentVersion !== PHOTO_CONSENT.version) return { ok: false, reason: "consent_required" };
+    let change = stepPhotoChange(photoChangeInitial, {
+      type: "beginUpload", appAllowed: PHOTO_APPS.includes(app), consentCurrent: consentVersion === PHOTO_CONSENT.version,
+    });
+    if (change.phase === "UnsupportedApp") return { ok: false, reason: "app_not_allowed" };
+    if (change.phase === "ConsentMissing") return { ok: false, reason: "consent_required" };
     const who = await this.mayTake(personId, app);
-    if (who) return { ok: false, reason: who };
-    if (input.length > PHOTO_MAX_BYTES) return { ok: false, reason: "too_large" };
-    const type = sniffType(input);
-    if (!type) return { ok: false, reason: "bad_type" };
-    if (photoSlotsFull((await this.o.meta.list(personId)).length)) return { ok: false, reason: "too_many" };
-    let bytes: Uint8Array;
-    try { bytes = stripMetadata(input, type); } catch { return { ok: false, reason: "bad_image" }; }
+    change = stepPhotoChange(change, { type: "checkUploader", eligible: who === undefined });
+    if (!canScreenFile(change)) return { ok: false, reason: who ?? "adults_only" };
+    const tooLarge = input.length > PHOTO_MAX_BYTES;
+    const type = tooLarge ? undefined : sniffType(input);
+    change = stepPhotoChange(change, { type: "screenFile", tooLarge, typeKnown: type !== undefined });
+    if (change.phase === "SizeExceeded") return { ok: false, reason: "too_large" };
+    if (!type || !canCheckSlots(change)) return { ok: false, reason: "bad_type" };
+    const count = (await this.o.meta.list(personId)).length;
+    change = stepPhotoChange(change, { type: "checkSlots", available: !photoSlotsFull(count) });
+    if (!canCleanImage(change)) return { ok: false, reason: "too_many" };
+    let bytes: Uint8Array | undefined;
+    try { bytes = stripMetadata(input, type); } catch { /* The image did not pass parsing. */ }
+    change = stepPhotoChange(change, { type: "cleanImage", cleaned: bytes !== undefined });
+    if (!bytes || !canRecordUploadBytes(change)) return { ok: false, reason: "bad_image" };
     const id = newPhotoId();
     const key = randomBytes(24).toString("hex");
     await this.o.storage.put(key, bytes, type);
-    await this.o.meta.put({ id, personId, app, storageKey: key, contentType: type, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), consentVersion, createdAt: this.now() });
-    await this.rate(personId, app).catch(e => this.o.log?.(`[photos] rating failed: ${(e as Error).message}`));
+    change = stepPhotoChange(change, { type: "recordUploadBytes" });
+    if (!canRecordUploadRow(change)) throw new Error("photo bytes did not advance the upload");
+    await this.o.meta.put({ id, personId, app, storageKey: key, contentType: type, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), consentVersion: PHOTO_CONSENT.version, createdAt: this.now() });
+    change = stepPhotoChange(change, { type: "recordUploadRow" });
+    if (!(await this.finishPhotoChange(change, personId, app))) throw new Error("photo upload did not complete");
     return { ok: true, value: { id } };
   }
 
@@ -564,20 +582,38 @@ export class PhotoService {
   /** The member deletes one of their photos: the rating goes with it and is made again from what is left. */
   async remove(personId: string, app: AppId, id: string): Promise<boolean> {
     const r = await this.o.meta.get(id);
-    if (!r || r.personId !== personId || r.app !== app) return false;
-    await this.o.storage?.delete(r.storageKey);
-    await this.o.meta.delete(id);
-    await this.o.onRemoved?.(personId, r.app, id);
-    await this.rate(personId, app).catch(e => this.o.log?.(`[photos] rating failed: ${(e as Error).message}`));
-    return true;
+    return r?.id === id ? this.erasePhoto(r, personId, app, true) : false;
   }
 
   /** Every photo of a person (on one app, or every app): leave, delete everything, a minor age, a ban. Bytes first, then rows. */
   async deleteFor(personId: string, app?: AppId): Promise<number> {
     const rows = await this.o.meta.list(personId, app);
-    for (const r of rows) { await this.o.storage?.delete(r.storageKey); await this.o.meta.delete(r.id); await this.o.onRemoved?.(personId, r.app, r.id); }
-    if (rows.length) this.o.log?.(`[photos] deleted ${rows.length} photo(s)${app ? ` on ${app}` : ""}`);
-    return rows.length;
+    let removed = 0;
+    for (const r of rows) if (await this.erasePhoto(r, personId, app, false)) removed++;
+    if (removed) this.o.log?.(`[photos] deleted ${removed} photo(s)${app ? ` on ${app}` : ""}`);
+    return removed;
+  }
+
+  private async erasePhoto(row: PhotoRow, personId: string, app: AppId | undefined, rerate: boolean): Promise<boolean> {
+    let change = stepPhotoChange(photoChangeInitial, {
+      type: "beginRemoval", owned: row.personId === personId && (app === undefined || row.app === app), rerate,
+    });
+    if (!canRecordRemovedBytes(change)) return false;
+    await this.o.storage?.delete(row.storageKey);
+    change = stepPhotoChange(change, { type: "recordRemovedBytes" });
+    if (!canRecordRemovedRow(change)) return false;
+    await this.o.meta.delete(row.id);
+    change = stepPhotoChange(change, { type: "recordRemovedRow" });
+    if (!canRecordRatingClear(change)) return false;
+    await this.o.onRemoved?.(personId, row.app, row.id);
+    change = stepPhotoChange(change, { type: "recordRatingClear" });
+    return this.finishPhotoChange(change, personId, row.app);
+  }
+
+  private async finishPhotoChange(change: PhotoChange, personId: string, app: AppId): Promise<boolean> {
+    if (!canFinishRerate(change)) return change.phase === "ChangeFinished";
+    await this.rate(personId, app).catch(e => this.o.log?.(`[photos] rating failed: ${(e as Error).message}`));
+    return stepPhotoChange(change, { type: "finishRerate" }).phase === "ChangeFinished";
   }
 
   /**

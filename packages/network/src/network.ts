@@ -37,6 +37,11 @@ import {
 } from "@thenetwork/engine";
 import { initial as initialCrewOffer, step as stepCrewOffer, type CrewOfferState } from "../../core/src/generated/crewOffer.ts";
 import {
+  chooseCheckIn, confirmationChanges, confirmationWindowHours as OPT_OUT_HOURS, countAttendance, counterpartConfirmsAttendance,
+  deliveredInvitee, feedbackDelayHours, initial as initialMeetingSettlement, organizerCanVerify, requestAttendanceSatisfied,
+  restoreAttendance, settlementDelayDays, silentConfirmationDue, step as stepMeetingSettlement,
+} from "../../core/src/generated/meetingSettlement.ts";
+import {
   groupCanContinue, initial as initialOpportunity, step as stepOpportunity,
   type OpportunityLifecycle, type OpportunityPhase,
 } from "../../core/src/generated/opportunityLifecycle.ts";
@@ -495,8 +500,6 @@ const ZERO: ScoreComponents = { fit: 0, mutualBenefit: 0, warmPath: 0, novelty: 
 const PROBE_WAIT = DEFAULT_ATTENTION.expiry.partnerProbeDays * DAY;
 /** The daily engine run happens at the first tick from runHour until this New York hour. */
 const ENGINE_RUN_UNTIL = 20;
-/** The booked plan's opt-out window: silence this long counts as confirmed (attention v1.2). */
-const OPT_OUT_HOURS = 48;
 /** The earliest a booked meeting may start after the last yes, and the earliest offered slot for a partner probe. */
 const MIN_NOTICE = 6 * HOUR, PARTNER_LEAD = 12 * HOUR;
 /** Employer-like facets never go in a probe (D5). Same rule as the engine's buildProbe, which does not export it. */
@@ -2491,9 +2494,10 @@ export class ConsentNetwork implements NetworkUnderTest {
    * without a "can't". Each is recorded once as plan_confirmed; `explicit` keeps who said it.
    */
   private confirmPlan(o: Opp, id: MemberId, explicit: boolean) {
-    if (o.status.get(id) !== "yes" || o.bookedAt?.[id] === undefined) return;
-    if (explicit && !(o.explicit ?? []).includes(id)) o.explicit = [...(o.explicit ?? []), id];
-    if ((o.confirmed ?? []).includes(id)) return;
+    const changes = confirmationChanges(o.status.get(id) === "yes", o.bookedAt?.[id] !== undefined,
+      (o.explicit ?? []).includes(id), (o.confirmed ?? []).includes(id), explicit);
+    if (changes.recordWords) o.explicit = [...(o.explicit ?? []), id];
+    if (!changes.emitConfirmation) return;
     o.confirmed = [...(o.confirmed ?? []), id];
     // A revealed member's decision (matching-e2e-7): a yes in words or by 48 hours of silence.
     this.counters.revealYes++;
@@ -2889,34 +2893,45 @@ export class ConsentNetwork implements NetworkUnderTest {
   private finalize(o: Opp) {
     if (o.finalized || o.meetingAt === undefined) return;
     o.finalized = true;
-    const going = o.participants.filter(p => o.status.get(p) === "yes" && o.bookedAt?.[p] !== undefined);
+    const going = o.participants.filter(p => deliveredInvitee(o.status.get(p) === "yes", o.bookedAt?.[p] !== undefined));
     if (!going.length) return;
     const post = o.post ?? {};
     const said = (p: MemberId) => post[p];
-    const host = o.plan?.hostId && going.includes(o.plan.hostId) && said(o.plan.hostId)?.came ? o.plan.hostId : undefined;
+    const proposedHost = o.plan?.hostId;
+    const host = proposedHost && organizerCanVerify(going.includes(proposedHost), !!said(proposedHost)?.came) ? proposedHost : undefined;
     const hp = host ? said(host)! : undefined;
-    // The host's check-in: the people they named as there; when they reported someone missing, the
-    // named ones are the missing and only those who said they came count; otherwise everyone who did not say they missed it.
-    const checkIn = !hp ? [] : hp.otherNoShow ? going.filter(p => p !== host && said(p)?.came && !hp.named.includes(p))
-      : hp.named.length ? hp.named : going.filter(p => p !== host && said(p)?.came !== false);
-    // A counterpart who came and reported nobody missing confirms everyone booked (the mutual check-in).
-    const vouchers = (p: MemberId) => going.filter(x => x !== p && said(x)?.came && !said(x)!.otherNoShow);
-    const present = going.filter(p => said(p)?.came === true || (said(p)?.came !== false && (vouchers(p).length > 0 || checkIn.includes(p))));
+    const names = hp?.named ?? [];
+    const checkInSource = chooseCheckIn(!!hp, !!hp?.otherNoShow, names.length > 0);
+    let checkIn: MemberId[] = [];
+    if (checkInSource === "MissingNames") checkIn = going.filter(p => p !== host && said(p)?.came && !names.includes(p));
+    else if (checkInSource === "PresentNames") checkIn = names;
+    else if (checkInSource === "BookedParticipants") checkIn = going.filter(p => p !== host && said(p)?.came !== false);
+    const foundMissing = going.filter(p => said(p)?.came && said(p)?.otherNoShow);
+    const confirms = going.filter(p => counterpartConfirmsAttendance(!!said(p)?.came, !!said(p)?.otherNoShow));
+    const findings = going.map(p => {
+      const reply = said(p);
+      const vouchers = confirms.filter(x => x !== p);
+      const organizerVerified = checkIn.includes(p);
+      const finding = countAttendance({
+        saidAttended: reply?.came === true, saidAbsent: reply?.came === false, hasFeedback: !!reply,
+        counterpartVerified: vouchers.length > 0, organizerVerified, pairMeeting: going.length === 2,
+        reportedMissing: foundMissing.some(x => x !== p), explicitReply: (o.explicit ?? []).includes(p),
+      });
+      return { p, vouchers, organizerVerified, finding };
+    });
+    const present = findings.filter(({ finding }) => finding.mark === "Attended").map(({ p }) => p);
     const origin = this.originOf(o);
-    for (const p of going) {
+    for (const { p, vouchers, organizerVerified, finding } of findings) {
       const key = `${o.id}:${p}`;
-      if (present.includes(p)) {
-        const v = vouchers(p);
-        const verifiedBy: ("counterpart" | "organizer")[] = [...(v.length ? ["counterpart" as const] : []), ...(checkIn.includes(p) ? ["organizer" as const] : [])];
-        this.emit({ type: "plan_attended", member: p, planId: o.id, counterparts: present.filter(x => x !== p), verifiedBy, origin, publicVenue: true, confirmers: [...v, ...(checkIn.includes(p) && host ? [host] : [])] }, key);
-        if (said(p)) this.emit({ type: "feedback_given", member: p, planId: o.id }, key);
-        continue;
+      if (finding.mark === "Attended") {
+        const verifiedBy: ("counterpart" | "organizer")[] = [...(vouchers.length ? ["counterpart" as const] : []), ...(organizerVerified ? ["organizer" as const] : [])];
+        this.emit({ type: "plan_attended", member: p, planId: o.id, counterparts: present.filter(x => x !== p), verifiedBy, origin, publicVenue: true, confirmers: [...vouchers, ...(organizerVerified && host ? [host] : [])] }, key);
+        if (finding.logFeedback) this.emit({ type: "feedback_given", member: p, planId: o.id }, key);
+      } else if (finding.mark === "Absent") {
+        this.emit({ type: "plan_no_show", member: p, planId: o.id }, key);
+      } else if (finding.mark === "Ghosted") {
+        this.emit({ type: "plan_ghosted", member: p, planId: o.id }, key);
       }
-      if (said(p)?.came === false) { this.emit({ type: "plan_no_show", member: p, planId: o.id }, key); continue; }
-      const reported = going.length === 2 && going.some(x => x !== p && said(x)?.came && said(x)!.otherNoShow);
-      if (!reported) continue;
-      if (!(o.explicit ?? []).includes(p)) this.emit({ type: "plan_ghosted", member: p, planId: o.id }, key);
-      else this.emit({ type: "plan_no_show", member: p, planId: o.id }, key);
     }
     if (host && o.plan) {
       const a = plans.activityById.get(o.plan.activityId);
@@ -2924,12 +2939,13 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     // A reported no-show counts only when corroborated (network-consent-17): the member said they did
     // not come, or they were asked how it went and stayed silent (finalize runs 4 days after).
-    for (const p of going) {
-      if (present.includes(p) || said(p)) continue;
-      if (going.some(x => x !== p && said(x)?.came && said(x)!.otherNoShow)) { const x = this.members.get(p); if (x) { x.noShows++; x.completedSinceNoShow = 0; } }
+    for (const { p, finding } of findings) {
+      if (!finding.reliabilityNoShow) continue;
+      const x = this.members.get(p);
+      if (x) { x.noShows++; x.completedSinceNoShow = 0; }
     }
     // A request is fulfilled only when the requester and someone else attended (matching-e2e-7).
-    if (o.requester && present.includes(o.requester) && present.some(p => p !== o.requester)) {
+    if (o.requester && requestAttendanceSatisfied(present.includes(o.requester), present.some(p => p !== o.requester))) {
       const r = this.requests.find(x => x.oppId === o.id && x.memberId === o.requester);
       if (r && r.outcome !== "fulfilled") {
         r.outcome = "fulfilled"; r.fulfilledAt = this.now(); this.counters.requestsFulfilled++;
@@ -3597,7 +3613,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       // The pre-plan confirmation: 48 hours of silence after the booked plan reached them (or the start) confirms it.
       for (const id of o.bookedTold ?? []) {
         const at = o.bookedAt?.[id];
-        if (at !== undefined && o.status.get(id) === "yes" && !(o.confirmed ?? []).includes(id) && (now - at >= OPT_OUT_HOURS * HOUR || now >= o.meetingAt)) this.confirmPlan(o, id, false);
+        if (silentConfirmationDue(o.status.get(id) === "yes", at !== undefined, (o.confirmed ?? []).includes(id),
+          now - (at ?? 0), now >= o.meetingAt)) this.confirmPlan(o, id, false);
       }
       // Reminders land inside each member's allowed window before the meeting: at T-4h when that is
       // allowed, otherwise at the last allowed tick before it (the evening before for an early meeting).
@@ -3610,9 +3627,10 @@ export class ConsentNetwork implements NetworkUnderTest {
         o.reminded.add(id);
         this.send(m, copy.reminder(whenPhrase(o.meetingAt), `${o.venue}`), { type: "reminder", proposalId: o.id }, "reminder", { about: o.participants.filter(p => o.status.get(p) === "yes") });
       }
-      const next = stepOpportunity(opportunityLifecycle(o), {
-        type: "complete", feedbackDue: !o.feedbackSent && now >= o.meetingAt + 3 * HOUR,
+      const settlement = stepMeetingSettlement(initialMeetingSettlement, {
+        type: "requestFeedback", unsent: !o.feedbackSent, asOf: now, feedbackAt: o.meetingAt + feedbackDelayHours * HOUR,
       });
+      const next = stepOpportunity(opportunityLifecycle(o), { type: "complete", feedbackDue: settlement.phase === "AwaitingAttendance" });
       if (next.phase === "Done") {
         o.feedbackSent = true;
         o.stage = STAGE_BY_PHASE[next.phase];
@@ -3634,9 +3652,15 @@ export class ConsentNetwork implements NetworkUnderTest {
       }
     }
     // Attendance is resolved once everyone booked answered, or 4 days after the meeting (NC events).
-    if (o.stage === "done" && !o.finalized && o.meetingAt !== undefined) {
+    if (o.stage === "done" && o.meetingAt !== undefined) {
+      const current = restoreAttendance(!!o.finalized);
+      if (current.phase !== "AwaitingAttendance") return;
       const going = o.participants.filter(p => o.status.get(p) === "yes");
-      if (now >= o.meetingAt + 4 * DAY || going.every(p => o.post?.[p])) this.finalize(o);
+      const timedOut = now >= o.meetingAt + settlementDelayDays * DAY;
+      const settlement = stepMeetingSettlement(current, {
+        type: "resolveAttendance", timedOut, everyoneResponded: !timedOut && going.every(p => o.post?.[p]),
+      });
+      if (settlement.phase === "SettlementComplete") this.finalize(o);
     }
   }
 

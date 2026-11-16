@@ -23,6 +23,7 @@ import type { SQL } from "bun";
 import type { City, Clock, MemberId, WorldSnapshot } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import type { NetworkContext, SimMessage } from "@thenetwork/core";
+import { matchingDisabledByRegistry, startupPlan, tickRepairsProjection, tickRunsFollowup } from "../../core/src/generated/runtimeUnit.ts";
 import { ConsentNetwork, presentInNyc, relayDispatchCheck, type NetworkOptions, type NetworkState } from "../src/network.ts";
 import type { RelayCanonical } from "../src/relay.ts";
 import { loadRelayRows, PgStore, runStored, runTick, type NetworkStore } from "../src/store.ts";
@@ -342,7 +343,8 @@ export class NetworkRuntime {
     for (const r of await this.scoped(tx => tx`select event from network.capital_events where app_id = ${this.app.id} order by t, id`) as any[]) {
       try { this.capital.ledger.record(typeof r.event === "string" ? JSON.parse(r.event) : r.event); } catch { /* out of order: counted by the wiring only for new events */ }
     }
-    if (!this.adapter.enqueue) {await this.projectNotifications();return;}
+    // spec/runtimeUnit.md, "Runtime follow-up depends on the adapter and whether the tick ran"
+    if (startupPlan(!!this.adapter.enqueue) === "RepairProjection") { await this.projectNotifications(); return; }
     const recovered = (await this.adapter.recover?.()) ?? 0;
     if (recovered) this.host.log(`[restart] ${recovered} message(s) ${this.adapter.name === "eliza_cloud" ? "held for receipt lookup" : "go out again with the same provider key"} (${this.id})`);
     // One unit loads the state and the address book; its delivery drains the queue.
@@ -358,7 +360,7 @@ export class NetworkRuntime {
         await this.refresh();
         const state = await this.loadState();
         // The registry's switch wins: a network whose matching is not allowed never matches, whatever was stored.
-        if (state && !this.matchingAllowed) state.matchingEnabled = false;
+        if (state && matchingDisabledByRegistry(this.matchingAllowed)) state.matchingEnabled = false;
         return state;
       },
       save: async (state: NetworkState) => {
@@ -662,8 +664,8 @@ export class NetworkRuntime {
     if (this.retry.length) this.committed.unshift(...this.retry.splice(0));
     await this.deliver();
     await this.storeStatuses(await this.adapter.flush());
-    if (ran && !this.adapter.enqueue) await this.projectNotifications();
-    if (ran && this.host.afterTick) await this.host.afterTick(this).catch(e => this.host.log(`[tick] after-tick work failed (${this.id}): ${(e as Error).message}`));
+    if (tickRepairsProjection(ran, !!this.adapter.enqueue)) await this.projectNotifications();
+    if (tickRunsFollowup(ran, !!this.host.afterTick)) await this.host.afterTick?.(this).catch(e => this.host.log(`[tick] after-tick work failed (${this.id}): ${(e as Error).message}`));
     return ran;
   }
 

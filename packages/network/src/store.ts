@@ -6,6 +6,7 @@
 //    lock and loads the newest state first, so two processes never overwrite each other's saves.
 // The SQL is in packages/network/db/network-state.sql.
 import { SQL } from "bun";
+import { initial as initialUnit, step as stepUnit, tickMayEnter, tickMayTryLock } from "../../core/src/generated/runtimeUnit.ts";
 import type { ConsentNetwork, NetworkState } from "./network.ts";
 import type { RelayRecord } from "../../engine/src/relay.ts";
 import { emptyRelayState, RELAY_LOG_MAX, type RelayState } from "./relay.ts";
@@ -39,7 +40,7 @@ export class MemoryStore implements NetworkStore {
   private readonly queue = new Queue();
   async load() { return this.json === undefined ? undefined : (JSON.parse(this.json) as NetworkState); }
   async save(state: NetworkState) { this.json = JSON.stringify(state); }
-  async withTickLock<T>(fn: () => Promise<T>): Promise<T | undefined> { return this.queue.busy ? undefined : this.queue.run(fn); }
+  async withTickLock<T>(fn: () => Promise<T>): Promise<T | undefined> { return tickMayTryLock(this.queue.busy) ? this.queue.run(fn) : undefined; }
   withLock<T>(fn: () => Promise<T>): Promise<T> { return this.queue.run(fn); }
 }
 
@@ -51,10 +52,19 @@ function storeOf(net: ConsentNetwork, store: NetworkStore | undefined): NetworkS
 
 /** Under the lock: load the newest stored state, run `fn`, save. Another process's saves are never overwritten. */
 async function stored<T>(net: ConsentNetwork, s: NetworkStore, fn: (net: ConsentNetwork) => Promise<T> | T): Promise<T> {
+  // spec/runtimeUnit.md, "Restore a saved snapshot before running and make one save after success"
   const state = await s.load();
-  if (state) net.importState(state);
+  let unit = stepUnit(initialUnit, { type: "recordLoad", snapshotFound: !!state });
+  if (unit.phase === "RestoringSnapshot" && state) {
+    net.importState(state);
+    unit = stepUnit(unit, { type: "recordRestore" });
+  }
+  if (unit.phase !== "RunningAction") throw new Error("Network unit needs its current state before running");
   const out = await fn(net);
+  const saving = stepUnit(unit, { type: "recordAction" });
+  if (saving.phase !== "SavingState") throw new Error("Network unit must finish running before saving");
   await s.save(net.exportState());
+  if (stepUnit(saving, { type: "recordSave" }).phase !== "StateSaved") throw new Error("Network unit did not finish saving");
   return out;
 }
 
@@ -306,7 +316,7 @@ export class PgStore implements NetworkStore {
   private readonly queue = new Queue();
 
   withTickLock<T>(fn: () => Promise<T>): Promise<T | undefined> {
-    return this.queue.busy ? Promise.resolve(undefined) : this.queue.run(() => this.locked(false, fn));
+    return tickMayTryLock(this.queue.busy) ? this.queue.run(() => this.locked(false, fn)) : Promise.resolve(undefined);
   }
 
   withLock<T>(fn: () => Promise<T>): Promise<T> {
@@ -324,7 +334,7 @@ export class PgStore implements NetworkStore {
       if (wait) await conn`select pg_advisory_lock(hashtext(${key}))`;
       else {
         const [row] = await conn`select pg_try_advisory_lock(hashtext(${key})) as ok`;
-        if (!row?.ok) return undefined;
+        if (!tickMayEnter(!!row?.ok)) return undefined;
       }
       try { return await fn(); } finally { await conn`select pg_advisory_unlock(hashtext(${key}))`; }
     } finally {

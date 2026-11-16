@@ -8,6 +8,8 @@ An operator needs the backend to complete scheduled work, report failures, and r
 
 Check stored writes, retention, ticks, alerts, backup recovery, and shutdown. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
+The [runtime unit spec](../runtimeUnit.md) generates load, restore, action, save, and adapter follow-up decisions. The shell owns the queue, database advisory locks, and transaction commit.
+
 Imported from `quint/runtime_ops.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
