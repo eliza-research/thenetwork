@@ -7,7 +7,7 @@
 import { gini } from "@thenetwork/core";
 import { countPublishedQuestions, initial as initialAskRun, questionSubjectAllowed, step as stepAskRun } from "../../core/src/generated/engineAsks.ts";
 import {
-  initial, selectionMemberFullAt, step,
+  canReserveSelection, initial, selectionMemberFullAt, step,
   type Event as SelectionEvent, type SelectionChoice, type SelectionMember, type SelectionRun,
 } from "../../core/src/generated/selectionRun.ts";
 export { gini };
@@ -78,6 +78,8 @@ export function planAsks(w: World, input: EngineInput): AskPlan {
   return plan;
 }
 
+type ReserveEvent = Extract<SelectionEvent, { type: "reserveSelection" }>;
+
 const byKey = (a: Scored, b: Scored) => (a.c.key < b.c.key ? -1 : a.c.key > b.c.key ? 1 : 0);
 const valueOf = (x: Scored) => Math.round(x.score * 1000);
 const bump = <K>(m: Map<K, number>, k: K) => m.set(k, (m.get(k) ?? 0) + 1);
@@ -129,16 +131,23 @@ function selectionShell(w: World, opts: SelectOptions) {
   // spec/selectionRun.md, "Each reservation checks the city, pair, and member limits"
   const limitsOpen = (u: Use, c: SelectionChoice) =>
     !u.keys.has(c.candidateKey) && (u.cities.get(c.city) ?? 0) < c.cityLimit && c.pairKeys.every(k => !u.pairs.has(k));
-  const hooksAllow = (u: Use, x: Scored) => {
+  // The two inputs of the reservation guard that only the shell can compute: no participant holds an
+  // overlapping fixed window, and the pack does not refuse the choice.
+  const timeFree = (u: Use, x: Scored) => {
     const window = x.c.fixedWindow ? x.c.window : undefined;
-    if (window && !x.c.participants.every(id => !(u.windows.get(id) ?? []).some(([s, e]) => window.start < e && s < window.end))) return false;
+    return !window || x.c.participants.every(id => !(u.windows.get(id) ?? []).some(([s, e]) => window.start < e && s < window.end));
+  };
+  const packAllows = (u: Use, x: Scored) => {
     const adjust = w.pack.selection.adjust;
     return !adjust || adjust(w, x.c, x.score, id => u.proactive.get(id) ?? 0) !== -Infinity;
   };
+  /** The O(1) mirrors of the machine's room checks: they only skip choices the guard would refuse. */
   const fits = (u: Use, x: Scored) => {
     const c = choiceFor(x);
-    return limitsOpen(u, c) && c.members.every(m => !full(u, m)) && hooksAllow(u, x);
+    return limitsOpen(u, c) && c.members.every(m => !full(u, m));
   };
+  /** The whole guard on a copy of the use, without the machine (the exploration size estimate and the diagnostic). */
+  const allows = (u: Use, x: Scored) => fits(u, x) && timeFree(u, x) && packAllows(u, x);
   // spec/selectionRun.md, "Reserving a proposal consumes its slots together"
   const record = (u: Use, x: Scored) => {
     const c = choiceFor(x);
@@ -152,7 +161,7 @@ function selectionShell(w: World, opts: SelectOptions) {
     const window = x.c.fixedWindow ? x.c.window : undefined;
     if (window) for (const id of x.c.participants) u.windows.set(id, [...(u.windows.get(id) ?? []), [window.start, window.end]]);
   };
-  return { choiceFor, full, limitsOpen, hooksAllow, fits, record };
+  return { choiceFor, full, limitsOpen, timeFree, packAllows, fits, allows, record };
 }
 
 /**
@@ -175,10 +184,29 @@ export function selectProposals(w: World, scored: Scored[], rng: Rng, debt: Reco
     if (next === run) throw new Error(`selectionRun refused ${event.type} that the shell allowed`);
     run = next;
   };
-  const reserve = (x: Scored, exploring: boolean, probability: number, value?: number) => {
-    advance({ type: "reserveSelection", choice: shell.choiceFor(x), timeFree: true, exploring, packAllows: true, value: value ?? valueOf(x) });
+  // spec/selectionRun.md, "Each reservation checks the city, pair, and member limits": the generated
+  // guard decides every reservation, in every pass, with the fixed windows and the pack's refusal as
+  // its inputs. The shell's mirrors (fits) only skip choices early and must agree with the guard.
+  const reservation = (x: Scored, exploring: boolean, value: number): ReserveEvent => ({
+    type: "reserveSelection", choice: shell.choiceFor(x), timeFree: shell.timeFree(use, x), exploring, packAllows: shell.packAllows(use, x), value,
+  });
+  const admits = (x: Scored, exploring: boolean) => {
+    if (!shell.fits(use, x)) return false;
+    const e = reservation(x, exploring, valueOf(x));
+    return canReserveSelection(run, e.choice, e.timeFree, e.exploring, e.packAllows, e.value);
+  };
+  /** Step the machine for a choice the mirrors let through; false when its guard refuses the window or the pack's refusal. */
+  const tryReserve = (x: Scored, exploring: boolean, probability: number, value?: number): boolean => {
+    const event = reservation(x, exploring, value ?? valueOf(x));
+    const next = step(run, event);
+    if (next === run) {
+      if (event.timeFree && event.packAllows) throw new Error("selectionRun refused reserveSelection that the shell allowed");
+      return false;
+    }
+    run = next;
     shell.record(use, x);
     selected.push({ s: x, exploration: exploring, rank: selected.length, probability, ...(value === undefined ? {} : { value }) });
+    return true;
   };
 
   // spec/selectionRun.md, "Greedy decisions never rise in value": one order, value descending, key ascending.
@@ -203,8 +231,7 @@ export function selectProposals(w: World, scored: Scored[], rng: Rng, debt: Reco
   for (const id of floorMembers) {
     if (floorTaken >= floorCap) break;
     if ((use.proactive.get(id) ?? 0) > 0) continue;
-    const best = (byMember.get(id) ?? []).find(x => shell.fits(use, x));
-    if (best) { reserve(best, false, 1); floorTaken++; }
+    if ((byMember.get(id) ?? []).some(x => shell.fits(use, x) && tryReserve(x, false, 1))) floorTaken++;
   }
 
   // spec/selectionRun.md, "Exposure selection precedes exploration and greedy selection"
@@ -214,7 +241,7 @@ export function selectProposals(w: World, scored: Scored[], rng: Rng, debt: Reco
   // would follow the floor without exploration.
   const sizing = copyUse(use);
   let greedyEstimate = 0;
-  for (const { x } of greedy) if (shell.fits(sizing, x)) { shell.record(sizing, x); greedyEstimate++; }
+  for (const { x } of greedy) if (shell.allows(sizing, x)) { shell.record(sizing, x); greedyEstimate++; }
   const runSize = floorTaken + greedyEstimate;
   const slots = Math.min(Math.floor((cfg.exploration.rate * runSize) / (1 - cfg.exploration.rate)), Math.floor(cfg.exploration.maxShare * runSize));
   if (slots > 0) {
@@ -246,7 +273,7 @@ export function selectProposals(w: World, scored: Scored[], rng: Rng, debt: Reco
     // A draw that does not fit now never fits later: every use in the run only grows.
     const firstOpen = (queue: Draw[], at: number) => {
       let i = at;
-      while (i < queue.length && (passed.has(queue[i]!.x) || !shell.fits(use, queue[i]!.x))) pass(queue[i++]!);
+      while (i < queue.length && (passed.has(queue[i]!.x) || !admits(queue[i]!.x, true))) pass(queue[i++]!);
       return i;
     };
     let atAll = 0, atExpansion = 0;
@@ -256,7 +283,7 @@ export function selectProposals(w: World, scored: Scored[], rng: Rng, debt: Reco
       const fromExpansion = k % 2 === 0 && atExpansion < expansion.length;
       const d = fromExpansion ? expansion[atExpansion] : all[atAll];
       if (!d) break;
-      reserve(d.x, true, d.weight / (fromExpansion ? restExpansion : restAll));
+      tryReserve(d.x, true, d.weight / (fromExpansion ? restExpansion : restAll));
       pass(d);
     }
   }
@@ -267,10 +294,12 @@ export function selectProposals(w: World, scored: Scored[], rng: Rng, debt: Reco
   for (const { x, value } of greedy) {
     if (x.c.participants.some(id => refused.has(id))) continue;
     const choice = shell.choiceFor(x);
-    if (!shell.limitsOpen(use, choice) || !shell.hooksAllow(use, x)) continue;
+    if (!shell.limitsOpen(use, choice)) continue;
     const blocked = choice.members.find(m => shell.full(use, m));
-    if (!blocked) { reserve(x, false, 1, value); continue; }
-    // spec/selectionRun.md, "A greedy refusal names a member who stays without room"
+    if (!blocked) { tryReserve(x, false, 1, value); continue; }
+    // spec/selectionRun.md, "A greedy refusal names a member who stays without room": a fixed window or
+    // a pack refusal is outside the refusal claim, so such a choice is skipped, not refused.
+    if (!shell.timeFree(use, x) || !shell.packAllows(use, x)) continue;
     advance({ type: "refuseSelection", choice, value, blockedMember: blocked });
     refused.add(blocked.id);
   }
@@ -344,7 +373,7 @@ export function blockingPairs(w: World, selected: readonly Selected[], scored: r
   for (const x of scored) {
     if (!x.eligible || x.c.exploration || !Number.isFinite(x.score)) continue;
     const choice = shell.choiceFor(x);
-    if (!shell.limitsOpen(use, choice) || !shell.hooksAllow(use, x)) continue;
+    if (!shell.limitsOpen(use, choice) || !shell.timeFree(use, x) || !shell.packAllows(use, x)) continue;
     const value = valueOf(x);
     if (choice.members.every(m => !shell.full(use, m) || (lowest.get(m.id) ?? Infinity) < value)) n++;
   }

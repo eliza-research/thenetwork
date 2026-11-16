@@ -64,8 +64,6 @@ Imported from `quint/candidate_pool.qnt` at `30d950e`. See [model index](README.
 //
 // VALUES THAT ARE NOT IN `safety` (each one is a defect that this model found; the code is not changed;
 // each has a run test that reaches it):
-//   noAltPairBlockedEngine   group.ts:137-146: composeGroup checks each alternate against the primary
-//                            group only, not against the other alternates (plans.ts:348-355 checks both).
 //                            The ConsentNetwork repairs it (network.ts:4279), so `blockedApart` holds for the submitted group.
 //   noSessionBlocked         planner.ts:244-255: a crew session invites every eligible crew member and
 //                            has no block check. A block made after the crew formed is not seen.
@@ -311,7 +309,7 @@ module candidate_pool {
   // composeGroup on the current pool: minors leave the pool (group.ts:82-83), the primary group is
   // pairwise compatible (evaluateGroup -> null on -Infinity), MIN_G..MAX_G members (the beam stops at
   // maxSize; `complete` needs minSize) with a common city (overlap). Alternates (group.ts:137-146):
-  // each is compatible with each primary member and in the group's city. Then candidateReason
+  // each is compatible with each primary member and each retained alternate, in the group's city. Then candidateReason
   // (group_size for friends, involvesMinor, memberReason, pairReason over participants), and the
   // ConsentNetwork distinctAlternates (network.ts:4271): `kept` is its result. distinctAlternates also
   // drops a member with unknown age or a minor signal (here: minor) and a second person with the same
@@ -324,6 +322,7 @@ module candidate_pool {
       sameCity(city, primary),
       alts.subseteq(cand.exclude(primary)),
       alts.forall(y => primary.forall(x => compat(x, y, lane)) and primary.forall(x => city.get(x) == city.get(y))),
+      alts.forall(x => alts.forall(y => x == y or compat(x, y, lane))),
       // candidateReason
       not(primary.union(alts).exists(m => minor.get(m))),
       primary.forall(m => memberOk(m, lane)),
@@ -557,7 +556,7 @@ module candidate_pool {
     all {
       ps.size() > 0,
       nondet p = ps.oneOf()
-      val alts = validAlts(lane, p)
+      nondet alts = validAlts(lane, p).powerset().filter(a => a.forall(x => a.forall(y => x == y or compat(x, y, lane)))).oneOf()
       nondet k = alts.powerset().filter(k => keptOk(p, alts, k)).oneOf()
       composeGroup(lane, p, alts, k),
     }
@@ -623,7 +622,7 @@ module candidate_pool {
   // AGENTS.md hard rule "blocks" (PRD 40, keep every safety guard): a blocked pair is never put together.
   // filters.ts:71-73 pairReason (blocks win), group.ts:32 makeCompat, plans.ts:176 scorePlanGroup,
   // network.ts:4279 distinctAlternates. The engine-level gaps are the values below `safety`.
-  val blockedApart = not(h.introBlocked or h.introViaUnsafe or h.groupBlocked or h.groupAltBlockedWithPrimary
+  val blockedApart = not(h.introBlocked or h.introViaUnsafe or h.groupBlocked or h.groupAltBlockedWithPrimary or h.altPairBlockedEngine
                          or h.submittedBlocked or h.repeatBlocked or h.planBlocked or h.partnerBlocked)
   // Romance needs mutual opt-in: packs/network/rules.ts:67-69 romance_incompatible, rules.ts:20
   // romance_opt_out, complementarity.ts:63 romanceMutual (the score gate, also for a pool pair that
@@ -643,7 +642,6 @@ module candidate_pool {
   val safety = all { noMinorEnters, blockedApart, romanceMutualOptIn, coLocated, groupSizeBounds, seatsOnce }
 
   // Defects (not in safety; see the header). Each is reached by a run test below.
-  val noAltPairBlockedEngine = not(h.altPairBlockedEngine)
   val noSessionBlocked = not(h.sessionBlocked)
   val noOfferBlocked = not(h.offerBlocked)
   val oneCrewPerWeek = not(h.crewTwice)
@@ -682,14 +680,15 @@ module candidate_pool {
     .then(retrieve("a", "romance", Set("d")))
     .fail()
 
-  // A group of three in nyc with two alternates; the engine keeps alternates d and e although they
-  // blocked each other (group.ts:137-146), and distinctAlternates keeps only one of them.
+  // A group of three can keep one of two blocked alternates. The pair cannot share the same bench.
   run altPairTest = initWith("network")
     .then(blockPair("d", "e"))
     .then(retrieve("a", "social", Set("b", "c", "d", "e")))
     .then(retrieve("f", "social", Set("a", "b", "c", "d", "e")))
+    .then(composeGroup("social", Set("a", "b", "c"), Set("d"), Set("d")))
+    .expect(safety)
     .then(composeGroup("social", Set("a", "b", "c"), Set("d", "e"), Set("d")))
-    .expect(safety and not(noAltPairBlockedEngine))
+    .fail()
 
   // A blocked pair cannot be in the primary group.
   run groupBlockTest = initWith("network")
