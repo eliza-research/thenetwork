@@ -159,4 +159,40 @@ describe("plan probe replies", () => {
     await w.say("e", "yes");
     expect(w.meetings).toMatchObject([{ proposalId: item.oppId, participants: ["a", "b", "e"] }]);
   });
+
+  test("a reviewed Friends plan books after its invitation uses the last discovery slot", async () => {
+    // spec/planDecision.md, "An existing Friends plan can use the last discovery slot"
+    const primary = ["a", "b", "c"];
+    const history = [["a", "d", "e"], ["a", "f", "g"]];
+    const ids = [...new Set([...primary, ...history.flat()])];
+    const w = new Mini(ids.map(climber), { app: "friends", pack: friendsPack, review: "human" });
+    const now = w.clock.now();
+    for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified", tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
+    await w.onboard(...ids);
+    const plan: plans.Plan = {
+      id: "friends_reviewed_last_slot", city: "nyc", activityId: "bouldering", place: { name: "Brooklyn Boulders", area: "Gowanus" },
+      window: { start: now + 6 * DAY, end: now + 6 * DAY + 2 * HOUR }, invited: primary, alternates: [], partner: false,
+      size: { min: 3, target: 3, max: 3 }, quorum: 3, probeDeadline: now + 4 * DAY, score: 0.6, u: {}, familiar: {}, createdAt: now, category: "social",
+    };
+    (w.net as unknown as { submitPlan(plan: plans.Plan, at: number): void }).submitPlan(plan, now);
+    const item = w.net.reviewQueue()[0]!;
+    const state = w.net.exportState();
+    const pending = state.opps.find(o => o.id === item.oppId)!;
+    for (const [index, invited] of history.entries()) {
+      state.opps.push({
+        ...pending, id: `friends_previous_${index}`, createdAt: now - (index + 1) * DAY, stage: "done",
+        participants: invited, contacted: invited, status: invited.map(id => [id, "yes"]), plan: { ...plan, invited },
+        review: undefined, recorded: true,
+      });
+    }
+    w.net.importState(state);
+    expect(w.net.review(item.oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
+    expect(await w.runUntil(() => primary.every(id => w.probed(id)), DAY)).toBe(true);
+    w.restart();
+    await w.say("a", "yes");
+    await w.say("b", "yes");
+    expect(w.meetings).toHaveLength(0);
+    await w.say("c", "yes");
+    expect(w.meetings).toMatchObject([{ proposalId: item.oppId, participants: primary }]);
+  });
 });

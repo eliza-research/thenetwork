@@ -5,6 +5,7 @@ import {
   laneOffered, laneShape, laneSidesCompatible, standingCeiling, standingUncertaintyCeiling,
   type LaneSide, type MatchLane,
 } from "../../../core/src/generated/matchLane.ts";
+import { planProfileCapacityAllows } from "../../../core/src/generated/planDecision.ts";
 import { tokenize } from "../embed.ts";
 import { sendTimeReason } from "../filters.ts";
 import type { MemberStandingRow } from "../types.ts";
@@ -23,7 +24,7 @@ export interface Membership {
   readonly lane: MatchLane;
   readonly side: LaneSide;
   readonly market: City;
-  /** Introductions this entity can still take this week; 0 or less gives no profile. */
+  /** Introductions this entity can still take this week; discovery requires a positive value. */
   readonly capacity: number;
 }
 export interface MatchEntity extends Membership { readonly memberId: MemberId }
@@ -136,9 +137,10 @@ interface Draft {
  * unknown age, under the pack or config age floor, safety hold, paused, not opted in to the lane's
  * category) gets none, and the pack is not asked about a member who fails the core checks.
  */
-export function buildProfiles(w: World, standingUpdates?: MemberStandingRow[]): readonly MatchProfile[] {
+export function buildProfiles(w: World, standingUpdates?: MemberStandingRow[], mode: "discovery" | "existingFriendPlan" = "discovery"): readonly MatchProfile[] {
   const vectors = w.pack.vectors;
   if (!vectors) return [];
+  const existingFriendPlan = mode === "existingFriendPlan";
   const traitCount = vectors.traits?.costs.length ?? 0;
   const drafts: Draft[] = [];
   const seen = new Set<string>();
@@ -146,13 +148,14 @@ export function buildProfiles(w: World, standingUpdates?: MemberStandingRow[]): 
     if (sendTimeReason(w, memberId) !== null) continue;
     for (const membership of vectors.memberships(w, memberId)) {
       const { id, lane, side, market } = membership;
+      if (existingFriendPlan && lane !== "Friend") continue;
       if (!isEntityId(id)) throw new Error(`empty entity id for member ${memberId}`);
       if (seen.has(id)) throw new Error(`duplicate entity id ${id}`);
       seen.add(id);
       if (!laneOffered(w.pack.id, lane) || !laneSidesCompatible(lane, side, partnerSide(lane, side))) continue;
       if (sendTimeReason(w, memberId, [], undefined, laneCategory(lane)) !== null) continue;
       const capacity = wholeNumber(membership.capacity, "capacity");
-      if (capacity <= 0) continue;
+      if (!planProfileCapacityAllows(capacity, existingFriendPlan)) continue;
       const entity: MatchEntity = { ...membership, memberId };
       const raw = vectors.tags(w, entity);
       const rated = vectors.standing(w, entity);

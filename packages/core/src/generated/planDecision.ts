@@ -49,6 +49,12 @@ export function lawFriendPlanSeatNeedsEveryPairValue(hasProfile: boolean, peerVa
   return !peerValues.some((value: number) => value < 0) || !currentFriendPlanSeatFits(hasProfile, peerValues);
 }
 
+/** Story: Confirm a plan after enough members accept / An existing Friends plan can use the last discovery slot (spec/planDecision.md) */
+//@ pure
+export function planProfileCapacityAllows(capacity: number, existingFriendPlan: boolean): boolean {
+  return existingFriendPlan || capacity > 0;
+}
+
 /** Story: Confirm a plan after enough members accept / Booking requires a pending acceptance that meets quorum (spec/planDecision.md) */
 //@ pure
 export function lawBookingNeedsQuorum(phase: PlanStage, pendingMember: boolean, accepted: boolean, yesAfter: number, needed: number, partnerPlan: boolean, firstMember: boolean, beforeDeadline: boolean, lateJoinOpen: boolean): boolean {

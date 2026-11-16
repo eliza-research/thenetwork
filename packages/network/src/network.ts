@@ -31,7 +31,7 @@ import {
   type Category, type Facet, type Intent, type LeakOptions, type LLM, type MemberId, type NetworkEvent, type ParticipationState, type Proposal, type ScoreComponents, type WorldSnapshot,
 } from "@thenetwork/core";
 import {
-  attention, CONTRIBUTOR_ROLES, DEFAULT_ATTENTION, localEmbed, networkPack, plans, resolveConfig, resolvePlans, runEngine,
+  attention, CONTRIBUTOR_ROLES, DEFAULT_ATTENTION, existingFriendPlanPairValues, localEmbed, networkPack, plans, resolveConfig, resolvePlans, runEngine,
   type AskRecord, type EngineAsk, type EngineConfigInput, type EngineInput, type EngineProposal, type FeedbackRecord, type InteractionRecord, type MatchingRunLog,
   type AppPack, type PlansConfig, type PlansConfigInput, World as EngineWorld, DEFAULT_FRIENDS_POLICY, planFriendsWeek,
 } from "@thenetwork/engine";
@@ -3539,10 +3539,14 @@ export class ConsentNetwork implements NetworkUnderTest {
     return !m.minor && !m.account && !m.optedOut && m.stage === "active" && !m.onlyWhenAsked && this.trust.ok(m.id) && !this.reportHeld(m.id) && validAge(m.age ?? m.statedAge) && (!!o.busyOk || !this.busy(m.id, exceptOpp));
   }
 
-  private planFriendSeatFits(world: EngineWorld, id: MemberId, peers: readonly MemberId[]): boolean {
+  private planFriendSeatFits(world: EngineWorld, id: MemberId, peers: readonly MemberId[], mode: "discovery" | "existingPlan"): boolean {
+    if (peers.some(peer => this.blocked(id, peer) || this.avoid.has(pairKey(id, peer)))) return false;
+    if (mode === "existingPlan") {
+      const values = existingFriendPlanPairValues(world, id, peers);
+      return currentFriendPlanSeatFits(values !== undefined, values ?? []);
+    }
     const profile = world.match.profileIn(id, "Friend");
     const peerValues = profile ? peers.map(peer => {
-      if (this.blocked(id, peer) || this.avoid.has(pairKey(id, peer))) return noPairValue;
       const other = world.match.profileIn(peer, "Friend");
       return other ? world.match.value(profile, other) : noPairValue;
     }) : [];
@@ -3648,7 +3652,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const friendReplacement = this.appPack()?.id === "friends" && !o.plan.invited.includes(id);
     // spec/planDispatch.md, "A missing seat or an absence rules out the invitation"
     const eligible = this.planSeatOk(m, o.id, { busyOk: true }) && (!friendReplacement
-      || this.planFriendSeatFits(this.planWorld(now, true), id, about.filter(peer => peer !== id)));
+      || this.planFriendSeatFits(this.planWorld(now, true), id, about.filter(peer => peer !== id), "existingPlan"));
     const seat = stepPlanDispatch(initialPlanDispatch, { type: "checkSeat", eligible });
     if (seat.phase !== "CheckingPresence") return this.planAnswer(o, id, false, true);
     // Away from New York (an announced trip) at any time from now to the plan: never asked.
@@ -3723,7 +3727,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (!member || !this.planSeatOk(member, o.id, { busyOk: true })) return false;
       const peers = o.participants.filter(peer => peer !== alternate && (peer !== id || yes) && activeOpportunityParticipant(o, peer));
       world ??= this.planWorld(now, true);
-      return this.planFriendSeatFits(world, alternate, peers);
+      return this.planFriendSeatFits(world, alternate, peers, "existingPlan");
     } : undefined;
     const { run, action } = plans.recordPlanAnswer(o.planRun, id, yes, now, this.pcfg, { canMatch });
     if (run === o.planRun) return;
@@ -3781,7 +3785,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       const chk = this.checkRecipient(id, "reveal", { about: [...seated, id], reply: false });
       const why = !chk.ok ? chk.reason : attention.canSendLogistics({ outboundSinceInbound: this.member(id).outbound ?? 0 }) ? undefined : "conversation_streak";
       if (why) { this.refuse(id, "reveal", why); o.status.set(id, "unavailable"); continue; }
-      if (friendWorld && !this.planFriendSeatFits(friendWorld, id, seated)) { o.status.set(id, "unavailable"); continue; }
+      if (friendWorld && !this.planFriendSeatFits(friendWorld, id, seated, "existingPlan")) { o.status.set(id, "unavailable"); continue; }
       seated.push(id);
     }
     keep = seated;
@@ -3833,7 +3837,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (this.publicEventRefusal(o)) { o.status.set(id, "unavailable"); return; }
     const going = o.participants.filter(p => o.status.get(p) === "yes");
     if (this.bookedNear(id, plan.window.start, o.id) || !this.checkRecipient(id, "reveal", { about: going, reply: false }).ok
-      || (this.appPack()?.id === "friends" && !this.planFriendSeatFits(this.planWorld(this.now(), true), id, going))) {
+      || (this.appPack()?.id === "friends" && !this.planFriendSeatFits(this.planWorld(this.now(), true), id, going, "existingPlan"))) {
       o.status.set(id, "unavailable");
       return;
     }
@@ -4030,7 +4034,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     // spec/capitalLevers.md, "Earned organizing reach reserves the extra slots for low exposure"
     for (const { id } of ranked) {
       if (add.length >= extra) break;
-      if (!friends || this.planFriendSeatFits(w, id, [...invited, ...add])) add.push(id);
+      if (!friends || this.planFriendSeatFits(w, id, [...invited, ...add], "discovery")) add.push(id);
     }
     this.plansCounters.reachExtra += add.length;
     this.ctx.log("organizing_reach", { planId: plan.id, host, max: reach.max, reserved: reach.reservedForLowExposure, added: add.length });

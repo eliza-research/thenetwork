@@ -2,6 +2,7 @@
 // Every candidate path reads pairs from here, so one pair gate and one search decide them all.
 import type { MemberId } from "@thenetwork/core";
 import { laneLimits, type MatchLane } from "../../../core/src/generated/matchLane.ts";
+import { noPairValue } from "../../../core/src/generated/pairValue.ts";
 import type { MemberStandingRow, SearchTally } from "../types.ts";
 import type { World } from "../world.ts";
 import { buildCircles, type Circle } from "./circles.ts";
@@ -10,6 +11,23 @@ import { pairValueOf } from "./pair.ts";
 import { buildProfiles, compareText, type EntityId, type MatchProfile } from "./profile.ts";
 import { emptySearchTally, mutualEdges, searchCandidates, tallySearch, type MatchEdge, type SearchResult } from "./search.ts";
 import { standingKey } from "./standing.ts";
+
+const existingFriendPlanProfiles = new WeakMap<World, ReadonlyMap<MemberId, MatchProfile>>();
+
+/** Pair values for a reviewed plan. Build all profiles with one interner and no discovery index. */
+export function existingFriendPlanPairValues(w: World, memberId: MemberId, peers: readonly MemberId[]): number[] | undefined {
+  let profiles = existingFriendPlanProfiles.get(w);
+  if (!profiles) {
+    profiles = new Map(buildProfiles(w, undefined, "existingFriendPlan").map(profile => [profile.memberId, profile]));
+    existingFriendPlanProfiles.set(w, profiles);
+  }
+  const profile = profiles.get(memberId);
+  if (!profile) return undefined;
+  return peers.map(id => {
+    const peer = profiles.get(id);
+    return peer ? pairValueOf(w, profile, peer) : noPairValue;
+  });
+}
 
 export class MatchRun {
   readonly profiles: readonly MatchProfile[];

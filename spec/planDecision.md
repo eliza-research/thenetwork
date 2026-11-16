@@ -53,6 +53,15 @@ pure def lawFriendPlanSeatNeedsEveryPairValue(hasProfile: bool, peerValues: List
   peerValues.some(value => value < 0) implies not(currentFriendPlanSeatFits(hasProfile, peerValues))
 ```
 
+### An existing Friends plan can use the last discovery slot
+
+Discovery needs a positive capacity. Check an existing plan's Friend profiles without applying that capacity limit. The plan's own invitation can use the last slot. The current member and pair eligibility rules still apply.
+
+```quint
+pure def planProfileCapacityAllows(capacity: int, existingFriendPlan: bool): bool =
+  existingFriendPlan or capacity > 0
+```
+
 ### Booking requires a pending acceptance that meets quorum
 
 Only an accepting response from a member whose answer is pending can book a plan. It must arrive before the probe deadline and bring the acceptance count to quorum.
