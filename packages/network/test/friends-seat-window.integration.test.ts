@@ -11,12 +11,13 @@ test("friends: a fitting triangle whose strongest member has no window still sea
   // d pairs best with a and b, so the triangle a-b-d is the strongest; c and d have a block between
   // them, so no circle holds all four. d has no window this week. Each member is in one circle per
   // run, so a circle that keeps d would hold a and b and leave a table of two.
-  const venue = PLAN_VENUES.find(v => v.activities.includes("restaurant_dinner"))!;
-  const wide = ["cooking", "climbing"];
+  const venue = PLAN_VENUES.find(v => v.activities.includes("coffee_crawl"));
+  if (!venue) throw new Error("Missing curated coffee crawl venue");
+  const wide = ["coffee", "climbing"];
   const mini = new Mini([
     { id: "a", name: "Ana Diaz", age: 30, area: venue.area, interests: wide },
     { id: "b", name: "Ben Ito", age: 31, area: venue.area, interests: wide },
-    { id: "c", name: "Cara Li", age: 29, area: venue.area, interests: ["cooking"] },
+    { id: "c", name: "Cara Li", age: 29, area: venue.area, interests: ["coffee"] },
     { id: "d", name: "Dan Wu", age: 30, area: venue.area, interests: wide },
   ]);
   const ids: MemberId[] = ["a", "b", "c", "d"];
@@ -25,11 +26,14 @@ test("friends: a fitting triangle whose strongest member has no window still sea
   const input: EngineInput = { ...snapshot, edges: [{ from: "c", to: "d", type: "blocked", strength: 1, explicit: true, createdAt: START - DAY }] };
   const w = new World(input, resolveConfig({ seed: 1, cities: ["nyc"] }), localEmbed, friendsPack);
 
-  // Every evening from Tuesday to Sunday, 18:00-23:00 New York.
-  const windows = Array.from({ length: 6 }, (_, k) => { const start = Date.UTC(2026, 9, 6 + k, 22); return { start, end: start + 5 * HOUR }; });
+  // The coffee crawl fits the curated venue's weekend hours, 12:00-17:00 New York.
+  const windows = [10, 11].map(day => {
+    const start = Date.UTC(2026, 9, day, 16);
+    return { start, end: start + 5 * HOUR };
+  });
   const evidence = new Map<MemberId, plans.PlanEvidence>(["a", "b", "c"].map(id => [id, { memberId: id, tz: TZ, quietHours: [22, 8], stated: { windows, at: START, until: START + 7 * DAY } }]));
   // The production policy (network.ts friendsWeekPlans): alternates only as replacements.
-  const week = planFriendsWeek(w, { now: START, tz: TZ, evidence, venues: PLAN_VENUES, crews: [], outcomes: [], offered: [] }, { ...DEFAULT_FRIENDS_POLICY, openTable: false }, FRIENDS_PLANS);
+  const week = planFriendsWeek(w, { now: START, tz: TZ, evidence, venues: [venue], crews: [], outcomes: [], offered: [] }, { ...DEFAULT_FRIENDS_POLICY, openTable: false }, FRIENDS_PLANS);
 
   expect(week.plans.some(p => ["a", "b", "c"].every(id => p.invited.includes(id)))).toBe(true);
   expect([...week.plans, ...week.partners].some(p => p.invited.includes("d") || p.alternates.includes("d"))).toBe(false);

@@ -1043,7 +1043,10 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect((await stopped("/api/join", profile("Stopped", tokenOf(1)))).status).toBe(400);
     await s.people.ban({ id: "seed-fixture-ban", scope: "phone", personId: null, phoneHash: s.accounts.phoneHash(bannedPhone), reason: "Fixture safety ban",
       reportId: null, bannedBy: "fixture-admin", at: clock.now() });
-    expect((await banned("/api/join", profile("Banned", tokenOf(2)))).status).toBe(400);
+    // spec/webSession.md, "Only a live token on the requested app can authenticate":
+    // A ban after sign-in stops the session before /api/join reads the invitation.
+    expect(await banned("/api/join", profile("Banned", tokenOf(2))))
+      .toEqual({ status: 401, body: { ok: false, error: "unauthorized" } });
     clock.advance(links[3]!.expiresAt - clock.now() + 1);
     const expired = await authenticate(expiredPhone);
     expect((await expired("/api/join", profile("Expired", tokenOf(3)))).status).toBe(400);
@@ -1536,7 +1539,7 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     };
 
     // A seeking set the rules derived from "straight guy" follows the corrected orientation.
-    const lee = await start("Lee 30", "straight guy, 28-38, within 5 mi of 11211");
+    const lee = await start("Lee 30", "straight guy, ages 28-38, within 5 mi of 11211");
     expect(await lee.last()).toBe("so: you're a man looking for women 28-38 within 5 mi of 11211. right?");
     await text(s, clock, lee.phone, "no, i'm gay", { app: "slop" });
     expect(await seeksTags(lee.id)).toEqual(["romance:seeks:man"]);
