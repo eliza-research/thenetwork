@@ -7,7 +7,7 @@ import { basename, join } from "node:path";
 const ROOT = join(import.meta.dir, "..");
 const MODEL_DIR = "spec/models";
 const OUTPUT_DIR = "runs/quint-models";
-const QUINT = join(ROOT, "tools/vibespec/node_modules/.bin/quint");
+const QUINT = join(ROOT, "tools/vibestack/node_modules/.bin/quint");
 const SEED = "0x5eed";
 
 function tangle(name: string): string {

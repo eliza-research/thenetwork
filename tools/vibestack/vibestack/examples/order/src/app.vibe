@@ -1,0 +1,54 @@
+// spec/index.md, "Story: Check out"
+import { type Order, type Role, NotAnEvent, Rejected, apply, decodeEvent } from "../gen/index.effect.vibe"
+
+// src/ledger.ts stays TypeScript, where `pnpm check` proves its contracts. What it throws is said here, as
+// gen/index.effect.vibe says it of the generated module: nothing but the defect of a number past 2^53.
+module ledger {
+  import type { Order } from "../gen/index.ts"
+  import * as L from "./ledger.ts"
+  /** @throws {never} */
+  export function replay(log: L.Sent[]): Order { return L.replay(log) }
+  /** @throws {never} */
+  export function balance(order: Order): number { return L.balance(order) }
+}
+import { balance, replay } from ledger
+import type { Sent } from "./ledger.ts"
+
+/** An event-sourced order book. Only events the rules allow are ever stored. */
+export service OrderBook {
+  get(id: string): Order!!
+  /**
+   * `input` may come straight from the network: it is decoded into an event before the rules see it. `by` is who sent
+   * it, known from how they signed in, never from the input (spec/index.md, "Staff can put a pending order on hold and
+   * release it again").
+   */
+  dispatch(id: string, input: unknown, by: Role): Order!(NotAnEvent | Rejected)
+  balance(id: string): number!!
+}
+
+/** A book that keeps each order's log in memory, and takes one event at a time. */
+export const OrderBookMemory = Layer.effect(OrderBook, effect {
+  const logs = try SynchronizedRef.make(HashMap.empty<string, Sent[]>())
+  const log = (all: HashMap.HashMap<string, Sent[]>, id: string) => Option.getOrElse(HashMap.get(all, id), (): Sent[] => [])
+  effect function get(id: string) { return replay(log(try SynchronizedRef.get(logs), id)) }
+  return {
+    get,
+    effect dispatch(id, input, by) {
+      const event = try decodeEvent(input)
+      return try SynchronizedRef.modifyEffect(logs, effect (all) => {
+        const sent = log(all, id)
+        const order = try apply(replay(sent), event, by) // what `replay` gives for the longer log
+        return [order, HashMap.set(all, id, [...sent, { event, by }])] as const
+      })
+    },
+    effect balance(id) { return balance(try get(id)) }
+  }
+})
+
+/** Why the book did not take an input, for the person who sent it. */
+export function reason(error: NotAnEvent | Rejected): string {
+  return match (error) {
+    when NotAnEvent: "not a well-formed event";
+    when Rejected: `${error.event.type} is not allowed for a ${error.state.status} order`;
+  }
+}
