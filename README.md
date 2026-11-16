@@ -114,13 +114,19 @@ from The Network root.
 | `pnpm demo` | `bun run spec:demo` | Run the standalone order example. |
 | | `bun run spec:sync` | Generate and publish the production copies. |
 | | `bun run spec:check-generated` | Compare the production copies with fresh generation. |
+| | `bun run spec:conformance <module>` | Run one spec's simulation and compare it with the app through its driver or recorded trace. |
 | | `bun run quint:check` | Exercise the action-based flows in `spec/models/`. |
 | | `bun run typecheck`, `bun run test:integration`, `bun run test:e2e`, `bun run sim` | Check the application and the live-code seams. |
 
-The spec checker uses an executable projection of `spec/`. Product prose,
-historical sources, and action-based flow models stay in the repository
-under `spec/product/` and `spec/models/`. Application TypeScript, service
-journeys, and simulations have their own commands. The review ledger,
+The spec checker uses an executable projection of `spec/` and the
+conformance inputs under `test/`. The
+[shared-line consent journey](spec/sharedLineConsentJourney.md) runs
+against the signed turn endpoint and an isolated local Postgres database
+on port 54339. Run it with
+`bun run spec:conformance sharedLineConsentJourney`. The checker saves
+a minimal failing trace under `test/counterexamples/` and replays it on
+later runs. Product prose, historical sources, and action-based flow
+models stay in `spec/product/` and `spec/models/`. The review ledger,
 `spec/lock.json`, records product owner approval and goes with the spec. See the [standalone stage definitions](SPEC.md#stages-of-pnpm-check)
 and the [Network test policy](docs/tests-policy.md).
 

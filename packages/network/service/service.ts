@@ -36,6 +36,7 @@ import type { ActionResult, NetworkOptions, NetworkState, ReviewDecision, Review
 import { brandOf, copy as ntwrkCopy, copyFor, ELIZA_NOTICE, type Copy } from "../src/copy.ts";
 import { isMinor } from "@thenetwork/core";
 import { personDailyCap } from "../../core/src/generated/outreachPolicy.ts";
+import { stopCoversEveryApp } from "../../core/src/generated/sharedLineConsentJourney.ts";
 import { ageAnswer, agesStated } from "../src/classify.ts";
 import { NetworkRuntime, type RuntimeHost } from "./runtime.ts";
 import { effectiveParticipation, automatedFacetPredicate } from "./snapshot.ts";
@@ -1075,7 +1076,7 @@ export class NetworkService implements RuntimeHost {
 
     // STOP / STOP ALL: the consent ledger first (with or without a membership; once per message), then every member it covers.
     if (kw === "stop" || kw === "stop_all") {
-      const scope: StopScope = kw === "stop_all" || route.shared ? "global" : stopScope(this.env);
+      const scope: StopScope = stopCoversEveryApp(kw === "stop_all", route.shared, stopScope(this.env) === "global") ? "global" : "app";
       return this.stop(kw, ev.from, app, rt, scope, rowId, line, ev);
     }
 

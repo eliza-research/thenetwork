@@ -59,4 +59,4 @@ entire imported model.
 | [runtime_ops](runtime_ops.md) | Runtime work, retention, and alerts | [Stored units and tick follow-up](../runtimeUnit.md), [Observatory timing](../operationsTiming.md), [operations alert dispatch](../opsAlertDispatch.md) |
 | [safety_trust](safety_trust.md) | Safety reports, holds, and blocks | [Safety case lifecycle](../safetyCase.md), [trust levels](../trustLevel.md) |
 | [staff_console](staff_console.md) | Staff roles and console actions | [Staff request permissions](../staffPermissions.md) |
-| [turn_consent](turn_consent.md) | Signed turns and carrier consent | [Carrier consent](../carrierConsent.md), [signed inbox and recovery](../signedInbox.md), [webhook queue](../webhookInbox.md), [signed receipt processing](../turnReceipt.md), [shared agent context](../sharedContext.md) |
+| [turn_consent](turn_consent.md) | Signed turns and carrier consent | [Carrier consent](../carrierConsent.md), [shared-line consent journey](../sharedLineConsentJourney.md), [signed inbox and recovery](../signedInbox.md), [webhook queue](../webhookInbox.md), [signed receipt processing](../turnReceipt.md), [shared agent context](../sharedContext.md) |
