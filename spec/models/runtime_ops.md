@@ -10,6 +10,13 @@ Check stored writes, retention, ticks, alerts, backup recovery, and shutdown. Th
 
 The [runtime unit spec](../runtimeUnit.md) generates load, restore, action, save, and adapter follow-up decisions. The shell owns the queue, database advisory locks, and transaction commit.
 
+The [alert dispatch spec](../opsAlertDispatch.md) follows the current
+backend when a metrics read fails or an alert could not post. The backend
+evaluates the alerts it could collect, may close a missing episode without
+a prior successful post, and can still ping its heartbeat after a failed
+alert delivery. The retained model below describes different behavior for
+those cases.
+
 Imported from `quint/runtime_ops.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint

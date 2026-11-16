@@ -17,6 +17,10 @@
 // The webhook body is JSON: { text, source, env, build, alerts: [{ key, level, count, text, state }] }.
 // `text` alone is what a Slack incoming webhook shows; ALERT_WEBHOOK_FORMAT=slack sends only { text }.
 import type { SQL } from "bun";
+import {
+  batchWasAccepted, batchWasAttempted, batchWasHeld, cachedOpsMetricsFresh, chooseFiringPlan, chooseMissingPlan,
+  initial as initialAlertDispatch, opsRoundDue, roundReport, step as stepAlertDispatch,
+} from "../../packages/core/src/generated/opsAlertDispatch.ts";
 import { URGENT_REPORTS } from "../../packages/network/src/reports.ts";
 import { SIM_AUTO_REVIEWER } from "../../packages/network/src/network.ts";
 import { budgetLines, costBudgetsFromEnv, dayOf, type BudgetLine, type CostApp, type CostBudgets, type CostLedger } from "../../packages/network/service/cost.ts";
@@ -376,8 +380,6 @@ export class PgAlertStore implements AlertStore {
 export interface Notice { key: string; level: AlertLevel; count: number; text: string; state: "firing" | "resolved" }
 export interface DispatchResult { notices: Notice[]; posted: boolean; ok: boolean; held: number; open: { key: string; level: AlertLevel; count: number }[]; postsLastHour: number }
 
-const RANK: Record<AlertLevel, number> = { warn: 1, bad: 2 };
-
 export class AlertDispatcher {
   constructor(private o: {
     store: AlertStore;
@@ -402,42 +404,47 @@ export class AlertDispatcher {
       for (const a of current) {
         seen.add(a.key);
         const prev = states.get(a.key);
-        const s: AlertState = prev?.open
+        const decision = chooseFiringPlan({
+          episodeOpen: !!prev?.open, postedBefore: prev?.lastSentAt !== undefined, latestLevel: a.level,
+          sentLevel: prev?.lastSentLevel ?? "warn", bumpOnCount: !!a.bump, latestCount: a.count,
+          sentCount: prev?.lastSentCount ?? 0, elapsedMs: now - (prev?.lastSentAt ?? 0), repeatMs: this.o.repeatMs,
+        });
+        const s: AlertState = decision !== "StartAlert" && prev
           ? { ...prev, level: a.level, count: a.count, text: a.text, lastAt: now }
           : { key: a.key, level: a.level, count: a.count, text: a.text, open: true, firstAt: now, lastAt: now };
-        const due = s.lastSentAt === undefined
-          || RANK[a.level] > RANK[s.lastSentLevel ?? "warn"]
-          || (!!a.bump && a.count > (s.lastSentCount ?? 0))
-          || now - s.lastSentAt >= this.o.repeatMs;
         states.set(a.key, s);
-        if (due) { notices.push({ key: a.key, level: a.level, count: a.count, text: a.text, state: "firing" }); firing.push(s); }
+        if (decision !== "UpdateOnly") {
+          notices.push({ key: a.key, level: a.level, count: a.count, text: a.text, state: "firing" });
+          firing.push(s);
+        }
       }
       const resolved: AlertState[] = [];
       for (const s of states.values()) {
-        if (!s.open || seen.has(s.key)) continue;
-        // Never posted (it started and ended between rate-limited rounds): close it quietly.
-        if (s.lastSentAt === undefined) { s.open = false; continue; }
-        resolved.push(s);
-        notices.push({ key: s.key, level: s.level, count: s.count, text: s.text, state: "resolved" });
-      }
-      let posted = false, ok = false, held = 0;
-      let postsLastHour = await tx.postsSince(now - HOUR);
-      if (notices.length) {
-        if (postsLastHour >= this.o.maxPostsPerHour) held = notices.length;
-        else {
-          posted = true;
-          ok = await this.o.post(this.body(notices)).catch(() => false);
-          await tx.recordPost(now, notices.length, ok);
-          postsLastHour++;
-          if (ok) {
-            for (const s of firing) { s.lastSentAt = now; s.lastSentLevel = s.level; s.lastSentCount = s.count; }
-            for (const s of resolved) s.open = false;
-          }
+        const decision = chooseMissingPlan(s.open, seen.has(s.key), s.lastSentAt !== undefined);
+        if (decision === "CloseQuietly") s.open = false;
+        else if (decision === "SendResolution") {
+          resolved.push(s);
+          notices.push({ key: s.key, level: s.level, count: s.count, text: s.text, state: "resolved" });
         }
+      }
+      let postsLastHour = await tx.postsSince(now - HOUR);
+      let batch = stepAlertDispatch(initialAlertDispatch, {
+        type: "prepareDispatch", noticeCount: notices.length, postsLastHour, hourlyLimit: this.o.maxPostsPerHour,
+      });
+      if (batch.phase === "PostingNotices") {
+        const accepted = await this.o.post(this.body(notices)).catch(() => false);
+        await tx.recordPost(now, notices.length, accepted);
+        postsLastHour++;
+        batch = stepAlertDispatch(batch, { type: "recordDelivery", accepted });
+      }
+      const ok = batchWasAccepted(batch);
+      if (ok) {
+        for (const s of firing) { s.lastSentAt = now; s.lastSentLevel = s.level; s.lastSentCount = s.count; }
+        for (const s of resolved) s.open = false;
       }
       await tx.save([...states.values()]);
       const open = [...states.values()].filter(s => s.open).map(s => ({ key: s.key, level: s.level, count: s.count }));
-      return { notices, posted, ok, held, open, postsLastHour };
+      return { notices, posted: batchWasAttempted(batch), ok, held: batchWasHeld(batch) ? notices.length : 0, open, postsLastHour };
     });
   }
 
@@ -521,24 +528,25 @@ export function createOps(d: OpsDeps) {
     dispatcher,
     /** The snapshot for GET /ops/metrics: at most one collection every 15 s. */
     async metrics(): Promise<OpsMetrics> {
-      if (last && d.now() - last.at < 15_000) return last.metrics;
+      if (last && cachedOpsMetricsFresh(d.now() - last.at)) return last.metrics;
       return collect(false);
     },
     /** One round (called from the backend tick; runs at most every OPS_EVERY_MS): collect, alert, heartbeat. */
     async tick(): Promise<DispatchResult | undefined> {
       const now = d.now();
-      if (now - lastRound < c.everyMs) return undefined;
+      if (!opsRoundDue(now - lastRound, c.everyMs)) return undefined;
       lastRound = now;
       const m = await collect(true);
       const alerts = evaluate(m, c);
       const r = await dispatcher.dispatch(alerts);
+      const report = roundReport(!!r?.notices.length, !!r?.posted, !!r?.ok, !!r?.held, !!c.heartbeatUrl);
       if (r) {
         lastAlerts = { open: r.open, postsLastHour: r.postsLastHour };
-        if (r.notices.length) d.log.info("alerts", { notices: r.notices.length, posted: r.posted, ok: r.ok, held: r.held });
-        if (r.posted && !r.ok) d.log.error("alert webhook failed", { notices: r.notices.length });
-        if (r.held) d.log.warn("alerts held by the rate limit", { held: r.held, maxPerHour: c.maxPostsPerHour });
+        if (report.logSummary) d.log.info("alerts", { notices: r.notices.length, posted: r.posted, ok: r.ok, held: r.held });
+        if (report.logFailure) d.log.error("alert webhook failed", { notices: r.notices.length });
+        if (report.logLimit) d.log.warn("alerts held by the rate limit", { held: r.held, maxPerHour: c.maxPostsPerHour });
       }
-      if (c.heartbeatUrl) await ping(c.heartbeatUrl).then(ok => { if (!ok) d.log.warn("heartbeat ping failed"); }, e => d.log.warn("heartbeat ping failed", { error: (e as Error).message }));
+      if (report.pingHeartbeat && c.heartbeatUrl) await ping(c.heartbeatUrl).then(ok => { if (!ok) d.log.warn("heartbeat ping failed"); }, e => d.log.warn("heartbeat ping failed", { error: (e as Error).message }));
       return r;
     },
   };

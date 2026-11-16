@@ -53,7 +53,7 @@ in a top-level Vibespec module. For a flow with I/O or concurrency, use the
 | Member profile | [Saved profile reads](../savedProfileRead.md), [suggestion review](../profileSuggestionReview.md) |
 | Staff operations | [Review, safety and heartbeat timing](../operationsTiming.md), [console synchronization](../observatorySync.md), [staff review interaction](../staffReview.md), [staff permissions](../staffPermissions.md), [member inspector](../consoleMemberView.md) |
 | Conversation infrastructure | [Structured reply retries](../chatRetry.md), [signed inbox and recovery](../signedInbox.md), [webhook queue](../webhookInbox.md), [shared agent context](../sharedContext.md), [outbound admission](../outboundAdmission.md), [outbound receipts](../outboundReceipt.md), [gateway turn receipts](../turnReceipt.md) |
-| Service operations | [Startup configuration](../bootPolicy.md), [stored units and tick follow-up](../runtimeUnit.md), [scratch database restore](../databaseRestore.md) |
+| Service operations | [Startup configuration](../bootPolicy.md), [stored units and tick follow-up](../runtimeUnit.md), [operations alert dispatch](../opsAlertDispatch.md), [scratch database restore](../databaseRestore.md) |
 
 The product directory also records provider, rollout, and human requirements
 that need separate evidence. The [model index](../models/README.md) links
