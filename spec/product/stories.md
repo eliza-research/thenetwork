@@ -122,7 +122,7 @@ Models: [opportunity](../models/opportunity.md), [matching engine](../models/mat
 
 Anchor a group of 3–6 to a public activity, place or event and add a host when needed. Probe anonymously under review. Enforce the approved deadline and quorum, typically three for a plan. Use eligible alternates under review and release members without revealing declines if quorum fails. Book and relay only for consenting participants.
 
-Models: [plan run](../models/plan_run.md), [opportunity](../models/opportunity.md), [plan crew](../models/plan_crew.md).
+Models: [reviewed group journey](../reviewedGroupJourney.md), [plan run](../models/plan_run.md), [opportunity](../models/opportunity.md), [plan crew](../models/plan_crew.md).
 
 ## Story F13 — Meet at an event
 
@@ -184,7 +184,7 @@ Models: [opportunity](../models/opportunity.md), [plan run](../models/plan_run.m
 
 Send permitted reminders and a day-of check-in. Relay a late arrival. Offer a reviewed, eligible replacement or reschedule when someone drops, or cancel gracefully if minimum participation fails. A booked group cannot continue with fewer than three people. Record attendance and apply the contextual no-show rule. STOP, bans, blocks and quiet hours still apply.
 
-Models: [plan run](../models/plan_run.md), [outbound queue](../models/outbound_queue.md).
+Models: [reviewed group journey](../reviewedGroupJourney.md), [plan run](../models/plan_run.md), [outbound queue](../models/outbound_queue.md).
 
 ## Story F19 — Give feedback and meet again
 

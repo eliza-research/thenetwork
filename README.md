@@ -151,7 +151,11 @@ trip saves, exact expiry in the matching snapshot, and replay after app
 leave. Run it with `pnpm run spec:conformance travelPresenceJourney`.
 The [solo concierge journey](spec/soloConciergeJourney.md) compares current
 Parks recommendations, age eligibility, and replay after catalog changes.
-Run it with `pnpm run spec:conformance soloConciergeJourney`. Run
+Run it with `pnpm run spec:conformance soloConciergeJourney`. The
+[reviewed group journey](spec/reviewedGroupJourney.md) checks a planned
+public hike through staff review, consent, and private cancellation in
+the ConsentNetwork harness. Run it with
+`pnpm run spec:conformance reviewedGroupJourney`. Run
 `pnpm run spec:conformance memberRequestJourney` to compare the request
 and review flow through the dry-run ConsentNetwork harness. The checker saves
 a minimal failing trace under `test/counterexamples/` and replays it on
