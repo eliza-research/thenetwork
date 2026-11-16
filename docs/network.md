@@ -117,7 +117,7 @@ A hiring manager is a peon member who owns job postings. The engine matches job 
 
 **Intake by text.** The intake runs in a handled turn (`AppHooks.postings`, peon only), with rules only. It never reads an open-turn LLM output. A posting command ("We're hiring a data analyst, 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL") starts a draft. The Network asks for a missing title or pay range (at most two questions), then reads the post back. The manager's yes saves it (`applyPosting`, then `NetworkOptions.onPosting`). The service writes the rows in the same transaction as the state (`runtime.ts` `writeUnit`). Other details correct the draft, and a no drops it. "Update my data analyst post: 3 openings" and "Close my data analyst post" work the same way. The draft is in `MemberState.posting`, so it survives a restart.
 
-**Staff API** (`jobPostingRoutes`, peon only, admin for writes): `GET /postings?managerId=`, `POST /postings`, `POST /postings/:id/close` (`reason: closed | filled`), `POST /employers/:memberId/verify` (`company`, `note`; peonPack proposes no job of an unverified employer). Each write goes through `applyPosting` in a unit of work, with the same checks as a text, and writes `network.staff_audit`.
+**Staff API.** In Peon, admins and reviewers can list postings with `GET /postings?managerId=`. Admins can save with `POST /postings`, close with `POST /postings/:id/close` and reason `closed` or `filled`, and verify employers with `POST /employers/:memberId/verify` and a company and note. Posting writes use `applyPosting` in a unit of work and run the text intake checks. These routes use the staff audit log.
 
 **Routing.** The engine proposes a pair `[candidate, job:<id>]`. `seatRoute` puts the manager in place of the seat and keeps `Opp.seat = { id, manager }`. A seat without a manager on the record is never proposed (gate `seat_without_manager`). Every item goes to the review queue first, like every other item. Then the normal consent flow runs:
 
@@ -133,7 +133,7 @@ A no from the manager closes the item (an alternate candidate never stands in fo
 
 **Validation.** `pnpm run sim --only peon-seats` (blocking: intake, routing, double opt-in, exclusions, restart, close; review "human", approved by the gate). `packages/network/test/peon-postings.integration.test.ts` (text intake, the yes, restart, the staff API, on Postgres). `packages/network/test/peon-seats.integration.test.ts` (seats and capacity from rows).
 
-**Not built.** The service does not register `jobPostingRoutes` yet (one line in `service.ts`). There is no web intake page. Interview, offer and hire stages after the intro are not tracked. The pack's own stages go further (PRD 40.6).
+Peon tracks the introduction in the member conversation. The pack models the later interview, offer, and hire stages (PRD 40.6).
 
 ## 2. The review gate (PRD 32.8)
 

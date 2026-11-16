@@ -3326,6 +3326,9 @@ export class NetworkService implements RuntimeHost {
         const r = await this.staffPhotos(user, rt, id, reason);
         return r.ok ? json(r) : json({ ok: false, reason: r.reason }, r.reason === "photos_off" ? 503 : 403);
       }
+      // Peon job postings include a read route. The handler enforces the app, method and staff role.
+      const postingResponse = await jobPostingRoutes({ rt, user, need, audit: e => this.audit.write(e), now: () => this.clock.now(), log: m => this.log(m) })(req, path);
+      if (postingResponse) return postingResponse;
       if (req.method !== "POST") return json({ ok: false, error: "not_found" }, 404);
       const m = path.match(/^\/review\/([^/]+)$/);
       if (m) {
@@ -3437,9 +3440,6 @@ export class NetworkService implements RuntimeHost {
         }
         return result(await this.verify(user, rt, id, b.check, b.result, b.note));
       }
-      // peon job postings and employer verification (service/postings.ts): admin writes, admin or reviewer reads, each call audited.
-      const postingResponse = await jobPostingRoutes({ rt, user, need, audit: e => this.audit.write(e), now: () => this.clock.now(), log: m => this.log(m) })(req, path);
-      if (postingResponse) return postingResponse;
       if (path === "/invite/seed" && scoped) {
         const no = need(["admin"]); if (no) return no;
         return await this.issueSeedInvitationBatch(req, rt, user);
