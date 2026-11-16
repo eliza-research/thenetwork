@@ -10,6 +10,8 @@ Check pool eligibility, pair exclusions, group sizes, and seat uniqueness. The m
 
 The [candidate exposure floor](../exposureFloor.md) supplies the generated allocation transitions used by the engine’s intent and embedding retrieval paths. The [group formation spec](../groupFormation.md) generates the beam composer’s admission decisions, primary selection, and alternate reservations. This model treats retrieval channels as an oracle and follows groups into the service.
 
+The [bounded candidate search spec](../candidateSearch.md) defines the posting and pair-check limits, exact termination, and the certificate for a budgeted result. The model below begins with the candidates returned by retrieval.
+
 The [candidate screening spec](../candidateScreening.md) generates the ordered hard-check transitions and the first refusal used before scoring.
 
 The [travel presence spec](../travelPresence.md) supplies bounded intervals for the production city check. This model abstracts them to one city per member.
