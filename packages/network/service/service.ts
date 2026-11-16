@@ -558,16 +558,25 @@ export class NetworkService implements RuntimeHost {
   /** The bias monitor of one network when its last stored report is a week old (or there is none). Returns the new report, if one was made. */
   async weeklyBias(rt: NetworkRuntime, force = false): Promise<StoredBiasReport | undefined> {
     const now = this.clock.now();
+    const reportDue = (lastAt: Date | string | null | undefined) =>
+      weeklyBiasDue(force, !!lastAt, !force && lastAt ? now - new Date(lastAt).getTime() : 0);
     const [last] = await rt.scoped(tx => tx`select max(at) as at from network.bias_reports where app_id = ${rt.app.id} and network_id = ${rt.id}`);
-    const lastAt = force ? undefined : last?.at;
-    if (!weeklyBiasDue(force, !!lastAt, lastAt ? now - new Date(lastAt as string).getTime() : 0)) return undefined;
+    if (!reportDue(last?.at)) return undefined;
     const rows = await rt.scoped(tx => tx`select m.id, m.age, m.joined_at, coalesce(array_agg(t) filter (where t like 'appearance:%'), '{}') as tags
       from network.members m left join network.facets f on f.app_id = m.app_id and f.member_id = m.id and f.status <> 'rejected' and ${automatedFacetPredicate(tx, true)} left join lateral unnest(f.tags) t on true
       where m.app_id = ${rt.app.id} and m.account_status in ('active', 'paused', 'restricted') group by m.id, m.age, m.joined_at order by m.id`) as any[];
     const members: BiasMember[] = rows.map(r => ({ id: r.id, age: r.age, joinedAt: r.joined_at ? new Date(r.joined_at).getTime() : null, tags: r.tags ?? [] }));
-    const r = biasReport(rt.id, rt.app.id, members, [...rt.net.opps.values()], now);
-    await rt.scoped(tx => tx`insert into network.bias_reports (app_id, id, network_id, at, members, alerts, report)
-      values (${rt.app.id}, ${`bias_${rt.id}_${now}`}, ${rt.id}, ${new Date(now)}, ${r.members}, ${r.report.alerts.length}, ${r.report as unknown as Row}::jsonb)`);
+    const opportunities = await rt.readState(n => [...n.opps.values()]);
+    const r = biasReport(rt.id, rt.app.id, members, opportunities, now);
+    const saved = await rt.scoped(async tx => {
+      await tx`select pg_advisory_xact_lock(hashtext(${`bias-report-${rt.id}`}))`;
+      const [latest] = await tx`select max(at) as at from network.bias_reports where app_id = ${rt.app.id} and network_id = ${rt.id}`;
+      if (!reportDue(latest?.at)) return false;
+      await tx`insert into network.bias_reports (app_id, id, network_id, at, members, alerts, report)
+        values (${rt.app.id}, ${`bias_${rt.id}_${now}`}, ${rt.id}, ${new Date(now)}, ${r.members}, ${r.report.alerts.length}, ${r.report as unknown as Row}::jsonb)`;
+      return true;
+    });
+    if (!saved) return undefined;
     this.log(`[bias] ${rt.id}: ${r.members} adult member(s), ${r.report.alerts.length} alert(s)`);
     for (const line of biasAlerts(r)) this.log(line);
     return r;

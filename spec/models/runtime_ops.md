@@ -25,10 +25,9 @@ alert delivery. The retained model below describes different behavior for
 those cases.
 
 [Weekly bias monitoring](../weeklyBias.md) drives cadence, cohort
-eligibility, and aggregate outcome rules. The current backend checks
-the newest stored report and builds from its in-memory opportunities.
-The retained model also describes an insert-time recheck and a durable
-opportunity read.
+eligibility, and aggregate outcome rules. The backend reads saved
+opportunities and rechecks eligibility under its report lock before
+inserting an aggregate report.
 
 Imported from `quint/runtime_ops.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 

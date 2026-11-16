@@ -10,6 +10,11 @@ The weekly staff report uses aggregate exposure and outcome counts. The service 
 
 For a photo-enabled network, the normal run is due when there is no stored report or when at least seven days have passed since the newest report. An explicit force request can run sooner. The check is against the latest report the scheduler reads.
 
+Read opportunities from the latest saved network state. Before saving,
+acquire the report's network-scoped lock and apply the same cadence
+check to the latest stored report. A competing report can make the
+current run no longer due.
+
 ```quint
 pure val biasEveryMs: int = 604800000
 
