@@ -74,6 +74,60 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
     expect(calls.length).toBe(ids.length);
   });
 
+  test("the member's saved local quiet window defers logistics while replies and compliance pass", async () => {
+    // spec/outboundAdmission.md, "Replies, quiet hours and unanswered messages limit when a send can go out"
+    const local = new SimClock(Date.UTC(2026, 9, 9, 13)); // 06:00 in San Francisco, 09:00 in the queue's zone.
+    const { calls, provider } = recorder();
+    const q = queue(a, provider, { clock: local });
+    const memberId = "quiet-home-city", to = "+12125553212";
+    await a`insert into network.members (id,app_id,home_city,prefs) values (${memberId},'friends','sf',${{ quietHours: [5, 8] }}::jsonb)`;
+    await q.inbound(to);
+    await q.enqueue(a, [
+      { id: "quiet-home-logistics", memberId, to, kind: "transactional", text: "Your meeting reminder.", timeZone: NY },
+      { id: "quiet-home-reply", memberId, to, kind: "reply", text: "Here is your requested update.", timeZone: NY },
+      { id: "quiet-home-confirmation", memberId, to, kind: "compliance", text: "Your settings are saved.", timeZone: NY },
+    ]);
+    await q.drain();
+    expect(calls.map(call => call.idempotencyKey).sort()).toEqual(["tn:quiet-home-confirmation", "tn:quiet-home-reply"]);
+    const [row] = await a`select status,attempts,next_attempt_at from platform.outbound where id='quiet-home-logistics'`;
+    expect([row.status, row.attempts, new Date(row.next_attempt_at).getTime()]).toEqual(["deferred_quiet_hours", 0, Date.UTC(2026, 9, 9, 15)]);
+    local.set(Date.UTC(2026, 9, 9, 15));
+    await q.drain();
+    expect(calls.at(-1)?.idempotencyKey).toBe("tn:quiet-home-logistics");
+  });
+
+  test("the locked claim defers a newly quiet member and releases the reserved cap", async () => {
+    // spec/outboundAdmission.md, "Replies, quiet hours and unanswered messages limit when a send can go out"
+    const local = new SimClock(Date.UTC(2026, 9, 9, 11)); // 07:00 in New York, when the default window is quiet.
+    const { calls, provider } = recorder();
+    const memberId = "quiet-late-change";
+    let takes = 0;
+    const refunds: string[] = [];
+    const claims: string[] = [];
+    const q = queue(a, provider, { clock: local, checks: checks({
+      capTake: async () => {
+        if (++takes === 1) await b`update network.members set prefs=${{ quietHours: [6, 8] }}::jsonb where app_id='friends' and id=${memberId}`;
+        return true;
+      },
+      capRelease: async row => { refunds.push(row.id); },
+      claimed: async row => { claims.push(row.id); },
+    }) });
+    await a`insert into network.members (id,app_id,home_city,prefs) values (${memberId},'friends','nyc',${{ quietHours: [0, 0] }}::jsonb)`;
+    await q.enqueue(a, [{ id: "quiet-claim-probe", memberId, to: "+12125553213", kind: "proactive", text: "Would you like to meet?", timeZone: NY }]);
+    await q.drain();
+    const [row] = await a`select status,attempts,person_cap,lease_until,next_attempt_at from platform.outbound where id='quiet-claim-probe'`;
+    expect([row.status, row.attempts, row.person_cap, row.lease_until, new Date(row.next_attempt_at).getTime()])
+      .toEqual(["deferred_quiet_hours", 0, false, null, Date.UTC(2026, 9, 9, 12)]);
+    expect(calls).toEqual([]);
+    expect(claims).toEqual([]);
+    expect(refunds).toEqual(["quiet-claim-probe"]);
+    local.set(Date.UTC(2026, 9, 9, 12));
+    await q.drain();
+    expect(takes).toBe(2);
+    expect(claims).toEqual(["quiet-claim-probe"]);
+    expect(calls.map(call => call.idempotencyKey)).toEqual(["tn:quiet-claim-probe"]);
+  });
+
   test("a worker that stopped mid-send: the other worker's next drain recovers the row (no restart needed) and sends it with the same key", async () => {
     const { calls, provider } = recorder();
     const w1 = queue(a, provider, { instance: "worker-1" });
