@@ -9,7 +9,37 @@
 // spec/consoleWorkspace.md, "The switch shows only to an admin who can change it"
 // spec/consoleWorkspace.md, "The first press asks for a confirmation and the second press saves"
 // spec/consoleWorkspace.md, "Only an admin loads the audit log"
+// spec/consolePanels.md, "The lab shows its runs, or says that it is off"
+// spec/consolePanels.md, "A lab run starts only in the simulated world with a valid request"
+// spec/consolePanels.md, "A lab result marks each safety count"
+// spec/consolePanels.md, "The difference loads once two runs are picked"
+// spec/consolePanels.md, "The bias monitor alerts below 0.8 times the outcome of everyone"
+// spec/consolePanels.md, "The proactive rate and the inviter share show their targets"
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  type ConsolePanels,
+  type CountMark,
+  type LabPanel,
+  type RunsView,
+  type ShareMark,
+  biasAlert,
+  biasAlertBelow,
+  biasSummary,
+  canReceiveLab,
+  canReceiveLabStart,
+  canStartLab,
+  countMark,
+  diffRowShown,
+  initial as initialPanels,
+  inviterMark,
+  labBody,
+  labPolls,
+  labStartShown,
+  receiveLab,
+  receiveLabStart,
+  startLab,
+} from "../../core/src/generated/consolePanels.ts";
+import { panelStaffOf } from "./ops.tsx";
 import {
   type AuditPhase,
   type ConfigEditor,
@@ -156,20 +186,20 @@ export function BiasMonitor() {
     >
       {last && (
         <div className="flex flex-col gap-2 text-sm">
-          <FactLine parts={[stamp(last.at), `${num(last.members)} adult members`, "alert under 0.8x"]} />
-          {last.report.alerts.length
+          <FactLine parts={[stamp(last.at), `${num(last.members)} adult members`, `alert under ${(biasAlertBelow / 100).toFixed(1)}x`]} />
+          {biasSummary(last.report.alerts.length) === "GroupsBelowAlert"
             ? last.report.alerts.map(a => (
               <p className="flex items-center gap-2 text-destructive" key={`${a.group}${a.metric}`}>
                 <StatusMark tone="destructive" label="Alert" />{a.group}: {humanize(a.metric)} at {a.ratio.toFixed(2)}x
               </p>
             ))
-            : <p className="text-ok">No group under 0.8x.</p>}
+            : <p className="text-ok">No group under {(biasAlertBelow / 100).toFixed(1)}x.</p>}
           <DataTable columns={biasColumns}>
             {Object.entries(last.report.groups).map(([g, x]) => (
               <TableRow key={g}>
                 <DataCell>{g}</DataCell>
                 <DataCell numeric>{num(x.n)}</DataCell>
-                {BIAS_METRICS.map(([k]) => <DataCell key={k} numeric className={x.ratio[k] < 0.8 ? "text-destructive" : undefined}>{x.ratio[k].toFixed(2)}x</DataCell>)}
+                {BIAS_METRICS.map(([k]) => <DataCell key={k} numeric className={biasAlert(Math.floor(x.ratio[k] * 100)) ? "text-destructive" : undefined}>{x.ratio[k].toFixed(2)}x</DataCell>)}
               </TableRow>
             ))}
           </DataTable>
@@ -505,6 +535,7 @@ export function Growth() {
   const s = useStore();
   const g = s.stats?.growth;
   if (!g) return null;
+  const inviter: ShareMark = inviterMark(g.inviterShare !== null, Math.floor((g.inviterShare ?? 0) * 100));
   const row = (label: string, c: typeof g.seed) => (
     <TableRow key={label}>
       <DataCell>{label}</DataCell><DataCell numeric>{num(c.members)}</DataCell><DataCell numeric>{num(c.joined)}</DataCell><DataCell numeric>{num(c.activated)}</DataCell><DataCell numeric>{c.rate === null ? "–" : pct(c.rate)}</DataCell>
@@ -516,7 +547,7 @@ export function Growth() {
         <Kpi label="invites sent" value={num(g.invitesSent)} />
         <Kpi label="invitees joined" value={num(g.inviteesJoined)} />
         <Kpi label="growth asks" value={num(g.growthAsks)} />
-        <Kpi label="invited someone" value={g.inviterShare === null ? "–" : pct(g.inviterShare)} tone={g.inviterShare !== null && g.inviterShare >= 0.3 ? "ok" : undefined} title="Joined members who invited someone. PRD 28.2 target: at least 30%." />
+        <Kpi label="invited someone" value={inviter === "ShareUnknown" ? "–" : pct(g.inviterShare ?? 0)} tone={inviter === "ShareMet" ? "ok" : undefined} title="Joined members who invited someone. PRD 28.2 target: at least 30%." />
       </KpiGrid>
       <DataTable columns={cohortColumns} title="Activated: joined and had a first outcome (attended a meeting, or a request was fulfilled or answered)">
         {row("Seed", g.seed)}{row("Invitees", g.invitees)}
@@ -639,43 +670,63 @@ function AuditLog() {
 
 const ARMS: [LabArm, string][] = [["push_baseline", "Push baseline"], ["push_v2", "Push v2"], ["consent", "Consent"]];
 
+/**
+ * The simulation lab: background runs of the experiment arms and their safety counts. Runs start only in the simulated world.
+ * @model spec/consolePanels.md
+ */
 export function Lab() {
-  const [poll, setPoll] = useState(0);
-  const r = useFetch<{ enabled: boolean; running: number; runs: LabRun[] }>(() => store.lab(), "lab", poll);
+  const s = useStore();
+  const staff = panelStaffOf(s);
+  const [lab, setLab] = useState<LabPanel>(initialPanels.lab);
+  const r = useFetch<{ enabled: boolean; running: number; runs: LabRun[] }>(() => store.lab(), "lab", labPolls(lab) ? 3000 : 0);
   const [arms, setArms] = useState<LabArm[]>(["consent"]);
   const [seeds, setSeeds] = useState("1");
   const [days, setDays] = useState(7);
   const [err, setErr] = useState("");
   const [sel, setSel] = useState<string>();
-  const lab = r.data;
-  const active = !!lab?.runs.some(x => x.status === "queued" || x.status === "running");
-  useEffect(() => { setPoll(active ? 3000 : 0); }, [active]);
-  if (!lab) return <StatusRow view={panelView("LabPanel", answerOf(r, false), 0)} error={r.error} />;
-  if (!lab.enabled) return <p className={quiet}>The lab is off on this server.</p>;
+  const panelsWith = (l: LabPanel): ConsolePanels => ({ ...initialPanels, staff, lab: l });
+  const data = r.data;
+  useEffect(() => {
+    if (!data) return;
+    const active = data.runs.some(x => x.status === "queued" || x.status === "running");
+    setLab(l => (canReceiveLab(panelsWith(l), data.runs.length) ? receiveLab(panelsWith(l), data.enabled, data.runs.length, active).lab : l));
+  }, [data]);
+  if (!data) return <StatusRow view={panelView("LabPanel", answerOf(r, false), 0)} error={r.error} />;
+  const body = labBody(data.enabled, data.runs.length);
+  if (body === "LabOffView") return <p className={quiet}>The lab is off on this server.</p>;
+  const panels = panelsWith(lab);
+  const seedList = seeds.split(/[\s,]+/).filter(Boolean).map(Number);
+  const seedCount = seedList.every(Number.isInteger) ? seedList.length : 0;
+  const dayCount = Number.isInteger(days) ? days : 0;
+  const ready = canStartLab(panels, arms.length, seedCount, dayCount);
   const start = async () => {
+    if (!ready) return;
     setErr("");
-    const list = seeds.split(/[\s,]+/).filter(Boolean).map(Number);
-    const x = await store.labRun({ arms, seeds: list, days });
+    setLab(startLab(panels, arms.length, seedCount, dayCount).lab);
+    const x = await store.labRun({ arms, seeds: seedList, days: dayCount });
+    setLab(l => (canReceiveLabStart(panelsWith(l)) ? receiveLabStart(panelsWith(l), !!x.data?.ok).lab : l));
     if (!x.data?.ok) { setErr(x.error ?? "refused"); return; }
-    setSel(x.data.run.id); setPoll(3000); r.reload();
+    setSel(x.data.run.id); r.reload();
   };
-  const runs = [...lab.runs].sort((a, b) => b.createdAt - a.createdAt);
+  const runs = [...data.runs].sort((a, b) => b.createdAt - a.createdAt);
   const shown = runs.find(x => x.id === sel) ?? runs[0];
   return (
     <div className="flex flex-col gap-4">
-      <form className="flex flex-wrap items-center gap-3" onSubmit={e => { e.preventDefault(); start(); }}>
-        {ARMS.map(([k, l]) => (
-          <Label key={k} className="font-normal">
-            <Checkbox checked={arms.includes(k)} onCheckedChange={v => setArms(v === true ? [...arms, k] : arms.filter(a => a !== k))} />{l}
-          </Label>
-        ))}
-        <Label className="font-normal">seeds <Input className="w-24" value={seeds} onChange={e => setSeeds(e.target.value)} title="1-5 seeds, comma-separated" /></Label>
-        <Label className="font-normal">days <Input className="w-20" type="number" min={1} max={60} value={days} onChange={e => setDays(Number(e.target.value))} /></Label>
-        <Button type="submit" disabled={!arms.length}>Start run</Button>
-        <span className={quiet}>{lab.running} running</span>
-        {err && <span role="alert" className="text-sm text-destructive">{err}</span>}
-      </form>
-      <StatusRow view={panelView("LabPanel", "AnswerRows", runs.length)} empty="No lab runs yet.">
+      {labStartShown(panels) ? (
+        <form className="flex flex-wrap items-center gap-3" onSubmit={e => { e.preventDefault(); start(); }}>
+          {ARMS.map(([k, l]) => (
+            <Label key={k} className="font-normal">
+              <Checkbox checked={arms.includes(k)} onCheckedChange={v => setArms(v === true ? [...arms, k] : arms.filter(a => a !== k))} />{l}
+            </Label>
+          ))}
+          <Label className="font-normal">seeds <Input className="w-24" value={seeds} onChange={e => setSeeds(e.target.value)} title="1-5 seeds, comma-separated" /></Label>
+          <Label className="font-normal">days <Input className="w-20" type="number" min={1} max={60} value={days} onChange={e => setDays(Number(e.target.value))} /></Label>
+          <Button type="submit" disabled={!ready}>Start run</Button>
+          <span className={quiet}>{data.running} running</span>
+          {err && <span role="alert" className="text-sm text-destructive">{err}</span>}
+        </form>
+      ) : <p className={quiet}>{data.running} running · lab runs start in the simulated world.</p>}
+      <StatusRow view={panelView("LabPanel", "AnswerRows", body === "LabRunsView" ? runs.length : 0)} empty="No lab runs yet.">
         <div className="grid gap-4 md:grid-cols-3">
           <div className="flex flex-col gap-1">
             {runs.map(x => (
@@ -703,9 +754,10 @@ const labColumns: DataColumn[] = [
   { key: "arm", label: "Arm" }, { key: "seed", label: "Seed", numeric: true }, { key: "yes", label: "Everyone-yes", numeric: true }, { key: "accept", label: "Accept", numeric: true },
   { key: "meetings", label: "Meetings", numeric: true }, { key: "inv", label: "Invariants", numeric: true }, { key: "leaks", label: "Canary leaks", numeric: true }, { key: "minors", label: "Minor contacts", numeric: true },
 ];
+const COUNT_TEXT: Record<CountMark, string> = { CountUnknown: "text-muted-foreground", CountZero: "text-ok", CountAlarm: "text-destructive" };
 
 function LabResults({ run }: { run: LabRun }) {
-  const zero = (v: number | null) => <DataCell numeric className={v ? "text-destructive" : v === 0 ? "text-ok" : "text-muted-foreground"}>{v === null ? "–" : num(v)}</DataCell>;
+  const zero = (v: number | null) => <DataCell numeric className={COUNT_TEXT[countMark(v !== null, v ?? 0)]}>{v === null ? "–" : num(v)}</DataCell>;
   return (
     <div className="flex min-w-0 flex-col gap-2 md:col-span-2">
       <p className={quiet} title={run.file}>{run.id} · by {run.requestedBy.replace(/^token:/, "")}{run.finishedAt && run.startedAt ? ` · ${secs(run.finishedAt - run.startedAt)}` : ""} · {run.file.split("/").pop()}</p>
@@ -728,7 +780,7 @@ const fmtN = (x: number) => (Number.isInteger(x) ? num(x) : x.toFixed(3));
 const diffColumns: DataColumn[] = [{ key: "k", label: "Measure", hideLabel: true }, { key: "a", label: "A", numeric: true }, { key: "b", label: "B", numeric: true }, { key: "d", label: "B − A", numeric: true }];
 
 function DiffTable({ title, rows }: { title: string; rows: Record<string, DiffNum> }) {
-  const xs = Object.entries(rows).filter(([, v]) => v.a || v.b);
+  const xs = Object.entries(rows).filter(([, v]) => diffRowShown(Math.sign(v.a), Math.sign(v.b)));
   if (!xs.length) return null;
   return (
     <InspectorSection title={title}>
@@ -748,11 +800,25 @@ function TopList({ items }: { items: EngineRunSummary["top"] }) {
   return <>{items.slice(0, 12).map(t => <p className="text-sm" key={t.key}><span className="font-mono tabular-nums">{t.score.toFixed(3)}</span> {t.participants.map((p, i) => <span key={p}>{i > 0 && " · "}<Member id={p} first /></span>)} <span className="text-muted-foreground">· {humanize(t.generator)}{t.selected ? " · selected" : ""}</span></p>)}</>;
 }
 
-/** Two engine runs side by side: A is the older one. */
-export function RunDiffView({ a, b }: { a: string; b: string }) {
-  const r = useFetch<RunDiff>(() => store.runDiff(a, b), `${a}|${b}`);
-  const d = r.data;
-  if (!d) return <StatusRow view={panelView("LabPanel", answerOf(r, false), 0)} error={r.error} />;
+/**
+ * Two engine runs side by side: A is the older one. It reads the difference of the pair once and reports the answer through `onAnswer`; `view` is the generated runs view of the tab.
+ * @model spec/consolePanels.md
+ */
+export function RunDiffView({ a, b, view, onAnswer }: { a: string; b: string; view: RunsView; onAnswer(loaded: boolean): void }) {
+  const pair = `${a}|${b}`;
+  const [read, setRead] = useState<{ pair: string; r: Fetched<RunDiff> }>();
+  useEffect(() => {
+    let live = true;
+    store.runDiff(a, b).then(r => {
+      if (!live) return;
+      setRead({ pair, r });
+      onAnswer(!!r.data);
+    });
+    return () => { live = false; };
+  }, [pair]);
+  const r = read?.pair === pair ? read.r : undefined;
+  const d = r?.data;
+  if (view !== "DiffShownView" || !d) return <StatusRow view={view === "DiffFailedView" ? "PanelFailed" : "PanelLoading"} error={r?.error} />;
   const head = (x: RunDiff["a"]): ReactNode => <>{stamp(x.at)} · {x.engineVersion} · {x.proposals} proposals{x.city ? ` · ${x.city}` : ""}</>;
   return (
     <div className="flex flex-col gap-6">

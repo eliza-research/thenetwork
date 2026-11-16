@@ -1,7 +1,23 @@
 // spec/consoleNavigation.md, "Each drawer tab shows only where it applies"
 // spec/consoleNavigation.md, "A tab choice opens the drawer, and the open tab collapses it"
 // spec/consoleNavigation.md, "The filter bar dims the filters that do not apply to the open tab"
+// spec/consolePanels.md, "The feed segments group the event kinds"
+// spec/consolePanels.md, "The mine segment exists only in the simulated world"
+// spec/consolePanels.md, "The pipeline shows the columns of the state filter, and the ladder of a consent network"
+// spec/consolePanels.md, "The runs tab shows a run, asks for two runs, or shows their difference"
+// spec/consolePanels.md, "Compare opens only with two runs, and a third pick drops the oldest"
+// spec/consolePanels.md, "The metrics tab shows truth numbers only in the simulated world, and bias and cost only on real data"
+// spec/consolePanels.md, "The proactive rate and the inviter share show their targets"
+// spec/consolePanels.md, "The game tab shows the score of the simulated world"
+// spec/consolePanels.md, "Only an admin resets the world, chooses a level or chooses the reviewer"
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  canChooseFeedSegment, canPickRun, canReceiveDiff, canReceiveGame, canReceiveRuns, canResetWorld, canToggleCompare, columnShown, compareShown, feedEmptyNote,
+  feedSegmentNow, feedSegmentOffered, feedShows, gameView, initial as initialPanels, ladderView, metricsSectionShown, pickRun, proactiveWarns, receiveDiff,
+  receiveGame, receiveRuns, reviewerSwitchShown, runsView, toggleCompare, type ConsolePanels, type EventGroup, type FeedNote, type FeedSegment,
+  type PipelineColumn, type RunCompare, type StateFilter,
+} from "../../core/src/generated/consolePanels.ts";
+import { panelStaffOf } from "./ops.tsx";
 import {
   canChooseTab, canToggleDrawer, chooseTab, filterApplies as tabFilterApplies, initial as initialNav, tabNow, toggleDrawer,
   type ConsoleNav, type DrawerTab as NavTab, type FilterKey as NavFilterKey,
@@ -84,10 +100,17 @@ export function Drawer() {
   );
 }
 
-type Seg = "all" | "people" | "safety" | "system" | "mine";
-const PEOPLE = new Set(["accept", "decline", "meeting", "outcome", "feedback", "proposal", "message", "join", "invite", "probe", "request", "growth"]);
+const PEOPLE = new Set(["accept", "decline", "meeting", "outcome", "feedback", "proposal", "message", "invite", "probe", "request", "growth"]);
 const SAFETY = new Set(["block", "opt_out", "adversarial", "invariant", "error", "trust"]);
 const SYSTEM = new Set(["engine", "skip", "scenario", "game", "review"]);
+/** The event group of a feed kind. */
+const groupOf = (kind: string): EventGroup =>
+  kind === "join" ? "JoinGroup" : PEOPLE.has(kind) ? "PeopleGroup" : SAFETY.has(kind) ? "SafetyGroup" : SYSTEM.has(kind) ? "SystemGroup" : "OtherGroup";
+const SEGMENTS: { value: FeedSegment; label: string }[] = [
+  { value: "AllEvents", label: "All" }, { value: "PeopleEvents", label: "People" }, { value: "SafetyEvents", label: "Safety" },
+  { value: "SystemEvents", label: "System" }, { value: "MineEvents", label: "Mine" },
+];
+const FEED_NOTE: Record<FeedNote, string> = { PressPlayNote: "Nothing yet. Press play.", NoEventsInRangeNote: "No events in range.", NothingMatchesNote: "" };
 const severityText: Record<NonNullable<ObsFeedItem["severity"]>, string> = { info: "text-muted-foreground", good: "text-ok", warn: "text-warn", bad: "text-destructive" };
 
 /** Feed text with the members' names as focus links. */
@@ -122,27 +145,30 @@ function FeedLine({ x, onOpen }: { x: ObsFeedItem; onOpen?: () => void }) {
   ) : <div className={row}>{body}</div>;
 }
 
+/**
+ * The live feed: the generated segments group the event kinds, and the mine segment shows only in the simulated world.
+ * @model spec/consolePanels.md
+ */
 function Feed() {
   const s = useStore();
-  const [seg, setSeg] = useState<Seg>("all");
-  const game = !!s.env?.capabilities.canIntervene;
-  const segs: SegmentOption[] = [{ value: "all", label: "All" }, { value: "people", label: "People" }, { value: "safety", label: "Safety" }, { value: "system", label: "System" }, ...(game ? [{ value: "mine", label: "Mine" }] : [])];
-  const inSeg = (x: ObsFeedItem) => seg === "all" ? x.kind !== "join" || s.feed.length < 60
-    : seg === "people" ? PEOPLE.has(x.kind)
-    : seg === "safety" ? SAFETY.has(x.kind)
-    : seg === "system" ? SYSTEM.has(x.kind as string)
-    : x.kind === "game" || (!!x.opportunityId && s.opps.get(x.opportunityId)?.source === "player");
-  const items = s.feed.filter(x => inSeg(x) && s.matchFeed(x) && s.focusFeed(x)).slice(-150).reverse();
+  const staff = panelStaffOf(s);
+  const [wanted, setWanted] = useState<FeedSegment>(initialPanels.feedSegment);
+  const panels: ConsolePanels = { ...initialPanels, staff };
+  const seg = feedSegmentNow(wanted, staff);
+  const segs: SegmentOption[] = SEGMENTS.filter(x => feedSegmentOffered(x.value, staff));
+  const player = (x: ObsFeedItem) => x.kind === "game" || (!!x.opportunityId && s.opps.get(x.opportunityId)?.source === "player");
+  const items = s.feed.filter(x => feedShows(groupOf(x.kind), seg, player(x), s.feed.length) && s.matchFeed(x) && s.focusFeed(x)).slice(-150).reverse();
+  const note = feedEmptyNote(!s.feed.length, !!s.env?.capabilities.canStep, !!s.ui.focus);
   const open = (x: ObsFeedItem) => {
     if (x.opportunityId && s.opps.has(x.opportunityId)) store.focus({ kind: "opportunity", id: x.opportunityId });
     else if (x.members?.[0]) store.focus({ kind: "member", id: x.members[0] });
   };
   return (
     <div className="flex flex-col gap-3">
-      <Segments aria-label="Feed" value={seg} onValueChange={v => setSeg(v as Seg)} options={segs} className="self-start" />
+      <Segments aria-label="Feed" value={seg} onValueChange={v => { if (canChooseFeedSegment(panels, v as FeedSegment)) setWanted(v as FeedSegment); }} options={segs} className="self-start" />
       <div className="flex flex-col">
         {items.map(x => <FeedLine key={x.seq} x={x} onOpen={() => open(x)} />)}
-        {!items.length && <EmptyState title={!s.feed.length ? (s.env?.capabilities.canStep ? "Nothing yet. Press play." : "No events in range.") : s.ui.focus ? s.nothing() : s.env?.capabilities.canStep ? s.nothing() : "No events in range."} />}
+        {!items.length && <EmptyState title={note === "NothingMatchesNote" ? s.nothing() : FEED_NOTE[note]} />}
       </div>
     </div>
   );
@@ -151,8 +177,9 @@ function Feed() {
 function Ladder() {
   const s = useStore();
   const n = s.network;
-  if (!n) return null;
-  if (n.kind === "stub") return <EmptyState title="Stub network: no consent data." />;
+  const ladder = ladderView(!!n, n?.kind === "stub");
+  if (ladder === "NoLadder" || !n) return null;
+  if (ladder === "StubLadderNote") return <EmptyState title="Stub network: no consent data." />;
   const c = (k: string) => n.counters[k] ?? 0;
   const rate = (a: number, b: number) => (b ? pct(a / b) : "–");
   const candidates = c("engineProposals"), passed = candidates - (c("gatedOut") - (n.gateReasons.daily_cap ?? 0));
@@ -184,12 +211,19 @@ function Ladder() {
   );
 }
 
+const STATE_FILTER: Record<"all" | ReturnType<typeof stateGroupOf>, StateFilter> = { all: "AnyState", review: "ReviewStates", open: "OpenStates", met: "MetStates", closed: "ClosedStates" };
+const PIPELINE_COLUMN: Record<ReturnType<typeof stateGroupOf>, PipelineColumn> = { review: "ReviewColumn", open: "OpenColumn", met: "MetColumn", closed: "ClosedColumn" };
+
+/**
+ * The opportunity pipeline: the consent ladder and the columns that the generated state filter keeps.
+ * @model spec/consolePanels.md
+ */
 function Pipeline() {
   const s = useStore();
   const f = s.ui.focus;
   const sg = s.ui.filters.stateGroup;
   const opps = [...s.opps.values()].filter(o => s.matchOpp(o) && (f?.kind === "opportunity" || s.focusOpp(o)));
-  const cols = COLUMNS.filter(c => sg === "all" || stateGroupOf(c.states[0]!) === sg);
+  const cols = COLUMNS.filter(c => columnShown(STATE_FILTER[sg], PIPELINE_COLUMN[stateGroupOf(c.states[0]!)]));
   const rv = s.network?.review;
   return (
     <div className="flex flex-col gap-3">
@@ -245,27 +279,48 @@ const count = <T,>(xs: T[], f: (x: T) => string) => xs.reduce<Record<string, num
 const rowsOf = (data: Record<string, number>, tone?: MeterTone, label: (k: string) => string = humanize): MeterRow[] =>
   Object.entries(data).map(([k, v]) => ({ key: k, label: label(k), value: v, title: k, tone }));
 
+/**
+ * The runs tab: one run, or two picked runs and their difference. The generated run comparison decides what shows; the shell keeps the picked run ids in pick order.
+ * @model spec/consolePanels.md
+ */
 function Engine() {
   const s = useStore();
   const f = s.ui.focus;
   const runs = s.runs.filter(r => s.inRange(r.at) && s.focusRun(r)).reverse();
   const [sel, setSel] = useState<string>();
-  const [cmp, setCmp] = useState<string[] | null>(null);
+  const [compare, setCompare] = useState<{ model: RunCompare; ids: string[] }>({ model: initialPanels.runs, ids: [] });
+  const panelsWith = (model: RunCompare): ConsolePanels => ({ ...initialPanels, runs: model });
+  useEffect(() => {
+    setCompare(c => {
+      if (!canReceiveRuns(panelsWith(c.model), runs.length)) return c;
+      const model = receiveRuns(panelsWith(c.model), runs.length).runs;
+      return { model, ids: model.picked === 0 ? [] : c.ids };
+    });
+  }, [runs.length]);
+  const model: RunCompare = { ...compare.model, runTotal: runs.length };
+  const panels = panelsWith(model);
+  const view = runsView(model);
   const focusRunId = f?.kind === "opportunity" ? s.opps.get(f.id)?.runId : undefined;
   const run = runs.find(r => r.id === (focusRunId ?? sel)) ?? runs.find(r => r.id === sel) ?? runs[0];
-  if (!run) return <EmptyState title={s.runs.length ? s.nothing() : "No runs yet."} />;
-  const pick = (id: string) => setCmp(c => (c ?? []).includes(id) ? c!.filter(x => x !== id) : [...(c ?? []), id].slice(-2));
-  const pair = cmp?.length === 2 ? cmp.map(id => s.runs.find(r => r.id === id)!).filter(Boolean).sort((a, b) => a.at - b.at) : [];
+  if (view === "NoRunsView" || !run) return <EmptyState title={s.runs.length ? s.nothing() : "No runs yet."} />;
+  const toggle = () => { if (canToggleCompare(panels)) setCompare({ model: toggleCompare(panels).runs, ids: [] }); };
+  const pick = (id: string) => {
+    const already = compare.ids.includes(id);
+    if (!canPickRun(panels, already)) return;
+    setCompare({ model: pickRun(panels, already).runs, ids: already ? compare.ids.filter(x => x !== id) : [...compare.ids, id].slice(-2) });
+  };
+  const answer = (loaded: boolean) => setCompare(c => (canReceiveDiff(panelsWith(c.model)) ? { ...c, model: receiveDiff(panelsWith(c.model), loaded).runs } : c));
+  const pair = compare.ids.length === 2 ? compare.ids.map(id => s.runs.find(r => r.id === id)!).filter(Boolean).sort((a, b) => a.at - b.at) : [];
   const runText = (r: EngineRunSummary) => <>{stamp(r.at)} <span className="text-muted-foreground">· {r.proposals} proposals{r.shadow ? " · shadow" : ""}</span></>;
   return (
     <div className="flex gap-4">
       <div className="flex w-60 shrink-0 flex-col gap-1">
-        {runs.length > 1 && (
-          <Button variant={cmp ? "secondary" : "outline"} size="sm" aria-pressed={!!cmp} onClick={() => setCmp(cmp ? null : [])} title="Pick two runs to compare">{cmp ? "Close compare" : "Compare two"}</Button>
+        {compareShown(panels) && (
+          <Button variant={model.comparing ? "secondary" : "outline"} size="sm" aria-pressed={model.comparing} onClick={toggle} title="Pick two runs to compare">{model.comparing ? "Close compare" : "Compare two"}</Button>
         )}
-        {runs.map(r => cmp ? (
-          <label key={r.id} className={cn("flex items-center gap-2 rounded-sm px-2 py-1 text-sm", cmp.includes(r.id) && "bg-accent text-accent-foreground")}>
-            <Checkbox checked={cmp.includes(r.id)} onCheckedChange={() => pick(r.id)} /> {runText(r)}
+        {runs.map(r => model.comparing ? (
+          <label key={r.id} className={cn("flex items-center gap-2 rounded-sm px-2 py-1 text-sm", compare.ids.includes(r.id) && "bg-accent text-accent-foreground")}>
+            <Checkbox checked={compare.ids.includes(r.id)} onCheckedChange={() => pick(r.id)} /> {runText(r)}
           </label>
         ) : (
           <Button key={r.id} variant="ghost" size="sm" aria-pressed={r.id === run.id} className={cn("justify-start", r.id === run.id && "bg-accent text-accent-foreground")} onClick={() => setSel(r.id)}>
@@ -274,7 +329,9 @@ function Engine() {
         ))}
       </div>
       <div className="min-w-0 flex-1">
-        {pair.length === 2 ? <RunDiffView a={pair[0]!.id} b={pair[1]!.id} /> : cmp ? <EmptyState title="Pick two runs." /> : <RunDetail run={run} />}
+        {view === "RunDetailView" ? <RunDetail run={run} />
+          : view === "PickTwoView" || pair.length !== 2 ? <EmptyState title="Pick two runs." />
+          : <RunDiffView a={pair[0]!.id} b={pair[1]!.id} view={view} onAnswer={answer} />}
       </div>
     </div>
   );
@@ -408,7 +465,8 @@ function Metrics() {
   const st = s.stats;
   if (!st) return null;
   const weeks = Math.max(1 / 7, ((s.clock?.now ?? 0) - (s.clock?.start ?? 0)) / (7 * DAY));
-  const game = !!s.env?.capabilities.hiddenTruth;
+  const staff = panelStaffOf(s);
+  const game = metricsSectionShown("TruthSection", staff);
   const n = s.network;
   const learned = ["introduced", "met", "enjoyed", "would_interact_again", "avoid", "blocked"];
   const proactive = st.proactive / Math.max(1, st.joined) / weeks;
@@ -423,7 +481,7 @@ function Metrics() {
     <div className="flex flex-col gap-4">
       <KpiGrid className="lg:grid-cols-4">
         <Kpi label="messages / member / week" value={(st.messages / Math.max(1, st.joined) / weeks).toFixed(1)} />
-        <Kpi label="proactive / member / week" value={proactive.toFixed(2)} tone={proactive > 2 ? "warn" : undefined} title="Budget: normal ≤ 2 proactive messages per member per week" />
+        <Kpi label="proactive / member / week" value={proactive.toFixed(2)} tone={proactiveWarns(Math.ceil(proactive * 100)) ? "warn" : undefined} title="Budget: normal ≤ 2 proactive messages per member per week" />
         <Kpi label="invite yes rate" value={pct(inviteYes)} title={n?.kind === "consent" ? "Yes answers to revealed invitations" : "Accepts per invite sent"} />
         <Kpi label={`show rate · ${st.noShows} no-shows · ${st.cancelledWithNotice} with notice`} value={pct(showDen ? st.attended / showDen : 0)} />
         <Kpi label="mean enjoyment" value={st.enjoymentN ? pct(st.enjoymentSum / st.enjoymentN) : "–"} />
@@ -441,8 +499,8 @@ function Metrics() {
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {st.scorecard && <InspectorSection title="Scorecard (PRD 28.2)"><Scorecard rows={st.scorecard} /></InspectorSection>}
         <Growth />
-        {s.mode === "real" && s.can("analyst") && <InspectorSection title="Bias monitor (weekly)"><BiasMonitor /></InspectorSection>}
-        {s.mode === "real" && s.can("analyst") && <InspectorSection title="Cost (estimated)"><CostPanel /></InspectorSection>}
+        {metricsSectionShown("BiasSection", staff) && <InspectorSection title="Bias monitor (weekly)"><BiasMonitor /></InspectorSection>}
+        {metricsSectionShown("CostSection", staff) && <InspectorSection title="Cost (estimated)"><CostPanel /></InspectorSection>}
       </div>
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <InspectorSection title="Proposals by origin"><MeterBars rows={rowsOf(byOrigin, undefined, k => k)} empty={s.nothing()} /></InspectorSection>
@@ -453,11 +511,18 @@ function Metrics() {
   );
 }
 
+/**
+ * The game tab of the simulated world: the scoreboard, the missions, the levels and the player's run. Only an admin resets the world or chooses the reviewer.
+ * @model spec/consolePanels.md
+ */
 function Game() {
   const s = useStore();
   const g = s.game;
   const [resetSeed, setResetSeed] = useState(1);
-  if (!g) return null;
+  const base: ConsolePanels = { ...initialPanels, staff: panelStaffOf(s) };
+  const panels = canReceiveGame(base) ? receiveGame(base, !!g, !!g?.over, !!s.network?.scenario) : base;
+  const view = gameView(panels.game);
+  if (view === "NoGameView" || !g) return <EmptyState title="The game runs in the simulated world only." />;
   const mode = s.reviewMode();
   return (
     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -494,9 +559,9 @@ function Game() {
           <Kpi label="safety strikes" value={`${g.strikes}/${g.maxStrikes}`} tone={g.strikes ? "destructive" : "ok"} />
           <Kpi label="oracle peeks" value={g.peeks} />
         </KpiGrid>
-        {g.over && <Alert variant="destructive">Game over: three safety strikes.</Alert>}
-        {mode && s.isAdmin() && <ReviewerSwitch mode={mode} title="Who approves network-composed opportunities before anyone is contacted. You: they queue in the Review tab." />}
-        {s.isAdmin() && (
+        {view === "GameOverView" && <Alert variant="destructive">Game over: three safety strikes.</Alert>}
+        {mode && reviewerSwitchShown(panels) && <ReviewerSwitch mode={mode} title="Who approves network-composed opportunities before anyone is contacted. You: they queue in the Review tab." />}
+        {canResetWorld(panels, false) && (
           <div className="flex flex-wrap items-center gap-2">
             <label className="flex items-center gap-2 text-sm">seed <Input type="number" value={resetSeed} onChange={e => setResetSeed(Number(e.target.value))} className="w-20" /></label>
             <Button variant="outline" size="sm" onClick={() => store.control({ type: "reset", seed: resetSeed, engine: "engine-v1" })}>New world vs engine-v1</Button>

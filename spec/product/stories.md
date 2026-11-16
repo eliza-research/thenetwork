@@ -644,6 +644,26 @@ Acceptance:
 
 Spec: [brand identity](../brandIdentity.md), "Story: One component set for every brand". Tokens: the [brand design notes](../../packages/design-system/brands/network/design.md).
 
+## Story F52 — Read and run the console analysis panels
+
+> As a staff member, I want the lab, runs, metrics, feed, pipeline and game panels to show each data state and to offer a control only in the mode and to the role that can use it, so that I read the numbers that need me and never change the world from real data.
+
+### Each analysis panel follows the mode, the role and the data
+
+The [workspace spec](../consoleWorkspace.md) owns the loading, refused and failed rows. The [navigation spec](../consoleNavigation.md) owns which tab shows.
+
+Acceptance:
+
+- A lab run, a world reset, a level choice and a level check exist only in the simulated world. Real data, with or without the Network service, gets no write from these panels.
+- The lab says when it is off on the server. A lab run starts only for an analyst, with one to three arms, one to five seeds and one to sixty days. A refused start keeps the form. A safety count above zero shows as an alarm.
+- The runs tab shows one run, or asks for two runs in compare. Compare shows only with two runs or more. A third pick drops the oldest. The difference loads once two runs are picked, and it hides a measure that is zero in both runs.
+- The metrics tab shows truth numbers only in the simulated world, and the bias monitor and the cost only on real data to an analyst. A bias ratio under 0.8x is an alert. A cost budget is amber from 80 percent and red from 100 percent. A proactive rate above two messages per member a week is a warning. An inviter share of 30 percent or more meets its target.
+- The feed segments group the event kinds. The mine segment shows only in the simulated world. An empty feed says why.
+- The pipeline shows the columns of the state filter. A stub network says that it has no consent data.
+- The game tab shows only in the simulated world. Only an admin resets the world, chooses a level or chooses the reviewer.
+
+Spec: [console analysis panels](../consolePanels.md).
+
 ## Later stories
 
 Original later IDs stay attached to their prerequisites. They do not enter launch scope merely because a shared state machine supports them.

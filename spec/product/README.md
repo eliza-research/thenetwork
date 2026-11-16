@@ -58,6 +58,7 @@ in a top-level Vibespec module. For a flow with I/O or concurrency, use the
 | Connector pages ([F43](stories.md#story-f43--connect-my-assistant-on-the-apps-page), [F44](stories.md#story-f44--see-and-remove-my-connected-assistants)) | [Connector authorization pages](../authorizationPages.md), [connected assistants page](../connectedAssistants.md) |
 | Agent experience ([F45](stories.md#story-f45--sign-up-in-my-agents-conversation)–[F47](stories.md#story-f47--reach-my-agent-from-a-plugin-a-catalog-or-an-update-text)) | [Agent signup conversation](../agentSignup.md), [connector tools](../connectorTools.md), [agent entry: plugins, skill catalog and update links](../agentEntry.md) |
 | Staff console screens ([F48](stories.md#story-f48--sign-in-to-the-staff-console-as-myself)–[F50](stories.md#story-f50--do-staff-work-in-the-console-panels)) | [Staff sign-in](../staffSignIn.md), [console navigation](../consoleNavigation.md), [console workspace](../consoleWorkspace.md) |
+| Staff console analysis panels ([F52](stories.md#story-f52--read-and-run-the-console-analysis-panels)) | [Console analysis panels](../consolePanels.md) |
 
 The product directory also records provider, rollout, and human requirements
 that need separate evidence. The [model index](../models/README.md) links
