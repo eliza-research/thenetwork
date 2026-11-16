@@ -30,10 +30,8 @@ pure val initial: ProfileMemberships = { inSlop: true, inFriends: true }
 pure def canReadProfile(s: ProfileMemberships, app: ProfileApp, kind: ProfileReadKind): bool = true
 pure def readProfile(s: ProfileMemberships, app: ProfileApp, kind: ProfileReadKind): ProfileTurn =
   val hasMembership = if (app == Slop) s.inSlop else s.inFriends
-  val disclosure = if (kind == ReadOwn and hasMembership)
-    List(if (app == Slop) SlopProfile else FriendsProfile)
-    else List()
-  { state: s, out: disclosure }
+  { state: s, out: if (kind == ReadOwn and hasMembership)
+    List(if (app == Slop) SlopProfile else FriendsProfile) else List() }
 
 pure def stepReadingKeepsMemberships(before: ProfileMemberships, via: str, after: ProfileMemberships): bool =
   via == "readProfile" implies after == before

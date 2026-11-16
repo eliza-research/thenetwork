@@ -11,7 +11,7 @@ export type ProfileShown = "SlopProfile" | "FriendsProfile";
 export interface ProfileMemberships { inSlop: boolean; inFriends: boolean }
 /** Story: See only my saved profile for the app I use / A read returns only this member's current profile for the requested app (spec/savedProfileJourney.md:14) */
 export interface ProfileTurn { state: ProfileMemberships; out: ProfileShown[] }
-/** Story: See only my saved profile for the app I use / A displayed profile uses the saved location and the signed-turn size limit (spec/savedProfileJourney.md:57) */
+/** Story: See only my saved profile for the app I use / A displayed profile uses the saved location and the signed-turn size limit (spec/savedProfileJourney.md:55) */
 export type LocationLabel = "NeighborhoodLabel" | "BayAreaLabel" | "NewYorkLabel" | "NoLocationLabel";
 
 /** One variant per transition in the spec. */
@@ -19,7 +19,7 @@ export type Event =
   | { type: "readProfile"; app: ProfileApp; kind: ProfileReadKind }
   | { type: "leaveProfileApp"; app: ProfileApp };
 
-/** Story: See only my saved profile for the app I use / A displayed profile uses the saved location and the signed-turn size limit (spec/savedProfileJourney.md:57) */
+/** Story: See only my saved profile for the app I use / A displayed profile uses the saved location and the signed-turn size limit (spec/savedProfileJourney.md:55) */
 export const savedProfileReplyLimit: number = 1600;
 /** Story: See only my saved profile for the app I use / A read returns only this member's current profile for the requested app (spec/savedProfileJourney.md:14) */
 export const initial: ProfileMemberships = { inSlop: true, inFriends: true };
@@ -47,48 +47,47 @@ export function canReadProfile(s: ProfileMemberships, app: ProfileApp, kind: Pro
 export function readProfile(s: ProfileMemberships, app: ProfileApp, kind: ProfileReadKind): ProfileTurn {
   //@ ensures (inv(s) && canReadProfile(s, app, kind)) ==> stepReadingKeepsMemberships(s, "readProfile", \result.state)
   const local_0 = app === "Slop" ? s.inSlop : s.inFriends;
-  const local_1 = kind === "ReadOwn" && local_0 ? [app === "Slop" ? "SlopProfile" : "FriendsProfile"] : ([] as ProfileShown[]);
-  return { state: s, out: local_1 };
+  return { state: s, out: kind === "ReadOwn" && local_0 ? [app === "Slop" ? "SlopProfile" : "FriendsProfile"] : ([] as ProfileShown[]) };
 }
 
-/** Story: See only my saved profile for the app I use / An app leave removes that app's profile from later reads (spec/savedProfileJourney.md:42) */
+/** Story: See only my saved profile for the app I use / An app leave removes that app's profile from later reads (spec/savedProfileJourney.md:40) */
 //@ pure
 export function canLeaveProfileApp(s: ProfileMemberships, app: ProfileApp): boolean {
   return true;
 }
 
-/** Story: See only my saved profile for the app I use / An app leave removes that app's profile from later reads (spec/savedProfileJourney.md:42) */
+/** Story: See only my saved profile for the app I use / An app leave removes that app's profile from later reads (spec/savedProfileJourney.md:40) */
 //@ pure
 export function sometimesKeepsOnlySlop(s: ProfileMemberships): boolean {
   return s.inSlop && !s.inFriends;
 }
 
-/** Story: See only my saved profile for the app I use / An app leave removes that app's profile from later reads (spec/savedProfileJourney.md:42) */
+/** Story: See only my saved profile for the app I use / An app leave removes that app's profile from later reads (spec/savedProfileJourney.md:40) */
 //@ pure
 export function sometimesKeepsOnlyFriends(s: ProfileMemberships): boolean {
   return s.inFriends && !s.inSlop;
 }
 
-/** Story: See only my saved profile for the app I use / An app leave removes that app's profile from later reads (spec/savedProfileJourney.md:42) */
+/** Story: See only my saved profile for the app I use / An app leave removes that app's profile from later reads (spec/savedProfileJourney.md:40) */
 //@ pure
 export function sometimesLeavesBothApps(s: ProfileMemberships): boolean {
   return !s.inFriends && !s.inSlop;
 }
 
-/** Story: See only my saved profile for the app I use / An app leave removes that app's profile from later reads (spec/savedProfileJourney.md:42) */
+/** Story: See only my saved profile for the app I use / An app leave removes that app's profile from later reads (spec/savedProfileJourney.md:40) */
 //@ pure
 export function leaveProfileApp(s: ProfileMemberships, app: ProfileApp): ProfileTurn {
   //@ ensures (inv(s) && canLeaveProfileApp(s, app)) ==> stepReadingKeepsMemberships(s, "leaveProfileApp", \result.state)
   return { state: app === "Slop" ? ({ ...s, inSlop: false } as ProfileMemberships) : ({ ...s, inFriends: false } as ProfileMemberships), out: ([] as ProfileShown[]) };
 }
 
-/** Story: See only my saved profile for the app I use / A displayed profile uses the saved location and the signed-turn size limit (spec/savedProfileJourney.md:57) */
+/** Story: See only my saved profile for the app I use / A displayed profile uses the saved location and the signed-turn size limit (spec/savedProfileJourney.md:55) */
 //@ pure
 export function savedProfileFitsReply(units: number): boolean {
   return units <= savedProfileReplyLimit;
 }
 
-/** Story: See only my saved profile for the app I use / A displayed profile uses the saved location and the signed-turn size limit (spec/savedProfileJourney.md:57) */
+/** Story: See only my saved profile for the app I use / A displayed profile uses the saved location and the signed-turn size limit (spec/savedProfileJourney.md:55) */
 //@ pure
 export function savedProfileLocation(hasNeighborhood: boolean, homeCity: string): LocationLabel {
   return hasNeighborhood ? "NeighborhoodLabel" : (homeCity === "sf" ? "BayAreaLabel" : (homeCity === "nyc" ? "NewYorkLabel" : "NoLocationLabel"));
