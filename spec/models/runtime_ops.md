@@ -8,7 +8,7 @@ An operator needs the backend to complete scheduled work, report failures, and r
 
 Check stored writes, retention, ticks, alerts, backup recovery, and shutdown. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [runtime unit spec](../runtimeUnit.md) generates load, restore, action, save, and adapter follow-up decisions. The shell owns the queue, database advisory locks, and transaction commit.
+The [runtime unit spec](../runtimeUnit.md) generates load, restore, action, save, and adapter follow-up decisions. The VibeLang shell sequences the effects. The store owns the queue, database advisory locks, and transaction commit.
 
 The [backend lifecycle spec](../backendLifecycle.md) drives worker
 reservations and shutdown decisions. The serving shell starts a single

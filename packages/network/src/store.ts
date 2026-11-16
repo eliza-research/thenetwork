@@ -7,7 +7,8 @@
 // The SQL is in packages/network/db/network-state.sql.
 import { fileAt } from "../../core/src/runtime/files.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
-import { initial as initialUnit, step as stepUnit, tickMayEnter, tickMayTryLock } from "../../core/src/generated/runtimeUnit.ts";
+import { tickMayEnter, tickMayTryLock } from "../../core/src/generated/runtimeUnit.ts";
+import { runStoredNetworkUnit } from "../../core/src/vibe/runtimeUnitShell.js";
 import type { ConsentNetwork, NetworkState } from "./network.ts";
 import type { RelayRecord } from "../../engine/src/relay.ts";
 import { emptyRelayState, RELAY_LOG_MAX, type RelayState } from "./relay.ts";
@@ -52,21 +53,13 @@ function storeOf(net: ConsentNetwork, store: NetworkStore | undefined): NetworkS
 }
 
 /** Under the lock: load the newest stored state, run `fn`, save. Another process's saves are never overwritten. */
-async function stored<T>(net: ConsentNetwork, s: NetworkStore, fn: (net: ConsentNetwork) => Promise<T> | T): Promise<T> {
-  // spec/runtimeUnit.md, "Restore a saved snapshot before running and make one save after success"
-  const state = await s.load();
-  let unit = stepUnit(initialUnit, { type: "recordLoad", snapshotFound: !!state });
-  if (unit.phase === "RestoringSnapshot" && state) {
-    net.importState(state);
-    unit = stepUnit(unit, { type: "recordRestore" });
-  }
-  if (unit.phase !== "RunningAction") throw new Error("Network unit needs its current state before running");
-  const out = await fn(net);
-  const saving = stepUnit(unit, { type: "recordAction" });
-  if (saving.phase !== "SavingState") throw new Error("Network unit must finish running before saving");
-  await s.save(net.exportState());
-  if (stepUnit(saving, { type: "recordSave" }).phase !== "StateSaved") throw new Error("Network unit did not finish saving");
-  return out;
+function stored<T>(net: ConsentNetwork, s: NetworkStore, fn: (net: ConsentNetwork) => Promise<T> | T): Promise<T> {
+  return runStoredNetworkUnit({
+    load: () => s.load(),
+    restore: state => net.importState(state),
+    run: () => fn(net),
+    save: () => s.save(net.exportState()),
+  });
 }
 
 /**

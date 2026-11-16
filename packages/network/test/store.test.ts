@@ -12,7 +12,7 @@ import { existsSync } from "node:fs";
 import { DATA_DIR } from "../../../scripts/synthetic/common.ts";
 import { DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { friendFactory, nycPersonas } from "../harness/index.ts";
-import { ConsentNetwork, consoleRows, MemoryStore, NETWORK_STATE_VERSION, PgStore, runStored, runTick, type NetworkOptions, type NetworkState } from "../src/index.ts";
+import { ConsentNetwork, consoleRows, MemoryStore, NETWORK_STATE_VERSION, PgStore, runStored, runTick, type NetworkOptions, type NetworkState, type NetworkStore } from "../src/index.ts";
 import { Mini, type Spec } from "./mini.ts";
 
 const T = 600_000;
@@ -250,6 +250,25 @@ describe.skipIf(!pgAvailable)("PgStore", () => {
     w.clock.set(now);
     expect(await runTick(net, undefined, now)).toBe(true);
     expect((await a.load())!.lastTick).toBe(now);
+
+    const advance = () => net.importState({ ...net.exportState(), lastTick: now + HOUR });
+    const actionFailure = new Error("action failed");
+    await expect(runStored(net, b, () => {
+      advance();
+      throw actionFailure;
+    })).rejects.toBe(actionFailure);
+    expect((await a.load())!.lastTick).toBe(now);
+
+    const saveFailure = new Error("transaction failed");
+    const failingStore: NetworkStore = {
+      load: () => b.load(),
+      save: state => b.save(state, async () => { throw saveFailure; }),
+      withTickLock: fn => b.withTickLock(fn),
+      withLock: fn => b.withLock(fn),
+    };
+    await expect(runStored(net, failingStore, advance)).rejects.toBe(saveFailure);
+    expect((await a.load())!.lastTick).toBe(now);
+    expect(await runStored(net, b, n => n.exportState().lastTick)).toBe(now);
   }, T);
 
   test("participations: written on save, rewritten after a re-roll and after an under-13 decline", async () => {
