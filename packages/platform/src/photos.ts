@@ -36,6 +36,10 @@ import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { S3Client, type SQL } from "bun";
 import { ratingMaxBytes, ratingMaxPhotos, uploadMaxBytes, uploadMaxPerPerson, photoSlotsFull } from "../../core/src/generated/photoPolicy.ts";
+import {
+  canCheckReturnedScore, canCheckWrittenScore, canRecordScoreRemoval, canRecordScoreWrite, canReceiveScore, canSupplyPhotos,
+  initial as ratingInitial, step as stepRating,
+} from "../../core/src/generated/photoRating.ts";
 import { canBeMatched } from "../../core/src/policy.ts";
 import { PgPeopleStore } from "./pg-store.ts";
 import type { AppId } from "./apps.ts";
@@ -503,29 +507,37 @@ export class PhotoService {
     const rater = this.o.rater;
     if (!rater || !this.o.storage) return { rated: false };
     const who = await this.ratingRefusal(personId, app);
-    if (who) return { rated: false, refused: who };
+    let attempt = stepRating(ratingInitial, { type: "screenSubject", eligible: who === undefined });
+    if (!canSupplyPhotos(attempt)) return { rated: false, refused: who };
     const person = await this.o.people.getPerson(personId);
     const subject: RatingSubject = { age: person!.lowestAge!, ageVerified: true };
     const rows = (await this.o.meta.list(personId, app)).filter(r => r.bytes <= RATER_MAX_BYTES).slice(-RATER_MAX_PHOTOS);
     const photos: { id: string; bytes: Uint8Array }[] = [];
     for (const r of rows) { const bytes = await this.o.storage.get(r.storageKey); if (bytes) photos.push({ id: r.id, bytes }); }
-    if (!photos.length) return { rated: false, refused: "not_found" };
+    attempt = stepRating(attempt, { type: "supplyPhotos", hasPhotos: photos.length > 0 });
+    if (!canReceiveScore(attempt)) return { rated: false, refused: "not_found" };
     const s = await rater.rate(subject, photos);
-    if (!s) return { rated: false };
+    attempt = stepRating(attempt, { type: "receiveScore", hasScore: !!s });
+    if (!s || !canCheckReturnedScore(attempt)) return { rated: false };
     const ids = photos.map(p => p.id);
     const changed = await this.ratingRefusal(personId, app, ids);
-    if (changed) {
+    attempt = stepRating(attempt, { type: "checkReturnedScore", eligible: changed === undefined });
+    if (!canRecordScoreWrite(attempt)) {
       this.o.log?.(`[photos] rating discarded: ${changed} while the rater ran`);
       return { rated: false, refused: changed };
     }
     await this.o.onRating?.(personId, app, s, subject);
+    attempt = stepRating(attempt, { type: "recordScoreWrite" });
+    if (!canCheckWrittenScore(attempt)) return { rated: false };
     const late = await this.ratingRefusal(personId, app, ids);
-    if (late) {
+    attempt = stepRating(attempt, { type: "checkWrittenScore", eligible: late === undefined });
+    if (canRecordScoreRemoval(attempt)) {
       this.o.log?.(`[photos] rating dropped: ${late} while it was written`);
       await this.o.onRemoved?.(personId, app, ids[0]!);
-      return { rated: false, refused: late };
+      attempt = stepRating(attempt, { type: "recordScoreRemoval" });
     }
-    return { rated: true };
+    const rated = attempt.phase === "RatingKept";
+    return late === undefined ? { rated } : { rated, refused: late };
   }
 
   /** Selected-item path only. Revalidates owner/app/adult/live membership and immutable bytes.

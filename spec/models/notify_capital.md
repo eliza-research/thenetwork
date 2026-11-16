@@ -8,7 +8,9 @@ A member needs to receive each relevant update once and get credit for confirmed
 
 Check notification projection and deduplication and the network capital ledger. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-Production uses the generated [notification delivery rules](../notificationDelivery.md) for timing, caps, and surface scoring.
+Production uses the generated [notification delivery rules](../notificationDelivery.md) for timing, caps, and surface scoring, and the [notification dispatch machine](../notificationDispatch.md) for digest rechecks, recording and queued relevance.
+
+This model assumes the store rejects a digest when any item changed after the re-read. The current Postgres store deduplicates by delivery ID in a transaction and marks items that remain unnotified. The scheduler also assumes the recipient still exists when rebuilding a partial digest. The generated machine takes the store's recording result as given and preserves those runtime boundaries.
 
 Imported from `quint/notify_capital.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 

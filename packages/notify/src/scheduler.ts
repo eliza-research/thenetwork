@@ -14,6 +14,9 @@
 
 import { createHash, randomInt } from "node:crypto";
 import { inboxDueAt, removeProactiveItems } from "../../core/src/generated/notificationDelivery.ts";
+import {
+  canRecordDigest, inboxItemExpired, inboxItemStillPending, initial as digestInitial, step as stepDigest,
+} from "../../core/src/generated/notificationDispatch.ts";
 import { isQuietAt } from "../../blooio/src/quiet-hours.ts";
 import { composeText } from "./compose.ts";
 import type { NotifyStore } from "./store.ts";
@@ -177,16 +180,18 @@ export class Notifier {
     const sent: SendPlan[] = [];
     const cancelled: string[] = [];
     for (const p of sends) {
-      const fresh = (await this.store.getItems(p.itemIds)).filter(i => i.seenAt === undefined && i.notifiedAt === undefined);
-      if (fresh.length === 0) { cancelled.push(p.deliveryId); continue; }
-      const final = fresh.length === p.itemIds.length ? p : await this.build((await this.directory.get(p.personId))!, fresh, now);
+      const fresh = (await this.store.getItems(p.itemIds)).filter(i => inboxItemStillPending(i.seenAt !== undefined, i.notifiedAt !== undefined));
+      const refreshed = stepDigest(digestInitial, { type: "rereadItems", plannedCount: p.itemIds.length, remainingCount: fresh.length });
+      if (!canRecordDigest(refreshed)) { cancelled.push(p.deliveryId); continue; }
+      const final = refreshed.phase === "ReusingDigest" ? p : await this.build((await this.directory.get(p.personId))!, fresh, now);
       const target: Surface = final.delivery.mode === "deeplink" ? final.delivery.assistant : final.channel;
       // Record first: a crash after this and before enqueue loses one text, never sends two.
       const recorded = await this.store.recordDelivery({
         deliveryId: final.deliveryId, personId: final.personId, itemIds: final.itemIds, target,
         countsTowardCap: final.countsTowardCap, sentAt: now,
       });
-      if (!recorded) { cancelled.push(final.deliveryId); continue; }
+      const ready = stepDigest(refreshed, { type: "recordDigest", recorded });
+      if (ready.phase !== "EnqueueingDigest") { cancelled.push(final.deliveryId); continue; }
       await sink.enqueue({
         idempotencyKey: final.deliveryId,
         channel: final.channel,
@@ -196,7 +201,7 @@ export class Notifier {
         timeZone: final.timeZone,
         briefId: final.deliveryId,
       });
-      sent.push(final);
+      if (stepDigest(ready, { type: "enqueueDigest" }).phase === "DigestQueued") sent.push(final);
     }
     return { sent, cancelled, holds };
   }
@@ -207,10 +212,18 @@ export class Notifier {
    */
   async stillNeeded(deliveryId: string, now: number): Promise<boolean> {
     const d = await this.store.getDelivery(deliveryId);
-    if (!d || deliveryIdFor(d.personId, d.itemIds) !== deliveryId) return false;
+    const queued = stepDigest(digestInitial, {
+      type: "readQueuedDigest",
+      sameDigest: !!d && deliveryIdFor(d.personId, d.itemIds) === deliveryId,
+    });
+    if (queued.phase !== "ReadingQueuedItems" || !d) return false;
     const items = await this.store.getItems(d.itemIds);
-    if (items.length !== d.itemIds.length || items.some(i => i.expiresAt !== undefined && i.expiresAt <= now)) return false;
-    return items.some(i => i.seenAt === undefined);
+    return stepDigest(queued, {
+      type: "revalidateQueuedItems",
+      allPresent: items.length === d.itemIds.length,
+      anyExpired: items.some(i => inboxItemExpired(i.expiresAt !== undefined, i.expiresAt ?? 0, now)),
+      anyUnseen: items.some(i => i.seenAt === undefined),
+    }).phase === "QueuedDigestNeeded";
   }
 
   private async acted(deliveryId: string | undefined, on: Surface, personId: string, now: number) {
