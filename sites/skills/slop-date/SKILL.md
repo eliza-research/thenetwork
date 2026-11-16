@@ -7,7 +7,7 @@ metadata:
   app: slop
   site: https://slop.date
   operator: Eliza Research Corporation
-  version: "1.2.5"
+  version: "1.2.6"
 ---
 
 # slop.date
@@ -73,6 +73,17 @@ or adjust permissions as a signup step. In an ordinary signup request, state the
 unsupported capability simply: "Signup isn't supported in this agent yet."
 Give technical diagnostics only when the person explicitly asks for them.
 
+## A forwarded invitation
+
+If the person supplies a link starting with `https://slop.date/SKILL.md#invite=`,
+it can attribute their new membership to the member who forwarded it. Fetch only
+the `/SKILL.md` path. Keep the 43-character invitation value from the fragment
+private and only for this signup. Ask if the person wants to use the invitation
+when you ask for their approval of the profile and text consent. Never repeat the
+link or value in your reply, logs or stored notes. Never ask for a link after the
+site shows an existing membership. The invitation does not replace phone
+verification, age eligibility or consent.
+
 ## Join in this conversation
 
 1. GET `/api/app`. Confirm `id` is `slop`. Keep the returned `consent.text` and
@@ -110,8 +121,8 @@ Give technical diagnostics only when the person explicitly asks for them.
    session cookie in the private jar. On rejection explain it; only the person
    can authorize a new code request. On success, GET `/api/me` with that jar.
 7. Check the reply and confirm its app is slop; never submit across apps.
-   If a membership already exists, do not POST Join
-   again to overwrite it: that endpoint does not update existing profiles. Read
+   If a membership already exists in a state other than `invited`, use the
+   existing account. The Join request does not update existing profiles. Read
    the existing account as described below and report its actual state. Do not
    claim a newly drafted profile was saved over an existing membership.
 8. For a new membership, require `canJoin:true` and the person's explicit profile
@@ -129,6 +140,10 @@ Give technical diagnostics only when the person explicitly asks for them.
    is missing/ambiguous, ask. Do not infer it from a ZIP or neighbourhood, or select
    an incorrect supported region for someone elsewhere.
    Use `consent:{"sms":true,"version":"<current consent.version>","wording":"<current consent.text>"}`.
+   Include `inviteToken` in that JSON body only when the person supplied and
+   approved the exact app's invitation. If the site returns `invalid_invitation`,
+   say the invitation is unavailable. Do not submit again without the person's
+   approval for a new link or, where joining is open, an ordinary join.
    Never send placeholders or guessed fields. Do not silently omit the profile.
 9. After Join succeeds, GET `/api/me` again, then GET `/api/me/export` using the
    SAME private session. The export is this person's own app data: parse it in

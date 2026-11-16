@@ -83,6 +83,10 @@ export interface SimMeta {
   plan?: PlanMeta;
   /** Outbound only, on a "crew_offer": the crew being offered. The persona opts in ("yes") or out. */
   crew?: { crewId: string; activity?: string };
+  /** Issuer-owned member invitation URL in the requester's own direct reply. Never a general URL exemption. */
+  approvedInviteLink?: string;
+  /** Exact invitees whose verified join notices are present in this outbound message. */
+  invitationJoins?: readonly MemberId[];
   [k: string]: unknown;
 }
 

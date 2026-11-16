@@ -60,6 +60,8 @@ export interface InboundTurn {
   consent?: {state: "opted_in" | "opted_out"; scope: "all" | "app"; app: NetworkAppId | null; at: number};
   /** The fixed confirmation of a consent change this turn recorded (STOP, leave): sent even if a later step of the turn fails. */
   confirmation?: {id: string; body: string};
+  /** This unit attempted to store its own complete invitation reply. The row determines whether it committed. */
+  invitationCompletion?: true;
   /** Undo work committed outside the turn's own transactions (the one-time notice row) when the turn ends without an answer. */
   onFail?: Array<() => Promise<unknown>>;
 }
@@ -126,6 +128,8 @@ export class Inbox {
     (renew as {unref?: () => void}).unref?.();
     try {
       const body = await this.turns.run(turn, () => run(turn));
+      const invitation = await this.committedInvitation(turn);
+      if (invitation) return {status: 200, body: invitation};
       const rows = await this.o.sql`update platform.inbound set status='done',response=${body}::jsonb,handled_at=${new Date(this.o.clock.now())},
         handled_order=nextval('platform.inbound_handled_seq'),event=null,sender=null,app_id=${turn.app ?? null},member_id=${turn.memberId ?? null} where id=${id} and status='processing' returning id`;
       // spec/signedInbox.md, "Completion and compliance recovery depend on the stored row"
@@ -133,6 +137,8 @@ export class Inbox {
       if (completed.phase !== "Finished") { this.o.log(`[alert] signed turn ${id} lost its claim before completion (swept or resolved by staff)`); throw new Error("Turn ownership changed before completion"); }
       return {status:200,body};
     } catch (e) {
+      const invitation = await this.committedInvitation(turn);
+      if (invitation) return {status: 200, body: invitation};
       const failed = stepSignedInbox(claimed, { type: "handleFailure", compliance: keyword });
       if (failed.phase === "CheckingRescue") {
         const rescued = await this.rescueCompliance(id, turn, failed).catch(() => undefined);
@@ -144,6 +150,12 @@ export class Inbox {
     } finally {
       clearInterval(renew);
     }
+  }
+
+  private async committedInvitation(turn: InboundTurn): Promise<TurnResponse | undefined> {
+    if (!turn.invitationCompletion) return;
+    const [row] = await this.o.sql`select response from platform.inbound where id=${turn.id} and status='done'`;
+    return row?.response as TurnResponse | undefined;
   }
 
   private async undo(turn: InboundTurn) {
@@ -182,9 +194,20 @@ export class Inbox {
   }
 
   /** Persist only causal replies in the same transaction as their Network effects. */
-  async collect(tx: SQL, replies: CollectedReply[]): Promise<void> {
+  async collect(tx: SQL, replies: CollectedReply[], invitation = false): Promise<void> {
     const turn = this.currentTurn();
     if (!turn || !replies.length) return;
+    if (invitation) {
+      if (!turn.app || !turn.memberId || replies.length !== 1 || replies[0]!.kind !== "reply") throw new Error("Invitation collection requires one verified member reply");
+      turn.invitationCompletion = true;
+      const response: TurnResponse = {outcome: "handled", replies: replies.map(reply => reply.body), replyIds: replies.map(reply => reply.id),
+        delivery: "collected", replyKind: "reply", accountEligible: true, app: turn.app, memberId: turn.memberId, reason: "member_invitation"};
+      const rows = await tx`update platform.inbound set status='done',response=${response}::jsonb,replies=(${{items: replies}}::jsonb->'items'),
+        handled_at=${new Date(this.o.clock.now())},handled_order=nextval('platform.inbound_handled_seq'),event=null,sender=null,
+        app_id=${turn.app},member_id=${turn.memberId} where id=${turn.id} and status='processing' and replies='[]'::jsonb returning id`;
+      if (rows.length !== 1) throw new Error("Invitation turn lost its claim before completion");
+      return;
+    }
     const rows = await tx`update platform.inbound set replies=replies || (${{items:replies}}::jsonb->'items'),app_id=${turn.app ?? null},member_id=${turn.memberId ?? null} where id=${turn.id} and status='processing' returning id`;
     if (!rows.length) throw new Error("Turn was sealed before reply collection");
   }

@@ -9,6 +9,23 @@ import { prefillJoin } from "./prefill.ts";
 import { mountAuth } from "./auth.ts";
 import { $, busy, fill, formatDate, message, plainText, ready, setError, showStep, when } from "./ui.ts";
 
+const pendingInviteKey = "network.join.invite";
+const inviteTokenPattern = /^[A-Za-z0-9_-]{43}$/;
+
+/** The fragment stays on this origin. Read any Cloud handoff state once and clear it. */
+function readInviteToken(): string | undefined {
+  const fragment = location.hash.startsWith("#invite=") ? location.hash.slice("#invite=".length) : undefined;
+  if (fragment !== undefined) history.replaceState(history.state, "", `${location.pathname}${location.search}`);
+  let saved: string | null = null;
+  try {
+    saved = sessionStorage.getItem(pendingInviteKey);
+    sessionStorage.removeItem(pendingInviteKey);
+  } catch { /* Phone-code signup can keep the invitation in this page's memory. */ }
+  const token = fragment ?? saved;
+  if (token === null) return undefined;
+  return inviteTokenPattern.test(token) ? token : "";
+}
+
 function start(root: HTMLElement): void {
   showStep(root, "phone");
 }
@@ -41,6 +58,7 @@ function route(root: HTMLElement, me: Me, inviteOnly: boolean): void {
 }
 
 export async function mountJoin(root: HTMLElement): Promise<void> {
+  let inviteToken = readInviteToken();
   const profile = $(root, 'form[data-form="profile"]') as HTMLFormElement | null;
   // Block native GET submission even while the optional draft is loading.
   profile?.addEventListener("submit", event => event.preventDefault());
@@ -55,9 +73,10 @@ export async function mountJoin(root: HTMLElement): Promise<void> {
     generation++; loading = false; account = undefined; edited.clear(); profile?.reset();
   };
   const prefill = async (me: Me) => {
-    if (!me.canJoin || !["friends", "ntwrk"].includes(me.app) || !me.signupView || loading || !profile) return;
+    if (!me.canJoin || !me.signupView || loading || !profile) return;
     if (account && account !== me.signupView) resetAccount();
     account = me.signupView;
+    if (!["friends", "ntwrk"].includes(me.app)) return;
     const requestGeneration = generation, requestAccount = account;
     loading = true;
     try {
@@ -112,6 +131,12 @@ export async function mountJoin(root: HTMLElement): Promise<void> {
       start(root);
       flowError(root, message(root, again.error));
     }
+  }, () => {
+    if (inviteToken === undefined) return true;
+    try {
+      sessionStorage.setItem(pendingInviteKey, inviteToken);
+      return true;
+    } catch { return false; }
   });
 
   const form = $(root, 'form[data-form="profile"]') as HTMLFormElement | null;
@@ -143,6 +168,7 @@ export async function mountJoin(root: HTMLElement): Promise<void> {
     const interests = f.getAll("interests").map(String).filter(Boolean);
     const body = {
       ...(account ? { signupView: account } : {}),
+      ...(inviteToken !== undefined ? { inviteToken } : {}),
       firstName,
       age,
       ...(str("homeCity") ? { homeCity: str("homeCity") as "nyc" | "sf" } : {}),
@@ -156,9 +182,11 @@ export async function mountJoin(root: HTMLElement): Promise<void> {
     const res = await busy(form, () => api.join(body));
     if (submitGeneration !== generation) return;
     if (res.ok) {
+      inviteToken = undefined;
       generation++; loading = false;
       // Deliberate successful Join ends the draft, without changing the normal Join contract.
-      if (submitAccount) void fetch("/oauth/signup-draft/discard", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ signupView: submitAccount }) }).catch(() => {});
+      if (submitAccount && app.ok && ["friends", "ntwrk"].includes(app.data.id))
+        void fetch("/oauth/signup-draft/discard", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ signupView: submitAccount }) }).catch(() => {});
       fill(root, { firstName: res.data.membership?.firstName ?? firstName });
       const done = $(root, '[data-step="done"]');
       if (new URLSearchParams(location.search).get("via") === "agent" && done && !done.querySelector("[data-agent-return]")) {

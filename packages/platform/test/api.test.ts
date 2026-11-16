@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { APPS, type AppId, type AppInfo } from "../src/apps.ts";
 import { createPublicApi, type PublicApi, type PublicApiOptions } from "../src/api.ts";
 import { detectKeyword, keywordEvent, lastEvents, resolveConsent, stopScope } from "../src/consent.ts";
+import { InvitationUnavailable } from "../src/invite-links.ts";
 import type { OtpProvider } from "../src/otp.ts";
 import { PgPeopleStore } from "../src/pg-store.ts";
 import { MemoryPeopleStore, type PeopleStore } from "../src/store.ts";
@@ -96,6 +97,62 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
     expect((await call(c, "peon", "GET", "/api/me", undefined, cookie.replace("sid_slop", "sid_peon"))).status).toBe(401);
     expect((await call(c, "slop", "POST", "/api/auth/logout", {}, cookie)).status).toBe(200);
     expect((await call(c, "slop", "GET", "/api/me", undefined, cookie)).status).toBe(401);
+  });
+
+  test("a member invitation reaches only an approved new join on its verified app", async () => {
+    const token = "R".repeat(42) + "Q";
+    const referral = { tokenHash: "test-hash", inviterMemberId: "ntwrk_inviter" };
+    const checked: AppId[] = [];
+    const attributed: unknown[] = [];
+    let invitationLost = true;
+    const c = make(store, {
+      findInvitation: async (app, value) => {
+        checked.push(app);
+        return app === "ntwrk" && value === token ? referral : undefined;
+      },
+      commitReferredJoin: async ({ app, person, membership, e164, referral }) => {
+        expect(await store.getMembership(person.id, app.id)).toBeUndefined();
+        expect(await store.lastConsent(e164, app.id)).toEqual({});
+        if (invitationLost) throw new InvitationUnavailable();
+        await store.putMembership(membership);
+        await store.addConsent({ e164, app: app.id, state: "opted_in", source: "web_form", at: membership.joinedAt! });
+        await store.attachPerson(e164, person.id);
+        attributed.push(referral);
+      },
+      onJoin: () => { throw new Error("Referred signup uses only its commit hook"); },
+    });
+    const body = { firstName: "Sam", age: 29, consent: consentOf("ntwrk"), inviteToken: token };
+    expect((await call(c, "ntwrk", "POST", "/api/join", body)).status).toBe(401);
+    const phone = newPhone();
+    const cookie = await login(c, "ntwrk", phone);
+    expect((await call(c, "ntwrk", "GET", "/api/me", undefined, cookie)).body).toMatchObject({ reason: "invite_only", canJoin: false });
+    expect((await call(c, "ntwrk", "POST", "/api/join", { ...body, consent: consentOf("slop") }, cookie)).body.error).toBe("consent_wording");
+    expect(checked).toEqual([]);
+
+    const slop = await login(c, "slop", phone);
+    expect((await call(c, "slop", "POST", "/api/join", { ...body, consent: consentOf("slop") }, slop)).body).toEqual({ ok: false, error: "invalid_invitation" });
+    expect(await c.api.accounts.personFor(phone)).toBeUndefined();
+    expect(await c.api.accounts.optedIn("slop", phone)).toBe(false);
+
+    expect((await call(c, "ntwrk", "POST", "/api/join", body, cookie)).body).toEqual({ ok: false, error: "invalid_invitation" });
+    expect((await call(c, "ntwrk", "GET", "/api/me", undefined, cookie)).body).toMatchObject({ canJoin: false, membership: null, smsOptedIn: false });
+    invitationLost = false;
+    const result = await call(c, "ntwrk", "POST", "/api/join", body, cookie);
+    expect(result.status).toBe(200);
+    expect(result.body.membership).toMatchObject({ state: "active", firstName: "Sam" });
+    expect(result.text).not.toContain(token);
+    expect(result.text).not.toContain(referral.inviterMemberId);
+    expect(attributed).toEqual([referral]);
+    expect((await call(c, "ntwrk", "POST", "/api/join", { ...body, inviteToken: "unavailable", firstName: "Changed" }, cookie)).body).toEqual(result.body);
+    expect(checked).toEqual(["slop", "ntwrk", "ntwrk"]);
+    expect(attributed).toEqual([referral]);
+
+    const underage = newPhone();
+    const minor = await login(c, "slop", underage);
+    expect((await call(c, "slop", "POST", "/api/join", { ...body, age: 12, consent: consentOf("slop") }, minor)).body.error).toBe("under_age");
+    expect((await join(c, "slop", minor, 29)).body.error).toBe("under_age");
+    expect(await c.api.accounts.personFor(underage)).toBeUndefined();
+    expect(attributed).toEqual([referral]);
   });
 
   test("otp/start: the same status and body for a known and an unknown phone, and at least the minimum time", async () => {

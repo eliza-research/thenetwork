@@ -42,6 +42,10 @@ import {
   step as stepMemberRequest, waitingMemberRequest, type MemberRequestFlow,
 } from "../../core/src/generated/memberRequest.ts";
 import {
+  defaultMemberInviteCapacity, memberInviteCanAttribute, memberInviteCanIssue, memberInviteLinkCanBeShared,
+  memberInviteUsesAllowance, memberInviteWithinWindow, memberMayRequestInvite,
+} from "../../core/src/generated/memberInvitation.ts";
+import {
   chooseCheckIn, confirmationChanges, confirmationWindowHours as OPT_OUT_HOURS, countAttendance, counterpartConfirmsAttendance,
   deliveredInvitee, feedbackDelayHours, initial as initialMeetingSettlement, organizerCanVerify, requestAttendanceSatisfied,
   restoreAttendance, settlementDelayDays, silentConfirmationDue, step as stepMeetingSettlement,
@@ -85,6 +89,7 @@ import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS } from "@thene
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
 import { ageAnswer, availabilityTags, checkinTags, classify, explicitRepeatRequest, extractProfile, feedbackOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, type Classified, type TimeOption } from "./classify.ts";
 import { mergeConsent, type Understand, type Understood } from "./extract.ts";
+import { directInviteVouch, isMemberInvitationLink, type MemberInviteRequest, type MemberInviteResult } from "./invitation.ts";
 import { brandOf, copy, copyFor, type Copy, whenPhrase } from "./copy.ts";
 import { APPS, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { meetingSpot, nearbyVenues, NEIGHBORHOOD, NEIGHBORHOODS, neighborhood, travelMinutes, VENUES, type Venue } from "./geo.ts";
@@ -218,6 +223,8 @@ export interface NetworkOptions {
   growth?: boolean;
   /** Invites per member per 30 days (default 3). */
   invitesPerMonth?: number;
+  /** Stage a member's shareable invite with the current service transaction. Never contacts the invitee. */
+  issueMemberInvite?: (input: MemberInviteRequest) => MemberInviteResult | undefined;
   /** Growth asks per day across the network (default 8). */
   maxGrowthAsksPerDay?: number;
   /** Open a quiet standing request for a specific want named during onboarding (default false). */
@@ -522,6 +529,8 @@ interface SendOpts {
   relayFrom?: MemberId;
   /** A number swap both members asked for (relay.ts): the one contact value the leak guard lets through in this text. */
   relayContact?: string;
+  /** One server-issued invitation URL on its own line in a direct reply to its requester. */
+  memberInviteLink?: string;
 }
 type SendHook =
   | { t: "interview" } | { t: "age" } | { t: "suggested"; venues: string[] } | { t: "retry_found"; oppId: string }
@@ -672,8 +681,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** The app this Network serves, and its member-facing copy. */
   readonly app: AppInfo;
   private readonly copy: Copy;
-  private opts: Required<Omit<NetworkOptions, "app" | "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "plansConfig" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "allowedCategories" | "hooks" | "onPosting">>
-    & Pick<NetworkOptions, "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "hooks" | "onPosting">;
+  private opts: Required<Omit<NetworkOptions, "app" | "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "plansConfig" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "allowedCategories" | "hooks" | "onPosting" | "issueMemberInvite">>
+    & Pick<NetworkOptions, "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "hooks" | "onPosting" | "issueMemberInvite">;
   /** The categories this app may start opportunities in (ALLOWED_CATEGORIES). */
   readonly allowedCategories: ReadonlySet<Category>;
   private pcfg: PlansConfig;
@@ -685,10 +694,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.opts = {
       seed: opts.seed ?? 1, probes: opts.probes ?? true, selective: opts.selective ?? true, maxNewPerDay: opts.maxNewPerDay ?? 20,
       minScore: opts.minScore ?? 0, minKnowledge: opts.minKnowledge ?? 2, minWantMet: opts.minWantMet ?? 0.8, minResponsiveness: opts.minResponsiveness ?? 0.6, runHour: opts.runHour ?? 9, growth: opts.growth ?? true,
-      invitesPerMonth: opts.invitesPerMonth ?? 3, maxGrowthAsksPerDay: opts.maxGrowthAsksPerDay ?? 8, onboardingRequests: opts.onboardingRequests ?? false,
+      invitesPerMonth: opts.invitesPerMonth ?? defaultMemberInviteCapacity, maxGrowthAsksPerDay: opts.maxGrowthAsksPerDay ?? 8, onboardingRequests: opts.onboardingRequests ?? false,
       review: opts.review ?? "human", reviewSlaHours: opts.reviewSlaHours ?? 12, matchingEnabled: opts.matchingEnabled ?? true,
       engine: opts.engine, onEngineRun: opts.onEngineRun, store: opts.store, onLedger: opts.onLedger, capital: opts.capital, plans: opts.plans ?? true,
       understand: opts.understand, onAgeStated: opts.onAgeStated, engineLLM: opts.engineLLM, pack: opts.pack, hooks: opts.hooks, onPosting: opts.onPosting,
+      issueMemberInvite: opts.issueMemberInvite,
     };
     this.allowedCategories = new Set(opts.allowedCategories ?? ALLOWED_CATEGORIES[this.app.id] ?? ALLOWED_CATEGORIES.ntwrk!);
     this.pcfg = resolvePlans(opts.plansConfig ?? {});
@@ -866,6 +876,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (c.abuse.length && !mcp && this.swapAsk(m, c, body)) return "open" as const;
     if (c.abuse.length && !this.handleAbuse(m, c, body)) return;
 
+    if (this.opts.issueMemberInvite && !mcp && !c.abuse.length) {
+      const vouch = directInviteVouch(body);
+      if (vouch) return this.issueInviteLink(m, msg.id, vouch);
+    }
+
     // peon (#9): a job post by text, read back and saved only on the manager's yes (rules only, never an open-turn LLM output).
     if (this.opts.hooks?.postings && this.postingTurn(m, body)) return;
 
@@ -935,7 +950,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     const lone = /^\W*([A-Z][a-z]+)\W*$/.exec(body)?.[1];
     const loneName = lone && !NOT_A_NAME.test(lone) && consentOf(lone).answer === "unclear" ? lone : undefined;
     const friend = c.friendName ?? (aw?.kind === "growth" && !isRequest ? (/\b[Mm]y (?:friend|buddy|pal|coworker|roommate|cousin) ([A-Z][a-z]+)\b/.exec(body)?.[1] ?? loneName) : undefined);
-    if (friend && (c.kind === "invite_friend" || aw?.kind === "growth")) { m.awaiting = undefined; return this.invite(m, friend); }
+    if (friend && (c.kind === "invite_friend" || aw?.kind === "growth") && !this.opts.issueMemberInvite) {
+      m.awaiting = undefined;
+      return this.invite(m, friend);
+    }
     if (aw?.kind === "growth") m.awaiting = undefined; // they moved on; don't swallow what they said
     // A profile answer teaches us about the member. A direct ask can move past the initial interview.
     const directRequest = c.kind === "plans_request" || (!mcp && c.kind === "people_request" && c.directPeopleAsk === true);
@@ -3056,15 +3074,38 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   private canInvite(m: MemberState) {
     // Vouch capacity (NC), read at invite time; the floor without a capital reader is invitesPerMonth.
-    const limit = this.opts.capital ? this.opts.capital.vouchCapacity(m.id, this.now()) : this.opts.invitesPerMonth;
-    return !m.minor && this.trust.ok(m.id) && !this.reportHeld(m.id) && this.now() >= m.invitesBlockedUntil && m.invites.filter(t => this.now() - t < 30 * DAY).length < limit;
+    const now = this.now();
+    const limit = this.opts.capital ? this.opts.capital.vouchCapacity(m.id, now) : this.opts.invitesPerMonth;
+    const record = this.record(m.id);
+    const adult = !m.minor && !m.minorSignal && canBeMatched(this.ageOf(m));
+    const accountEligible = !!record && !m.account && !["invited", "removed"].includes(record.accountStatus ?? "");
+    const used = m.invites.filter(t => memberInviteWithinWindow(now - t)).length;
+    return memberMayRequestInvite(adult, accountEligible, !m.optedOut, this.trust.ok(m.id) && !this.reportHeld(m.id), now, m.invitesBlockedUntil, used, limit);
   }
 
-  /**
-   * Growth asks and invites are on, and this Network can send an invite link (NetworkContext.invite).
-   * Without one (the production service today) no text offers or claims an invite link.
-   */
+  /** Only the simulator automatically offers growth invitations. The production issuer serves direct requests. */
   private get invitesWork(): boolean { return this.opts.growth && !!this.ctx.invite; }
+
+  private issueInviteLink(m: MemberState, messageId: string, vouch: Pick<MemberInviteRequest, "firstName" | "relationship">) {
+    if (!memberInviteCanIssue(this.memberReply && this.replyTo === m.id, this.canInvite(m), vouch.relationship)) {
+      this.send(m, this.copy.inviteUnavailable, { type: "info" }, "reply");
+      return;
+    }
+    const at = this.now();
+    const result = this.opts.issueMemberInvite?.({ inviterId: m.id, messageId, at, ...vouch });
+    if (!result || (result.status === "issued" && !isMemberInvitationLink(this.app, result.url))) {
+      this.send(m, this.copy.inviteUnavailable, { type: "info" }, "reply");
+      return;
+    }
+    if (result.status === "review") this.send(m, this.copy.inviteInReview, { type: "info" }, "reply");
+    else {
+      const sent = this.send(m, this.copy.forwardInvite(result.url), { type: "info" }, "reply", { memberInviteLink: result.url });
+      if (sent !== "sent") return;
+      this.counters.invitesSent++;
+    }
+    if (memberInviteUsesAllowance(result.status)) m.invites = [...m.invites.filter(t => memberInviteWithinWindow(at - t)), at];
+    this.ctx.log("member_invite", { memberId: m.id, status: result.status });
+  }
 
   private invite(m: MemberState, friendName: string) {
     if (!this.ctx.invite) { this.ctx.log("invite_unavailable", { from: m.id }); this.send(m, this.copy.invitesNotOpen(friendName), { type: "info" }, "reply"); return; }
@@ -4580,7 +4621,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (o.fallback !== undefined) o = { ...o, fallback: `${ack} ${o.fallback}` };
     }
     // A note for this member ("That plan didn't come together this time.") rides on their next message.
-    const note = m.note && kind !== "safety" && kind !== "relay" && now - m.note.at < 7 * DAY ? m.note.text : undefined;
+    const note = m.note && !o.memberInviteLink && kind !== "safety" && kind !== "relay" && now - m.note.at < 7 * DAY ? m.note.text : undefined;
     if (note) {
       body = `${note} ${body}`;
       if (o.fallback !== undefined) o = { ...o, fallback: `${note} ${o.fallback}` };
@@ -4595,14 +4636,16 @@ export class ConsentNetwork implements NetworkUnderTest {
       // `unsolicited` marks a send the controller made proactive (not an initial invite on the intro cap).
       if (this.laneOf(meta) !== "check_in") meta = { ...meta, proactive: true, ...(meta.proactive ? {} : { unsolicited: true }) } as SimMeta;
     }
-    if (o.hook?.t === "invite_notice") {
-      const status = this.inviteJoinText(m, o.hook.notice);
+    const standaloneNotice = o.hook?.t === "invite_notice" ? o.hook.notice : undefined;
+    let sentStandaloneNotice = standaloneNotice;
+    if (standaloneNotice) {
+      const status = this.inviteJoinText(m, standaloneNotice);
       if (status === undefined || m.onlyWhenAsked) return this.refuse(m.id, kind, "invite_notice_not_current", fns);
       body = `${body}${status}`;
     }
     const baseBody = body;
     const deliveredInviteJoins: InviteJoinNotice[] = [];
-    if (m.pendingInviteJoins?.length && inviteJoinNoticeMayRideReply(this.memberReply && this.replyTo === m.id, reply, kind === "safety" || kind === "relay")) {
+    if (!standaloneNotice && !o.memberInviteLink && m.pendingInviteJoins?.length && inviteJoinNoticeMayRideReply(this.memberReply && this.replyTo === m.id, reply, kind === "safety" || kind === "relay")) {
       const current: InviteJoinNotice[] = [];
       for (const notice of m.pendingInviteJoins) {
         const status = this.inviteJoinText(m, notice);
@@ -4616,7 +4659,13 @@ export class ConsentNetwork implements NetworkUnderTest {
       m.pendingInviteJoins = current;
     }
     let text = body;
-    const approvedLink = (value: string) => kind === "reveal" ? this.approvedPublicEventLink(meta.proposalId, m.id, value) : undefined;
+    const approvedLink = (value: string) => {
+      if (kind === "reveal") return this.approvedPublicEventLink(meta.proposalId, m.id, value);
+      const link = o.memberInviteLink;
+      if (!link) return undefined;
+      const presentOnce = value.endsWith(`\n${link}`) && value.indexOf(link) === value.lastIndexOf(link);
+      return memberInviteLinkCanBeShared(this.memberReply && this.replyTo === m.id && reply, true, isMemberInvitationLink(this.app, link), presentOnce) ? link : undefined;
+    };
     const leaks = this.guardCheck(o.relayContact ? text.split(o.relayContact).join(" ") : text, m.id, o.relayFrom, approvedLink(text));
     if (leaks.length) {
       const fallback = [deliveredInviteJoins.length ? baseBody : undefined, o.fallback].find(value =>
@@ -4625,6 +4674,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       this.ctx.log("guard_blocked", { memberId: m.id, kind, reasons: leaks, fallback: fallback !== undefined });
       if (fallback === undefined) { fns.onRefused?.(); return "refused"; }
       text = fallback;
+      sentStandaloneNotice = undefined;
       deliveredInviteJoins.length = 0;
     }
     // Never the same text to one member twice within 10 minutes (the judge's duplicate_send rule).
@@ -4647,12 +4697,17 @@ export class ConsentNetwork implements NetworkUnderTest {
     } else if (outreach === "followup") m.askUsed = (m.askUsed ?? 0) + 1;
     m.lastOutUnsol = unsol;
     m.outbound = (m.outbound ?? 0) + 1;
-    this.ctx.send(m.id, text, { meta, idempotencyKey: o.key ?? `${m.id}:${++this.seq}`, reply });
+    if (o.memberInviteLink && approvedLink(text) === o.memberInviteLink) meta = { ...meta, approvedInviteLink: o.memberInviteLink };
+    const invitationJoins = sentStandaloneNotice ? [sentStandaloneNotice.inviteeId] : deliveredInviteJoins.map(notice => notice.inviteeId);
+    if (invitationJoins.length) meta = { ...meta, invitationJoins };
+    const idPrefix = invitationJoins.length ? "invite-notice:" : "";
+    this.ctx.send(m.id, text, { meta, idempotencyKey: o.key ?? `${idPrefix}${m.id}:${++this.seq}`, reply });
     if (deliveredInviteJoins.length) m.pendingInviteJoins = m.pendingInviteJoins?.filter(notice => !deliveredInviteJoins.includes(notice));
     m.pendingAck = undefined;
     if (note || (m.note && now - m.note.at >= 7 * DAY)) m.note = undefined;
-    m.lastSent = { body: text, at: now, ...(Array.isArray(meta.approvedPhotos) && meta.approvedPhotos.length ? {photoItemId:(meta.approvedPhotos[0] as {itemId:string}).itemId} : {}) };
-    fns.onSent?.();
+    const storedText = o.memberInviteLink ? text.replace(o.memberInviteLink, "").trimEnd() : text;
+    m.lastSent = { body: storedText, at: now, ...(Array.isArray(meta.approvedPhotos) && meta.approvedPhotos.length ? {photoItemId:(meta.approvedPhotos[0] as {itemId:string}).itemId} : {}) };
+    if (!standaloneNotice || sentStandaloneNotice) fns.onSent?.();
     return "sent";
   }
 
@@ -5555,13 +5610,24 @@ export class ConsentNetwork implements NetworkUnderTest {
    * A member who joined on the web (the platform's POST /api/join) has not written yet: send the
    * welcome now, as their first message would. Nothing happens for a member already welcomed.
    */
-  welcomeJoined(id: MemberId): boolean {
+  welcomeJoined(id: MemberId, verifiedInviterId?: MemberId): boolean {
     if (this.declinedIds.has(id)) return false;
     this.dirty = true;
     const m = this.member(id);
-    if (m.stage !== "new") return false;
+    if (m.stage !== "new" && verifiedInviterId === undefined) return false;
     this.syncMember(m);
     if (validAge(m.age) && !this.canJoinApp(m.age)) { this.declineUnderMinAge(m); return false; }
+    const inviterMatches = verifiedInviterId !== id && this.record(id)?.invitedBy === verifiedInviterId;
+    const freshAttribution = memberInviteCanAttribute(!this.invitedIds.has(id), verifiedInviterId !== undefined, inviterMatches);
+    if (freshAttribution) {
+      this.invitedIds.add(id);
+      if (verifiedInviterId && this.record(verifiedInviterId) && !this.declinedIds.has(verifiedInviterId)) this.member(verifiedInviterId);
+    }
+    // The inviter's receipt belongs to the join, even if the invitee wrote before its projection recovered.
+    if (m.stage !== "new") {
+      if (freshAttribution && !m.minor && !m.optedOut) this.inviteeJoined(m);
+      return false;
+    }
     // The answer to the person's own action (the join), so it goes now, not at a picked send time.
     this.replyTo = m.id;
     try { this.welcome(m); } finally { this.replyTo = undefined; }

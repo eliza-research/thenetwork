@@ -12,6 +12,8 @@ import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import type { SendRequest } from "../../blooio/src/types.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { APP_IDS, APPS, type AppId } from "../../platform/src/apps.ts";
+import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
+import { svcSign } from "../../core/src/svc/svc-auth.ts";
 import { lastEvents, resolveConsent } from "../../platform/src/consent.ts";
 import type { OtpProvider } from "../../platform/src/otp.ts";
 import { BlooioAdapter, DryRunAdapter, liveSendAllowed, type Outbound } from "../service/channel.ts";
@@ -588,7 +590,7 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(await count(sql`select count(*)::int as n from platform.suppression`)).toBe(1);
   }, T);
 
-  test("no invite link exists on the service: naming a friend gets an honest reply that sends and promises nothing", async () => {
+  test("an unsigned member request cannot issue an invite link or contact the named person", async () => {
     await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
     const { s } = service(clock);
@@ -597,9 +599,101 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     const m = (await memberOf("friends", p))!;
     await text(s, clock, p, "My friend Maya would love this, can you invite her?", { app: "friends" });
     const bodies = (await outbound(m.id)).map(x => x.body as string);
-    expect(bodies.at(-1)).toMatch(/^Thanks! I can't send invite links yet, so nothing went to Maya\./);
-    for (const b of bodies) expect(b).not.toMatch(/here's an invite link|send you an invite/i);
+    expect(bodies.at(-1)).toBe(copyFor(brandOf(APPS.friends)).inviteUnavailable);
+    for (const b of bodies) expect(b).not.toContain("#invite=");
+    expect(await count(sql`select count(*)::int as n from platform.member_invitations`)).toBe(0);
     expect((await sql`select count(*)::int as n from network.members where app_id = 'friends'`)[0].n).toBe(1);
+  }, T);
+
+  // spec/memberInvitation.md, "The link goes to the inviter as a reply"
+  // spec/memberInvitation.md, "A new verified acceptance can be attributed"
+  test("a signed vouch issues a private single-use invitation for a verified app join", async () => {
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
+    const secret = "member-invitation-signed-turn-fixture-secret";
+    const { s, otp } = service(clock, { env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret } });
+    await s.start();
+    const inviterPhone = newPhone();
+    const invited = await s.accounts.invite(APPS.ntwrk, inviterPhone);
+    if (!invited) throw new Error("The fixture's staff invitation is missing");
+    const bodyFor = (firstName: string, app: AppId = "ntwrk") => ({ firstName, age: 31, consent: { sms: true as const, wording: APPS[app].consent.text } });
+    expect(await s.accounts.join(APPS.ntwrk, { e164: inviterPhone, personId: invited.personId }, bodyFor("Ari"))).toMatchObject({ ok: true });
+    const send = async (input: TurnRequest) => {
+      const body = JSON.stringify(input);
+      return s.fetch(new Request(`http://127.0.0.1${TURN_PATH}`, { method: "POST", body, headers: {
+        "content-type": "application/json", ...await svcSign(secret, { method: "POST", path: TURN_PATH, id: input.messageId, body, nowS: Math.floor(clock.now() / 1000) }),
+      } }));
+    };
+    const input: TurnRequest = { messageId: "invite-own", from: inviterPhone, to: null, text: "Can you invite my friend Maya?", channel: "blooio", transport: "imessage", receivedAt: clock.now(), app: "ntwrk" };
+    const issued = await send(input);
+    expect(issued.status).toBe(200);
+    const response = await issued.json();
+    expect(response).toMatchObject({ outcome: "handled", reason: "member_invitation", memberId: invited.memberId, delivery: "collected" });
+    const [, token] = response.replies[0].match(/https:\/\/ntwrk\.party\/SKILL\.md#invite=([a-zA-Z0-9_-]{43})$/) ?? [];
+    expect(token).toHaveLength(43);
+    expect(await (await send(input)).json()).toEqual(response);
+    const rows = await sql`select relationship, inviter_member_id, token_hash, redeemed_at from platform.member_invitations`;
+    expect([...rows]).toEqual([{ relationship: "friend", inviter_member_id: invited.memberId, token_hash: expect.stringMatching(/^[0-9a-f]{64}$/), redeemed_at: null }]);
+    expect(JSON.stringify(await sql`select state from network.network_state`)).not.toContain(token);
+    expect(JSON.stringify(await sql`select body from network.messages`)).not.toContain(token);
+    expect(await count(sql`select count(*)::int as n from network.members`)).toBe(1);
+
+    const client = (app: AppId) => {
+      let cookie = "";
+      return async (path: string, data: unknown) => {
+        const res = await s.publicFetch(new Request(`http://localhost:${5101 + APP_IDS.indexOf(app)}${path}`, {
+          method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(data),
+        }));
+        cookie = res.headers.get("set-cookie")?.split(";")[0] ?? cookie;
+        return { status: res.status, body: await res.json() };
+      };
+    };
+    const login = async (call: ReturnType<typeof client>, phone: string) => {
+      clock.advance(31_000);
+      expect((await call("/api/auth/otp/start", { phone })).status).toBe(200);
+      expect((await call("/api/auth/otp/verify", { phone, code: otp.codes.get(phone) })).status).toBe(200);
+    };
+    const first = client("ntwrk");
+    const second = client("ntwrk");
+    const otherApp = client("friends");
+    expect((await first("/api/join", { ...bodyFor("Maya"), inviteToken: token })).status).toBe(401);
+    const inviteePhone = newPhone(), secondPhone = newPhone();
+    await login(first, inviteePhone);
+    await login(second, secondPhone);
+    await login(otherApp, inviteePhone);
+    expect(await otherApp("/api/join", { ...bodyFor("Maya", "friends"), inviteToken: token })).toMatchObject({ body: { error: "invalid_invitation" } });
+    // The platform commit must survive a failed downstream welcome and notice projection.
+    await sql`create function platform.fail_fixture_invitation_projection() returns trigger language plpgsql as $$
+      begin raise exception 'fixture invitation projection unavailable'; end $$`;
+    await sql`create trigger fail_fixture_invitation_projection before update of projected_at on platform.member_invitations
+      for each row execute function platform.fail_fixture_invitation_projection()`;
+    const attempts = await Promise.all([
+      first("/api/join", { ...bodyFor("Maya"), inviteToken: token }),
+      second("/api/join", { ...bodyFor("Maya"), inviteToken: token }),
+    ]);
+    expect(attempts.filter(result => result.status === 200)).toHaveLength(1);
+    expect(attempts.find(result => result.status !== 200)?.body).toMatchObject({ error: "invalid_invitation" });
+    const [redeemed] = await sql`select redeemed_member_id, projected_at from platform.member_invitations`;
+    expect(redeemed.projected_at).toBeNull();
+    expect((await sql`select invited_by from network.members where id=${redeemed.redeemed_member_id}`)[0]!.invited_by).toBe(invited.memberId);
+    const winningPhone = attempts[0]!.status === 200 ? inviteePhone : secondPhone;
+    const welcome = await send({ ...input, from: winningPhone, messageId: "invitee-first-turn", text: "Hi, I just joined." });
+    expect(welcome.status).toBe(200);
+    expect((await welcome.json()).replies.join("\n")).toContain("Ari");
+    await sql`drop trigger fail_fixture_invitation_projection on platform.member_invitations`;
+    const rt = s.runtimeFor("ntwrk")!;
+    await rt.tick();
+    expect((await sql`select projected_at from platform.member_invitations`)[0]!.projected_at).toBeInstanceOf(Date);
+    const notices = await sql`select id,body from network.messages where member_id=${invited.memberId} and ${redeemed.redeemed_member_id}=any(invite_join_members)`;
+    expect([...notices]).toEqual([{ id: expect.stringMatching(/^invite-notice:/), body: expect.stringContaining("Maya just joined.") }]);
+    const noticeId = notices[0]!.id as string;
+    expect(await rt.scoped(tx => rt.invitationNoticeAdmission(tx, noticeId, invited.memberId))).toBe(true);
+    expect((await send({ ...input, from: winningPhone, messageId: "invitee-stop", text: "STOP" })).status).toBe(200);
+    expect(await rt.scoped(tx => rt.invitationNoticeAdmission(tx, noticeId, invited.memberId))).toBe(false);
+    expect(await count(sql`select count(*)::int as n from network.members where account_status='active'`)).toBe(2);
+    const tokenReplay = await send(input);
+    expect(tokenReplay.status).toBe(409);
+    expect(await tokenReplay.json()).toMatchObject({ error: "turn_invitation_changed" });
   }, T);
 
   test("slop onboarding is the engine's loop: one question at a time, bi asked again in other words, the read-back, tags and state without the member's words", async () => {

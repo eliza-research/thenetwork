@@ -12,7 +12,7 @@ A supplied signup marker must match the app-bound account that owns the session.
 
 ```quint
 type EnrollmentPhase = AwaitingAccountView | AccountChanged | AwaitingProfile | InvalidProfile | AwaitingConsent | ConsentMismatch |
-  AwaitingEligibility | NeedsReview | AwaitingMembership | NeedsInvite | AwaitingAge | BelowJoinAge |
+  AwaitingEligibility | NeedsReview | AwaitingMembership | NeedsInvite | InvalidInvitation | AwaitingAge | BelowJoinAge |
   ReturnExisting | AwaitingPersistence | Created | JoinHookFailed
 type Enrollment = {
   phase: EnrollmentPhase,
@@ -22,11 +22,13 @@ type Enrollment = {
   currentEligibility: bool,
   rejoin: bool,
   invited: bool,
+  referred: bool,
+  invalidReferral: bool,
   ageAllowed: bool,
 }
 pure val initial: Enrollment = {
   phase: AwaitingAccountView, viewChecked: false, validProfile: false, currentConsent: false,
-  currentEligibility: false, rejoin: false, invited: false, ageAllowed: false,
+  currentEligibility: false, rejoin: false, invited: false, referred: false, invalidReferral: false, ageAllowed: false,
 }
 
 pure def canCheckAccountView(joining: Enrollment): bool = joining.phase == AwaitingAccountView
@@ -67,29 +69,34 @@ pure def checkEligibility(joining: Enrollment, eligible: bool): Enrollment =
 
 ### The current membership determines whether a join needs an invite
 
-A live membership can be returned without creating another membership. An invite-only app requires a current invitation for a new membership. The new-membership path preserves an invited member's ID.
+A live membership can be returned without reading or redeeming a referral. An invite-only app requires a stored staff invitation or a valid member invitation for a new membership. The new-membership path preserves a staff-invited member's ID. A person may explicitly submit a member invitation in the authenticated join body. The shell verifies the invitation against the app and its active enrollment policy, then passes the verified referral to the join hook after the effective age check. A new join with an unavailable referral gets one generic refusal, including on an open app. A waitlist keeps its usual enrollment path because membership there begins without an active Network member.
 
 ```quint
-type MembershipFacts = { existingMember: bool, inviteRequired: bool, hasInvite: bool }
+type ReferralFact = NoReferral | InvalidReferral | VerifiedReferral
+type MembershipFacts = { existingMember: bool, inviteRequired: bool, hasInvite: bool, referral: ReferralFact }
 pure val membershipFactsValues = Set(
-  { existingMember: false, inviteRequired: false, hasInvite: false },
-  { existingMember: true, inviteRequired: true, hasInvite: false },
-  { existingMember: false, inviteRequired: true, hasInvite: false },
-  { existingMember: false, inviteRequired: true, hasInvite: true },
+  { existingMember: false, inviteRequired: false, hasInvite: false, referral: NoReferral },
+  { existingMember: true, inviteRequired: true, hasInvite: false, referral: NoReferral },
+  { existingMember: false, inviteRequired: true, hasInvite: false, referral: NoReferral },
+  { existingMember: false, inviteRequired: true, hasInvite: true, referral: NoReferral },
+  { existingMember: false, inviteRequired: true, hasInvite: false, referral: VerifiedReferral },
+  { existingMember: false, inviteRequired: false, hasInvite: false, referral: InvalidReferral },
 )
 
 pure def canCheckMembership(joining: Enrollment): bool =
   joining.phase == AwaitingMembership and joining.currentEligibility and joining.viewChecked and joining.validProfile and joining.currentConsent
 
 pure def checkMembership(joining: Enrollment, membershipFacts: MembershipFacts): Enrollment =
-  val missingInvite = membershipFacts.inviteRequired and not(membershipFacts.existingMember) and not(membershipFacts.hasInvite)
+  val referred = not(membershipFacts.existingMember) and membershipFacts.referral == VerifiedReferral
+  val invalid = not(membershipFacts.existingMember) and membershipFacts.referral == InvalidReferral
+  val missingInvite = membershipFacts.inviteRequired and not(membershipFacts.existingMember) and not(membershipFacts.hasInvite) and not(referred) and not(invalid)
   { ...joining, rejoin: membershipFacts.existingMember, invited: membershipFacts.hasInvite,
-    phase: if (missingInvite) NeedsInvite else AwaitingAge }
+    referred: referred, invalidReferral: invalid, phase: if (missingInvite) NeedsInvite else AwaitingAge }
 ```
 
 ### The effective age controls the result of a new or repeated join
 
-Use the existing lowest age rule. A repeated join records the age statement before returning the existing membership. A new join that fails the age rule records the age statement without creating a membership. Passing the age rule starts persistence only for a new membership.
+Use the existing lowest age rule. A repeated join records the age statement before returning the existing membership. A new join that fails the age rule records the age statement without creating a membership, even when its explicit member invitation is unavailable. Passing the age rule starts persistence only for a new membership with no unavailable invitation.
 
 ```quint
 pure def canCheckJoinAge(joining: Enrollment): bool =
@@ -97,16 +104,16 @@ pure def canCheckJoinAge(joining: Enrollment): bool =
 
 pure def checkJoinAge(joining: Enrollment, ageEligible: bool): Enrollment =
   { ...joining, ageAllowed: ageEligible,
-    phase: if (not(ageEligible)) BelowJoinAge else if (joining.rejoin) ReturnExisting else AwaitingPersistence }
+    phase: if (not(ageEligible)) BelowJoinAge else if (joining.rejoin) ReturnExisting else if (joining.invalidReferral) InvalidInvitation else AwaitingPersistence }
 ```
 
 ### Success for a new membership follows the join hook
 
-After the store writes the membership, consent and person link, run the join hook. A hook failure forgets the new membership and records the failed opt-in's reversal. A successful response reports the stored membership.
+An ordinary join writes the membership, consent and person link, then runs the join hook. A hook failure forgets the new membership and records the failed opt-in's reversal. A referred join commits the app membership, consent, session attachment, Network attribution and invitation use together. A failed referral commit leaves those writes for the next verified attempt. A successful response reports the stored membership.
 
 ```quint
 pure def canFinishJoin(joining: Enrollment): bool =
-  joining.phase == AwaitingPersistence and not(joining.rejoin) and joining.ageAllowed
+  joining.phase == AwaitingPersistence and not(joining.rejoin) and not(joining.invalidReferral) and joining.ageAllowed
     and joining.currentEligibility and joining.viewChecked and joining.validProfile and joining.currentConsent
 
 pure def finishJoin(joining: Enrollment, hookSucceeded: bool): Enrollment =
@@ -125,6 +132,9 @@ pure def alwaysSuccessUsesEligibleProfile(joining: Enrollment): bool =
 pure def alwaysExistingMembershipStaysExisting(joining: Enrollment): bool =
   (joining.phase == ReturnExisting implies joining.rejoin) and (joining.phase == Created implies not(joining.rejoin))
 
+pure def alwaysReferralOnlyOnNewMembership(joining: Enrollment): bool =
+  joining.referred implies not(joining.rejoin)
+
 pure def lawTypedEntryUsesSameConsentGate(consentMatches: bool): bool =
   canConfirmConsent(typedJoinEntry) and
     (confirmConsent(typedJoinEntry, consentMatches).phase == AwaitingEligibility) == consentMatches
@@ -139,5 +149,6 @@ pure def sometimesEnrolled(joining: Enrollment): bool = joining.phase == Created
 pure def sometimesExisting(joining: Enrollment): bool = joining.phase == ReturnExisting
 pure def sometimesAccountChanged(joining: Enrollment): bool = joining.phase == AccountChanged
 pure def sometimesNeedsInvite(joining: Enrollment): bool = joining.phase == NeedsInvite
+pure def sometimesInvalidInvitation(joining: Enrollment): bool = joining.phase == InvalidInvitation
 pure def sometimesBelowJoinAge(joining: Enrollment): bool = joining.phase == BelowJoinAge
 ```

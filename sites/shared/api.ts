@@ -19,6 +19,7 @@ export type ApiError =
   | "turnstile"
   | "under_age"
   | "invite_only"
+  | "invalid_invitation"
   | "review"
   | "unauthorized"
   | "same_number"
@@ -39,6 +40,7 @@ export const PLATFORM_ERRORS: Record<string, ApiError> = {
   turnstile: "turnstile",
   under_age: "under_age",
   invite_only: "invite_only",
+  invalid_invitation: "invalid_invitation",
   review: "review",
   unauthorized: "unauthorized",
   // A delete or export needs a fresh login: the same next step as an ended session.
@@ -103,6 +105,7 @@ export interface JoinBody {
   /** The app/account whose fields the person reviewed; not a credential. */
   signupView?: string;
   homeCity?: "nyc" | "sf";
+  inviteToken?: string;
   firstName: string;
   age: number;
   neighborhood?: string;
@@ -188,6 +191,7 @@ export const MESSAGES: Record<ApiError, string> = {
   account_changed: "Your account changed. Please check your details again.",
   under_age: "You must be 13 or older to join. We did not save your details.",
   invite_only: "You can join only with an invitation.",
+  invalid_invitation: "This invitation is unavailable. Ask the person who invited you for a new link.",
   unauthorized: "Your session ended. Please log in again.",
   same_number: "That is the number you use now. Enter the new number.",
   number_in_use: "That number already has an account. Nothing was changed. Email us for help.",

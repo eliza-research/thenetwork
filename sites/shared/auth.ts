@@ -14,7 +14,7 @@ export function maskPhone(e164: string): string {
   return `(•••) •••-${e164.slice(-4)}`;
 }
 
-export function mountAuth(root: HTMLElement, onSignedIn: () => Promise<void> | void): void {
+export function mountAuth(root: HTMLElement, onSignedIn: () => Promise<void> | void, preserveJoin?: () => boolean): void {
   const form = root.querySelector<HTMLFormElement>('form[data-form="phone"]');
   if (!form) return;
   // The static form defaults to GET; block native submission before any await.
@@ -55,6 +55,7 @@ export function mountAuth(root: HTMLElement, onSignedIn: () => Promise<void> | v
       event.preventDefault();
       const result = await busy(form, () => api.cloudAuthStart("/join"));
       if (!result.ok) { setError(form, "Sign-in is unavailable. Try again."); return; }
+      if (preserveJoin?.() === false) { setError(form, "Allow this tab to save your invitation during sign-in, then try again."); return; }
       location.assign(result.data.url);
     });
   });

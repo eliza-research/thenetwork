@@ -207,7 +207,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   const log = o.log ?? (s => console.log(s));
   const accounts = new Accounts(o.store, {
     hashKey, now, env, apps: id => apps[id],
-    hooks: { onJoin: o.onJoin, onStop: o.onStop, onForget: o.onForget, onExport: o.onExport, onAgeLowered: o.onAgeLowered },
+    hooks: { findInvitation: o.findInvitation, commitReferredJoin: o.commitReferredJoin, onJoin: o.onJoin, onStop: o.onStop, onForget: o.onForget, onExport: o.onExport, onAgeLowered: o.onAgeLowered },
   });
   const otp = new OtpService(o.store, o.otp, { hashKey, now, limits: o.otpLimits, log });
   const sessions = new SessionService(o.store, { now, secret: sessionSecret });
@@ -558,7 +558,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           const home = live && o.home && (who.personId === null || who.personId === live.personId)
             ? await o.home({ app, personId: live.personId, memberId: live.memberId, e164: who.e164 }) : null;
           return json(200, {
-            app: appId, ...(["ntwrk", "friends"].includes(appId) && c.reason !== "review" ? { signupView: signupAccountView(appId, accounts.phoneHash(who.e164)) } : {}), phoneMasked: maskPhone(who.e164), membership: publicMembership(c.membership),
+            app: appId, ...(["ntwrk", "friends", "peon"].includes(appId) && c.reason !== "review" ? { signupView: signupAccountView(appId, accounts.phoneHash(who.e164)) } : {}), phoneMasked: maskPhone(who.e164), membership: publicMembership(c.membership),
             smsOptedIn: c.reason !== "review" && await accounts.optedIn(appId, who.e164),
             canJoin: c.canJoin, ...(c.reason && c.reason !== "member" ? { reason: c.reason } : {}),
             ...(participation ? { participation } : {}),
@@ -603,8 +603,10 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           const input = parseJoin(b);
           const enrollment = stepEnrollment(accountView, { type: "decodeProfile", decoded: input !== undefined });
           if (!input || enrollment.phase !== "AwaitingConsent") return json(400, { ok: false, error: "invalid" });
+          if (b.inviteToken !== undefined && typeof b.inviteToken !== "string")
+            return json(400, { ok: false, error: "invalid_invitation" });
           try {
-            const r = await accounts.join(app, who, input, enrollment);
+            const r = await accounts.join(app, who, input, enrollment, b.inviteToken);
             if (!r.ok) return json(400, { ok: false, error: r.error, ...(r.error === "invite_only" ? { message: app.brand.inviteOnly } : r.error === "under_age" ? { message: app.brand.underAge } : r.error === "review" ? { message: REVIEW_MESSAGE } : {}) });
             return json(200, { ok: true, membership: publicMembership(r.membership) });
           } catch (e) {

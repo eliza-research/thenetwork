@@ -14,6 +14,8 @@ Keep vouch notes outside matching until the invitee joins and consents. Clear no
 
 When someone joins through the invitation, tell the inviter using their first name and join status. Apply the delivery rules and carry the notice on a genuine reply when it cannot go out separately. [Invite join notice](../outreachPolicy.md#an-eligible-join-receipt-can-ride-on-a-current-reply).
 
+[Member invitation rules](../memberInvitation.md) cover the direct link request, its allowance, and verified attribution.
+
 ## Story F2 — Seed a cohort
 
 > As an operator, I want to seed the first cohort with attributed invitations so we can establish a useful local network.

@@ -30,6 +30,7 @@ export interface Outbound {
   /** HTTPS links to attachments (a photo). */
   mediaUrls?: string[];
   approvedPhotos?: ApprovedRelayPhoto[];
+  invitationJoins?: readonly MemberId[];
   /** reply: an answer to the member's own message; compliance: STOP/HELP confirmations; proactive; transactional: everything else. */
   kind: MessageKind;
   type?: string;
@@ -202,9 +203,13 @@ export class BlooioAdapter implements ChannelAdapter {
         if (row.id.startsWith("relay:")) await tx`select id from network.network_state where id=${rt.pg.id} for share`;
       },
       // A relayed item: its match and both members are read again inside the admission transaction (runtime.ts).
-      admit: (row, tx) => row.approvedPhotos?.length && this.name !== "eliza_cloud"
-        ? Promise.resolve({ ok: false as const, reason: "approved_photos_require_cloud" })
-        : row.id.startsWith("relay:") ? rt.relayAdmission(tx, row) : Promise.resolve({ ok: true as const }),
+      admit: async (row, tx) => {
+        if (row.approvedPhotos?.length && this.name !== "eliza_cloud") return { ok: false, reason: "approved_photos_require_cloud" };
+        if (row.id.startsWith("relay:")) return rt.relayAdmission(tx, row);
+        if (row.id.startsWith("invite-notice:")) return await rt.invitationNoticeAdmission(tx, row.id, row.memberId)
+          ? { ok: true } : { ok: false, reason: "invitation_notice_changed" };
+        return { ok: true };
+      },
       capTake: row => rt.capTake(row.id, row.memberId as MemberId),
       capRelease: row => rt.capRelease(row.id),
     };

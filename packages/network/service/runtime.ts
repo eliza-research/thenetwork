@@ -46,6 +46,8 @@ import type { PhotoRelayService } from "../../platform/src/photo-relay.ts";
 import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import { isDeepStrictEqual } from "node:util";
 import type { Accounts } from "../../platform/src/accounts.ts";
+import type { ReferralJoin } from "../../platform/src/invite-links.ts";
+import type { MemberInviteRequest } from "../src/invitation.ts";
 import { outputLeaks } from "../../mcp/src/leaks.ts";
 // The Observatory's event shape and run summaries, so the console reads what this writes.
 import { eventOf, membersOf, type EventRow } from "../../observatory/src/events.ts";
@@ -58,9 +60,16 @@ import { savePosting } from "./postings.ts";
 
 type Row = Record<string, unknown>;
 
+export interface StagedMemberInvitation {
+  referral: ReferralJoin;
+  request: MemberInviteRequest;
+  url: string;
+}
+
 /** What one unit of work produced. Written in the save transaction, then delivered. */
 export interface Unit {
   inbound?: Row;
+  memberInvitation?: StagedMemberInvitation;
   standingIntent?: StoredStandingIntentChange;
   legacyIntentState?: NetworkState;
   /** A signed member command prepares its own reply inside the save transaction. */
@@ -94,7 +103,9 @@ export interface RuntimeHost {
   /** Canonical read checks inside an existing admission transaction, without another pool lease. */
   accountsFor?(tx: SQL): Pick<Accounts, "activeMembership" | "lowestAge" | "phoneHash">;
   inboundTurn?(): InboundTurn | undefined;
-  collectReplies?(tx: SQL, replies: CollectedReply[]): Promise<void>;
+  collectReplies?(tx: SQL, replies: CollectedReply[], invitation?: boolean): Promise<void>;
+  stageMemberInvitation?(rt: NetworkRuntime, request: MemberInviteRequest): StagedMemberInvitation | undefined;
+  saveMemberInvitation?(tx: SQL, rt: NetworkRuntime, staged: StagedMemberInvitation): Promise<void>;
   /** Proactive sends of this batch the person-level daily cap refuses (ids). Called before delivery. */
   capRefused(rt: NetworkRuntime, batch: Outbound[]): Promise<Set<string>>;
   /** Give back the person-cap slots of sends the adapter refused (they never went out). */
@@ -178,6 +189,12 @@ export class NetworkRuntime {
       onAgeStated: (memberId, age, o) => { this.statedAges.push({ memberId, age, ...o }); },
       // peon (#9): a posting the manager confirmed (or staff saved) is written with the unit (writeUnit).
       onPosting: p => { this.unit.postings.push(p); },
+      issueMemberInvite: request => {
+        const staged = this.host.stageMemberInvitation?.(this, request);
+        if (!staged) return;
+        this.unit.memberInvitation = staged;
+        return { status: "issued", url: staged.url };
+      },
     });
     this.net.init(this.context());
     this.adapter = typeof o.adapter === "function" ? o.adapter(this.net, this) : o.adapter ?? new DryRunAdapter(host.log);
@@ -298,6 +315,27 @@ export class NetworkRuntime {
       if (c.held) return no("party:held");
     }
     return { ok: true };
+  }
+
+  async invitationNoticeAdmission(tx: SQL, id: string, recipient?: MemberId | null): Promise<boolean> {
+    if (!recipient) return false;
+    const [row] = await tx`select invite_join_members from network.messages where app_id=${this.app.id} and id=${id}
+      and direction='outbound' and member_id=${recipient}`;
+    return this.invitationNoticeCurrent(tx, recipient, row?.invite_join_members as MemberId[] | undefined);
+  }
+
+  private async invitationNoticeCurrent(tx: SQL, inviter: MemberId, invitees?: readonly MemberId[]): Promise<boolean> {
+    if (!invitees?.length) return false;
+    const app = this.app.id;
+    const links = await tx`select i.id from network.members i join network.members v on v.app_id=i.app_id and v.id=i.invited_by
+      where i.app_id=${app} and v.id=${inviter} and i.id in ${tx([...invitees])}
+      and not exists(select 1 from network.edges b where b.app_id=${app} and b.type='blocked'
+        and ((b.from_id=i.id and b.to_id=v.id) or (b.from_id=v.id and b.to_id=i.id)))
+      and not exists(select 1 from platform.person_blocks b where (b.from_person=i.person_id and b.to_person=v.person_id)
+        or (b.from_person=v.person_id and b.to_person=i.person_id))`;
+    if (links.length !== invitees.length) return false;
+    const parties = await this.relayParties([inviter, ...invitees], tx);
+    return [...parties.values()].every(party => party.adult && !party.optedOut && !party.held);
   }
 
   /** Current canonical parties for a selected photo; no participant or phone is selected by the model. */
@@ -437,6 +475,13 @@ export class NetworkRuntime {
         const turn = this.host.inboundTurn?.();
         const causal = turn?.app === this.app.id && turn.memberId === memberId && o?.reply === true
           && normalizeAddress(this.memberToAddr.get(memberId) ?? "") === normalizeAddress(turn.from);
+        const pendingInvite = this.unit.memberInvitation;
+        if (meta.approvedInviteLink) {
+          if (!causal || pendingInvite?.request.inviterId !== memberId || pendingInvite.url !== meta.approvedInviteLink) {
+            throw new Error("Invitation reply has no matching signed issuer");
+          }
+          (this.unit.collectedPublicLinks ??= new Map()).set(id, [pendingInvite.url]);
+        }
         if (causal) this.unit.collected.add(id);
         this.unit.sends.push({
           id, memberId, to: this.memberToAddr.get(memberId), body,
@@ -444,8 +489,9 @@ export class NetworkRuntime {
           // re-engagement or a check-in), so the queue's quiet hours and caps still apply to those.
           kind: o?.reply && (causal || this.replyingTo === memberId) ? "reply" : meta.proactive ? "proactive" : "transactional",
           // A probe names its opportunity only in meta.probe (anonymous to the member); the row links it either way.
-          ...(approvedPhotos ? { approvedPhotos } : {}),
-          type: meta.type, oppId: meta.proposalId ?? meta.probe?.key, proactive: !!meta.proactive, system: false, ts: t,
+          ...(approvedPhotos ? { approvedPhotos } : {}), ...(meta.invitationJoins ? { invitationJoins: meta.invitationJoins } : {}),
+        type: meta.approvedInviteLink ? "member_invitation" : meta.type,
+        oppId: meta.proposalId ?? meta.probe?.key, proactive: !!meta.proactive, system: false, ts: t,
         });
         return { id, ts: t, direction: "outbound", channel: "imessage", from: "network", to: memberId, memberId, body, status: causal ? "collected" : "delivered", meta } satisfies SimMessage;
       },
@@ -513,6 +559,13 @@ export class NetworkRuntime {
     if (u.inbound && ok(u.inbound.member_id as string)) await tx`insert into network.messages ${tx({ ...u.inbound, app_id: app })} on conflict (id) do nothing`;
     const turn = this.host.inboundTurn?.();
     const queue = this.adapter instanceof BlooioAdapter ? this.adapter.queue : undefined;
+    for (const send of u.sends) {
+      if (!send.invitationJoins?.length) continue;
+      if (!ok(send.memberId) || send.invitationJoins.some(member => u.forget.has(member)) || !await this.invitationNoticeCurrent(tx, send.memberId, send.invitationJoins)) {
+        u.collected.delete(send.id);
+        u.sends = u.sends.filter(message => message.id !== send.id);
+      }
+    }
     // Collected replies (Cloud sends them) get the queue's own leak guard first: canary shapes, contacts,
     // the recipient's leak sources and the thread check. One that fails is not collected; it goes into
     // the queue like any other send, where the same guard parks it for staff (parked_leak_review).
@@ -523,7 +576,7 @@ export class NetworkRuntime {
       const reasons = await queue.collectedLeaks(tx, { id: s.id, ...(u.forget.has(s.memberId) ? {} : { memberId: s.memberId }), to: s.to, kind: s.kind, text: s.body, contactAllow });
       if (reasons.length) {
         u.collected.delete(s.id);
-        if (s.type === "solo_events" || s.type === "contribution_history") {
+        if (s.type === "solo_events" || s.type === "contribution_history" || s.type === "member_invitation") {
           // This result was authorized for the signed reply only.
           u.sends = u.sends.filter(message => message.id !== s.id);
           this.host.log(`[alert] a ${s.type} reply failed the collected leak guard (${this.id}, ${s.id})`);
@@ -531,18 +584,29 @@ export class NetworkRuntime {
       }
     }
     const captured = u.sends.filter(s => u.collected.has(s.id) && (ok(s.memberId) || u.forget.has(s.memberId)));
+    if (u.memberInvitation) {
+      const staged = u.memberInvitation;
+      const reply = captured.find(s => s.type === "member_invitation" && s.memberId === staged.request.inviterId && ok(s.memberId));
+      // A link and its allowance must roll back together if the exact reply was withheld.
+      if (!reply || !this.host.saveMemberInvitation) throw new Error("Member invitation reply was not collected");
+      await this.host.saveMemberInvitation(tx, this, staged);
+    }
     if (captured.length) {
       if (!turn || !this.host.collectReplies) throw new Error("Signed turn collector is unavailable");
-      await this.host.collectReplies(tx, captured.map(s => ({id:s.id, body:s.body, kind:s.kind === "compliance" ? "compliance" : "reply"})));
+      await this.host.collectReplies(tx, captured.map(s => ({id:s.id, body:s.body, kind:s.kind === "compliance" ? "compliance" : "reply"})), !!u.memberInvitation);
     }
     const out = u.sends.filter(s => ok(s.memberId)).map(s => ({
-      id: s.id, app_id: app, member_id: s.memberId, direction: "outbound", channel: "imessage", body: s.body, status: u.collected.has(s.id) ? "collected" : this.adapter.storedStatus,
+      id: s.id, app_id: app, member_id: s.memberId, direction: "outbound", channel: "imessage",
+      body: s.type === "member_invitation" ? "You received an invitation link to forward." : s.body,
+      status: u.collected.has(s.id) ? "collected" : this.adapter.storedStatus,
       inbound_id: u.collected.has(s.id) ? turn!.id : null,
+      invite_join_members: s.invitationJoins ? tx.array([...s.invitationJoins], "TEXT") : null,
       type: s.type ?? null, opportunity_id: s.oppId ?? null, proactive: s.proactive, system: s.system, ts: new Date(s.ts),
     }));
     // Collected replies to members join the line's thread history (platform.outbound "collected"; sent_at when Cloud accepts), so the
     // leak guard's thread check (core-14) sees what Cloud delivered, and a value split across a reply and a later text is caught.
-    if (queue) await queue.recordCollected(tx, captured.filter(s => ok(s.memberId) && s.to).map(s => ({ id: s.id, memberId: s.memberId, to: s.to!, kind: s.kind, text: s.body })));
+    if (queue) await queue.recordCollected(tx, captured.filter(s => ok(s.memberId) && s.to && s.type !== "member_invitation")
+      .map(s => ({ id: s.id, memberId: s.memberId, to: s.to!, kind: s.kind, text: s.body })));
     for (let i = 0; i < out.length; i += 500) {
       const chunk = out.slice(i, i + 500);
       const wrote = new Set((await tx`insert into network.messages ${tx(chunk)} on conflict (id) do nothing returning id`).map((r: any) => r.id as string));
@@ -595,6 +659,18 @@ export class NetworkRuntime {
       await tx`delete from network.presence where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.edges where app_id = ${app} and (from_id = ${id} or to_id = ${id})`;
       await tx`delete from network.channel_identities where app_id = ${app} and member_id = ${id}`;
+      await tx`delete from platform.member_invitations where app_id=${app} and (inviter_member_id=${id} or redeemed_member_id=${id})`;
+      const joinNotices = await tx`select id,inbound_id from network.messages where app_id=${app} and ${id}=any(invite_join_members)`;
+      if (joinNotices.length) {
+        const ids = joinNotices.map(row => row.id as string);
+        await tx`update platform.outbound set body=null, ended_at=coalesce(ended_at,${new Date(this.clock.now())}),
+          status=case when status=any(${tx.array(WAITING_STATUSES, "TEXT")}) then 'dropped_forgotten' else status end
+          where app_id=${app} and id in ${tx(ids)}`;
+        const turns = joinNotices.flatMap(row => row.inbound_id ? [row.inbound_id as string] : []);
+        if (turns.length) await tx`update platform.inbound set status='unresolved',response=null,replies='[]'::jsonb,
+          receipt=null,receipt_hash=null,action_receipts='{}'::jsonb where app_id=${app} and id in ${tx(turns)}`;
+        await tx`update network.messages set body='Invitation notice erased.',invite_join_members=null where app_id=${app} and id in ${tx(ids)}`;
+      }
       await tx`update network.members set invited_by = null where app_id = ${app} and invited_by = ${id}`;
       await tx`update network.members set name = null, home_city = null, home_area = null, account_status = 'removed', opted_out = false, age = null, invited_by = null,
         community = null, occupation = null, bio = null, participation_window=null, prefs = '{}'::jsonb, unanswered_proactive = 0, joined_at = null, person_id = null where app_id = ${app} and id = ${id}`;

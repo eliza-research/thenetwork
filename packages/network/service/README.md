@@ -250,7 +250,7 @@ Rules for the boundary:
 
 1. **One owner per inbound message.** The service handles every inbound message it gets. This service answers STOP, START and HELP, inside the signed turn; the gateway only mirrors the reported `consent`. The legacy Blooio webhook must not point at the service while the gateway owns the line, or two systems would confirm a STOP.
 2. **Only this service proposes or contacts members about other members.** The plugin must not send probes, introductions or booked plans. It can read what the Network knows through its own store.
-3. **Joining is a membership.** The platform creates members: a web join (`POST /api/join`) or a join by text on an open app makes the person, the membership and the `network.members` row. For The Network, Cloud's invite gate still creates the `network.members` and `network.channel_identities` rows. An `invited` member is not a member here.
+3. **Joining is a membership.** The platform creates members after a verified join (`POST /api/join`) or a join by text on an open app. A new membership through a forwarding link commits with consent, the Network member, and the app-scoped attribution. An `invited` member still has to complete signup.
 4. **No shared process state.** The two talk only through Postgres (the `network` schema) and the channel gateway. Nothing here imports Eliza, and the plugin does not import this service.
 
 ## Limits
@@ -259,7 +259,7 @@ Rules for the boundary:
 - **The queue's caps are placeholders.** 200 agent-started messages and 20 new conversations a day per line until prototype P3 measures the line.
 - Parked leak reviews have staff routes (`/queue/leak-review`, above). Collected replies in signed turns get the same leak guard before they are returned to Cloud; one that fails goes to the queue instead, where it is parked for that review.
 - **The requester's time question has no opportunity id.** The Network sends it with no `proposalId` (network.md 4.1), so its `network.messages` row has no `opportunity_id`. Probes are linked through `meta.probe.key`.
-- **Invites are not built.** The Network's `ctx.invite` is not set, so an invite request logs `invite` with no new member.
+- A direct signed request can give an eligible adult a link to forward. The token expires after 30 days and can be used once on its app. Signup still requires the invitee's own verified phone, age and consent. Staff review for unusual vouches and join notices across separate city runtimes are pending. [Invitation rules](../../../spec/memberInvitation.md)
 - **The service imports the Observatory's modules** (`events.ts`, `engineCapture.ts`, `staff.ts`) by path, so the events, run summaries and staff auth are the same in both. The Observatory imports `snapshot.ts` from here.
 - **No JWT check.** Use role tokens only, and keep the port on 127.0.0.1 or behind an access proxy.
 - **No fencing on the save.** Two instances that both believe they hold a network's lock can overwrite each other's state (audit network-service-8).

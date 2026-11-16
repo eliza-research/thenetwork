@@ -115,6 +115,9 @@ export function copyFor(b: CopyBrand) {
   /** A member names a friend to invite where no invite link can be sent: nothing is promised. */
   invitesNotOpen: (friend: string) => `Thanks! I can't send invite links yet, so nothing went to ${friend}. They're welcome to sign up for ${b.name} themselves.`,
   inviteSent: (friend: string) => `Done: here's an invite link for ${friend}. I'll welcome them when they join.`,
+  forwardInvite: (url: string) => `You can forward this invite link:\n${url}`,
+  inviteInReview: "Your invite is waiting for review.",
+  inviteUnavailable: "I couldn't make an invite link right now.",
   inviteeJoined: (friend: string) => `${friend} just joined. Thanks for bringing them in.`,
   secondEncounter: (others: string) => `You and ${others} both said you'd meet again. Want me to find a time?`,
   // Safety and boundaries.
