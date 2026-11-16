@@ -27,6 +27,12 @@ export const feedbackDelayHours: number = 3;
 export const settlementDelayDays: number = 4;
 /** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md) */
 export const confirmationWindowHours: number = 48;
+/** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
+export const dayBeforeReminderStartMs: number = exact_meetingSettlement(24 * 3600000);
+/** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
+export const dayBeforeReminderEndMs: number = exact_meetingSettlement(12 * 3600000);
+/** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
+export const nearMeetingReminderLeadMs: number = exact_meetingSettlement(3 * 3600000);
 /** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md) */
 export const confirmationWindowMs: number = exact_meetingSettlement(confirmationWindowHours * 3600000);
 /** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
@@ -56,6 +62,32 @@ export function silentConfirmationDue(accepted: boolean, bookingDelivered: boole
 export function lawConfirmedDoesNotRepeat(accepted: boolean, bookingDelivered: boolean, wordsRecorded: boolean, explicitReply: boolean): boolean {
   //@ ensures \result === true
   return !confirmationChanges(accepted, bookingDelivered, wordsRecorded, true, explicitReply).emitConfirmation;
+}
+
+/** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
+//@ pure
+export function dayBeforeReminderWindow(remainingMs: number): boolean {
+  return remainingMs <= dayBeforeReminderStartMs && remainingMs > dayBeforeReminderEndMs;
+}
+
+/** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
+//@ pure
+export function dayBeforeReminderDue(accepted: boolean, bookingDelivered: boolean, earlySent: boolean, remainingMs: number): boolean {
+  return accepted && bookingDelivered && !earlySent && dayBeforeReminderWindow(remainingMs);
+}
+
+/** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
+//@ pure
+export function lawDayBeforeReminderFollowsBooking(accepted: boolean, earlySent: boolean, remainingMs: number): boolean {
+  //@ ensures \result === true
+  return !dayBeforeReminderDue(accepted, false, earlySent, remainingMs);
+}
+
+/** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
+//@ pure
+export function lawDayBeforeReminderDoesNotRepeat(accepted: boolean, bookingDelivered: boolean, remainingMs: number): boolean {
+  //@ ensures \result === true
+  return !dayBeforeReminderDue(accepted, bookingDelivered, true, remainingMs);
 }
 
 /** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */

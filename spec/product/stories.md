@@ -220,7 +220,7 @@ Models: [opportunity](../models/opportunity.md), [plan run](../models/plan_run.m
 
 Send permitted reminders and a day-of check-in. Relay a late arrival. Offer a reviewed, eligible replacement or reschedule when someone drops, or cancel gracefully if minimum participation fails. A booked group cannot continue with fewer than three people. Record attendance and apply the contextual no-show rule. STOP, bans, blocks and quiet hours still apply.
 
-Models: [reviewed group journey](../reviewedGroupJourney.md), [plan run](../models/plan_run.md), [outbound queue](../models/outbound_queue.md).
+Models: [meeting settlement](../meetingSettlement.md), [reviewed group journey](../reviewedGroupJourney.md), [plan run](../models/plan_run.md), [outbound queue](../models/outbound_queue.md).
 
 ## Story F19 — Give feedback and meet again
 

@@ -49,7 +49,7 @@ import {
 import {
   chooseCheckIn, confirmationChanges, confirmationWindowHours as OPT_OUT_HOURS, countAttendance, counterpartConfirmsAttendance,
   deliveredInvitee, feedbackDelayHours, initial as initialMeetingSettlement, organizerCanVerify, requestAttendanceSatisfied,
-  restoreAttendance, settlementDelayDays, silentConfirmationDue, step as stepMeetingSettlement,
+  dayBeforeReminderDue, dayBeforeReminderWindow, nearMeetingReminderLeadMs, restoreAttendance, settlementDelayDays, silentConfirmationDue, step as stepMeetingSettlement,
 } from "../../core/src/generated/meetingSettlement.ts";
 import {
   bookedReplyCurrent, closesForMinor, groupCanContinue, initial as initialOpportunity, releasesPartialAcceptance, step as stepOpportunity,
@@ -487,6 +487,7 @@ interface Opp {
   /** Members a probe or a reveal actually reached. */
   contacted: Set<MemberId>;
   reminded: Set<MemberId>;
+  dayBeforeReminded?: MemberId[];
   fixedVenue?: Venue;
   venue?: string; venueArea?: string; meetingAt?: number; feedbackSent?: boolean; recorded?: boolean;
   tags: string[]; replacements: number; runId?: string;
@@ -1135,7 +1136,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       o.status.delete(id); delete o.explanations[id];
       // Every per-member map and list too (network-consent-16): only declinedIds may keep the id.
       for (const k of ["offered", "picks", "turnAt", "sentAt", "bookedAt", "post"] as const) if (o[k]) delete (o[k] as Record<string, unknown>)[id];
-      for (const k of ["explicit", "confirmed", "bookedTold", "deferLogged", "timeRetry"] as const) if (o[k]) o[k] = o[k]!.filter(x => x !== id);
+      for (const k of ["explicit", "confirmed", "bookedTold", "dayBeforeReminded", "deferLogged", "timeRetry"] as const) if (o[k]) o[k] = o[k]!.filter(x => x !== id);
       if (o.post) for (const v of Object.values(o.post)) v.named = v.named.filter(x => x !== id);
       if (o.plan) o.plan = this.scrubPlan(o.plan, id);
       if (o.planRun) { const { [id]: _, ...answers } = o.planRun.answers; o.planRun = { ...o.planRun, plan: this.scrubPlan(o.planRun.plan, id), answers, bench: o.planRun.bench.filter(x => x !== id) }; }
@@ -4283,16 +4284,25 @@ export class ConsentNetwork implements NetworkUnderTest {
         if (silentConfirmationDue(o.status.get(id) === "yes", at !== undefined, (o.confirmed ?? []).includes(id),
           now - (at ?? 0), now >= o.meetingAt)) this.confirmPlan(o, id, false);
       }
-      // Reminders land inside each member's allowed window before the meeting: at T-4h when that is
-      // allowed, otherwise at the last allowed tick before it (the evening before for an early meeting).
+      // Send a day-before reminder in its own window. Aim for a near reminder at T-3h,
+      // otherwise at the last allowed tick before the meeting.
       // A job intro has no meeting the Network booked: no reminder (the two arrange it through the agent).
+      const remaining = o.meetingAt - now;
       for (const id of o.seat ? [] : o.participants) {
-        if (o.status.get(id) !== "yes" || o.reminded.has(id) || now >= o.meetingAt || now < o.meetingAt - DAY) continue;
+        if (o.status.get(id) !== "yes" || remaining <= 0 || remaining > DAY) continue;
         const m = this.members.get(id);
         if (!m || !this.timingOk(m, "logistics", now)) continue;
-        if (now < o.meetingAt - 4 * HOUR && this.laterAllowedTick(m, now, o.meetingAt - HOUR)) continue;
-        o.reminded.add(id);
-        this.send(m, copy.reminder(whenPhrase(o.meetingAt), `${o.venue}`), { type: "reminder", proposalId: o.id }, "reminder", { about: o.participants.filter(p => o.status.get(p) === "yes") });
+        const earlySent = (o.dayBeforeReminded ?? []).includes(id);
+        const booked = o.bookedAt?.[id] !== undefined;
+        const early = dayBeforeReminderDue(true, booked, earlySent, remaining);
+        if (!early && (o.reminded.has(id) || (earlySent && dayBeforeReminderWindow(remaining)))) continue;
+        if (!early && remaining > nearMeetingReminderLeadMs && this.laterAllowedTick(m, now, o.meetingAt - HOUR)) continue;
+        const result = this.send(m, copy.reminder(whenPhrase(o.meetingAt), `${o.venue}`), { type: "reminder", proposalId: o.id }, "reminder", {
+          about: o.participants.filter(p => o.status.get(p) === "yes"), noDefer: true,
+          ...(early ? { key: `day-before-reminder:${o.id}:${id}` } : {}),
+        });
+        if (!early) o.reminded.add(id);
+        else if (result === "sent") o.dayBeforeReminded = [...(o.dayBeforeReminded ?? []), id];
       }
       const settlement = stepMeetingSettlement(initialMeetingSettlement, {
         type: "requestFeedback", unsent: !o.feedbackSent, asOf: now, feedbackAt: o.meetingAt + feedbackDelayHours * HOUR,
