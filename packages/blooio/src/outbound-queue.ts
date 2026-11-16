@@ -35,6 +35,7 @@ import {
   consentPolicy, conversationPolicy, duePolicy, lineCaps, linePolicy, livePolicy, personPolicy, quietPolicy,
   recipientPolicy, replyPolicy, textPolicy,
 } from "../../core/src/generated/outboundAdmission.ts";
+import { controlQuietHoursValid } from "../../core/src/generated/participationControls.ts";
 import { step as stepReceipt, type FailureKind, type ReceiptPhase } from "../../core/src/generated/outboundReceipt.ts";
 import { receiptAccepted, receiptFinal, receiptMessageStatus } from "../../core/src/generated/turnReceipt.ts";
 import { settleClaimedSend, type SendDisposition } from "../../core/src/vibe/outboundReceiptShell.js";
@@ -116,6 +117,15 @@ export interface QueueRow {
 
 /** A status a row moved to. Rows with a member also update network.messages (the runtime stores it). */
 export interface StatusChange { id: string; app: string; memberId?: string; status: string }
+
+interface MemberDeliverySettings {
+  id: string;
+  person_id: string | null;
+  account_status: string;
+  opted_out: boolean;
+  quiet_hours: unknown;
+  time_zone: string | null;
+}
 
 /** What the app (the Network runtime) checks for its own rows. Every hook fails closed when it throws. */
 export interface AppChecks {
@@ -403,6 +413,28 @@ export class OutboundQueue {
     return c as { unanswered: number; reengagement_used: boolean; last_outbound_at: unknown; last_inbound_at: unknown } | undefined;
   }
 
+  private async memberDeliverySettings(tx: SQL, row: QueueRow, lock = false): Promise<MemberDeliverySettings | undefined> {
+    if (!row.memberId) return;
+    const [member] = await tx<MemberDeliverySettings[]>`select member.id,member.person_id,member.account_status,member.opted_out,
+      member.prefs->'quietHours' as quiet_hours,city.tz as time_zone
+      from network.members member left join platform.cities city on city.id=member.home_city
+      where member.app_id=${row.app} and member.id=${row.memberId} ${lock ? tx`for update of member` : tx``}`;
+    return member;
+  }
+
+  private quietTiming(row: QueueRow, member: MemberDeliverySettings | undefined, now: number) {
+    if (!isAgentInitiated(row.kind)) return { kind: "open" } as const;
+    const zone = isValidTimeZone(member?.time_zone) ? member.time_zone : row.timeZone;
+    const validZone = isValidTimeZone(zone);
+    const saved = member?.quiet_hours;
+    const quiet = Array.isArray(saved) && saved.length === 2 && saved.every(Number.isInteger) && controlQuietHoursValid(saved[0], saved[1])
+      ? { startHour: saved[0], endHour: saved[1] } : this.o.quiet ?? DEFAULT_QUIET;
+    const decision = quietPolicy(true, validZone, validZone && isQuietAt(now, zone, quiet));
+    if (decision === "InvalidZone") return { kind: "invalid_zone" } as const;
+    if (decision === "QuietHours") return { kind: "quiet", until: nextAllowedAt(now, zone, quiet) } as const;
+    return { kind: "open" } as const;
+  }
+
   private async dispatch(row: QueueRow): Promise<StatusChange> {
     const now = this.now;
     const c = this.o.checks;
@@ -426,11 +458,13 @@ export class OutboundQueue {
       return this.end(row, "suppressed_ineligible", "reply without a recent inbound");
     }
     if (agent) {
-      const validZone = isValidTimeZone(row.timeZone);
-      const quiet = this.o.quiet ?? DEFAULT_QUIET;
-      const decision = quietPolicy(agent, validZone, validZone && isQuietAt(now, row.timeZone, quiet));
-      if (decision === "InvalidZone") return this.end(row, "parked_invalid_timezone");
-      if (decision === "QuietHours") return this.wait(row, "deferred_quiet_hours", nextAllowedAt(now, row.timeZone, quiet), "quiet hours");
+      const member = row.memberId ? await this.sql.begin(async tx => {
+        await tx`select set_config('app.app_id',${row.app},true)`;
+        return this.memberDeliverySettings(tx, row);
+      }) : undefined;
+      const timing = this.quietTiming(row, member, now);
+      if (timing.kind === "invalid_zone") return this.end(row, "parked_invalid_timezone");
+      if (timing.kind === "quiet") return this.wait(row, "deferred_quiet_hours", timing.until, "quiet hours");
     }
     const quietFor = now - (ms(conv?.last_outbound_at) ?? -Infinity);
     const conversation = conversationPolicy(compliance, !!conv && conv.unanswered >= this.opt("maxUnanswered", 3),
@@ -502,16 +536,16 @@ export class OutboundQueue {
   }
 
   private async send(row: QueueRow, isNew: boolean, reengagement: boolean): Promise<StatusChange> {
-    const start = this.now;
     // Admit only the current canonical member and immutable payload, after the async gates.
     // Erasure and admission share the person/member row fences. No remote I/O holds these locks.
     const admission = await this.sql.begin(async tx => {
       await tx`select set_config('app.app_id',${this.app},true)`;
       await this.o.checks.lockAdmission?.(row, tx);
+      let member: MemberDeliverySettings | undefined;
       if (row.memberId) {
         await tx`select person.id from platform.people person join network.members member on member.person_id=person.id
           where member.app_id=${row.app} and member.id=${row.memberId} order by person.id for update of person`;
-        const [member] = await tx`select id,person_id,account_status,opted_out from network.members where app_id=${row.app} and id=${row.memberId} for update`;
+        member = await this.memberDeliverySettings(tx, row, true);
         if (!member || member.account_status==='removed' || member.account_status==='invited') return "dropped_forgotten";
         // A paused or restricted account still gets replies to its own messages, compliance texts and
         // safety notices (snapshot.ts); the engine already decides those. The fence stops only proactive sends.
@@ -530,13 +564,23 @@ export class OutboundQueue {
       }
       // Recheck eligibility after person/member fences; app state fences were acquired first, as in canonical erasure.
       if (this.o.checks.admit && !(await this.o.checks.admit(row, tx)).ok) return "suppressed_ineligible";
-      const claimed = await tx`update platform.outbound set status='sending',attempts=attempts+1,lease_owner=${this.instance},
-        lease_until=${new Date(start+this.opt("leaseMs",5*MINUTE))},updated_at=${new Date(start)},new_conversation=${isNew},reengagement=${reengagement}
-        where id=${row.id} and app_id=${row.app} and line=${this.line} and status=${row.status} and lease_until is null
-        and to_address=${row.to} and body=${row.text} and fingerprint=${fingerprint(row.to,row.text,row.mediaUrls,row.kind,row.approvedPhotos)} returning id`;
-      if (claimed.length) {
-        await this.o.checks.claimed?.(row, tx);
-        return "admitted";
+      const start = this.now;
+      const timing = this.quietTiming(row, member, start);
+      if (timing.kind === "invalid_zone") return "parked_invalid_timezone";
+      const pending = tx`id=${row.id} and app_id=${row.app} and line=${this.line} and status=${row.status} and lease_until is null
+        and to_address=${row.to} and body=${row.text} and fingerprint=${fingerprint(row.to,row.text,row.mediaUrls,row.kind,row.approvedPhotos)}`;
+      if (timing.kind === "quiet") {
+        const deferred = await tx`update platform.outbound set status='deferred_quiet_hours',next_attempt_at=${new Date(timing.until)},
+          note='quiet hours',updated_at=${new Date(start)},person_cap=false where ${pending} returning id`;
+        if (deferred.length) return "deferred_quiet_hours";
+      } else {
+        const claimed = await tx`update platform.outbound set status='sending',attempts=attempts+1,lease_owner=${this.instance},
+          lease_until=${new Date(start+this.opt("leaseMs",5*MINUTE))},updated_at=${new Date(start)},new_conversation=${isNew},reengagement=${reengagement}
+          where ${pending} returning id`;
+        if (claimed.length) {
+          await this.o.checks.claimed?.(row, tx);
+          return "admitted";
+        }
       }
       // Another worker claimed or ended the row since this drain read it: leave it to that worker.
       const [now] = await tx`select status,lease_until from platform.outbound where id=${row.id}`;
@@ -544,6 +588,10 @@ export class OutboundQueue {
       return "dropped_forgotten";
     });
     if (typeof admission==="object") return {id:row.id,app:row.app,memberId:row.memberId,status:admission.busy};
+    if (admission === "deferred_quiet_hours") {
+      if (row.personCap) await this.o.checks.capRelease?.(row).catch(() => {});
+      return { id: row.id, app: row.app, memberId: row.memberId, status: admission };
+    }
     if (admission!=="admitted") return this.end(row,admission);
     const attempts = row.attempts + 1;
     try {
