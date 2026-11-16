@@ -18,7 +18,9 @@
 // `text` alone is what a Slack incoming webhook shows; ALERT_WEBHOOK_FORMAT=slack sends only { text }.
 import type { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { cachedOpsMetricsFresh, opsRoundDue, roundReport } from "../../packages/core/src/generated/opsAlertDispatch.ts";
-import { dispatchOperationsAlerts, type Alert, type AlertState, type AlertTx, type DispatchResult, type Notice } from "../../packages/core/src/vibe/opsAlertShell.js";
+import {
+  dispatchOperationsAlerts, type Alert, type AlertLevel, type AlertState, type AlertTx, type DispatchResult, type Notice,
+} from "../../packages/core/src/vibe/opsAlertShell.js";
 import { URGENT_REPORTS } from "../../packages/network/src/reports.ts";
 import { SIM_AUTO_REVIEWER } from "../../packages/network/src/network.ts";
 import { budgetLines, costBudgetsFromEnv, dayOf, type BudgetLine, type CostApp, type CostBudgets, type CostLedger } from "../../packages/network/service/cost.ts";
