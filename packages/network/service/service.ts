@@ -34,7 +34,6 @@ import { isDeepStrictEqual } from "node:util";
 import { DAY, LLMBudget, RealClock, recommenderLLM, type Clock, type City, type MemberId } from "@thenetwork/core";
 import { storedInviterCurrent, type ActionResult, type NetworkOptions, type NetworkState, type ReviewDecision, type ReviewOptions } from "../src/network.ts";
 import { brandOf, copy as ntwrkCopy, copyFor, ELIZA_NOTICE, type Copy } from "../src/copy.ts";
-import { isMinor } from "@thenetwork/core";
 import { personDailyCap } from "../../core/src/generated/outreachPolicy.ts";
 import {
   initial as initialStaffSafety, staffAgeAppCleared, staffAgeClearSummary, staffAgeMayReviewReports,
@@ -45,6 +44,7 @@ import { inboxKeepMs, platformKeepMs, stopHintWindowMs } from "../../core/src/ge
 import { stopCoversEveryApp } from "../../core/src/generated/sharedLineConsentJourney.ts";
 import { standingIntentReplayAllowed } from "../../core/src/generated/standingIntentManagement.ts";
 import { projectInvitationWelcome, projectRemoteInvitationNotice } from "../../core/src/generated/invitationJoinProjection.ts";
+import { profileAgeCounts } from "../../core/src/generated/siteEnrollment.ts";
 import { ageAnswer, agesStated } from "../src/classify.ts";
 import { standingIntentCommand } from "../src/standing-intents.ts";
 import { contributionHistoryReply, contributionHistoryRequest } from "./contribution-history.ts";
@@ -66,6 +66,7 @@ import {
   networkEnrollmentAllowed, noticeAllowed, otherAppAllowed, otherAppEnrollment, pendingMatchesApp, shouldReadLookingFor,
   shouldReadPendingAnswer, step as stepTextJoin,
 } from "../../core/src/generated/textEnrollment.ts";
+import { inboundAllowedAfterBan } from "../../core/src/generated/safetyCase.ts";
 import { Inbox, type CollectedReply, type InvitationReplyReason } from "./inbox.ts";
 import { staffDecideInvitationReview, staffInvitationReviewQueue } from "./invitation-review.ts";
 import { networkRoutePolicy, routeEnvelopeAllowed, sameNetworkAuthority, type NetworkRoutePolicy } from "./route-authority.ts";
@@ -76,7 +77,7 @@ import { ADULT_AGE, canBeMatched, canJoin } from "../../core/src/policy.ts";
 import { CostLedger, costRatesFromEnv, PgCostSink } from "./cost.ts";
 import { BlooioAdapter, type ChannelAdapter, type DirectKind, type Outbound } from "./channel.ts";
 import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, type AppId, type AppInfo } from "../../platform/src/apps.ts";
-import { Accounts, homeCityOf, type AccountHooks, type HomeInput, type JoinHookContext, type MemberHookContext } from "../../platform/src/accounts.ts";
+import { Accounts, homeCityOf, joinProfileText, type AccountHooks, type HomeInput, type JoinHookContext, type MemberHookContext } from "../../platform/src/accounts.ts";
 import {
   consumeMemberInvitation, findApprovedMemberInvitationReview, findMemberInvitation, holdMemberInvitation, InvitationUnavailable,
   memberInvitationHash, memberInvitationReviewId, memberInvitationReviewStatus, newMemberInvitation, purgeExpiredMemberInvitationReviews,
@@ -109,6 +110,7 @@ import { LEARNING_CONSENT_CONTEXT_PATH } from "../../core/src/svc/learning-conse
 import { learningConsentContextEndpoint } from "./learning-consent-context-endpoint.ts";
 import { SUGGESTION_PATH, profileSuggestionEndpoint, type SuggestionIdentityResolver } from "./profile-suggestion-endpoint.ts";
 import { RELAY_PATH, relayClassifierFromEnv, relayEndpoint } from "./relay-endpoint.ts";
+import { jobPostingRoutes } from "./postings.ts";
 import type { RelayClassifierHook } from "../../engine/src/relay.ts";
 import type { ChannelEvent } from "../../blooio/src/types.ts";
 // The Observatory's staff auth (per-app role grants) and audit sink, so the console and the service agree.
@@ -882,6 +884,14 @@ export class NetworkService implements RuntimeHost {
       },
       onExport: (ctx: MemberHookContext) => this.exportMember(ctx.app, ctx.memberId),
       onAgeLowered: ctx => this.ageLowered(ctx.personId, ctx.age),
+      // The ages the Network itself would record from the text (statedAge uses the same rule).
+      // spec/siteEnrollment.md, "The approved profile reaches onboarding and its stated age counts"
+      profileAges: text => {
+        const stated = agesStated(text);
+        return [{ age: stated.explicit, explicit: true }, { age: stated.age, explicit: false }]
+          .filter((a): a is { age: number; explicit: boolean } => a.age !== undefined && profileAgeCounts(a.explicit, false, canBeMatched(a.age)))
+          .map(a => a.age);
+      },
     };
   }
 
@@ -907,6 +917,26 @@ export class NetworkService implements RuntimeHost {
     if (ctx.membership.state !== "active") return; // waitlist or a recycled number: staff first
     await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age });
     await rt.unitOfWork(n => { n.welcomeJoined(ctx.membership.memberId); });
+    await this.learnJoinProfile(rt, ctx.person.id, ctx.e164, ctx.membership);
+  }
+
+  /**
+   * The approved profile that came with the join (the agent's `about`, with the home area and ZIP, as
+   * stored on the membership), given once to the welcomed member as profile input from their own agent
+   * (submitProfile): the Network learns it with its usual rules. The join already counted any age the
+   * text states (Accounts.statedJoinAge). A failure here never undoes the join: the member exists and
+   * has the welcome, so the member gives the missing fields in the conversation.
+   */
+  // spec/siteEnrollment.md, "The approved profile reaches onboarding and its stated age counts"
+  private async learnJoinProfile(rt: NetworkRuntime, personId: string, e164: string, membership: Membership): Promise<void> {
+    const field = (key: "about" | "neighborhood" | "zip") => {
+      const value = membership.profile[key];
+      return typeof value === "string" ? value : undefined;
+    };
+    const text = joinProfileText({ about: field("about"), neighborhood: field("neighborhood"), zip: field("zip") });
+    if (!text) return;
+    await this.submitProfile(personId, rt.app.id, e164, text)
+      .catch(e => this.log(`[join] profile not learned (${rt.id}): ${(e as Error).message}`));
   }
 
   private async commitReferredJoin(ctx: JoinHookContext & { referral: ReferralJoin }): Promise<void> {
@@ -922,12 +952,13 @@ export class NetworkService implements RuntimeHost {
       await accounts.store.attachPerson(ctx.e164, ctx.person.id);
       await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age }, { tx, referral: ctx.referral });
     });
-    // The token is consumed and attribution is durable. A failed welcome can retry independently.
+    // The token is consumed and attribution is durable. A failed welcome can retry independently,
+    // and the joined profile follows whichever call sends the welcome (projectInvitationJoin).
     await this.projectInvitationJoin(rt, ctx.membership.memberId).catch(() => this.log(`[invite] joined projection waits for retry (${rt.id})`));
   }
 
   private async projectInvitationJoin(rt: NetworkRuntime, memberId: MemberId): Promise<void> {
-    const remote = await rt.unitOfWork(async net => {
+    const projected = await rt.unitOfWork(async net => {
       const app = rt.app.id;
       const [pending] = await rt.scoped(tx => tx`select i.token_hash,i.inviter_member_id,i.welcome_projected_at,
           v.home_city as inviter_home,m.home_city as invitee_home
@@ -945,9 +976,18 @@ export class NetworkService implements RuntimeHost {
           where app_id=${app} and token_hash=${pending.token_hash as string} and welcome_projected_at is null returning token_hash`;
         if (rows.length !== 1) throw new InvitationUnavailable();
       };
-      return localNotice ? undefined : inviterRuntime;
+      return { remote: localNotice ? undefined : inviterRuntime };
     });
-    if (remote) await this.projectInvitationNotice(remote, memberId);
+    if (!projected) return;
+    // This call sent the welcome (also a later recovery): the joined profile follows it, once.
+    // spec/siteEnrollment.md, "The approved profile reaches onboarding and its stated age counts"
+    await (async () => {
+      const [invitee] = await rt.scoped(tx => tx`select m.person_id, ph.e164 from network.members m join platform.phone_identities ph on ph.person_id=m.person_id
+        where m.app_id=${rt.app.id} and m.id=${memberId}`);
+      const membership = invitee && await this.people.getMembership(invitee.person_id as string, rt.app.id);
+      if (invitee && membership?.memberId === memberId) await this.learnJoinProfile(rt, invitee.person_id as string, invitee.e164 as string, membership);
+    })().catch(e => this.log(`[invite] joined profile not learned (${rt.id}): ${(e as Error).message}`));
+    if (projected.remote) await this.projectInvitationNotice(projected.remote, memberId);
   }
 
   private async projectInvitationNotice(rt: NetworkRuntime, inviteeId: MemberId): Promise<void> {
@@ -1218,9 +1258,12 @@ export class NetworkService implements RuntimeHost {
         await this.lineAdapter()?.lineSafety?.(ev.type === "safety.number_banned" ? "review" : ev.action, ev.type);
         this.log(`[safety] ${ev.type} action=${ev.action ?? "-"}`);
         return "safety";
-      case "reaction":
-        await this.lineAdapter()?.engaged?.(ev.from);
+      case "reaction": {
+        // spec/safetyCase.md, "A ban allows only carrier commands and app leave"
+        const reactor = normalizePhone(ev.from);
+        if (!reactor || !(await this.accounts.banned(reactor))) await this.lineAdapter()?.engaged?.(ev.from);
         return "reaction";
+      }
       case "message": break;
     }
     if (ev.isGroup) return "ignored_group";
@@ -1229,8 +1272,10 @@ export class NetworkService implements RuntimeHost {
     const travel = !kw && this.inboundTurn() ? travelPresenceCommand(ev.text) : undefined;
     const soloEvents = !kw && this.inboundTurn() ? soloConciergeRequest(ev.text) : undefined;
     const contributionPage = !kw && this.inboundTurn() ? contributionHistoryRequest(ev.text) : undefined;
+    const e164 = normalizePhone(ev.from);
+    const banned = !!e164 && await this.accounts.banned(e164);
     // Legacy webhooks own transport engagement. A signed turn admits its canonical member after policy processing.
-    if (!this.inboundTurn() && !intentCommand) await this.lineAdapter()?.engaged?.(ev.from);
+    if (!banned && !this.inboundTurn() && !intentCommand) await this.lineAdapter()?.engaged?.(ev.from);
     const route = await this.route(ev, o.app);
     const app = this.apps[route.app];
     const joinedMember = (await this.memberApps(ev.from)).find(m => m.app === route.app);
@@ -1249,7 +1294,6 @@ export class NetworkService implements RuntimeHost {
     const memberId = rt.memberOf(ev.from);
     const turn = this.inboundTurn();
     if (turn) { turn.app = app.id; turn.memberId = memberId; }
-    const e164 = normalizePhone(ev.from);
     const t = this.clock.now();
     const rowId = `in:${ev.channel}:${ev.messageId}`;
     const profileRead = !kw ? profileReadRequest(ev.text, this.apps) : undefined;
@@ -1261,9 +1305,19 @@ export class NetworkService implements RuntimeHost {
       return this.stop(kw, ev.from, app, rt, scope, rowId, line, ev);
     }
 
+    // A banned person: STOP above, HELP and "leave <app>" only. Nothing else is engagement or opens a flow.
+    // spec/safetyCase.md, "A ban allows only carrier commands and app leave"
+    const leavingId = leaveTarget(ev.text, this.apps);
+    if (!inboundAllowedAfterBan(banned, kw === "help" || !!leavingId)) { this.log(`[inbound] a banned number (${rt.id}): not handled`); return "held"; }
+    // An allowed HELP from a banned number gets the help text and nothing else.
+    if (banned && kw === "help") {
+      await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`, "compliance");
+      return "held";
+    }
+
     // A number not seen for 12 months may have a new owner: on hold for staff review. Nothing is
     // answered or stored until staff decide (STOP above always works; HELP still answers).
-    if (e164 && (await this.accounts.seen(e164)) === "held") {
+    if (!banned && e164 && (await this.accounts.seen(e164)) === "held") {
       this.log(`[inbound] a number on hold for review (${rt.id}): not handled`);
       if (kw === "help") await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`, "compliance");
       return "held";
@@ -1272,8 +1326,8 @@ export class NetworkService implements RuntimeHost {
     // Photos by text (photoIntake.ts): the answer to the photo consent ask, then any attachment. A photo
     // from a minor, an unknown age, a banned person or a non-member of slop is dropped before it is fetched.
     // Only an explicit YES PHOTOS / NO PHOTOS routed to slop: a bare yes or no goes on to the Network (a probe, a date ask, another app).
-    if (e164 && !kw && !profileRead && !intentCommand && (await this.photoIntake.consentAnswer(e164, ev.text, rowId, route.app))) return "handled";
-    if (e164 && ev.mediaUrls?.length && !profileRead && !intentCommand) {
+    if (!banned && e164 && !kw && !profileRead && !intentCommand && (await this.photoIntake.consentAnswer(e164, ev.text, rowId, route.app))) return "handled";
+    if (!banned && e164 && ev.mediaUrls?.length && !profileRead && !intentCommand) {
       // A provider retry of the same message takes no photo twice.
       const first = (await this.people.hit(`photo_msg:${rowId}`, DAY, t)).count === 1;
       const r = first ? await this.photoIntake.photosIn(e164, ev.mediaUrls, rowId) : { outcome: "duplicate" as const };
@@ -1281,7 +1335,6 @@ export class NetworkService implements RuntimeHost {
     }
 
     // "leave <app>": that app only, on any line.
-    const leavingId = leaveTarget(ev.text, this.apps);
     const leaving = leavingId ? this.apps[leavingId] : undefined;
     if (leaving && e164) {
       const leaveMember = (await this.memberApps(ev.from)).find(m => m.app === leaving.id);
@@ -1297,6 +1350,7 @@ export class NetworkService implements RuntimeHost {
         return "left";
       }
     }
+    if (banned) return "held";
 
     // An account command never joins an app or opts the sender in.
     if (!memberId && (profileRead || intentCommand || travel || soloEvents || contributionPage !== undefined)) {
@@ -1305,9 +1359,8 @@ export class NetworkService implements RuntimeHost {
 
     if (memberId) {
       if (kw === "start" && e164) {
-        // The recycled-number hold is checked above (seen). A banned number or person is never opted back in.
+        // The recycled-number hold and the ban are checked above: a banned number or person is never opted back in.
         const person = await this.accounts.personFor(e164);
-        if (await this.accounts.banned(e164, person)) { this.log(`[inbound] START from a banned number (${rt.id}): not opted in`); return "held"; }
         const at = this.consentAt(ev);
         await this.accounts.recordConsent({ e164, app: app.id, line, state: "opted_in", source: "keyword:start", wording: "START keyword", ref: rowId, at });
         // The ledger orders events by their time: an older START (a late gateway retry) never undoes a newer STOP.
@@ -1335,10 +1388,8 @@ export class NetworkService implements RuntimeHost {
     if (!e164) { this.log(`[inbound] unknown sender (not a phone), ${ev.text.length} chars, not stored`); return "unknown_sender"; }
     if (kw === "help") { await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`, "compliance"); return "handled"; }
     // START from someone who is not a member (they sent STOP before joining): opt them back in, then the join
-    // flow asks for name and age as usual. A banned number or person is never opted back in.
+    // flow asks for name and age as usual. A banned number or person is never opted back in (checked above).
     if (kw === "start") {
-      const person = await this.accounts.personFor(e164);
-      if (await this.accounts.banned(e164, person)) { this.log(`[inbound] START from a banned number (${rt.id}): not opted in`); return "held"; }
       await this.accounts.recordConsent({ e164, app: app.id, line, state: "opted_in", source: "keyword:start", wording: "START keyword", ref: rowId, at: this.consentAt(ev) });
       if (turn) turn.consent = { state: "opted_in", scope: "app", app: app.id, at: this.consentAt(ev) };
     }
@@ -1583,7 +1634,8 @@ export class NetworkService implements RuntimeHost {
    * Network declined them (under 13), every membership goes: under 13 cannot use any app.
    */
   private async statedAge(app: AppInfo, rt: NetworkRuntime, memberId: MemberId, e164: string) {
-    const ages = rt.takeAges(memberId).filter(a => a.explicit || a.declined || isMinor(a.age));
+    // spec/siteEnrollment.md, "The approved profile reaches onboarding and its stated age counts"
+    const ages = rt.takeAges(memberId).filter(a => profileAgeCounts(a.explicit, a.declined, canBeMatched(a.age)));
     if (!ages.length) return;
     const person = await this.accounts.personFor(e164);
     // An under-13 statement the Network did not decline for (an attested adult: it holds them for
@@ -1837,7 +1889,7 @@ export class NetworkService implements RuntimeHost {
     // The reviewer of record is the signed-in person (reviewerOfRecord), never a body field; time on the item is clamped.
     const secondsSpent = typeof o.secondsSpent === "number" && Number.isFinite(o.secondsSpent) ? Math.min(Math.max(0, o.secondsSpent), MAX_REVIEW_SECONDS) : undefined;
     const opts: ReviewOptions = { ...o, secondsSpent, reviewer: user.id };
-    const detail = { decision, reason: o.reason ?? null, ...(o.swapOut ? { swapOut: o.swapOut } : {}), ...(o.explanations || o.objective ? { edited: [...Object.keys(o.explanations ?? {}).map(k => `explanation:${k}`), ...(o.objective !== undefined ? ["objective"] : [])] } : {}) };
+    const detail = { decision, reason: o.reason ?? null, revision: o.revision ?? null, ...(o.swapOut ? { swapOut: o.swapOut } : {}), ...(o.explanations || o.objective ? { edited: [...Object.keys(o.explanations ?? {}).map(k => `explanation:${k}`), ...(o.objective !== undefined ? ["objective"] : [])] } : {}) };
     return this.staffAction(rt, user, "review", { type: "opportunity", id: oppId }, detail, n => n.decide(oppId, decision, opts));
   }
 
@@ -2781,14 +2833,15 @@ export class NetworkService implements RuntimeHost {
         try { oppId = decodeURIComponent(m[1]!); } catch { return json({ ok: false, error: "invalid_id" }, 400); }
         const b = await body(req);
         if (!b) return json({ ok: false, error: "invalid_json" }, 400);
-        const { decision, reason, note, secondsSpent, explanations, objective, swapOut } = b as Record<string, any>;
+        const { decision, reason, note, secondsSpent, explanations, objective, swapOut, revision } = b as Record<string, any>;
         const str = (v: unknown, max: number) => v === undefined || (typeof v === "string" && v.length <= max);
-        if (!DECISIONS.has(decision) || oppId.length > 200 || !str(reason, 64) || !str(note, 2000) || !str(objective, 500) || !str(swapOut, 200)
+        // spec/reviewDeadline.md, "A decision applies only to the revision the reviewer saw": a staff decision always carries it.
+        if (!DECISIONS.has(decision) || !Number.isSafeInteger(revision) || revision < 0 || oppId.length > 200 || !str(reason, 64) || !str(note, 2000) || !str(objective, 500) || !str(swapOut, 200)
           || (secondsSpent !== undefined && typeof secondsSpent !== "number")
           || (explanations !== undefined && (typeof explanations !== "object" || explanations === null || Array.isArray(explanations) || Object.values(explanations).some(v => typeof v !== "string" || v.length > 500)))) {
           return json({ ok: false, error: "invalid_review" }, 400);
         }
-        return result(await this.review(user, oppId, decision, { reason, note, secondsSpent, explanations, objective, swapOut }, rt));
+        return result(await this.review(user, oppId, decision, { reason, note, secondsSpent, explanations, objective, swapOut, revision }, rt));
       }
       if (path === "/safety/lift" || path === "/safety/close") {
         const no = need(["safety"]); if (no) return no;
@@ -2883,6 +2936,9 @@ export class NetworkService implements RuntimeHost {
         }
         return result(await this.verify(user, rt, id, b.check, b.result, b.note));
       }
+      // peon job postings and employer verification (service/postings.ts): admin writes, admin or reviewer reads, each call audited.
+      const postingResponse = await jobPostingRoutes({ rt, user, need, audit: e => this.audit.write(e), now: () => this.clock.now(), log: m => this.log(m) })(req, path);
+      if (postingResponse) return postingResponse;
       if (path === "/invite") {
         // A staff invite to this app (an invite-only app: the person's reply with name and age is the join).
         const no = need(["admin"]); if (no) return no;

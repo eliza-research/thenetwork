@@ -57,6 +57,7 @@ import { NOT_SENT, type RecipientCheck } from "../../blooio/src/outbound-queue.t
 import { summarizeRun } from "../../observatory/src/engineCapture.ts";
 import type { JobPosting } from "../src/jobs.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
+import { emptySearchTally } from "@thenetwork/engine";
 import { savePosting } from "./postings.ts";
 
 type Row = Record<string, unknown>;
@@ -187,7 +188,7 @@ export class NetworkRuntime {
       app: o.app, review: "human", store: this.store,
       onEngineRun: (log, proposals, at) => {
         const s = summarizeRun(log, proposals, { at, city: this.city as City, wallMs: Math.round(log.timingsMs.total ?? 0) });
-        this.unit.runs.push({ id: this.app.id === "ntwrk" ? s.id : `${this.app.id}.${s.id}`, app_id: this.app.id, at: new Date(at), city: this.city, engine_version: s.engineVersion, proposals: s.proposals, wall_ms: s.wallMs, summary: s });
+        this.unit.runs.push({ id: this.app.id === "ntwrk" ? s.id : `${this.app.id}.${s.id}`, app_id: this.app.id, at: new Date(at), city: this.city, engine_version: s.engineVersion, proposals: s.proposals, wall_ms: s.wallMs, summary: { ...s, search: log.search ?? emptySearchTally } });
       },
       onLedger: e => { this.capital.onLedger(e); this.unit.capital.push(e); },
       // An age a member stated (network-consent-12): the service writes it to the person after the unit.

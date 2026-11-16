@@ -168,7 +168,7 @@ export interface DecideOpts { reason?: ReviewReason; note?: string; explanations
 /** Time on one review item counts at most this long (a card left open is not review work). */
 const REVIEW_SECONDS_CAP = 30 * 60;
 /** Review codes for an action that was refused before anything was recorded (the item still waits). */
-const REFUSED = new Set(["in_flight", "not_in_review", "note_required", "participant_minor", "participant_declined", "matching_paused", "nothing_to_edit", "not_a_participant", "edit_leak", "cannot_swap", "unknown_decision", "unknown_reason", "forbidden", ""]);
+const REFUSED = new Set(["in_flight", "not_in_review", "note_required", "participant_minor", "participant_declined", "matching_paused", "nothing_to_edit", "not_a_participant", "edit_leak", "cannot_swap", "review_stale", "unknown_decision", "unknown_reason", "forbidden", ""]);
 /**
  * Reads #token= once (the server prints the page URL with the token in the fragment, which the browser
  * never sends to a server or in a Referer), then removes it from the address bar and the history entry;
@@ -867,7 +867,8 @@ class ObsStore {
     const note = opts.note?.trim() || undefined;
     this.deciding.add(o.id);
     let r: ControlResult;
-    try { r = await this.control({ type: "review", oppId: o.id, decision, ...opts, note, ...(secondsSpent !== undefined ? { secondsSpent } : {}) }, { quiet }); } finally { this.deciding.delete(o.id); }
+    // The revision this card shows (spec/reviewDeadline.md): a re-roll since then makes the service refuse it as stale.
+    try { r = await this.control({ type: "review", oppId: o.id, decision, ...opts, note, revision: o.review?.rerolls ?? 0, ...(secondsSpent !== undefined ? { secondsSpent } : {}) }, { quiet }); } finally { this.deciding.delete(o.id); }
     // A refused action changed nothing (no seconds were recorded): keep timing. Otherwise the item moved on.
     if (r.ok || !REFUSED.has(r.code ?? "")) this.reviewOpened.delete(o.id);
     if (decision === "reroll" && r.ok) this.reviewOpened.set(o.id, Date.now());

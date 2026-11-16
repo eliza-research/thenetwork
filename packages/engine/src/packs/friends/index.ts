@@ -19,10 +19,11 @@ import { networkConstraints } from "../network/ontology.ts";
 import { objectivesFor, OBJECTIVES } from "../network/taxonomy.ts";
 import { FRIENDS_ACTIVITY, FRIENDS_ASK_QUESTIONS, FRIENDS_KIND_PHRASE, FRIENDS_LANE_LABEL, FRIENDS_SAFE_FALLBACK, friendsKindBits, friendsProbeText } from "./copy.ts";
 import { FRIENDS_GENERATORS } from "./generators.ts";
-import { displayMinutes, FRIENDS_EXCLUDED_ACTIVITIES, transitMinutes } from "./geo.ts";
+import { displayMinutes, FRIENDS_CITY, FRIENDS_EXCLUDED_ACTIVITIES, transitMinutes } from "./geo.ts";
 import { friendsInfo } from "./info.ts";
 import { FRIENDS_PLANS } from "./planner.ts";
 import { FRIENDS_CANDIDATE_POST_RULES, FRIENDS_CANDIDATE_PRE_RULES, friendsMemberRules, friendsPairRules } from "./rules.ts";
+import { friendsVectors } from "./vectors.ts";
 
 export const FRIENDS_PACK_VERSION = "friends-pack-0.1.0";
 
@@ -33,12 +34,12 @@ export const FRIENDS_PACK_VERSION = "friends-pack-0.1.0";
  */
 export const friendsGeo: GeoModel = {
   kind: "city",
-  markets: cfg => cfg.cities.filter(c => c === "nyc"),
+  markets: cfg => cfg.cities.filter(c => c === FRIENDS_CITY),
   tz: (market, cfg) => cfg.timezones[market] ?? "America/New_York",
   location: (w, id, start, end) => cityBucketGeo.location(w, id, start, end),
   overlap: (w, ids, start, end) => {
-    const o = cityBucketGeo.overlap(w, ids, start, end, "nyc");
-    return o && o.city === "nyc" ? o : null;
+    const o = cityBucketGeo.overlap(w, ids, start, end, FRIENDS_CITY);
+    return o && o.city === FRIENDS_CITY ? o : null;
   },
   sharesArea: (w, ids, market) => cityBucketGeo.sharesArea(w, ids, market),
   pairReason: (w, a, b) => {
@@ -92,6 +93,8 @@ export const friendsPack: AppPack = {
   get eligibility(): EligibilityPolicy { return eligibility(); },
   geo: friendsGeo,
   get generators(): readonly GeneratorSpec[] { return FRIENDS_GENERATORS; },
+  // One Friend membership per adult member (Peers; the band is the full range, so standing does not gate).
+  vectors: friendsVectors,
   retrieval: { channels: ["tag", "geo", "graph", "exposure_floor"], directions: [{ from: "member", to: "group" }] },
   scoring: { objective: "reciprocal", aggregate: b => mutualBenefit(b) },
   selection: { askQuestions: FRIENDS_ASK_QUESTIONS },
@@ -152,3 +155,4 @@ export * from "./geo.ts";
 export * from "./info.ts";
 export { ROMANCE_FRAMING, friendsProbeText } from "./copy.ts";
 export { attendedGroup } from "./rules.ts";
+export { FRIENDS_ACTIVITY_TAGS, friendsVectors } from "./vectors.ts";

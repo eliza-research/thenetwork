@@ -53,13 +53,8 @@ export interface PeonHistory {
   inFlight: number;
   /** Candidate yeses waiting for the employer's review (job seats). */
   pendingReview: number;
-  /** Applications the employer answered (yes or no) / let expire without an answer (job seats: responsiveness). */
-  answered: number; ghosted: number;
-  /** Candidate yeses received in the last 28 days (job seats). */
-  applications28: number;
-  /** All intros ever proposed to this member (job seats: total exposure so far). */
-  intros: number;
-  hires: number;
+  /** Applications the employer answered, yes or no (job seats: the company's probation ends). */
+  answered: number;
 }
 
 interface Cache { profiles: Map<MemberId, PeonProfile | null>; history: Map<MemberId, PeonHistory>; extra: Map<string, unknown> }
@@ -71,7 +66,7 @@ function cacheOf(w: World): Cache {
   return c;
 }
 
-/** Per-World scratch space for other pack modules (pool sizes etc.). */
+/** Per-World scratch space for other pack modules (company probation, seats per company). */
 export function worldScratch<V>(w: World, key: string, make: () => V): V {
   const c = cacheOf(w);
   if (!c.extra.has(key)) c.extra.set(key, make());
@@ -81,7 +76,7 @@ export function worldScratch<V>(w: World, key: string, make: () => V): V {
 export function profileOf(w: World, id: MemberId): PeonProfile | null { return cacheOf(w).profiles.get(id) ?? null; }
 export function candidateOf(w: World, id: MemberId): CandidateProfile | null { const p = profileOf(w, id); return p?.kind === "candidate" ? p : null; }
 export function jobOf(w: World, id: MemberId): JobProfile | null { const p = profileOf(w, id); return p?.kind === "job" ? p : null; }
-export function historyOf(w: World, id: MemberId): PeonHistory { return cacheOf(w).history.get(id) ?? { inFlight: 0, pendingReview: 0, answered: 0, ghosted: 0, applications28: 0, intros: 0, hires: 0 }; }
+export function historyOf(w: World, id: MemberId): PeonHistory { return cacheOf(w).history.get(id) ?? { inFlight: 0, pendingReview: 0, answered: 0 }; }
 /** All job seats / candidates, sorted by id. */
 export function jobs(w: World): JobProfile[] { return w.ids.map(id => jobOf(w, id)).filter((p): p is JobProfile => !!p); }
 export function candidates(w: World): CandidateProfile[] { return w.ids.map(id => candidateOf(w, id)).filter((p): p is CandidateProfile => !!p); }
@@ -191,23 +186,15 @@ function build(w: World): Cache {
   }
   // Pipeline history from the Network's interaction log.
   const history = new Map<MemberId, PeonHistory>();
-  const h = (id: MemberId) => { let x = history.get(id); if (!x) { x = { inFlight: 0, pendingReview: 0, answered: 0, ghosted: 0, applications28: 0, intros: 0, hires: 0 }; history.set(id, x); } return x; };
+  const h = (id: MemberId) => { let x = history.get(id); if (!x) { x = { inFlight: 0, pendingReview: 0, answered: 0 }; history.set(id, x); } return x; };
   for (const r of w.interactions) {
     if (r.at > now) continue;
-    for (const id of r.participants) {
-      const x = h(id);
-      x.intros++;
-      if ((r.outcome === "pending" || r.outcome === "accepted") && now - r.at <= 28 * DAY) x.inFlight++;
-      if (r.outcome === "completed") x.hires++;
-    }
+    if (r.outcome === "pending" || r.outcome === "accepted") for (const id of r.participants) if (now - r.at <= 28 * DAY) h(id).inFlight++;
     const seat = r.participants.find(id => profiles.get(id)?.kind === "job");
     const cand = r.participants.find(id => profiles.get(id)?.kind === "candidate");
-    if (seat && cand && (r.acceptedBy ?? []).includes(cand) && now - r.at <= 28 * DAY) h(seat).applications28++;
-    if (seat && cand && r.outcome === "pending" && (r.acceptedBy ?? []).includes(cand)) h(seat).pendingReview++;
-    if (seat && cand && (r.acceptedBy ?? []).includes(cand)) {
-      if ((r.acceptedBy ?? []).includes(seat) || (r.declinedBy ?? []).includes(seat)) h(seat).answered++;
-      else if ((r.noResponse ?? []).includes(seat)) h(seat).ghosted++;
-    }
+    if (!seat || !cand || !(r.acceptedBy ?? []).includes(cand)) continue;
+    if (r.outcome === "pending") h(seat).pendingReview++;
+    if ((r.acceptedBy ?? []).includes(seat) || (r.declinedBy ?? []).includes(seat)) h(seat).answered++;
   }
   return { profiles, history, extra: new Map() };
 }

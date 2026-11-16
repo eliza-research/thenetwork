@@ -865,6 +865,10 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   }
 
   async function cloudGrantCurrent(grant: Grant): Promise<"valid" | "invalid" | "unavailable"> {
+    // spec/oauthTokenLifecycle.md, "The request needs current grant authority and must stay within its consent"
+    let banned: boolean;
+    try { banned = await o.platform.grantIsBanned(grant.phoneKey, grant.personId); } catch { return "unavailable"; }
+    if(banned)return "invalid";
     if(!grant.id.startsWith("grant_cloud_") && grant.cloudAuthority==null)return "valid";
     const authority=grant.cloudAuthority;
     if(!authority || grant.expiresAt<=now() || grant.expiresAt>authority.expiresAt || authority.expiresAt<=now())return "invalid";

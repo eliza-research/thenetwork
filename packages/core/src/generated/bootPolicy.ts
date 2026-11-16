@@ -11,7 +11,9 @@ export interface NetworkBootFacts { environment: Environment; production: boolea
 export interface BackendBoot { deployed: boolean; databaseMissing: boolean; turnstileMissing: boolean; proxyMissing: boolean; hashMissing: boolean; proxyShort: boolean; hashShort: boolean; leakKeyShort: boolean; migrationMissing: boolean; sharedLogin: boolean }
 /** Story: Start the service with its declared configuration / The combined backend entry checks its own database, provider and secret configuration (spec/bootPolicy.md:67) */
 export interface BackendBootFacts { environment: Environment; database: boolean; migrate: boolean; migrationUrl: boolean; sameLoginUrl: boolean; turnstile: boolean; proxyLength: number; hashLength: number; leakKeyBytes: number }
-/** Story: Start the service with its declared configuration / A deployed service login must be a restricted database role (spec/bootPolicy.md:98) */
+/** Story: Start the service with its declared configuration / A deployed service lets each agent signup skill finish (spec/bootPolicy.md:98) */
+export interface AgentSignupFacts { environment: Environment; phoneCodeOnly: boolean; blooioCodes: boolean; cloudSignIn: boolean }
+/** Story: Start the service with its declared configuration / A deployed service login must be a restricted database role (spec/bootPolicy.md:118) */
 export type LoginCheck = "MissingRole" | "Superuser" | "BypassRls" | "OwnsTables" | "RestrictedRole";
 
 /** Story: Start the service with its declared configuration / The network service entry checks provider, review, storage and secret configuration (spec/bootPolicy.md:37) */
@@ -61,13 +63,33 @@ export function backendBoot(facts: BackendBootFacts): BackendBoot {
   return { deployed: local_0, databaseMissing: !facts.database, turnstileMissing: local_0 && !facts.turnstile, proxyMissing: local_0 && facts.proxyLength === 0, hashMissing: local_0 && facts.hashLength === 0, proxyShort: facts.proxyLength > 0 && facts.proxyLength < minimumSecretLength, hashShort: local_0 && facts.hashLength < minimumSecretLength, leakKeyShort: local_0 && facts.leakKeyBytes < minimumSecretLength, migrationMissing: local_0 && facts.migrate && !facts.migrationUrl, sharedLogin: local_0 && facts.sameLoginUrl };
 }
 
-/** Story: Start the service with its declared configuration / A deployed service login must be a restricted database role (spec/bootPolicy.md:98) */
+/** Story: Start the service with its declared configuration / A deployed service lets each agent signup skill finish (spec/bootPolicy.md:98) */
+//@ pure
+export function agentSignupBlocked(facts: AgentSignupFacts): boolean {
+  return deployedEnvironment(facts.environment) && !facts.cloudSignIn && (!facts.phoneCodeOnly || !facts.blooioCodes);
+}
+
+/** Story: Start the service with its declared configuration / A deployed service lets each agent signup skill finish (spec/bootPolicy.md:98) */
+//@ pure
+export function lawDevNeverBlocksAgentSignup(phoneCodeOnly: boolean, blooioCodes: boolean, cloudSignIn: boolean): boolean {
+  //@ ensures \result === true
+  return !agentSignupBlocked(({ environment: "Dev", phoneCodeOnly: phoneCodeOnly, blooioCodes: blooioCodes, cloudSignIn: cloudSignIn } as AgentSignupFacts));
+}
+
+/** Story: Start the service with its declared configuration / A deployed service lets each agent signup skill finish (spec/bootPolicy.md:98) */
+//@ pure
+export function lawDeployedAgentSignupNeedsPhoneCodes(environment: Environment, phoneCodeOnly: boolean, blooioCodes: boolean): boolean {
+  //@ ensures \result === true
+  return !(deployedEnvironment(environment) && !agentSignupBlocked(({ environment: environment, phoneCodeOnly: phoneCodeOnly, blooioCodes: blooioCodes, cloudSignIn: false } as AgentSignupFacts))) || (phoneCodeOnly && blooioCodes);
+}
+
+/** Story: Start the service with its declared configuration / A deployed service login must be a restricted database role (spec/bootPolicy.md:118) */
 //@ pure
 export function databaseLogin(rolePresent: boolean, superuser: boolean, bypass: boolean, owner: boolean): LoginCheck {
   return !rolePresent ? "MissingRole" : (superuser ? "Superuser" : (bypass ? "BypassRls" : (owner ? "OwnsTables" : "RestrictedRole")));
 }
 
-/** Story: Start the service with its declared configuration / A deployed service login must be a restricted database role (spec/bootPolicy.md:98) */
+/** Story: Start the service with its declared configuration / A deployed service login must be a restricted database role (spec/bootPolicy.md:118) */
 //@ pure
 export function lawRestrictedRoleHasNoElevatedPrivileges(rolePresent: boolean, superuser: boolean, bypass: boolean, owner: boolean): boolean {
   //@ ensures \result === true

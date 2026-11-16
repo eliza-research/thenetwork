@@ -145,62 +145,88 @@ export function finishJoin(joining: Enrollment, hookSucceeded: boolean): Enrollm
   return { ...joining, phase: hookSucceeded ? "Created" : "JoinHookFailed" };
 }
 
-/** Story: Save my approved profile in the app I asked for / Success requires an eligible profile with current consent (spec/siteEnrollment.md:135) */
+/** Story: Save my approved profile in the app I asked for / The approved profile reaches onboarding and its stated age counts (spec/siteEnrollment.md:135) */
+//@ pure
+export function profileJoinAge(typedAge: number, profileAge: number, profileStatesAge: boolean): number {
+  return profileStatesAge && profileAge < typedAge ? profileAge : typedAge;
+}
+
+/** Story: Save my approved profile in the app I asked for / The approved profile reaches onboarding and its stated age counts (spec/siteEnrollment.md:135) */
+//@ pure
+export function profileAgeCounts(statedExplicitly: boolean, declinedForAge: boolean, ageMatchable: boolean): boolean {
+  return statedExplicitly || declinedForAge || !ageMatchable;
+}
+
+/** Story: Save my approved profile in the app I asked for / The approved profile reaches onboarding and its stated age counts (spec/siteEnrollment.md:135) */
+//@ pure
+export function lawProfileMinorAgeAlwaysCounts(statedExplicitly: boolean, declinedForAge: boolean): boolean {
+  //@ ensures \result === true
+  return profileAgeCounts(statedExplicitly, declinedForAge, false);
+}
+
+/** Story: Save my approved profile in the app I asked for / The approved profile reaches onboarding and its stated age counts (spec/siteEnrollment.md:135) */
+//@ pure
+export function lawProfileAgeNeverRaisesJoinAge(typedAge: number, profileAge: number, profileStatesAge: boolean): boolean {
+  //@ ensures \result === true
+  return profileJoinAge(typedAge, profileAge, profileStatesAge) <= typedAge && (!profileStatesAge || profileJoinAge(typedAge, profileAge, profileStatesAge) <= profileAge);
+}
+
+/** Story: Save my approved profile in the app I asked for / Success requires an eligible profile with current consent (spec/siteEnrollment.md:158) */
 //@ pure
 export function alwaysSuccessUsesEligibleProfile(joining: Enrollment): boolean {
   return !(joining.phase === "Created" || joining.phase === "ReturnExisting") || (joining.viewChecked && joining.validProfile && joining.currentConsent && joining.currentEligibility && joining.ageAllowed);
 }
 
-/** Story: Save my approved profile in the app I asked for / Success requires an eligible profile with current consent (spec/siteEnrollment.md:135) */
+/** Story: Save my approved profile in the app I asked for / Success requires an eligible profile with current consent (spec/siteEnrollment.md:158) */
 //@ pure
 export function alwaysExistingMembershipStaysExisting(joining: Enrollment): boolean {
   return (!(joining.phase === "ReturnExisting") || joining.rejoin) && (!(joining.phase === "Created") || !joining.rejoin);
 }
 
-/** Story: Save my approved profile in the app I asked for / Success requires an eligible profile with current consent (spec/siteEnrollment.md:135) */
+/** Story: Save my approved profile in the app I asked for / Success requires an eligible profile with current consent (spec/siteEnrollment.md:158) */
 //@ pure
 export function alwaysReferralOnlyOnNewMembership(joining: Enrollment): boolean {
   return !joining.referred || !joining.rejoin;
 }
 
-/** Story: Save my approved profile in the app I asked for / Success requires an eligible profile with current consent (spec/siteEnrollment.md:135) */
+/** Story: Save my approved profile in the app I asked for / Success requires an eligible profile with current consent (spec/siteEnrollment.md:158) */
 //@ pure
 export function lawTypedEntryUsesSameConsentGate(consentMatches: boolean): boolean {
   //@ ensures \result === true
   return canConfirmConsent(typedJoinEntry) && confirmConsent(typedJoinEntry, consentMatches).phase === "AwaitingEligibility" === consentMatches;
 }
 
-/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md:155) */
+/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md:178) */
 //@ pure
 export function sometimesEnrolled(joining: Enrollment): boolean {
   return joining.phase === "Created";
 }
 
-/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md:155) */
+/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md:178) */
 //@ pure
 export function sometimesExisting(joining: Enrollment): boolean {
   return joining.phase === "ReturnExisting";
 }
 
-/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md:155) */
+/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md:178) */
 //@ pure
 export function sometimesAccountChanged(joining: Enrollment): boolean {
   return joining.phase === "AccountChanged";
 }
 
-/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md:155) */
+/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md:178) */
 //@ pure
 export function sometimesNeedsInvite(joining: Enrollment): boolean {
   return joining.phase === "NeedsInvite";
 }
 
-/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md:155) */
+/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md:178) */
 //@ pure
 export function sometimesInvalidInvitation(joining: Enrollment): boolean {
   return joining.phase === "InvalidInvitation";
 }
 
-/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md:155) */
+/** Story: Save my approved profile in the app I asked for / A request can enroll, reuse its membership or stop at a refusal (spec/siteEnrollment.md:178) */
 //@ pure
 export function sometimesBelowJoinAge(joining: Enrollment): boolean {
   return joining.phase === "BelowJoinAge";

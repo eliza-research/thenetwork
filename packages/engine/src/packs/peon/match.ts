@@ -1,24 +1,25 @@
-// Reciprocal, two-sided asymmetric match scoring for peon.biz (job-related criteria only).
-//   need(job <- candidate): the employer's must-haves are floors; evidence-weighted skill coverage,
-//     nice-to-haves and seniority fit (skills x seniority x logistics; O*NET / ESCO style skills).
-//   want(candidate <- job): pay headroom over the candidate's stated floor, role-family preference,
-//     work-mode preference and seniority (growth) fit.
+// peon.biz features for generic matching (AppPack.vectors; packages/engine/src/match), lane Hire
+// (TwoSided): an open job seat of a verified employer is Offering, an adult candidate is Seeking,
+// once per role family they seek (a candidate wants any one of their families, not all of them).
+// Tags carry skill levels as one tag per level ("skill:sql:1".."skill:sql:3"), so coverage counts
+// the levels a candidate brings toward each must-have, with credit for a near miss. Standing is the
+// role level on both sides, private. The pack value is pay, directed.
 // Inputs are profile.ts fields only, so nothing here can see a sealed attribute or a proxy.
-import type { CandidateProfile, JobProfile } from "./profile.ts";
+import type { MemberId } from "@thenetwork/core";
+import { laneLimits, standingCeiling } from "../../../../core/src/generated/matchLane.ts";
+import { standingFromEvidence, standingUncertainty } from "../../../../core/src/generated/memberStanding.ts";
+import { pairValueScale } from "../../../../core/src/generated/pairValue.ts";
+import { memberReason } from "../../filters.ts";
+import type { EntityStanding, EntityTags, MatchEntity, MatchProfile, Membership, PackVectors } from "../../match/profile.ts";
+import type { World } from "../../world.ts";
+import { candidateOf, jobOf, profileOf, type CandidateProfile, type JobProfile } from "./profile.ts";
+import { peonMarkets } from "./rules.ts";
 
-const clamp = (x: number, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, Number.isFinite(x) ? x : lo));
-
-/**
- * Expected true level from a claim. Self-reported skill levels run high (about 30% of claims are
- * overstated by a level or more in the world's model, as in hiring research on resume inflation),
- * so an unverified claim is discounted; demonstrated (portfolio, reference) and interview-verified
- * levels are taken as they are.
- */
-export const MATCH_TUNING = { claimDiscount: 0.4, mustFloor: 0.55 };
+/** Whole-number skill level an employer can rely on: an unverified claim counts one level lower. */
 export function effectiveLevel(c: CandidateProfile, skill: string): number {
   const s = c.skills.get(skill);
   if (!s) return 0;
-  return s.evidence === "claimed" ? Math.max(0, s.level - MATCH_TUNING.claimDiscount) : s.level;
+  return s.evidence === "claimed" ? Math.max(0, s.level - 1) : s.level;
 }
 
 /** Per must-have: met (effective level >= min), partial (within one level) or missing. */
@@ -29,34 +30,96 @@ export function mustChecks(c: CandidateProfile, j: JobProfile, claimedOnly = fal
   });
 }
 
-export interface PairScore {
-  /** Employer side (job needs). */
-  need: number;
-  /** Candidate side (candidate wants). */
-  want: number;
-  /** Must-have coverage in [0, 1]; < MATCH_TUNING.mustFloor = not proposed. */
-  coverage: number;
-}
-/** Must-have coverage below this is never proposed (the employer's floors). */
-export const mustFloor = () => MATCH_TUNING.mustFloor;
+/** A nice-to-have counts up to this level. */
+const NICE_LEVEL = 2;
+/** Seniority runs 1 (entry) .. TOP_LEVEL (principal). */
+const TOP_LEVEL = 5;
 
-export function pairScore(c: CandidateProfile, j: JobProfile): PairScore {
-  // Must-haves: shortfall of the evidence-weighted level below the minimum, in levels.
-  let cov = 0;
-  for (const m of j.must) cov += clamp(1 - Math.max(0, m.min - effectiveLevel(c, m.skill)) / 2);
-  const coverage = j.must.length ? cov / j.must.length : 0.5;
-  const nice = j.nice.length ? j.nice.filter(s => effectiveLevel(c, s) >= 2).length / j.nice.length : 0;
-  const dSen = c.seniority !== undefined && j.seniority !== undefined ? j.seniority - c.seniority : 0;
-  const senNeed = 1 - 0.35 * Math.abs(dSen);
-  const need = clamp(0.65 * coverage ** 1.5 + 0.1 * nice + 0.25 * senNeed);
+const levels = (skill: string, upTo: number): string[] => Array.from({ length: Math.max(0, upTo) }, (_, k) => `skill:${skill}:${k + 1}`);
+const family = (f: string) => `family:${f}`;
+const known = (x: number | undefined): x is number => x !== undefined && Number.isFinite(x);
 
-  // Candidate side.
-  const pay = c.floor !== undefined && j.payMax !== undefined ? clamp(0.5 + (j.payMax - c.floor) / (0.4 * Math.max(20, c.floor))) : 0.5;
-  const famIdx = j.family ? c.families.indexOf(j.family) : -1;
-  // Role family is career-intent fit (soft, domain research B3): an adjacent role the skills fit still counts.
-  const fam = famIdx === 0 ? 1 : famIdx > 0 ? 0.8 : 0.25;
-  const modePref = j.mode && c.modes.has(j.mode) ? (j.mode === "remote" ? 1 : j.mode === "hybrid" ? 0.95 : 0.85) : 0.4;
-  const senWant = dSen === 0 ? 1 : dSen === 1 ? 0.9 : dSen === -1 ? 0.6 : 0.3;
-  const want = clamp(0.4 * pay + 0.25 * fam + 0.2 * modePref + 0.15 * senWant);
-  return { need, want, coverage };
+/** A job entity's id in a market: the job intent id, suffixed by the market for a remote job seen in several. */
+export function jobEntityId(j: JobProfile, market: string, markets: number): string {
+  const id = j.intentId ?? j.id;
+  return markets > 1 ? `${id}@${market}` : id;
 }
+/** A candidate entity's id: the member id for one sought family, else the member id and the family. */
+const candidateEntityId = (c: CandidateProfile, f: string): string => (c.families.length > 1 ? `${c.id}#${f}` : c.id);
+const familyOfEntity = (c: CandidateProfile, e: MatchEntity): string => (e.id === c.id ? c.families[0]! : e.id.slice(c.id.length + 1));
+
+const memberOk = (w: World, id: MemberId, role: "seeker" | "provider") =>
+  memberReason(w, id, { category: "professional", role, format: "one_to_one", timeSensitive: false }) === null;
+
+// A seat or a candidate without a stated level, family or pay has no membership: the lane band is the
+// level rule only when both levels exist, and the pay value needs both the range and the floor.
+function memberships(w: World, id: MemberId): Membership[] {
+  const p = profileOf(w, id);
+  if (!p || !known(p.seniority)) return [];
+  if (p.kind === "job") {
+    if (!p.family || !known(p.payMin) || !known(p.payMax) || !memberOk(w, id, "provider")) return [];
+    const markets = peonMarkets(w, id);
+    // spec/peonCapacity.md, "The next slate stays within remaining openings"
+    const capacity = p.seatCap ?? p.openings;
+    return markets.map(market => ({ id: jobEntityId(p, market, markets.length), lane: "Hire" as const, side: "Offering" as const, market, capacity }));
+  }
+  if (!known(p.floor) || !memberOk(w, id, "seeker")) return [];
+  const capacity = laneLimits("Hire").weeklyCapacity;
+  return p.families.map(f => ({ id: candidateEntityId(p, f), lane: "Hire" as const, side: "Seeking" as const, market: p.market, capacity }));
+}
+
+const heldSkills = (c: CandidateProfile) => [...c.skills.keys()].flatMap(s => levels(s, effectiveLevel(c, s)));
+
+// Work mode and location are hard rules (rules.ts), so they are not sought here: a candidate who
+// accepts more modes must not get less value from a job. The role family is the shared field
+// (affinity, both sides) and, for the candidate, what they seek.
+function tags(w: World, e: MatchEntity): EntityTags {
+  const j = jobOf(w, e.memberId);
+  if (j) {
+    return {
+      offers: [family(j.family!)],
+      seeks: [...j.must.flatMap(m => levels(m.skill, m.min)), ...j.nice.flatMap(s => levels(s, NICE_LEVEL))],
+      interests: [family(j.family!)],
+    };
+  }
+  const c = candidateOf(w, e.memberId)!;
+  const f = family(familyOfEntity(c, e));
+  return { offers: heldSkills(c), seeks: [f], interests: [f] };
+}
+
+/** Role level 1..TOP_LEVEL on the standing scale (0..standingCeiling). */
+const levelPoints = (level: number): number => Math.floor((Math.min(TOP_LEVEL, Math.max(1, Math.round(level))) - 1) * standingCeiling / (TOP_LEVEL - 1));
+
+// spec/memberStanding.md: role level and track record only; never a reply, acceptance or popularity count.
+// The level is a categorical fact on both sides, so both count it in full and sit on one scale; how
+// well the candidate's level is backed shows only in the uncertainty.
+function standing(w: World, e: MatchEntity): EntityStanding {
+  const p = profileOf(w, e.memberId)!;
+  const level = [{ points: levelPoints(p.seniority!), reviewed: true }];
+  // The employer is staff-verified (an unverified seat has no membership): one reviewed fact.
+  // A candidate's level is backed by each demonstrated or interview-verified skill at or above it.
+  const backing = p.kind === "job" ? 1 : [...p.skills.values()].filter(s => s.evidence !== "claimed" && s.level >= p.seniority!).length;
+  return { standing: standingFromEvidence(level), uncertainty: standingUncertainty(backing) };
+}
+
+const clampValue = (v: number) => Math.max(0, Math.min(pairValueScale, v));
+/** Pay headroom for a candidate: 500 at their floor, 1000 at 20% above it (the floor itself is a hard rule). */
+function payHeadroom(floor: number, payMax: number): number {
+  return clampValue(pairValueScale / 2 + Math.floor((payMax - floor) * pairValueScale * 5 / (2 * Math.max(20, floor))));
+}
+/** Pay fit for a seat: 1000 when the candidate's floor is at or below the range's minimum, 500 at its maximum. */
+function payFit(payMin: number, payMax: number, floor: number): number {
+  if (floor <= payMin) return pairValueScale;
+  if (payMax <= payMin) return pairValueScale / 2;
+  return clampValue(pairValueScale - Math.floor((floor - payMin) * (pairValueScale / 2) / (payMax - payMin)));
+}
+
+// Both sides of every Hire profile have a known floor or range (memberships), so no default applies.
+function packValue(w: World, a: MatchProfile, b: MatchProfile): number {
+  const ja = jobOf(w, a.memberId), cb = candidateOf(w, b.memberId);
+  if (ja && cb) return payFit(ja.payMin!, ja.payMax!, cb.floor!);
+  const ca = candidateOf(w, a.memberId), jb = jobOf(w, b.memberId);
+  return ca && jb ? payHeadroom(ca.floor!, jb.payMax!) : 0;
+}
+
+export const peonVectors: PackVectors = { memberships, tags, standing, packValue };

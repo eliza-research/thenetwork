@@ -8,7 +8,7 @@ The backend process uses this machine for local tick reservations and shutdown p
 
 ### Reserve each tick worker before starting its work
 
-A network, notification, or operations tick uses its own key. While the process is serving, an available worker can reserve its key only if no tick owns it. Release the reservation after the worker settles, including on a failure. The shell runs the operations round beside the networks. It starts the notification tick after the network attempts for that round settle. The database owns advisory locks across processes.
+A network, inbox, retention, notification, or operations tick uses its own key. The inbox redrive uses the key `inbox`, and retention ([platform retention](platformRetention.md)) uses the key `retention`. While the process is serving, an available worker can reserve its key only if no tick owns it. Release the reservation after the worker settles, including on a failure. The shell runs the operations round beside the networks. Each round runs the inbox redrive first, then the network attempts, then retention after the network attempts settle, then the notification tick. The database owns advisory locks across processes.
 
 ```quint
 type BackendPhase = Serving | StoppingListeners | WaitingForWork | ClosingClean | ClosingTimedOut | ClosedClean | ClosedTimedOut

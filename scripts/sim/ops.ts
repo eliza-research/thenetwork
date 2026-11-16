@@ -260,6 +260,7 @@ export async function opsBlock(b: Block): Promise<void> {
     const svc: ServiceLike = {
       fetch: async () => Response.json({ ok: true }), publicFetch: async () => Response.json({ ok: true }), close: async () => {},
       runtimes: new Map([["slop:nyc", { id: "slop:nyc", tick: async () => { if (hang) await new Promise<void>(r => { release = r; }); return true; } }]]),
+      inboxTick: async () => {}, purge: async () => 0,
     };
     let now = T0;
     const fakeOps = { tick: async () => undefined, metrics: async () => ({ ok: true, networks: [] }) };
@@ -274,7 +275,7 @@ export async function opsBlock(b: Block): Promise<void> {
     expect(() => loadConfig({ ...base, OPS_METRICS_TOKEN: "short" })).toThrow();
     const thrown = (f: () => unknown) => { try { f(); return ""; } catch (e) { return (e as Error).message; } };
     expect(thrown(() => loadConfig({ PLATFORM_ENV: "staging", DATABASE_URL: "postgres://x@db/x", MIGRATION_DATABASE_URL: "postgres://o@db/x", PLATFORM_HASH_KEY: "h".repeat(40), LEAK_LABEL_KEY: "l".repeat(40), PLATFORM_PROXY_SECRET: "s".repeat(40),
-      TURNSTILE_SECRET_KEY: "f", OTP_PROVIDER: "twilio", TWILIO_ACCOUNT_SID: "AC", TWILIO_AUTH_TOKEN: "t", TWILIO_VERIFY_SERVICE_SID: "VA", ALERT_WEBHOOK_URL: "http://hooks.example.test/x" }))).toMatch(/must be https/);
+      TURNSTILE_SECRET_KEY: "f", OTP_PROVIDER: "blooio", BLOOIO_API_KEY: "k", BLOOIO_FROM: "+12125550142", PLATFORM_PHONE_OTP_ONLY_APPS: "ntwrk,slop,friends", ALERT_WEBHOOK_URL: "http://hooks.example.test/x" }))).toMatch(/must be https/);
     // A tick that never finishes: healthy until TICK_LATE_MS (15 min by default), then 503 for the uptime monitor.
     void on.startTicks();
     expect((await on.publicFetch(new Request("http://x/healthz"))).status).toBe(200);

@@ -212,15 +212,16 @@ module plan_run {
   pure def record(e: Env, o: Opp, m: str, yes: bool): (Opp, Act) = {
     val a1 = o.answers.set(m, if (yes) "yes" else "no")
     val o1 = { ...o, answers: a1 }
-    if (yes) {
+    if (o.runStage == "probing" and e.now >= D)
+      ({ ...o, runStage: "closed" }, { kind: "fallback", member: "", going: Set() })
+    else if (yes) {
       if (o.runStage == "booked") {
         if (e.now <= CUTOFF) (o1, { kind: "join", member: m, going: Set() })
         else ({ ...o1, answers: a1.set(m, "late") }, NONE)
       } else {
         val y = yesOf(a1)
-        // No deadline check here (plans.ts:577-578): the network runs planDeadline before the answer (SD-423).
         if (y.size() >= e.quorum) ({ ...o1, runStage: "booked" }, { kind: "book", member: "", going: y })
-        else (o1, NONE)
+        else closeIfUnmet(e, o1)
       }
     } else recordNo(e, o1)
   }
@@ -233,8 +234,12 @@ module plan_run {
       val nx = o1.bench.head()
       ({ ...o1, bench: o1.bench.tail(), answers: o1.answers.set(nx, "pending") }, { kind: "backfill", member: nx, going: Set() })
     }
-    else if (pendingOf(o1.answers).size() == 0 and yesOf(o1.answers).size() < e.quorum) ({ ...o1, runStage: "closed" }, { kind: "fallback", member: "", going: Set() })
-    else (o1, NONE)
+    else closeIfUnmet(e, o1)
+
+  pure def closeIfUnmet(e: Env, o: Opp): (Opp, Act) =
+    if (pendingOf(o.answers).size() == 0 and yesOf(o.answers).size() < e.quorum)
+      ({ ...o, runStage: "closed" }, { kind: "fallback", member: "", going: Set() })
+    else (o, NONE)
 
   // ------------------------------------------------------------------------------------------------
   // Network side
@@ -280,40 +285,46 @@ module plan_run {
     }
 
   /**
-   * bookPlan (network.ts:3041). Returns the opportunity and "booked", "closed" or "fallback" (the caller runs
-   * planFallback, which calls this again with fromFallback = true, so there is no recursion).
+   * bookPlan (network.ts:3041). Returns the opportunity, "booked", "closed", "fallback" or "pair", and the
+   * members the fallback may use (Set() = every yes-sayer). The caller runs planFallback, which calls this
+   * again with fromFallback = true; "pair" falls back for the two seated members only, so there is no recursion.
    */
-  pure def bookPlanCore(e: Env, o: Opp, going: Set[str], fromFallback: bool): (Opp, str) = {
+  pure def bookPlanCore(e: Env, o: Opp, going: Set[str], fromFallback: bool): (Opp, str, Set[str]) = {
     val keep1 = going.filter(id => not(bookedNear(e, id)))
     val o1 = withStatus(o, going.exclude(keep1), "unavailable")   // plan_conflict
     val seated = ORDER.foldl(Set(), (acc, id) =>
       if (keep1.contains(id) and checkRecipient(e, id, acc.union(Set(id)))._1 == "ok" and not(e.streakBad.contains(id))) acc.union(Set(id)) else acc)
     val o2 = withStatus(o1, keep1.exclude(seated), "unavailable")   // refused at the reveal check
     val left = going.exclude(seated)                               // both kinds are told (SD-480 fixed)
-    // A smaller group of 3 or more is booked; a group plan is never booked as a pair (network.ts:3101, SD-008 fixed).
-    val enough = seated.size() >= e.quorum or (seated.size() >= GROUP_MIN and e.minSize <= 2)
+    // A smaller group of 3 or more is booked; a group plan is never booked as a pair (SD-008 fixed).
+    // spec/planDecision.md, "A group plan never books two members directly" (planBookingConsented, group plans).
+    val enough = seated.size() >= GROUP_MIN and (seated.size() >= e.quorum or e.minSize <= 2)
     if (not(enough)) {
       val o3 = { ...o2, runStage: "closed" }
-      if (fromFallback or seated.size() < 2) (closeF(e, noteLeft(e, note(o3, seated), left), "plan did not come together"), "closed")
+      // Two seated members: the fallback for that pair only, after a fallback too. The yes-sayers left out
+      // hear that the plan did not come together.
+      if (seated.size() == 2) (note(o3, left), "pair", seated)
+      else if (fromFallback or seated.size() < 2) (closeF(e, noteLeft(e, note(o3, seated), left), "plan did not come together"), "closed", Set())
       // planFallback tells every yes-sayer, the left-out ones too.
-      else (o3, "fallback")
+      else (o3, "fallback", Set())
     } else {
       val o3 = { ...withStatus(noteLeft(e, o2, left), seated, "yes"), stage: "scheduled", runStage: "booked", seated: seated }
       // The reveals go out one by one (network.ts:3115). Each seated member passed the recipient check against
       // the members seated before them, and blocks and the minors and watch checks are symmetric, so each
       // reveal passes planReveal's check against the whole group: every seated member hears the names.
-      (ORDER.foldl(o3, (acc, id) => if (seated.contains(id)) revealTo(e, acc, id, seated) else acc), "booked")
+      (ORDER.foldl(o3, (acc, id) => if (seated.contains(id)) revealTo(e, acc, id, seated) else acc), "booked", Set())
     }
   }
 
   /**
    * planFallback (network.ts:3109) with engine planFallback (engine/src/plans.ts:640-654). The smaller group
    * is booked by bookPlan (fromFallback = true): this returns the plan and the members to book, or Set() when
-   * the fallback is done.
+   * the fallback is done. `eligible`: the members the fallback may use, Set() for every yes-sayer (network.ts
+   * planFallback's `eligible`: the seated pair of a group plan).
    */
-  pure def planFallbackF(e: Env, o: Opp): (Opp, Set[str]) = {
+  pure def planFallbackF(e: Env, o: Opp, eligible: Set[str]): (Opp, Set[str]) = {
     val o1 = { ...o, runStage: "closed" }
-    val yes = yesOf(o1.answers)
+    val yes = if (eligible == Set()) yesOf(o1.answers) else yesOf(o1.answers).intersect(eligible)
     if (yes.size() == 0) (closeF(e, { ...o1, fallbackKind: "none" }, "plan did not come together"), Set())
     else if (yes.size() >= 2 and e.minSize <= 2 and S - e.now > LATEJOIN) {
       if (yes.size() == 2)
@@ -350,17 +361,18 @@ module plan_run {
   /**
    * planAnswer (network.ts:3008) for a yes: recordPlanAnswer, then planAct. "book" runs bookPlan (finishBook);
    * a yes after booking joins; a yes after the late-join cutoff is out and hears so in the next message
-   * (network.ts:3047, Q-plan_run-1 fixed). A yes never backfills or falls back (recordPlanAnswer).
+   * (Q-plan_run-1). A yes can cause a fallback when it is the last reply and quorum is unmet.
    */
   pure def planYesF(e: Env, o: Opp, m: str): Res =
     if (not(recordable(o, m))) done(o)
     else {
       val r = record(e, o, m, true)
-      val o1 = setStatus(r._1, m, "available")
+      val o1 = if (r._1.answers.get(m) == "pending") r._1 else setStatus(r._1, m, "available")
       val o2 = { ...o1, lateYesBooked: o1.lateYesBooked or (r._2.kind == "book" and e.now >= D) }
       if (o2.answers.get(m) == "late") done(note(setStatus(o2, m, "unavailable"), Set(m)))
       else if (r._2.kind == "book") { o: o2, next: "book", going: r._2.going }
       else if (r._2.kind == "join") done(planJoin(e, o2, m))
+      else if (r._2.kind == "fallback") thenFallback(o2)
       else done(o2)
     }
 
@@ -371,8 +383,8 @@ module plan_run {
   pure def planNoF(e: Env, o: Opp, m: str, silent: bool): Res =
     if (not(recordable(o, m))) done(o)
     else {
-      val r = recordNo(e, { ...o, answers: o.answers.set(m, "no") })
-      val o1 = setStatus(r._1, m, if (silent) "unavailable" else "no")
+      val r = record(e, o, m, false)
+      val o1 = if (r._1.answers.get(m) == "pending") r._1 else setStatus(r._1, m, if (silent) "unavailable" else "no")
       if (r._2.kind == "backfill") done(backfill(o1, r._2.member))
       else if (r._2.kind == "fallback") thenFallback(o1)
       else done(o1)
@@ -459,17 +471,6 @@ module plan_run {
     { ...withStatus(o, late, "unavailable"), answers: MEMBERS.mapBy(p => if (late.contains(p)) "no" else o.answers.get(p)) }
   }
 
-  /**
-   * The rest of an answer that waited for the deadline step (onPlanProbeAnswer, network.ts:2353-2355): when the
-   * plan closed, the answer is not counted and gets no ack, and a yes gets the "didn't come together" note
-   * (SD-423 fixed). When the fallback booked a smaller group, the answer is recorded on the booked run (a yes
-   * joins, a no has no other effect).
-   */
-  pure def afterDeadline(e: Env, o: Opp, m: str, yes: bool): Opp =
-    if (o.stage == "closed") (if (yes) note(o, Set(m)) else o)
-    else if (yes) planYesF(e, { ...o, promised: o.promised.union(Set(m)) }, m).o
-    else planNoF(e, o, m, false).o
-
   // ------------------------------------------------------------------------------------------------
   // Environment record from the state
 
@@ -502,15 +503,14 @@ module plan_run {
   /**
    * The rest of the current unit: "" (none: the model is between two units), "book" (bookPlan for `going`,
    * from the fallback or not) or "fallback" (planFallback). `late`: a tick fell back, so the silent members
-   * are recorded after a smaller booking. `ansM`, `ansYes`: an answer that waits for the deadline step. The
-   * oracles of the unit are kept for the steps that finish it.
+   * are recorded after a smaller booking. The oracles of the unit are kept for the steps that finish it.
    */
   type Todo = {
-    kind: str, going: Set[str], fromFallback: bool, late: bool, ansM: str, ansYes: bool,
+    kind: str, going: Set[str], fromFallback: bool, late: bool,
     streakBad: Set[str], eventExists: bool
   }
   pure val IDLE: Todo = {
-    kind: "", going: Set(), fromFallback: false, late: false, ansM: "", ansYes: false, streakBad: Set(), eventExists: false
+    kind: "", going: Set(), fromFallback: false, late: false, streakBad: Set(), eventExists: false
   }
   var todo: Todo
   val idle: bool = todo.kind == ""
@@ -599,21 +599,18 @@ module plan_run {
 
   /**
    * The member answers the probe (onPlanProbeAnswer, network.ts:2351); m.awaiting routes it while the opp is
-   * open. planDeadline runs first (SD-423 fixed): when it is due, its fallback is the next step and the
-   * answer waits in `todo` (afterDeadline).
+   * open. At or after the deadline, the fallback runs and the reply leaves the answer and status unchanged.
    */
   action answer(m: str, yes: bool, streakBad: Set[str], eventExists: bool): bool = all {
     idle,
     plan.contacted.contains(m), plan.answers.get(m) == "pending",
     plan.stage == "probing" or plan.stage == "scheduled", not(optedOut.contains(m)),
     val e = envOf(streakBad, eventExists)
-    if (deadlineDue(e, plan)) all {
-      plan' = { ...plan, runStage: "closed" },
-      todo' = { ...IDLE, kind: "fallback", ansM: m, ansYes: yes, streakBad: streakBad, eventExists: eventExists },
-    } else {
-      val r = if (yes) planYesF(e, { ...plan, promised: plan.promised.union(Set(m)) }, m) else planNoF(e, plan, m, false)
-      all { plan' = r.o, todo' = todoOf(r, streakBad, eventExists) }
-    },
+    val expired = deadlineDue(e, plan)
+    val promised = if (yes and not(expired)) plan.promised.union(Set(m)) else plan.promised
+    val r = if (yes) planYesF(e, { ...plan, promised: promised }, m) else planNoF(e, plan, m, false)
+    val result = if (expired and yes) note(r.o, Set(m)) else r.o
+    all { plan' = result, todo' = todoOf(r, streakBad, eventExists) },
     now' = now, keepEnv,
   }
 
@@ -637,16 +634,16 @@ module plan_run {
   /**
    * bookPlan (network.ts:3041), the next step of a unit that books. When the main booking falls back, the
    * fallback is the next step. When a smaller group is booked in a tick, the silent members are recorded
-   * (lateSilence). Then the answer that waited for the deadline step, if any, runs.
+   * (lateSilence).
    */
   action finishBook = all {
     todo.kind == "book",
     val e = envOf(todo.streakBad, todo.eventExists)
     val r = bookPlanCore(e, plan, todo.going, todo.fromFallback)
-    if (r._2 == "fallback") all { plan' = r._1, todo' = { ...todo, kind: "fallback", going: Set(), fromFallback: false } }
+    if (r._2 == "fallback" or r._2 == "pair") all { plan' = r._1, todo' = { ...todo, kind: "fallback", going: r._3, fromFallback: false } }
     else {
       val o1 = if (todo.late and r._1.runStage == "booked") lateSilence(e, r._1) else r._1
-      all { plan' = if (todo.ansM != "") afterDeadline(e, o1, todo.ansM, todo.ansYes) else o1, todo' = IDLE }
+      all { plan' = o1, todo' = IDLE }
     },
     now' = now, keepEnv,
   }
@@ -655,9 +652,9 @@ module plan_run {
   action finishFallback = all {
     todo.kind == "fallback",
     val e = envOf(todo.streakBad, todo.eventExists)
-    val r = planFallbackF(e, plan)
+    val r = planFallbackF(e, plan, todo.going)
     if (r._2 != Set()) all { plan' = r._1, todo' = { ...todo, kind: "book", going: r._2, fromFallback: true } }
-    else all { plan' = if (todo.ansM != "") afterDeadline(e, r._1, todo.ansM, todo.ansYes) else r._1, todo' = IDLE },
+    else all { plan' = r._1, todo' = IDLE },
     now' = now, keepEnv,
   }
 
@@ -820,8 +817,8 @@ module plan_run {
   /**
    * SD-423 (fixed). A yes after the probe deadline never books the plan. Rule: the probe "Expires at the probe
    * deadline" (engine plans.ts:440-443) and "At the probe deadline without quorum: close and fall back"
-   * (plans.ts:593). recordPlanAnswer has no deadline check for a yes (plans.ts:577-578). Before the fix only
-   * the tick ran checkPlanDeadline; now onPlanProbeAnswer runs planDeadline first (network.ts:2353-2355).
+   * Before the fix only the tick ran checkPlanDeadline. A reply while the plan is still probing now
+   * expires the probe before recording an answer.
    */
   val noBookAfterDeadline: bool = not(plan.lateYesBooked)
 

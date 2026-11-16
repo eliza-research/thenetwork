@@ -198,7 +198,7 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     // An unknown decision is refused; approve works; the reviewer of record is the staff id.
     expect((await staff(b, "rev-tok", "POST", `/review/${oppId}`, { decision: "maybe" })).status).toBe(400);
     clock.set(START + 90 * MINUTE); // 14:30 New York: every member's send window is open
-    const ok = await staff(b, "rev-tok", "POST", `/review/${oppId}`, { decision: "approve", secondsSpent: 40, reviewer: "someone-else" });
+    const ok = await staff(b, "rev-tok", "POST", `/review/${oppId}`, { decision: "approve", secondsSpent: 40, reviewer: "someone-else", revision: item.revision });
     expect(await ok.json()).toEqual({ ok: true });
     const [decision] = await sql`select decision, reviewer, seconds_spent from network.review_items where opportunity_id = ${oppId}`;
     expect(decision.decision).toBe("approve");
@@ -420,7 +420,7 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     expect([...pending.proposal.participants].sort()).toEqual(["a", "b"]);
     clock.advance(MINUTE);
     expect(await importPublicEvents(sql, clock, async () => Response.json([{ ...fixture, location: "Transmitter Park", coordinates: "40.7273,-73.9606" }]))).toEqual({ published: true, events: 1 });
-    const approval = await staff(s, "rev-tok", "POST", `/review/${pending.oppId}`, { decision: "approve" });
+    const approval = await staff(s, "rev-tok", "POST", `/review/${pending.oppId}`, { decision: "approve", revision: pending.revision });
     expect(approval.status).toBe(409);
     expect(await approval.json()).toMatchObject({ reason: "public_event_changed" });
     expect(await sql`select id from network.messages where opportunity_id = ${pending.oppId}`).toHaveLength(0);
@@ -432,7 +432,7 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     expect(preferenceReview?.oppId).toBeDefined();
     expect(preferenceReview.oppId).not.toBe(pending.oppId);
     await sql`update network.members set prefs = jsonb_set(prefs, '{formats}', '["one_to_one"]') where id = 'b'`;
-    const preferenceApproval = await staff(s, "rev-tok", "POST", `/review/${preferenceReview.oppId}`, { decision: "approve" });
+    const preferenceApproval = await staff(s, "rev-tok", "POST", `/review/${preferenceReview.oppId}`, { decision: "approve", revision: preferenceReview.revision });
     expect(preferenceApproval.status).toBe(409);
     expect(await preferenceApproval.json()).toMatchObject({ reason: "public_event_participant_ineligible" });
     expect(await sql`select id from network.messages where opportunity_id = ${preferenceReview.oppId}`).toHaveLength(0);
@@ -449,7 +449,7 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     const messages = () => sql<{ member_id: string; body: string; type: string; status: string }[]>`select member_id, body, type, status
       from network.messages where direction = 'outbound' and opportunity_id = ${replacement.oppId} order by ts, id`;
     expect(await messages()).toHaveLength(0);
-    expect((await staff(s, "rev-tok", "POST", `/review/${replacement.oppId}`, { decision: "approve" })).status).toBe(200);
+    expect((await staff(s, "rev-tok", "POST", `/review/${replacement.oppId}`, { decision: "approve", revision: replacement.revision })).status).toBe(200);
     expect(await s.tick()).toBe(true);
     const first = (await messages()).filter(m => m.type === "probe");
     expect(first).toHaveLength(1);
@@ -489,12 +489,12 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
 
     // The SLA passes and no tick runs (one instance holds the lock, or the 60 s tick is still due).
     clock.set(item.deadline + MINUTE);
-    const late = await staff(s, "rev-tok", "POST", `/review/${oppId}`, { decision: "approve" });
+    const late = await staff(s, "rev-tok", "POST", `/review/${oppId}`, { decision: "approve", revision: item.revision });
     expect(late.status).toBe(409);
     expect(await late.json()).toEqual({ ok: false, reason: "review_expired" });
     expect((await sql`select decision from network.review_items where opportunity_id = ${oppId}`)[0].decision).toBe("expired");
     // A reroll cannot give the expired item a new deadline either.
-    expect(await (await staff(s, "rev-tok", "POST", `/review/${oppId}`, { decision: "reroll" })).json()).toEqual({ ok: false, reason: "not_in_review" });
+    expect(await (await staff(s, "rev-tok", "POST", `/review/${oppId}`, { decision: "reroll", revision: item.revision })).json()).toEqual({ ok: false, reason: "not_in_review" });
     // Nothing about the item reaches a member, now or after the next tick.
     expect(await s.tick()).toBe(true);
     expect((await sql`select count(*)::int as n from network.events where type = 'probe_started' and object_id = ${oppId}`)[0].n).toBe(0);
@@ -514,10 +514,50 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     const oppId = item.oppId as string;
 
     clock.set(item.deadline);
-    const edge = await staff(s, "rev-tok", "POST", `/review/${oppId}`, { decision: "approve" });
+    const edge = await staff(s, "rev-tok", "POST", `/review/${oppId}`, { decision: "approve", revision: item.revision });
     expect(edge.status).toBe(409);
     expect(await edge.json()).toEqual({ ok: false, reason: "review_expired" });
     expect((await sql`select decision from network.review_items where opportunity_id = ${oppId}`)[0].decision).toBe("expired");
+  }, T);
+
+  // spec/reviewDeadline.md, "A decision applies only to the revision the reviewer saw" (flow gap G6).
+  test("a staff approval of the revision before a re-roll is refused as stale, contacts nobody, and keeps both audit rows", async () => {
+    await reset();
+    const clock = new SimClock(START);
+    const s = service(clock, "stale");
+    expect((await staff(s, "adm-tok", "POST", "/matching", { on: true })).status).toBe(200);
+    for (const id of ["a", "b", "c", "r"]) for (const text of ONBOARD) await say(s, clock, id, text);
+    expect(await say(s, clock, "r", "Anyone around who'd want to find a regular climbing partner? I'm near Greenpoint.")).toBe("handled");
+    const queued = async () => (await (await staff(s, "rev-tok", "GET", "/review")).json()).items.find((i: any) => i.origin === "request");
+    const seen = await queued();
+    expect(seen).toMatchObject({ revision: 0 });
+    const oppId = seen.oppId as string;
+    clock.set(START + 90 * MINUTE); // every member's send window is open
+
+    // A second reviewer re-rolls the item: the partner the first reviewer saw is swapped out.
+    expect(await (await staff(s, "rev-tok", "POST", `/review/${encodeURIComponent(oppId)}`, { decision: "reroll", revision: 0 })).json()).toEqual({ ok: true });
+    const now = await queued();
+    expect(now).toMatchObject({ oppId, revision: 1 });
+    expect(now.proposal.participants).not.toEqual(seen.proposal.participants);
+
+    // The first reviewer approves what they saw (revision 0): refused, nothing changes.
+    const stale = await staff(s, "rev-tok", "POST", `/review/${encodeURIComponent(oppId)}`, { decision: "approve", revision: 0 });
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toEqual({ ok: false, reason: "review_stale" });
+    expect((await sql`select decision from network.review_items where opportunity_id = ${oppId}`)[0].decision).toBeNull();
+    expect(await s.tick()).toBe(true);
+    expect((await sql`select count(*)::int as n from network.events where type = 'probe_started' and object_id = ${oppId}`)[0].n).toBe(0);
+    expect((await sql`select count(*)::int as n from network.messages where opportunity_id = ${oppId}`)[0].n).toBe(0);
+    const audit = await sql`select ok, detail->>'phase' as phase, detail->>'decision' as decision, (detail->>'revision')::int as revision, detail->>'reason' as reason
+      from network.staff_audit where action = 'review' and target_id = ${oppId} order by id`;
+    expect(audit.slice(-2)).toEqual([
+      { ok: true, phase: "requested", decision: "approve", revision: 0, reason: null },
+      { ok: false, phase: "result", decision: "approve", revision: 0, reason: "review_stale" },
+    ]);
+
+    // An approval of the revision the queue shows now goes through.
+    expect(await (await staff(s, "rev-tok", "POST", `/review/${encodeURIComponent(oppId)}`, { decision: "approve", revision: 1 })).json()).toEqual({ ok: true });
+    expect((await sql`select decision from network.review_items where opportunity_id = ${oppId}`)[0].decision).toBe("approve");
   }, T);
 
   test("two instances never tick at once; the second sees the lock holder and skips", async () => {

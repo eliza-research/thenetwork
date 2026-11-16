@@ -38,6 +38,18 @@ pure def lawVouchCapacityIsBounded(good: int, lost: int, base: int, perGood: int
     vouchCapacityFromCounts(good, lost, base, perGood, perLost, maxBonus, maximum) <= maximum)
 ```
 
+### Vouch capacity counts only the vouches and stakes of its rolling period
+
+The capacity is a rate per rolling period. The default period is thirty days. A good vouch or a lost stake counts only when its time is after the period start and not after the evaluation time. An entry exactly one period old no longer counts. So a lost stake lowers the allowance for one period, not for good, and an old good vouch does not raise it for good. The shell converts the configured days to milliseconds and counts the entries for which this check holds.
+
+```quint
+pure def vouchInPeriod(entryAt: int, asOf: int, periodMs: int): bool =
+  entryAt > asOf - periodMs and entryAt <= asOf
+
+pure def lawVouchPeriodDropsOldEntries(entryAt: int, asOf: int, periodMs: int): bool =
+  entryAt <= asOf - periodMs implies not(vouchInPeriod(entryAt, asOf, periodMs))
+```
+
 ### Earned organizing reach reserves the extra slots for low exposure
 
 The configured maximum caps the total reach. Slots above the baseline are reserved for members with low exposure. The shell computes completed session bands and applies any active abuse or fraud lock.

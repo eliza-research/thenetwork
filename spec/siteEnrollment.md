@@ -132,6 +132,29 @@ pure def finishJoin(joining: Enrollment, hookSucceeded: bool): Enrollment =
   { ...joining, phase: if (hookSucceeded) Created else JoinHookFailed }
 ```
 
+### The approved profile reaches onboarding and its stated age counts
+
+The profile text is the `about` field plus the home area and ZIP that the request names. A request without an `about` field has no profile text: its home area and ZIP go only to the member record, so a browser join's first interview answer stays the member's own. An age that this text states about the person counts in the effective age check before anything is stored. An age counts when the text states it explicitly, when the Network declined the person for it, or when it is below the matching age. The Network's own reader of member text uses the same rule. So the lowest stated age wins, a text that states an age below the join age stores nothing for the app, and a text that states an age from 13 to 17 makes the member single-player.
+
+The join hook creates the Network member and sends the welcome. Then it gives the profile text to that member once, as profile input from the member's own agent. A referred join gives it after its welcome, also when a later recovery sends that welcome. The Network reads the text with its usual rules and learns from it. In an app with its own onboarding loop (Slop), onboarding then asks only for the fields that are still missing. In an app with the fixed interview (Network, Friends), the text answers the first interview question, and the interview continues with its fixed questions. The text never answers a probe, a plan or a check-in, and it never blocks or reports anyone. The shell parses the agent's text with the Network's own readers. The text is untrusted input and never changes review or consent.
+
+A failure to learn the profile does not undo the join: the member, the welcome, the membership and the consent stay, and the member gives the missing fields in the conversation. A repeated join keeps the existing membership and does not send its profile text again; the member changes the profile in the conversation.
+
+```quint
+pure def profileJoinAge(typedAge: int, profileAge: int, profileStatesAge: bool): int =
+  if (profileStatesAge and profileAge < typedAge) profileAge else typedAge
+
+pure def profileAgeCounts(statedExplicitly: bool, declinedForAge: bool, ageMatchable: bool): bool =
+  statedExplicitly or declinedForAge or not(ageMatchable)
+
+pure def lawProfileMinorAgeAlwaysCounts(statedExplicitly: bool, declinedForAge: bool): bool =
+  profileAgeCounts(statedExplicitly, declinedForAge, false)
+
+pure def lawProfileAgeNeverRaisesJoinAge(typedAge: int, profileAge: int, profileStatesAge: bool): bool =
+  profileJoinAge(typedAge, profileAge, profileStatesAge) <= typedAge and
+    (profileStatesAge implies profileJoinAge(typedAge, profileAge, profileStatesAge) <= profileAge)
+```
+
 ### Success requires an eligible profile with current consent
 
 Both successful outcomes need a valid profile, current consent, account eligibility and a passing effective age check. The repeat path keeps an existing membership. The new path can report creation only after persistence and the hook.

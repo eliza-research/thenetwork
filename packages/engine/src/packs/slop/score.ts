@@ -1,12 +1,13 @@
 // slopPack scoring: each side's estimated enjoyment of a first date with the other (directional
-// value), aggregated reciprocally (harmonic mean or minimum, RECON). Stated preferences are FILTERS
-// only (rules.ts); here only compatibility signals count:
+// value), the Date lane's pack value (spec/matchLane.md); the match core combines both directions.
+// Stated preferences are FILTERS only (rules.ts); here only compatibility signals count:
 //   - goals (casual vs long-term), lifestyle (smoking, drinking, kids, faith, politics), shared
 //     interests, the planned activity both like, the stated "type" against the other's self-description
 //     (weak by design: Eastwick & Finkel 2008);
-//   - a learned / revealed component from the Network's own records: how positively a member rates
-//     the dates they go on, and how the people they met rated them (both shrunk to a prior);
-//   - pair logistics: a stated common free slot for the booked date.
+//   - a learned component from the Network's own records: the member's revealed taste (per pair);
+//   - pair logistics: a stated common free slot for the booked date;
+//   - body type against the stated or revealed body-type preference.
+// The appearance rating is not here: it is the member's private lane standing (parity band).
 // Unknown fields use expected factors (never zero, never a guess presented as a fact). Nothing here
 // reads race or ethnicity (there is no such field) or any hidden truth.
 import type { SlopPackOptions } from "./options.ts";
@@ -88,21 +89,14 @@ export function typeMatch(a: SlopProfile, b: SlopProfile): number {
   return Math.max(-2, Math.min(2, s));
 }
 
-/** Shrunk mean of a feedback scale (0..1) with `n` observations. */
-const shrink = (mean: number, n: number, prior: number, k: number) => (mean * n + prior * k) / (n + k);
-
 /**
- * Learned / revealed factor for a's enjoyment of b: members who enjoy the dates they go on (rate
- * them well) tend to enjoy the next one; people whom past dates enjoyed tend to be enjoyed again.
- * 1 with no history. The learned desirability signal is used only inside the reciprocal score, never
- * to sort exposure downward (congestion control lifts low-exposure members back up).
+ * Learned factor for a's enjoyment of b: a's revealed taste for b only, a per-pair term. 1 with no
+ * history. No property of one member alone enters the pack value: standing is the only global
+ * quality signal.
  */
+// spec/memberStanding.md, "Story: Estimate standing from facts, never from popularity"
 export function learnedFactor(a: SlopProfile, b: SlopProfile, o: SlopPackOptions): number {
-  const L = o.learned;
-  if (!L.enabled) return 1;
-  const pos = shrink(a.history.givenMean, a.history.given, L.prior, L.strength) - L.prior;
-  const app = shrink(b.history.receivedMean, b.history.received, L.prior, L.strength) - L.prior;
-  return Math.exp(L.positivity * pos + L.appeal * app + L.taste * revealedTaste(a, b));
+  return o.learned.enabled ? Math.exp(o.learned.taste * revealedTaste(a, b)) : 1;
 }
 
 const cos = (x: number[], y: number[]) => {
@@ -133,36 +127,12 @@ export function dateActivity(a: SlopProfile, b: SlopProfile): string {
 }
 
 /** a's estimated enjoyment of a first date with b (0..1]: the directional value. */
-export function directional(a: SlopProfile, b: SlopProfile, o: SlopPackOptions, activity = dateActivity(a, b), attraction = 0): number {
+export function directional(a: SlopProfile, b: SlopProfile, o: SlopPackOptions): number {
   let v = compatEstimate(a, b, o);
-  if (attraction) v *= Math.exp(attraction);
-  if (a.activities.length && !a.activities.includes(activity)) v *= o.compat.activityMiss;
+  if (a.activities.length && !a.activities.includes(dateActivity(a, b))) v *= o.compat.activityMiss;
   v *= Math.exp(o.compat.typeWeight * typeMatch(a, b));
   v *= learnedFactor(a, b, o);
   return Math.max(1e-6, Math.min(1, v));
-}
-
-/**
- * Weighted RMS gap between two ratings over face / body / overall (o.appearance.dims) when both are
- * usable (confidence >= min), else undefined. With dims = overall only it is |overall_a - overall_b|.
- */
-export function appearanceGap(a: SlopProfile, b: SlopProfile, o: SlopPackOptions): number | undefined {
-  const x = a.appearance, y = b.appearance, A = o.appearance;
-  if (!x || !y || x.confidence < A.minConfidence || y.confidence < A.minConfidence) return undefined;
-  // Iteration 5: a pair with a bottom-rated member is never scored or filtered on similarity.
-  if (A.protectBelow > 0 && ((x.quantile ?? 1) < A.protectBelow || (y.quantile ?? 1) < A.protectBelow)) return undefined;
-  const W = A.dims ?? { face: 0, body: 0, overall: 1 };
-  const tot = W.face + W.body + W.overall;
-  if (!(tot > 0)) return Math.abs(x.overall - y.overall);
-  return Math.sqrt((W.face * (x.face - y.face) ** 2 + W.body * (x.body - y.body) ** 2 + W.overall * (x.overall - y.overall) ** 2) / tot);
-}
-/** Soft assortative term: exp(-w x max(0, gap - gapFree)^2), 1 when not soft or unusable. */
-export function appearanceFactor(a: SlopProfile, b: SlopProfile, o: SlopPackOptions): number {
-  if (o.appearance.mode !== "soft") return 1;
-  const d = appearanceGap(a, b, o);
-  if (d === undefined) return 1;
-  const x = Math.max(0, d - (o.appearance.gapFree ?? 0));
-  return Math.exp(-o.appearance.softWeight * x * x);
 }
 
 /**
@@ -180,11 +150,11 @@ export function revealedBodyPref(a: SlopProfile, type: string, shrinkN: number):
 /**
  * Body type (categorical), directional: a's value of b x exp(+statedWeight) when b's body type is in
  * a's stated preferences, exp(-statedWeight) when not; with no stated preference, exp(revealedWeight
- * x 2 x revealed preference); otherwise 1 (the similarity term is all that applies).
+ * x 2 x revealed preference); otherwise 1.
  */
 export function bodyTypeFactor(a: SlopProfile, b: SlopProfile, o: SlopPackOptions): number {
   const B = o.appearance.bodyType;
-  if (o.appearance.mode === "off" || !B?.enabled) return 1;
+  if (!B.enabled) return 1;
   const t = b.appearance?.bodyType;
   if (!t || (b.appearance!.bodyTypeConfidence ?? 0) < B.minConfidence || b.appearance!.confidence < o.appearance.minConfidence) return 1;
   if (a.wantsBody.length) return Math.exp(a.wantsBody.includes(t) ? B.statedWeight : -B.statedWeight);
@@ -198,12 +168,11 @@ export function logistics(a: SlopProfile, b: SlopProfile, o: SlopPackOptions): n
   return a.free.some(s => b.free.includes(s)) ? 1 : o.logistics.noCommonSlot;
 }
 
-/** Reciprocal aggregate. */
-export function aggregate(xs: number[], kind: SlopPackOptions["aggregate"]): number {
-  if (!xs.length) return 0;
-  if (xs.some(x => x <= 0)) return 0;
-  if (xs.length === 1) return xs[0]!;
-  return kind === "min" ? Math.min(...xs) : xs.length / xs.reduce((s, x) => s + 1 / x, 0);
+/** The Date lane's directed pack value of b for a: a whole number 0..1000. */
+// spec/matchLane.md, "Each lane weighs the four utility terms"
+export function datePackValue(a: SlopProfile, b: SlopProfile, o: SlopPackOptions): number {
+  const v = directional(a, b, o) * logistics(a, b, o) * bodyTypeFactor(a, b, o);
+  return Math.round(1000 * Math.max(0, Math.min(1, v)));
 }
 
 /** Estimated P(this member answers a probe yes), from their own probe history (Beta-smoothed). */

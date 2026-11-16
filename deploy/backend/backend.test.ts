@@ -11,6 +11,7 @@ import { migrate } from "../../packages/observatory/db/migrate.ts";
 import { PROXY_MAX_SKEW_S, signProxyHeaders } from "../../packages/platform/src/proxy.ts";
 import { PROFILE_REVIEW_DISCONNECT_PATH } from "../../packages/core/src/svc/profile-review-disconnect.ts";
 import { PROFILE_REVIEW_WITHDRAWAL_PATH } from "../../packages/core/src/svc/profile-review-withdrawal.ts";
+import { RELAY_PHOTO_RESOLVE_PATH } from "../../packages/core/src/svc/contract.ts";
 import {
   BUILD_HEADER, CLIENT_IP, createBackend, ipOf, jsonLogger, loadConfig, normalizeEdge, PROXY_HEADERS,
   redact, routeLabel, serviceLoginProblem, type BackendConfig, type ServiceLike,
@@ -19,7 +20,8 @@ import {
 const SECRET = "s".repeat(40);
 const DEPLOYED = {
   PLATFORM_ENV: "staging", DATABASE_URL: "postgres://svc@db.invalid/x", MIGRATION_DATABASE_URL: "postgres://owner@db.invalid/x", PLATFORM_HASH_KEY: "h".repeat(40), LEAK_LABEL_KEY: "l".repeat(40), PLATFORM_PROXY_SECRET: SECRET,
-  TURNSTILE_SECRET_KEY: "fake", OTP_PROVIDER: "twilio", TWILIO_ACCOUNT_SID: "ACfake", TWILIO_AUTH_TOKEN: "fake", TWILIO_VERIFY_SERVICE_SID: "VAfake",
+  // The agent signup configuration (spec/bootPolicy.md, "A deployed service lets each agent signup skill finish").
+  TURNSTILE_SECRET_KEY: "fake", OTP_PROVIDER: "blooio", BLOOIO_API_KEY: "fake", BLOOIO_FROM: "+12125550142", PLATFORM_PHONE_OTP_ONLY_APPS: "ntwrk,slop,friends",
 };
 
 describe("config", () => {
@@ -67,7 +69,7 @@ describe("config", () => {
   });
 
   test("a deployed environment needs every secret", () => {
-    for (const k of ["DATABASE_URL", "PLATFORM_HASH_KEY", "LEAK_LABEL_KEY", "PLATFORM_PROXY_SECRET", "TURNSTILE_SECRET_KEY", "TWILIO_AUTH_TOKEN"]) {
+    for (const k of ["DATABASE_URL", "PLATFORM_HASH_KEY", "LEAK_LABEL_KEY", "PLATFORM_PROXY_SECRET", "TURNSTILE_SECRET_KEY", "BLOOIO_API_KEY", "PLATFORM_PHONE_OTP_ONLY_APPS"]) {
       const e: Record<string, string | undefined> = { ...DEPLOYED, [k]: undefined };
       expect(() => loadConfig(e)).toThrow(k);
     }
@@ -83,7 +85,7 @@ describe("config", () => {
   });
 
   test("sends stay dry-run unless every global live flag is set", () => {
-    const base = { ...DEPLOYED, NETWORK_CHANNEL: "blooio", BLOOIO_API_KEY: "k", BLOOIO_FROM: "+15550100" };
+    const base = { ...DEPLOYED, NETWORK_CHANNEL: "blooio", BLOOIO_API_KEY: "k" };
     expect(loadConfig(DEPLOYED).channel).toBe("dry-run");
     expect(loadConfig(base).channel).toBe("dry-run");
     expect(loadConfig({ ...base, BLOOIO_ALLOW_SEND: "1" }).channel).toBe("dry-run");
@@ -99,6 +101,17 @@ describe("config", () => {
     expect(loadConfig({ ...DEPLOYED, BACKEND_EXTRA_HOSTS: "pr-1-slop.example.workers.dev=slop" }).hostMap["pr-1-slop.example.workers.dev"]).toBe("slop");
     expect(() => loadConfig({ ...DEPLOYED, BACKEND_EXTRA_HOSTS: "x.dev=nope" })).toThrow(/known app/);
     expect(() => loadConfig({ ...DEPLOYED, PLATFORM_ENV: "production", BACKEND_EXTRA_HOSTS: "x.dev=slop" })).toThrow(/not production/);
+  });
+
+  test("the selected-photo links use this backend's public https origin (BACKEND_PUBLIC_ORIGIN), nothing else", () => {
+    expect(loadConfig({ ...DEPLOYED, BACKEND_PUBLIC_ORIGIN: "https://api.ntwrk.party" }).photoDeliveryOrigin).toBe("https://api.ntwrk.party");
+    expect(loadConfig({ ...DEPLOYED, BACKEND_PUBLIC_ORIGIN: "https://api.ntwrk.party/" }).photoDeliveryOrigin).toBe("https://api.ntwrk.party");
+    const unset = loadConfig(DEPLOYED);
+    expect(unset.photoDeliveryOrigin).toBeUndefined();
+    expect(unset.warnings.join(" ")).toMatch(/BACKEND_PUBLIC_ORIGIN/);
+    for (const bad of ["http://api.ntwrk.party", "https://api.ntwrk.party/x", "https://u:p@api.ntwrk.party", "https://api.ntwrk.party?x=1", "api.ntwrk.party"]) {
+      expect(() => loadConfig({ ...DEPLOYED, BACKEND_PUBLIC_ORIGIN: bad }), bad).toThrow(/BACKEND_PUBLIC_ORIGIN/);
+    }
   });
 
   test("the build id comes from BUILD_ID, then Railway's commit", () => {
@@ -209,15 +222,19 @@ describe("logs", () => {
 function fakeService() {
   const calls: { kind: string; host: string | null; path: string; ip: string | null }[] = [];
   let release: () => void = () => {};
-  const svc: ServiceLike & { closed: boolean; ticks: number; slowTick: boolean } = {
-    closed: false, ticks: 0, slowTick: false,
+  const svc: ServiceLike & { closed: boolean; ticks: number; slowTick: boolean; rounds: string[] } = {
+    closed: false, ticks: 0, slowTick: false, rounds: [],
     async fetch(req) { calls.push({ kind: "staff", host: req.headers.get("host"), path: new URL(req.url).pathname, ip: null }); return Response.json({ ok: true, staff: true }); },
     async publicFetch(req) { calls.push({ kind: "public", host: req.headers.get("host"), path: new URL(req.url).pathname, ip: req.headers.get(CLIENT_IP) }); return Response.json({ ok: true }); },
     runtimes: new Map([["ntwrk:nyc", { id: "ntwrk:nyc", tick: async () => {
       svc.ticks++;
+      svc.rounds.push("network:ntwrk:nyc");
       if (svc.slowTick) await new Promise<void>(r => { release = r; });
       return true;
     } }]]),
+    async inboxTick() { svc.rounds.push("inbox"); },
+    async purge() { svc.rounds.push("retention"); return 0; },
+    async notifyTick() { svc.rounds.push("notify"); },
     async close() { svc.closed = true; },
   };
   return { svc, calls, release: () => release() };
@@ -255,6 +272,8 @@ describe("routing", () => {
     const { svc, calls } = fakeService();
     const b = createBackend({ svc, config: cfg(), log: silent, ping: async () => true });
     for (const p of ["/internal/turn", "/internal/turn-receipt", "/internal/set-state", "/internal/signals", "/internal/updates", "/internal/relay",
+      // The selected-photo resolve (packages/core/src/svc/contract.ts RELAY_PHOTO_RESOLVE_PATH) was 404 on the public port.
+      RELAY_PHOTO_RESOLVE_PATH,
       "/internal/profile-suggestions/preview", "/internal/profile-suggestions/decide", "/internal/profile-suggestions/delete", "/internal/profile-suggestions/collect", "/internal/profile-suggestions/consent-context",
       PROFILE_REVIEW_DISCONNECT_PATH, PROFILE_REVIEW_WITHDRAWAL_PATH]) {
       const r = await b.publicFetch(new Request(`http://api.example.test${p}`, { method: "POST", body: "{}", headers: { "content-type": "application/json" } }));
@@ -269,6 +288,8 @@ describe("routing", () => {
     // The same size is fine on the turn route (256 KiB).
     expect((await b.publicFetch(new Request("http://api.example.test/internal/turn", { method: "POST", body: "x".repeat(17 * 1024), headers: { "content-length": String(17 * 1024) } }))).status).toBe(200);
     expect((await b.publicFetch(new Request("http://api.example.test/internal/profile-suggestions/decide", { method: "POST", body: "x".repeat(17 * 1024), headers: { "content-length": String(17 * 1024) } }))).status).toBe(413);
+    // The service reads at most 16 KiB of a resolve body.
+    expect((await b.publicFetch(new Request(`http://api.example.test${RELAY_PHOTO_RESOLVE_PATH}`, { method: "POST", body: "x".repeat(17 * 1024), headers: { "content-length": String(17 * 1024) } }))).status).toBe(413);
     for (const path of [PROFILE_REVIEW_DISCONNECT_PATH, PROFILE_REVIEW_WITHDRAWAL_PATH]) {
       const before = calls.length;
       const r = await b.publicFetch(new Request(`http://api.example.test${path}`, { method: "POST", body: "x".repeat(4097), headers: { "content-length": "4097" } }));
@@ -288,6 +309,54 @@ describe("routing", () => {
     // Locally (dev), the site ports name their app without a router.
     const local = createBackend({ svc, config: cfg({ deployed: false }), log: silent, ping: async () => true });
     expect((await local.publicFetch(new Request("http://127.0.0.1:8790/api/app", { headers: { host: "slop.date" } }))).status).toBe(200);
+  });
+
+  test("the provider's selected-photo fetch reaches the public API without an edge (it answered 421); its proxy headers are removed", async () => {
+    const { svc, calls } = fakeService();
+    const b = createBackend({ svc, config: cfg(), log: silent, ping: async () => true });
+    const path = `/api/relay-photos/deliver/pri_${"a".repeat(32)}`;
+    const r = await b.publicFetch(new Request(`https://network-backend.up.railway.app${path}?exp=1&sig=x`, {
+      headers: { host: "network-backend.up.railway.app", [PROXY_HEADERS.host]: "slop.date", [PROXY_HEADERS.ip]: "203.0.113.1", "x-forwarded-host": "slop.date" },
+    }));
+    expect(r.status).toBe(200);
+    expect(calls.at(-1)).toEqual({ kind: "public", host: "network-backend.up.railway.app", path, ip: null });
+    // Only the provider's GET is exempt: any other unsigned request to that prefix, or to /api, still needs the edge.
+    // A GET under the deliver prefix that is not serveDelivery's exact pattern needs the edge too.
+    for (const [method, p] of [["POST", path], ["GET", "/api/relay-photos/options"], ["GET", "/api/relay-photos/deliver/x"],
+      ["GET", `${path}/extra`], ["GET", `/api/relay-photos/deliver/pri_${"A".repeat(32)}`]] as const) {
+      const n = calls.length;
+      const refused = await b.publicFetch(new Request(`https://network-backend.up.railway.app${p}`, { method, headers: { host: "slop.date" } }));
+      expect([method, p, refused.status]).toEqual([method, p, 421]);
+      expect(calls.length).toBe(n);
+    }
+  });
+
+  test("a turn still waiting at the deadline answers turn_busy (retryable) and its worker keeps running to the end", async () => {
+    const { svc, calls } = fakeService();
+    let finish!: (r: Response) => void;
+    const stored = Response.json({ outcome: "handled", replies: ["late"] });
+    svc.fetch = async req => {
+      calls.push({ kind: "staff", host: null, path: new URL(req.url).pathname, ip: null });
+      return new URL(req.url).pathname === "/internal/turn" ? new Promise<Response>(r => { finish = r; }) : Response.json({ ok: true });
+    };
+    const b = createBackend({ svc, config: cfg({ turnAnswerMs: 30 }), log: silent, ping: async () => true });
+    // Before the deadline existed, the answer waited for the worker (here: until the test gave up).
+    const answer = await Promise.race([
+      b.publicFetch(new Request("http://api.example.test/internal/turn", { method: "POST", body: "{}" })),
+      sleep(1_000, "no answer"),
+    ]);
+    if (typeof answer === "string") throw new Error(answer);
+    expect(answer.status).toBe(409);
+    expect(await answer.json()).toEqual({ error: "turn_busy", retryable: true });
+    // The worker still runs and is tracked, so shutdown waits for its commit.
+    expect(b.inFlight).toBe(1);
+    finish(stored);
+    await sleep(5);
+    expect(b.inFlight).toBe(0);
+    // A turn that finishes in time is answered with its own response.
+    svc.fetch = async () => Response.json({ outcome: "ignored", reason: "unknown_sender" });
+    const fast = await b.publicFetch(new Request("http://api.example.test/internal/turn", { method: "POST", body: "{}" }));
+    expect([fast.status, await fast.json()]).toEqual([200, { outcome: "ignored", reason: "unknown_sender" }]);
   });
 
   test("the staff API never answers on the public port", async () => {
@@ -344,6 +413,30 @@ describe("router to backend (deploy/router.ts, the real Worker code)", () => {
       expect(res.status).toBe(200);
       expect(calls.at(-1)).toEqual({ kind: "public", host, path: "/api/app", ip: "203.0.113.20" });
     }
+  });
+});
+
+describe("tick round", () => {
+  // spec/platformRetention.md, "Platform rows and inbox payloads have separate cutoffs"; spec/backendLifecycle.md, "Reserve each tick worker before starting its work"
+  test("each round redrives the waiting inbound messages, ticks the networks, runs retention, then the notifications (retention and the redrive never ran deployed)", async () => {
+    const { svc } = fakeService();
+    const b = createBackend({ svc, config: cfg(), log: silent, ping: async () => true });
+    await b.tickAll();
+    expect(svc.rounds).toEqual(["inbox", "network:ntwrk:nyc", "retention", "notify"]);
+    await b.tickAll();
+    expect(svc.rounds.filter(r => r === "retention").length).toBe(2);
+  });
+
+  test("a failed redrive or retention is logged and the round goes on", async () => {
+    const { svc } = fakeService();
+    const lines: string[] = [];
+    svc.inboxTick = async () => { svc.rounds.push("inbox"); throw new Error("inbox down"); };
+    svc.purge = async () => { svc.rounds.push("retention"); throw new Error("purge down"); };
+    const b = createBackend({ svc, config: cfg(), log: jsonLogger(s => lines.push(s)), ping: async () => true });
+    await b.tickAll();
+    expect(svc.rounds).toEqual(["inbox", "network:ntwrk:nyc", "retention", "notify"]);
+    expect(lines.join("\n")).toMatch(/"msg":"inbox tick failed"/);
+    expect(lines.join("\n")).toMatch(/"msg":"retention tick failed"/);
   });
 });
 
@@ -435,6 +528,7 @@ describe.skipIf(!pgAvailable)("boot (dev Postgres, a database of its own)", () =
     const env: Record<string, string> = {
       ...process.env as Record<string, string>, ...DEPLOYED, DATABASE_URL: svcUrl, MIGRATION_DATABASE_URL: url, PORT: String(port), STAFF_PORT: String(staff), TICK_MS: "3600000",
       PLATFORM_DB_ENVIRONMENT_INIT: "1", BUILD_ID: "boot-test", NODE_ENV: "", NETWORK_CHANNEL: "", BLOOIO_ALLOW_SEND: "", NTWRK_LIVE_APPROVED: "", NETWORK_PROFILE_REVIEW_ENABLED: "0",
+      BACKEND_PUBLIC_ORIGIN: "https://api.example.test",
     };
     const proc = spawnProcess([process.execPath, "--import", "tsx", `${import.meta.dirname}/server.ts`], { env, stdout: "pipe", stderr: "pipe" });
     const out = new Response(proc.stdout).text();
@@ -469,6 +563,9 @@ describe.skipIf(!pgAvailable)("boot (dev Postgres, a database of its own)", () =
         const big = await fetch(`http://127.0.0.1:${port}${path}`, { method: "POST", body: "x".repeat(4097) });
         expect(big.status).toBe(413);
       }
+      // The selected-photo resolve reaches the service's signature check on the public port (it was 404 not_found).
+      const resolve = await fetch(`http://127.0.0.1:${port}${RELAY_PHOTO_RESOLVE_PATH}`, { method: "POST", body: "{}", headers: { "content-type": "application/json" } });
+      expect([401, 503]).toContain(resolve.status);
     } finally {
       proc.kill("SIGTERM");
     }
@@ -480,6 +577,30 @@ describe.skipIf(!pgAvailable)("boot (dev Postgres, a database of its own)", () =
     expect(logs).toMatch(/"sends":"dry-run"/);
     expect(logs).not.toMatch(/"sends":"live"/);
   }, 30_000);
+
+  // spec/bootPolicy.md, "A deployed service lets each agent signup skill finish"
+  test("the real process refuses to start when an agent signup skill could not finish, and names the setting", async () => {
+    const port = 20000 + ((process.pid + 7) % 20000);
+    const refused: Record<string, string>[] = [
+      // The configuration docs/deploy.md documented before: Twilio codes and Turnstile on every app.
+      { OTP_PROVIDER: "twilio", TWILIO_ACCOUNT_SID: "ACfake", TWILIO_AUTH_TOKEN: "fake", TWILIO_VERIFY_SERVICE_SID: "VAfake", BLOOIO_API_KEY: "", BLOOIO_FROM: "", PLATFORM_PHONE_OTP_ONLY_APPS: "" },
+      // Blooio codes, but Friends still asks for the browser challenge.
+      { PLATFORM_PHONE_OTP_ONLY_APPS: "ntwrk,slop" },
+    ];
+    for (const change of refused) {
+      const env: Record<string, string> = {
+        ...process.env as Record<string, string>, ...DEPLOYED, ...change, PORT: String(port), STAFF_PORT: String(port + 1), TICK_MS: "3600000",
+        NODE_ENV: "", NETWORK_CHANNEL: "", BLOOIO_ALLOW_SEND: "", NTWRK_LIVE_APPROVED: "", NETWORK_CLOUD_AUTH_ENABLED: "",
+      };
+      const proc = spawnProcess([process.execPath, "--import", "tsx", `${import.meta.dirname}/server.ts`], { env, stdout: "pipe", stderr: "pipe" });
+      const out = Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]).then(parts => parts.join("\n"));
+      const code = await Promise.race([proc.exited, sleep(20_000, "still running" as const)]);
+      if (code === "still running") proc.kill("SIGKILL");
+      expect(code).toBe(1);
+      expect(await out).toContain("PLATFORM_PHONE_OTP_ONLY_APPS");
+      expect(await fetch(`http://127.0.0.1:${port}/healthz`).then(r => r.status, () => 0)).toBe(0);
+    }
+  }, 60_000);
 });
 
 describe("ensureServiceLogin (first deploy)", () => {

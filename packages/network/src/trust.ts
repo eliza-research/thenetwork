@@ -13,7 +13,7 @@
 // you met (a harassment victim) and reports are not counted (network-consent-14). Inviters are
 // accountable: when someone they vouched for reaches hold, the inviter loses invites for 30 days.
 import { DAY, type MemberId } from "@thenetwork/core";
-import { holdScore, levelForScore, watchScore, type TrustLevel as ModelTrustLevel } from "../../core/src/generated/trustLevel.ts";
+import { holdScore, levelForScore, trustDecayDays, trustDecayPoints, watchScore, type TrustLevel as ModelTrustLevel } from "../../core/src/generated/trustLevel.ts";
 import type { Abuse } from "./classify.ts";
 
 export type TrustLevel = "ok" | "watch" | "hold";
@@ -30,7 +30,6 @@ export const WATCH = watchScore, HOLD = holdScore;
 const STORED_LEVEL = { Ok: "ok", Watch: "watch", Hold: "hold" } as const satisfies Record<ModelTrustLevel, TrustLevel>;
 /** A Trust as plain JSON (exportState). */
 export type TrustState = { id: MemberId; score: number; level: TrustLevel; events: TrustEvent[]; reportsFrom: MemberId[]; blocksMade: number[]; blockedStrangers?: MemberId[]; heldAt?: number; lastDecay?: number }[];
-const DECAY_DAYS = 14;
 
 export class Trust {
   private recs = new Map<MemberId, TrustRecord>();
@@ -125,16 +124,16 @@ export class Trust {
     return 0;
   }
 
-  /** Clean time pays the score down one point per two weeks (never below zero). */
+  /** Clean time pays the score down one point per two weeks (never below zero), as a recorded decay event. */
   decay(now: number) {
     for (const [id, r] of this.recs) {
       if (r.lastDecay === undefined) { r.lastDecay = now; continue; }
-      const steps = Math.floor((now - r.lastDecay) / (DECAY_DAYS * DAY));
+      const steps = Math.floor((now - r.lastDecay) / (trustDecayDays * DAY));
       if (steps <= 0) continue;
-      r.lastDecay += steps * DECAY_DAYS * DAY;
-      if (r.level === "hold" || r.score <= 0) continue; // holds are lifted by a person, not by time
-      r.score = Math.max(0, r.score - steps);
-      this.relevel(id, now, "decay");
+      r.lastDecay += steps * trustDecayDays * DAY;
+      // spec/trustLevel.md, "Clean time lowers the score through a recorded decay event"
+      const points = trustDecayPoints(r.score, steps, r.level === "hold");
+      if (points < 0) this.add(id, now, "decay", points);
     }
   }
 

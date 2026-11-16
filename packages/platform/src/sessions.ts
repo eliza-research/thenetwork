@@ -29,7 +29,7 @@ export const tokenHash = (token: string, secret: string) => createHmac("sha256",
 export const signupAccountView = (app: string, phoneKey: string) => createHash("sha256").update(`signup-view:${app}:${phoneKey}`).digest("hex");
 
 export class SessionService {
-  constructor(private readonly store: PeopleStore, private readonly opts: { secret: string; now?: () => number; ttlMs?: number; rotateMs?: number; maxMs?: number }) {}
+  constructor(private readonly store: PeopleStore, private readonly opts: { secret: string; phoneHash: (e164: string) => string; now?: () => number; ttlMs?: number; rotateMs?: number; maxMs?: number }) {}
   private now() { return (this.opts.now ?? Date.now)(); }
   private hash(token: string) { return tokenHash(token, this.opts.secret); }
 
@@ -53,8 +53,11 @@ export class SessionService {
     if (flow.phase !== "LookingUp" || !token) return undefined;
     const at = this.now();
     const s = await this.store.getSession(this.hash(token));
+    // A ban made after sign-in ends the session at its next use.
+    const banned = s?.app === app && await this.store.isBanned(this.opts.phoneHash(s.e164),
+      s.personId ?? (await this.store.findPhone(s.e164))?.personId ?? null);
     flow = step(flow, { type: "readRow", sameAppRow: s?.app === app, expired: !!s && s.expiresAt <= at,
-      hasRevocation: s?.revokedAt != null, revocationDue: s?.revokedAt != null && s.revokedAt <= at,
+      hasRevocation: s?.revokedAt != null, revocationDue: s?.revokedAt != null && s.revokedAt <= at, banned,
       rotationRequested: rotate, oldEnough: !!s && !(at - s.createdAt < (this.opts.rotateMs ?? SESSION_ROTATE_MS)), at });
     if (!s || flow.phase === "Refused") return undefined;
     if (flow.phase === "Usable") return { session: s, token, rotated: false };

@@ -27,6 +27,7 @@ import { type AccountHooks, Accounts, type HomeInput, type MemberHookContext, pa
 import { APPS, type AppId, type AppInfo, appForHost, DEFAULT_HOST_MAP, DEV_HOST_MAP, isAppId, publicAppInfo, siteHosts, stagingSiteOrigins } from "./apps.ts";
 import { devShortcutsAllowed, type Env } from "./env.ts";
 import { type OtpProvider, OtpService, type OtpLimits } from "./otp.ts";
+import { agentSkillApps, phoneCodeOnlyApps } from "./otp-config.ts";
 import { maskPhone, normalizePhone } from "./phone.ts";
 import { readCappedText } from "./body.ts";
 import { verifyProxyHeaders } from "./proxy.ts";
@@ -149,9 +150,10 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   if (!o.turnstile && !dev) throw new Error("a Turnstile verifier is required outside PLATFORM_ENV=dev (TURNSTILE_SECRET_KEY)");
   // Explicit deployment policy: genuine phone-code proof without a browser challenge.
   // Unset preserves Turnstile for every app; callers cannot select this policy.
-  const phoneOtpApps = env.PLATFORM_PHONE_OTP_ONLY_APPS ? env.PLATFORM_PHONE_OTP_ONLY_APPS.split(",").map(app => app.trim()) : [];
-  if (phoneOtpApps.some(app => !["ntwrk", "slop", "friends"].includes(app)) || new Set(phoneOtpApps).size !== phoneOtpApps.length)
-    throw new Error("PLATFORM_PHONE_OTP_ONLY_APPS must list distinct ntwrk, slop or friends app IDs");
+  // The boot check (otp-config.ts agentSignupProblems) requires every agent skill app here outside dev.
+  const phoneOtpApps = phoneCodeOnlyApps(env);
+  if (phoneOtpApps.some(app => !(agentSkillApps as readonly string[]).includes(app)) || new Set(phoneOtpApps).size !== phoneOtpApps.length)
+    throw new Error(`PLATFORM_PHONE_OTP_ONLY_APPS must list distinct ${agentSkillApps.join(", ")} app IDs`);
   if (phoneOtpApps.length && o.otp.name !== "blooio") throw new Error("phone-code-only OTP requires Blooio");
   const phoneOtpOnlyApps = new Set(phoneOtpApps);
   const proxySecret = o.proxySecret ?? env.PLATFORM_PROXY_SECRET ?? undefined;
@@ -207,10 +209,10 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   const log = o.log ?? (s => console.log(s));
   const accounts = new Accounts(o.store, {
     hashKey, now, env, apps: id => apps[id],
-    hooks: { findInvitation: o.findInvitation, commitReferredJoin: o.commitReferredJoin, onJoin: o.onJoin, onStop: o.onStop, onForget: o.onForget, onExport: o.onExport, onAgeLowered: o.onAgeLowered },
+    hooks: { findInvitation: o.findInvitation, commitReferredJoin: o.commitReferredJoin, onJoin: o.onJoin, onStop: o.onStop, onForget: o.onForget, onExport: o.onExport, onAgeLowered: o.onAgeLowered, profileAges: o.profileAges },
   });
   const otp = new OtpService(o.store, o.otp, { hashKey, now, limits: o.otpLimits, log });
-  const sessions = new SessionService(o.store, { now, secret: sessionSecret });
+  const sessions = new SessionService(o.store, { now, secret: sessionSecret, phoneHash: e164 => accounts.phoneHash(e164) });
   const cookieName = (app: AppId) => (dev ? `sid_${app}` : "__Host-sid");
   const cookie = (app: AppId, token: string, maxAge: number) =>
     `${cookieName(app)}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${dev ? "" : "; Secure"}`;

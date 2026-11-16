@@ -2,13 +2,13 @@
 //@ backend dafny
 
 
-/** Story: Detect differences in outcomes without exposing individual ratings / Report rates and alert only below the configured ratio (spec/weeklyBias.md:61) */
+/** Story: Detect differences in outcomes without exposing individual ratings / Report rates and alert only below the configured ratio (spec/weeklyBias.md:64) */
 export const biasProductionGroupMinimum: number = 8;
-/** Story: Detect differences in outcomes without exposing individual ratings / Report rates and alert only below the configured ratio (spec/weeklyBias.md:61) */
+/** Story: Detect differences in outcomes without exposing individual ratings / Report rates and alert only below the configured ratio (spec/weeklyBias.md:64) */
 export const biasAnalysisGroupMinimum: number = 15;
-/** Story: Detect differences in outcomes without exposing individual ratings / Report rates and alert only below the configured ratio (spec/weeklyBias.md:61) */
+/** Story: Detect differences in outcomes without exposing individual ratings / Report rates and alert only below the configured ratio (spec/weeklyBias.md:64) */
 export const biasThresholdNumerator: number = 4;
-/** Story: Detect differences in outcomes without exposing individual ratings / Report rates and alert only below the configured ratio (spec/weeklyBias.md:61) */
+/** Story: Detect differences in outcomes without exposing individual ratings / Report rates and alert only below the configured ratio (spec/weeklyBias.md:64) */
 export const biasThresholdDenominator: number = 5;
 /** Story: Detect differences in outcomes without exposing individual ratings / The weekly run waits until the stored report is one week old (spec/weeklyBias.md:9) */
 export const biasEveryMs: number = 604800000;
@@ -50,8 +50,8 @@ export function biasOpportunityReached(stage: string, closedFrom: string): boole
 
 /** Story: Detect differences in outcomes without exposing individual ratings / Outcomes count only the opportunities in the observation window (spec/weeklyBias.md:43) */
 //@ pure
-export function biasDateHeld(stage: string, hasMeeting: boolean, meetingAt: number, asOf: number): boolean {
-  return stage === "done" && hasMeeting && meetingAt <= asOf;
+export function biasDateHeld(stage: string, hasMeeting: boolean, meetingAt: number, from: number, asOf: number): boolean {
+  return stage === "done" && hasMeeting && meetingAt >= from && meetingAt <= asOf;
 }
 
 /** Story: Detect differences in outcomes without exposing individual ratings / Outcomes count only the opportunities in the observation window (spec/weeklyBias.md:43) */
@@ -72,31 +72,38 @@ export function biasOpportunityInWindow(createdAt: number, from: number, asOf: n
   return createdAt >= from && createdAt <= asOf;
 }
 
-/** Story: Detect differences in outcomes without exposing individual ratings / Report rates and alert only below the configured ratio (spec/weeklyBias.md:61) */
+/** Story: Detect differences in outcomes without exposing individual ratings / Outcomes count only the opportunities in the observation window (spec/weeklyBias.md:43) */
+//@ pure
+export function lawBiasDateCountsByMeetingTime(meetingAt: number, from: number, asOf: number): boolean {
+  //@ ensures \result === true
+  return biasDateHeld("done", true, meetingAt, from, asOf) === biasOpportunityInWindow(meetingAt, from, asOf);
+}
+
+/** Story: Detect differences in outcomes without exposing individual ratings / Report rates and alert only below the configured ratio (spec/weeklyBias.md:64) */
 //@ pure
 export function biasRateFor(hasExposure: boolean, quotient: number): number {
   return hasExposure ? quotient : 0;
 }
 
-/** Story: Detect differences in outcomes without exposing individual ratings / Report rates and alert only below the configured ratio (spec/weeklyBias.md:61) */
+/** Story: Detect differences in outcomes without exposing individual ratings / Report rates and alert only below the configured ratio (spec/weeklyBias.md:64) */
 //@ pure
 export function biasRatioFor(hasOverallRate: boolean, quotient: number): number {
   return hasOverallRate ? quotient : 1;
 }
 
-/** Story: Detect differences in outcomes without exposing individual ratings / Report rates and alert only below the configured ratio (spec/weeklyBias.md:61) */
+/** Story: Detect differences in outcomes without exposing individual ratings / Report rates and alert only below the configured ratio (spec/weeklyBias.md:64) */
 //@ pure
 export function biasGroupEligible(members: number, minimum: number): boolean {
   return members >= minimum;
 }
 
-/** Story: Detect differences in outcomes without exposing individual ratings / Report rates and alert only below the configured ratio (spec/weeklyBias.md:61) */
+/** Story: Detect differences in outcomes without exposing individual ratings / Report rates and alert only below the configured ratio (spec/weeklyBias.md:64) */
 //@ pure
 export function biasRatioBelowThreshold(ratio: number, threshold: number): boolean {
   return ratio < threshold;
 }
 
-/** Story: Detect differences in outcomes without exposing individual ratings / Report rates and alert only below the configured ratio (spec/weeklyBias.md:61) */
+/** Story: Detect differences in outcomes without exposing individual ratings / Report rates and alert only below the configured ratio (spec/weeklyBias.md:64) */
 //@ pure
 export function lawBiasAtThresholdIsQuiet(threshold: number): boolean {
   //@ ensures \result === true

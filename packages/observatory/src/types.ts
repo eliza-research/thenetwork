@@ -641,6 +641,8 @@ export type ControlCommand =
     objective?: string;
     /** "reroll": the participant to swap for an alternate. */
     swapOut?: MemberId;
+    /** The review revision the reviewer saw (Review.rerolls); another one is refused as "review_stale". */
+    revision?: number;
   }
   | { type: "review_mode"; mode: "human" | "auto" }
   /** Admin only: the "proactive matching on in NYC" switch. */

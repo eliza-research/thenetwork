@@ -2,9 +2,12 @@
 // text on the shared line, posts a job by text, gets the read-back, and the posting is saved only on
 // their yes (network.intents and network.facets rows, in the unit's transaction). A new service on the
 // same database (a restart) sees the posting as a job seat. A 15-year-old who joins peon cannot post.
-// The staff API (service/postings.ts jobPostingRoutes) verifies the employer, refuses a minor's
-// posting, and closes the posting (the seat then has no opening). Postgres in a database of its own;
-// dry-run sends; fictional numbers (+1 212 555 01xx). Nothing is sent.
+// The staff API (service/postings.ts jobPostingRoutes, mounted by the service under /apps/peon after
+// staff authentication) verifies the employer, refuses a minor's posting, and closes the posting (the
+// seat then has no opening). The reader keeps a full dollar range and refused work terms, picks the named
+// post when one title contains another, and a stale yes cannot reopen a job that staff closed
+// (spec/postingPolicy.md). Postgres in a database of its own; dry-run sends; fictional numbers
+// (+1 212 555 01xx). Nothing is sent.
 import { findExecutable } from "../../core/src/runtime/process.ts";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { existsSync } from "node:fs";
@@ -13,7 +16,6 @@ import { MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { DryRunAdapter } from "../service/channel.ts";
-import { jobPostingRoutes } from "../service/postings.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
 import { POSTING_COPY } from "../src/jobs.ts";
@@ -50,7 +52,7 @@ const postings = async (id: string) => (await sql`select id, status, objective, 
 function service(clock: SimClock) {
   return new NetworkService({
     url: URL_, clock, instance: "peon-postings", log: () => {}, env: { PLATFORM_ENV: "dev" }, networks: [{ id: "ntwrk:nyc" }, { id: "peon:nyc" }],
-    tokens: "admin:adm-tok", webhookSecret: SECRET, network: { seed: 1 }, photoStorage: null, notify: false,
+    tokens: "admin:adm-tok,reviewer:rev-tok", webhookSecret: SECRET, network: { seed: 1 }, photoStorage: null, notify: false,
     adapter: () => new DryRunAdapter(() => {}),
   });
 }
@@ -79,17 +81,19 @@ describe.skipIf(!pgAvailable)("peon postings: text intake, restart, staff API (N
     await text(s, clock, ROWAN, "Rowan, 34");
     const rowan = (await memberId(ROWAN))!;
     expect(rowan).toEqual(expect.any(String));
-    await text(s, clock, ROWAN, "We're hiring a data analyst (level 2), 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL");
-    expect(await last(rowan)).toMatch(/^Here's your job post: Data analyst, 2 openings, \$90k-\$120k a year, hybrid in Brooklyn\..*Reply yes to post it/);
+    // spec/postingPolicy.md, "The low end of the pay range comes first": the full dollar range is kept.
+    await text(s, clock, ROWAN, "We're hiring a senior data analyst, 2 openings, $90,500-$120,750, hybrid, not remote, in Brooklyn. No sponsorship available. Must have SQL level 4 and SQL level 2");
+    expect(await last(rowan)).toMatch(/^Here's your job post: Senior data analyst, 2 openings, \$90\.5k-\$120\.75k a year, hybrid in Brooklyn\..*Visa sponsorship: no\..*Reply yes to post it/);
     expect(await postings(rowan)).toHaveLength(0);
 
     // ---- The yes saves it: the intent and the facets tagged with its id, on the manager.
     await text(s, clock, ROWAN, "yes");
-    expect(await last(rowan)).toMatch(/^Posted: data analyst\./);
+    expect(await last(rowan)).toMatch(/^Posted: senior data analyst\./);
     const [p] = await postings(rowan);
-    expect(p).toMatchObject({ status: "active", objective: "Hire: data analyst", details: "peon:job" });
+    expect(p).toMatchObject({ status: "active", objective: "Hire: senior data analyst", details: "peon:job" });
     const tags = ((await sql`select tags from network.facets where app_id = 'peon' and member_id = ${rowan} and ${`peon:posting:${p.id}`} = any(tags)`) as any[]).flatMap(r => r.tags as string[]);
-    for (const t of ["peon:family:data_analyst", "peon:seniority:2", "peon:pay:90-120", "peon:mode:hybrid", "peon:area:brooklyn", "peon:must:sql:2", "peon:openings:2"]) expect(tags).toContain(t);
+    for (const t of ["peon:family:senior_data_analyst", "peon:seniority:3", "peon:pay:90.5-120.75", "peon:mode:hybrid", "peon:area:brooklyn", "peon:must:sql:4", "peon:sponsors:no", "peon:openings:2"]) expect(tags).toContain(t);
+    expect(tags).not.toContain("peon:must:sql:2");
 
     // ---- A 15-year-old may join peon but cannot post a job.
     await text(s, clock, KAI, "peon");
@@ -109,23 +113,81 @@ describe.skipIf(!pgAvailable)("peon postings: text intake, restart, staff API (N
     expect(snap.members.some(m => m.id === seat)).toBe(true);
     expect(snap.facets.find(f => f.id === `${seat}:openings`)?.tags).toEqual(["peon:openings:2"]);
 
-    // ---- The staff API: verify the employer, refuse a minor's posting, close the posting.
-    const routes = jobPostingRoutes({ rt: s.runtimeFor("peon")!, user: { id: "staff:test", roles: ["admin"] }, need: () => undefined, audit: async () => {}, now: () => clock.now() });
-    const call = async (method: string, path: string, b?: unknown) => {
-      const res = await routes(new Request(`http://127.0.0.1:4848/apps/peon${path}`, { method, ...(b ? { headers: { "content-type": "application/json" }, body: JSON.stringify(b) } : {}) }), path.split("?")[0]!);
-      return { status: res!.status, body: await res!.json() as any };
+    // ---- The staff API on the production service: authentication, roles and audit first.
+    const callAs = async (token: string | undefined, method: string, path: string, b?: unknown) => {
+      const headers: Record<string, string> = { ...(token ? { authorization: `Bearer ${token}` } : {}), ...(b ? { "content-type": "application/json" } : {}) };
+      const res = await s.fetch(new Request(`http://127.0.0.1/apps/peon${path}`, { method, headers, ...(b ? { body: JSON.stringify(b) } : {}) }));
+      return { status: res.status, body: await res.json() as any };
     };
-    expect((await call("POST", `/employers/${encodeURIComponent(rowan)}/verify`, { company: "Acme", note: "called the office" })).body.ok).toBe(true);
+    const call = (method: string, path: string, b?: unknown) => callAs("adm-tok", method, path, b);
+    const verifyPath = `/employers/${encodeURIComponent(rowan)}/verify`;
+    expect((await callAs(undefined, "POST", verifyPath, { company: "Acme", note: "called the office" })).status).toBe(401);
+    expect((await callAs("rev-tok", "POST", verifyPath, { company: "Acme", note: "called the office" })).status).toBe(403);
+    expect((await callAs("rev-tok", "GET", `/postings?managerId=${encodeURIComponent(rowan)}`)).status).toBe(200);
+    // ---- Verify the employer, refuse a minor's posting, close the posting.
+    expect((await call("POST", verifyPath, { company: "Acme", note: "called the office" })).body.ok).toBe(true);
+    const audited = await sql`select ok, detail->>'phase' as phase from network.staff_audit where app_id = 'peon' and action = 'verify_employer' and target_id = ${rowan} order by id`;
+    expect(audited).toEqual([{ ok: true, phase: "requested" }, { ok: true, phase: "result" }]);
     const minor = await call("POST", "/postings", { managerId: kai, title: "cashier", openings: 1, payMin: 30, payMax: 35, mode: "onsite" });
     expect(minor).toMatchObject({ status: 409, body: { ok: false, reason: "adults_only" } });
     const listed = await call("GET", `/postings?managerId=${encodeURIComponent(rowan)}`);
     expect(listed.body.postings).toHaveLength(1);
-    expect(listed.body.postings[0]).toMatchObject({ id: p.id, title: "data analyst", openings: 2, payMin: 90, payMax: 120, status: "active" });
+    expect(listed.body.postings[0]).toMatchObject({ id: p.id, title: "senior data analyst", openings: 2, payMin: 90.5, payMax: 120.75, mode: "hybrid", sponsors: false, status: "active" });
     const closed = await call("POST", `/postings/${encodeURIComponent(p.id)}/close`, { reason: "filled" });
     expect(closed.body).toMatchObject({ ok: true, posting: { id: p.id, status: "closed" } });
     expect((await postings(rowan))[0].status).toBe("closed");
     snap = await loadSnapshot(sql, clock.now(), { app: "peon", city: "nyc" });
     expect(snap.facets.find(f => f.id === `${seat}:openings`)?.tags).toEqual(["peon:openings:0"]);
     expect(snap.facets.filter(f => f.memberId === seat).flatMap(f => f.tags)).toContain("peon:verified");
+    // A closed row keeps its headcount, close reason and change time; a staff reopen restores the openings.
+    const closedRead = await call("GET", `/postings?managerId=${encodeURIComponent(rowan)}`);
+    expect(closedRead.body.postings[0]).toMatchObject({ status: "closed", closedReason: "filled", openings: 2, updatedAt: clock.now() });
+    clock.advance(MINUTE);
+    const reopened = await call("POST", "/postings", { id: p.id, managerId: rowan });
+    expect(reopened.body.posting).toMatchObject({ status: "active", openings: 2, updatedAt: clock.now() });
+    expect(reopened.body.posting.closedReason).toBeUndefined();
+    snap = await loadSnapshot(sql, clock.now(), { app: "peon", city: "nyc" });
+    expect(snap.facets.find(f => f.id === `${seat}:openings`)?.tags).toEqual(["peon:openings:2"]);
+
+    // ---- A direct title answer completes a draft. A new posting command starts its own question count.
+    await text(s, clock, ROWAN, "We're hiring a coordinator");
+    expect(await last(rowan)).toBe(POSTING_COPY.askPay);
+    await text(s, clock, ROWAN, "Title: office coordinator");
+    expect(await last(rowan)).toBe(POSTING_COPY.askPay);
+    await text(s, clock, ROWAN, "Job posting: $65k-$75k");
+    expect(await last(rowan)).toBe(POSTING_COPY.askTitle);
+    // An unrelated request while the title question waits is not a title: the draft ends and the turn goes on to normal handling.
+    await text(s, clock, ROWAN, "can you find me a cofounder");
+    expect(await last(rowan)).not.toMatch(/Here's your job post|cofounder, 1 opening/i);
+    await text(s, clock, ROWAN, "Job posting: $65k-$75k");
+    expect(await last(rowan)).toBe(POSTING_COPY.askTitle);
+    await text(s, clock, ROWAN, "Data analyst");
+    expect(await last(rowan)).toMatch(/Data analyst, 1 opening, \$65k-\$75k/);
+    await text(s, clock, ROWAN, "yes");
+    expect(await last(rowan)).toMatch(/^Posted: data analyst\./);
+
+    // ---- Choosing a post keeps the edits, and "data analyst" inside "senior data analyst" is one post.
+    await text(s, clock, ROWAN, "Update my job post: 3 openings");
+    expect(await last(rowan)).toContain("Which post should I update");
+    await text(s, clock, ROWAN, "Senior data analyst");
+    expect(await last(rowan)).toMatch(/Senior data analyst, 3 openings, \$90\.5k-\$120\.75k/);
+
+    // ---- spec/postingPolicy.md, "Confirm only the posting shown in the read-back": a yes with a correction gets a new read-back.
+    await text(s, clock, ROWAN, "Yes, 4 openings");
+    expect(await last(rowan)).toMatch(/Senior data analyst, 4 openings, \$90\.5k-\$120\.75k/);
+    const openingsOf = async () => (await call("GET", `/postings?managerId=${encodeURIComponent(rowan)}`)).body.postings.find((x: { id: string }) => x.id === p.id);
+    expect((await openingsOf()).openings).toBe(2);
+    // ---- spec/postingPolicy.md, "A stale yes never reopens or overwrites a posting that staff changed or closed".
+    await call("POST", `/postings/${encodeURIComponent(p.id)}/close`, { reason: "filled" });
+    await text(s, clock, ROWAN, "yes");
+    expect(await last(rowan)).toBe(POSTING_COPY.dropped);
+    expect(await openingsOf()).toMatchObject({ status: "closed", openings: 2 });
+
+    // ---- The short close command still needs a yes before the only open post closes.
+    await text(s, clock, ROWAN, "We filled it.");
+    expect(await last(rowan)).toBe(POSTING_COPY.readBackClose("data analyst"));
+    expect((await postings(rowan)).filter(x => x.status === "active")).toHaveLength(1);
+    await text(s, clock, ROWAN, "yes");
+    expect((await postings(rowan)).filter(x => x.status === "active")).toHaveLength(0);
   }, T);
 });

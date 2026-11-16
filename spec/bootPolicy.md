@@ -1,6 +1,6 @@
 # Runtime startup configuration
 
-The [service start model](models/boot_config.md) includes database setup, process restarts and Pages proxy rotation. These generated rules decide which environment and local shortcuts apply, and which facts each startup gate requires. The entry points read environment variables and database role metadata and render the errors.
+The [service start model](models/boot_config.md) includes database setup, process restarts and Pages proxy rotation. These generated rules decide which environment and local shortcuts apply, and which facts each startup gate requires, including the settings that agent signup in [Story F30](product/stories.md#story-f30--join-the-app-i-asked-for) needs. The entry points read environment variables and database role metadata and render the errors.
 
 ## Story: Start the service with its declared configuration
 
@@ -93,6 +93,26 @@ pure def backendBoot(facts: BackendBootFacts): BackendBoot = {
     sharedLogin: deployed and facts.sameLoginUrl
   }
 }
+```
+
+### A deployed service lets each agent signup skill finish
+
+The published signup skills for Network, Slop and Friends ask for a phone code over direct HTTPS (`spec/siteEnrollment.md`). An agent cannot pass a browser challenge. So in staging and production, when the service signs people in with phone codes, each of these apps must be listed in `PLATFORM_PHONE_OTP_ONLY_APPS`, and the codes must go through Blooio (`OTP_PROVIDER=blooio`), because the API gives the phone-code-only exemption only with Blooio. Cloud sign-in (`NETWORK_CLOUD_AUTH_ENABLED=true`) is a separate sign-in mode (`spec/cloudSignIn.md`) that does not use phone codes, so this rule does not apply to it. Peon keeps its browser Join form and its Turnstile challenge, so this rule does not apply to Peon. Both entry points keep the Turnstile secret requirement for the browser and connector paths. A dev environment has no requirement. The entry points check each skill app and name the missing setting.
+
+```quint
+type AgentSignupFacts = { environment: Environment, phoneCodeOnly: bool, blooioCodes: bool, cloudSignIn: bool }
+
+pure def agentSignupBlocked(facts: AgentSignupFacts): bool =
+  deployedEnvironment(facts.environment) and not(facts.cloudSignIn) and
+    (not(facts.phoneCodeOnly) or not(facts.blooioCodes))
+
+pure def lawDevNeverBlocksAgentSignup(phoneCodeOnly: bool, blooioCodes: bool, cloudSignIn: bool): bool =
+  not(agentSignupBlocked({ environment: Dev, phoneCodeOnly: phoneCodeOnly, blooioCodes: blooioCodes, cloudSignIn: cloudSignIn }))
+
+pure def lawDeployedAgentSignupNeedsPhoneCodes(environment: Environment, phoneCodeOnly: bool, blooioCodes: bool): bool =
+  (deployedEnvironment(environment) and
+    not(agentSignupBlocked({ environment: environment, phoneCodeOnly: phoneCodeOnly, blooioCodes: blooioCodes, cloudSignIn: false })))
+    implies (phoneCodeOnly and blooioCodes)
 ```
 
 ### A deployed service login must be a restricted database role

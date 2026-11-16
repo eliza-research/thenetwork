@@ -123,6 +123,33 @@ export function lawCorrectionNeedsConfirmation(affirmative: boolean, restricted:
   return !confirmationAfterAnswer(true, affirmative, restricted);
 }
 
+/** Story: Review the information used for dating / Only a plain yes confirms the read-back (spec/slopOnboarding.md:105) */
+//@ pure
+export function readbackAffirmed(answeredYes: boolean, answeredNo: boolean, qualified: boolean, bareAffirmation: boolean): boolean {
+  return !qualified && !answeredNo && (answeredYes || bareAffirmation);
+}
+
+/** Story: Review the information used for dating / Only a plain yes confirms the read-back (spec/slopOnboarding.md:105) */
+//@ pure
+export function lawQualifiedReadbackAnswerNeverConfirms(changed: boolean, answeredYes: boolean, answeredNo: boolean, bareAffirmation: boolean, restricted: boolean): boolean {
+  //@ ensures \result === true
+  return !confirmationAfterAnswer(changed, readbackAffirmed(answeredYes, answeredNo, true, bareAffirmation), restricted);
+}
+
+/** Story: Review the information used for dating / Only a plain yes confirms the read-back (spec/slopOnboarding.md:105) */
+//@ pure
+export function lawRefusedReadbackNeverConfirms(changed: boolean, answeredYes: boolean, qualified: boolean, bareAffirmation: boolean, restricted: boolean): boolean {
+  //@ ensures \result === true
+  return !confirmationAfterAnswer(changed, readbackAffirmed(answeredYes, true, qualified, bareAffirmation), restricted);
+}
+
+/** Story: Review the information used for dating / Only a plain yes confirms the read-back (spec/slopOnboarding.md:105) */
+//@ pure
+export function lawPlainYesConfirmsUnchangedReadback(answeredNo: boolean, restricted: boolean): boolean {
+  //@ ensures \result === true
+  return confirmationAfterAnswer(false, readbackAffirmed(true, answeredNo, false, false), restricted) === (!answeredNo && !restricted);
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: PromptRun, event: Event): boolean {

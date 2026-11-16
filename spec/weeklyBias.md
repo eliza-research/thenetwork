@@ -42,7 +42,7 @@ pure def biasRatingQuintile(rank: int, population: int): int =
 
 ### Outcomes count only the opportunities in the observation window
 
-An opportunity enters the report when its creation timestamp is at either bound or between them. It counts as reaching a member after review. A closed opportunity with no recorded prior stage is treated as having closed in review. Count held dates marked done with a meeting timestamp through the report time. A pair with at least two held dates contributes one second-date count to each participant.
+Each outcome uses its own timestamp. A proposal enters the report when its creation timestamp is at either bound or between them. It counts as reaching a member after review. A closed opportunity with no recorded prior stage is treated as having closed in review. A held date enters the report when it is marked done and its meeting timestamp is at either bound or between them, whenever the proposal was created. So a date stays in the report until its meeting leaves the window. A pair with at least two held dates in the window contributes one second-date count to each participant.
 
 ```quint
 pure def biasOpportunityInWindow(createdAt: int, from: int, asOf: int): bool =
@@ -51,8 +51,11 @@ pure def biasOpportunityInWindow(createdAt: int, from: int, asOf: int): bool =
 pure def biasOpportunityReached(stage: str, closedFrom: str): bool =
   stage != "review" and not(stage == "closed" and closedFrom == "review")
 
-pure def biasDateHeld(stage: str, hasMeeting: bool, meetingAt: int, asOf: int): bool =
-  stage == "done" and hasMeeting and meetingAt <= asOf
+pure def biasDateHeld(stage: str, hasMeeting: bool, meetingAt: int, from: int, asOf: int): bool =
+  stage == "done" and hasMeeting and meetingAt >= from and meetingAt <= asOf
+
+pure def lawBiasDateCountsByMeetingTime(meetingAt: int, from: int, asOf: int): bool =
+  biasDateHeld("done", true, meetingAt, from, asOf) == biasOpportunityInWindow(meetingAt, from, asOf)
 
 pure def biasSinglePair(participants: int): bool = participants == 2
 pure def biasPairMetAgain(dates: int): bool = dates >= 2

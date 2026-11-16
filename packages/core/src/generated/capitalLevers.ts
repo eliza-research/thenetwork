@@ -3,7 +3,7 @@
 
 /** Story: Use my past contributions without changing who can match with me / Effort uses four tiers (spec/capitalLevers.md:9) */
 export type EffortBand = "Baseline" | "First" | "Second" | "Highest";
-/** Story: Use my past contributions without changing who can match with me / Earned organizing reach reserves the extra slots for low exposure (spec/capitalLevers.md:41) */
+/** Story: Use my past contributions without changing who can match with me / Earned organizing reach reserves the extra slots for low exposure (spec/capitalLevers.md:53) */
 export interface ReachAllowance { max: number; reservedForLowExposure: number }
 
 
@@ -30,7 +30,20 @@ export function lawVouchCapacityIsBounded(good: number, lost: number, base: numb
   return !(maximum >= 0) || (vouchCapacityFromCounts(good, lost, base, perGood, perLost, maxBonus, maximum) >= 0 && vouchCapacityFromCounts(good, lost, base, perGood, perLost, maxBonus, maximum) <= maximum);
 }
 
-/** Story: Use my past contributions without changing who can match with me / Earned organizing reach reserves the extra slots for low exposure (spec/capitalLevers.md:41) */
+/** Story: Use my past contributions without changing who can match with me / Vouch capacity counts only the vouches and stakes of its rolling period (spec/capitalLevers.md:41) */
+//@ pure
+export function vouchInPeriod(entryAt: number, asOf: number, periodMs: number): boolean {
+  return entryAt > exact_capitalLevers(asOf - periodMs) && entryAt <= asOf;
+}
+
+/** Story: Use my past contributions without changing who can match with me / Vouch capacity counts only the vouches and stakes of its rolling period (spec/capitalLevers.md:41) */
+//@ pure
+export function lawVouchPeriodDropsOldEntries(entryAt: number, asOf: number, periodMs: number): boolean {
+  //@ ensures \result === true
+  return !(entryAt <= exact_capitalLevers(asOf - periodMs)) || !vouchInPeriod(entryAt, asOf, periodMs);
+}
+
+/** Story: Use my past contributions without changing who can match with me / Earned organizing reach reserves the extra slots for low exposure (spec/capitalLevers.md:53) */
 //@ pure
 export function reachFromBands(bands: number, base: number, perBand: number, maximum: number): ReachAllowance {
   const local_4 = exact_capitalLevers(base + exact_capitalLevers(bands * perBand));

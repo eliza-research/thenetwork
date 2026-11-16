@@ -859,8 +859,11 @@ export function mergeReading(p0: SlopOnboarding, r: Reading, text: string): Slop
   if (r.gender) p.gender = field(r.gender, turn, text);
   if (r.identity) p.identity = field(r.identity, turn, text);
   if (r.orientation) p.orientation = field(r.orientation, turn, text);
+  // A gender or orientation correction recomputes a seeking set the rules derived from the old label
+  // (finalize derives it again). A seeking set the member stated, or the model read, stays.
+  const derived = derivedSeeks(p.seeks);
+  if ((r.gender || r.orientation) && !r.seeks && !r.seeksNeg.length && derived) delete p.seeks;
   if (r.seeks) {
-    const derived = p.seeks && p.seeks.confidence <= 0.7;
     const value = r.additive && p.seeks && !derived ? [...new Set([...p.seeks.value, ...r.seeks.value])].sort() : r.seeks.value;
     p.seeks = field({ ...r.seeks, value: value.filter(g => !r.seeksNeg.includes(g)) }, turn, text);
   } else if (r.seeksNeg.length && p.seeks) {
@@ -881,11 +884,23 @@ export function mergeReading(p0: SlopOnboarding, r: Reading, text: string): Slop
   for (const c of r.activities) if (!p.activities.some(x => x.value === c.value)) p.activities.push(field(c, turn, text));
   p.free = p.free.filter(f => !r.free.remove.includes(f.value));
   for (const c of r.free.add) if (!p.free.some(x => x.value === c.value)) p.free.push(field(c, turn, text));
-  return finalize(p, JSON.stringify(stripMeta(p)) !== before);
+  return finalizeAfter(p, before);
 }
 
-/** What a confirmation covers: the hard fields and the age (a change to them needs a new read-back). */
-const stripMeta = (p: SlopOnboarding) => ({ age: p.age?.value, seeks: p.seeks?.value, gender: p.gender?.value, ageRange: p.ageRange?.value, distance: p.distance?.value, location: p.location?.value });
+/** A seeking set finalize derived from a label (rules source, confidence 0.7 or the 0.6 default), not one the member stated or the model read. */
+const derivedSeeks = (s: Field<Gender[]> | undefined): boolean => s?.source === "rules" && s.confidence <= 0.7;
+
+/** What a confirmation covers: the hard fields, the age, the age rules and the orientation (a change to them needs a new read-back). */
+const stripMeta = (p: SlopOnboarding) => ({
+  age: p.age?.value, minor: p.minor, declined: p.declined, orientation: p.orientation?.value, seeks: p.seeks?.value,
+  gender: p.gender?.value, ageRange: p.ageRange?.value, distance: p.distance?.value, location: p.location?.value,
+});
+
+/** Finalize a merge. Confirmation clears only when a covered field differs after derivation (a recomputed, equal seeking set keeps it). */
+function finalizeAfter(p: SlopOnboarding, before: string): SlopOnboarding {
+  const next = finalize(p);
+  return JSON.stringify(stripMeta(next)) === before ? next : finalize(next, true);
+}
 
 /** Derived values, the minor and decline rules, and matchability. */
 export function finalize(p: SlopOnboarding, changed = false): SlopOnboarding {
@@ -1014,6 +1029,7 @@ export function slopReaderPrompt(text: string, ctx: { asked?: OnboardField; miss
       "Never guess or infer. Leave a field out unless the message states it. Never infer who someone seeks from an orientation word.",
       "Every field you report is {\"value\": ..., \"quote\": \"<exact words from the message that state it>\"}.",
       "Fields: gender (\"woman\"|\"man\"|\"nonbinary\", the sender's own); seeks (array of those, who the sender wants to date);",
+      "Location means the member's home, never an office or a place where they only visited.",
       "ageRange ([lo, hi] integers 18-99); distance ({\"mode\":\"city\"} or {\"mode\":\"radius\",\"miles\":n} or {\"mode\":\"multi\",\"markets\":[\"nyc\",\"sf\"],\"miles\":n}); multi needs at least two distinct markets from nyc/sf/la; omit optional miles unless explicitly stated, 1-200; location ({\"zip\":\"5 digits\"} or {\"area\":\"neighborhood name\"});",
       `goal ("casual"|"long_term"|"unsure"); dealbreakers (array of ${DEALBREAKER_IDS.join(", ")}); interests (array of ${[...INTEREST_TAGS].join(", ")});`,
       `activities (first-date ideas, array of ${DATE_ACTIVITY_IDS.join(", ")}); selfAge (the sender's own age now, integer).`,
@@ -1089,17 +1105,33 @@ export async function extractSlopProfileLLM(
     if (!o.llm?.enabled || p.declined || p.minor) continue;
     const low = (f?: Field<unknown>) => !f || f.confidence < LLM_FILL_BELOW;
     const missing = LLM_FIELDS.filter(k =>
-      k === "gender" ? low(p.gender) : k === "seeks" ? low(p.seeks) : k === "ageRange" ? low(p.ageRange) : k === "distance" ? low(p.distance)
+      k === "gender" ? low(p.gender) : k === "seeks" ? p.seeks?.source !== "llm" && low(p.seeks) : k === "ageRange" ? low(p.ageRange) : k === "distance" ? low(p.distance)
       : k === "location" ? !p.location?.value.known : k === "goal" ? low(p.goal) : k === "dealbreakers" ? !hasField(p, "dealbreakers")
       : k === "interests" ? !p.interests.length : k === "activities" ? !p.activities.length : k === "selfAge");
     const r = await o.llm.reader(text, { asked, missing });
     if (!r) continue;
-    p = mergeLlm(p, r, text, missing);
+    p = mergeLlm(p, r, text, missing, asked, o.market);
   }
   return p;
 }
 
-function mergeLlm(p0: SlopOnboarding, r: SlopLlmReading, text: string, missing: LlmField[]): SlopOnboarding {
+const HOME_CLAIM = /\b(?:i live|i'?m living|im living|based (?:in|out of)|i call .+ home|my (?:home|place|neighborhood|zip) is)\b/;
+/** A model-read place is the home only with a home claim, or a short direct answer to the location question, in the clause that quotes it. */
+function homeLocationEvidence(t: string, quote: string, asked: OnboardField | undefined): boolean {
+  const quoted = normText(quote).trim();
+  if (!quoted) return false;
+  for (const sentence of sentences(t)) {
+    for (const clause of sentence.text.split(/\b(?:but|while|whereas)\b|[,;]/)) {
+      if (!clause.includes(quoted) || NOT_HOME_CLAUSE.test(clause) || /\b(?:not|never|no longer)\b/.test(clause)) continue;
+      if (HOME_CLAIM.test(clause)) return true;
+      if ((asked === "location" || asked === "distance") && clause.trim().split(/\s+/).length <= 5) return true;
+    }
+  }
+  return false;
+}
+
+function mergeLlm(p0: SlopOnboarding, r: SlopLlmReading, text: string, missing: LlmField[], asked: OnboardField | undefined, market?: City): SlopOnboarding {
+  const before = JSON.stringify(stripMeta(p0));
   const p = structuredClone(p0);
   const turn = p.turns - 1;
   const t = normText(text);
@@ -1111,19 +1143,29 @@ function mergeLlm(p0: SlopOnboarding, r: SlopLlmReading, text: string, missing: 
     const x = r[k];
     if (!x) continue;
     if (k === "selfAge") { const a = x.value as number; if (a < 18 && a >= MIN_MEMBER_AGE && (!p.age || a < p.age.value)) { p.age = mk(a, x.quote); p.minor = true; } continue; }
-    if (k === "gender") p.gender = mk(x.value as Gender, x.quote);
+    if (k === "gender") {
+      // As in mergeReading: a gender change drops a seeking set derived from the old gender (finalize derives it again).
+      if (p.gender && p.gender.value !== x.value && derivedSeeks(p.seeks)) delete p.seeks;
+      p.gender = mk(x.value as Gender, x.quote);
+    }
     if (k === "seeks") p.seeks = mk([...new Set(x.value as Gender[])].sort(), x.quote);
     if (k === "ageRange") p.ageRange = mk(x.value as [number, number], x.quote);
     if (k === "distance") p.distance = mk(mergeDistance(p.distance?.value, x.value as Distance), x.quote);
-    if (k === "location") {
+    if (k === "location" && homeLocationEvidence(t, x.quote, asked)) {
       const v = x.value as Location;
       if (v.zip) p.location = mk({ zip: v.zip, known: isKnownZip(v.zip) }, x.quote);
-      else if (v.area) { const e = AREA_INDEX.get(ALIAS.get(areaNorm(v.area)) ?? areaNorm(v.area))!; const pick = e.length === 1 ? e[0] : undefined; if (pick) p.location = mk({ area: pick.label, zip: pick.zip, known: true }, x.quote); }
+      else if (v.area) {
+        const key = areaNorm(v.area);
+        const entries = AREA_INDEX.get(ALIAS.get(key) ?? key);
+        // The member's market picks the entry; without one, only a name in a single market places them.
+        const pick = market ? entries?.find(e => e.market === market) : entries?.length === 1 ? entries[0] : undefined;
+        if (pick) p.location = mk({ area: pick.label, zip: pick.zip, known: true }, x.quote);
+      }
     }
     if (k === "goal") p.goal = mk(x.value as Goal, x.quote);
     if (k === "dealbreakers") for (const d of x.value as Dealbreaker[]) if (!p.dealbreakers.some(y => y.value === d)) p.dealbreakers.push(mk(d, x.quote));
     if (k === "interests") for (const i of x.value as string[]) if (!p.interests.some(y => y.value === i)) p.interests.push(mk(i, x.quote));
     if (k === "activities") for (const a of x.value as DateActivity[]) if (!p.activities.some(y => y.value === a)) p.activities.push(mk(a, x.quote));
   }
-  return finalize(p, true);
+  return finalizeAfter(p, before);
 }

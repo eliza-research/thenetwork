@@ -15,7 +15,10 @@ test('staging authority keeps signed HTTP API and OAuth on its configured app or
  globalThis.fetch=(async(input:any,init?:RequestInit)=>{if(String(input)==='https://challenges.cloudflare.com/turnstile/v0/siteverify'){mcpBotChecks++;return Response.json({success:true,hostname:verifiedHostname})}return originalFetch(input,init)}) as typeof fetch;
  const st=await startStack(); let server:HttpServer|undefined; let mcp:Awaited<ReturnType<typeof createServiceMcp>>;
  const env={PLATFORM_ENV:'staging', NODE_ENV:'production', STAGING_SITE_ORIGINS:JSON.stringify({slop:origin}),PLATFORM_HASH_KEY:'stage-hash-key-'.repeat(3),PLATFORM_SESSION_SECRET:'dev-only-platform-session-secret',PLATFORM_PROXY_SECRET:secret,TURNSTILE_SITE_KEY:'stage-key',TURNSTILE_SECRET_KEY:'fixture-secret',LEAK_LABEL_KEY:'labels'.repeat(8),DATABASE_URL:st.url,MIGRATE_ON_BOOT:'0',OTP_PROVIDER:'twilio',TWILIO_ACCOUNT_SID:'fixture',TWILIO_AUTH_TOKEN:'fixture',TWILIO_VERIFY_SERVICE_SID:'fixture'};
- const config=loadConfig(env);
+ // The boot check needs the agent signup configuration (spec/bootPolicy.md, "A deployed service lets each agent signup skill finish").
+ // The API below keeps env: it tests Turnstile on the staged slop origin with the fixture OTP provider.
+ const bootEnv={...env,OTP_PROVIDER:'blooio',BLOOIO_API_KEY:'fixture',BLOOIO_FROM:'+12125550142',PLATFORM_PHONE_OTP_ONLY_APPS:'ntwrk,slop,friends'};
+ const config=loadConfig(bootEnv);
  try{
   const phone=newPhone(); await webJoin(st,'slop',phone,{age:30});
   const person=(await st.svc.publicApi.accounts.personFor(phone))!;
@@ -73,12 +76,12 @@ test('staging authority keeps signed HTTP API and OAuth on its configured app or
   expect((await call('/.well-known/oauth-authorization-server',undefined,undefined,undefined,{host:new URL(origin).host},'slop.date')).status).toBe(421);
   expect(config.hostMap['slop.date']).toBeUndefined();expect(config.hostMap['peon.biz']).toBe('peon');
   for(const [key,value] of Object.entries({badApp:JSON.stringify({other:origin}),path:JSON.stringify({slop:origin+'/join'}),credentials:JSON.stringify({slop:'https://user:pw@preview.example.test'}),canonical:JSON.stringify({slop:'https://slop.date'}),canonicalDot:JSON.stringify({slop:'https://slop.date.'}),duplicateDot:JSON.stringify({slop:origin,peon:'https://slop-qa.example.test.'}),encodedHost:JSON.stringify({slop:'https://%73lop.date'}),duplicate:JSON.stringify({slop:origin,peon:origin}),sharedHostnamePorts:JSON.stringify({slop:origin+':8443',peon:origin+':9443'})})){
-   expect(()=>loadConfig({...env,STAGING_SITE_ORIGINS:value}),key).toThrow(/STAGING_SITE_ORIGINS/);
+   expect(()=>loadConfig({...bootEnv,STAGING_SITE_ORIGINS:value}),key).toThrow(/STAGING_SITE_ORIGINS/);
   }
-  expect(()=>loadConfig({...env,PLATFORM_ENV:'production'})).toThrow(/STAGING_SITE_ORIGINS/);
-  expect(()=>loadConfig({...env,DEPLOY_TARGET:'production'})).toThrow(/STAGING_SITE_ORIGINS/);
-  expect(()=>loadConfig({...env,BACKEND_EXTRA_HOSTS:'slop-qa.example.test=peon'})).toThrow(/conflicts/);
-  expect(()=>loadConfig({...env,BACKEND_EXTRA_HOSTS:'slop.date=slop'})).toThrow(/conflicts/);
+  expect(()=>loadConfig({...bootEnv,PLATFORM_ENV:'production'})).toThrow(/STAGING_SITE_ORIGINS/);
+  expect(()=>loadConfig({...bootEnv,DEPLOY_TARGET:'production'})).toThrow(/STAGING_SITE_ORIGINS/);
+  expect(()=>loadConfig({...bootEnv,BACKEND_EXTRA_HOSTS:'slop-qa.example.test=peon'})).toThrow(/conflicts/);
+  expect(()=>loadConfig({...bootEnv,BACKEND_EXTRA_HOSTS:'slop.date=slop'})).toThrow(/conflicts/);
 
  }finally{globalThis.fetch=originalFetch;await server?.stop(true);await (mcp?.store as any)?.close?.();await st.close()}
 },180000);

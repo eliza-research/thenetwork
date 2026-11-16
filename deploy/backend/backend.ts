@@ -5,15 +5,19 @@ import {
 import { checkBackendHealth } from "../../packages/core/src/vibe/backendHealthShell.js";
 import { finishBackendShutdown } from "../../packages/core/src/vibe/backendShutdownShell.js";
 import type { HealthStatus } from "../../packages/core/src/generated/backendHealth.ts";
-import { otpConfigProblems } from "../../packages/platform/src/otp-config.ts";
+import { agentSignupProblems, otpConfigProblems } from "../../packages/platform/src/otp-config.ts";
 // The shared backend as one deployable process (docs/deploy.md). It wraps the Network service
 // (packages/network/service) for a host that gives the process one public port (Railway):
 //
 //   PORT (public)          /api/*                 the platform public API, for the four sites' Worker routers
 //                          /webhooks/blooio[/app] the inbound line webhooks (signature checked by the service)
-//                          /internal/turn, /internal/turn-receipt, /internal/set-state, /internal/signals, /internal/updates, /internal/relay
+//                          /internal/turn, /internal/turn-receipt, /internal/set-state, /internal/signals, /internal/updates, /internal/relay,
+//                          /internal/relay-photo/resolve
 //                                                 the Eliza gateway's signed calls (SERVICE_TURN_SECRET, checked by the service; STOP,
 //                                                 START, HELP and leave are answered inside the turn). A body over 256 KiB is refused here.
+//                                                 A turn still running at turnAnswerMs is answered turn_busy (retryable); the worker
+//                                                 keeps running and the gateway's retry of the same messageId replays its stored answer.
+//                          /api/relay-photos/deliver/*   the selected-photo capability the provider fetches (its own signature; no edge)
 //                          /mcp, /oauth/*, /.well-known/oauth-*   the MCP server (packages/mcp, mounted by server.ts; 404 when off)
 //                          /healthz               liveness for the platform health check and the external uptime monitor
 //                                                 (no data, no auth; 503 when the database is down or a network's tick is late)
@@ -37,6 +41,7 @@ import { RELAY_MAX_BODY_BYTES, RELAY_PATH } from "../../packages/network/service
 import { SUGGESTION_PATH } from "../../packages/network/service/profile-suggestion-endpoint.ts";
 import { PROFILE_REVIEW_DISCONNECT_PATH } from "../../packages/core/src/svc/profile-review-disconnect.ts";
 import { PROFILE_REVIEW_WITHDRAWAL_PATH } from "../../packages/core/src/svc/profile-review-withdrawal.ts";
+import { RELAY_PHOTO_RESOLVE_PATH, TURN_PATH } from "../../packages/core/src/svc/contract.ts";
 
 export { PROXY_HEADERS };
 /** The visitor IP the public API reads (ipOf). Present only on a verified request. */
@@ -49,12 +54,19 @@ const HEALTH_FAILURE = {
 } as const satisfies Record<Exclude<HealthStatus, "Ready">, string>;
 const STRIP = ["x-forwarded-host", "x-forwarded-for", "x-forwarded-proto", "x-real-ip", "forwarded", "true-client-ip"];
 /** The Eliza gateway's signed routes (served by the service) and their body cap (the service's MAX_BODY_BYTES). */
-const INTERNAL_PATHS = new Set(["/internal/turn", "/internal/turn-receipt", "/internal/set-state", "/internal/signals", "/internal/updates", "/internal/relay",
-  PROFILE_REVIEW_DISCONNECT_PATH, PROFILE_REVIEW_WITHDRAWAL_PATH,
+const INTERNAL_PATHS = new Set([TURN_PATH, "/internal/turn-receipt", "/internal/set-state", "/internal/signals", "/internal/updates", "/internal/relay",
+  RELAY_PHOTO_RESOLVE_PATH, PROFILE_REVIEW_DISCONNECT_PATH, PROFILE_REVIEW_WITHDRAWAL_PATH,
   ...["preview", "decide", "delete", "collect", "consent-context"].map(action => SUGGESTION_PATH + action)]);
 const MAX_INTERNAL_BODY = 256 * 1024;
 const internalCap = (path: string) => path === PROFILE_REVIEW_DISCONNECT_PATH || path === PROFILE_REVIEW_WITHDRAWAL_PATH
-  ? 4096 : path === RELAY_PATH || path.startsWith(SUGGESTION_PATH) ? RELAY_MAX_BODY_BYTES : MAX_INTERNAL_BODY;
+  ? 4096 : path === RELAY_PATH || path === RELAY_PHOTO_RESOLVE_PATH || path.startsWith(SUGGESTION_PATH) ? RELAY_MAX_BODY_BYTES : MAX_INTERNAL_BODY;
+/**
+ * The provider's fetch of one selected photo (packages/platform/src/photo-relay.ts serveDelivery): a GET that carries
+ * its own HMAC capability. The exact pattern of serveDelivery; any other path under /api keeps the edge requirement.
+ */
+const PHOTO_DELIVERY_PATH = /^\/api\/relay-photos\/deliver\/pri_[a-f0-9]{32}$/;
+/** /internal/turn answers by this time: the gateway waits 8 s (spec/product/source/founder-decisions.md, service-to-service contract), so 1 s stays for the network. */
+export const TURN_ANSWER_MS = 7_000;
 
 // ------------------------------------------------------------------ config
 
@@ -80,6 +92,13 @@ export interface BackendConfig {
   tickMs: number;
   /** /healthz answers 503 "tick_late" when a network's tick has not finished in this process for this long (TICK_LATE_MS). */
   tickLateMs: number;
+  /** /internal/turn answers turn_busy (retryable) when its worker has not finished by then (TURN_ANSWER_MS). */
+  turnAnswerMs: number;
+  /**
+   * BACKEND_PUBLIC_ORIGIN: this backend's own public https origin (https://api.ntwrk.party). The selected-photo
+   * capability links point here (service photoDeliveryOrigin). Unset: /internal/relay-photo/resolve answers photo_unavailable.
+   */
+  photoDeliveryOrigin?: string;
   /** Monitoring, alerts and budgets (ops.ts; docs/deploy.md section 7). */
   ops: OpsConfig;
   /** Staging and production: the key for the leak guard's labels (LEAK_LABEL_KEY, 32+ bytes). server.ts passes it to setLeakLabelKey. Dev: undefined. */
@@ -90,6 +109,17 @@ export interface BackendConfig {
 const SECRET_MIN = minimumSecretLength;
 /** The largest request body the public port reads: a photo (8 MB, packages/platform/src/photos.ts) and some room. */
 export const MAX_PUBLIC_BODY_BYTES = 9 * 1024 * 1024;
+
+/** BACKEND_PUBLIC_ORIGIN as a bare https origin (the form PhotoRelayService.issueDelivery accepts), or undefined when unset. */
+function publicOrigin(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  let u: URL;
+  try { u = new URL(value); } catch { throw new Error("BACKEND_PUBLIC_ORIGIN must be an https origin such as https://api.ntwrk.party"); }
+  if (u.protocol !== "https:" || u.username || u.password || u.pathname !== "/" || u.search || u.hash || value.replace(/\/$/, "") !== u.origin) {
+    throw new Error("BACKEND_PUBLIC_ORIGIN must be an https origin such as https://api.ntwrk.party");
+  }
+  return u.origin;
+}
 
 /** Reads and checks the environment. Fails closed: a deployed environment without its secrets does not start. */
 export function loadConfig(e: Env = process.env, argv: string[] = []): BackendConfig {
@@ -111,7 +141,7 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   if (deployed) {
     if (policy.hashMissing) missing.push("PLATFORM_HASH_KEY");
     if (policy.turnstileMissing) missing.push("TURNSTILE_SECRET_KEY");
-    missing.push(...otpConfigProblems(e));
+    missing.push(...otpConfigProblems(e), ...agentSignupProblems(e));
     if (policy.proxyMissing) missing.push("PLATFORM_PROXY_SECRET");
   }
   // Deployed: migrations run as the owner, the service as a login that RLS and the grants apply to
@@ -174,6 +204,8 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   const tickMs = Number(e.TICK_MS ?? 60_000);
   const ops = opsConfigFromEnv(e, { env, build, deployed });
   if (deployed && !ops.webhookUrl) warnings.push("ALERT_WEBHOOK_URL is not set: alerts are log lines only (docs/deploy.md 7.2)");
+  const photoDeliveryOrigin = publicOrigin(e.BACKEND_PUBLIC_ORIGIN);
+  if (deployed && !photoDeliveryOrigin) warnings.push("BACKEND_PUBLIC_ORIGIN is not set: a selected photo cannot be relayed (resolve answers photo_unavailable)");
 
   return {
     env, deployed, databaseUrl: databaseUrl!, migrationUrl: migrationUrl ?? databaseUrl!, host, port,
@@ -185,6 +217,8 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
     shutdownGraceMs: Number(e.SHUTDOWN_GRACE_MS ?? 25_000),
     tickMs,
     tickLateMs: Number(e.TICK_LATE_MS ?? Math.max(15 * 60_000, 3 * tickMs)),
+    turnAnswerMs: TURN_ANSWER_MS,
+    ...(photoDeliveryOrigin ? { photoDeliveryOrigin } : {}),
     ops,
     ...(leakLabelKey ? { leakLabelKey } : {}),
     warnings,
@@ -286,6 +320,10 @@ export interface ServiceLike {
   fetch(req: Request): Promise<Response>;
   publicFetch(req: Request, server?: { requestIP(req: Request): { address: string } | null }): Promise<Response>;
   runtimes: Map<string, { id: string; tick(): Promise<boolean> }>;
+  /** Inbound messages a crash or an error left waiting (platform.inbound), handled once in order per sender. */
+  inboxTick(): Promise<void>;
+  /** Retention (spec/platformRetention.md): expired OTP challenges, sessions, platform rows, inbox payloads, line counters, pending suggestions. */
+  purge(): Promise<unknown>;
   /** The single inbox's tick (packages/notify): outcome sweep, then due notifications. Optional. */
   notifyTick?(): Promise<void>;
   close(force?: boolean): Promise<void>;
@@ -346,6 +384,21 @@ export function createBackend(d: BackendDeps) {
     return out;
   };
 
+  /**
+   * A turn waits for its network's lock while a tick (the daily engine run included) holds it. The gateway
+   * must have an answer within 8 s, so at turnAnswerMs it gets the answer a retry of a running turn gets
+   * (signed inbox "Busy": turn_busy, retryable). The worker keeps its claim and runs to the end, tracked for
+   * shutdown; the retry with the same messageId replays the stored answer. This is the gateway timeout of
+   * the turn_consent model (gwTimeout), taken here before the gateway's own timer fires.
+   */
+  const answerTurnInTime = (work: Promise<Response>): Promise<Response> => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      log.warn("turn answered busy: its worker is still running", { route: TURN_PATH, ms: c.turnAnswerMs });
+      resolve(json(409, { error: "turn_busy", retryable: true }));
+    }, c.turnAnswerMs);
+    work.then(r => { clearTimeout(timer); resolve(r); }, e => { clearTimeout(timer); reject(e); });
+  });
+
   /** The public port. */
   const publicFetch = async (req: Request, server?: { requestIP(req: Request): { address: string } | null }): Promise<Response> => {
     const t0 = performance.now();
@@ -371,6 +424,10 @@ export function createBackend(d: BackendDeps) {
         else res = json(200, await track(d.ops.metrics()));
       } else if (!backendAcceptsWork(lifecycle)) {
         res = json(503, { ok: false, error: "shutting_down" });
+      } else if (req.method === "GET" && PHOTO_DELIVERY_PATH.test(path)) {
+        // The provider's fetch names no site: its own signature and expiry are the authority, so it needs no edge.
+        // The request still loses every proxy and forwarding header.
+        res = await track(svc.publicFetch((await normalizeEdge(req, undefined, c.hostMap, now())).req, server));
       } else if (path === "/api" || path.startsWith("/api/")) {
         const n = await normalizeEdge(req, c.proxySecret, c.hostMap, (d.now ?? Date.now)());
         app = n.app;
@@ -379,7 +436,9 @@ export function createBackend(d: BackendDeps) {
         res = c.deployed && !n.edge ? json(421, { ok: false, error: "edge_required" }) : await track(svc.publicFetch(n.req, server));
       } else if (path === "/webhooks/blooio" || path.startsWith("/webhooks/blooio/") || INTERNAL_PATHS.has(path)) {
         // A declared body over the cap is refused before the service reads or verifies it (the service caps the read too).
-        res = INTERNAL_PATHS.has(path) && Number(req.headers.get("content-length") ?? "0") > internalCap(path) ? json(413, { ok: false, error: "payload_too_large" }) : await track(svc.fetch(req));
+        res = INTERNAL_PATHS.has(path) && Number(req.headers.get("content-length") ?? "0") > internalCap(path) ? json(413, { ok: false, error: "payload_too_large" })
+          : path === TURN_PATH ? await answerTurnInTime(track(svc.fetch(req)))
+          : await track(svc.fetch(req));
       } else if (MCP_PATH.test(path)) {
         // The MCP server sees the same normalized request as the public API: Host is the site's host only via a verified edge.
         const n = await normalizeEdge(req, c.proxySecret, c.hostMap, (d.now ?? Date.now)());
@@ -415,7 +474,16 @@ export function createBackend(d: BackendDeps) {
     return true;
   };
   const releaseTick = (tickKey: string) => { lifecycle = stepBackendLifecycle(lifecycle, { type: "releaseTick", tickKey }); };
-  const networksThenNotify = () => Promise.all([...svc.runtimes.values()].map(async rt => {
+  /** One reserved round of a process-wide worker (inbox redrive, retention, notifications): skipped while its last round runs. */
+  const serviceTick = async (tickKey: string, work: () => Promise<unknown>) => {
+    if (!reserveTick(tickKey)) return;
+    try { await track(work()); }
+    catch (e) { log.error(`${tickKey} tick failed`, { error: (e as Error).message }); }
+    finally { releaseTick(tickKey); }
+  };
+  // The same order as the dev loop (packages/network/service/serve.ts startTicks): inbound messages a crash
+  // or an error left waiting go first, then every network, then retention, then the notifications.
+  const networksThenNotify = () => serviceTick("inbox", () => svc.inboxTick()).then(() => Promise.all([...svc.runtimes.values()].map(async rt => {
     if (!reserveTick(rt.id)) return;
     try {
       if (!(await track(rt.tick()))) log.info("tick skipped: another instance holds the lock", { network: rt.id });
@@ -423,23 +491,13 @@ export function createBackend(d: BackendDeps) {
     }
     catch (e) { log.error("tick failed", { network: rt.id, error: (e as Error).message }); }
     finally { releaseTick(rt.id); }
-  })).then(() => notifyTick());
+  }))).then(() => serviceTick("retention", () => svc.purge())).then(() => notifyTick());
   // The ops round runs beside the networks, so a network tick that hangs does not stop its alert.
-  const opsTick = async () => {
-    if (!d.ops || !reserveTick("ops")) return;
-    try { await track(d.ops.tick()); }
-    catch (e) { log.error("ops tick failed", { error: (e as Error).message }); }
-    finally { releaseTick("ops"); }
-  };
+  const opsTick = () => d.ops ? serviceTick("ops", () => d.ops!.tick()) : Promise.resolve();
   const tickAll = () => Promise.all([networksThenNotify(), opsTick()]).then(() => undefined);
-  // The inbox ticks once per round, after the networks (their sends are recorded by then). Replicas may overlap: a delivery id is recorded once
+  // The notification inbox (packages/notify) ticks once per round, after the networks (their sends are recorded by then). Replicas may overlap: a delivery id is recorded once
   // (notify.deliveries primary key), so a second replica cancels instead of sending again.
-  const notifyTick = async () => {
-    if (!svc.notifyTick || !reserveTick("notify")) return;
-    try { await track(svc.notifyTick()); }
-    catch (e) { log.error("notify tick failed", { error: (e as Error).message }); }
-    finally { releaseTick("notify"); }
-  };
+  const notifyTick = () => svc.notifyTick ? serviceTick("notify", () => svc.notifyTick!()) : Promise.resolve();
   const startTicks = () => {
     if (!canStartTimer(lifecycle)) return Promise.resolve(undefined);
     lifecycle = stepBackendLifecycle(lifecycle, { type: "startTimer", at: now() });

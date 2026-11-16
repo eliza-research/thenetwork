@@ -151,6 +151,7 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
       continue;
     }
     if (!pack.geo.markets(cfg).includes(c.city!)) { f.rejectedBy.city_not_in_run = (f.rejectedBy.city_not_in_run ?? 0) + 1; continue; }
+    c.alternates = screening.alternates;
     passed.push(c);
   }
   f.passedHardFilters = passed.length;
@@ -205,13 +206,15 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
     if (judgment.phase === "Rubric") {
       const toJudge = pickTop(pool, cfg.judge.topK, cfg.judge.groupTopK).map(s => s.c);
       const verdicts = await judgeCandidates(w, toJudge, llm, deps.judgeCache ?? new JudgeCache(cfg.judge.ttlMs), runLog.judge, runLog.judge.verdicts);
-      // Pass 2 can only remove (engine-pipeline-7): a configuration that was below its bar before the
-      // judge stays ineligible even if the blended score now clears it.
+      // Pass 2 can only lower or remove (engine-pipeline-7): a verdict that would raise the score keeps
+      // the pre-judge score and components; a floor the verdict breaks still removes the configuration;
+      // a configuration below its bar before the judge stays ineligible.
       scored = scored.map(s => {
         const v = verdicts.get(s.c.key);
         if (!v) return s;
         const r = scoreCandidate(w, s.c, v);
-        return s.eligible || !r.eligible ? r : { ...r, eligible: false, reason: s.reason ?? "below_threshold" };
+        const judged = r.score > s.score ? { ...s, verdict: v, eligible: r.eligible, reason: r.reason } : r;
+        return s.eligible ? judged : { ...judged, eligible: false, reason: s.reason ?? "below_threshold" };
       });
       t = lap("judge", t);
       judgment = stepJudgmentRun(judgment, {
@@ -277,6 +280,8 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   if (runLog.judge.calls + runLog.judge.cacheHits + runLog.judge.failures > 0) {
     runLog.judge.coverage = { selected: selected.length, judged: selected.filter(s => !!s.s.verdict).length };
   }
+  const search = w.match.tally();
+  if (search.members > 0) runLog.search = search;
   t = lap("select", t);
 
   // 6. Proposals with shareable-only explanations.
@@ -303,7 +308,6 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   runLog.scored = scored.map(s => ({
     key: s.c.key, generator: s.c.generator, participants: s.c.participants, components: roundAll(s.components),
     score: round(s.score), eligible: s.eligible, reason: s.reason, judged: !!s.verdict,
-    ...(s.complementarity !== undefined ? { complementarity: round(s.complementarity) } : {}),
   }));
   runLog.fairness = fairnessMetrics(w, selected, scored);
   runLog.blockingPairs = blockingPairs(selected, scored);

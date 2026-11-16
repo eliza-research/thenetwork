@@ -223,13 +223,15 @@ export async function signIn(st: Stack, app: AppId, phone: string, b: Browser) {
 }
 
 /** The web join: sign in, then POST /api/join with the app's canonical opt-in version. */
-export async function webJoin(st: Stack, app: AppId, phone: string, o: { age: number; firstName?: string; interests?: string[]; browser?: Browser }) {
+export async function webJoin(st: Stack, app: AppId, phone: string, o: { age: number; firstName?: string; interests?: string[]; browser?: Browser } & Partial<Record<"about" | "neighborhood" | "homeCity" | "zip", string>>) {
   const b = o.browser ?? new Browser();
   await signIn(st, app, phone, b);
   const info = (await (await st.site(app, "/api/app")).json()) as { consent: { version: string } };
+  // The fields an agent signup skill sends (sites/skills/*/SKILL.md "Join in this conversation").
+  const profile = Object.fromEntries((["about", "neighborhood", "homeCity", "zip"] as const).filter(k => o[k] !== undefined).map(k => [k, o[k]]));
   const res = await st.site(app, "/api/join", {
     browser: b,
-    json: { firstName: o.firstName ?? "Rae", age: o.age, consent: { sms: true, version: info.consent.version }, ...(o.interests ? { interests: o.interests } : {}) },
+    json: { firstName: o.firstName ?? "Rae", age: o.age, consent: { sms: true, version: info.consent.version }, ...(o.interests ? { interests: o.interests } : {}), ...profile },
   });
   return { b, res, body: (await res.json()) as Record<string, any> };
 }

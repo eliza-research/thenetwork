@@ -709,6 +709,7 @@ export class GameSource implements DataSource {
           if (typeof cmd.secondsSpent === "number") opts.secondsSpent = cmd.secondsSpent;
           if (cmd.decision === "edit") { opts.explanations = cmd.explanations; opts.objective = cmd.objective; }
           if (cmd.decision === "reroll" && cmd.swapOut) opts.swapOut = cmd.swapOut;
+          if (typeof cmd.revision === "number") opts.revision = cmd.revision;
           const r = this.consent.decide(cmd.oppId, cmd.decision, opts);
           await this.settle();
           this.push();

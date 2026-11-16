@@ -1,6 +1,7 @@
 // Builds an immutable, canonical index over the engine input. Every identifier is mapped into
 // ONE id space (member id) before any filter runs (ME-006; Soulmates pitfall: blocks stored in
 // one id space and compared in another).
+import { MatchRun } from "./match/run.ts";
 import type { Category, City, Edge, EdgeType, Facet, FacetKind, Intent, Member, MemberId, Presence, Proposal } from "@thenetwork/core";
 import { canBeMatched, DAY } from "@thenetwork/core";
 import { standingIntentLive } from "../../core/src/standing-intent.ts";
@@ -76,6 +77,22 @@ export class World {
 
   /** The app pack (default networkPack). Identity travels beside the config, never inside it (byte-identity rule 1). */
   readonly pack: AppPack;
+
+  private matchRun: MatchRun | undefined;
+  /** The run's generic matching handle, built on first use (profiles, index, searches, edges, circles). */
+  get match(): MatchRun { return this.matchRun ??= new MatchRun(this); }
+
+  private postings: ReadonlyMap<string, readonly MemberId[]> | undefined;
+  /** Members by lower-case facet tag (MemberIndex.tags), in id order; built once per run on first use. */
+  get tagPostings(): ReadonlyMap<string, readonly MemberId[]> {
+    if (this.postings) return this.postings;
+    const postings = new Map<string, MemberId[]>();
+    for (const id of this.ids) for (const tag of this.members.get(id)!.tags) {
+      const list = postings.get(tag);
+      if (list) list.push(id); else postings.set(tag, [id]);
+    }
+    return this.postings = postings;
+  }
 
   constructor(readonly input: EngineInput, readonly cfg: EngineConfig, embed: EmbedFn, pack: AppPack = networkPack) {
     this.pack = pack;

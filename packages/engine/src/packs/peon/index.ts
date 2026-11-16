@@ -6,11 +6,12 @@
 //
 //   entities   candidates (members) and job seats (one member per open job, capacity = openings; schema.ts)
 //              (the service builds seats from job postings and keeps their capacity: seats.ts)
-//   retrieval  two-way: candidate -> jobs and job -> candidates (generators.ts)
-//   scoring    reciprocal, two-sided asymmetric: must-haves as floors x candidate wants (match.ts)
-//   selection  congestion control per job (slate cap) and per candidate (3 roles a week) (selection.ts)
+//   matching   lane Hire (seat Offering, candidate Seeking) on the generic match core: skill-level
+//              tags, private role-level standing, directed pay value (match.ts)
+//   retrieval  the bounded search both ways (generators.ts)
+//   selection  the pack refusal: a slate cap per job, the lane's weekly capacity per candidate (selection.ts)
 //   filters    pay range, verified employer, scam cue, location / remote, work authorization,
-//              seniority band, credentials, excluded companies, no re-intro (rules.ts)
+//              credentials, excluded companies, no re-intro (rules.ts)
 //   consent    application: the candidate opts in, the employer reviews a blind summary, then reveal
 import { DAY } from "@thenetwork/core";
 import { DEFAULT_ATTENTION, resolveConfig, type EngineConfigInput } from "../../config.ts";
@@ -19,11 +20,13 @@ import type { AppPack, MemberConstraints } from "../../pack.ts";
 import { LANE_ACTIVITY, LANE_LABEL, PEON_ASK_QUESTIONS, PEON_SAFE_FALLBACK, peonLeadBits, peonProbeText } from "./copy.ts";
 import { PEON_GENERATORS } from "./generators.ts";
 import { peonJudge } from "./judge.ts";
+import { peonVectors } from "./match.ts";
 import { PEON_CANDIDATE_POST_RULES, PEON_CANDIDATE_PRE_RULES, PEON_MEMBER_RULES, PEON_PAIR_RULES, peonGeo } from "./rules.ts";
 import { T } from "./schema.ts";
-import { peonAdjust } from "./selection.ts";
+import { peonAllows, SLATE } from "./selection.ts";
 
-export const PEON_PACK_VERSION = "peon-pack-0.1.0";
+/** The pack version carries the slate tuning (selection.ts SLATE), so a tuning change changes it. */
+export const PEON_PACK_VERSION = `peon-pack-0.3.0+slate.${Object.values(SLATE).join(".")}`;
 
 /**
  * Engine config for peon runs (pass it as `cfgIn`; the shared EngineConfig shape is unchanged).
@@ -83,14 +86,15 @@ export const peonPack: AppPack = {
   },
   geo: peonGeo,
   generators: PEON_GENERATORS,
-  retrieval: { channels: ["need", "tag"], directions: [{ from: "candidate", to: "job" }, { from: "job", to: "candidate" }] },
+  retrieval: { channels: ["tag"], directions: [{ from: "candidate", to: "job" }, { from: "job", to: "candidate" }] },
+  vectors: peonVectors,
   scoring: {
     objective: "two_sided_asymmetric",
     aggregate: benefits => (benefits.length === 2 ? harmonic(benefits) : 0),
     novelty: () => 0,
   },
   selection: {
-    adjust: (w, c, v, times) => peonAdjust(w, c, v, times),
+    adjust: (w, c, v, times) => (peonAllows(w, c, times) ? v : -Infinity),
     askQuestions: PEON_ASK_QUESTIONS,
   },
   consent: {

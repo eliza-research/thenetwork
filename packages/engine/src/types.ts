@@ -4,6 +4,9 @@ import type {
   Category, City, MemberId, OpenOpportunity, OpportunityKind, Proposal, ScoreComponents, WorldSnapshot,
 } from "@thenetwork/core";
 
+import type { MatchLane } from "../../core/src/generated/matchLane.ts";
+import type { EntityId } from "./match/profile.ts";
+
 export type { NetworkEvent } from "@thenetwork/core";
 export interface SafetyHold { memberId: MemberId; from: number; to?: number; reason?: string }
 export interface FeedbackRecord {
@@ -104,6 +107,13 @@ export interface Candidate {
   riskFlags?: string[];
   /** Evidence quality when it does not come from facets (e.g. mutual feedback, graph position). */
   confidenceHint?: number;
+  /**
+   * The relationship lane (spec/matchLane.md). Every candidate with two or more participants names
+   * one: screening refuses a pair that has no pair value in it, on every path.
+   */
+  lane?: MatchLane;
+  /** The matched entity of a participant when it is not the member itself (a peon job seat). */
+  entities?: Record<MemberId, EntityId>;
 }
 export interface GroupStats { avgPairwise: number; minBest: number; roleCoverage: number; warmTies: number; clusterDiversity: number; overlapHours: number }
 
@@ -185,7 +195,11 @@ export interface MatchingRunLog {
   blockingPairs: number;
   /** Updated exposure debt to persist for the next run. */
   exposureDebt: Record<MemberId, number>;
+  /** Bounded candidate search totals (match/search.ts); absent when no search ran. */
+  search?: SearchTally;
 }
+/** Searches run, pair checks, exact and budgeted results, and the largest unseen bound of a budgeted result (-1 if none). */
+export interface SearchTally { members: number; checks: number; exact: number; budgeted: number; largestUnseenBound: number }
 
 // ------------------------------------------------------------------------------------------------
 // Attention budget data model (docs/design/2026-10-07-experience-design.md 1.2; engine-local first,

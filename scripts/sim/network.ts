@@ -22,6 +22,7 @@ import { allowedAt, ConsentNetwork, NY, OUTREACH, SIM_AUTO_REVIEWER, VENUES, typ
 import { styleViolations } from "../../packages/network/src/copy.ts";
 import { Mini, START } from "../../packages/network/test/mini.ts";
 import { DATA_DIR } from "../synthetic/common.ts";
+import { vouchPeriodGate } from "./capital.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
 
@@ -110,6 +111,7 @@ export async function scenarioRepetitionGate(b: Block): Promise<void> {
 export async function networkBlock(b: Block, o: { quick: boolean }): Promise<void> {
   await scenarioRepetitionGate(b);
   await inviteRootGate(b);
+  await vouchPeriodGate(b);
   await b.run("judge: a time counter requires agreement before a name can be revealed", () => {
     const person = (id: MemberId, name: string): RunRecord => ({ t: 0, type: "persona", persona: {
       id, name, archetype: "regular", homeCity: "nyc", joinDay: 0, trueAge: 30, claimedAge: 30, quietHours: [23, 7], romanceOptIn: false,

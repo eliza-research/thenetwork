@@ -8,6 +8,7 @@ import { FRIENDS_EXCLUDED_ACTIVITIES, FRIENDS_SLOTS, NEIGHBORHOODS, type Friends
 import { Rng, clamp01, hash32 } from "@thenetwork/core";
 import { FIRST_NAMES, LAST_NAMES } from "../../taxonomy.ts";
 import type { RichnessTier } from "../../sources.ts";
+import { plantLatent, type PlantedMark, type PlantedSpec } from "../../planted.ts";
 
 export type { RichnessTier };
 export const FRIEND_ACTIVITIES = ACTIVITIES.filter(a => !FRIENDS_EXCLUDED_ACTIVITIES.has(a.id));
@@ -51,6 +52,8 @@ export interface FriendsHidden {
   adversary?: AdversaryKind;
   /** Unique token that must never appear in any member-facing text (the snapshot plants it agent_private). */
   canary: string;
+  /** Planted circle and standing (only with FriendsGenOptions.planted). */
+  planted?: PlantedMark;
 }
 
 export interface FriendsStated {
@@ -79,6 +82,12 @@ export interface FriendsGenOptions {
   /** Adult adversary shares (default romance_seeker 0.025, mlm 0.015, bot 0.02, harasser 0.01). */
   adversaryShares?: Partial<Record<Exclude<AdversaryKind, "age_liar">, number>>;
   richnessMix?: Partial<Record<RichnessTier, number>>;
+  /**
+   * Planted circles and standing (planted.ts): loves come from the hidden circle topics, and
+   * likability follows the planted standing. Off by default so existing worlds are unchanged. The
+   * truth is on `hidden.planted`.
+   */
+  planted?: PlantedSpec;
 }
 
 export const FRIENDS_DEFAULTS = {
@@ -112,8 +121,9 @@ export function generateFriendsPersonas(o: FriendsGenOptions): FriendsPersona[] 
   const mix = { ...FRIENDS_DEFAULTS.richnessMix, ...(o.richnessMix ?? {}) };
   const root = new Rng(hash32("friends-personas", o.seed));
   const hoods = NEIGHBORHOODS.map(h => [h, h.weight] as const);
-  const out: FriendsPersona[] = [];
-  for (let i = 0; i < n; i++) {
+  // Two passes: the planted layer needs every member's eligibility first. Each member draws from
+  // its own fork in the same order, so the personas are the same either way.
+  const drafts = [...Array(n).keys()].map(i => {
     const r = root.fork("p", i);
     const id = `f${String(i).padStart(4, "0")}`;
     const name = `${r.pick(FIRST_NAMES)} ${r.pick(LAST_NAMES)}`;
@@ -125,6 +135,15 @@ export function generateFriendsPersonas(o: FriendsGenOptions): FriendsPersona[] 
       const u = r.next(); let acc = 0;
       for (const k of ["romance_seeker", "mlm", "bot", "harasser"] as const) { acc += adv[k]; if (u < acc) { adversary = k; break; } }
     }
+    return { i, r, id, name, isMinor, trueAge, adversary };
+  });
+  const latent = o.planted
+    ? plantLatent({ topicsPerCircle: 3, interestsPerMember: [2, 4], ...o.planted },
+      drafts.map(d => ({ id: d.id, market: "nyc", eligible: !d.isMinor && !d.adversary })), ACTIVITY_IDS, o.seed)
+    : undefined;
+  const out: FriendsPersona[] = [];
+  for (const { i, r, id, name, isMinor, trueAge, adversary } of drafts) {
+    const planted = latent?.marks.get(id);
     const claimedAge = adversary === "age_liar" ? r.int(18, 21) : trueAge;
     const lifeStage = isMinor ? "student" : lifeStageFor(trueAge, r);
     const homeH: Neighborhood = r.weighted(hoods);
@@ -136,6 +155,8 @@ export function generateFriendsPersonas(o: FriendsGenOptions): FriendsPersona[] 
     const favs = new Set(r.sample(FAMILIES, r.int(2, 3)));
     const likes: Record<string, number> = {};
     for (const a of FRIEND_ACTIVITIES) likes[a.id] = clamp01(r.normal(0.32, 0.17) + (favs.has(a.family) ? 0.28 : 0) + (UNIVERSAL.has(a.id) ? 0.2 : 0) + (lifeStage === "parent" && a.family === "civic" ? 0.1 : 0) - (a.intensity === 2 && trueAge > 50 ? 0.15 : 0));
+    // Planted: the circle topics are exactly the loves (like >= 0.65); every other activity stays below.
+    if (planted) for (const a of ACTIVITY_IDS) likes[a] = planted.topics.includes(a) ? Math.max(likes[a]!, 0.7) : Math.min(likes[a]!, 0.64);
     let loves = ACTIVITY_IDS.filter(a => likes[a]! >= 0.65);
     if (loves.length < 2) { const top = [...ACTIVITY_IDS].sort((x, y) => likes[y]! - likes[x]!).slice(0, 2); for (const t of top) likes[t] = Math.max(likes[t]!, 0.68); loves = top; }
     if (loves.length > 6) loves = [...loves].sort((x, y) => likes[y]! - likes[x]!).slice(0, 6);
@@ -158,8 +179,9 @@ export function generateFriendsPersonas(o: FriendsGenOptions): FriendsPersona[] 
       appetite, loneliness, newToCity,
       flakiness: Math.min(0.6, r.logNormal(0.08, 0.7)), replyProb: clamp01(r.normal(0.85, 0.1)), honesty: clamp01(r.normal(0.9, 0.07)),
       tolerance, travelCost: Math.max(0.05, r.normal(0.35, 0.12)),
-      warmth: r.normal(0, 0.35), likability: r.normal(0, 0.3), checkIn: r.bool(0.25 + 0.35 * energy),
+      warmth: r.normal(0, 0.35), likability: planted ? (planted.standing[0]! - 50) / 170 : r.normal(0, 0.3), checkIn: r.bool(0.25 + 0.35 * energy),
       richness, ...(adversary ? { adversary } : {}), canary: `canary-${hash32("friends-canary", o.seed, i).toString(36)}`,
+      ...(planted ? { planted } : {}),
     };
     // Adversaries: bots and promoters want reach; romance seekers and harassers look like anyone.
     if (adversary === "bot" || adversary === "mlm") { hidden.appetite = 0.95; hidden.replyProb = 0.97; }
