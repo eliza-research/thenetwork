@@ -306,6 +306,10 @@ test("signed contribution history scopes verified acts to the current adult and 
       { id: "contribution-minor-history", type: "review_completed", member: minor, items: 1, t: t + 6 },
     );
 
+    // Old exports can store a serialized event inside the JSONB column.
+    await sql`update network.capital_events set event = to_jsonb(event::text)
+      where app_id = 'friends' and id = 'contribution-attended'`;
+
     const text = "Show my contribution history";
     const before = escaped;
     const initial = turn("history-adult", adult, text, "friends");
@@ -757,21 +761,21 @@ test("expired isolated updates roll back unread and surface changes after a noti
   const person=await service.accounts.personFor(phone);expect(person).toBeDefined();
   const[item]=await sql`insert into notify.inbox_items(dedupe_key,person_id,app_id,event_type,subject_id,urgency,summary,created_at)
     values('updates-drain-unread',${person!.id},'friends','test','updates-drain-unread','requested','Your requested update is ready.',${new Date(clock.now())})returning id`;
-  const surfaceBefore=await sql`select surface,active,last_used_at,acted,ignored,ignored_streak from notify.surface_signals where person_id=${person!.id}order by surface`;
+  const surfaceBefore=await sql`select surface,active,last_used_at,acted,ignored,ignored_streak from notify.surface_signals where person_id=${person!.id} order by surface`;
   const locker=new SQL({url,max:1});let release!:()=>void,locked!:()=>void;
   const gate=new Promise<void>(r=>{release=r;}),acquired=new Promise<void>(r=>{locked=r;});
-  const held=locker.begin(async tx=>{await tx`select id from notify.inbox_items where id=${item.id}for update`;locked();await gate;});await acquired;
+  const held=locker.begin(async tx=>{await tx`select id from notify.inbox_items where id=${item.id} for update`;locked();await gate;});await acquired;
   let pending:Promise<Response>|undefined;
   try{
     const body=JSON.stringify({channel:open.channel,messageId:open.messageId,app:opened.app,memberId:opened.memberId,networkAuthority:authority});
     pending=fetch(new URL("/internal/updates",server.url),{method:"POST",headers:{"content-type":"application/json",...await svcSign(secret,{method:"POST",path:"/internal/updates",id:`${open.messageId}:updates`,body,nowS:Math.floor(clock.now()/1000)})},body});
     const deadline=Date.now()+5000;let waiters=0;
-    while(Date.now()<deadline){const[row]=await admin`select count(*)::int as count from pg_stat_activity where datname=${db}and wait_event_type='Lock'and lower(query)like'%notify.inbox_items%'`;waiters=row.count;if(waiters)break;await sleep(10);}
+    while(Date.now()<deadline){const[row]=await admin`select count(*)::int as count from pg_stat_activity where datname=${db} and wait_event_type='Lock'and lower(query)like'%notify.inbox_items%'`;waiters=row.count;if(waiters)break;await sleep(10);}
     expect(waiters).toBeGreaterThan(0);clock.advance(policy.drainUntil-clock.now());release();await held;
     expect((await pending).status).toBe(403);
     const[after]=await sql`select seen_at,seen_on from notify.inbox_items where id=${item.id}`;
     expect(after).toEqual({seen_at:null,seen_on:null});
-    expect(await sql`select surface,active,last_used_at,acted,ignored,ignored_streak from notify.surface_signals where person_id=${person!.id}order by surface`).toEqual(surfaceBefore);
+    expect(await sql`select surface,active,last_used_at,acted,ignored,ignored_streak from notify.surface_signals where person_id=${person!.id} order by surface`).toEqual(surfaceBefore);
   }finally{release();await held;if(pending)await pending.catch(()=>undefined);await locker.close();await server.stop(true);await service.close();await start();}
 },60_000);
 

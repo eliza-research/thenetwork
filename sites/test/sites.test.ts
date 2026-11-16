@@ -318,7 +318,11 @@ test("landing pages keep agent onboarding and an accessible phone sign-in link",
     expect(existsSync(join(out(s), "fonts/host-grotesk.woff2")), s.domain).toBe(true);
     // Every site has its logo in the header and as the favicon of every page.
     expect(home, s.domain).toMatch(/<a class="l-mark" href="\/"><svg /);
-    for (const f of htmlFiles(s)) expect(read(s, f), `${s.domain} ${f}`).toMatch(/<link rel="icon" href="\/favicon-[a-z0-9]+\.svg" type="image\/svg\+xml">/);
+    for (const f of htmlFiles(s)) {
+      const favicon = read(s, f).match(/<link rel="icon" href="\/(favicon-[A-Za-z0-9_-]+\.svg)" type="image\/svg\+xml">/)?.[1];
+      expect(favicon, `${s.domain} ${f}`).toBeDefined();
+      expect(existsSync(join(out(s), favicon!)), `${s.domain} ${f} favicon asset`).toBe(true);
+    }
   }
 });
 

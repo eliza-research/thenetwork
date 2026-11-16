@@ -33,8 +33,9 @@ export async function contributionHistoryReply(
 
   // The committed app log includes evidence from other members needed to verify
   // vouches, help, attendance and reversals. Only the owner's entries reach the reply.
-  const events = (await tx<{ event: CapitalEvent }[]>`select event from network.capital_events
-    where app_id = ${owner.app.id} order by t, id`).map(row => row.event);
+  const events = (await tx<{ event: CapitalEvent }[]>`
+    select case when jsonb_typeof(event) = 'string' then (event #>> '{}')::jsonb else event end as event
+    from network.capital_events where app_id = ${owner.app.id} order by t, id`).map(row => row.event);
   events.sort((a, b) => a.t - b.t || contributionEventReplayPriority(a.type) - contributionEventReplayPriority(b.type));
   const entries = CapitalLedger.replay(events).entriesFor({ member: owner.memberId }, owner.memberId);
   const reversed = new Set(entries.flatMap(entry => entry.provenance.reverses ? [entry.provenance.reverses] : []));

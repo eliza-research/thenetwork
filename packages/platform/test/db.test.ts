@@ -159,11 +159,13 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
       const apps = (await sql`select id from platform.apps order by id`).map((r: any) => r.id as string);
       expect(apps.length).toBeGreaterThanOrEqual(4);
       // Readable without row-level security, on purpose: app configuration, each app's own views (they
-      // filter by app), the console's own ops and audit tables, and the cross-app safety role's person tables.
+      // filter by app), the public event catalog used in snapshots, and scoped ops, audit and safety tables.
+      const catalog = ["network.public_events", "network.public_event_imports"];
       const allowed = (role: string, rel: string): boolean => {
         if (["platform.apps", "platform.cities", "platform.networks"].includes(rel)) return true;
         const app = role === "network_observatory" ? "ntwrk" : role.slice("network_observatory_".length);
         if (apps.includes(app) && [`network.network_state_console_${app}`, `platform.person_blocks_${app}`, `platform.matching_ages_${app}`].includes(rel)) return true;
+        if (catalog.includes(rel)) return apps.includes(app) || role === "network_observatory_cross_app";
         if (role === "network_observatory") return ["network.staff_audit", "platform.staff_roles", "network.ops_alerts", "network.ops_alert_posts"].includes(rel);
         if (role === "network_observatory_audit") return rel === "network.staff_audit";
         if (role === "network_observatory_cross_app") return ["network.network_state_console_cross_app", "platform.memberships", "platform.people", "platform.person_blocks"].includes(rel);
@@ -171,6 +173,13 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
       };
       const open = rows.filter((r: any) => !(r.kind === "r" && r.rls) && !allowed(r.role, r.rel)).map((r: any) => `${r.role} ${r.rel}`);
       expect(open).toEqual([]);
+      const catalogWriters = await sql`
+        select r.rolname as role, c.relname as relation
+        from pg_roles r cross join pg_class c join pg_namespace n on n.oid = c.relnamespace
+        where r.rolname like 'network\\_observatory%' and n.nspname = 'network'
+          and c.relname in ('public_events', 'public_event_imports')
+          and has_table_privilege(r.oid, c.oid, 'INSERT, UPDATE, DELETE, TRUNCATE')`;
+      expect(catalogWriters).toEqual([]);
       expect(rows.filter((r: any) => r.rel === "network.network_state_console" || r.rel === "network.network_state")).toEqual([]);
       // No console role gets around row-level security.
       expect((await sql`select rolname from pg_roles where rolname like 'network\\_observatory%' and (rolsuper or rolbypassrls)`).map((r: any) => r.rolname)).toEqual([]);
