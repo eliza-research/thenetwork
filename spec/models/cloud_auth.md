@@ -8,7 +8,7 @@ An Eliza Cloud member needs to authorize their own access to The Network.
 
 Check grant ownership and expiry, ban checks, auth mode, and validation cache behavior. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [Cloud sign-in spec](../cloudSignIn.md) generates the platform callback sequence. The [Cloud authority spec](../cloudAuthority.md) generates per-request site proof, cache, and grant eligibility decisions. This standalone model also covers app configuration, concurrent requests, and storage-level interactions.
+The [Cloud sign-in spec](../cloudSignIn.md) generates the platform callback machine. The VibeLang shell uses it from handoff through the stored session. The [Cloud authority spec](../cloudAuthority.md) generates per-request site proof, cache, and grant eligibility decisions. This standalone model also covers app configuration, concurrent requests, and storage-level interactions.
 
 Imported from `quint/cloud_auth.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
