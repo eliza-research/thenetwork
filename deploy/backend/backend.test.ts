@@ -386,16 +386,18 @@ describe("graceful shutdown", () => {
   // spec/backendLifecycle.md, "The grace period covers listener and work drain"
   test("the shutdown grace period also bounds an in-flight HTTP response", async () => {
     const { svc } = fakeService();
-    const entered = Promise.withResolvers<void>();
-    const response = Promise.withResolvers<Response>();
+    let recordEntry!: () => void;
+    let finishResponse!: (response: Response) => void;
+    const entered = new Promise<void>(resolve => { recordEntry = resolve; });
+    const response = new Promise<Response>(resolve => { finishResponse = resolve; });
     const closeMode: boolean[] = [];
-    svc.publicFetch = () => { entered.resolve(); return response.promise; };
+    svc.publicFetch = () => { recordEntry(); return response; };
     svc.close = async (force = false) => { closeMode.push(force); };
     const b = createBackend({ svc, config: cfg({ deployed: false, shutdownGraceMs: 30 }), log: silent, ping: async () => true });
     const listener = await serveHttp({ hostname: "127.0.0.1", port: 0, fetch: b.publicFetch });
     const client = fetch(new URL("/api/app", listener.url), { signal: AbortSignal.timeout(2000) })
       .then(res => res.status, () => null);
-    const reachedService = await Promise.race([entered.promise.then(() => true), client.then(() => false)]);
+    const reachedService = await Promise.race([entered.then(() => true), client.then(() => false)]);
     try {
       expect(reachedService).toBe(true);
       const result = await Promise.race([b.shutdown([listener]), sleep(600, "still draining")]);
@@ -403,7 +405,7 @@ describe("graceful shutdown", () => {
       expect(closeMode).toEqual([true]);
       expect(await client).toBeNull();
     } finally {
-      response.resolve(Response.json({ ok: true }));
+      finishResponse(Response.json({ ok: true }));
       await listener.stop(true);
       await b.shutdown();
     }
