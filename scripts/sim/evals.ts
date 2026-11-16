@@ -7,6 +7,7 @@
 //   guard/         the shared leak guard (contacts in disguise, private facts, homoglyphs, benign text)
 import { classifyYesNo, findLeaks, maskPii, parseOptOut, parseReply, type ReplyAnswer } from "../../packages/core/src/index.ts";
 import { ageAnswer, classify, extractProfile, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
+import { mergeConsent } from "../../packages/network/src/extract.ts";
 import { detectKeyword, leaveTarget, optOutPhrase } from "../../packages/platform/src/consent.ts";
 import { createPublicApi } from "../../packages/platform/src/api.ts";
 import { APPS, type AppId } from "../../packages/platform/src/apps.ts";
@@ -68,16 +69,23 @@ export async function evalsBlock(b: Block): Promise<void> {
   }
 
   // Two options can share a day or a clock time ("Wednesday 7pm", "Thursday 7pm"). A member who
-  // names one of them must not be recorded as free at the others.
-  const collisionRows = await jsonl<{ text: string; answer: "yes" | "unclear"; keys?: string[]; options: { key: string; label: string }[] }>("network/time-answer-collisions.jsonl");
+  // names one of them must not be recorded as free at the others, and a time the offer does not
+  // name must not accept the offer through "anytime". A row marked modelYes is also read again with
+  // a model yes: an unclear time answer must survive the merge, or the flow books every offered
+  // time the member never named.
+  const collisionRows = await jsonl<{ text: string; answer: "yes" | "unclear"; keys?: string[]; modelYes?: true; options: { key: string; label: string }[] }>("network/time-answer-collisions.jsonl");
   const collisionMisses: string[] = [];
   for (const row of collisionRows) {
     const options = row.options.map((o, i) => ({ key: o.key, label: o.label, start: i * 2 + 1, end: i * 2 + 2 }));
     const r = parseProbeReply(row.text, options);
     const expected = row.keys ?? [];
-    if (r.answer !== row.answer || JSON.stringify(r.keys) !== JSON.stringify(expected)) collisionMisses.push(`${row.text} -> ${r.answer} [${r.keys}]`);
+    if (r.answer !== row.answer || JSON.stringify(r.keys) !== JSON.stringify(expected)) { collisionMisses.push(`${row.text} -> ${r.answer} [${r.keys}]`); continue; }
+    if (row.modelYes) {
+      const merged = mergeConsent(r, { consent: "yes", times: [], wants: [], notWanted: [], interests: [], skills: [] }, options);
+      if (merged.answer !== row.answer || JSON.stringify(merged.keys) !== JSON.stringify(expected)) collisionMisses.push(`${row.text} -> model yes made it ${merged.answer} [${merged.keys}]`);
+    }
   }
-  b.gate(`time answers: a mention that fits more than one option is never a pick (n ${collisionRows.length})`, collisionRows.length >= 8 && collisionMisses.length === 0, collisionMisses.slice(0, 5).join(" | "));
+  b.gate(`time answers: only a single named option is a pick, and a model yes cannot promote an unclear time (n ${collisionRows.length})`, collisionRows.length >= 8 && collisionMisses.length === 0, collisionMisses.slice(0, 5).join(" | "));
 
   const benign = (await Bun.file(`${ROOT}/network/benign-adult.txt`).text()).trim().split("\n");
   const flagged = benign.filter(t => classify(t).abuse.length);

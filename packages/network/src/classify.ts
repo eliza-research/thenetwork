@@ -614,7 +614,7 @@ const NEGATIVE_FEEDBACK = /\b((was|is|it's|that's)?\s*(not|n't|wasn't|isn't)\s+(
 
 export type YesNo = "yes" | "no" | "counter" | "unclear";
 /** Why a reply reads as it does. "mixed": a refusal, then a yes ("no... ok fine yes"): ask again. */
-export type ConsentWhy = "affirm" | "refusal" | "mixed" | "conditional" | "hedged" | "counter" | "none";
+export type ConsentWhy = "affirm" | "refusal" | "mixed" | "conditional" | "hedged" | "counter" | "none" | "ambiguous";
 export interface Consent { answer: YesNo; why: ConsentWhy }
 
 /** A time word right after a refusal makes it a refusal of that time, not of the offer ("can't do Thursday"). */
@@ -753,6 +753,9 @@ function clauseAt(t: string, i: number, len: number): string {
   const end = rest.search(/[.,;!?\n]|\bbut\b/);
   return t.slice(from, end < 0 ? t.length : i + len + end);
 }
+/** True when no clause boundary sits between the two positions. */
+const sameClause = (t: string, a: number, b: number): boolean =>
+  !t.slice(Math.min(a, b), Math.max(a, b)).match(/[.,;!?]|\b(but|though|however|although|so)\b/);
 
 /**
  * A member's answer to a probe (founder decision 4a), in free text: "Thursday", "the first",
@@ -823,6 +826,9 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   }
   // Time words that fit more than one option are not a yes to all of them.
   let ambiguousTime = false;
+  // A day or a clock time the member names that no option offers: the reply names no
+  // offered time, so it must never accept the offered ones through a generic "anytime".
+  const unofferedAt: number[] = [];
   for (const m of merged.sort((a, b) => a.index - b.index)) {
     const matched = options.filter(
       o => (!m.day || o.label.startsWith(m.day)) && (!m.clock || o.label.endsWith(` ${m.clock}`)),
@@ -836,8 +842,10 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     if (matched.length === 1) { mark([matched[0]!.key], m.index, m.len); continue; }
     // The words fit more than one option, or a time that is not on offer at all: the
     // member named no single offered time, so ask again instead of booking one.
-    ambiguousTime = true;
+    if (matched.length) ambiguousTime = true;
+    else unofferedAt.push(m.index);
   }
+  const unoffered = unofferedAt.length > 0;
   // A reply that is only time words ("sat 11am", "thursday or sunday") picks them all firmly.
   let residue = t;
   for (const [re] of DAY_WORDS) residue = residue.replace(re, " ");
@@ -854,9 +862,19 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   if (picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return { answer: "yes", keys: picked.filter(k => strong.has(k) || c.answer === "yes"), why: c.why };
   if (NEITHER.test(t)) return { answer: "yes", keys: [], why: c.why };
   // "Any of them" (not refused, not a request for other days): every option the member did not rule out.
+  // Skipped when the time words name no single offered option, and when a day or time we did not
+  // offer sits in the same clause as the universal: "Friday anytime works" carries the same Friday
+  // constraint as "Friday works", so a generic "anytime" must not accept the offered options. The
+  // skip is clause-local, because the acceptance it suppresses is too: "a wedding Friday but any of
+  // those work" accepts the offered times in its second clause.
   const allAt = ALL.exec(t) ?? ALL_WEAK.exec(t);
-  if (allAt && c.answer !== "counter" && !negatedAt(t, allAt.index, allAt[0].length)) return open.length ? { answer: "yes", keys: open, why: c.why } : unclear;
-  if (ambiguousTime) return unclear;
+  const unofferedHere = !!allAt && unofferedAt.some(i => sameClause(t, i, allAt.index));
+  if (allAt && c.answer !== "counter" && !ambiguousTime && !unofferedHere && !negatedAt(t, allAt.index, allAt[0].length)) return open.length ? { answer: "yes", keys: open, why: c.why } : unclear;
+  // A named time that fits no offered option or several of them is not a yes to every option: ask
+  // again. "ambiguous" is its own reason code, because the model reader may only supply an answer
+  // the rules found no signal for (spec/probeReply.md): with "none" it would promote this reply to
+  // a yes over every offered time.
+  if (ambiguousTime || unoffered) return { answer: "unclear", keys: [], why: "ambiguous" };
   if (c.answer === "yes") return { answer: "yes", keys: open, why: c.why };
   if (c.answer === "counter") return { answer: "yes", keys: [], why: c.why };
   // Only refusals ("Thursday doesn't work") are not a yes: the probe stays open for a clear answer.

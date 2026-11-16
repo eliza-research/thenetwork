@@ -15,3 +15,10 @@
 {"text": "Friday won't work, sunday is good", "answer": "unclear", "keys": [], "options": [{"key": "a", "label": "Thursday 7pm"}, {"key": "b", "label": "Saturday 11am"}, {"key": "c", "label": "Sunday 2pm"}]}
 {"text": "Thursday 7:30pm works for me.", "answer": "yes", "keys": ["a"], "options": [{"key": "a", "label": "Thursday 7:30pm"}, {"key": "b", "label": "Saturday 2pm"}, {"key": "c", "label": "Saturday 7pm"}]}
 {"text": "7:30pm works for me.", "answer": "unclear", "keys": [], "options": [{"key": "a", "label": "Thursday 7pm"}, {"key": "b", "label": "Saturday 2pm"}, {"key": "c", "label": "Saturday 7pm"}]}
+{"text": "Friday anytime works", "answer": "unclear", "keys": [], "options": [{"key": "a", "label": "Thursday 7pm"}, {"key": "b", "label": "Saturday 11am"}, {"key": "c", "label": "Sunday 2pm"}]}
+{"text": "Wednesday anytime works", "answer": "unclear", "keys": [], "options": [{"key": "a", "label": "Thursday 7pm"}, {"key": "b", "label": "Saturday 2pm"}, {"key": "c", "label": "Saturday 7pm"}]}
+{"text": "Friday any of them works", "answer": "unclear", "keys": [], "options": [{"key": "a", "label": "Thursday 7pm"}, {"key": "b", "label": "Saturday 2pm"}, {"key": "c", "label": "Saturday 7pm"}]}
+{"text": "I have a wedding Friday but any of those work", "answer": "yes", "keys": ["a", "b", "c"], "options": [{"key": "a", "label": "Thursday 7pm"}, {"key": "b", "label": "Saturday 2pm"}, {"key": "c", "label": "Saturday 7pm"}]}
+{"text": "7:30pm", "answer": "unclear", "keys": [], "modelYes": true, "options": [{"key": "a", "label": "Thursday 7pm"}, {"key": "b", "label": "Thursday 8pm"}]}
+{"text": "Thursday 7:30pm", "answer": "unclear", "keys": [], "modelYes": true, "options": [{"key": "a", "label": "Thursday 7pm"}, {"key": "b", "label": "Thursday 8pm"}]}
+{"text": "Saturday anytime works", "answer": "unclear", "keys": [], "options": [{"key": "a", "label": "Thursday 7pm"}, {"key": "b", "label": "Saturday 2pm"}, {"key": "c", "label": "Saturday 7pm"}]}
