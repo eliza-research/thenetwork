@@ -57,6 +57,6 @@ entire imported model.
 | [relay](relay.md) | Relay between matched members | [Consent timing and verdict](../relayDecision.md), [item lifecycle](../relayLifecycle.md) |
 | [review_desk](review_desk.md) | Staff review desk | [Staff review interaction](../staffReview.md), [server review deadline](../reviewDeadline.md) |
 | [runtime_ops](runtime_ops.md) | Runtime work, retention, and alerts | [Stored units and tick follow-up](../runtimeUnit.md), [backend tick and shutdown lifecycle](../backendLifecycle.md), [platform retention](../platformRetention.md), [Observatory timing](../operationsTiming.md), [operations alert dispatch](../opsAlertDispatch.md), [weekly bias monitoring](../weeklyBias.md) |
-| [safety_trust](safety_trust.md) | Safety reports, holds, and blocks | [Safety case lifecycle](../safetyCase.md), [trust levels](../trustLevel.md) |
+| [safety_trust](safety_trust.md) | Safety reports, holds, and blocks | [Safety case lifecycle](../safetyCase.md), [staff safety scope and audit](../staffSafetyService.md), [trust levels](../trustLevel.md) |
 | [staff_console](staff_console.md) | Staff roles and console actions | [Staff request permissions](../staffPermissions.md) |
 | [turn_consent](turn_consent.md) | Signed turns and carrier consent | [Carrier consent](../carrierConsent.md), [shared-line consent journey](../sharedLineConsentJourney.md), [signed inbox and recovery](../signedInbox.md), [webhook queue](../webhookInbox.md), [signed receipt processing](../turnReceipt.md), [shared agent context](../sharedContext.md) |

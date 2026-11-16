@@ -36,6 +36,11 @@ import type { ActionResult, NetworkOptions, NetworkState, ReviewDecision, Review
 import { brandOf, copy as ntwrkCopy, copyFor, ELIZA_NOTICE, type Copy } from "../src/copy.ts";
 import { isMinor } from "@thenetwork/core";
 import { personDailyCap } from "../../core/src/generated/outreachPolicy.ts";
+import {
+  initial as initialStaffSafety, staffAgeAppCleared, staffAgeClearSummary, staffAgeMayReviewReports,
+  staffMinorReportDismissible, staffSafetyAuditScope, staffSafetyMembershipLive, staffSafetySelectsTarget,
+  step as stepStaffSafety,
+} from "../../core/src/generated/staffSafetyService.ts";
 import { inboxKeepMs, platformKeepMs, stopHintWindowMs } from "../../core/src/generated/platformRetention.ts";
 import { stopCoversEveryApp } from "../../core/src/generated/sharedLineConsentJourney.ts";
 import { ageAnswer, agesStated } from "../src/classify.ts";
@@ -1713,7 +1718,7 @@ export class NetworkService implements RuntimeHost {
     const members: { rt: NetworkRuntime; memberId: MemberId }[] = [];
     for (const m of await this.people.memberships(personId)) {
       const r = await this.runtimeOfMember(m.app, m.memberId);
-      if (r && m.state !== "removed" && m.state !== "invited") members.push({ rt: r, memberId: m.memberId as MemberId });
+      if (r && staffSafetyMembershipLive(m.state)) members.push({ rt: r, memberId: m.memberId as MemberId });
     }
     if (!members.some(x => x.rt === rt && x.memberId === memberId)) members.push({ rt, memberId });
     return { personId, members };
@@ -1727,10 +1732,12 @@ export class NetworkService implements RuntimeHost {
     // Staff with safety on this app only hold here; the hold on every other app needs safety@* (or admin@*),
     // and the audit row never says how many apps the person uses (a slop membership never shows across apps).
     const all = await this.membersOfPerson(rt, memberId);
-    const members = crossAppSafety(user) ? all.members : all.members.filter(x => x.rt === rt);
-    return this.audited(rt, user, { type: "member", id: memberId }, { safety: "hold", reportId: reportId ?? null, scope: members.length > 1 ? "every_app" : "this_app" }, async () => {
+    const everywhere = crossAppSafety(user);
+    const members = all.members.filter(x => staffSafetySelectsTarget(everywhere, x.rt === rt));
+    return this.audited(rt, user, { type: "member", id: memberId }, { safety: "hold", reportId: reportId ?? null, scope: staffSafetyAuditScope(members.length) }, async () => {
       const r = await rt.unitOfWork(n => n.holdMember(memberId, user.id, note, reportId));
-      if (!r.ok) return r;
+      const hold = stepStaffSafety(initialStaffSafety, { type: "readPrimaryHold", applied: r.ok });
+      if (hold.phase !== "HoldRemainingTargets") return r;
       // One network at a time (never one unit inside another: no lock order to get wrong).
       for (const x of members) if (!(x.rt === rt && x.memberId === memberId)) await x.rt.unitOfWork(o => o.holdMember(x.memberId, user.id, note));
       return r;
@@ -1747,32 +1754,36 @@ export class NetworkService implements RuntimeHost {
    */
   async clearMinor(user: StaffUser, rt: NetworkRuntime, memberId: MemberId, note: string): Promise<ActionResult & { apps?: { app: AppId; result: string }[] }> {
     const all = await this.membersOfPerson(rt, memberId);
-    const members = crossAppSafety(user) ? all.members : all.members.filter(x => x.rt === rt);
+    const everywhere = crossAppSafety(user);
+    const members = all.members.filter(x => staffSafetySelectsTarget(everywhere, x.rt === rt));
     const apps: { app: AppId; result: string }[] = [];
-    const r = await this.audited(rt, user, { type: "member", id: memberId }, { safety: "clear_minor", scope: members.length > 1 ? "every_app" : "this_app" }, async () => {
+    const r = await this.audited(rt, user, { type: "member", id: memberId }, { safety: "clear_minor", scope: staffSafetyAuditScope(members.length) }, async () => {
       let refusal: string | undefined;
       // One network at a time (never one unit inside another).
       for (const x of members) {
         const one = await x.rt.unitOfWork(n => {
           const c = n.clearMinorSignal(x.memberId, user.id, note);
-          if (!c.ok && c.reason !== "no_signal") return c;
+          if (!staffAgeMayReviewReports(c.ok, !c.ok && c.reason === "no_signal")) return c;
           let dismissed = 0;
           for (const rep of n.safetyReports()) {
-            if (rep.kind === "minor" && rep.subjectId === x.memberId && rep.status === "open" && n.dismissReport(rep.id, user.id, note).ok) dismissed++;
+            if (staffMinorReportDismissible(rep.subjectId === x.memberId, rep.kind === "minor", rep.status === "open")
+              && n.dismissReport(rep.id, user.id, note).ok) dismissed++;
           }
-          return c.ok || dismissed ? { ok: true as const } : c;
+          return staffAgeAppCleared(c.ok, dismissed > 0) ? { ok: true as const } : c;
         });
         apps.push({ app: x.rt.app.id, result: one.ok ? "cleared" : one.reason });
         if (!one.ok && one.reason !== "no_signal") refusal ??= one.reason;
       }
-      return refusal ? { ok: false, reason: refusal } : apps.some(a => a.result === "cleared") ? { ok: true } : { ok: false, reason: "no_signal" };
+      const summary = staffAgeClearSummary(!!refusal, apps.some(a => a.result === "cleared"));
+      return summary === "ClearSucceeded" ? { ok: true } : { ok: false, reason: summary === "ClearRefused" ? refusal! : "no_signal" };
     });
     return { ...r, apps };
   }
 
   /** Dismiss a report: it no longer keeps the member out of matching. */
   dismissReport(user: StaffUser, rt: NetworkRuntime, reportId: string, note: string) {
-    return this.staffAction(rt, user, "safety", { type: "case", id: reportId }, { safety: "dismiss_report" }, n => n.dismissReport(reportId, user.id, note));
+    return this.audited(rt, user, { type: "case", id: reportId }, { safety: "dismiss_report" },
+      () => rt.unitOfWork(n => n.dismissReport(reportId, user.id, note)));
   }
 
   /**
@@ -1786,15 +1797,22 @@ export class NetworkService implements RuntimeHost {
     const { personId, members } = await this.membersOfPerson(rt, memberId);
     const target = { type: "member" as const, id: memberId };
     // A ban stops the number on every app: only safety@* (or admin@*) may do it. Staff of one app hold.
-    if (!crossAppSafety(user)) return this.refused(user, rt, "ban", target, "needs_safety_everywhere");
-    if (!personId) return this.refused(user, rt, "ban", target, "no_person");
+    const admission = stepStaffSafety(initialStaffSafety, {
+      type: "startStaffBan", everywhere: crossAppSafety(user), hasPerson: !!personId, phoneOnly: by === "phone",
+    });
+    if (admission.phase === "BanNeedsCrossApp") return this.refused(user, rt, "ban", target, "needs_safety_everywhere");
+    if (admission.phase !== "ReadingBanPhones" || !personId) return this.refused(user, rt, "ban", target, "no_person");
     const hashes = await this.people.phoneHashesOf(personId);
-    if (by === "phone" && !hashes.length) return this.refused(user, rt, "ban", target, "no_phone");
-    const already = by === "person" ? await this.people.isBanned("", personId) : (await Promise.all(hashes.map(h => this.people.isBanned(h)))).every(Boolean);
-    if (already) return this.refused(user, rt, "ban", target, "already_banned");
+    const phones = stepStaffSafety(admission, { type: "readStaffBanPhones", hasPhone: hashes.length > 0 });
+    if (phones.phase !== "ReadingExistingBan") return this.refused(user, rt, "ban", target, "no_phone");
+    const already = phones.phoneOnly
+      ? (await Promise.all(hashes.map(h => this.people.isBanned(h)))).every(Boolean)
+      : await this.people.isBanned("", personId);
+    const admitted = stepStaffSafety(phones, { type: "checkExistingStaffBan", alreadyBanned: already });
+    if (admitted.phase !== "ApplyingPersonBan" && admitted.phase !== "ApplyingPhoneBan") return this.refused(user, rt, "ban", target, "already_banned");
     return this.audited(rt, user, target, { safety: "ban", by, reportId: reportId ?? null }, async () => {
       const at = this.clock.now();
-      const rows: Ban[] = by === "person"
+      const rows: Ban[] = admitted.phase === "ApplyingPersonBan"
         ? [{ id: `ban_${randomUUID()}`, scope: "person", personId, phoneHash: hashes[0] ?? null, reason: note, reportId: reportId ?? null, bannedBy: user.id, at },
           ...hashes.slice(1).map(h => ({ id: `ban_${randomUUID()}`, scope: "person" as const, personId, phoneHash: h, reason: note, reportId: reportId ?? null, bannedBy: user.id, at }))]
         : hashes.map(h => ({ id: `ban_${randomUUID()}`, scope: "phone" as const, personId, phoneHash: h, reason: note, reportId: reportId ?? null, bannedBy: user.id, at }));
@@ -1802,7 +1820,7 @@ export class NetworkService implements RuntimeHost {
       for (const h of hashes) await this.people.suppress(h, "banned", at);
       // No rating of looks is kept for a banned person (they are never matched again). The photos stay for the safety team.
       await this.dropRatings(personId);
-      for (const m of await this.people.memberships(personId)) if (m.state !== "removed" && m.state !== "invited") await this.people.putMembership({ ...m, state: "restricted" });
+      for (const m of await this.people.memberships(personId)) if (staffSafetyMembershipLive(m.state)) await this.people.putMembership({ ...m, state: "restricted" });
       let out: ActionResult = { ok: true };
       for (const x of members) {
         await x.rt.scoped(tx => tx`update network.members set account_status = 'restricted' where app_id = ${x.rt.app.id} and id = ${x.memberId}`);
@@ -1814,13 +1832,17 @@ export class NetworkService implements RuntimeHost {
     });
   }
 
-  /** A safety action that spans networks: the audit row first (no row, no action), then `fn`, then a result row. */
+  /** Audit the requested safety action, run it, then write its result. */
   private async audited(rt: NetworkRuntime, user: StaffUser, target: { type: NonNullable<AuditEntry["targetType"]>; id: string }, detail: Row, fn: () => Promise<ActionResult>): Promise<ActionResult> {
     const base = { actor: user.id, roles: user.roles, action: "safety", targetType: target.type, targetId: target.id, mode: "real" as const, app: rt.app.id };
     await this.audit.write({ ...base, at: this.clock.now(), ok: true, detail: { ...detail, network: rt.id, phase: "requested" } });
+    const audited = stepStaffSafety(initialStaffSafety, { type: "recordRequestedSafetyAudit" });
+    if (audited.phase !== "PerformingAuditedAction") throw new Error("Safety action requires a request audit");
     const r = await fn();
-    await this.audit.write({ ...base, at: this.clock.now(), ok: r.ok, detail: { ...detail, network: rt.id, phase: "result", ...(r.ok ? {} : { reason: r.reason }) } })
-      .catch(e => this.log(`[audit] result row failed: ${(e as Error).message}`));
+    if (stepStaffSafety(audited, { type: "recordCompletedSafetyAction" }).phase === "RecordingAuditResult") {
+      await this.audit.write({ ...base, at: this.clock.now(), ok: r.ok, detail: { ...detail, network: rt.id, phase: "result", ...(r.ok ? {} : { reason: r.reason }) } })
+        .catch(e => this.log(`[audit] result row failed: ${(e as Error).message}`));
+    }
     return r;
   }
 
