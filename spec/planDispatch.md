@@ -22,7 +22,7 @@ pure def lawBookedLaneRespectsLateJoinCutoff(booked: bool): bool =
 
 ### A missing seat or an absence rules out the invitation
 
-Check the member's current eligibility for the seat. A Friends replacement also needs current pair values with the other members still in the plan. If the recipient is ineligible or will be away during the plan interval, the quorum runner treats this seat as unavailable. Eligible and present members proceed to the contact window checks.
+Check the member's current eligibility for the seat. A Friends replacement also needs current pair values with the other members still in the plan. A Friends partner invitation checks both partners under the [one-to-one rules](planDecision.md#both-friends-activity-partners-need-prior-group-attendance). If the seat is ineligible or the recipient will be away during the plan interval, the quorum runner treats this seat as unavailable. Eligible and present members proceed to the contact window checks.
 
 ```quint
 type InvitePhase = CheckingSeat | CheckingPresence | CheckingWindow | CheckingAllowance | RenderingInvite |

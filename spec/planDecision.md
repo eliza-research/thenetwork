@@ -111,6 +111,15 @@ pure def lawDirectFallbackRequiresGroup(yesCount: int, smallerOn: bool, minGroup
   planFallbackShape(yesCount, smallerOn, minGroup, leadOk) == SmallerGroup implies yesCount >= 3
 ```
 
+### Both Friends activity partners need prior group attendance
+
+Each Friends activity partner must have attended a completed group and must pass current one-to-one eligibility and pair checks for the plan's category. Check both members before asking staff to review a partner fallback, before sending either anonymous invitation, and before booking. If a partner fallback fails the check, use the ordinary solo event or next-week fallback.
+
+```quint
+pure def friendsPartnerPlanFits(currentSeats: List[bool], pairEligible: bool): bool =
+  currentSeats.length() == 2 and currentSeats.every(eligible => eligible) and pairEligible
+```
+
 ### A group plan never books two members directly
 
 The engine counts the accepting members it can still seat after it removes booking conflicts and contact refusals. For Friends plans it seats an accepting member only when their current Friend profile gives them a pair value with every member already seated. A late join on Friends needs a current pair value with every booked member. A partner plan books when the seated count reaches its quorum. A group plan books only with three or more seated members, and only when the count reaches quorum or the activity permits two people. When a group plan keeps exactly two seated members, the engine uses the fallback for those two members. That fallback asks them again through a fresh partner plan, which needs new review and consent from both.

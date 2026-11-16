@@ -96,6 +96,12 @@ export function lawDirectFallbackRequiresGroup(yesCount: number, smallerOn: bool
   return !(planFallbackShape(yesCount, smallerOn, minGroup, leadOk) === "SmallerGroup") || yesCount >= 3;
 }
 
+/** Story: Choose a fallback for a plan that cannot proceed / Both Friends activity partners need prior group attendance (spec/planDecision.md) */
+//@ pure
+export function friendsPartnerPlanFits(currentSeats: boolean[], pairEligible: boolean): boolean {
+  return currentSeats.length === 2 && !currentSeats.some((eligible: boolean) => !eligible) && pairEligible;
+}
+
 /** Story: Choose a fallback for a plan that cannot proceed / A group plan never books two members directly (spec/planDecision.md) */
 //@ pure
 export function planBookingConsented(partnerPlan: boolean, seatedCount: number, needed: number, minGroup: number): boolean {

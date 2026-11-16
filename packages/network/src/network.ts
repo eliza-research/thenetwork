@@ -31,7 +31,7 @@ import {
   type Category, type Facet, type Intent, type LeakOptions, type LLM, type MemberId, type NetworkEvent, type ParticipationState, type Proposal, type ScoreComponents, type WorldSnapshot,
 } from "@thenetwork/core";
 import {
-  attention, CONTRIBUTOR_ROLES, DEFAULT_ATTENTION, existingFriendPlanPairValues, localEmbed, networkPack, plans, resolveConfig, resolvePlans, runEngine,
+  attention, CONTRIBUTOR_ROLES, DEFAULT_ATTENTION, existingFriendPlanPairValues, friendsKit, localEmbed, networkPack, plans, resolveConfig, resolvePlans, runEngine,
   type AskRecord, type EngineAsk, type EngineConfigInput, type EngineInput, type EngineProposal, type FeedbackRecord, type InteractionRecord, type MatchingRunLog,
   type AppPack, type PlansConfig, type PlansConfigInput, World as EngineWorld, DEFAULT_FRIENDS_POLICY, planFriendsWeek,
 } from "@thenetwork/engine";
@@ -61,7 +61,7 @@ import { isHomeEntry, riskTerms } from "../../engine/src/filters.ts";
 import { bookedCapacityReached, bookedOccupies } from "../../core/src/generated/peonCapacity.ts";
 import { initial as initialPlanDispatch, planLaneOpen, planTurnDue, step as stepPlanDispatch } from "../../core/src/generated/planDispatch.ts";
 import { noPairValue } from "../../core/src/generated/pairValue.ts";
-import { currentFriendPlanSeatFits, planBookingConsented } from "../../core/src/generated/planDecision.ts";
+import { currentFriendPlanSeatFits, friendsPartnerPlanFits, planBookingConsented } from "../../core/src/generated/planDecision.ts";
 import {
   alternateAllowed, canRecordReply, mayTryAlternate, mayUsePriorIntent, needsOtherTimes,
   needsProbeSend, probeAvailability, probeExpired, probeExpiryDeadline, probeIsInvite, probeQuestionHoldUntil, probeResponseMs,
@@ -3553,6 +3553,17 @@ export class ConsentNetwork implements NetworkUnderTest {
     return currentFriendPlanSeatFits(!!profile, peerValues);
   }
 
+  private planFriendPartnerFits(world: EngineWorld, roster: readonly MemberId[], category: Category): boolean {
+    const [first, second] = roster;
+    const currentSeats = roster.map(id => {
+      const member = this.members.get(id);
+      return !!member && this.planSeatOk(member, undefined, { busyOk: true });
+    });
+    const pairEligible = first !== undefined && second !== undefined && friendsKit.friendsPartnerEligible(world, first, second, category)
+      && this.planFriendSeatFits(world, first, [second], "existingPlan");
+    return friendsPartnerPlanFits(currentSeats, pairEligible);
+  }
+
   /**
    * The planner run (plans ask 2): Monday and Thursday from 09:00 New York (plans config runDays).
    * Members with a stated, standing or learned window, not in an open opportunity and not waiting on
@@ -3649,10 +3660,13 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!m || !o.plan || !o.planRun) return;
     const about = o.participants.filter(peer => peer === id || (o.stage === "scheduled"
       ? o.status.get(peer) === "yes" : activeOpportunityParticipant(o, peer)));
-    const friendReplacement = this.appPack()?.id === "friends" && !o.plan.invited.includes(id);
+    const friends = this.appPack()?.id === "friends";
+    const friendPartner = friends && o.plan.partner;
+    const friendReplacement = friends && !o.plan.invited.includes(id);
     // spec/planDispatch.md, "A missing seat or an absence rules out the invitation"
-    const eligible = this.planSeatOk(m, o.id, { busyOk: true }) && (!friendReplacement
-      || this.planFriendSeatFits(this.planWorld(now, true), id, about.filter(peer => peer !== id), "existingPlan"));
+    const eligible = this.planSeatOk(m, o.id, { busyOk: true }) && (friendPartner
+      ? this.planFriendPartnerFits(this.planWorld(now, true), about, o.plan.category)
+      : !friendReplacement || this.planFriendSeatFits(this.planWorld(now, true), id, about.filter(peer => peer !== id), "existingPlan"));
     const seat = stepPlanDispatch(initialPlanDispatch, { type: "checkSeat", eligible });
     if (seat.phase !== "CheckingPresence") return this.planAnswer(o, id, false, true);
     // Away from New York (an announced trip) at any time from now to the plan: never asked.
@@ -3772,6 +3786,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const a = plans.activityById.get(plan.activityId)!;
     const now = this.now();
     const friendWorld = this.appPack()?.id === "friends" ? this.planWorld(now, true) : undefined;
+    const friendPartnerEligible = !friendWorld || !plan.partner || this.planFriendPartnerFits(friendWorld, going, plan.category);
     let keep = going.filter(id => {
       if (!this.bookedNear(id, plan.window.start, o.id)) return true;
       o.status.set(id, "unavailable"); this.plansCounters.planConflictsDropped++;
@@ -3785,7 +3800,10 @@ export class ConsentNetwork implements NetworkUnderTest {
       const chk = this.checkRecipient(id, "reveal", { about: [...seated, id], reply: false });
       const why = !chk.ok ? chk.reason : attention.canSendLogistics({ outboundSinceInbound: this.member(id).outbound ?? 0 }) ? undefined : "conversation_streak";
       if (why) { this.refuse(id, "reveal", why); o.status.set(id, "unavailable"); continue; }
-      if (friendWorld && !this.planFriendSeatFits(friendWorld, id, seated, "existingPlan")) { o.status.set(id, "unavailable"); continue; }
+      if (!friendPartnerEligible || (friendWorld && !plan.partner && !this.planFriendSeatFits(friendWorld, id, seated, "existingPlan"))) {
+        o.status.set(id, "unavailable");
+        continue;
+      }
       seated.push(id);
     }
     keep = seated;
@@ -3859,9 +3877,14 @@ export class ConsentNetwork implements NetworkUnderTest {
     o.planRun = run;
     const w = this.planWorld(now);
     const candidates = eligible ? { ...run, answers: Object.fromEntries(eligible.map(id => [id, run.answers[id]!])) } : run;
-    const { fallback, carry } = plans.planFallback(candidates, now, w.events, this.pcfg);
+    const chosen = plans.planFallback(candidates, now, w.events, this.pcfg);
+    const partner = chosen.fallback.kind === "smaller" ? chosen.fallback.partnerPlan : undefined;
+    const friends = this.appPack()?.id === "friends";
+    const { fallback, carry } = friends && partner && !this.planFriendPartnerFits(this.planWorld(now, true), partner.invited, partner.category)
+      ? plans.planFallback(candidates, now, w.events, { ...this.pcfg, fallback: { ...this.pcfg.fallback, smaller: false } })
+      : chosen;
     // The friends planner does not read the carry (planFriendsWeek), so friends keeps none.
-    if (this.appPack()?.id !== "friends") this.planCarry.push(...carry);
+    if (!friends) this.planCarry.push(...carry);
     if (!again) this.ctx.log("plan_fallback", { oppId: o.id, kind: fallback.kind, members: fallback.kind === "none" ? 0 : fallback.members.length });
     if (fallback.kind === "smaller") {
       if (!fallback.partnerPlan) return this.bookPlan(o, fallback.members, true);
