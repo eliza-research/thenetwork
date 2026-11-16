@@ -155,7 +155,7 @@ function skillTransports(s: Site): Transport[] {
 }
 
 /** The event of one marked step when the step succeeds. `chooseTransport` takes the capabilities that reach `transport`. */
-function successfulEvent(s: Site, event: string, transport: Transport): SignupEvent | undefined {
+function successfulEvent(s: Site, event: string, transport: Transport, forwarded: boolean): SignupEvent | undefined {
   const kind = skillKindFor(s.key);
   switch (event) {
     case "chooseTransport": {
@@ -170,8 +170,12 @@ function successfulEvent(s: Site, event: string, transport: Transport): SignupEv
     case "readAuthMode": return { type: "readAuthMode", codeMode: true };
     case "startCode": return { type: "startCode", codeStart: "CodeSent" };
     case "checkCode": return { type: "checkCode", verified: true };
-    case "readAccount": return { type: "readAccount", account: "JoinableAccount" };
-    case "joinApp": return { type: "joinApp", joinResult: "JoinCreated" };
+    case "readAccount": return {
+      type: "readAccount",
+      account: forwarded ? "InviteRequired" : "JoinableAccount",
+      invitation: { forwarded, sameApp: forwarded, approved: forwarded },
+    };
+    case "joinApp": return { type: "joinApp", joinResult: "JoinCreated", invitationSubmitted: forwarded };
     case "readBack": return { type: "readBack", readBackMatches: true };
     case "checkSiteStatus": return { type: "checkSiteStatus", siteApp: true, siteStatus: "SiteActive" };
     case "submitProfile": return { type: "submitProfile", accepted: true };
@@ -194,19 +198,24 @@ export function signupStepProblems(s: Site, text: string): string[] {
   for (const m of markers) {
     if (m.transport !== null && !transports.includes(m.transport as Transport)) problems.push(`${s.skill}/SKILL.md:${m.line} marks a step for ${m.transport}, which the ${s.domain} skill does not use (${transports.join(", ")})`);
   }
-  for (const transport of transports) {
+  const cases = transports.map(transport => ({ transport, forwarded: false }));
+  if (transports.includes("InAgentCode") && brandFor(s.key).joinMode === "InviteOnly") {
+    cases.push({ transport: "InAgentCode", forwarded: true });
+  }
+  for (const { transport, forwarded } of cases) {
+    const route = forwarded ? `${transport} with a forwarded invitation` : transport;
     let state: AgentSignup = signupStart;
     for (const m of markers.filter((x) => x.transport === null || x.transport === transport)) {
-      const event = successfulEvent(s, m.event, transport);
+      const event = successfulEvent(s, m.event, transport, forwarded);
       if (!event) { problems.push(`${s.skill}/SKILL.md:${m.line} names "${m.event}", which is not a step of a successful signup`); break; }
-      if (!signupEnabled(state, event)) { problems.push(`${s.skill}/SKILL.md:${m.line}: the agentSignup model does not allow "${m.event}" in phase ${state.phase} (${transport})`); break; }
+      if (!signupEnabled(state, event)) { problems.push(`${s.skill}/SKILL.md:${m.line}: the agentSignup model does not allow "${m.event}" in phase ${state.phase} (${route})`); break; }
       state = signupStep(state, event);
-      if (!signupInvariants(state)) { problems.push(`${s.skill}/SKILL.md:${m.line}: "${m.event}" breaks an agentSignup rule (${transport})`); break; }
+      if (!signupInvariants(state)) { problems.push(`${s.skill}/SKILL.md:${m.line}: "${m.event}" breaks an agentSignup rule (${route})`); break; }
     }
     if (problems.length) break;
     const want = endReportFor(transport);
     const got = reportFor(state.phase);
-    if (got !== want) problems.push(`${s.skill}/SKILL.md: the ${transport} steps end in phase ${state.phase} (${got}), not at ${want}`);
+    if (got !== want) problems.push(`${s.skill}/SKILL.md: the ${route} steps end in phase ${state.phase} (${got}), not at ${want}`);
   }
   return problems;
 }
