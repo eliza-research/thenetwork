@@ -2147,7 +2147,7 @@ export class NetworkService implements RuntimeHost {
       const delivery = b.outcome as TurnReceiptRequest["outcome"];
       const replyIds = b.replyIds as string[];
       const phase = await this.sql.begin(tx => recordSignedTurnReceipt({
-        digest, delivery, replyIds, providerIds: (b.providerMessageIds as string[]).length > 0, history: b.historyRecorded,
+        digest, delivery, replyIds, providerIds: (b.providerMessageIds as string[]).length > 0, history: b.historyRecorded === true,
       }, {
         readTurn: async () => {
           const [claim] = await tx<{
