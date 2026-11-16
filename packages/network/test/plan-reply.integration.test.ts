@@ -90,33 +90,29 @@ describe("plan probe replies", () => {
 
   test("a smaller group that keeps two seats after a booking conflict is asked again as a pair, counted as one fallback", async () => {
     // spec/planDecision.md, "A group plan never books two members directly"
-    const ids = ["a", "b", "c", "d", "x", "y"];
+    const ids = ["a", "b", "c", "d", "x"];
     const w = new Mini(ids.map(climber), { review: "human" });
     await w.onboard(...ids);
     const now = w.clock.now();
-    const window = { start: now + 6 * DAY, end: now + 6 * DAY + 2 * HOUR };
-    const planOf = (id: string, invited: string[], quorum: number): plans.Plan => ({
-      id, city: "nyc", activityId: "bouldering", place: { name: "Brooklyn Boulders", area: "Gowanus" }, window, invited, alternates: [],
-      partner: false, size: { min: 3, target: quorum, max: quorum }, quorum, probeDeadline: now + 4 * DAY, score: 0.6, u: {}, familiar: {},
+    const plan: plans.Plan = {
+      id: "plan_group", city: "nyc", activityId: "bouldering", place: { name: "Brooklyn Boulders", area: "Gowanus" },
+      window: { start: now + 5 * DAY, end: now + 5 * DAY + 2 * HOUR }, invited: ["a", "b", "c", "d"], alternates: [],
+      partner: false, size: { min: 3, target: 4, max: 4 }, quorum: 4, probeDeadline: now + 4 * DAY, score: 0.6, u: {}, familiar: {},
       createdAt: now, category: "hobby",
-    });
-    const submit = (plan: plans.Plan) => (w.net as unknown as { submitPlan(plan: plans.Plan, at: number): void }).submitPlan(plan, w.clock.now());
-    const approveNew = (seen: string[]) => {
-      const item = w.net.reviewQueue().find(i => !seen.includes(i.oppId))!;
-      expect(w.net.review(item.oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
-      return item.oppId;
     };
     // The group plan: a, b and c accept; d has not answered yet.
-    submit(planOf("plan_group", ["a", "b", "c", "d"], 4));
-    const group = approveNew([]);
+    (w.net as unknown as { submitPlan(plan: plans.Plan, at: number): void }).submitPlan(plan, now);
+    const group = w.net.reviewQueue()[0]!.oppId;
+    expect(w.net.review(group, "approve", { reviewer: "sim_staff" })).toBe(true);
     expect(await w.runUntil(() => ["a", "b", "c", "d"].every(id => w.probed(id)), 2 * DAY)).toBe(true);
     for (const id of ["a", "b", "c"]) await w.say(id, "yes");
-    // c also books another plan at the same time, so the smaller group loses c to a booking conflict.
-    submit(planOf("plan_other", ["c", "x", "y"], 3));
-    approveNew([group]);
-    expect(await w.runUntil(() => ["c", "x", "y"].every(id => w.probed(id)), 2 * DAY)).toBe(true);
-    for (const id of ["c", "x", "y"]) await w.say(id, "yes");
-    expect(w.meetings.length).toBe(1);
+    // A separately reviewed introduction can book while c waits for the plan's quorum.
+    const competing = w.propose(["c", "x"]);
+    expect(await w.runUntil(() => w.net.reviewQueue().some(item => item.oppId === competing), DAY)).toBe(true);
+    expect(w.net.review(competing, "approve", { reviewer: "sim_staff" })).toBe(true);
+    await w.answerProbes(["c", "x"], () => "yes", 8 * HOUR);
+    expect(w.meetings).toMatchObject([{ proposalId: competing, participants: ["c", "x"] }]);
+    expect(Math.abs(w.meetings[0]!.at - plan.window.start)).toBeLessThan(4 * HOUR);
     const fallbacks = () => w.net.exportState().plans!.counters.planFallbacks;
     const before = { fallbacks: fallbacks(), meetings: w.meetings.length };
     expect(w.probed("d")).toBe(true);
