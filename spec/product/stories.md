@@ -22,7 +22,7 @@ When someone joins through the invitation, tell the inviter using their first na
 
 ### Seed invitations use the same acceptance rules
 
-Authorize a staff member to create individually attributable invites with city and vouch context. F1 and F3 still govern who can be contacted and how an invite becomes a membership. The cohort receives no permanent rank or special member status.
+Authorize a staff member to create individually attributable invites with city and vouch context. F1 and F3 still govern who can be contacted and how an invite becomes a membership. The cohort receives no permanent rank or special member status. [Seed invitation rules](../seedInvitation.md) cover the batch and its verified recipient binding.
 
 ## Story F3 — Accept an invite and verify identity
 

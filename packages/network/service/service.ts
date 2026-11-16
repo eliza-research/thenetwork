@@ -70,6 +70,7 @@ import {
 } from "../../core/src/generated/textEnrollment.ts";
 import { Inbox, type CollectedReply, type AtomicReplyReason } from "./inbox.ts";
 import { staffDecideInvitationReview, staffInvitationReviewQueue } from "./invitation-review.ts";
+import { auditSeedInvitationBatch, seedInvitationBatch } from "./seed-invitation-route.ts";
 import { ExpectedMemberInvitations } from "./expected-invitation-store.ts";
 import { memberInviteDeliveryCommand, memberInviteDeliveryPrompt, memberInviteDeliveryReply, type MemberInviteDeliveryCommand } from "./member-invite-delivery-command.ts";
 import { BOUNDED_HOME_HELP_CLARIFICATION, boundedHomeHelpCommand, boundedHomeHelpDraft, type BoundedHomeHelpCommand } from "./bounded-home-help-intake.ts";
@@ -89,12 +90,13 @@ import { ADULT_AGE, canBeMatched, canJoin } from "../../core/src/policy.ts";
 import { CostLedger, costRatesFromEnv, PgCostSink } from "./cost.ts";
 import { BlooioAdapter, type ChannelAdapter, type DirectKind, type Outbound } from "./channel.ts";
 import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, type AppId, type AppInfo } from "../../platform/src/apps.ts";
-import { Accounts, homeCityOf, type AccountHooks, type HomeInput, type JoinHookContext, type MemberHookContext, type Who } from "../../platform/src/accounts.ts";
+import { Accounts, homeCityOf, type AccountHooks, type EnrollmentReferral, type HomeInput, type JoinHookContext, type MemberHookContext, type Who } from "../../platform/src/accounts.ts";
 import {
   consumeMemberInvitation, findApprovedMemberInvitationReview, findMemberInvitation, holdMemberInvitation, InvitationUnavailable,
   memberInvitationHash, memberInvitationReviewId, memberInvitationReviewStatus, newMemberInvitation, purgeExpiredMemberInvitationReviews,
   releaseMemberInvitationReview, storeMemberInvitation, type ReferralJoin,
 } from "../../platform/src/invite-links.ts";
+import { SeedInvitations } from "../../platform/src/seed-invitations.ts";
 import { joinAgeCheck, lowestAge } from "../../platform/src/age.ts";
 import { detectKeyword as platformKeyword, keywordEvent, leaveTarget, resolveConsent, stopScope, type StopScope } from "../../platform/src/consent.ts";
 import { devShortcutsAllowed, isProduction, platformEnv, type Env } from "../../platform/src/env.ts";
@@ -154,7 +156,7 @@ export function turnSecretProblem(env: Record<string, string | undefined> = proc
 /** The tables the service needs (pnpm run db:migrate). */
 const REQUIRED_TABLES = [
   ...["members", "channel_identities", "facets", "intents", "presence", "edges", "messages", "events", "matching_runs", "staff_audit", "network_state", "opportunities", "review_items", "requests", "bounded_home_help", "bounded_home_help_consent", "bounded_home_help_venue"].map(t => `network.${t}`),
-  ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "app_lines", "share_grants", "eliza_notices", "member_invitations", "member_invitation_reviews", "expected_member_invitations", "expected_invitation_contacts"].map(t => `platform.${t}`),
+  ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "app_lines", "share_grants", "eliza_notices", "member_invitations", "member_invitation_reviews", "expected_member_invitations", "expected_invitation_contacts", "seed_invitation_batches", "seed_invitations", "seed_invitation_attributions"].map(t => `platform.${t}`),
 ];
 /** The dev-only key for keyed phone hashes (the platform's own default). Production needs PLATFORM_HASH_KEY. */
 const DEV_HASH_KEY = "dev-only-platform-hash-key";
@@ -347,6 +349,7 @@ export class NetworkService implements RuntimeHost {
   private readonly secrets: Partial<Record<AppId, string>>;
   private readonly hashKey: string;
   private readonly expectedInvitations: ExpectedMemberInvitations;
+  private readonly seedInvitations: SeedInvitations;
   private readonly homeHelpVenueKey: ReturnType<typeof createSecretKey>;
   /** The inbound inbox: one row per provider message, handled once and in order per sender (inbox.ts). */
   readonly inbox: Inbox;
@@ -392,6 +395,7 @@ export class NetworkService implements RuntimeHost {
     if (!key) throw new Error("PLATFORM_HASH_KEY is required in production and outside PLATFORM_ENV=dev");
     this.hashKey = key;
     this.expectedInvitations = new ExpectedMemberInvitations(key, () => this.clock.now(), app => this.apps[app]);
+    this.seedInvitations = new SeedInvitations(key, () => this.clock.now());
     this.homeHelpVenueKey = createSecretKey(Buffer.from(hkdfSync("sha256", key, "thenetwork", "private-home-help-venue-v1", 32)));
     try { this.tokens = parseTokenGrants(o.tokens, { explicitApp: isProduction(this.env) }); } catch (e) { throw new Error(String((e as Error).message).replace("OBSERVATORY_TOKENS", "NETWORK_SERVICE_TOKENS")); }
     // Cloud holds the turn secret; it must never also be a staff bearer (PR #4: the agent credential was never the console token).
@@ -564,13 +568,18 @@ export class NetworkService implements RuntimeHost {
     await storeMemberInvitation(tx, rt.app.id, staged.referral, staged.relationship, staged.at, approval ? approval.expiresAt : undefined, staged.evidence);
   }
 
-  private async referralFor(app: AppId, token: string, at: number, verifiedPhone: string): Promise<ReferralJoin | undefined> {
+  private async referralFor(app: AppId, token: string, at: number, verifiedPhone: string): Promise<EnrollmentReferral | undefined> {
     const hash = memberInvitationHash(this.hashKey, app, token);
     const rt = this.runtimeFor(app);
     if (!hash || !rt) return;
     return rt.scoped(async tx => {
       const referral = await findMemberInvitation(tx, app, hash, at);
-      if (!referral || !await this.invitationOwner(tx, rt.app, referral.inviterMemberId)) return;
+      if (!referral) {
+        const seed = await this.seedInvitations.findRecipient(tx, {app, token, e164: verifiedPhone});
+        if (seed && await this.invitationRecipientMayRedeem(tx, app, verifiedPhone)) return seed;
+        return;
+      }
+      if (!await this.invitationOwner(tx, rt.app, referral.inviterMemberId)) return;
       try { await this.expectedInvitationBinding(tx, app, hash, verifiedPhone); }
       catch (error) { if (error instanceof InvitationUnavailable) return; throw error; }
       return referral;
@@ -582,12 +591,16 @@ export class NetworkService implements RuntimeHost {
       from platform.member_invitations where app_id=${app} and token_hash=${tokenHash} for update`;
     if (!invite) throw new InvitationUnavailable();
     if (!invite.expected_recipient_hash) return;
-    const accounts = this.accountsFor(tx);
-    if (!await this.expectedInvitations.verifyRecipient(tx, {app, tokenHash, to}) || await accounts.held(to) || await accounts.banned(to)
-      || await accounts.store.isSuppressed(accounts.phoneHash(to)) || resolveConsent(await accounts.store.lastConsent(to, app)) === "opted_out") {
+    if (!await this.expectedInvitations.verifyRecipient(tx, {app, tokenHash, to}) || !await this.invitationRecipientMayRedeem(tx, app, to)) {
       throw new InvitationUnavailable();
     }
     return invite.expected_recipient_hash;
+  }
+
+  private async invitationRecipientMayRedeem(tx: SQL, app: AppId, to: string): Promise<boolean> {
+    const accounts = this.accountsFor(tx);
+    return !await accounts.held(to) && !await accounts.banned(to) && !await accounts.store.isSuppressed(accounts.phoneHash(to))
+      && resolveConsent(await accounts.store.lastConsent(to, app)) !== "opted_out";
   }
 
   private async eligibleExpectedInviteRecipient(tx: SQL, app: AppId, to: string): Promise<boolean> {
@@ -744,10 +757,12 @@ export class NetworkService implements RuntimeHost {
    */
   async afterTick(rt: NetworkRuntime): Promise<void> {
     await this.recoverInvitationJoins(rt);
+    await this.recoverSeedInvitationJoins(rt).catch(() => this.log(`[invite] seed projection waits for retry (${rt.id})`));
     if (this.runtimeFor(rt.app.id) === rt) await rt.scoped(async tx => {
       const now = this.clock.now();
       await purgeExpiredMemberInvitationReviews(tx, rt.app.id, now);
       await this.expectedInvitations.purgeExpired(tx, rt.app.id);
+      await this.seedInvitations.purgeExpired(tx, rt.app.id);
       await tx`delete from platform.member_invitations
         where app_id=${rt.app.id} and expires_at<=${new Date(now)} and (redeemed_at is null or projected_at is not null)`;
     }).catch(() => this.log(`[purge] invitations failed (${rt.id})`));
@@ -968,7 +983,7 @@ export class NetworkService implements RuntimeHost {
    * first name, age) and what the person gave at join (neighborhood, interests). The phone stays in
    * platform.phone_identities. Written with app.app_id set (migration 0004).
    */
-  async createMember(rt: NetworkRuntime, m: Membership, info: { age: number; firstName: string; homeCity?: string; neighborhood?: string; interests?: string[]; zip?: string }, invitation?: { tx: SQL; referral: ReferralJoin; verifiedRecipientHash?: string }) {
+  async createMember(rt: NetworkRuntime, m: Membership, info: { age: number; firstName: string; homeCity?: string; neighborhood?: string; interests?: string[]; zip?: string }, invitation?: { tx: SQL; referral?: ReferralJoin; verifiedRecipientHash?: string }) {
     const at = this.clock.now();
     const now = new Date(at);
     const homeCity = info.homeCity ?? homeCityOf(m.profile.homeCity) ?? rt.city;
@@ -1049,23 +1064,57 @@ export class NetworkService implements RuntimeHost {
     await rt.unitOfWork(n => { n.welcomeJoined(ctx.membership.memberId); });
   }
 
-  private async commitReferredJoin(ctx: JoinHookContext & { referral: ReferralJoin }): Promise<void> {
+  private async commitReferredJoin(ctx: JoinHookContext & { referral: EnrollmentReferral }): Promise<void> {
     const browserHome = publicSignupUsesBrowser(ctx.app.id) ? this.runtimeFor(ctx.app.id)?.city : undefined;
     const rt = this.runtimeForHome(ctx.app.id, ctx.input.homeCity ?? browserHome ?? "");
     const at = ctx.membership.joinedAt;
     if (!rt || ctx.membership.state !== "active" || at === null) throw new InvitationUnavailable();
+    const referral = ctx.referral;
+    const memberReferral = "inviterMemberId" in referral ? referral : undefined;
     // A verified person can already exist. The active membership, consent and referral are one outcome.
     await rt.scoped(async tx => {
-      const verifiedRecipientHash = await this.expectedInvitationBinding(tx, ctx.app.id, ctx.referral.tokenHash, ctx.e164);
+      const verifiedRecipientHash = memberReferral ? await this.expectedInvitationBinding(tx, ctx.app.id, memberReferral.tokenHash, ctx.e164) : undefined;
+      if (!memberReferral && !await this.invitationRecipientMayRedeem(tx, ctx.app.id, ctx.e164)) throw new InvitationUnavailable();
       const accounts = this.accountsFor(tx);
-      await accounts.store.unsuppress(accounts.phoneHash(ctx.e164));
+      if (memberReferral && verifiedRecipientHash === undefined) await accounts.store.unsuppress(accounts.phoneHash(ctx.e164));
       await accounts.store.putMembership(ctx.membership);
       await accounts.store.addConsent({ e164: ctx.e164, app: ctx.app.id, state: "opted_in", source: "web_form", wording: ctx.app.consent.text, wordingVersion: ctx.app.consent.version, at });
       await accounts.store.attachPerson(ctx.e164, ctx.person.id);
-      await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age }, { tx, referral: ctx.referral, verifiedRecipientHash });
+      await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age }, { tx, referral: memberReferral, verifiedRecipientHash });
+      if ("kind" in referral) {
+        await this.seedInvitations.consume(tx, {app: ctx.app.id, referral, e164: ctx.e164, memberId: ctx.membership.memberId});
+      }
     });
     // The token is consumed and attribution is durable. A failed welcome can retry independently.
-    await this.projectInvitationJoin(rt, ctx.membership.memberId).catch(() => this.log(`[invite] joined projection waits for retry (${rt.id})`));
+    const project = memberReferral ? this.projectInvitationJoin(rt, ctx.membership.memberId) : this.projectSeedWelcome(rt, ctx.membership.memberId);
+    await project.catch(() => this.log(`[invite] joined projection waits for retry (${rt.id})`));
+  }
+
+  private async projectSeedWelcome(rt: NetworkRuntime, memberId: MemberId): Promise<void> {
+    const app = rt.app.id;
+    await rt.unitOfWork(async net => {
+      const [pending] = await rt.scoped(tx => tx<{home_city: string}[]>`select m.home_city from platform.seed_invitation_attributions a
+        join network.members m on m.app_id=a.app_id and m.id=a.member_id
+        where a.app_id=${app} and a.member_id=${memberId} and a.welcome_projected_at is null`);
+      if (!pending || !projectInvitationWelcome(true, this.runtimeForHome(app, pending.home_city) === rt, false)) return;
+      net.welcomeJoined(memberId);
+      rt.unit.memberCommand = async tx => {
+        const rows = await tx`update platform.seed_invitation_attributions set welcome_projected_at=${new Date(this.clock.now())}
+          where app_id=${app} and member_id=${memberId} and welcome_projected_at is null returning member_id`;
+        if (rows.length !== 1) throw new InvitationUnavailable();
+      };
+    });
+  }
+
+  private async recoverSeedInvitationJoins(rt: NetworkRuntime): Promise<void> {
+    const app = rt.app.id;
+    const cities = this.conversationCities(rt);
+    if (!cities.length) return;
+    const pending = await rt.scoped(tx => tx<{member_id: string}[]>`select a.member_id from platform.seed_invitation_attributions a
+      join network.members m on m.app_id=a.app_id and m.id=a.member_id
+      where a.app_id=${app} and a.welcome_projected_at is null and m.home_city in ${tx(cities)}
+      order by a.redeemed_at,a.member_id limit 20`);
+    for (const row of pending) await this.projectSeedWelcome(rt, row.member_id);
   }
 
   private async projectInvitationJoin(rt: NetworkRuntime, memberId: MemberId): Promise<void> {
@@ -1405,7 +1454,10 @@ export class NetworkService implements RuntimeHost {
     }
 
     if (memberInviteDeliveryCommand(ev.text)?.kind === "decline") {
-      if (turn && e164) await rt.scoped(tx => this.expectedInvitations.decline(tx, e164));
+      if (turn && e164) await rt.scoped(async tx => {
+        await this.expectedInvitations.decline(tx, e164);
+        await this.seedInvitations.decline(tx, {app: app.id, e164});
+      });
       return "handled";
     }
 
@@ -2123,6 +2175,31 @@ export class NetworkService implements RuntimeHost {
     await this.audit.write({ actor: user.id, roles: user.roles, action: "invite", targetType: target.type, targetId: target.id, mode: "real", app: rt.app.id, at: this.clock.now(), ok: r.ok, detail: { network: rt.id, phase: "result", ...(r.ok ? {} : { reason: r.reason }) } })
       .catch(e => this.log(`[audit] result row failed: ${(e as Error).message}`));
     return r;
+  }
+
+  private async issueSeedInvitationBatch(req: Request, rt: NetworkRuntime, user: StaffUser): Promise<Response> {
+    if (req.method !== "POST") return json({ok: false, error: "method_not_allowed"}, 405);
+    const bytes = await readCapped(req, MAX_BODY_BYTES);
+    if (bytes === "too_large") return json({ok: false, error: "payload_too_large"}, 413);
+    let payload: unknown;
+    try { payload = JSON.parse(new TextDecoder("utf-8", {fatal: true}).decode(bytes)); }
+    catch { return json({ok: false, error: "invalid_seed_batch"}, 400); }
+    const batch = seedInvitationBatch(payload);
+    if (!batch) {
+      return json({ok: false, error: "invalid_seed_batch"}, 400);
+    }
+    if (rt.app.joinMode === "waitlist") return json({ok: false, error: "seed_invitation_unavailable"}, 409);
+    const issued = await rt.scoped(async tx => {
+      const result = await this.seedInvitations.issue(tx, {app: rt.app.id, issuerId: user.id, ...batch});
+      if (result.kind === "issued") {
+        await auditSeedInvitationBatch(tx, rt.app.id, user, result.batchId, result.links.length, result.issuedAt);
+      }
+      return result;
+    });
+    if (issued.kind === "conflict") return json({ok: false, error: "seed_batch_conflict"}, 409);
+    if (issued.kind === "unavailable") return json({ok: false, error: "seed_invitation_unavailable"}, 409);
+    return json({ok: true, batchId: batch.requestId, replayed: issued.kind === "replayed",
+      invitations: issued.links.map(({token, homeCity}) => ({link: memberInvitationLink(rt.app, token), city: homeCity, expiresAt: issued.expiresAt}))});
   }
 
   // ------------------------------------------------------------------ verification, photos, reports, holds and bans
@@ -3163,6 +3240,10 @@ export class NetworkService implements RuntimeHost {
           return json({ ok: false, error: "invalid_verify" }, 400);
         }
         return result(await this.verify(user, rt, id, b.check, b.result, b.note));
+      }
+      if (path === "/invite/seed" && scoped) {
+        const no = need(["admin"]); if (no) return no;
+        return await this.issueSeedInvitationBatch(req, rt, user);
       }
       if (path === "/invite") {
         // A staff invite to this app (an invite-only app: the person's reply with name and age is the join).
