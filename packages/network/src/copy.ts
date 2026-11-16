@@ -78,6 +78,8 @@ export function copyFor(b: CopyBrand) {
   booked: (others: string[], why: string, venue: string, when: string, offer = false) =>
     `${others.length === 1 ? `You're both in: meet ${others[0]}` : `You're all in: ${others.join(", ")}`}, ${when} at ${venue}. ${why}. Reply if your plans change.${offer ? ` ${OFFER}` : ""}`,
   bookedThanks: "Great, see you there.",
+  whichBookingToCancel: "I found more than one upcoming meeting. Which one should I cancel? Use “Please cancel my meeting on YYYY-MM-DD at HH:MM” with its New York date and 24-hour time.",
+  noBookingToCancel: "I couldn't find a matching upcoming meeting.",
   /** A probe reply that was neither a clear yes nor a clear no (a condition, a maybe): asked once more. */
   probeClarify: "Just to check: is that a yes or a no? Either is fine.",
   /** The member opted in to calendar free/busy (founder decision 4c); free/busy only, never event details. */

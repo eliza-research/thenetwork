@@ -1108,9 +1108,9 @@ module opportunity {
   // decline, but close() records "declined" only for reason "declined".
   val declineRecorded = OPPS.forall(o => op(s, o).outcomeRec == "expired" implies op(s, o).saidNo == Set())
 
-  // SD-259 (skipped: reschedule and a cancel outside the booked slot are a new flow and need a founder or
-  // maintainer decision on wording and window). The booked text says "Reply if your plans change"; after
-  // the 48-hour slot a plain "no" is not read as a cancel.
+  // SD-259. A plain "no" after the 48-hour booked slot carries no cancellation authority. The explicit
+  // fallback in spec/opportunityLifecycle.md selects a unique upcoming booking in the member's app.
+  // The exact local-time qualifier and multiple-booking selection are outside this pair model.
   val bookedNoHonored = OPPS.forall(o => {
     val x = op(s, o)
     x.stage == "scheduled" implies x.cancelAsked.forall(m => x.status.get(m) != "yes")
@@ -1279,7 +1279,7 @@ module opportunity {
       .then(answer("b", "fb_self_noshow", ALL_OPEN)).then(settled)
       .expect(op(s, "o1").noShowCount.get("b") == 1 and op(s, "o1").feedbackFrom.contains("b") and noShowOnce and safety)
 
-  // SD-259 (skipped): the booked slot ends after 48 hours; a plain "no, sorry" to the booked plan is then ignored.
+  // SD-259. After the 48-hour booked slot, a plain "no, sorry" leaves the plan as it was.
   run lateNoTest =
     bookO1(72).then(tick(49, ALL_OPEN)).then(settled)
       .expect(mm(s, "a").aw.kind == "none")

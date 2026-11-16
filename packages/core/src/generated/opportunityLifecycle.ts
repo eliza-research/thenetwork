@@ -5,6 +5,8 @@
 export type OpportunityPhase = "InReview" | "Probing" | "Scheduled" | "Done" | "Closed";
 /** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md) */
 export interface OpportunityLifecycle { phase: OpportunityPhase; approved: boolean }
+/** Story: Book and conclude a proposal that comes together / An explicit cancellation without a reply slot selects one upcoming meeting (spec/opportunityLifecycle.md) */
+export type UnlinkedCancellation = "NoCancellation" | "NoMatchingBooking" | "AskWhichBooking" | "CancelMatchingBooking";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -80,6 +82,32 @@ export function bookedReplyCurrent(proposal: OpportunityLifecycle, accepted: boo
 export function lawBookedReplyRequiresCurrentConsent(proposal: OpportunityLifecycle, accepted: boolean): boolean {
   //@ ensures \result === true
   return !bookedReplyCurrent(proposal, accepted) || (proposal.phase === "Scheduled" && accepted);
+}
+
+/** Story: Book and conclude a proposal that comes together / An explicit cancellation without a reply slot selects one upcoming meeting (spec/opportunityLifecycle.md) */
+//@ pure
+export function unlinkedCancellation(ownText: boolean, explicit: boolean, activeBookedSlot: boolean, matching: number): UnlinkedCancellation {
+  return !ownText || !explicit || activeBookedSlot ? "NoCancellation" : (matching === 1 ? "CancelMatchingBooking" : (matching > 1 ? "AskWhichBooking" : "NoMatchingBooking"));
+}
+
+/** Story: Book and conclude a proposal that comes together / An explicit cancellation without a reply slot selects one upcoming meeting (spec/opportunityLifecycle.md) */
+//@ pure
+export function upcomingCancellationEligible(proposal: OpportunityLifecycle, onRoster: boolean, accepted: boolean, startKnown: boolean, startAt: number, now: number): boolean {
+  return onRoster && bookedReplyCurrent(proposal, accepted) && startKnown && startAt > now;
+}
+
+/** Story: Book and conclude a proposal that comes together / An explicit cancellation without a reply slot selects one upcoming meeting (spec/opportunityLifecycle.md) */
+//@ pure
+export function lawUnlinkedCancellationNeedsOneMatch(ownText: boolean, explicit: boolean, activeBookedSlot: boolean, matching: number): boolean {
+  //@ ensures \result === true
+  return !(unlinkedCancellation(ownText, explicit, activeBookedSlot, matching) === "CancelMatchingBooking") || (ownText && explicit && !activeBookedSlot && matching === 1);
+}
+
+/** Story: Book and conclude a proposal that comes together / An explicit cancellation without a reply slot selects one upcoming meeting (spec/opportunityLifecycle.md) */
+//@ pure
+export function lawStartedBookingCannotBeSelected(proposal: OpportunityLifecycle, onRoster: boolean, accepted: boolean, startKnown: boolean, startAt: number, now: number): boolean {
+  //@ ensures \result === true
+  return !(startAt <= now) || !upcomingCancellationEligible(proposal, onRoster, accepted, startKnown, startAt, now);
 }
 
 /** Story: Book and conclude a proposal that comes together / A new minor signal closes an unbooked opportunity involving that person (spec/opportunityLifecycle.md) */

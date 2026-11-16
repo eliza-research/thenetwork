@@ -54,7 +54,7 @@ import {
 import { bookedCancellationAllowed, bookedCancellationPrefix } from "../../core/src/generated/outboundAdmission.ts";
 import {
   bookedReplyCurrent, closesForMinor, groupCanContinue, initial as initialOpportunity, releasesPartialAcceptance, step as stepOpportunity,
-  type OpportunityLifecycle, type OpportunityPhase,
+  unlinkedCancellation, upcomingCancellationEligible, type OpportunityLifecycle, type OpportunityPhase,
 } from "../../core/src/generated/opportunityLifecycle.ts";
 import { queueRepeat, recentRepeatSource, recordsRepeatConsent } from "../../core/src/generated/repeatEncounter.ts";
 import { boundedHelpRoute, openHomeHelpCase } from "../../core/src/generated/boundedHelp.ts";
@@ -440,6 +440,22 @@ const NOT_A_NAME = /^(?:yes|yeah|yep|yup|no|nope|nah|sure|ok|okay|maybe|thanks|t
 const MEMBER_ASK = /\?|\b(looking for|i'?d (really )?(like|love)|i want|i need|can you|could you|help me|find me|anything (come|came) up|still hoping)\b/i;
 /** A bare acknowledgement ("thx", "ok") answers logistics, not an earlier unsolicited message. */
 const ACK_ONLY = /^(?:ok(?:ay)?|k|kk|thx|thanks?(?: you)?|ty|cool|great|nice|perfect|got it|sounds good|will do|see you(?: then| there)?|yep|yup|sure|[\s.!,:;)(-]|\p{Extended_Pictographic})+$/iu;
+
+const BOOKING_CANCEL = /^(?:please )?(?:cancel|call off) (?:my|the|this) (?:meeting|date|plan|booking)(?: on (\d{4}-\d{2}-\d{2}) at ((?:[01]\d|2[0-3]):[0-5]\d))?(?: please)?[.!?]?$/i;
+const STANDALONE_CANCEL = /^(?:sorry[, ]+)?(?:i )?(?:need to cancel|can'?t make it(?: anymore)?|can'?t come(?: anymore)?|have to bail)[.!]?$/i;
+
+function explicitBookingCancellation(text: string): { localStart?: string } | undefined {
+  const command = text.trim().replace(/[‘’ʼ`´]/g, "'").replace(/\s+/g, " ");
+  const booking = BOOKING_CANCEL.exec(command);
+  if (booking) return booking[1] ? { localStart: `${booking[1]} ${booking[2]}` } : {};
+  return STANDALONE_CANCEL.test(command) ? {} : undefined;
+}
+
+function localBookingStart(at: number): string {
+  const { year, month, day, hour, minute } = localParts(at, NY);
+  const twoDigits = (n: number) => String(n).padStart(2, "0");
+  return `${year}-${twoDigits(month)}-${twoDigits(day)} ${twoDigits(hour)}:${twoDigits(minute)}`;
+}
 
 const PHASE_BY_STAGE = { review: "InReview", probing: "Probing", scheduled: "Scheduled", done: "Done", closed: "Closed" } as const;
 const STAGE_BY_PHASE = { InReview: "review", Probing: "probing", Scheduled: "scheduled", Done: "done", Closed: "closed" } as const satisfies Record<OpportunityPhase, keyof typeof PHASE_BY_STAGE>;
@@ -995,6 +1011,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         }
       }
     }
+    if (this.handleUnlinkedCancellation(m, body, now)) return;
     if (aw?.kind === "checkin") {
       m.awaiting = undefined;
       const tags = checkinTags(body);
@@ -1006,10 +1023,6 @@ export class ConsentNetwork implements NetworkUnderTest {
         this.ctx.log("availability_stated", { memberId: m.id, tags, windows: st?.windows.length ?? 0 });
         if (c.kind !== "people_request" && c.kind !== "plans_request") { this.ack(m, "Got it, thanks."); return; }
       }
-    }
-    if (c.kind === "cancel") {
-      const o = [...this.opps.values()].find(o => o.stage === "scheduled" && o.status.get(m.id) === "yes");
-      if (o) return this.handleDrop(m, o);
     }
     const isRequest = c.kind === "people_request" || c.kind === "plans_request";
     if ((aw?.kind === "feedback" && !isRequest && c.kind !== "invite_friend") || (c.kind === "feedback_like" && aw?.kind !== "interview")) {
@@ -1048,6 +1061,26 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (m.minor && c.kind === "other" && body.length > 12) return this.concierge(m);
     if (ACK_ONLY.test(body)) return;
     return "open" as const;
+  }
+
+  private handleUnlinkedCancellation(m: MemberState, body: string, now: number): boolean {
+    // spec/opportunityLifecycle.md, "An explicit cancellation without a reply slot selects one upcoming meeting"
+    const request = explicitBookingCancellation(body);
+    if (!request) return false;
+    const matches: Opp[] = [];
+    for (const o of this.opps.values()) {
+      const startAt = o.meetingAt;
+      if (!upcomingCancellationEligible(opportunityLifecycle(o), o.participants.includes(m.id),
+        o.status.get(m.id) === "yes", startAt !== undefined && Number.isFinite(startAt), startAt ?? 0, now)) continue;
+      if (request.localStart !== undefined && localBookingStart(startAt!) !== request.localStart) continue;
+      matches.push(o);
+      if (matches.length === 2) break;
+    }
+    const action = unlinkedCancellation(this.memberReply, true, m.awaiting?.kind === "booked", matches.length);
+    if (action === "NoCancellation") return false;
+    if (action === "CancelMatchingBooking") this.handleDrop(m, matches[0]!);
+    else this.send(m, action === "AskWhichBooking" ? this.copy.whichBookingToCancel : this.copy.noBookingToCancel, { type: "info" }, "reply");
+    return true;
   }
 
   /**
