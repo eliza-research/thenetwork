@@ -739,6 +739,13 @@ const NEG_AFTER = /^\s*(?:(?:one|option|time|slot)\b\s*)?(?:\d{1,2}(?::\d\d)?\s*
 const CLAUSE_START = /[.,;!?]|\b(but|though|however|although|so)\b/g;
 /** Words that make a named time a pick ("Saturday works", "free Sunday"), not just a mention ("Saturday I'm at a wedding"). */
 const POSITIVE_PICK = /\b(works|work for (?:me|us)|does|good|fine|great|perfect|best|better|free|open|i can|let'?s|is ok|okay|please|for me|yes|yeah|sure)\b/;
+/** An additive word after a named time inherits the affirmation from an earlier clause
+ * ("2 hours works, Saturday 11am too" = Saturday 11am works too). A degree "too"
+ * ("too early", "too late") inherits nothing, so it is excluded. */
+const ADDITIVE = /\b(?:too(?!\s+(?:early|late|soon|much|many|far|long|short|big|small|hard|easy|expensive|cheap|busy|tired)\b)|as well|also)\b/;
+/** The same additive word right after a comma ("Saturday 11am, too"): the comma ends the
+ * clause, so the word sits in the next clause. */
+const ADDITIVE_AFTER_COMMA = /^\s*,\s*(?:too(?!\s+(?:early|late|soon|much|many|far|long|short|big|small|hard|easy|expensive|cheap|busy|tired)\b)|as well|also)\b/;
 /** True when the words at `i` (of length `len`) are refused: a negation cue earlier in their clause, or a refusal right after them. */
 function negatedAt(t: string, i: number, len: number): boolean {
   let from = 0;
@@ -772,7 +779,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   if (!options.length) return { answer: c.answer === "no" ? "no" : c.answer === "yes" || c.answer === "counter" ? "yes" : "unclear", keys: [], why: c.why };
   const all = options.map(o => o.key);
   // Every mention of an option, as a pick or a refusal. A key both picked and refused counts as picked.
-  const pos = new Set<string>(), neg = new Set<string>(), strong = new Set<string>(), named = new Set<string>();
+  const pos = new Set<string>(), neg = new Set<string>(), strong = new Set<string>(), named = new Set<string>(), namedAdditive = new Set<string>();
   const onlyPick = (i: number, len: number) => /^[\s\W]*(?:the\s+)?$/.test(t.slice(0, i)) && /^[\s\W]*(?:one|option|works?|please|pls|lol)?[\s\W]*$/.test(t.slice(i + len));
   const mark = (keys: string[], i: number, len: number, namesOption = false) => {
     for (const k of keys) {
@@ -780,6 +787,12 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
       pos.add(k);
       if (namesOption) named.add(k);
       const cl = clauseAt(t, i, len);
+      // The clause ends at the next boundary; an additive word right after a comma
+      // ("Saturday 11am, too") belongs to the same pick.
+      const rest = t.slice(i + len);
+      const endRel = rest.search(/[.,;!?\n]|\bbut\b/);
+      const afterCl = endRel < 0 ? "" : t.slice(i + len + endRel);
+      if (namesOption && (ADDITIVE.test(cl) || ADDITIVE_AFTER_COMMA.test(afterCl))) namedAdditive.add(k);
       if (onlyPick(i, len) || (POSITIVE_PICK.test(cl) && !/\?/.test(t.slice(i + len, i + len + 2)))) strong.add(k);
     }
   };
@@ -821,9 +834,12 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // The "in ..." forms are the sibling guard (T1-01): a duration with an "in|within"
   // prefix is not bare. A firm pick of an offered day, letter, or ordinal named in the
   // same reply ("Saturday works, and 2 hours too") still books that time; a bare clock
-  // time next to it ("7pm works, 2 hours too") does not save it.
+  // time next to it ("7pm works, 2 hours too") does not save it. An additive pick in a
+  // later clause ("2 hours works, Saturday 11am too") also books: "too" inherits the
+  // affirmation from the earlier clause. A degree "too" ("too early") or a bare mention
+  // ("Saturday I'm at a wedding") does not.
   const bareDuration = [...t.matchAll(/\b(?:(in|within)\s+)?((?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|a\s+few|an?|few|half(?:\s+an?)?|(?:a\s+)?couple(?:\s+of)?)\s+(?:hours?|hrs?|minutes?|mins?|seconds?|secs?|days?|weeks?))\b/g)].some(m => !m[1]);
-  if (bareDuration && ![...named].some(k => strong.has(k))) return unclear;
+  if (bareDuration && ![...named].some(k => strong.has(k) || (c.answer === "yes" && namedAdditive.has(k)))) return unclear;
   // A time they name and do not refuse is a yes to it ("no plans Thursday, so Thursday works").
   // A named time with a yes or a firm pick ("Saturday works"); a bare mention ("I'm at a wedding saturday") is not a yes.
   if (picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return { answer: "yes", keys: picked.filter(k => strong.has(k) || c.answer === "yes"), why: c.why };

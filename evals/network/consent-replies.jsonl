@@ -341,3 +341,16 @@
 {"text":"3 days works","label":"unclear","keys":[]}
 {"text":"1 week works","label":"unclear","keys":[]}
 {"text":"Saturday works, and 2 hours too","label":"yes","keys":["b"]}
+{"text":"2 hours works, Saturday 11am too","label":"yes","keys":["b"]}
+{"text":"2 hours works, and Saturday too","label":"yes","keys":["b"]}
+{"text":"2 hours works, Saturday 11am, Sunday 2pm too","label":"yes","keys":["b","c"]}
+{"text":"2 hours works, Saturday 11am as well","label":"yes","keys":["b"]}
+{"text":"2 hours works, also Saturday 11am","label":"yes","keys":["b"]}
+{"text":"2 hours works, the second one too","label":"yes","keys":["b"]}
+{"text":"2 hours works, option b too","label":"yes","keys":["b"]}
+{"text":"in 2 hours works, Saturday 11am too","label":"yes","keys":["b"]}
+{"text":"2 hours works, Saturday 11am is too early","label":"unclear","keys":[]}
+{"text":"2 hours works, Saturday 11am is too late","label":"unclear","keys":[]}
+{"text":"2 hours works, Saturday I'm at a wedding","label":"unclear","keys":[]}
+{"text":"2 hours works, Saturday 11am","label":"unclear","keys":[]}
+{"text":"2 hours works, Saturday 11am, too","label":"yes","keys":["b"]}
