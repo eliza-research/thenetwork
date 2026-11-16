@@ -39,8 +39,29 @@ pure def lawCatalogExpiresAtLimit(checkedAt: int): bool =
 
 ### A contact or booking uses the same current listing that entered review
 
-A change to the listed event, venue or time invalidates a pending opportunity. Recheck the bound listing before reviewer approval, while sending invitations, and before booking. Use that listing's venue, time and official link when confirming a co-attendance. A solo event suggestion can include the same public link. Independent consent and the usual review and dispatch rules still apply.
+A change to the listed event, venue or time invalidates a pending opportunity. Recheck the bound listing and each participant's adult eligibility, category choice and event format before reviewer approval, while sending invitations, and before booking. Use that listing's venue, time and official link when confirming a co-attendance. A solo event suggestion can include the same public link. Independent consent and the usual review and dispatch rules still apply.
 
 ```quint
 pure def publicEventRevisionMatches(bound: str, available: str): bool = bound != "" and bound == available
+
+pure def publicEventMemberAllowsMatch(adult: bool, categoryAllowed: bool, eventFormatAllowed: bool): bool =
+  adult and categoryAllowed and eventFormatAllowed
+```
+
+### A closed event opportunity without contact does not use a matching slot
+
+After an unsent public event opportunity closes, it is no longer an active duplicate or a charged introduction. A corrected listing can become a new opportunity that needs its own review. The existing limits still apply to a review rejection and to recorded contacts.
+
+```quint
+pure def closedPublicEventIsUnsent(bound: bool, closed: bool, contacted: bool): bool =
+  bound and closed and not(contacted)
+```
+
+### The send guard allows the exact official link in a booked confirmation
+
+The contact check may allow the current listing's exact official link once, as the last line of a confirmation for that booked opportunity, to a participant who consented. Private facts, canaries and all other contact details still go through the normal checks.
+
+```quint
+pure def publicBookedEventLinkAllowed(booked: bool, consenting: bool, exactFinalLine: bool): bool =
+  booked and consenting and exactFinalLine
 ```

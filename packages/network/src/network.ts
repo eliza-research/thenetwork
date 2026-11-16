@@ -58,7 +58,7 @@ import {
   replacementRoute, shouldLookForOtherTimes, step as stepProbe, turnReached, type ParticipantProbe,
 } from "../../core/src/generated/probeDispatch.ts";
 import { reviewLate } from "../../core/src/generated/reviewDeadline.ts";
-import { publicEventRevisionMatches } from "../../core/src/generated/publicEventCatalog.ts";
+import { closedPublicEventIsUnsent, publicBookedEventLinkAllowed, publicEventMemberAllowsMatch, publicEventRevisionMatches } from "../../core/src/generated/publicEventCatalog.ts";
 import {
   cachedStandingIntentsCurrent, canQueueEngineOpportunity, learnedIntentDays, learnedIntentMayProject,
   standingIntentBlocksLearnedCopy, standingIntentFacetEvidence, standingIntentRecheckDue,
@@ -2254,7 +2254,8 @@ export class ConsentNetwork implements NetworkUnderTest {
    * two. Engine proposals also pass gateReason() again. Undefined when all pass.
    */
   private approvalCheck(o: Opp): string | undefined {
-    if (o.publicEventRevision && !this.currentPublishedEvent(o)) return "public_event_changed";
+    const publicEventIssue = this.publicEventRefusal(o);
+    if (publicEventIssue) return publicEventIssue;
     for (const id of o.participants) {
       if (this.declinedIds.has(id)) return "participant_declined";
       const m = this.members.get(id);
@@ -2407,7 +2408,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   private advanceProbes(o: Opp) {
     if (o.plan) return this.planLane(o, this.now());
     if (o.stage !== "probing") return;
-    if (o.publicEventRevision && !this.currentPublishedEvent(o)) return this.close(o, "public event changed");
+    const publicEventIssue = this.publicEventRefusal(o);
+    if (publicEventIssue) return this.close(o, publicEventIssue);
     const now = this.now();
     if (!o.first || !o.participants.includes(o.first)) o.first = this.firstOf(o);
     // A member who asked for this exact thing is not asked yes or no. A requester still picks the
@@ -2719,7 +2721,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   private reveal(o: Opp) {
     const now = this.now();
     const published = this.currentPublishedEvent(o);
-    if (o.publicEventRevision && !published) return this.close(o, "public event changed");
+    const publicEventIssue = this.publicEventRefusal(o, published);
+    if (publicEventIssue) return this.close(o, publicEventIssue);
     // Send-time re-check before anyone learns who (P1-5): everyone must still be reachable about the
     // others, and have room on the Blooio streak for one more message.
     for (const id of o.participants) {
@@ -3292,7 +3295,8 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** Probes whose turn has come go out when the member's plan lane allows (send window, one a day, allowance). */
   private planLane(o: Opp, now: number) {
-    if (o.stage === "probing" && o.publicEventRevision && !this.currentPublishedEvent(o)) return this.close(o, "public event changed");
+    const publicEventIssue = o.stage === "probing" ? this.publicEventRefusal(o) : undefined;
+    if (publicEventIssue) return this.close(o, publicEventIssue);
     if (!o.planRun) return;
     // spec/planDispatch.md, "Only an open plan can invite a pending member"
     const booked = o.stage === "scheduled";
@@ -3412,7 +3416,8 @@ export class ConsentNetwork implements NetworkUnderTest {
    */
   private bookPlan(o: Opp, going: MemberId[], fromFallback = false): void {
     const publicEvent = this.currentPublishedEvent(o);
-    if (o.publicEventRevision && !publicEvent) return this.close(o, "public event changed");
+    const publicEventIssue = this.publicEventRefusal(o, publicEvent);
+    if (publicEventIssue) return this.close(o, publicEventIssue);
     const plan = o.plan!;
     const a = plans.activityById.get(plan.activityId)!;
     let keep = going.filter(id => {
@@ -3470,7 +3475,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** A late yes after booking (until 6 hours before): the member joins and gets the booked plan; the sim's meeting is updated in place. */
   private planJoin(o: Opp, id: MemberId) {
     const plan = o.plan!;
-    if (o.publicEventRevision && !this.currentPublishedEvent(o)) { o.status.set(id, "unavailable"); return; }
+    if (this.publicEventRefusal(o)) { o.status.set(id, "unavailable"); return; }
     if (this.bookedNear(id, plan.window.start, o.id) || !this.checkRecipient(id, "reveal", { about: o.participants.filter(p => o.status.get(p) === "yes"), reply: false }).ok) { o.status.set(id, "unavailable"); return; }
     o.status.set(id, "yes"); this.plansCounters.planLateJoins++;
     this.ctx.recordMeeting({ proposalId: o.id, participants: [id], at: plan.window.start, city: "nyc", kind: "plan" });
@@ -3498,7 +3503,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       const ev = w.events.find(e => e.id === fallback.eventId);
       for (const id of fallback.members) {
         const m = this.members.get(id);
-        if (m && ev) this.send(m, copy.planEvent(ev.title, whenPhrase(ev.start), ev.listing?.venue ?? ev.area) + (ev.listing ? `\n${ev.listing.url}` : ""),
+        if (m && ev) this.send(m, copy.planEvent(ev.title, whenPhrase(ev.start), ev.listing?.venue ?? ev.area),
           { type: "info", items: [{ key: ev.id, label: ev.title, tags: ev.tags }] }, "info");
       }
     } else if (fallback.kind === "next_week") for (const id of fallback.members) this.noteFor(id, copy.planNotTogether);
@@ -3665,7 +3670,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     // The member records can change between units (staff edits, the member's settings): read them again first.
     for (const m of [...this.members.values()]) this.syncMember(m);
     for (const o of this.openOpps()) {
-      if (o.stage !== "scheduled" && o.publicEventRevision && !this.currentPublishedEvent(o)) this.close(o, "public event changed");
+      const publicEventIssue = o.stage === "scheduled" ? undefined : this.publicEventRefusal(o);
+      if (publicEventIssue) this.close(o, publicEventIssue);
     }
     // Deferred sends whose window may have come. Each one runs every send-time check again.
     const waiting = this.deferred; this.deferred = [];
@@ -4164,6 +4170,33 @@ export class ConsentNetwork implements NetworkUnderTest {
     return event?.listing && publicEventRevisionMatches(o.publicEventRevision, sha256(stableStringify(event))) ? event : undefined;
   }
 
+  private publicEventRefusal(o: Opp, event = this.currentPublishedEvent(o)): string | undefined {
+    if (!o.publicEventRevision) return undefined;
+    if (!event) return "public_event_changed";
+    for (const id of o.participants) {
+      const current = this.record(id), member = this.members.get(id);
+      const age = validAge(current?.age) ? current.age : member?.statedAge;
+      const adult = !!member && !member.minor && !member.minorSignal && !member.ageConflict && canBeMatched(age);
+      const categories = current?.prefs?.categoriesOptIn, formats = current?.prefs?.formats;
+      if (!publicEventMemberAllowsMatch(adult, Array.isArray(categories) && categories.includes(o.category), Array.isArray(formats) && formats.includes("event"))) {
+        return "public_event_participant_ineligible";
+      }
+    }
+    return undefined;
+  }
+
+  /** Used only by confirmation dispatch. Other URLs still go through the ordinary contact guard. */
+  approvedPublicEventLink(oppId: string | undefined, recipient: MemberId | undefined, text: string): string | undefined {
+    const opportunity = oppId ? this.opps.get(oppId) : undefined;
+    if (!opportunity || !recipient || !opportunity.publicEventRevision) return undefined;
+    const current = this.currentPublishedEvent(opportunity);
+    const link = current?.listing?.url;
+    if (!link || this.publicEventRefusal(opportunity, current)) return undefined;
+    const consenting = opportunity.participants.includes(recipient) && opportunity.status.get(recipient) === "yes";
+    return publicBookedEventLinkAllowed(opportunity.stage === "scheduled", consenting,
+      text.endsWith(`\n${link}`) && text.indexOf(link) === text.lastIndexOf(link)) ? link : undefined;
+  }
+
   /** The engine's input: the public snapshot plus everything the Network has learned and observed. */
   engineInput(now: number): EngineInput {
     const snap = this.controlledIntentSnapshot(this.ctx.snapshot());
@@ -4188,7 +4221,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     const holds = [...this.members.values()].filter(m => !this.trust.ok(m.id) || m.minor || m.minorSignal || this.reportHeld(m.id)).map(m => ({ memberId: m.id, from: now - HOUR }));
     const reliability = Object.fromEntries([...this.members.values()].filter(m => m.noShows > 0).map(m => [m.id, { noShows: m.noShows, completedSinceLastNoShow: m.completedSinceNoShow }]));
-    const recent = [...this.opps.values()].filter(o => now - o.createdAt < 30 * DAY).map(o => this.toProposal(o));
+    const recent = [...this.opps.values()].filter(o => now - o.createdAt < 30 * DAY
+      && !closedPublicEventIsUnsent(!!o.publicEventRevision, o.stage === "closed", o.contacted.size > 0)).map(o => this.toProposal(o));
     const engineInput: EngineInput = {
       // A member with no valid age on the record who told us they are an adult (6.3) goes in with that age.
       now, members: snap.members.filter(m => nyc.has(m.id)).map(x => { const m = this.members.get(x.id); return !validAge(x.age) && m && !m.minor && validAge(m.statedAge) ? { ...x, age: m.statedAge } : x; }),
@@ -4404,9 +4438,10 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (this.laneOf(meta) !== "check_in") meta = { ...meta, proactive: true, ...(meta.proactive ? {} : { unsolicited: true }) } as SimMeta;
     }
     let text = body;
-    const leaks = this.guardCheck(o.relayContact ? text.split(o.relayContact).join(" ") : text, m.id, o.relayFrom);
+    const approvedLink = (value: string) => kind === "reveal" ? this.approvedPublicEventLink(meta.proposalId, m.id, value) : undefined;
+    const leaks = this.guardCheck(o.relayContact ? text.split(o.relayContact).join(" ") : text, m.id, o.relayFrom, approvedLink(text));
     if (leaks.length) {
-      const fallback = o.fallback !== undefined && !this.guardCheck(o.fallback, m.id, o.relayFrom).length ? o.fallback : undefined;
+      const fallback = o.fallback !== undefined && !this.guardCheck(o.fallback, m.id, o.relayFrom, approvedLink(o.fallback)).length ? o.fallback : undefined;
       this.counters.guardBlocked++;
       this.ctx.log("guard_blocked", { memberId: m.id, kind, reasons: leaks, fallback: fallback !== undefined });
       if (fallback === undefined) { fns.onRefused?.(); return "refused"; }
@@ -4724,7 +4759,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** Leak guard: other members' private facts and every canary, compiled once per change in private facets. */
   private guardCache?: { snap: WorldSnapshot; key: string; guard: LeakGuard };
-  private guardCheck(text: string, recipient: MemberId, alsoOwner?: MemberId): string[] {
+  private guardCheck(text: string, recipient: MemberId, alsoOwner?: MemberId, approvedLink?: string): string[] {
     const snap = this.snapshotCached();
     if (!this.guardCache || this.guardCache.snap !== snap) {
       const priv = snap.facets.filter(f => f.scope === "agent_private");
@@ -4737,10 +4772,11 @@ export class ConsentNetwork implements NetworkUnderTest {
       });
       this.guardCache = { snap, key, guard };
     }
-    const leaks = this.guardCache.guard.check(text, { exceptOwner: recipient });
+    const contactAllow = approvedLink ? [approvedLink] : undefined;
+    const leaks = this.guardCache.guard.check(text, { exceptOwner: recipient, contactAllow });
     // A relayed text: what the sender wrote about themselves may go to the person they wrote to.
     if (alsoOwner === undefined || !leaks.length) return leaks;
-    const theirs = new Set(this.guardCache.guard.check(text, { exceptOwner: alsoOwner }));
+    const theirs = new Set(this.guardCache.guard.check(text, { exceptOwner: alsoOwner, contactAllow }));
     return leaks.filter(l => theirs.has(l));
   }
 

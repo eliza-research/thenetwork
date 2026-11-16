@@ -60,6 +60,8 @@ export type RecipientCheck = { ok: true } | { ok: false; reason: string };
 
 /** What must not appear in a message to this recipient (see LeakOptions in packages/core/src/guard.ts). */
 export interface LeakSources {
+  /** Exact, complete tokens authorized for this row's contact check. */
+  contactAllow?: readonly string[];
   forbidden?: string[];
   privateVocab?: string[];
   canaries?: string[];
@@ -461,7 +463,8 @@ export class OutboundQueue {
       try { src = await this.o.checks.leaks(row); } catch { return ["leak_check_error"]; }
     }
     const own = row.memberId ?? row.to;
-    const reasons = new LeakGuard({ ...src, canaryShapes: true, allow: [...(this.o.leakAllow ?? []), ...(src.allow ?? [])], contacts: row.kind !== "compliance" }).check(row.text, { exceptOwner: own, contactAllow });
+    const reasons = new LeakGuard({ ...src, canaryShapes: true, allow: [...(this.o.leakAllow ?? []), ...(src.allow ?? [])], contacts: row.kind !== "compliance" })
+      .check(row.text, { exceptOwner: own, contactAllow: [...(src.contactAllow ?? []), ...(contactAllow ?? [])] });
     // core-14: the new text together with the recent thread to this address (any app on the line), so a
     // value split across messages ("212 555" then "0102") is caught. The generic contact patterns run on
     // the new text alone (two ordinary messages joined can look like a number); another member's own

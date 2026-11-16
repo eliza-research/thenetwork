@@ -44,6 +44,24 @@ export function publicEventRevisionMatches(bound: string, available: string): bo
   return bound !== "" && bound === available;
 }
 
+/** Story: Find a current public event / A contact or booking uses the same current listing that entered review (spec/publicEventCatalog.md:40) */
+//@ pure
+export function publicEventMemberAllowsMatch(adult: boolean, categoryAllowed: boolean, eventFormatAllowed: boolean): boolean {
+  return adult && categoryAllowed && eventFormatAllowed;
+}
+
+/** Story: Find a current public event / A closed event opportunity without contact does not use a matching slot (spec/publicEventCatalog.md:51) */
+//@ pure
+export function closedPublicEventIsUnsent(bound: boolean, closed: boolean, contacted: boolean): boolean {
+  return bound && closed && !contacted;
+}
+
+/** Story: Find a current public event / The send guard allows the exact official link in a booked confirmation (spec/publicEventCatalog.md:60) */
+//@ pure
+export function publicBookedEventLinkAllowed(booked: boolean, consenting: boolean, exactFinalLine: boolean): boolean {
+  return booked && consenting && exactFinalLine;
+}
+
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
 export function exact_publicEventCatalog(n: number): number {
   if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);

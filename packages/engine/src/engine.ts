@@ -6,7 +6,7 @@ import type { LLM, MemberId, WorldSnapshot } from "@thenetwork/core";
 import { configHash, ENGINE_VERSION, resolveConfig, type EngineConfigInput } from "./config.ts";
 import { localEmbed, type EmbedFn } from "./embed.ts";
 import { explain, privateVocabulary } from "./explain.ts";
-import { involvesMinor, memberReason, screenCandidate } from "./filters.ts";
+import { involvesMinor, memberReason, publicEventPreferencesAllow, screenCandidate } from "./filters.ts";
 import type { GenCtx } from "./genkit.ts";
 import { JudgeCache, judgeCandidates, runCachedPass } from "./judge.ts";
 import { checkMemberFacing, redactPrivate } from "./judgeCommon.ts";
@@ -114,10 +114,15 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   // (networkPack: the GENERATOR_NAMES flags; a name the config does not know runs).
   const gate = cfg.generators as Record<string, boolean | undefined>;
   const intentScope = input.standingIntentSearch && new Set(input.standingIntentSearch);
+  const publishedEvents = new Set(w.events.filter(event => event.listing).map(event => event.id));
   for (const g of pack.generators) {
     if (g.name in gate && !gate[g.name]) continue;
     const ts = performance.now();
-    const generated = g.run(ctx);
+    const proposed = g.run(ctx);
+    const generated = publishedEvents.size ? proposed.filter(c => {
+      if (c.anchor?.type !== "event" || !publishedEvents.has(c.anchor.id)) return true;
+      return c.participants.every(id => publicEventPreferencesAllow(w.get(id)?.m, c.category));
+    }) : proposed;
     const got = intentScope ? generated.filter(c => standingIntentCandidateInScope(true,
       c.anchor?.type === "intent" && intentScope.has(c.anchor.id),
       c.anchor?.type === "event" && c.participants.some(id =>

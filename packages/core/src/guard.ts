@@ -604,10 +604,11 @@ export class LeakGuard {
       for (const e of candidates) if (!reasons.has(e.label) && counts(e) && factMatches(e.fact, toks, squashed)) reasons.add(e.label);
     }
     if (this.contacts) {
-      const allow = o.contactAllow?.length ? [...this.allow, ...o.contactAllow.map(a => plain(a)).filter(Boolean)] : this.allow;
-      for (const p of contactVariants(text)) {
+      const approved = o.contactAllow;
+      const contactText = approved?.length ? text.replace(/\S+/gu, token => approved.includes(token) ? " " : token) : text;
+      for (const p of contactVariants(contactText)) {
         let c = p;
-        for (const a of allow) c = c.split(a).join(" ");
+        for (const a of this.allow) c = c.split(a).join(" ");
         for (const { name, re } of CONTACT_PATTERNS) {
           if (reasons.has(`contact:${name}`)) continue;
           if (re.global) {

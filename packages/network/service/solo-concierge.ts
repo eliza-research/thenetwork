@@ -11,7 +11,7 @@ import { memberCommandOwner, type MemberCommandOwner } from "./member-command.ts
 import { readPublicEvents } from "./public-events.ts";
 import { automatedFacetPredicate, presenceOf } from "./snapshot.ts";
 
-type Period = "today" | "tomorrow" | "this weekend" | "this week";
+type Period = "today" | "tomorrow" | "this weekend" | "this week" | "next seven days";
 type Option = { event: NetworkEvent & { listing: NonNullable<NetworkEvent["listing"]> }; fit: number; minutes?: number; scheduled: boolean };
 interface SoloReply { body: string; publicLinks: string[] }
 const NY = CITY_TZ.nyc;
@@ -21,7 +21,7 @@ const like = (text: string) => text.normalize("NFKC").toLowerCase().replace(/[^\
 /** Recognize a solo request without claiming arbitrary open conversation or proposal replies. */
 export function soloConciergeRequest(text: string): Period | undefined {
   const request = /^(?:(?:anything fun|what(?:['’]s| is) happening) (today|tomorrow|this weekend|this week)|(?:find|show me|suggest|recommend) (?:some )?(?:public )?(?:events|things to do)(?: (today|tomorrow|this weekend|this week))?)[.!?]?$/i.exec(text.trim());
-  if (request) return (request[1] ?? request[2] ?? "this week").toLowerCase() as Period;
+  if (request) return (request[1] ?? request[2] ?? "next seven days").toLowerCase() as Period;
 }
 
 function requestedWindow(period: Period, now: number): PresenceWindow {
@@ -35,14 +35,15 @@ function requestedWindow(period: Period, now: number): PresenceWindow {
     return { from: Math.max(now, midnight(start)), to: midnight(start + 2) };
   }
   if (period === "tomorrow") return { from: midnight(1), to: midnight(2) };
-  return { from: now, to: midnight(period === "today" ? 1 : 7) };
+  const end = period === "today" ? 1 : period === "this week" ? 7 - parts.weekday : 7;
+  return { from: now, to: midnight(end) };
 }
 
 function eventAge(event: NetworkEvent): { allAges: boolean; minimum: number } {
   const words = [event.title, ...event.tags].join(" ");
-  const explicit = [...words.matchAll(/\b(\d{1,3})\s*(?:\+|and (?:older|up)|or older)/gi)].map(m => Number(m[1]));
+  const explicit = [...words.matchAll(/\b(\d{1,3})\s*(?:\+|and (?:older|up|over)|or (?:older|over))/gi)].map(m => Number(m[1]));
   return {
-    minimum: Math.max(/\badult[ -]only\b|\bfor adults\b/i.test(words) ? 18 : 0, ...explicit),
+    minimum: Math.max(/\b(?:adults?[ -]only|for adults)\b/i.test(words) ? 18 : 0, ...explicit),
     allAges: event.tags.some(tag => like(tag) === "all ages"),
   };
 }

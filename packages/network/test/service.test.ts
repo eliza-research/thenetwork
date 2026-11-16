@@ -280,10 +280,20 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     await reset();
     await sql`update network.members set account_status = 'invited' where id <> 'a'`;
     const clock = new SimClock(START);
-    const s = service(clock, "public-events", { network: { seed: 1, plans: false, growth: false, selective: false, engine: {
-      generators: Object.fromEntries(GENERATOR_NAMES.map(name => [name, name === "event_anchor"])),
-      floors: { fit: 0, mutualBenefit: 0, confidence: 0 }, retrieval: { minSim: 0 }, thresholds: { byGenerator: { event_anchor: 0 } },
-    } } });
+    const delivered: SendRequest[] = [];
+    const s = service(clock, "public-events", {
+      adapter: (net, runtime) => new BlooioAdapter({
+        net, memberOf: runtime.memberOf, from: "+12125550190", clock, env: {}, liveGate: () => true, log: () => {},
+        provider: { kind: "sim", send: async request => {
+          delivered.push(request);
+          return { providerMessageId: `public-event-${delivered.length}`, status: "queued" };
+        } },
+      }),
+      network: { seed: 1, plans: false, growth: false, selective: false, engine: {
+        generators: Object.fromEntries(GENERATOR_NAMES.map(name => [name, name === "event_anchor"])),
+        floors: { fit: 0, mutualBenefit: 0, confidence: 0 }, retrieval: { minSim: 0 }, thresholds: { byGenerator: { event_anchor: 0 } },
+      } },
+    });
     expect((await staff(s, "adm-tok", "POST", "/matching", { on: true })).status).toBe(200);
     for (const message of ONBOARD) await say(s, clock, "a", message);
     const runCount = async () => (await sql<{ n: number }[]>`select count(*)::int as n from network.matching_runs where app_id = 'ntwrk'`)[0]!.n;
@@ -330,20 +340,71 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     // The reviewed opportunity names the publisher's end-to-end window. A moved listing cannot
     // authorize contact for the old opportunity even before the next tick notices the move.
     await sql`update network.members set account_status = 'active' where id = 'b'`;
+    await sql`update network.members set account_status = 'active', age = 16 where id = 'c'`;
     for (const message of ONBOARD) await say(s, clock, "b", message);
     expect(await s.tick()).toBe(true);
-    const review = await (await staff(s, "rev-tok", "GET", "/review")).json();
-    const pending = review.items.find((row: { proposal: { kind: string } }) => row.proposal.kind === "event_coattend");
+    const eventInReview = async () => (await (await staff(s, "rev-tok", "GET", "/review")).json()).items.find(
+      (row: { proposal: { kind: string } }) => row.proposal.kind === "event_coattend",
+    );
+    const pending = await eventInReview();
     const [latest] = await sql`select summary->'funnel' as funnel from network.matching_runs where app_id = 'ntwrk' order by at desc limit 1`;
     expect(pending, JSON.stringify({ funnel: latest?.funnel, gateReasons: (await s.pg.load())?.gateReasons })).toBeDefined();
     expect(pending?.proposal.window).toEqual({ start: Date.UTC(2026, 9, 7, 22), end: Date.UTC(2026, 9, 7, 23) });
+    expect([...pending.proposal.participants].sort()).toEqual(["a", "b"]);
     clock.advance(MINUTE);
-    expect(await importPublicEvents(sql, clock, async () => Response.json([{ ...fixture, location: "Transmitter Park" }]))).toEqual({ published: true, events: 1 });
+    expect(await importPublicEvents(sql, clock, async () => Response.json([{ ...fixture, location: "Transmitter Park", coordinates: "40.7273,-73.9606" }]))).toEqual({ published: true, events: 1 });
     const approval = await staff(s, "rev-tok", "POST", `/review/${pending.oppId}`, { decision: "approve" });
     expect(approval.status).toBe(409);
     expect(await approval.json()).toMatchObject({ reason: "public_event_changed" });
     expect(await sql`select id from network.messages where opportunity_id = ${pending.oppId}`).toHaveLength(0);
-    expect(s.adapter.name).toBe("dry_run");
+
+    // A fresh review cannot ignore a member's change to their event-format preference.
+    clock.set(START + 90 * MINUTE);
+    expect(await s.tick()).toBe(true);
+    const preferenceReview = await eventInReview();
+    expect(preferenceReview?.oppId).toBeDefined();
+    expect(preferenceReview.oppId).not.toBe(pending.oppId);
+    await sql`update network.members set prefs = jsonb_set(prefs, '{formats}', '["one_to_one"]') where id = 'b'`;
+    const preferenceApproval = await staff(s, "rev-tok", "POST", `/review/${preferenceReview.oppId}`, { decision: "approve" });
+    expect(preferenceApproval.status).toBe(409);
+    expect(await preferenceApproval.json()).toMatchObject({ reason: "public_event_participant_ineligible" });
+    expect(await sql`select id from network.messages where opportunity_id = ${preferenceReview.oppId}`).toHaveLength(0);
+    clock.advance(MINUTE);
+    expect(await s.tick()).toBe(true);
+    expect(await eventInReview()).toBeUndefined();
+
+    // After the member restores their preference, a new review and two choices book the event.
+    await sql`update network.members set prefs = jsonb_set(prefs, '{formats}', '["one_to_one", "small_group", "event"]') where id = 'b'`;
+    clock.advance(MINUTE);
+    expect(await s.tick()).toBe(true);
+    const replacement = await eventInReview();
+    expect(replacement).toBeDefined();
+    const messages = () => sql<{ member_id: string; body: string; type: string; status: string }[]>`select member_id, body, type, status
+      from network.messages where direction = 'outbound' and opportunity_id = ${replacement.oppId} order by ts, id`;
+    expect(await messages()).toHaveLength(0);
+    expect((await staff(s, "rev-tok", "POST", `/review/${replacement.oppId}`, { decision: "approve" })).status).toBe(200);
+    expect(await s.tick()).toBe(true);
+    const first = (await messages()).filter(m => m.type === "probe");
+    expect(first).toHaveLength(1);
+    expect(first[0]!.body).toContain("Outdoor climbing");
+    expect(first[0]!.body).not.toMatch(/\b(Ana|Ben)\b/);
+    await say(s, clock, first[0]!.member_id, "A");
+    expect(await s.tick()).toBe(true);
+    const probes = (await messages()).filter(m => m.type === "probe");
+    expect(probes.map(m => m.member_id).sort()).toEqual(["a", "b"]);
+    expect((await messages()).filter(m => m.type === "proposal")).toHaveLength(0);
+    await say(s, clock, probes.find(m => m.member_id !== first[0]!.member_id)!.member_id, "A");
+    expect(await s.tick()).toBe(true);
+    const booked = (await s.pg.load())?.opps.find(o => o.id === replacement.oppId);
+    expect(booked).toMatchObject({ stage: "scheduled", meetingAt: Date.UTC(2026, 9, 7, 22), venue: "Transmitter Park" });
+    const confirmations = (await messages()).filter(m => m.type === "proposal");
+    const dispatchTrace = await sql`select type, payload from network.events where type in ('guard_blocked', 'send_refused', 'venue') order by id`;
+    expect(confirmations.map(m => m.member_id).sort(), JSON.stringify(dispatchTrace)).toEqual(["a", "b"]);
+    for (const confirmation of confirmations) {
+      expect(confirmation).toMatchObject({ status: "accepted", body: expect.stringContaining("Transmitter Park") });
+      expect(confirmation.body).toContain("https://www.nycgovparks.org/events/2026/10/07/fitness");
+      expect(delivered).toContainEqual(expect.objectContaining({ to: phone(confirmation.member_id), text: confirmation.body }));
+    }
     await s.close();
   }, T);
 

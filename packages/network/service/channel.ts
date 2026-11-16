@@ -186,12 +186,15 @@ export class BlooioAdapter implements ChannelAdapter {
         : policy(row.to, { kind: row.kind, ...(row.oppId ? { briefId: row.oppId } : {}), agentInitiated }),
       // A relayed item may carry its sender's own private facts, as the Network's guard allows (guardCheck
       // relayFrom): the queue excludes the sender's facts too, so it never parks what the Network passed.
-      // A number swap both members asked for (relay.ts) is the one contact the guard lets through, for that row only.
+      // Allow only this row's mutually approved number or its exact public booking link.
       leaks: row => {
         const sender = rt.net.relaySenderOf(row.id), recipient = (row.memberId as MemberId | undefined) ?? rt.memberOf(row.to);
         const base = sender && recipient ? rt.net.leakSources([recipient], [sender]) : leaks(row.to);
         const from = rt.net.relayContactShareFrom(row.id), number = from && rt.addressOf(from);
-        return number ? { ...base, allow: [number] } : base;
+        const publicEventLink = row.kind === "reply" || row.kind === "transactional"
+          ? rt.net.approvedPublicEventLink(row.oppId, recipient, row.text) : undefined;
+        return number ? { ...base, allow: [number] }
+          : publicEventLink ? { ...base, contactAllow: [publicEventLink] } : base;
       },
       // PgStore.save locks the state before erasing members. Dispatch takes the
       // same order, then the existing admit check revalidates current parties.

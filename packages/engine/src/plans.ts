@@ -29,7 +29,7 @@ import { availabilityProb, candidateSlots, timeOptionsPhrase, type AvailabilityE
 import { DEFAULT_ATTENTION, DEFAULT_CONFIG, DEFAULT_PLANS, type AttentionConfig, type PlansConfig } from "./config.ts";
 import { tokenize } from "./embed.ts";
 import { privateVocabulary } from "./explain.ts";
-import { isMinor, memberReason } from "./filters.ts";
+import { isMinor, memberReason, publicEventPreferencesAllow } from "./filters.ts";
 import { makeCompat } from "./group.ts";
 import { checkMemberFacing } from "./judgeCommon.ts";
 import { fromLocal, localParts } from "@thenetwork/core";
@@ -312,7 +312,8 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
     }
     if (avail.size < 2) continue;
     for (const a of wh.acts) {
-      const pool = [...avail.keys()].filter(id => (fits.get(id)!.get(a.id) ?? 0) >= pcfg.minFit && ageOk(id, a.ageMin))
+      const pool = [...avail.keys()].filter(id => (fits.get(id)!.get(a.id) ?? 0) >= pcfg.minFit && ageOk(id, a.ageMin)
+        && (!wh.event?.listing || publicEventPreferencesAllow(w.get(id)?.m, a.category)))
         .sort((x, y) => (fits.get(y)!.get(a.id)! * avail.get(y)! - fits.get(x)!.get(a.id)! * avail.get(x)!) || byTie(x, y)).slice(0, pcfg.poolSize);
       if (pool.length < 2) continue;
       const minG = Math.max(pcfg.size.min, a.groupSize[0]);

@@ -138,7 +138,7 @@ test("signed solo concierge offers current public listings without recruiting an
 
     const listing = (guid: string, title: string, categories: string, from: string, to: string, location = "McCarren Park", coordinates = "40.7206,-73.9518") => ({
       guid, title, categories, location, coordinates, starttime: from, endtime: to,
-      link: { url: `https://www.nycgovparks.org/events/2026/10/10/solo-event-${guid}` },
+      link: { url: `https://www.nycgovparks.org/events/2026/10/10/one-solo-event-${guid}` },
     });
     const event = (id: string, title: string, tags: string, start = "14", end = "15") => listing(id, title, tags, `2026-10-10T${start}:00:00`, `2026-10-10T${end}:00:00`);
     const allAges = event("110", "Nature sketch walk", "Nature | All ages");

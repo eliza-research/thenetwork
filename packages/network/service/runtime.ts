@@ -509,8 +509,17 @@ export class NetworkRuntime {
     // the queue like any other send, where the same guard parks it for staff (parked_leak_review).
     if (queue) for (const s of u.sends) {
       if (!u.collected.has(s.id) || !s.to) continue;
-      const reasons = await queue.collectedLeaks(tx, { id: s.id, ...(u.forget.has(s.memberId) ? {} : { memberId: s.memberId }), to: s.to, kind: s.kind, text: s.body, contactAllow: u.collectedPublicLinks?.get(s.id) });
-      if (reasons.length) { u.collected.delete(s.id); this.host.log(`[alert] a collected reply failed the leak guard and goes to the queue for review (${this.id}, ${s.id})`); }
+      const bookedLink = s.kind === "reply" && s.type === "proposal" ? this.net.approvedPublicEventLink(s.oppId, s.memberId, s.body) : undefined;
+      const contactAllow = u.collectedPublicLinks?.get(s.id) ?? (bookedLink ? [bookedLink] : undefined);
+      const reasons = await queue.collectedLeaks(tx, { id: s.id, ...(u.forget.has(s.memberId) ? {} : { memberId: s.memberId }), to: s.to, kind: s.kind, text: s.body, contactAllow });
+      if (reasons.length) {
+        u.collected.delete(s.id);
+        if (s.type === "solo_events") {
+          // A solo result was authorized for this signed reply only.
+          u.sends = u.sends.filter(message => message.id !== s.id);
+          this.host.log(`[alert] a solo event reply failed the collected leak guard (${this.id}, ${s.id})`);
+        } else this.host.log(`[alert] a collected reply failed the leak guard and goes to the queue for review (${this.id}, ${s.id})`);
+      }
     }
     const captured = u.sends.filter(s => u.collected.has(s.id) && (ok(s.memberId) || u.forget.has(s.memberId)));
     if (captured.length) {
