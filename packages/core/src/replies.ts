@@ -301,6 +301,11 @@ export function parseOptOut(text: string, o: { apps?: readonly string[] } = {}):
   if (app && o.apps?.some(a => a.toLowerCase() === app || a.toLowerCase().split(".")[0] === app.split(".")[0])) return { match: "likely", scope: "app", lang };
   const clauses = optOutClauses(text, norm);
   if (clauses.some(clause => LIKELY_EN.test(clause) || LIKELY_ES.test(clause) || /\bleave me alone\b/.test(clause))) return { match: "likely", scope: "all", lang };
+  // "QUIT NOW", "END ASAP": a stop keyword with only courtesy or urgency words around it — the same
+  // boundary the platform ledger uses for a whole-message STOP. "quit my job" and "cancel the date"
+  // carry other words, so they stay "none". CANCEL is left out on purpose: "cancel please" may mean
+  // a date (#169), so a CANCEL tail stays out of both readers.
+  if (clauses.length === 1 && clauses[0] === t && QUIT_END_TAIL_RX.test(t) && !/\?\s*$/.test(text.trim())) return { match: "likely", scope: "all", lang };
   if (clauses.length === 1 && clauses[0] === t && (/^(?:stop|unsubscribe|para|basta)\b/.test(t) || /\b(?:stop|unsubscribe)$/.test(t)) && !/\?\s*$/.test(text.trim())) return { match: "likely", scope: "all", lang };
   return { match: "none", scope: "all", lang };
 }
@@ -325,6 +330,10 @@ export const KEYWORDS = {
   start: ["START", "UNSTOP", "SUBSCRIBE", "RESUME"],
   help: ["HELP", "INFO"],
 } as const;
+
+const STOP_TAIL_LOWER = `(?:${KEYWORDS.stopTail.map(w => w.toLowerCase()).join("|")})`;
+/** "QUIT NOW", "END ASAP": a stop keyword with only courtesy or urgency words around it — the same boundary the platform ledger uses for a whole-message STOP. */
+const QUIT_END_TAIL_RX = new RegExp(`^(?:${STOP_TAIL_LOWER} )*(?:quit|end)(?:(?: ${STOP_TAIL_LOWER})* (?:quit|end))*(?: ${STOP_TAIL_LOWER})*$`);
 
 /** The carrier compliance copy for STOP and HELP on the Network's line. */
 export const STOP_CONFIRMATION = "You're unsubscribed from The Network and won't get more messages here. Reply START to resume.";

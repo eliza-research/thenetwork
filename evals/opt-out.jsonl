@@ -72,6 +72,15 @@
 {"text": "número equivocado", "label": "stop", "lang": "es"}
 {"text": "borren mi número", "label": "stop", "lang": "es"}
 {"text": "detener", "label": "stop", "lang": "es"}
+{"text": "QUIT NOW", "label": "stop", "lang": "en"}
+{"text": "QUIT PLS", "label": "stop", "lang": "en"}
+{"text": "QUIT ASAP", "label": "stop", "lang": "en"}
+{"text": "END NOW", "label": "stop", "lang": "en"}
+{"text": "END PLS", "label": "stop", "lang": "en"}
+{"text": "QUIT RN", "label": "stop", "lang": "en"}
+{"text": "END ASAP", "label": "stop", "lang": "en"}
+{"text": "QUIT PLEASE", "label": "stop", "lang": "en"}
+{"text": "END PLEASE", "label": "stop", "lang": "en"}
 {"text": "cancel the date", "label": "not_stop", "lang": "en"}
 {"text": "I need to cancel our plans for Saturday", "label": "not_stop", "lang": "en"}
 {"text": "can you stop by at 7?", "label": "not_stop", "lang": "en"}
