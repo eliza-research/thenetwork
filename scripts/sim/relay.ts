@@ -470,10 +470,23 @@ async function deskGates(b: Block): Promise<void> {
     // A withdrawal in any wording still withdraws (a swap left pending after a no would share the number).
     for (const t of ["I'd rather not share my number", "please don't give them my number", "changed my mind about my number", "scratch the swap", "stop sharing my number", "hold off for now, my number can wait", "cancel, I'll keep my number",
       "I don't want to swap numbers anymore", "actually I don't want to swap numbers", "I changed my mind about sharing my number", "never mind, I'd rather keep my number", "cancel that, keep my number", "I don't want you to send my number", "I don't want them to have my number",
-      "I don't mind waiting, but don't send my number yet", "don't worry, cancel the swap", "I don't mind, but I'd rather keep my number", "no worries, I'll keep my number to myself", "no, not my number", "hmm not sure about sharing my number", "please keep my number private"]) expect([t, withdrawsSwap(t)]).toEqual([t, true]);
+      "I don't mind waiting, but don't send my number yet", "don't worry, cancel the swap", "I don't mind, but I'd rather keep my number", "no worries, I'll keep my number to myself", "no, not my number", "hmm not sure about sharing my number", "please keep my number private",
+      "don't send it", "wait, don't send it", "don't share it", "actually don't send it", "never mind, don't share it", "hold on, don't send it yet"]) expect([t, withdrawsSwap(t)]).toEqual([t, true]);
     expect(d.cancelSwaps("b")).toBe(1);
     h.t += 60_000;
     expect((await d.request({ itemId: "c3", from: "a", kind: "contact_share" }, { contactOf })).decision).toBe("held");
+    expect(h.sent.some(x => x.contact)).toBe(false);
+  });
+
+  await b.run("relay desk: 'don't send it' takes back a pending swap; the number never goes out after it", async () => {
+    const h = fakeHost(), d = new RelayDesk(h);
+    expect((await d.request({ itemId: "c1", from: "a", kind: "contact_share" }, { contactOf })).decision).toBe("held");
+    // The member takes it back with the pronoun only: "it" is the number they just asked to send.
+    expect(withdrawsSwap("don't send it")).toBe(true);
+    expect(d.cancelSwaps("a")).toBe(1);
+    h.t += 60_000;
+    // The other member asks: nothing is shared, the request waits instead.
+    expect((await d.request({ itemId: "c2", from: "b", kind: "contact_share" }, { contactOf })).decision).toBe("held");
     expect(h.sent.some(x => x.contact)).toBe(false);
   });
 
