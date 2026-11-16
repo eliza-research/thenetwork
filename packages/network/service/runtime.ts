@@ -83,6 +83,7 @@ export interface Unit {
   atomicHomeHelpReceipt?: true;
   atomicCofounderReply?: true;
   atomicProfileFactReply?: true;
+  atomicParticipationReply?: true;
   atomicInvitationDeliveryReply?: true;
   memberInvitation?: StagedMemberInvitation;
   standingIntent?: StoredStandingIntentChange;
@@ -649,7 +650,7 @@ export class NetworkRuntime {
 
   /** A directly requested result for this signed member. Source links grant only a per-reply contact exception. */
   collectedMemberReply(memberId: MemberId, id: string, body: string,
-    type: "solo_events" | "contribution_history" | "member_invitation" | "member_invitation_vouch" | "member_invitation_delivery" | "bounded_home_help" | "profile_fact_edit" | "cofounder_intent", publicLinks: readonly string[] = []) {
+    type: "solo_events" | "contribution_history" | "member_invitation" | "member_invitation_vouch" | "member_invitation_delivery" | "bounded_home_help" | "profile_fact_edit" | "cofounder_intent" | "participation_controls", publicLinks: readonly string[] = []) {
     const turn = this.host.inboundTurn?.();
     if (turn?.app !== this.app.id || turn.memberId !== memberId
       || normalizeAddress(this.addressOf(memberId) ?? "") !== normalizeAddress(turn.from)) return;
@@ -759,7 +760,7 @@ export class NetworkRuntime {
       const reasons = await queue.collectedLeaks(tx, { id: s.id, ...(u.forget.has(s.memberId) ? {} : { memberId: s.memberId }), to: s.to, kind: s.kind, text: s.body, contactAllow });
       if (reasons.length) {
         u.collected.delete(s.id);
-        if (s.type === "solo_events" || s.type === "contribution_history" || privateMemberMessage(s.type)) {
+        if (s.type === "solo_events" || s.type === "contribution_history" || s.type === "participation_controls" || privateMemberMessage(s.type)) {
           // This result was authorized for the signed reply only.
           u.sends = u.sends.filter(message => message.id !== s.id);
           this.host.log(`[alert] a ${s.type} reply failed the collected leak guard (${this.id}, ${s.id})`);
@@ -779,6 +780,10 @@ export class NetworkRuntime {
     if (u.atomicProfileFactReply) {
       if (!captured.some(send => send.type === "profile_fact_edit")) throw new Error("Profile fact reply was not collected");
       replyReason = "profile_fact_edit";
+    }
+    if (u.atomicParticipationReply) {
+      if (!captured.some(send => send.type === "participation_controls")) throw new Error("Participation settings reply was not collected");
+      replyReason = "participation_controls";
     }
     if (u.atomicCofounderReply) {
       if (!captured.some(send => send.type === "cofounder_intent")) throw new Error("Cofounder intent reply was not collected");

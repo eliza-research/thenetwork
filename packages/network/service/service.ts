@@ -64,6 +64,7 @@ import { profileReadRequest, savedProfileText } from "./profile-read.ts";
 import { step as stepProfileRead } from "../../core/src/generated/savedProfileRead.ts";
 import { profileFactEditMayRead, profileFactEditMayReplay } from "../../core/src/generated/profileFactEdit.ts";
 import { memberCommandOwner } from "./member-command.ts";
+import { participationCommand, saveParticipationControl } from "./participation-controls.ts";
 import { MEMBER_FACT_PAGE_SIZE, memberFactCommand, memberFactEditPrompt, memberFactListText, memberFactReply, type MemberFactCommand } from "./member-fact-command.ts";
 import { ProfileFactEdits } from "./profile-fact-edits.ts";
 import { receiptAccepted } from "../../core/src/generated/turnReceipt.ts";
@@ -1487,13 +1488,14 @@ export class NetworkService implements RuntimeHost {
     const kw = platformKeyword(ev.text);
     const factCommand = !kw && memberFactCommand(ev.text);
     const intentCommand = !kw ? standingIntentCommand(ev.text) : undefined;
+    const controls = !kw && participationCommand(ev.text);
     const travel = !kw && this.inboundTurn() ? travelPresenceCommand(ev.text) : undefined;
     const soloEvents = !kw && this.inboundTurn() ? soloConciergeRequest(ev.text) : undefined;
     const contributionPage = !kw && this.inboundTurn() ? contributionHistoryRequest(ev.text) : undefined;
     const e164 = normalizePhone(ev.from);
     const banned = !!e164 && await this.accounts.banned(e164);
     // Legacy webhooks own transport engagement. A signed turn admits its canonical member after policy processing.
-    if (!banned && !this.inboundTurn() && !intentCommand && !factCommand) await this.lineAdapter()?.engaged?.(ev.from);
+    if (!banned && !this.inboundTurn() && !intentCommand && !factCommand && !controls) await this.lineAdapter()?.engaged?.(ev.from);
     const route = await this.route(ev, o.app);
     const app = this.apps[route.app];
     const joinedMember = (await this.memberApps(ev.from)).find(m => m.app === route.app);
@@ -1584,8 +1586,8 @@ export class NetworkService implements RuntimeHost {
     if (banned) return "held";
 
     // An account command never joins an app or opts the sender in.
-    if (!memberId && (profileRead || intentCommand || travel || soloEvents || contributionPage !== undefined)) {
-      return travel ? "travel_presence" : soloEvents ? "solo_events" : contributionPage !== undefined ? "contribution_history" : "handled";
+    if (!memberId && (profileRead || intentCommand || controls || travel || soloEvents || contributionPage !== undefined)) {
+      return controls ? "participation_controls" : travel ? "travel_presence" : soloEvents ? "solo_events" : contributionPage !== undefined ? "contribution_history" : "handled";
     }
 
     if (memberId) {
@@ -1603,13 +1605,13 @@ export class NetworkService implements RuntimeHost {
       const reply = kw === "help" ? app.brand.help : undefined;
       if (!kw && e164 && /^\s*share\W*$/i.test(ev.text) && (await this.pendingOf(e164, "share", app.id))) return this.share(rt, app, memberId, e164, ev, rowId);
       // The answer to The Network's "what are you looking for?": enroll in the apps they named.
-      if (!intentCommand && !travel && !soloEvents && contributionPage === undefined && shouldReadLookingFor(!!kw, !!profileRead, app.id === "ntwrk") && e164 && (await this.pendingOf(e164, "looking_for"))) {
+      if (!intentCommand && !controls && !travel && !soloEvents && contributionPage === undefined && shouldReadLookingFor(!!kw, !!profileRead, app.id === "ntwrk") && e164 && (await this.pendingOf(e164, "looking_for"))) {
         const wants = lookingFor(ev.text).filter(a => namedOtherApp(a, a !== "ntwrk" && !!this.runtimeFor(a)));
         if (wants.length) return this.enroll(rt, memberId, e164, wants, ev, rowId);
       }
       // After STOP the member's texts still reach the Network (a report is never dropped), but its replies are
       // refused: the person gets one hint instead (founder decision 2026-10-11, #22).
-      if (!kw && e164 && contributionPage === undefined) await this.stopHint(rt, app, e164, ev, rowId);
+      if (!kw && e164 && !controls && contributionPage === undefined) await this.stopHint(rt, app, e164, ev, rowId);
       const out = await this.memberMessage(rt, memberId, ev, rowId, kw, reply);
       if (e164) await this.statedAge(app, rt, memberId, e164);
       return out;
@@ -1730,6 +1732,19 @@ export class NetworkService implements RuntimeHost {
       const channel = ev.transport === "sms" ? "sms" : "imessage";
       const inbound = { id: rowId, member_id: memberId, direction: "inbound", channel, body: ev.text, status: "received", type: null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
       const signedDirect = !keyword && !fromAssistant && this.inboundTurn();
+      const controls = !keyword && participationCommand(ev.text);
+      if (controls) {
+        if (!signedDirect || !rt.signedMemberTurn(memberId, rowId)) return "participation_controls";
+        rt.unit.memberCommand = async tx => {
+          const owner = { app: rt.app, memberId, e164: signedDirect.from };
+          const body = await saveParticipationControl(tx, this.accountsFor(tx), owner, controls, rt.wiring.prefs(ADULT_AGE).categoriesOptIn, this.clock.now());
+          if (body === undefined) return;
+          rt.unit.inbound = inbound;
+          rt.unit.atomicParticipationReply = true;
+          rt.collectedMemberReply(memberId, `sys:${rowId}`, body, "participation_controls");
+        };
+        return "participation_controls";
+      }
       const factCommand = !keyword && memberFactCommand(ev.text);
       if (factCommand) {
         if (!signedDirect || !rt.signedMemberTurn(memberId, rowId)) return "profile_fact_edit";
@@ -2931,7 +2946,7 @@ export class NetworkService implements RuntimeHost {
       const rt = turn.app ? (turn.memberId ? await this.runtimeOfMember(turn.app, turn.memberId) : this.runtimeFor(turn.app)) : undefined;
       const binding = rt && turn.memberId ? await this.accounts.activeMembership(rt.app, {e164: input.from, personId: person?.id ?? null}) : undefined;
       // Own-profile commands preserve send holds. The binding includes the known join-age check.
-      if (outcome !== "standing_intents" && outcome !== "travel_presence" && outcome !== "solo_events" && outcome !== "contribution_history" && outcome !== "profile_fact_edit" && accountEligible && binding && binding.membership.memberId === turn.memberId) {
+      if (outcome !== "standing_intents" && outcome !== "travel_presence" && outcome !== "solo_events" && outcome !== "contribution_history" && outcome !== "profile_fact_edit" && outcome !== "participation_controls" && accountEligible && binding && binding.membership.memberId === turn.memberId) {
         await this.lineAdapter()?.engaged?.(input.from);
       }
       if (outcome === "open" && !collected.length && turn.app && turn.memberId) {
@@ -2969,6 +2984,12 @@ export class NetworkService implements RuntimeHost {
         const memberId = handled.memberId;
         const authorized = rt && memberId && await rt.scoped(tx => travelOwner(tx, this.accountsFor(tx), { app: rt.app, memberId, e164: input.from }));
         if (!authorized) return json({error: "turn_travel_account_changed", retryable: false}, 409);
+      }
+      if (handled.reason === "participation_controls" && handled.replies.length) {
+        const memberId = handled.memberId;
+        const rt = handled.app && memberId ? await this.runtimeOfMember(handled.app, memberId) : undefined;
+        const binding = rt && memberId && await rt.scoped(tx => memberCommandOwner(tx, this.accountsFor(tx), { app: rt.app, memberId, e164: input.from }));
+        if (!binding || !binding.member) return json({error: "turn_participation_account_changed", retryable: false}, 409);
       }
       if (handled.reason === "solo_events" && handled.replies.length) {
         const rt = handled.app && handled.memberId ? await this.runtimeOfMember(handled.app, handled.memberId) : undefined;
