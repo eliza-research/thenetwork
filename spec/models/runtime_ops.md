@@ -21,8 +21,8 @@ The VibeLang shell runs the effects against the backend's live dependencies.
 The [platform retention rules](../platformRetention.md) set the account
 and inbox cutoffs and retain counters needed for STOP hints.
 
-The [alert dispatch spec](../opsAlertDispatch.md) follows the current
-backend when a metrics read fails or an alert could not post. The backend
+The [alert dispatch spec](../opsAlertDispatch.md) drives the VibeLang
+shell under the existing alert-store transaction. The backend
 evaluates the alerts it could collect, may close a missing episode without
 a prior successful post, and can still ping its heartbeat after a failed
 alert delivery. The retained model below describes different behavior for

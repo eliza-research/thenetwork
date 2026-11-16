@@ -11,7 +11,7 @@ export type MissingPlan = "KeepEpisode" | "CloseQuietly" | "SendResolution";
 export type DispatchPhase = "AwaitingNotices" | "NoNotices" | "HeldByLimit" | "PostingNotices" | "NoticesAccepted" | "PostRejected";
 /** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md:40) */
 export interface AlertDispatch { phase: DispatchPhase }
-/** Story: Report the result of each operations round / A completed round reports the post separately from its heartbeat (spec/opsAlertDispatch.md:89) */
+/** Story: Report the result of each operations round / A completed round reports the post separately from its heartbeat (spec/opsAlertDispatch.md:91) */
 export interface RoundReport { logSummary: boolean; logFailure: boolean; logLimit: boolean; pingHeartbeat: boolean }
 
 /** One variant per transition in the spec. */
@@ -19,7 +19,9 @@ export type Event =
   | { type: "prepareDispatch"; noticeCount: number; postsLastHour: number; hourlyLimit: number }
   | { type: "recordDelivery"; accepted: boolean };
 
-/** Story: Report the result of each operations round / Collect scheduled rounds and reuse fresh metrics (spec/opsAlertDispatch.md:78) */
+/** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md:40) */
+export const alertPostWindowMs: number = 3600000;
+/** Story: Report the result of each operations round / Collect scheduled rounds and reuse fresh metrics (spec/opsAlertDispatch.md:80) */
 export const metricsFreshMs: number = 15000;
 /** Story: Receive useful operations alerts without duplicate notices / One batch consumes one attempt in the rolling hour (spec/opsAlertDispatch.md:40) */
 export const initial: AlertDispatch = { phase: "AwaitingNotices" };
@@ -110,19 +112,19 @@ export function sometimesAccepted(s: AlertDispatch): boolean {
   return batchWasAccepted(s);
 }
 
-/** Story: Report the result of each operations round / Collect scheduled rounds and reuse fresh metrics (spec/opsAlertDispatch.md:78) */
+/** Story: Report the result of each operations round / Collect scheduled rounds and reuse fresh metrics (spec/opsAlertDispatch.md:80) */
 //@ pure
 export function opsRoundDue(elapsedMs: number, intervalMs: number): boolean {
   return !(elapsedMs < intervalMs);
 }
 
-/** Story: Report the result of each operations round / Collect scheduled rounds and reuse fresh metrics (spec/opsAlertDispatch.md:78) */
+/** Story: Report the result of each operations round / Collect scheduled rounds and reuse fresh metrics (spec/opsAlertDispatch.md:80) */
 //@ pure
 export function cachedOpsMetricsFresh(elapsedMs: number): boolean {
   return elapsedMs < metricsFreshMs;
 }
 
-/** Story: Report the result of each operations round / A completed round reports the post separately from its heartbeat (spec/opsAlertDispatch.md:89) */
+/** Story: Report the result of each operations round / A completed round reports the post separately from its heartbeat (spec/opsAlertDispatch.md:91) */
 //@ pure
 export function roundReport(hasNotices: boolean, postAttempted: boolean, delivered: boolean, heldNotices: boolean, heartbeatConfigured: boolean): RoundReport {
   return { logSummary: hasNotices, logFailure: postAttempted && !delivered, logLimit: heldNotices, pingHeartbeat: heartbeatConfigured };

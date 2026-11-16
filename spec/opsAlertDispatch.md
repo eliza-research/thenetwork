@@ -1,6 +1,6 @@
 # Operations alert dispatch
 
-The [runtime operations model](models/runtime_ops.md) includes alert dispatch alongside retention, ticks, and recovery. The backend supplies the current alert keys, persisted history, the rolling post count, and the delivery result. Its existing lock and transaction still own the store and webhook calls.
+The [runtime operations model](models/runtime_ops.md) includes alert dispatch alongside retention, ticks, and recovery. The VibeLang shell reads alert history and executes the generated decisions through the backend's existing transaction and webhook adapters.
 
 ## Story: Receive useful operations alerts without duplicate notices
 
@@ -39,9 +39,11 @@ pure def chooseMissingPlan(episodeOpen: bool, seenThisRound: bool, postedBefore:
 
 ### One batch consumes one attempt in the rolling hour
 
-Send one body with all the pending notices when the rolling post count is below its limit. At the limit, hold all notices. Count both a successful and a failed attempt. Mark firing notices as sent and close resolved episodes after a successful delivery. An episode with a failed delivery can be eligible again next round.
+Send one body with all the pending notices when the rolling post count is below its limit. At the limit, hold all notices. Count both a successful and a failed attempt. Record the attempt and save episode changes in the same store transaction. Mark firing notices as sent and close resolved episodes after a successful delivery. An episode with a failed delivery can be eligible again next round.
 
 ```quint
+pure val alertPostWindowMs = 3600000
+
 type DispatchPhase = AwaitingNotices | NoNotices | HeldByLimit | PostingNotices | NoticesAccepted | PostRejected
 type AlertDispatch = { phase: DispatchPhase }
 

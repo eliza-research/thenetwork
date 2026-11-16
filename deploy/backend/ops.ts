@@ -17,10 +17,8 @@
 // The webhook body is JSON: { text, source, env, build, alerts: [{ key, level, count, text, state }] }.
 // `text` alone is what a Slack incoming webhook shows; ALERT_WEBHOOK_FORMAT=slack sends only { text }.
 import type { SQL } from "../../packages/core/src/runtime/postgres.ts";
-import {
-  batchWasAccepted, batchWasAttempted, batchWasHeld, cachedOpsMetricsFresh, chooseFiringPlan, chooseMissingPlan,
-  initial as initialAlertDispatch, opsRoundDue, roundReport, step as stepAlertDispatch,
-} from "../../packages/core/src/generated/opsAlertDispatch.ts";
+import { cachedOpsMetricsFresh, opsRoundDue, roundReport } from "../../packages/core/src/generated/opsAlertDispatch.ts";
+import { dispatchOperationsAlerts, type Alert, type AlertState, type AlertTx, type DispatchResult, type Notice } from "../../packages/core/src/vibe/opsAlertShell.js";
 import { URGENT_REPORTS } from "../../packages/network/src/reports.ts";
 import { SIM_AUTO_REVIEWER } from "../../packages/network/src/network.ts";
 import { budgetLines, costBudgetsFromEnv, dayOf, type BudgetLine, type CostApp, type CostBudgets, type CostLedger } from "../../packages/network/service/cost.ts";
@@ -261,12 +259,7 @@ export function runtimeProbe(rt: {
 
 // ------------------------------------------------------------------ alerts
 
-export type AlertLevel = "warn" | "bad";
-export interface Alert {
-  key: string; level: AlertLevel; count: number; text: string;
-  /** Post again when the count goes up (new safety events), not only on a level change. */
-  bump?: boolean;
-}
+export type { Alert, AlertLevel, AlertState, AlertTx, DispatchResult, Notice } from "../../packages/core/src/vibe/opsAlertShell.js";
 
 const mins = (ms: number) => `${Math.round(ms / MIN)} min`;
 
@@ -320,16 +313,6 @@ export function evaluate(m: Pick<OpsMetrics, "networks" | "cost"> & { uptimeMs?:
 
 // ------------------------------------------------------------------ the dispatcher
 
-export interface AlertState {
-  key: string; level: AlertLevel; count: number; text: string; open: boolean; firstAt: number; lastAt: number;
-  lastSentAt?: number; lastSentLevel?: AlertLevel; lastSentCount?: number;
-}
-export interface AlertTx {
-  load(): Promise<AlertState[]>;
-  save(states: AlertState[]): Promise<void>;
-  postsSince(t: number): Promise<number>;
-  recordPost(at: number, alerts: number, ok: boolean): Promise<void>;
-}
 export interface AlertStore {
   /** Run `fn` while no other replica runs it; undefined when another one holds the lock. */
   exclusive<T>(fn: (tx: AlertTx) => Promise<T>): Promise<T | undefined>;
@@ -377,9 +360,6 @@ export class PgAlertStore implements AlertStore {
   }
 }
 
-export interface Notice { key: string; level: AlertLevel; count: number; text: string; state: "firing" | "resolved" }
-export interface DispatchResult { notices: Notice[]; posted: boolean; ok: boolean; held: number; open: { key: string; level: AlertLevel; count: number }[]; postsLastHour: number }
-
 export class AlertDispatcher {
   constructor(private o: {
     store: AlertStore;
@@ -395,57 +375,10 @@ export class AlertDispatcher {
 
   /** One round: compare the current alerts with the stored ones, post what is new, worse, due again or resolved. Undefined: another replica runs it. */
   dispatch(current: Alert[]): Promise<DispatchResult | undefined> {
-    return this.o.store.exclusive(async tx => {
-      const now = this.o.now();
-      const states = new Map((await tx.load()).map(s => [s.key, s]));
-      const notices: Notice[] = [];
-      const firing: AlertState[] = [];
-      const seen = new Set<string>();
-      for (const a of current) {
-        seen.add(a.key);
-        const prev = states.get(a.key);
-        const decision = chooseFiringPlan({
-          episodeOpen: !!prev?.open, postedBefore: prev?.lastSentAt !== undefined, latestLevel: a.level,
-          sentLevel: prev?.lastSentLevel ?? "warn", bumpOnCount: !!a.bump, latestCount: a.count,
-          sentCount: prev?.lastSentCount ?? 0, elapsedMs: now - (prev?.lastSentAt ?? 0), repeatMs: this.o.repeatMs,
-        });
-        const s: AlertState = decision !== "StartAlert" && prev
-          ? { ...prev, level: a.level, count: a.count, text: a.text, lastAt: now }
-          : { key: a.key, level: a.level, count: a.count, text: a.text, open: true, firstAt: now, lastAt: now };
-        states.set(a.key, s);
-        if (decision !== "UpdateOnly") {
-          notices.push({ key: a.key, level: a.level, count: a.count, text: a.text, state: "firing" });
-          firing.push(s);
-        }
-      }
-      const resolved: AlertState[] = [];
-      for (const s of states.values()) {
-        const decision = chooseMissingPlan(s.open, seen.has(s.key), s.lastSentAt !== undefined);
-        if (decision === "CloseQuietly") s.open = false;
-        else if (decision === "SendResolution") {
-          resolved.push(s);
-          notices.push({ key: s.key, level: s.level, count: s.count, text: s.text, state: "resolved" });
-        }
-      }
-      let postsLastHour = await tx.postsSince(now - HOUR);
-      let batch = stepAlertDispatch(initialAlertDispatch, {
-        type: "prepareDispatch", noticeCount: notices.length, postsLastHour, hourlyLimit: this.o.maxPostsPerHour,
-      });
-      if (batch.phase === "PostingNotices") {
-        const accepted = await this.o.post(this.body(notices)).catch(() => false);
-        await tx.recordPost(now, notices.length, accepted);
-        postsLastHour++;
-        batch = stepAlertDispatch(batch, { type: "recordDelivery", accepted });
-      }
-      const ok = batchWasAccepted(batch);
-      if (ok) {
-        for (const s of firing) { s.lastSentAt = now; s.lastSentLevel = s.level; s.lastSentCount = s.count; }
-        for (const s of resolved) s.open = false;
-      }
-      await tx.save([...states.values()]);
-      const open = [...states.values()].filter(s => s.open).map(s => ({ key: s.key, level: s.level, count: s.count }));
-      return { notices, posted: batchWasAttempted(batch), ok, held: batchWasHeld(batch) ? notices.length : 0, open, postsLastHour };
-    });
+    return this.o.store.exclusive(tx => dispatchOperationsAlerts(current, tx, {
+      now: this.o.now(), repeatMs: this.o.repeatMs, maxPostsPerHour: this.o.maxPostsPerHour,
+      post: notices => this.o.post(this.body(notices)),
+    }));
   }
 
   body(notices: Notice[]): Record<string, unknown> {

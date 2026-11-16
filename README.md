@@ -49,7 +49,7 @@ Studio, examples, template setup and the packaged CLI.
 |---|---|
 | Product | Stories and acceptance rules in [the product specification](spec/product/README.md). Product owners record approval in `spec/lock.json` with `pnpm run accept`. |
 | Decisions | Quint in the [executable specs](SPEC.md#writing-a-spec) generates TypeScript. The checker simulates the model, compares TypeScript traces, and runs Dafny proof obligations. |
-| Effects | The [backend health shell](packages/core/src/vibe/backendHealthShell.vibe) reads readiness and the [shutdown shell](packages/core/src/vibe/backendShutdownShell.vibe) drains listeners and tracked work. `pnpm run spec:sync` compiles both shells and their generated Effect adapters with the vendored VibeLang compiler. |
+| Effects | VibeLang shells check [backend health](packages/core/src/vibe/backendHealthShell.vibe), drain [shutdown work](packages/core/src/vibe/backendShutdownShell.vibe), and dispatch [operations alerts](packages/core/src/vibe/opsAlertShell.vibe). `pnpm run spec:sync` compiles the shells and their generated Effect adapters. |
 | Application | Node 26 serves the backend and console. Each package owns its existing HTTP, storage, and UI integration. The [Network agent guide](AGENTS.md) applies the upstream design guidance to these packages. |
 | Conformance | The spec checker compares the app's observed state and effects with generated rules. The [command table](#commands) lists scoped journeys and the existing application test commands. |
 
@@ -124,7 +124,7 @@ from The Network root.
 | `pnpm accept` | `pnpm run accept` | Product owner sign-off after a fresh check. |
 | `pnpm selftest` | `pnpm run spec:selftest` | Exercise the vendored toolchain against its fixtures. |
 | `pnpm demo` | `pnpm run spec:demo` | Run the standalone order example. |
-| | `pnpm run spec:sync` | Generate the TypeScript snapshots and compile the serving VibeLang shell. |
+| | `pnpm run spec:sync` | Generate the TypeScript snapshots and compile the serving VibeLang shells. |
 | | `pnpm run spec:check-generated` | Compare checked-in TypeScript and VibeLang output with fresh generation. |
 | | `pnpm run spec:conformance <module>` | Run one spec's simulation and compare it with the app through its driver or recorded trace. |
 | | `pnpm run quint:check` | Exercise the action-based flows in `spec/models/`. |
