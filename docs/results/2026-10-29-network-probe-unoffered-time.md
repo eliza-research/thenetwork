@@ -133,6 +133,33 @@ Not tested: an authenticated tool call and the probe accept/decline flow through
 the operator's decision, so this is recorded as not authorized, not as a pass. The local OTP and
 consent pages for this site are covered inside `packages/mcp` tests.
 
+## Rebase 2026-11-16 (on `main` ebf3e61, 106 commits after the PR base a0ed7bc)
+
+- One conflict, in `mergeConsent` (`packages/network/src/extract.ts`): `main` moved the merge to the
+  generated `probeReplyReading` / `pickedTimes` (`packages/core/src/generated/probeReply.ts`, from
+  `spec/probeReply.md`). The rebase keeps that generated merge and puts the `unoffered` guard first:
+  a yes that named a time nobody offered keeps no pick, and the LLM still cannot turn it back into
+  every offered time. The generated file is untouched. The no-fallback guarantee and the refused-slot
+  carry-forward are retained. Every other file of the PR applied cleanly.
+- The maintainer review of 2026-11-14 asked for #152's clause-local controls, because the unrestricted
+  "any of them" branch still preceded the named-none guard. They are now in `parseProbeReply`
+  (`classify.ts`): an unoffered mention is tracked with its position; a universal in the same clause
+  ("Friday anytime works") no longer accepts the offered options, while one in another clause still
+  does ("I have a wedding Friday but any of those work"); a clock in the same clause as an unoffered
+  day ("Friday 10am works") never picks the offered days that share its hour; a day ruled out
+  ("any day but Friday", "free apart from Friday") is not an unoffered miss. The answer stays the
+  yes with no pick this PR defines, not #152's `unclear`.
+- The corpus gate grows from 14 to 29 rows with the new cases above. A 27-case probe battery over the
+  same rows plus the work-hours and refusal pins passes 27/27 on this tree (before the controls it
+  passed 12/22: the anytime branch booked every offered time, the shared-hour clock picked the offered
+  days, and exclusions read as `unclear`). Validation on this tree, base ebf3e61, Bun 1.4.4:
+  `bun run typecheck` exit 0; `bun run sim --only evals` 31/31 blocking gates (gate n 29);
+  `bun test packages/network/test/probe-unoffered-time.integration.test.ts` 9 pass, 0 fail;
+  `bun run sim --only network` 66/66 blocking gates, 0 tracked off target (550.6s).
+- Known, pre-existing, not fixed here or in #152: "any day except Friday works" reads `unclear`
+  (`mixed`, refusal plus affirm) and re-asks rather than booking the excluded day. It is pinned in the
+  corpus as `unclear` so a later change cannot silently book it.
+
 ## Relation to PR #152
 
 PR #152 ("never book an offered time the member did not name", open) fixes the same parser defect for
