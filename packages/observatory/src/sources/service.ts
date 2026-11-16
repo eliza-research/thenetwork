@@ -104,10 +104,10 @@ export class ServiceClient {
   }
 
   review(staff: string, cmd: Extract<ControlCommand, { type: "review" }>): Promise<ControlResult> {
-    const { decision, reason, note, explanations, objective, swapOut } = cmd;
+    const { decision, reason, note, explanations, objective, swapOut, revision } = cmd;
     // Time on one item counts at most 30 minutes (a card left open is not review work; audit observatory-10).
     const secondsSpent = cmd.secondsSpent === undefined ? undefined : Math.min(1800, Math.max(0, Number(cmd.secondsSpent) || 0));
-    return this.act(`/review/${encodeURIComponent(cmd.oppId)}`, staff, { decision, reason, note, secondsSpent, explanations, objective, swapOut }, REVIEW_BLOCK_ERRORS);
+    return this.act(`/review/${encodeURIComponent(cmd.oppId)}`, staff, { decision, reason, note, secondsSpent, explanations, objective, swapOut, revision }, REVIEW_BLOCK_ERRORS);
   }
 
   safety(staff: string, a: SafetyAction): Promise<ControlResult> {

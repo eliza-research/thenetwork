@@ -2,7 +2,7 @@
 //@ backend dafny
 
 /** Story: Confirm a plan after enough members accept / Only a pending member can change an open plan (spec/planDecision.md) */
-export type ReplyChoice = "IgnoreReply" | "AddMember" | "RecordLate" | "BookPlan" | "AskPartner" | "RecordAnswer" | "ClosePlan" | "AskAlternate";
+export type ReplyChoice = "IgnoreReply" | "ExpireProbe" | "AddMember" | "RecordLate" | "BookPlan" | "AskPartner" | "RecordAnswer" | "ClosePlan" | "AskAlternate";
 /** Story: Confirm a plan after enough members accept / Only a pending member can change an open plan (spec/planDecision.md) */
 export type PlanStage = "Probing" | "Booked" | "Closed";
 /** Story: Confirm a plan after enough members accept / Only a pending member can change an open plan (spec/planDecision.md) */
@@ -19,8 +19,14 @@ export function canApplyPlanReply(phase: PlanStage, pendingMember: boolean): boo
 
 /** Story: Confirm a plan after enough members accept / Only a pending member can change an open plan (spec/planDecision.md) */
 //@ pure
+export function planProbeExpired(phase: PlanStage, deadlineReached: boolean): boolean {
+  return phase === "Probing" && deadlineReached;
+}
+
+/** Story: Confirm a plan after enough members accept / Only a pending member can change an open plan (spec/planDecision.md) */
+//@ pure
 export function planReplyChoice(reply: ReplyFacts): ReplyChoice {
-  return !canApplyPlanReply(reply.phase, reply.pendingMember) ? "IgnoreReply" : (reply.accepted ? (reply.phase === "Booked" ? (reply.lateJoinOpen ? "AddMember" : "RecordLate") : (reply.yesAfter >= reply.needed ? "BookPlan" : (reply.partnerPlan && reply.beforeDeadline ? "AskPartner" : "RecordAnswer"))) : (reply.phase === "Booked" ? "RecordAnswer" : (reply.partnerPlan && reply.firstMember ? "ClosePlan" : (reply.beforeDeadline ? "AskAlternate" : "RecordAnswer"))));
+  return !canApplyPlanReply(reply.phase, reply.pendingMember) ? "IgnoreReply" : (planProbeExpired(reply.phase, !reply.beforeDeadline) ? "ExpireProbe" : (reply.accepted ? (reply.phase === "Booked" ? (reply.lateJoinOpen ? "AddMember" : "RecordLate") : (reply.yesAfter >= reply.needed ? "BookPlan" : (reply.partnerPlan ? "AskPartner" : "RecordAnswer"))) : (reply.phase === "Booked" ? "RecordAnswer" : (reply.partnerPlan && reply.firstMember ? "ClosePlan" : "AskAlternate"))));
 }
 
 /** Story: Confirm a plan after enough members accept / Booking requires a pending acceptance that meets quorum (spec/planDecision.md) */
@@ -28,7 +34,7 @@ export function planReplyChoice(reply: ReplyFacts): ReplyChoice {
 export function lawBookingNeedsQuorum(phase: PlanStage, pendingMember: boolean, accepted: boolean, yesAfter: number, needed: number, partnerPlan: boolean, firstMember: boolean, beforeDeadline: boolean, lateJoinOpen: boolean): boolean {
   //@ ensures \result === true
   const local_0: ReplyFacts = { phase: phase, pendingMember: pendingMember, accepted: accepted, yesAfter: yesAfter, needed: needed, partnerPlan: partnerPlan, firstMember: firstMember, beforeDeadline: beforeDeadline, lateJoinOpen: lateJoinOpen };
-  return !(planReplyChoice(local_0) === "BookPlan") || (phase === "Probing" && pendingMember && accepted && yesAfter >= needed);
+  return !(planReplyChoice(local_0) === "BookPlan") || (phase === "Probing" && pendingMember && accepted && beforeDeadline && yesAfter >= needed);
 }
 
 /** Story: Confirm a plan after enough members accept / An unanswered plan closes when its deadline passes (spec/planDecision.md) */
@@ -39,15 +45,16 @@ export function unmetPlanQuorum(pendingCount: number, yesCount: number, needed: 
 
 /** Story: Confirm a plan after enough members accept / An unanswered plan closes when its deadline passes (spec/planDecision.md) */
 //@ pure
-export function planProbeExpired(phase: PlanStage, deadlineReached: boolean): boolean {
-  return phase === "Probing" && deadlineReached;
+export function lawOnlyProbingPlansExpire(phase: PlanStage): boolean {
+  //@ ensures \result === true
+  return !planProbeExpired(phase, true) || phase === "Probing";
 }
 
 /** Story: Confirm a plan after enough members accept / An unanswered plan closes when its deadline passes (spec/planDecision.md) */
 //@ pure
-export function lawOnlyProbingPlansExpire(phase: PlanStage): boolean {
+export function lawReplyAtDeadlineClosesProbe(accepted: boolean, yesAfter: number, needed: number, partnerPlan: boolean, firstMember: boolean): boolean {
   //@ ensures \result === true
-  return !planProbeExpired(phase, true) || phase === "Probing";
+  return planReplyChoice(({ phase: "Probing", pendingMember: true, accepted: accepted, yesAfter: yesAfter, needed: needed, partnerPlan: partnerPlan, firstMember: firstMember, beforeDeadline: false, lateJoinOpen: false } as ReplyFacts)) === "ExpireProbe";
 }
 
 /** Story: Choose a fallback for a plan that cannot proceed / Two acceptances for a group require new partner consent (spec/planDecision.md) */
@@ -61,6 +68,26 @@ export function planFallbackShape(yesCount: number, smallerOn: boolean, minGroup
 export function lawDirectFallbackRequiresGroup(yesCount: number, smallerOn: boolean, minGroup: number, leadOk: boolean): boolean {
   //@ ensures \result === true
   return !(planFallbackShape(yesCount, smallerOn, minGroup, leadOk) === "SmallerGroup") || yesCount >= 3;
+}
+
+/** Story: Choose a fallback for a plan that cannot proceed / A group plan never books two members directly (spec/planDecision.md) */
+//@ pure
+export function planBookingConsented(partnerPlan: boolean, seatedCount: number, needed: number, minGroup: number): boolean {
+  return partnerPlan ? seatedCount >= needed : seatedCount >= 3 && (seatedCount >= needed || minGroup <= 2);
+}
+
+/** Story: Choose a fallback for a plan that cannot proceed / A group plan never books two members directly (spec/planDecision.md) */
+//@ pure
+export function lawGroupBookingNeedsThreeMembers(seatedCount: number, needed: number, minGroup: number): boolean {
+  //@ ensures \result === true
+  return !planBookingConsented(false, seatedCount, needed, minGroup) || seatedCount >= 3;
+}
+
+/** Story: Choose a fallback for a plan that cannot proceed / A group plan never books two members directly (spec/planDecision.md) */
+//@ pure
+export function lawPartnerBookingNeedsQuorum(seatedCount: number, needed: number, minGroup: number): boolean {
+  //@ ensures \result === true
+  return !planBookingConsented(true, seatedCount, needed, minGroup) || seatedCount >= needed;
 }
 
 /** Story: Keep plan invites on a separate allowance / The separate plan allowance requires availability evidence or weekly check-in consent (spec/planDecision.md) */

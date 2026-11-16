@@ -851,7 +851,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
 }
 
 /** Command fields an audit row keeps as they are (ids, decisions, codes, numbers). Anything else a client sends is dropped (audit observatory-15). */
-const AUDIT_FIELDS = new Set(["oppId", "memberId", "promptId", "decision", "reason", "on", "mode", "speed", "ms", "action", "participants", "category", "swapOut", "secondsSpent", "auto", "city", "seed", "engine", "personas", "days", "network", "scenario"]);
+const AUDIT_FIELDS = new Set(["oppId", "memberId", "promptId", "decision", "reason", "on", "mode", "speed", "ms", "action", "participants", "category", "swapOut", "revision", "secondsSpent", "auto", "city", "seed", "engine", "personas", "days", "network", "scenario"]);
 /** Free texts: only their length is kept. */
 const AUDIT_TEXTS = new Set(["text", "objective", "note", "why"]);
 const auditValue = (v: unknown): unknown =>

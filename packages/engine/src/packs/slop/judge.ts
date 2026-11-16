@@ -67,7 +67,6 @@ export function slopJudgeContext(w: World, c: Candidate, o: SlopPackOptions): { 
 export function slopJudge(o: SlopPackOptions): JudgePack {
   return {
     rubric: { compact: { version: SLOP_JUDGE_VERSION, system: SLOP_JUDGE_SYSTEM }, matchable: { version: SLOP_JUDGE_VERSION, system: SLOP_JUDGE_SYSTEM } },
-    rubricKeys: ["fit", "mutual_value", "capacity_realism", "timing", "social_comfort", "red_flags", "certainty"],
     buildContext: (w, c) => slopJudgeContext(w, c, o),
     // After the model: still two adults who are each in the other's stated seeking set.
     hardGate: (w, c) => {

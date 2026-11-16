@@ -4,7 +4,7 @@
 // src/sources/real.ts) use this one builder, so both see the same members. It never reads
 // network.channel_identities (phones and emails).
 import type { SQL } from "../../core/src/runtime/postgres.ts";
-import { DAY, temporaryPresenceWindow, type Edge, type EdgeType, type Facet, type Intent, type Member, type Presence, type Proposal, type ParticipationState, type WorldSnapshot } from "@thenetwork/core";
+import { DAY, isAppId, temporaryPresenceWindow, type Edge, type EdgeType, type Facet, type Intent, type Member, type Presence, type Proposal, type ParticipationState, type WorldSnapshot } from "@thenetwork/core";
 
 import { participationOverride, validWindow, windowIsActive } from "../../core/src/generated/participationWindow.ts";
 import { presenceWindowCurrentOrFuture } from "../../core/src/generated/travelPresence.ts";
@@ -51,6 +51,7 @@ export function facetOf(r: any): Facet & { learningPurpose?: "network_profile_le
     id: r.id, memberId: r.member_id, kind: r.kind, value: r.value, tags: r.tags ?? [], scope: r.privacy_scope, provenance: r.provenance,
     confidence: r.confidence, validFrom: ms(r.valid_from), validTo: ms(r.valid_to), ...(r.source ? { source: r.source } : {}),
     ...(r.sensitive ? { sensitive: r.sensitive } : {}), ...(r.provenance === "inferred" ? { inferred: true } : {}),
+    ...(isAppId(r.app_id) ? { app: r.app_id } : {}),
     ...(r.observed_at ? { observedAt: ms(r.observed_at) } : {}), confirmedByMember: r.status === "confirmed",
     ...(typeof r.id === "string" && r.id.startsWith("source-suggestion:") && ["gmail", "google_calendar"].includes(r.source)
       ? { learningPurpose: "network_profile_learning_v1" as const } : {}),
@@ -61,6 +62,7 @@ export function intentOf(r: any): Intent {
   return {
     id: r.id, memberId: r.member_id, objective: r.objective, category: r.category, details: r.details ?? undefined,
     desiredPeople: r.desired_people ?? undefined, horizonDays: r.horizon_days, status: r.status, createdAt: ms(r.created_at) ?? 0,
+    ...(isAppId(r.app_id) ? { app: r.app_id } : {}),
   };
 }
 
@@ -129,6 +131,7 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
     // proactive message; replies to its own messages, compliance texts and safety notices still go (founder, 2026-10-11).
     members: (members as any[]).filter(r => keep(r.id)).map((r): Member & { accountStatus: string } => ({
       id: r.id, name: r.name, homeCity: r.home_city, state: effectiveParticipation(r,now).state, prefs: r.prefs, accountStatus: r.account_status,
+      ...(isAppId(app) ? { apps: [app] } : {}),
       // A missing age stays missing (undefined), never 0: 0 is a valid age under 13, and the Network
       // would decline the member and delete their data. Missing means unknown: treated as a minor and asked (network.md 6.3).
       ...(r.invited_by ? { invitedBy: r.invited_by } : {}), joinedAt: ms(r.joined_at) ?? 0, age: r.matching_age ?? (undefined as unknown as number), unansweredProactive: r.unanswered_proactive,

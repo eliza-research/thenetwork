@@ -162,8 +162,8 @@ Send `Authorization: Bearer <token>`. Tokens are per app: `reviewer@slop:<t>` is
 | Route | Role | Body |
 |---|---|---|
 | `GET /health` | any role for the app | Last tick, lock holder, backlog (review, overdue, deferred, waiting sends), refusals; with several networks, a `networks` summary |
-| `GET /review` | reviewer, safety | The review queue, oldest first |
-| `POST /review/:oppId` | reviewer | `{ decision: "approve" \| "reject" \| "edit" \| "reroll", reason?, note?, secondsSpent?, explanations?, objective?, swapOut? }`. The reviewer of record is the token's staff id, never a field in the body. |
+| `GET /review` | reviewer, safety | The review queue, oldest first, with the current `revision` for each item |
+| `POST /review/:oppId` | reviewer | `{ decision: "approve" \| "reject" \| "edit" \| "reroll", revision, reason?, note?, secondsSpent?, explanations?, objective?, swapOut? }`. Send the revision the reviewer saw. A changed revision returns `review_stale`. The token identifies the reviewer. |
 | `POST /safety/lift` | safety | `{ memberId, note? }` |
 | `POST /safety/close` | safety | `{ caseId, note? }` |
 | `GET /signals` | reviewer, safety | Agent `opt_out` and `safety_concern` signals waiting for a person: `{ id, memberId, kind, evidence, at }`, newest first |
@@ -181,6 +181,10 @@ Send `Authorization: Bearer <token>`. Tokens are per app: `reviewer@slop:<t>` is
 | `GET /members/:id/photos` | safety | `X-Network-Reason: <5+ characters>`. Only with an open safety report (open or held) or an open safety case about the member, as the photo consent promises (403 `no_report`, audited as refused); the report or case id goes in the audit row. Verified adults only (403 `adults_only`); the audit row is written before any link |
 | `GET /bias` | admin, analyst | The newest weekly bias monitor reports of the network (aggregates only) |
 | `POST /matching` | admin | `{ on: true \| false }`. Refused (`matching_not_allowed`) for a network the registry keeps off. Migration 0011 allows slop and peon; their stored switch still starts off. |
+| `GET /postings?managerId=` | admin, reviewer | peon only (404 elsewhere). The job postings of one hiring manager, or all (`postings.ts`). Audited as `read_postings`. |
+| `POST /postings` | admin | peon only. Create, update or reopen a posting `{ managerId, id?, title, payMin, payMax, openings?, mode?, area?, must?, nice?, sponsors? }` through the same checks as a text post (an adult, active, opted-in manager). Audited as `save_posting`. |
+| `POST /postings/:id/close` | admin | peon only. `{ reason: "closed" \| "filled" }`; open seat items that are not booked end at once. Audited as `close_posting`. |
+| `POST /employers/:memberId/verify` | admin | peon only. `{ company, note }` (note 5+ characters): the company fact and `peon:verified` on the manager. peonPack proposes no job of an unverified employer. Audited as `verify_employer`. |
 | `/review-mode` | none | Always 404. Production review is "human" only (PRD 32.8). The service refuses any other mode at start. |
 
 A refused action answers 409 with the Network's reason (for example `participant_minor`, `matching_paused`, `not_in_review`). A new stored state starts with matching off (runbook-real 7.4 check 8). An admin turns it on.

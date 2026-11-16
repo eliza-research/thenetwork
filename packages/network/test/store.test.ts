@@ -78,13 +78,13 @@ describe("exportState / importState", () => {
     const w = await scripted();
     const s = w.net.exportState();
     expect(s.version).toBe(NETWORK_STATE_VERSION);
-    const again = new ConsentNetwork({ seed: 1, review: "auto" });
+    const again = new ConsentNetwork({ seed: 1, review: "auto", engine: { cities: ["nyc"] } });
     again.init(w.ctx());
     again.importState(JSON.parse(JSON.stringify(s)));
     expect(again.exportState()).toEqual(s);
     expect(() => again.importState({ ...s, version: 99 })).toThrow();
     // The review mode is never stored: a human-review Network stays human after importing a simulator state.
-    const human = new ConsentNetwork({ seed: 1 });
+    const human = new ConsentNetwork({ seed: 1, engine: { cities: ["nyc"] } });
     human.importState(s);
     expect(human.reviewMode()).toBe("human");
   }, T);
@@ -224,7 +224,7 @@ class Restartable implements NetworkUnderTest {
 }
 
 async function nycWorld(days: number, restartAtDay?: number) {
-  const seed = 3, opts: NetworkOptions = { seed, review: "auto" };
+  const seed = 3, opts: NetworkOptions = { seed, review: "auto", engine: { cities: ["nyc"] } };
   const personas = await nycPersonas();
   const start = (await fileAt(`${DATA_DIR}/manifest.json`).json()).snapshotNow as number;
   const net = new Restartable(new ConsentNetwork(opts), opts);
@@ -263,7 +263,7 @@ describe("runTick and the tick lock", () => {
     const w = await scripted();
     const store = new MemoryStore();
     await store.save(w.net.exportState());
-    const fresh = new ConsentNetwork({ seed: 1, review: "auto", store });
+    const fresh = new ConsentNetwork({ seed: 1, review: "auto", store, engine: { cities: ["nyc"] } });
     fresh.init(w.ctx());
     const now = w.clock.now() + HOUR;
     w.clock.set(now);
@@ -281,7 +281,7 @@ describe("runTick and the tick lock", () => {
     await w.onboard("a", "b");
     const store = new MemoryStore();
     await store.save(w.net.exportState());
-    const two = () => { const n = new ConsentNetwork({ seed: 1, review: "auto", store }); n.init(w.ctx()); return n; };
+    const two = () => { const n = new ConsentNetwork({ seed: 1, review: "auto", store, engine: { cities: ["nyc"] } }); n.init(w.ctx()); return n; };
     const A = two(), B = two();
     const optedOut = async () => (await store.load())!.members.find(m => m.id === "a")!.optedOut;
     const at = (h: number) => { const t = w.clock.now() + h * HOUR; w.clock.set(t); return t; };
@@ -361,7 +361,7 @@ describe.skipIf(!pgAvailable)("PgStore", () => {
     expect(inner).toBeUndefined();
     expect(await b.withTickLock(async () => "b ran")).toBe("b ran");
     // runTick against Postgres: a fresh Network loads, ticks and saves.
-    const net = new ConsentNetwork({ seed: 1, review: "auto", store: b });
+    const net = new ConsentNetwork({ seed: 1, review: "auto", store: b, engine: { cities: ["nyc"] } });
     net.init(w.ctx());
     const now = w.clock.now() + HOUR;
     w.clock.set(now);

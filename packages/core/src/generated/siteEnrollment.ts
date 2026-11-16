@@ -145,6 +145,32 @@ export function finishJoin(joining: Enrollment, hookSucceeded: boolean): Enrollm
   return { ...joining, phase: hookSucceeded ? "Created" : "JoinHookFailed" };
 }
 
+/** Story: Save my approved profile in the app I asked for / The approved profile reaches onboarding and its stated age counts (spec/siteEnrollment.md) */
+//@ pure
+export function profileJoinAge(typedAge: number, profileAge: number, profileStatesAge: boolean): number {
+  return profileStatesAge && profileAge < typedAge ? profileAge : typedAge;
+}
+
+/** Story: Save my approved profile in the app I asked for / The approved profile reaches onboarding and its stated age counts (spec/siteEnrollment.md) */
+//@ pure
+export function profileAgeCounts(statedExplicitly: boolean, declinedForAge: boolean, ageMatchable: boolean): boolean {
+  return statedExplicitly || declinedForAge || !ageMatchable;
+}
+
+/** Story: Save my approved profile in the app I asked for / The approved profile reaches onboarding and its stated age counts (spec/siteEnrollment.md) */
+//@ pure
+export function lawProfileMinorAgeAlwaysCounts(statedExplicitly: boolean, declinedForAge: boolean): boolean {
+  //@ ensures \result === true
+  return profileAgeCounts(statedExplicitly, declinedForAge, false);
+}
+
+/** Story: Save my approved profile in the app I asked for / The approved profile reaches onboarding and its stated age counts (spec/siteEnrollment.md) */
+//@ pure
+export function lawProfileAgeNeverRaisesJoinAge(typedAge: number, profileAge: number, profileStatesAge: boolean): boolean {
+  //@ ensures \result === true
+  return profileJoinAge(typedAge, profileAge, profileStatesAge) <= typedAge && (!profileStatesAge || profileJoinAge(typedAge, profileAge, profileStatesAge) <= profileAge);
+}
+
 /** Story: Save my approved profile in the app I asked for / Success requires an eligible profile with current consent (spec/siteEnrollment.md) */
 //@ pure
 export function alwaysSuccessUsesEligibleProfile(joining: Enrollment): boolean {

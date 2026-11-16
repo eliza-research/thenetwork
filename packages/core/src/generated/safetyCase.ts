@@ -14,7 +14,7 @@ export type ReportDecision = "HoldReport" | "BanReport" | "DismissReport";
 
 /** One variant per transition in the spec. */
 export type Event =
-  | { type: "recordCaseEvent"; liftEvent: boolean }
+  | { type: "recordCaseEvent"; liftEvent: boolean; decayEvent: boolean }
   | { type: "markCaseHeld" }
   | { type: "markCaseLifted" }
   | { type: "closeCase" };
@@ -36,9 +36,22 @@ export function canRecordCaseEvent(c: SafetyCase): boolean {
 
 /** Story: Review a safety case without removing a hold by accident / An event opens a case or adds to its current record (spec/safetyCase.md) */
 //@ pure
-export function recordCaseEvent(c: SafetyCase, liftEvent: boolean): SafetyCase {
+export function recordCaseEvent(c: SafetyCase, liftEvent: boolean, decayEvent: boolean): SafetyCase {
   //@ ensures (inv(c) && canRecordCaseEvent(c)) ==> stepClosedCaseStaysClosed(c, \result)
-  return c.phase === "NoCase" || (c.phase === "CaseLifted" && !liftEvent) ? ({ phase: "CaseOpen" } as SafetyCase) : c;
+  return decayEvent ? c : (c.phase === "NoCase" || (c.phase === "CaseLifted" && !liftEvent) ? ({ phase: "CaseOpen" } as SafetyCase) : c);
+}
+
+/** Story: Review a safety case without removing a hold by accident / An event opens a case or adds to its current record (spec/safetyCase.md) */
+//@ pure
+export function lawDecayNeverOpensCase(liftEvent: boolean): boolean {
+  //@ ensures \result === true
+  return equal_safetyCase(recordCaseEvent(initial, liftEvent, true), initial);
+}
+
+/** Story: Review a safety case without removing a hold by accident / A recorded hold or lift updates the open case (spec/safetyCase.md) */
+//@ pure
+export function liveCase(c: SafetyCase): boolean {
+  return c.phase !== "NoCase" && c.phase !== "CaseClosed";
 }
 
 /** Story: Review a safety case without removing a hold by accident / A recorded hold or lift updates the open case (spec/safetyCase.md) */
@@ -82,8 +95,8 @@ export function sometimesCaseWasLifted(c: SafetyCase): boolean {
 
 /** Story: Review a safety case without removing a hold by accident / A recorded hold or lift updates the open case (spec/safetyCase.md) */
 //@ pure
-export function liveCase(c: SafetyCase): boolean {
-  return c.phase !== "NoCase" && c.phase !== "CaseClosed";
+export function canMarkCaseHeld(c: SafetyCase): boolean {
+  return liveCase(c);
 }
 
 /** Story: Review a safety case without removing a hold by accident / A recorded hold or lift updates the open case (spec/safetyCase.md) */
@@ -95,12 +108,6 @@ export function canMarkCaseLifted(c: SafetyCase): boolean {
 /** Story: Review a safety case without removing a hold by accident / A recorded hold or lift updates the open case (spec/safetyCase.md) */
 //@ pure
 export function canCloseCase(c: SafetyCase): boolean {
-  return liveCase(c);
-}
-
-/** Story: Review a safety case without removing a hold by accident / A recorded hold or lift updates the open case (spec/safetyCase.md) */
-//@ pure
-export function canMarkCaseHeld(c: SafetyCase): boolean {
   return liveCase(c);
 }
 
@@ -147,6 +154,19 @@ export function lawDismissedReportStaysDismissed(decision: ReportDecision, sameM
   return reportAfterDecision("ReportDismissed", decision, sameMember, reportMatches) === "ReportDismissed";
 }
 
+/** Story: Resolve a report with its own disposition / A ban allows only carrier commands and app leave (spec/safetyCase.md) */
+//@ pure
+export function inboundAllowedAfterBan(banned: boolean, compliance: boolean): boolean {
+  return !banned || compliance;
+}
+
+/** Story: Resolve a report with its own disposition / A ban allows only carrier commands and app leave (spec/safetyCase.md) */
+//@ pure
+export function lawBanBlocksOrdinaryInbound(compliance: boolean): boolean {
+  //@ ensures \result === true
+  return inboundAllowedAfterBan(true, compliance) === compliance;
+}
+
 /** Story: Clear a mistaken minor signal after checking ages / A clear requires a known adult record and no stated minor age (spec/safetyCase.md) */
 //@ pure
 export function minorClearResult(actorPresent: boolean, memberKnown: boolean, hasSignal: boolean, ageKnown: boolean, recordMinor: boolean, statedMinor: boolean): StaffActionResult {
@@ -168,7 +188,7 @@ export function enabled(current: SafetyCase, event: Event): boolean {
 export function step(current: SafetyCase, event: Event): SafetyCase {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "recordCaseEvent" && canRecordCaseEvent(current)) return recordCaseEvent(current, event.liftEvent);
+  if (event.type === "recordCaseEvent" && canRecordCaseEvent(current)) return recordCaseEvent(current, event.liftEvent, event.decayEvent);
   if (event.type === "markCaseHeld" && canMarkCaseHeld(current)) return markCaseHeld(current);
   if (event.type === "markCaseLifted" && canMarkCaseLifted(current)) return markCaseLifted(current);
   if (event.type === "closeCase" && canCloseCase(current)) return closeCase(current);
@@ -189,7 +209,7 @@ export function parseEvent(x: unknown): Event | undefined {
     return undefined;
   }
   if (typeof raw !== "object" || raw === null) return undefined;
-  if (raw.type === "recordCaseEvent" && typeof raw.liftEvent === "boolean") return { type: "recordCaseEvent", liftEvent: raw.liftEvent };
+  if (raw.type === "recordCaseEvent" && typeof raw.liftEvent === "boolean" && typeof raw.decayEvent === "boolean") return { type: "recordCaseEvent", liftEvent: raw.liftEvent, decayEvent: raw.decayEvent };
   if (raw.type === "markCaseHeld") return { type: "markCaseHeld" };
   if (raw.type === "markCaseLifted") return { type: "markCaseLifted" };
   if (raw.type === "closeCase") return { type: "closeCase" };
@@ -219,4 +239,12 @@ export function parseState(x: unknown): SafetyCase | undefined {
 export function initialHolds(): SafetyCase {
   //@ ensures inv(\result)
   return initial;
+}
+
+/** Equality by structure, as Quint and the proof compare records, lists, maps and variants (none holds a set). */
+export function equal_safetyCase(a: unknown, b: unknown): boolean {
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return a === b;
+  const keys = Object.keys(a);
+  return Array.isArray(a) === Array.isArray(b) && keys.length === Object.keys(b).length
+    && keys.every((k) => Object.hasOwn(b, k) && equal_safetyCase((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
 }

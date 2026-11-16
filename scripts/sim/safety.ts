@@ -500,8 +500,8 @@ async function pgPart(b: Block): Promise<void> {
     });
 
     await b.run("pg: X-Network-Staff-Id from a token other than the console's is ignored: the token is the reviewer of record", async () => {
-      await staff("/review/opp_none", REVIEWER, { decision: "approve" });
-      await staff("/review/opp_none2", CONSOLE, { decision: "approve" });
+      await staff("/review/opp_none", REVIEWER, { decision: "approve", revision: 0 });
+      await staff("/review/opp_none2", CONSOLE, { decision: "approve", revision: 0 });
       const rows = await svc.sql`select target_id, actor from network.staff_audit where action = 'review' and target_id in ('opp_none', 'opp_none2') and detail->>'phase' = 'requested' order by target_id`;
       expect(rows.map((r: any) => [r.target_id, r.actor === "pat@example.com"])).toEqual([["opp_none", false], ["opp_none2", true]]);
     });

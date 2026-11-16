@@ -37,7 +37,8 @@ export class Mini {
   constructor(specs: Spec[], opts: NetworkOptions = {}) {
     for (const s of specs) this.add(s);
     // No engine opportunities unless a test asks for them: flows here are driven explicitly.
-    this.opts = { seed: 1, review: "auto", maxNewPerDay: 0, ...opts };
+    // The mini world is one market (NYC) unless a test names others.
+    this.opts = { seed: 1, review: "auto", maxNewPerDay: 0, ...opts, engine: { cities: ["nyc"], ...opts.engine } };
     this.net = new ConsentNetwork(this.opts);
     this.net.init(this.ctx());
   }

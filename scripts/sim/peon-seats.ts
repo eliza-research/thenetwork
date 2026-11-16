@@ -195,19 +195,21 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
     r.selectedOwn === 0 && r.selectedExpected === 1 && r.queued === 1 && r.beforeReview && r.candidateFirst && r.managerAfterYes && r.result && r.restored), JSON.stringify({ rows: ownerRows }));
 
   await b.run("intake rules: a job post is read from text, read back, and needs a title and a pay range", () => {
+    // No posting is stored yet: the lookup an update or close reads from finds nothing.
+    const storedPosting = () => undefined;
     const d = parsePosting(POST);
     expect(d).toMatchObject({ title: "data analyst", openings: 2, payMin: 90, payMax: 120, mode: "hybrid", area: "brooklyn", seniority: 2, must: [{ skill: "sql", level: 2 }] });
-    const step = readPostingText(POST, { postings: [], newId: "p-new" })!;
+    const step = readPostingText(POST, { postings: [], newId: "p-new", storedPosting })!;
     expect(step.ready).toBe(true);
     expect(step.text).toMatch(/Reply yes to post it/);
-    const noPay = readPostingText("We're hiring a barista, 1 opening", { postings: [], newId: "p-2" })!;
+    const noPay = readPostingText("We're hiring a barista, 1 opening", { postings: [], newId: "p-2", storedPosting })!;
     expect(noPay.ready).toBe(false);
     expect(noPay.text).toBe(POSTING_COPY.askPay);
-    const fixed = readPostingText("$40k-$50k", { draft: noPay.draft!, postings: [], newId: "p-3" })!;
+    const fixed = readPostingText("$40k-$50k", { draft: noPay.draft!, postings: [], newId: "p-3", storedPosting })!;
     expect(fixed.ready).toBe(true);
     expect(fixed.draft).toMatchObject({ id: "p-2", title: "barista", payMin: 40, payMax: 50 });
     // Not a posting command, no draft waiting: not about a posting (the turn goes on as usual).
-    expect(readPostingText("Any jobs for me this week?", { postings: [], newId: "p-4" })).toBeUndefined();
+    expect(readPostingText("Any jobs for me this week?", { postings: [], newId: "p-4", storedPosting })).toBeUndefined();
   });
 
   const w = new SeatWorld();

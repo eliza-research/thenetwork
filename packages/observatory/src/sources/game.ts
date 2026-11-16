@@ -204,7 +204,7 @@ export class GameSource implements DataSource {
     this.judgeHour = -1; this.healthHour = -1;
     this.recent = []; this.optOutAt.clear(); this.inviters.clear(); this.guardFallback.clear(); this.configHistory = [];
     this.consent = o.network === "consent" ? new ConsentNetwork({
-      seed: o.seed, review: o.review, ...(o.engine === "off" ? { maxNewPerDay: 0 } : {}), ...(matchingAllowed(this.app) ? {} : { matchingEnabled: false }),
+      seed: o.seed, review: o.review, engine: { cities: ["nyc"] }, ...(o.engine === "off" ? { maxNewPerDay: 0 } : {}), ...(matchingAllowed(this.app) ? {} : { matchingEnabled: false }),
       onEngineRun: (log, proposals, at) => {
         const sum = summarizeRun(log, proposals, { at, city: "nyc", wallMs: Math.round(log.timingsMs.total ?? 0) });
         this.store.addRun(sum);
@@ -709,6 +709,7 @@ export class GameSource implements DataSource {
           if (typeof cmd.secondsSpent === "number") opts.secondsSpent = cmd.secondsSpent;
           if (cmd.decision === "edit") { opts.explanations = cmd.explanations; opts.objective = cmd.objective; }
           if (cmd.decision === "reroll" && cmd.swapOut) opts.swapOut = cmd.swapOut;
+          if (typeof cmd.revision === "number") opts.revision = cmd.revision;
           const r = this.consent.decide(cmd.oppId, cmd.decision, opts);
           await this.settle();
           this.push();

@@ -14,7 +14,6 @@ export const PEON_SAFE_FALLBACK = "A new job fit for you.";
 const EMPLOYER_FALLBACK = "A new yes for your job.";
 // Not "peon.biz never asks...": the core leak guard reads a domain as contact details.
 export const NEVER_ASKS = "We never ask for money, bank details or your SSN.";
-export const LANE_LABEL = { professional: "a job introduction" } as const;
 export const LANE_ACTIVITY: Record<string, string> = { professional: "a role that fits what you asked for" };
 
 const human = (s: string) => s.replace(/_/g, " ");
@@ -28,6 +27,7 @@ export function peonProbeText(activity: string): string {
 
 /** Explanation lead bits (ExplainPack.leadBits): candidates hear about the job, employers get the must-have checklist. */
 export function peonLeadBits(w: World, c: Candidate, me: MemberId): string[] | undefined {
+  if (c.lane === "Cofounder") return ["You both asked to meet a potential cofounder."];
   const s = sides(w, c.participants);
   if (!s) return undefined;
   // Fixed copy can collide with words in someone's private facets: each sentence must pass the

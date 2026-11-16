@@ -3,10 +3,12 @@
 import type { Category, Member, MemberId } from "@thenetwork/core";
 import { ADULT_AGE as CORE_ADULT_AGE, canBeMatched, DAY, HOUR } from "@thenetwork/core";
 import { initial, step, type CheckPhase } from "../../core/src/generated/candidateScreening.ts";
+import { laneSidesCompatible, type MatchLane } from "../../core/src/generated/matchLane.ts";
 import { publicEventMemberAllowsMatch } from "../../core/src/generated/publicEventCatalog.ts";
 import type { EngineConfig } from "./config.ts";
+import type { MatchProfile } from "./match/profile.ts";
 import type { Candidate } from "./types.ts";
-import { pairKey, type World } from "./world.ts";
+import { pairKey, type MemberIndex, type World } from "./world.ts";
 
 /**
  * Funnel reasons. The core reasons (unknown_member, underage, safety_hold, state_paused, blocked,
@@ -19,7 +21,8 @@ export type FilterReason =
   | "contribution_budget" | "category_quota" | "category_cooldown" | "reliability_holdout"
   | "blocked" | "negative_feedback_cooldown" | "pair_cooldown" | "active_duplicate"
   | "romance_incompatible" | "dealbreaker" | "high_risk" | "home_entry_rule"
-  | "no_presence_overlap" | "group_size" | "romance_group" | "duplicate_participant" | (string & {});
+  | "no_presence_overlap" | "group_size" | "romance_group" | "duplicate_participant"
+  | "no_lane" | "no_pair_value" | (string & {});
 
 import type { MemberCheck } from "./pack.ts";
 export type { MemberCheck };
@@ -72,8 +75,17 @@ export function memberReason(w: World, id: MemberId, c: MemberCheck): FilterReas
   return null;
 }
 
+/** Both members' romance preferences admit each other (opt-in, stated orientation, age range). */
+export function romanceMutual(w: World, a: MemberId, b: MemberId): boolean {
+  const A = w.get(a), B = w.get(b);
+  if (!A || !B) return false;
+  const admits = (x: MemberIndex, y: MemberIndex) => !!x.romance && x.m.prefs.romanceOptIn && !!y.romance && y.romance.is.some(g => x.romance!.seeks.includes(g))
+    && (y.m.age ?? 0) >= x.romance.ageMin && (y.m.age ?? 0) <= x.romance.ageMax;
+  return admits(A, B) && admits(B, A);
+}
+
 /** Pair-level hard constraints. Completed / positive history never blocks (ME-005). */
-export function pairReason(w: World, a: MemberId, b: MemberId, category: Category): FilterReason | null {
+export function pairReason(w: World, a: MemberId, b: MemberId, category: Category, lane?: MatchLane): FilterReason | null {
   if (a === b) return "duplicate_participant";
   if (isMinor(w, a) || isMinor(w, b)) return "underage"; // minors are never paired with anyone
   // Core prefix: blocks win (either direction).
@@ -83,11 +95,11 @@ export function pairReason(w: World, a: MemberId, b: MemberId, category: Categor
   if (!ma || !mb) return "unknown_member";
   // Pack rules in order (networkPack: cooldowns, active duplicate, known members, romance, dealbreakers).
   for (const r of w.pack.eligibility.pairRules) {
-    const reason = r.check(w, a, b, category, ma, mb);
+    const reason = r.check(w, a, b, category, ma, mb, lane);
     if (reason) return reason;
   }
   // Optional geo hard filter (radius packs: mutual radius). Absent for networkPack.
-  return w.pack.geo.pairReason?.(w, a, b) ?? null;
+  return w.pack.geo.pairReason?.(w, a, b, lane) ?? null;
 }
 
 /**
@@ -165,7 +177,8 @@ export function isHomeEntry(cfg: EngineConfig, text: string): boolean {
 
 export interface RunUsage { proactive: Map<MemberId, number>; contribution: Map<MemberId, number> }
 
-export type CandidateScreenResult = { phase: "Passed" } | { phase: "Refused"; refusal: FilterReason };
+/** A passed candidate carries the alternates that keep a pair value with the primary participants; the caller applies them. */
+export type CandidateScreenResult = { phase: "Passed"; alternates: MemberId[] } | { phase: "Refused"; refusal: FilterReason };
 
 type ScreeningCheck = Exclude<CheckPhase, CandidateScreenResult["phase"]>;
 
@@ -177,7 +190,7 @@ export function screenCandidate(w: World, c: Candidate, usage?: RunUsage): Candi
     const checked = screen.phase;
     screen = step(screen, { type: "recordCheck", checked, reason: screeningReason(checked, w, c, usage) ?? "" });
   }
-  return screen.phase === "Passed" ? { phase: "Passed" } : { phase: "Refused", refusal: screen.refusal };
+  return screen.phase === "Passed" ? { phase: "Passed", alternates: keptAlternates(w, c) } : { phase: "Refused", refusal: screen.refusal };
 }
 
 /** Returns the first failing reason or null for callers that need only the original reason. */
@@ -214,7 +227,7 @@ function screeningReason(check: ScreeningCheck, w: World, c: Candidate, usage?: 
       for (const id of c.participants) {
         const own = c.anchor?.type === "intent" ? w.intentById.get(c.anchor.id) : undefined;
         const reason = memberReason(w, id, {
-          category: c.category, role: c.roles[id] ?? "peer", format: c.format, timeSensitive: c.timeSensitive,
+          category: c.category, role: c.roles[id] ?? "peer", format: c.format, timeSensitive: c.timeSensitive, lane: c.lane,
           extraProactive: usage?.proactive.get(id), extraContribution: usage?.contribution.get(id),
           ownIntentCreatedAt: own && own.memberId === id ? own.createdAt : undefined,
         });
@@ -223,13 +236,91 @@ function screeningReason(check: ScreeningCheck, w: World, c: Candidate, usage?: 
       return null;
     case "Pairs":
       for (let i = 0; i < c.participants.length; i++) for (let j = i + 1; j < c.participants.length; j++) {
-        const reason = pairReason(w, c.participants[i]!, c.participants[j]!, c.category);
+        const reason = pairReason(w, c.participants[i]!, c.participants[j]!, c.category, c.lane);
         if (reason) return reason;
       }
-      return null;
+      return c.participants.length < 2 ? null : laneReason(w, c);
     case "Presence":
       return presenceReason(w, c);
   }
+}
+
+type LaneSeats = Pick<Candidate, "participants" | "lane" | "entities">;
+
+/** A participant's profile in the lane: the entity the candidate names for it, else its own membership. */
+function laneProfile(w: World, c: LaneSeats, id: MemberId, lane: MatchLane): MatchProfile | undefined {
+  const entity = c.entities?.[id];
+  const profile = entity === undefined ? w.match.profileIn(id, lane) : w.match.profile(entity);
+  return profile?.lane === lane && profile.memberId === id ? profile : undefined;
+}
+
+/**
+ * The pair values the candidate's lane requires: every pair in a Peers lane, each Offering-Seeking
+ * pair in a TwoSided lane (spec/matchLane.md, "Two members pair only on compatible sides of the
+ * same lane"). Null when there is no lane, a participant has no profile in it, or it pairs nobody.
+ */
+export function requiredPairValues(w: World, c: LaneSeats): readonly number[] | null {
+  const lane = c.lane;
+  if (!lane) return null;
+  // Screening, scoring and the judge rescore ask for the same candidate; compute its values once.
+  const seats = `${lane}|${c.participants.join(",")}|${c.participants.map(id => c.entities?.[id] ?? "").join(",")}`;
+  const known = pairValueMemo.get(c);
+  if (known && known.w === w && known.seats === seats) return known.values;
+  const values = pairValuesOf(w, c, lane);
+  pairValueMemo.set(c, { w, seats, values });
+  return values;
+}
+
+const pairValueMemo = new WeakMap<LaneSeats, { w: World; seats: string; values: readonly number[] | null }>();
+
+function pairValuesOf(w: World, c: LaneSeats, lane: MatchLane): readonly number[] | null {
+  const profiles: MatchProfile[] = [];
+  for (const id of c.participants) {
+    const profile = laneProfile(w, c, id, lane);
+    if (!profile) return null;
+    profiles.push(profile);
+  }
+  const values: number[] = [];
+  for (let i = 0; i < profiles.length; i++) for (let j = i + 1; j < profiles.length; j++) {
+    if (laneSidesCompatible(lane, profiles[i]!.side, profiles[j]!.side)) values.push(w.match.value(profiles[i]!, profiles[j]!));
+  }
+  return values.length > 0 ? values : null;
+}
+
+/** An alternate stays only when it has a pair value with every primary participant the lane pairs it with. */
+function alternateFits(w: World, c: Candidate, lane: MatchLane, id: MemberId): boolean {
+  const alternate = laneProfile(w, c, id, lane);
+  if (!alternate) return false;
+  let paired = false;
+  for (const primary of c.participants) {
+    const profile = laneProfile(w, c, primary, lane)!;
+    if (!laneSidesCompatible(lane, alternate.side, profile.side)) continue;
+    if (w.match.value(alternate, profile) < 0) return false;
+    paired = true;
+  }
+  return paired;
+}
+
+/**
+ * Pair eligibility and parity for every screened candidate: a candidate with two or more
+ * participants names a lane, and every pair the lane requires has a pair value through the one pair
+ * gate (w.match.value).
+ */
+function laneReason(w: World, c: Candidate): FilterReason | null {
+  if (!c.lane) return "no_lane";
+  const values = requiredPairValues(w, c);
+  return !values || values.some(value => value < 0) ? "no_pair_value" : null;
+}
+
+/**
+ * The alternates that keep a pair value with every primary participant the lane pairs them with; a
+ * failing alternate is dropped and never refuses the candidate. With one participant an alternate
+ * replaces that participant and pairs with nobody, so there is no pair to check.
+ */
+function keptAlternates(w: World, c: Candidate): MemberId[] {
+  const lane = c.lane;
+  if (!lane || c.participants.length < 2) return [...c.alternates];
+  return c.alternates.filter(id => alternateFits(w, c, lane, id));
 }
 
 /** Resolve the shared city and window after the other checks (ME-011). */

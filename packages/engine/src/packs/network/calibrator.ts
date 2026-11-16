@@ -1,4 +1,4 @@
-// The Network's enjoyment calibrator knots (networkPack.attention.calibrator), moved verbatim from
+// The Network's enjoyment calibrator knots (read by attention.ts for every pack), moved verbatim from
 // attention.ts. Data fitted on Network sim labels (seeds 101-104); every pack fits its own.
 import type { Category } from "@thenetwork/core";
 

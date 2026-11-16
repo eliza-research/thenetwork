@@ -101,3 +101,21 @@ pure def countAfterPrompt(previous: int): int = previous + 1
 pure def lawCorrectionNeedsConfirmation(affirmative: bool, restricted: bool): bool =
   not(confirmationAfterAnswer(true, affirmative, restricted))
 ```
+
+### Only a plain yes confirms the read-back
+
+The shell reads the member's answer to a read-back with the shared reply parser. It reports whether the parser read a yes, whether it read a no, whether the answer is qualified, and whether the answer is only a short affirmation word that the parser does not know ("right", "perfect"). An answer is qualified when it has a condition or a time limit, a question, or a hedge ("right, maybe", "perfect, if 11211 includes Greenpoint", "right?"). A qualified answer or a no never confirms the profile. A plain yes, or a short affirmation with nothing after it, is an affirmation.
+
+```quint
+pure def readbackAffirmed(answeredYes: bool, answeredNo: bool, qualified: bool, bareAffirmation: bool): bool =
+  not(qualified) and not(answeredNo) and (answeredYes or bareAffirmation)
+
+pure def lawQualifiedReadbackAnswerNeverConfirms(changed: bool, answeredYes: bool, answeredNo: bool, bareAffirmation: bool, restricted: bool): bool =
+  not(confirmationAfterAnswer(changed, readbackAffirmed(answeredYes, answeredNo, true, bareAffirmation), restricted))
+
+pure def lawRefusedReadbackNeverConfirms(changed: bool, answeredYes: bool, qualified: bool, bareAffirmation: bool, restricted: bool): bool =
+  not(confirmationAfterAnswer(changed, readbackAffirmed(answeredYes, true, qualified, bareAffirmation), restricted))
+
+pure def lawPlainYesConfirmsUnchangedReadback(answeredNo: bool, restricted: bool): bool =
+  confirmationAfterAnswer(false, readbackAffirmed(true, answeredNo, false, false), restricted) iff (not(answeredNo) and not(restricted))
+```
