@@ -39,7 +39,9 @@ needs approval. Link the specific story or rule when you propose a change.
   [spec reference](SPEC.md#writing-a-spec).
 - Use the generated TypeScript for the decision in the owning package.
   Run `pnpm run spec:sync` to publish the generated modules. Commit the
-  source spec and the published modules together.
+  source spec and the published modules together. Generation and snapshot
+  comparison reuse Quint runs under `.spec-cache/snapshots/` when their
+  effective inputs match. Both commands compile the current VibeLang shells.
 - Keep the relevant [whole-flow model](spec/models/README.md) consistent
   with the runtime. Compare the guards, outcomes, and invariants where
   the generated rule enters the flow.
