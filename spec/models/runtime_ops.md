@@ -10,6 +10,9 @@ Check stored writes, retention, ticks, alerts, backup recovery, and shutdown. Th
 
 The [runtime unit spec](../runtimeUnit.md) generates load, restore, action, save, and adapter follow-up decisions. The shell owns the queue, database advisory locks, and transaction commit.
 
+The [platform retention rules](../platformRetention.md) set the account
+and inbox cutoffs and retain counters needed for STOP hints.
+
 The [alert dispatch spec](../opsAlertDispatch.md) follows the current
 backend when a metrics read fails or an alert could not post. The backend
 evaluates the alerts it could collect, may close a missing episode without

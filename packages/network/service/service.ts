@@ -36,6 +36,7 @@ import type { ActionResult, NetworkOptions, NetworkState, ReviewDecision, Review
 import { brandOf, copy as ntwrkCopy, copyFor, ELIZA_NOTICE, type Copy } from "../src/copy.ts";
 import { isMinor } from "@thenetwork/core";
 import { personDailyCap } from "../../core/src/generated/outreachPolicy.ts";
+import { inboxKeepMs, platformKeepMs, stopHintWindowMs } from "../../core/src/generated/platformRetention.ts";
 import { stopCoversEveryApp } from "../../core/src/generated/sharedLineConsentJourney.ts";
 import { ageAnswer, agesStated } from "../src/classify.ts";
 import { NetworkRuntime, type RuntimeHost } from "./runtime.ts";
@@ -582,9 +583,9 @@ export class NetworkService implements RuntimeHost {
     for (const app of new Set([...this.runtimes.values()].map(rt => rt.app.id))) {
       await this.profileSuggestions.expirePending(app, this.clock.now()).catch(e => this.log(`[purge] profile suggestions failed: ${(e as Error).message}`));
     }
-    const n = await this.people.purge(this.clock.now() - 2 * DAY).catch(e => { this.log(`[purge] failed: ${(e as Error).message}`); return 0; });
+    const n = await this.people.purge(this.clock.now() - platformKeepMs).catch(e => { this.log(`[purge] failed: ${(e as Error).message}`); return 0; });
     // The inbox keeps handled ids a week (dedupe); the line keeps no counters for an address that is nobody's phone.
-    await this.inbox.purge(this.clock.now() - 7 * DAY).catch(e => this.log(`[purge] inbox failed: ${(e as Error).message}`));
+    await this.inbox.purge(this.clock.now() - inboxKeepMs).catch(e => this.log(`[purge] inbox failed: ${(e as Error).message}`));
     await this.lineAdapter()?.purge?.().catch(e => { this.log(`[purge] line counters failed: ${(e as Error).message}`); return 0; });
     if (n) this.log(`[purge] removed ${n} expired platform row(s)`);
     return n;
@@ -1181,7 +1182,7 @@ export class NetworkService implements RuntimeHost {
     const key = this.phoneKey(e164);
     if (resolveConsent(await this.people.lastConsent(e164, app.id)) !== "opted_out" || (await this.people.isSuppressed(key))) return;
     if (await this.people.isBanned(key, (await this.people.findPhone(e164))?.personId ?? null)) return;
-    const { ok } = await this.people.hit(`stop_hint:${app.id}:${key}`, 30 * DAY, this.clock.now(), { minGapMs: 30 * DAY });
+    const { ok } = await this.people.hit(`stop_hint:${app.id}:${key}`, stopHintWindowMs, this.clock.now(), { minGapMs: stopHintWindowMs });
     if (ok) await this.direct(rt, ev.from, app.brand.stoppedHint, `sys:${rowId}`, "compliance");
   }
 

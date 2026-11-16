@@ -2,6 +2,7 @@
 // interface with two implementations: MemoryPeopleStore (tests, dev) and PgPeopleStore (pg-store.ts).
 // Times are epoch milliseconds. Phone numbers are E.164.
 import type { City } from "../../core/src/types.ts";
+import { phoneChangePastRetention, rowBeforeCutoff, sessionPastRetention, stopHintWindowMs } from "../../core/src/generated/platformRetention.ts";
 import type { AppId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
 import { lastEvents } from "./consent.ts";
@@ -71,7 +72,7 @@ export type PhoneMoveResult = "ok" | "number_in_use" | "no_phone";
  * before the first ":") and its window. purge() keeps these rows until the window has passed, so a
  * rule such as "at most once in 30 days" (service.ts stopHint) still holds after a purge.
  */
-export const LONG_RATE_WINDOWS: Readonly<Record<string, number>> = { stop_hint: 30 * 24 * 3_600_000 };
+export const LONG_RATE_WINDOWS: Readonly<Record<string, number>> = { stop_hint: stopHintWindowMs };
 const rateKind = (bucket: string) => bucket.split(":", 1)[0]!;
 
 /** A rate-limit rule for hit(): a hit over `limit` in the window, or within `minGapMs` of the last counted hit, is refused and not counted. */
@@ -344,11 +345,11 @@ export class MemoryPeopleStore implements PeopleStore {
 
   async purge(before: number) {
     let n = 0;
-    for (const [k, c] of this.challenges) if (c.expiresAt < before) { this.challenges.delete(k); n++; }
-    for (const [k, s] of this.sessions) if (s.expiresAt < before || (s.revokedAt !== null && s.revokedAt < before)) { this.sessions.delete(k); n++; }
-    for (const [k, l] of this.limits) if (l.lastAt < before - (LONG_RATE_WINDOWS[rateKind(k)] ?? 0)) { this.limits.delete(k); n++; }
-    for (const [k, p] of this.pending) if (p.at < before) { this.pending.delete(k); n++; }
-    for (const [k, c] of this.phoneChanges) if (c.confirmedAt === null && c.requestedAt < before) { this.phoneChanges.delete(k); n++; }
+    for (const [k, c] of this.challenges) if (rowBeforeCutoff(c.expiresAt, before)) { this.challenges.delete(k); n++; }
+    for (const [k, s] of this.sessions) if (sessionPastRetention(s.expiresAt, s.revokedAt !== null, s.revokedAt ?? before, before)) { this.sessions.delete(k); n++; }
+    for (const [k, l] of this.limits) if (rowBeforeCutoff(l.lastAt, before - (LONG_RATE_WINDOWS[rateKind(k)] ?? 0))) { this.limits.delete(k); n++; }
+    for (const [k, p] of this.pending) if (rowBeforeCutoff(p.at, before)) { this.pending.delete(k); n++; }
+    for (const [k, c] of this.phoneChanges) if (phoneChangePastRetention(c.confirmedAt !== null, c.requestedAt, before)) { this.phoneChanges.delete(k); n++; }
     return n;
   }
 
