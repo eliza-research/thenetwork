@@ -4,14 +4,14 @@
 // or occupation, opportunity texts written for a member are dropped, and feed lines lose the names in
 // them. The oracle's verdict on an opportunity (hidden truth, game mode) is stripped for everyone
 // until the opportunity is resolved, unless this staff member has the truth lens on.
+import { fullStaffView } from "../../core/src/generated/staffPermissions.ts";
 import type { ObsDelta, ObsFeedItem, ObsMember, ObsOpportunity, ObsState, StaffRole } from "./types.ts";
 
 /** "full": staff who may open members (admin, reviewer, safety; engineer in simulated worlds). "counts": analysts. */
 export type ViewClass = "full" | "counts";
 
 /** The view for the roles a caller holds for one app (rolesFor() in staff.ts). */
-export const viewClass = (roles: ReadonlySet<StaffRole>): ViewClass =>
-  roles.has("admin") || roles.has("reviewer") || roles.has("safety") || roles.has("engineer") ? "full" : "counts";
+export const viewClass = (roles: ReadonlySet<StaffRole>): ViewClass => fullStaffView([...roles]) ? "full" : "counts";
 
 /** Opportunities whose outcome is known: the oracle's verdict is no longer a spoiler. */
 const RESOLVED = new Set(["COMPLETED", "FEEDBACK_COLLECTED", "ABANDONED"]);

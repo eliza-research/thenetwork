@@ -5,12 +5,15 @@
 // Copy rules: one question per message, about the member only; the read-back repeats only what the
 // member said (or the one stated default: straight after an unclear seeks answer), and never identity, orientation, age, kids, faith or anything the rules did not read.
 import { classifyYesNo } from "@thenetwork/core";
+import {
+  confirmationAfterAnswer, countAfterPrompt, initial, nextQuestionReason, readbackEligible, readbackReason, step,
+} from "../../../../core/src/generated/slopOnboarding.ts";
 import type { Gender } from "./profile.ts";
 import { SLOP_ASK_QUESTIONS } from "./copy.ts";
 import {
   extractSlopProfile, finalize, HARD_FIELDS, hasField, MAX_ASKS_PER_QUESTION, type Dealbreaker, type DateActivity, type ExtractOptions, type OnboardField, type SlopOnboarding,
 } from "./extract.ts";
-export { MAX_ASKS_PER_QUESTION };
+export { MAX_ASKS_PER_QUESTION, readbackReason as SLOP_READBACK };
 
 // ------------------------------------------------------------------------------------------ read-back
 
@@ -89,9 +92,8 @@ export function readBack(p: SlopOnboarding): string | undefined {
 export function applyCorrection(p: SlopOnboarding, text: string, o: ExtractOptions = {}): SlopOnboarding {
   const next = extractSlopProfile([{ text, asked: o.asked }], p, o);
   const changed = JSON.stringify(view(next)) !== JSON.stringify(view(p));
-  if (changed) return finalize({ ...next, confirmed: false });
-  const yes = classifyYesNo(text) === "yes" || /^\s*(?:right|correct|exactly|that'?s (?:it|right)|you got it|perfect|yup|yep|ya|ye|100|👍)\b/i.test(text);
-  return finalize({ ...next, confirmed: yes && !p.minor && !p.declined });
+  const yes = !changed && (classifyYesNo(text) === "yes" || /^\s*(?:right|correct|exactly|that'?s (?:it|right)|you got it|perfect|yup|yep|ya|ye|100|👍)\b/i.test(text));
+  return finalize({ ...next, confirmed: confirmationAfterAnswer(changed, yes, p.minor || p.declined) });
 }
 const view = (p: SlopOnboarding) => ({ g: p.gender?.value, s: p.seeks?.value, a: p.ageRange?.value, d: p.distance?.value, l: p.location?.value, goal: p.goal?.value, db: p.dealbreakers.map(d => d.value).sort(), i: p.interests.map(x => x.value).sort(), ac: p.activities.map(x => x.value).sort(), f: p.free.map(x => x.value).sort(), age: p.age?.value, v: Object.fromEntries(Object.entries(p.values).map(([k, x]) => [k, x?.value])) });
 
@@ -114,37 +116,48 @@ export const SLOP_ONBOARD_QUESTIONS: Record<string, { field: OnboardField; text:
   slop_free: { field: "free", text: "Which evenings or weekend times are usually free for you?" },
 };
 
-/**
- * The one next question to send, hard fields first (gender and seeking, age range, distance, then a
- * place), then the soft ones (goal and dealbreakers, interests, first-date ideas, free times).
- * Undefined when there is nothing left to ask, or for a minor or a declined person (no dating questions).
- */
+function questionFacts(p: SlopOnboarding) {
+  return {
+    ageMissing: !hasField(p, "age"), genderMissing: !hasField(p, "gender"), seeksMissing: !hasField(p, "seeks"),
+    ageRangeMissing: !hasField(p, "ageRange"), distanceMissing: !hasField(p, "distance"),
+    locationMissing: !hasField(p, "location"), unknownZip: !!p.location?.value.zip && !p.location.value.known,
+    dealbreakersMissing: !hasField(p, "dealbreakers"), goalMissing: !hasField(p, "goal"),
+    interestsMissing: !hasField(p, "interests"), activitiesMissing: !hasField(p, "activities"), freeMissing: !hasField(p, "free"),
+  };
+}
+
+function unavailableQuestions(p: SlopOnboarding, skip: readonly string[]) {
+  return Object.keys(SLOP_ONBOARD_QUESTIONS).filter(reason => skip.includes(reason) || !((p.askCounts[reason] ?? 0) < MAX_ASKS_PER_QUESTION));
+}
+
+/** The next question when the caller has already handled read-back. */
 export function nextQuestion(p: SlopOnboarding): { reason: string; field: OnboardField; text: string } | undefined {
   if (p.declined || p.minor) return undefined;
-  const can = (r: string) => (p.askCounts[r] ?? 0) < MAX_ASKS_PER_QUESTION;
-  const q = (r: string) => ({ reason: r, ...SLOP_ONBOARD_QUESTIONS[r]! });
-  const order: [boolean, string][] = [
-    [!hasField(p, "age"), "slop_age"],
-    [!hasField(p, "gender") && !hasField(p, "seeks"), "slop_orientation"],
-    [!hasField(p, "seeks"), "slop_seeks"],
-    [!hasField(p, "gender"), "slop_gender"],
-    [!hasField(p, "ageRange"), "slop_age_range"],
-    [!hasField(p, "distance"), "slop_distance"],
-    [!hasField(p, "location") && !!p.location?.value.zip && !p.location.value.known, "slop_zip"],
-    [!hasField(p, "location"), "slop_location"],
-    [!hasField(p, "dealbreakers") && !hasField(p, "goal"), "slop_basics"],
-    [!hasField(p, "goal"), "slop_goal"],
-    [!hasField(p, "interests"), "slop_interests"],
-    [!hasField(p, "activities"), "slop_activities"],
-    [!hasField(p, "free"), "slop_free"],
-  ];
-  for (const [need, r] of order) if (need && can(r)) return q(r);
-  return undefined;
+  const reason = nextQuestionReason(questionFacts(p), unavailableQuestions(p, []));
+  return reason ? { reason, ...SLOP_ONBOARD_QUESTIONS[reason]! } : undefined;
+}
+
+/** Route one service prompt from the current profile and its previous prompts. */
+export function nextOnboardingPrompt(p: SlopOnboarding, skip: readonly string[] = []): { reason: string; text: string } | undefined {
+  // spec/slopOnboarding.md, "Age restrictions stop dating onboarding before a prompt"
+  const restricted = p.minor || p.declined;
+  const wantsReadback = !restricted && readbackEligible(hardComplete(p), !!p.confirmed, skip.includes(readbackReason),
+    (p.askCounts[readbackReason] ?? 0) < MAX_ASKS_PER_QUESTION);
+  let prompt = step(initial, { type: "routeProfile", restricted, wantsReadback });
+  if (prompt.phase === "ReadbackOffered") {
+    const text = readBack(p);
+    prompt = step(prompt, { type: "resolveReadback", textAvailable: !!text });
+    if (prompt.phase === "ReadbackReady") return { reason: prompt.reason, text: text! };
+  }
+  if (prompt.phase !== "QuestionSearch") return undefined;
+  // spec/slopOnboarding.md, "Ask the first missing field that can still be requested"
+  prompt = step(prompt, { type: "chooseQuestion", facts: questionFacts(p), unavailable: unavailableQuestions(p, skip) });
+  return prompt.phase === "QuestionReady" ? { reason: prompt.reason, text: SLOP_ONBOARD_QUESTIONS[prompt.reason]!.text } : undefined;
 }
 
 /** Record that a question was sent (the re-ask cap). */
 export function markAsked(p: SlopOnboarding, reason: string): SlopOnboarding {
-  return { ...p, askCounts: { ...p.askCounts, [reason]: (p.askCounts[reason] ?? 0) + 1 } };
+  return { ...p, askCounts: { ...p.askCounts, [reason]: countAfterPrompt(p.askCounts[reason] ?? 0) } };
 }
 
 /** True when every hard field is set (the service then sends the read-back). */

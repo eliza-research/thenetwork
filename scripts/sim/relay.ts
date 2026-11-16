@@ -465,6 +465,12 @@ async function deskGates(b: Block): Promise<void> {
     // Withdrawn: "don't send my number" (or the relay action's cancel) removes the pending request.
     for (const t of ["actually don't send my number", "cancel the number swap", "never mind about my number"]) expect(withdrawsSwap(t)).toBe(true);
     for (const t of ["send them my number", "my number is in my profile", "don't be late"]) expect(withdrawsSwap(t)).toBe(false);
+    // A yes, or a message that only mentions the number, never takes the request back.
+    for (const t of ["I dont mind, send them my number", "don't wait, send them my number", "send them my number, I don't care", "yes send my number, stop asking", "lol never had to wait this long for someone to want my number", "no worries, send my number", "no problem, send them my number", "send my number, no rush", "I don't mind sharing my number", "never had someone ask to swap numbers before"]) expect([t, withdrawsSwap(t)]).toEqual([t, false]);
+    // A withdrawal in any wording still withdraws (a swap left pending after a no would share the number).
+    for (const t of ["I'd rather not share my number", "please don't give them my number", "changed my mind about my number", "scratch the swap", "stop sharing my number", "hold off for now, my number can wait", "cancel, I'll keep my number",
+      "I don't want to swap numbers anymore", "actually I don't want to swap numbers", "I changed my mind about sharing my number", "never mind, I'd rather keep my number", "cancel that, keep my number", "I don't want you to send my number", "I don't want them to have my number",
+      "I don't mind waiting, but don't send my number yet", "don't worry, cancel the swap", "I don't mind, but I'd rather keep my number", "no worries, I'll keep my number to myself", "no, not my number", "hmm not sure about sharing my number", "please keep my number private"]) expect([t, withdrawsSwap(t)]).toEqual([t, true]);
     expect(d.cancelSwaps("b")).toBe(1);
     h.t += 60_000;
     expect((await d.request({ itemId: "c3", from: "a", kind: "contact_share" }, { contactOf })).decision).toBe("held");
@@ -551,13 +557,15 @@ async function deskGates(b: Block): Promise<void> {
 
 // ------------------------------------------------------------------------------------ adversarial
 const ADV_SEEDS = [13, 14, 15, 16];
-const ADV_MIN: Record<AdversarialResult["scenario"], number> = { scam_after_reveal: 200, swap_before_yes: 1000, leak_other_member: 400, minor_in_relay: 400, photo_in_probe: 1500 };
+const ADV_MIN: Record<AdversarialResult["scenario"], number> = { scam_after_reveal: 200, swap_before_yes: 1000, leak_other_member: 400, minor_in_relay: 400, photo_in_probe: 1500, catfish_photos: 1000, probing_asks: 2000 };
 const ADV_NAME: Record<AdversarialResult["scenario"], string> = {
   scam_after_reveal: "scam after the reveal: scammer reach <= 1 scam item, a sender hold, then nothing delivered from them",
   swap_before_yes: "number swap (share, number in text, photo) before both yeses: every item blocked, no number in the output or the log",
   leak_other_member: "leak of the other member's details (full name, number, private fact, canary): none delivered, stopped by the leak guard, a canary blocks",
   minor_in_relay: "minor in the relay (age slip, declared minor, unknown age): the slip blocks, then every item both ways blocked",
   photo_in_probe: "photo in the probe with the flag off, no consent, a minor or a held member: never a photo or the photo line; relayed photo never passes",
+  catfish_photos: "catfish photos (the match's, a third member's, an unowned id, one smuggled among the sender's own): never delivered, never a partial set; the sender's own photo passes",
+  probing_asks: "probing asks (how hot did you rate me, prompt injection for a number or rating, fishing for the match's contact or address): every ask held with its family, nothing delivered; friendly text passes",
 };
 
 async function adversarialGates(b: Block): Promise<void> {

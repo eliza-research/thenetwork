@@ -19,6 +19,7 @@
 import type { Accounts } from "../../platform/src/accounts.ts";
 import type { AppId } from "../../platform/src/apps.ts";
 import { readCapped } from "../../platform/src/body.ts";
+import { photoMaxPerMessage } from "../../core/src/generated/photoPolicy.ts";
 import { PHOTO_CONSENT, PHOTO_MAX_BYTES, type PhotoRefusal, type PhotoService } from "../../platform/src/photos.ts";
 import type { PeopleStore } from "../../platform/src/store.ts";
 import { DAY } from "@thenetwork/core";
@@ -26,7 +27,7 @@ import { DAY } from "@thenetwork/core";
 /** The app that takes photos by text. */
 export const PHOTO_APP: AppId = "slop";
 /** Attachments taken from one message. */
-export const PHOTO_MAX_PER_MESSAGE = 4;
+export const PHOTO_MAX_PER_MESSAGE = photoMaxPerMessage;
 /** Membership states that may send photos. */
 const LIVE = new Set(["active", "paused", "onboarding"]);
 
@@ -133,10 +134,15 @@ export class PhotoIntake {
     return true;
   }
 
-  /** One text a day per number and kind. True when it was sent. */
+  /**
+   * One text a day per number and kind. True when it was sent. The cap uses the store's minimum-gap
+   * rule, not the raw count of a fixed clock window: a window that starts at midnight UTC sends the
+   * same text twice in one evening for a member in New York (the STOP hint, PR #124, fixed the same
+   * class the same way: docs/results/2026-10-22-stop-hint-cooldown.md).
+   */
   private async once(e164: string, kind: string, text: string, ref: string): Promise<boolean> {
-    const { count } = await this.d.people.hit(`${kind}:${this.d.phoneKey(e164)}`, DAY, this.d.now());
-    if (count > 1) return false;
+    const { ok } = await this.d.people.hit(`${kind}:${this.d.phoneKey(e164)}`, DAY, this.d.now(), { minGapMs: DAY });
+    if (!ok) return false;
     await this.d.reply(e164, text, `sys:${ref}`);
     return true;
   }

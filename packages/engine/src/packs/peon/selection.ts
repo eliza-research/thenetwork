@@ -7,6 +7,7 @@
 //   - a spreading penalty as a job's slate fills, a lift for under-applied jobs (small hard-filtered
 //     pool, few applications so far; Horton 2017) and for candidates who have had no intro yet.
 import { DAY, type MemberId } from "@thenetwork/core";
+import { capSlate } from "../../../../core/src/generated/peonCapacity.ts";
 import type { Candidate } from "../../types.ts";
 import type { World } from "../../world.ts";
 import { poolSize } from "./generators.ts";
@@ -99,7 +100,10 @@ export function slateCap(w: World, j: JobProfile): number {
   // Applications the employer has not reviewed yet use up the slate (no pile-ups, no ghosted queues).
   const room = Math.max(0, target - historyOf(w, j.id).pendingReview);
   // A service seat (seats.ts) proposes at most one candidate per opening left: a seat is never over-filled.
-  const cap = j.seatCap === undefined ? Math.ceil(room / C.expectedYes) : Math.min(Math.ceil(room / C.expectedYes), Math.max(0, j.seatCap));
+  // spec/peonCapacity.md, "The next slate stays within remaining openings"
+  const planned = Math.ceil(room / C.expectedYes);
+  const cap = j.seatCap === undefined ? planned
+    : Number.isNaN(planned) ? planned : capSlate(planned, j.seatCap);
   if (companyTrusted(w, j)) return cap;
   const probation = j.verified && j.urgency >= C.urgentMinUrgency ? C.probationUrgentProbes : C.probationProbes;
   return Math.min(cap, Math.ceil(probation / seatsOf(w, j.company)));

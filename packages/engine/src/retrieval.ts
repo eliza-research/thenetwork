@@ -2,6 +2,7 @@
 // two-hop), member-level hard filters first, and an exposure floor that reserves slots for
 // low-exposure / low-data members so they are not starved by stronger profiles.
 import type { Category, Facet, Intent, MemberId } from "@thenetwork/core";
+import { initial, step } from "../../core/src/generated/exposureFloor.ts";
 import { cosine, tokenize } from "./embed.ts";
 import { intentSatisfaction } from "./complementarity.ts";
 import { memberReason, type FilterReason } from "./filters.ts";
@@ -53,6 +54,13 @@ export function twoHop(w: World, a: MemberId): Map<MemberId, { via: MemberId; st
   return out;
 }
 
+function startExposureFloor(limit: number, available: number) {
+  // spec/exposureFloor.md, "Retrieval starts with a fixed allocation of slots"
+  const rounded = Math.ceil(limit);
+  const slotLimit = Number.isNaN(rounded) ? available : Math.max(0, Math.min(rounded, available));
+  return step(initial, { type: "allocate", slotLimit });
+}
+
 /**
  * Retrieve members for an intent: semantic top-K + tag channel + graph channel, union, dedupe,
  * then append up to exposureFloorK low-exposure members above minSim that fell outside top-K.
@@ -83,15 +91,19 @@ export function retrieveForIntent(ctx: RetrievalCtx, intent: Intent, pool: Membe
   const out = new Map<MemberId, Retrieved>();
   scored.slice(0, cfg.topK).forEach(r => { if (r.sim >= minSim) r.channels.add("semantic"); out.set(r.id, r); });
   for (const r of scored) if (r.channels.has("tag") || r.channels.has("graph") || r.channels.has("need")) if (!out.has(r.id)) out.set(r.id, r);
-  // Exposure floor.
-  let floor = 0;
+  let floor = startExposureFloor(cfg.exposureFloorK, scored.length);
   for (const r of scored) {
-    if (floor >= cfg.exposureFloorK) break;
-    if (out.has(r.id)) continue;
-    const mi = w.get(r.id)!;
-    if ((mi.lowExposure || mi.lowData || mi.newcomer) && r.sim >= minSim) {
-      r.channels.add("exposure_floor"); r.floor = true; out.set(r.id, r); floor++;
-    }
+    if (floor.phase === "Full") break;
+    const alreadyIncluded = out.has(r.id);
+    const mi = alreadyIncluded ? undefined : w.get(r.id)!;
+    // spec/exposureFloor.md, "A slot goes to an eligible candidate outside the prior results"
+    const next = step(floor, { type: "reserveSlot", alreadyIncluded,
+      priority: Boolean(mi && (mi.lowExposure || mi.lowData || mi.newcomer)), similarityEligible: r.sim >= minSim });
+    if (next === floor) continue;
+    floor = next;
+    r.channels.add("exposure_floor");
+    r.floor = true;
+    out.set(r.id, r);
   }
   return [...out.values()].sort(byRank);
 }
@@ -110,11 +122,19 @@ export function retrieveByEmbedding(ctx: RetrievalCtx, q: number[], pool: Member
   }
   out.sort((a, b) => (b.sim - a.sim) || (a.id < b.id ? -1 : 1));
   const top = out.slice(0, w.cfg.retrieval.topK);
-  let floor = 0;
-  for (const r of out.slice(w.cfg.retrieval.topK)) {
-    if (floor >= w.cfg.retrieval.exposureFloorK) break;
+  const remaining = out.slice(w.cfg.retrieval.topK);
+  let floor = startExposureFloor(w.cfg.retrieval.exposureFloorK, remaining.length);
+  for (const r of remaining) {
+    if (floor.phase === "Full") break;
     const mi = w.get(r.id)!;
-    if (mi.lowExposure || mi.lowData || mi.newcomer) { r.channels.add("exposure_floor"); r.floor = true; top.push(r); floor++; }
+    // Slicing and the score filter above already separate these rows from the semantic results.
+    const next = step(floor, { type: "reserveSlot", alreadyIncluded: false,
+      priority: Boolean(mi.lowExposure || mi.lowData || mi.newcomer), similarityEligible: true });
+    if (next === floor) continue;
+    floor = next;
+    r.channels.add("exposure_floor");
+    r.floor = true;
+    top.push(r);
   }
   return top;
 }

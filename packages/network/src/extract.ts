@@ -11,6 +11,7 @@
 //  - An age the LLM reads can only make the member younger (a minor), never decline them: a
 //    decline deletes data, so it needs the offline explicit form.
 import { maskPii, tryChatJson, type ChatMessage, type LLM } from "@thenetwork/core";
+import { pickedTimes, probeReplyReading } from "../../core/src/generated/probeReply.ts";
 import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import type { ConsentWhy, TimeOption } from "./classify.ts";
 import { NEIGHBORHOODS } from "./geo.ts";
@@ -132,13 +133,11 @@ export function llmUnderstand(llm: LLM, o: { maxTokens?: number; attempts?: numb
 export function mergeConsent(
   offline: { answer: "yes" | "no" | "unclear"; keys: string[]; why: ConsentWhy; unoffered?: boolean; refused?: string[] },
   u: Understood | undefined, options: readonly TimeOption[],
-): { answer: "yes" | "no" | "unclear"; keys: string[]; why: ConsentWhy | "llm"; refused?: string[] } {
-  // A yes that named a time nobody offered keeps no pick, and that is a reading of its own: the LLM
-  // may still read the wants and interests, but it cannot turn the pick back into every offered time.
+): { answer: "yes" | "no" | "unclear"; keys: string[]; why: ConsentWhy | "llm" } {
   if (offline.unoffered) return { ...offline, keys: [] };
-  if (!u?.consent || offline.answer !== "unclear" || offline.why !== "none") return offline;
-  if (u.consent === "no") return { answer: "no", keys: [], why: "llm" };
-  if (u.consent !== "yes") return offline;
-  const keys = u.times?.length ? u.times : options.map(x => x.key);
-  return { answer: "yes", keys, why: "llm" };
+  // spec/probeReply.md, "A model reading cannot replace a definite or qualified answer"
+  const reading = probeReplyReading(offline.answer === "unclear", offline.why === "none", u?.consent ?? "");
+  if (reading === "KeepOffline") return offline;
+  if (reading === "HeardNo") return { answer: "no", keys: [], why: "llm" };
+  return { answer: "yes", keys: pickedTimes(u?.times ?? [], options.map(x => x.key)), why: "llm" };
 }

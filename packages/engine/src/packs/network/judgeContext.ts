@@ -17,6 +17,7 @@
 // the prompt bytes (and therefore of the evals cache key): do not reorder fields.
 import type { Category, City, Facet, MemberId, OpportunityKind, Presence, WorldSnapshot } from "@thenetwork/core";
 import { DAY } from "@thenetwork/core";
+import { validityIncludes } from "../../interval.ts";
 import { basisOf, boundaryRelevance, evidenceTag, isHypothesis, redactPrivate, scrubIds, STALE_DAYS, type EvidenceBasis } from "../../judgeCommon.ts";
 import type { Candidate } from "../../types.ts";
 import { pairKey, type World } from "../../world.ts";
@@ -36,7 +37,6 @@ function refsFor(ids: MemberId[]): { refs: Record<string, MemberId>; refOf: Map<
   return { refs, refOf, scrub: (s: string) => scrubIds(s, refOf) };
 }
 
-const validAt = (f: Facet, now: number) => (f.validFrom === undefined || f.validFrom <= now) && (f.validTo === undefined || f.validTo >= now);
 const presenceOf = (p: Presence, now: number) => ({
   city: p.city, type: p.type, areas: [...p.areas],
   ...(p.from !== undefined ? { from_day: r1((p.from - now) / DAY) } : {}), ...(p.to !== undefined ? { to_day: r1((p.to - now) / DAY) } : {}),
@@ -107,7 +107,7 @@ export function buildPublicView(snap: WorldSnapshot, cfg: ScreenConfig, o: Publi
   const people = everyone(cfg).map((id): PublicPerson => {
     const m = snap.members.find(x => x.id === id);
     if (!m) throw new Error(`unknown member ${id}`);
-    const facets = snap.facets.filter(f => f.memberId === id && PUBLIC_SCOPES.has(f.scope) && validAt(f, now));
+    const facets = snap.facets.filter(f => f.memberId === id && PUBLIC_SCOPES.has(f.scope) && validityIncludes(f, now));
     return {
       ref: refOf.get(id)!, role: roleOf(id, cfg), attending: id !== cfg.via, age: m.age, home_city: m.homeCity,
       participation_state: m.state, joined_days_ago: joinedDaysAgo(m.joinedAt, now),
@@ -288,7 +288,7 @@ export function buildDeepContext(w: World, c: Candidate, o: DeepContextOptions =
     const mi = w.get(id);
     if (!mi) throw new Error(`unknown member ${id}`);
     const m = mi.m;
-    const all = snap.facets.filter(f => w.canonical(f.memberId) === id && validAt(f, now));
+    const all = snap.facets.filter(f => w.canonical(f.memberId) === id && validityIncludes(f, now));
     const facts: DeepFact[] = all.filter(f => f.scope === "shareable" || f.scope === "matchable")
       .map(f => {
         const x = f as FacetX;
