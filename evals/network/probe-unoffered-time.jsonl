@@ -12,3 +12,18 @@
 {"text":"6pm works","options":["Saturday 10am","Sunday 10am"],"answer":"yes","keys":[]}
 {"text":"yes, I get out of work at 6pm","options":["Saturday 10am","Sunday 10am"],"answer":"yes","keys":["a","b"]}
 {"text":"yes, I'm free after work at 6pm","options":["Saturday 10am","Sunday 10am"],"answer":"yes","keys":["a","b"]}
+{"text":"Friday anytime works","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":[]}
+{"text":"anytime Friday works","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":[]}
+{"text":"Friday works, any of those work","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":["a","b","c"]}
+{"text":"I have a wedding Friday but any of those work","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":["a","b","c"]}
+{"text":"Friday 10am works","options":["Saturday 10am","Sunday 10am"],"answer":"yes","keys":[]}
+{"text":"Monday 10am works","options":["Saturday 10am","Sunday 10am"],"answer":"yes","keys":[]}
+{"text":"Friday 7pm works","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":[]}
+{"text":"any day but Friday works","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":["a","b","c"]}
+{"text":"I'm free anytime apart from Friday","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":["a","b","c"]}
+{"text":"free apart from Friday","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":["a","b","c"]}
+{"text":"anytime but Sunday","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":["a","b"]}
+{"text":"Sorry, but Saturday works","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":["b"]}
+{"text":"Friday or Thursday works","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":["a"]}
+{"text":"any day but Friday","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"unclear","keys":[]}
+{"text":"any day except Friday works","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"unclear","keys":[]}
