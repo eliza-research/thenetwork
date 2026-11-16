@@ -1,7 +1,7 @@
 # Spec reference
 
 This is the Vibestack spec-language reference at revision
-[`f3701e96`](https://github.com/lalalune/vibestack/blob/f3701e96e0e6845a4c67741433c76c50f3ffd9e4/SPEC.md).
+[`e6de8fa1`](https://github.com/lalalune/vibestack/blob/e6de8fa1f79ef66fb6849defcef050fbcd0dcc51/SPEC.md).
 Use [The Network command map](README.md#commands) when this reference uses
 standalone Vibestack commands. The Network keeps its product requirements in
 [`spec/product/`](spec/product/README.md) and the action-based Quint flow
@@ -500,7 +500,7 @@ change when read again, which must do what the clean event does. `options`
 are `view` (what of the state `observe` shows), `keys` (the entities walks
 interleave), `walks` (at most this many; `0` for a slow driver) and `steps`.
 The walks use the fixed normal or nightly profile
-([budgets](https://github.com/lalalune/vibestack/blob/f3701e96e0e6845a4c67741433c76c50f3ffd9e4/CONTRIBUTING.md#seeds-and-budgets)).
+([budgets](https://github.com/lalalune/vibestack/blob/e6de8fa1f79ef66fb6849defcef050fbcd0dcc51/CONTRIBUTING.md#seeds-and-budgets)).
 
 - **A disagreement is saved.** A journey or walk that disagrees is shrunk
   and written to `test/counterexamples/<name>/<hash>.json`, which every
