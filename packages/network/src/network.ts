@@ -58,6 +58,7 @@ import {
   replacementRoute, shouldLookForOtherTimes, step as stepProbe, turnReached, type ParticipantProbe,
 } from "../../core/src/generated/probeDispatch.ts";
 import { reviewLate } from "../../core/src/generated/reviewDeadline.ts";
+import { emptyIntentFollowupReady, emptyIntentFollowupReasonAllowed } from "../../core/src/generated/emptyIntentFollowup.ts";
 import { closedPublicEventIsUnsent, publicBookedEventLinkAllowed, publicEventMemberAllowsMatch, publicEventRevisionMatches } from "../../core/src/generated/publicEventCatalog.ts";
 import {
   cachedStandingIntentsCurrent, canQueueEngineOpportunity, learnedIntentDays, learnedIntentMayProject,
@@ -347,6 +348,8 @@ interface MemberState {
   learned: { interests: Set<string>; skills: Set<string>; desires: Map<string, number>; area?: string; eveningsOpen?: boolean; groups?: boolean };
   /** Per-intent choices saved with this member in the app's Network state. */
   intentControls?: Record<string, IntentControl>;
+  /** Latest statement time for which this member already received a committed empty-intent notice. */
+  emptyIntentNotices?: Record<string, number>;
   noShows: number; completedSinceNoShow: number; msgsIn: number;
   /** Probes/questions/invitations we sent that wanted an answer, and how many got one. */
   asked: number; answered: number;
@@ -519,7 +522,9 @@ type SendHook =
   | { t: "probe"; oppId: string; id: MemberId } | { t: "reveal"; oppId: string; id: MemberId } | { t: "times"; oppId: string; id: MemberId }
   | { t: "drop_notice"; oppId: string } | { t: "feedback"; oppId: string }
   | { t: "growth"; kind: string } | { t: "reengage" } | { t: "ask"; reason: AskRecord["reason"]; also?: string[]; follow?: boolean } | { t: "checkin" }
-  | { t: "plan_probe"; oppId: string; id: MemberId } | { t: "crew_offer"; crewId: string };
+  | { t: "plan_probe"; oppId: string; id: MemberId } | { t: "crew_offer"; crewId: string }
+  | EmptyIntentNotice;
+type EmptyIntentNotice = { t: "empty_intent"; intentId: string; statedAt: number; searchDay: string; reason: string };
 interface HookFns { valid?: () => boolean; onSent?: () => void; onRefused?: () => void }
 interface Deferred { memberId: MemberId; body: string; meta: SimMeta; kind: SendKind; o: SendOpts; timing?: Timing }
 /** When a send may go out: at once (replies, safety), in the member's send slot (interruptions), or outside quiet hours (logistics). */
@@ -537,6 +542,8 @@ const MIN_NOTICE = 6 * HOUR, PARTNER_LEAD = 12 * HOUR;
 const EMPLOYER_TAGS = /^(employer|employer_type|occupation|company|job|job_title|workplace|work|role|title)$/i;
 const EMPLOYER_TEXT = /\b(works? (at|for)|employer|employed|company|job|occupation|workplace|engineer at|manager at)\b/i;
 const OPEN_STAGES = new Set(["review", "probing", "scheduled"]);
+const activeOpportunityParticipant = (o: Opp, id: MemberId) =>
+  o.participants.includes(id) && !["unavailable", "no", "dropped"].includes(o.status.get(id) ?? "");
 const EMPTY_SET: ReadonlySet<string> = new Set();
 const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 /** A tie-break in [0, 1) from the seed and two ids (FNV-1a): stable per run, not id order. */
@@ -3930,7 +3937,10 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (this.fromProposal(p, "engine", now)) started++;
     }
     this.currentRunId = undefined;
-    if (!input.standingIntentSearch) this.sendAsks(asks ?? [], now);
+    if (!input.standingIntentSearch) {
+      this.sendAsks(asks ?? [], now);
+      this.sendEmptyIntentNotices(input.intents, runLog.emptyStates, now);
+    }
     return started;
   }
 
@@ -3967,6 +3977,33 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
   }
   private lastAsk(id: MemberId) { return Math.max(-Infinity, ...this.asks.filter(a => a.memberId === id).map(a => a.at)); }
+
+  private sendEmptyIntentNotices(intents: Intent[], results: MatchingRunLog["emptyStates"], now: number) {
+    if (!results.length) return;
+    const byId = new Map(intents.map(i => [i.id, i]));
+    const handled = new Set(this.deferred.filter(item => item.o.hook?.t === "empty_intent").map(item => item.memberId));
+    const searchDay = nyParts(now).day;
+    for (const result of results) {
+      if (handled.has(result.memberId) || !emptyIntentFollowupReasonAllowed(result.reason.split(":")[0]!)) continue;
+      const member = this.members.get(result.memberId), intent = byId.get(result.intentId);
+      if (!member || !intent || intent.memberId !== member.id) continue;
+      const hook: EmptyIntentNotice = { t: "empty_intent", intentId: intent.id, statedAt: intent.createdAt, searchDay, reason: result.reason };
+      if (!this.emptyIntentNoticeReady(member, hook, now)) continue;
+      handled.add(member.id);
+      this.send(member, this.copy.emptyIntentFollowup, { type: "info", proactive: false }, "info", { hook });
+    }
+  }
+
+  private emptyIntentNoticeReady(member: MemberState, hook: EmptyIntentNotice, now: number): boolean {
+    const intent = this.ownStandingIntents(member.id, now).find(({ intent }) => intent.id === hook.intentId)?.intent;
+    const prefs = this.record(member.id)?.prefs;
+    return emptyIntentFollowupReady(!!intent && intent.createdAt === hook.statedAt && standingIntentLive(intent, now),
+      this.opts.matchingEnabled && member.stage === "active" && !prefs?.onlyWhenAsked && this.eligible(member.id)
+        && !this.openOpps().some(o => activeOpportunityParticipant(o, member.id)),
+      !!intent && this.allowedCategories.has(intent.category) && !!prefs?.categoriesOptIn?.includes(intent.category),
+      !member.awaiting && !this.askOpen(member, now) && this.classifyOutreach(member, { type: "info" }, now) === "unsolicited",
+      nyParts(now).day === hook.searchDay, member.emptyIntentNotices?.[hook.intentId] === hook.statedAt);
+  }
 
   /** A proposal the gates stopped: counted, and logged per proposal for the timeline (the members' ids, never their words). */
   private gate(reason: string, members: MemberId[]) {
@@ -4566,6 +4603,13 @@ export class ConsentNetwork implements NetworkUnderTest {
       case "age": return { onSent: () => { m.awaiting = { kind: "age", at: now() }; } };
       case "suggested": return { onSent: () => this.suggested(m, h.venues) };
       case "retry_found": return { valid: () => !!o && OPEN_STAGES.has(o.stage) && o.stage !== "review" };
+      case "empty_intent": return {
+        valid: () => this.emptyIntentNoticeReady(m, h, now()),
+        onSent: () => {
+          m.emptyIntentNotices = { ...m.emptyIntentNotices, [h.intentId]: h.statedAt };
+          this.ctx.log("empty_intent_followup", { memberId: m.id, intentId: h.intentId, reason: h.reason });
+        },
+      };
       case "probe": return {
         valid: () => !!o && o.stage === "probing" && o.participants.includes(h.id) && o.status.get(h.id) === "probing",
         onSent: () => {
@@ -4896,13 +4940,11 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** In an open opportunity (other than `exceptOpp`) and not out of it. */
   busy(id: MemberId, exceptOpp?: string, seats = false) {
     for (const o of this.openOpps()) {
-      if (o.id === exceptOpp || !o.participants.includes(id)) continue;
+      if (o.id === exceptOpp || !activeOpportunityParticipant(o, id)) continue;
       // A hiring manager reviews every candidate for their seats at once: a seat item never makes them busy (`seats`: it does, for dropMember).
       if (!seats && o.seat?.manager === id) continue;
-      const st = o.status.get(id) ?? "";
-      if (["unavailable", "no", "dropped"].includes(st)) continue;
       // A yes to a plan still waiting for quorum does not block other items (plans ask 6).
-      if (o.plan && o.stage === "probing" && st === "available") continue;
+      if (o.plan && o.stage === "probing" && o.status.get(id) === "available") continue;
       return true;
     }
     return false;

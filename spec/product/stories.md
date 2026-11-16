@@ -214,7 +214,7 @@ Models: [shared-line consent journey](../sharedLineConsentJourney.md), [turn con
 
 If nothing clears the bar for an intent after the configured interval, normally ten days, record the reason. Offer a short relevant question, an outside-world suggestion, another format or a vouch invitation where permitted. Respect category and interruption settings.
 
-Models: [matching engine](../models/matching_engine.md), [profile learning](../models/profile_learning.md).
+Models: [empty intent follow-up](../emptyIntentFollowup.md), [matching engine](../models/matching_engine.md), [profile learning](../models/profile_learning.md).
 
 ## Story F22 — Attend a Network gathering
 

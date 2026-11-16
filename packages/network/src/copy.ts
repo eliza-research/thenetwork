@@ -137,6 +137,7 @@ export function copyFor(b: CopyBrand) {
   hold: "Your account is paused while our team takes a look. You'll hear from a person soon.",
   minorNotice: "Thanks for telling me. Since you're under 18, I won't introduce you to other members, but I'm happy to suggest public places and events.",
   minorConcierge: (topic: string, ideas: string) => `For ${topic}, ${ideas}. Happy to suggest more anytime.`,
+  emptyIntentFollowup: "I haven't found a match I can offer yet. Text “Show me public events” for ideas you can try on your own.",
   stopWelcomeBack: "Welcome back. I'll only reach out when something looks worth it.",
   // Plans (plans v1.1). The probe itself is the engine's buildPlanProbe (no names, leak-checked).
   /** The booked plan, sent only once enough people said yes: names, time, public place, own way. Silence for 48 hours = in. */

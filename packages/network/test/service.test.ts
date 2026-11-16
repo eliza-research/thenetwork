@@ -76,7 +76,7 @@ async function say(s: NetworkService, clock: SimClock, id: string, text: string)
 const ONBOARD = ["hi!", "More time outdoors.", "Weekends, mostly.", "One-on-one is good."];
 const staff = (s: NetworkService, token: string, method: string, path: string, body?: unknown) =>
   s.fetch(new Request(`http://127.0.0.1${path}`, { method, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) }));
-const outbound = async (member: string) => (await sql`select id, body, status, type, opportunity_id, system from network.messages where direction = 'outbound' and member_id = ${member} order by ts, id`) as any[];
+const outbound = async (member: string) => (await sql`select id, body, status, type, opportunity_id, proactive, system from network.messages where direction = 'outbound' and member_id = ${member} order by ts, id`) as any[];
 
 describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
   beforeAll(async () => {
@@ -273,6 +273,73 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     for (const text of ONBOARD) await say(restarted, clock, "c", text);
     expect(await restarted.tick()).toBe(true);
     expect(await runCount()).toBe(3);
+  }, T);
+
+  // spec/emptyIntentFollowup.md, "A pending follow-up uses current permission and the same live statement"
+  test("an aged intent without a match gets one eligible solo next step across restart", async () => {
+    await reset();
+    await sql`update network.members set account_status = 'invited' where id <> 'a'`;
+    const clock = new SimClock(START);
+    const options = { network: { seed: 1, plans: false, growth: false, engine: { emptyStateDays: 10 } } };
+    const s = service(clock, "empty-intent", options);
+    expect((await staff(s, "adm-tok", "POST", "/matching", { on: true })).status).toBe(200);
+    for (const message of ONBOARD) await say(s, clock, "a", message);
+    const statedAt = START - 10 * DAY + 3 * HOUR;
+    const objective = "Find a partner for my quiet north-wall climb";
+    await sql`update network.intents set created_at = ${new Date(statedAt)}, objective = ${objective} where member_id = 'a'`;
+    const sent = async () => (await outbound("a")).filter(message => message.type === "info" && message.body.includes("Show me public events"));
+
+    clock.set(START + 90 * MINUTE);
+    expect(await s.tick()).toBe(true);
+    expect(await sent()).toHaveLength(0);
+
+    // The result is old enough on the next day. The member's selected outreach preference wins.
+    await sql`update network.members set prefs = jsonb_set(prefs, '{onlyWhenAsked}', 'true') where id = 'a'`;
+    clock.advance(DAY);
+    expect(await s.tick()).toBe(true);
+    expect(await sent()).toHaveLength(0);
+
+    await sql`update network.members set prefs = jsonb_set(prefs, '{onlyWhenAsked}', 'false') where id = 'a'`;
+    const morning = START - 3 * HOUR - 30 * MINUTE;
+    const pending = async (instance: NetworkService) => (await instance.pg.load())?.deferred.filter(entry => entry.o.hook?.t === "empty_intent");
+    // The member's own 48-hour follow-up window has also passed.
+    clock.set(morning + 3 * DAY);
+    expect(await s.tick()).toBe(true);
+    expect(await pending(s)).toHaveLength(1);
+    expect(await sent()).toHaveLength(0);
+
+    // Losing the intent's category before the send window cancels this deferred follow-up.
+    await sql`update network.members set prefs = jsonb_set(prefs, '{categoriesOptIn}', (prefs->'categoriesOptIn') - 'hobby') where id = 'a'`;
+    clock.advance(5 * HOUR);
+    expect(await s.tick()).toBe(true);
+    expect(await pending(s)).toHaveLength(0);
+    expect(await sent()).toHaveLength(0);
+
+    await sql`update network.members set prefs = jsonb_set(prefs, '{categoriesOptIn}', (prefs->'categoriesOptIn') || '["hobby"]') where id = 'a'`;
+    clock.set(morning + 4 * DAY);
+    expect(await s.tick()).toBe(true);
+    expect(await pending(s)).toHaveLength(1);
+    await s.close();
+    const restarted = service(clock, "empty-intent-restarted", options);
+    await restarted.start();
+    clock.advance(5 * HOUR);
+    expect(await restarted.tick()).toBe(true);
+    const one = await sent();
+    expect(one).toHaveLength(1);
+    expect(one[0]).toMatchObject({ status: "dry_run", opportunity_id: null, proactive: true });
+    expect(one[0].body).not.toContain(objective);
+    expect((await restarted.pg.load())?.members.find(member => member.id === "a")?.unsol?.state).toEqual([clock.now()]);
+    const audit = await sql`select payload from network.events where type = 'empty_intent_followup' order by id`;
+    expect(audit).toHaveLength(1);
+    expect(audit[0]?.payload).toMatchObject({ memberId: "a", intentId: "a:want", reason: expect.any(String) });
+    expect(JSON.stringify(audit[0]?.payload)).not.toContain(objective);
+
+    await restarted.close();
+    const reopened = service(clock, "empty-intent-reopened", options);
+    await reopened.start();
+    clock.advance(DAY);
+    expect(await reopened.tick()).toBe(true);
+    expect(await sent()).toHaveLength(1);
   }, T);
 
   // spec/publicEventCatalog.md, "A successful complete scan replaces the previous source and expires if refresh stops"
