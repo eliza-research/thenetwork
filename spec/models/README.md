@@ -32,7 +32,7 @@ entire imported model.
 | [auth_edge](auth_edge.md) | Web sessions and trusted requests | [Phone verification](../otpLimits.md), [web sessions](../webSession.md) |
 | [backup_restore](backup_restore.md) | Database restore | [Scratch restore lifecycle](../databaseRestore.md) |
 | [boot_config](boot_config.md) | Service start and proxy configuration | [Startup configuration](../bootPolicy.md) |
-| [candidate_pool](candidate_pool.md) | Candidate retrieval and groups | [Candidate screening](../candidateScreening.md), [exposure floor state machine](../exposureFloor.md), [group formation](../groupFormation.md) |
+| [candidate_pool](candidate_pool.md) | Candidate retrieval and groups | [Candidate screening](../candidateScreening.md), [travel presence](../travelPresence.md), [exposure floor state machine](../exposureFloor.md), [group formation](../groupFormation.md) |
 | [chatjson_loop](chatjson_loop.md) | Structured model calls | [Structured request state machine](../chatRetry.md) |
 | [cloud_auth](cloud_auth.md) | Eliza Cloud sign-in and grants | [Cloud callback and session issuance](../cloudSignIn.md), [session and grant validation](../cloudAuthority.md) |
 | [console_privacy](console_privacy.md) | Staff console data visibility | [Staff permissions and view scope](../staffPermissions.md) |
@@ -59,4 +59,4 @@ entire imported model.
 | [runtime_ops](runtime_ops.md) | Runtime work, retention, and alerts | [Stored units and tick follow-up](../runtimeUnit.md), [backend tick and shutdown lifecycle](../backendLifecycle.md), [backend health](../backendHealth.md), [platform retention](../platformRetention.md), [service cost ledger](../costLedger.md), [Observatory timing](../operationsTiming.md), [operations alert dispatch](../opsAlertDispatch.md), [weekly bias monitoring](../weeklyBias.md) |
 | [safety_trust](safety_trust.md) | Safety reports, holds, and blocks | [Safety case lifecycle](../safetyCase.md), [staff safety scope and audit](../staffSafetyService.md), [trust levels](../trustLevel.md) |
 | [staff_console](staff_console.md) | Staff roles and console actions | [Staff request permissions](../staffPermissions.md) |
-| [turn_consent](turn_consent.md) | Signed turns and carrier consent | [Carrier consent](../carrierConsent.md), [shared-line consent journey](../sharedLineConsentJourney.md), [signed inbox and recovery](../signedInbox.md), [webhook queue](../webhookInbox.md), [signed receipt processing](../turnReceipt.md), [shared agent context](../sharedContext.md) |
+| [turn_consent](turn_consent.md) | Signed turns and carrier consent | [Carrier consent](../carrierConsent.md), [shared-line consent journey](../sharedLineConsentJourney.md), [signed inbox and recovery](../signedInbox.md), [webhook queue](../webhookInbox.md), [signed receipt processing](../turnReceipt.md), [receipt replay journey](../turnReceiptJourney.md), [shared agent context](../sharedContext.md) |

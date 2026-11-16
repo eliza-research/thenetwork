@@ -3,7 +3,7 @@ import { serveHttp, type HttpServer } from "../../packages/core/src/runtime/http
 import { randomUUID } from "node:crypto";
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { HOUR, SimClock } from "../../packages/core/src/index.ts";
-import { TURN_PATH, type TurnRequest, type TurnResponse } from "../../packages/core/src/svc/contract.ts";
+import { TURN_PATH, TURN_RECEIPT_PATH, type TurnReceiptRequest, type TurnRequest, type TurnResponse } from "../../packages/core/src/svc/contract.ts";
 import { svcSign } from "../../packages/core/src/svc/svc-auth.ts";
 import { DryRunAdapter } from "../../packages/network/service/channel.ts";
 import { NetworkService } from "../../packages/network/service/service.ts";
@@ -17,7 +17,8 @@ type FixtureTurn = Pick<TurnRequest, "app" | "receivedAt">;
 type SignedTurnFixture = {
   service: NetworkService;
   createMember(about?: Partial<Record<FixtureApp, string>>): Promise<FixtureMember>;
-  sendTurn(phone: string, text: string, options?: Partial<FixtureTurn>): Promise<{ response: TurnResponse; receivedAt: number }>;
+  sendTurn(phone: string, text: string, options?: Partial<FixtureTurn>): Promise<{ response: TurnResponse; receivedAt: number; messageId: string }>;
+  sendReceipt(input: TurnReceiptRequest): Promise<Response>;
 };
 
 export async function withSignedTurnFixture(run: (fixture: SignedTurnFixture) => Promise<void>) {
@@ -99,23 +100,28 @@ export async function withSignedTurnFixture(run: (fixture: SignedTurnFixture) =>
         receivedAt: options.receivedAt ?? clock.now(),
         ...(options.app ? { app: options.app } : {}),
       };
+      const response = await postSigned(TURN_PATH, input.messageId, input);
+      if (!response.ok) throw new Error(`Signed turn returned ${response.status}: ${await response.text()}`);
+      return { response: await response.json() as TurnResponse, receivedAt: input.receivedAt, messageId: input.messageId };
+    }
+
+    async function postSigned(path: string, id: string, input: TurnRequest | TurnReceiptRequest) {
       const body = JSON.stringify(input);
       const sent = adapterCalls;
-      const response = await fetch(new URL(TURN_PATH, http.url), {
+      const response = await fetch(new URL(path, http.url), {
         method: "POST", body, signal: AbortSignal.timeout(10_000),
         headers: {
           "content-type": "application/json",
           ...await svcSign(secret, {
-            method: "POST", path: TURN_PATH, id: input.messageId, body, nowS: Math.floor(clock.now() / 1000),
+            method: "POST", path, id, body, nowS: Math.floor(clock.now() / 1000),
           }),
         },
       });
-      if (!response.ok) throw new Error(`Signed turn returned ${response.status}: ${await response.text()}`);
-      if (adapterCalls !== sent) throw new Error("A signed turn called the delivery adapter");
-      return { response: await response.json() as TurnResponse, receivedAt: input.receivedAt };
+      if (adapterCalls !== sent) throw new Error(`${path} called the delivery adapter`);
+      return response;
     }
 
-    await run({ service: app, createMember, sendTurn });
+    await run({ service: app, createMember, sendTurn, sendReceipt: input => postSigned(TURN_RECEIPT_PATH, `${input.messageId}:receipt`, input) });
   } finally {
     await server?.stop(true);
     try {

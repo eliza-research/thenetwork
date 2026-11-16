@@ -132,11 +132,12 @@ from The Network root.
 
 The spec checker uses an executable projection of `spec/` and the
 conformance inputs under `test/`. The
-[shared-line consent journey](spec/sharedLineConsentJourney.md) and the
-[saved profile journey](spec/savedProfileJourney.md) run against the
-signed turn endpoint and isolated local Postgres databases on port 54339.
-Run either with `pnpm run spec:conformance sharedLineConsentJourney` or
-`pnpm run spec:conformance savedProfileJourney`. Run
+[shared-line consent](spec/sharedLineConsentJourney.md),
+[saved profile](spec/savedProfileJourney.md), and
+[gateway turn receipt](spec/turnReceiptJourney.md) journeys run through
+signed HTTP and isolated local Postgres databases on port 54339. Run
+`pnpm run spec:conformance` with `sharedLineConsentJourney`,
+`savedProfileJourney`, or `turnReceiptJourney`. Run
 `pnpm run spec:conformance memberRequestJourney` to compare the request
 and review flow through the dry-run ConsentNetwork harness. The checker saves
 a minimal failing trace under `test/counterexamples/` and replays it on
