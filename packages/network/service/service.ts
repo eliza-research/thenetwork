@@ -1066,8 +1066,10 @@ export class NetworkService implements RuntimeHost {
       case "message": break;
     }
     if (ev.isGroup) return "ignored_group";
+    const kw = platformKeyword(ev.text);
+    const intentCommand = !kw ? standingIntentCommand(ev.text) : undefined;
     // Legacy webhooks own transport engagement. A signed turn admits its canonical member after policy processing.
-    if (!this.inboundTurn()) await this.lineAdapter()?.engaged?.(ev.from);
+    if (!this.inboundTurn() && !intentCommand) await this.lineAdapter()?.engaged?.(ev.from);
     const route = await this.route(ev, o.app);
     const app = this.apps[route.app];
     const joinedMember = (await this.memberApps(ev.from)).find(m => m.app === route.app);
@@ -1089,9 +1091,7 @@ export class NetworkService implements RuntimeHost {
     const e164 = normalizePhone(ev.from);
     const t = this.clock.now();
     const rowId = `in:${ev.channel}:${ev.messageId}`;
-    const kw = platformKeyword(ev.text);
     const profileRead = !kw ? profileReadRequest(ev.text, this.apps) : undefined;
-    const intentCommand = !kw ? standingIntentCommand(ev.text) : undefined;
     const line = ev.to ? normalizeAddress(ev.to) : undefined;
 
     // STOP / STOP ALL: the consent ledger first (with or without a membership; once per message), then every member it covers.
@@ -2195,8 +2195,10 @@ export class NetworkService implements RuntimeHost {
       const onboarding = policyAllowed && age === undefined && outcome === "join_asked" && !turn.memberId;
       const rt = turn.app ? (turn.memberId ? await this.runtimeOfMember(turn.app, turn.memberId) : this.runtimeFor(turn.app)) : undefined;
       const binding = rt && turn.memberId ? await this.accounts.activeMembership(rt.app, {e164: input.from, personId: person?.id ?? null}) : undefined;
-      // activeMembership owns the known join-age check; first contact, STOP, leave and policy denials create no service counter.
-      if (accountEligible && binding && binding.membership.memberId === turn.memberId) await this.lineAdapter()?.engaged?.(input.from);
+      // Intent management preserves send holds. The active membership also owns the known join-age check.
+      if (outcome !== "standing_intents" && accountEligible && binding && binding.membership.memberId === turn.memberId) {
+        await this.lineAdapter()?.engaged?.(input.from);
+      }
       if (outcome === "open" && !collected.length && turn.app && turn.memberId) {
         const context = binding?.membership.memberId === turn.memberId ? await rt!.sharedContext(turn.memberId) : null;
         if (context) return {outcome: "open", channel: input.channel, app: turn.app, memberId: turn.memberId, context};

@@ -57,7 +57,7 @@ pure def sometimesClosesAnIntent(s: IntentManagement): bool = s.phase == CloseSe
 
 ### A pause or close stops only the work linked to that intent
 
-Without sending an invitation, retire a directly anchored opportunity if it is still in review or probing. Stop searches for the same named desire when it has no other live record. A scheduled or completed meeting stays in its own consent and cancellation flow.
+Retire a directly anchored opportunity if it is still in review or probing. Stop searches for the same named desire when it has no other live record. Preserve transport send holds and outstanding replies. A scheduled or completed meeting stays in its own consent and cancellation flow.
 
 ```quint
 pure def retireIntentOpportunity(directAnchor: bool, beforeBooking: bool): bool = directAnchor and beforeBooking
