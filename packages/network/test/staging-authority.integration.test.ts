@@ -23,7 +23,8 @@ test('staging authority keeps signed HTTP API and OAuth on its configured app or
   const api=createPublicApi({store:st.svc.people,env,hashKey:'dev-only-platform-hash-key',now:()=>st.clock.now(),otp:st.otp,turnstile:{verify:async(_token,_ip,hosts)=>{allowedHosts.push([...(hosts??[])]);return hosts?.includes(new URL(origin).hostname)??false}},minStartMs:0,minVerifyMs:0});
   // The mounted API and MCP must share the staged cookie namespace and session owner.
   Object.defineProperty(st.svc,'publicApi',{value:api,configurable:true});
-  mcp=await createServiceMcp(st.svc,{env:{...env,MCP_CUSTOM_CHATGPT_SLOP:'on',MCP_CUSTOM_CHATGPT_SLOP_PERSON_IDS:person.id},databaseUrl:st.url,migrate:false,now:()=>st.clock.now(),log:()=>{}});
+  const mcpLog: string[] = [];
+  mcp=await createServiceMcp(st.svc,{env:{...env,MCP_CUSTOM_CHATGPT_SLOP:'on',MCP_CUSTOM_CHATGPT_SLOP_PERSON_IDS:person.id},databaseUrl:st.url,migrate:false,now:()=>st.clock.now(),log:line=>mcpLog.push(line)});
   server=await serveHttp({hostname:'127.0.0.1',port:0,async fetch(req){
    const edge=await normalizeEdge(req,secret,config.hostMap,st.clock.now());
    if (!edge.edge) return new Response("edge_required", {status:421});
@@ -50,7 +51,8 @@ test('staging authority keeps signed HTTP API and OAuth on its configured app or
   expect((await call('/mcp/openai',{jsonrpc:'2.0',id:1,method:'tools/list'})).status).toBe(404);
   const stageStack={...st,sites:{...st.sites,slop:{...st.sites.slop,origin}},site:async(_app:string,path:string,init:any={})=>call(path,init.json,init.browser,init.form?{...init.form,...(path==='/oauth/authorize/phone'?{'cf-turnstile-response':'fixture'}:{})}:undefined)} as typeof st;
   const connection=await connectMcp(stageStack,'slop',phone,{browser:new Browser(),redirect:'https://chatgpt.com/connector_platform_oauth_redirect'});
-  expect(connection.html).toContain('action="/oauth/authorize/consent"');
+  expect(connection.html, mcpLog.join("\n")).toContain('action="/oauth/authorize/consent"');
+  expect(connection.html).toContain('data-brand="slop"');
   expect(connection.html).toContain('Return to chatgpt.com.');
   expect(connection.token?.access_token,connection.html).toEqual(expect.any(String));
   expect(mcpBotChecks).toBe(1);
