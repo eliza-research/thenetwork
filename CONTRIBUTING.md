@@ -35,18 +35,19 @@ needs approval. Link the specific story or rule when you propose a change.
   maintainer approval and an update to the product specification.
 - Add or update the story and its rules in `spec/<name>.md`. Put the Quint
   for a rule immediately below its prose. Follow the
-  [sync skill](.claude/skills/sync/SKILL.md).
+  [sync skill](.claude/skills/sync/SKILL.md) and the
+  [spec reference](SPEC.md#writing-a-spec).
 - Use the generated TypeScript for the decision in the owning package.
   Run `bun run spec:sync` to publish the generated modules. Commit the
   source spec and the published modules together.
 - Keep the relevant [whole-flow model](spec/models/README.md) consistent
   with the runtime. Compare the guards, outcomes, and invariants where
   the generated rule enters the flow.
-- Run `bun run check` for the Vibespec pipeline and the project commands in
-  section 6 for the application. The product owner runs `bun run accept`
-  after comparing the prose and Quint.
-- For work on the generator, run `bun run spec:selftest` and add a fixture
-  for each new class of error it detects.
+- Run `bun run check` for the Vibestack spec and the project commands in
+  section 6 for the application. The product owner compares each changed
+  rule with its Quint and records approval with `bun run accept`.
+- For work on the generator, follow the [Vibestack contributor guide](tools/vibestack/CONTRIBUTING.md#changing-the-tools)
+  and add a fixture for each new class of error it detects.
 
 ## 3. What is accepted and what is not
 
@@ -84,7 +85,7 @@ You need [Bun](https://bun.sh) 1.4.2 (the version in `package.json`) and Postgre
 ```bash
 cp .env.example .env                                   # never commit .env
 bun install --frozen-lockfile
-bun run spec:setup                                     # Node 24+ for Vibespec
+bun run spec:setup                                     # Node 26 with Corepack and pnpm 10.24.0
 bun run packages/observatory/db/dev-pg.ts up           # the dev Postgres on localhost:54339
 bun run sim                                            # must pass before you start
 ```
@@ -343,7 +344,7 @@ Every PR must include each item. Write `N/A: <reason>` only when an item does no
 - [ ] Agent clients tested (section 8): client and version, provider, model, result.
 - [ ] Logs or video when a flow is involved.
 - [ ] `bun run sim`, `bun run typecheck`, `bun run test:integration` and `bun run test:e2e` pass. Paste the summary lines.
-- [ ] Spec, generated modules, and related flow model agree. Include Vibespec check results and any open obligations.
+- [ ] Spec, generated modules, and related flow model agree. Include Vibestack check results and any open obligations.
 - [ ] Test steps and the expected result of each step.
 - [ ] Risks and trade-offs.
 - [ ] No UI change, or the broken-flow exception with before and after video (section 9).
