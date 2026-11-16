@@ -28,7 +28,7 @@
 //    through an optional reader (capital.ts); gaming flags wait in the review queue as "fraud" items.
 import {
   ADULT_AGE, canBeMatched, canJoin, DAY, HOUR, isMinor, localParts, LeakGuard, MINUTE, UNDER_MIN_AGE_DECLINE, validAge,
-  type Category, type Facet, type Intent, type LeakOptions, type LLM, type MemberId, type ParticipationState, type Proposal, type ScoreComponents, type WorldSnapshot,
+  type Category, type Facet, type Intent, type LeakOptions, type LLM, type MemberId, type NetworkEvent, type ParticipationState, type Proposal, type ScoreComponents, type WorldSnapshot,
 } from "@thenetwork/core";
 import {
   attention, buildWorld, CONTRIBUTOR_ROLES, DEFAULT_ATTENTION, localEmbed, plans, resolveConfig, resolvePlans, runEngine,
@@ -58,6 +58,7 @@ import {
   replacementRoute, shouldLookForOtherTimes, step as stepProbe, turnReached, type ParticipantProbe,
 } from "../../core/src/generated/probeDispatch.ts";
 import { reviewLate } from "../../core/src/generated/reviewDeadline.ts";
+import { publicEventRevisionMatches } from "../../core/src/generated/publicEventCatalog.ts";
 import {
   cachedStandingIntentsCurrent, canQueueEngineOpportunity, learnedIntentDays, learnedIntentMayProject,
   standingIntentBlocksLearnedCopy, standingIntentFacetEvidence, standingIntentRecheckDue,
@@ -450,6 +451,8 @@ interface Opp {
   offered?: Record<MemberId, TimeOption[]>; picks?: Record<MemberId, number[]>; deferLogged?: MemberId[];
   /** An event's own time window (a fixed-time opportunity gets that time as its only option). */
   anchorWindow?: { start: number; end: number };
+  /** The public listing reviewed for this opportunity. Content changes require a new review. */
+  publicEventRevision?: string;
   /** Slot starts a member was offered and did not pick: never offered again in this opportunity. */
   declinedTimes?: number[];
   /** Members who said "neither" and were offered other times once. */
@@ -2251,6 +2254,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    * two. Engine proposals also pass gateReason() again. Undefined when all pass.
    */
   private approvalCheck(o: Opp): string | undefined {
+    if (o.publicEventRevision && !this.currentPublishedEvent(o)) return "public_event_changed";
     for (const id of o.participants) {
       if (this.declinedIds.has(id)) return "participant_declined";
       const m = this.members.get(id);
@@ -2383,7 +2387,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     const now = this.now();
     return {
       id: o.id, kind: o.kind, participants: [...o.participants], alternates: [...o.alternates], objective: o.objective, category: o.category,
-      city: "nyc", window: o.plan ? { start: o.meetingAt ?? o.plan.window.start, end: o.plan.window.end } : { start: o.meetingAt ?? now + DAY, end: (o.meetingAt ?? now + DAY) + 4 * DAY }, score: o.score, components: o.components,
+      city: "nyc", window: o.plan ? { start: o.meetingAt ?? o.plan.window.start, end: o.plan.window.end }
+        : o.publicEventRevision && o.anchorWindow ? { ...o.anchorWindow }
+        : { start: o.meetingAt ?? now + DAY, end: (o.meetingAt ?? now + DAY) + 4 * DAY }, score: o.score, components: o.components,
       exploration: o.exploration, explanations: { ...o.explanations }, generator: o.generator, createdAt: o.createdAt,
     };
   }
@@ -2401,6 +2407,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   private advanceProbes(o: Opp) {
     if (o.plan) return this.planLane(o, this.now());
     if (o.stage !== "probing") return;
+    if (o.publicEventRevision && !this.currentPublishedEvent(o)) return this.close(o, "public event changed");
     const now = this.now();
     if (!o.first || !o.participants.includes(o.first)) o.first = this.firstOf(o);
     // A member who asked for this exact thing is not asked yes or no. A requester still picks the
@@ -2544,6 +2551,10 @@ export class ConsentNetwork implements NetworkUnderTest {
    */
   private timeOptionsFor(o: Opp, id: MemberId, now: number): TimeOption[] {
     const keyed = (slots: { start: number; end: number }[]) => slots.slice(0, 3).map((x, i) => ({ key: "abc"[i]!, start: x.start, end: x.end, label: attention.timeOptionsPhrase([x], NY) }));
+    if (o.publicEventRevision) {
+      const listing = this.currentPublishedEvent(o);
+      return listing && !o.declinedTimes?.includes(listing.start) ? keyed([listing]) : [];
+    }
     const picks = Object.entries(o.picks ?? {}).filter(([who]) => o.participants.includes(who));
     const common = this.commonPicks(o, id, now);
     if (common.named) return keyed(common.slots);
@@ -2707,6 +2718,8 @@ export class ConsentNetwork implements NetworkUnderTest {
    */
   private reveal(o: Opp) {
     const now = this.now();
+    const published = this.currentPublishedEvent(o);
+    if (o.publicEventRevision && !published) return this.close(o, "public event changed");
     // Send-time re-check before anyone learns who (P1-5): everyone must still be reachable about the
     // others, and have room on the Blooio streak for one more message.
     for (const id of o.participants) {
@@ -2724,14 +2737,19 @@ export class ConsentNetwork implements NetworkUnderTest {
       type: "book", hasConsent: o.participants.every(id => o.status.get(id) === "available"),
     });
     if (next.phase !== "Scheduled") return;
-    const t = this.meetingTime(o, now);
+    const t = published
+      ? published.start >= now + MIN_NOTICE && !o.declinedTimes?.includes(published.start) ? { at: published.start, how: "public_event" } : undefined
+      : this.meetingTime(o, now);
     if (!t) return this.closeNoCommonTime(o, o.participants[0]!);
     const areas = o.participants.map(p => this.member(p).area);
     // The app's pack may pick the place (slop: a public place near the midpoint of the two homes). Never a home.
-    const packVenue = o.fixedVenue ? undefined : this.opts.hooks?.venue?.({ ...this.hookOpp(o), meetingAt: t.at }, this.inputOnce());
-    const spot: { venue: Pick<Venue, "id" | "name" | "neighborhood" | "lat" | "lng">; worst: number } = o.fixedVenue
-      ? { venue: o.fixedVenue, worst: Math.max(0, ...areas.filter((a): a is string => !!a).map(a => travelMinutes(neighborhood(a), neighborhood(o.fixedVenue!.neighborhood)))) }
-      : packVenue ? { venue: packVenue, worst: -1 } : meetingSpot(areas, o.category, o.tags);
+    const packVenue = published?.listing ? {
+      id: published.id, name: published.listing.venue, neighborhood: published.area ?? "New York City", lat: published.listing.lat, lng: published.listing.lng,
+    } : o.fixedVenue ? undefined : this.opts.hooks?.venue?.({ ...this.hookOpp(o), meetingAt: t.at }, this.inputOnce());
+    const fixedVenue = o.fixedVenue;
+    const spot: { venue: Pick<Venue, "id" | "name" | "neighborhood" | "lat" | "lng">; worst: number } = packVenue ? { venue: packVenue, worst: -1 }
+      : fixedVenue ? { venue: fixedVenue, worst: Math.max(0, ...areas.filter((a): a is string => !!a).map(a => travelMinutes(neighborhood(a), neighborhood(fixedVenue.neighborhood)))) }
+      : meetingSpot(areas, o.category, o.tags);
     o.venue = spot.venue.name; o.venueArea = spot.venue.neighborhood;
     o.meetingAt = t.at;
     this.ctx.log("venue", { oppId: o.id, venueId: spot.venue.id, venue: spot.venue.name, lat: spot.venue.lat, lng: spot.venue.lng, meetingAt: o.meetingAt, worstMinutes: spot.worst, time: t.how });
@@ -2744,6 +2762,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (r) { r.outcome = "booked"; this.ctx.log("request_result", { requestId: r.id, memberId: r.memberId, outcome: "booked", hours: Math.round((now - r.at) / HOUR) }); }
     }
     this.ctx.recordMeeting({ proposalId: o.id, participants: [...o.participants], at: o.meetingAt, city: "nyc", kind: o.kind });
+    const source = published?.listing ? `\n${published.listing.url}` : "";
     for (const id of [...o.participants]) {
       if (o.stage !== "scheduled" || o.status.get(id) !== "yes") continue;
       const m = this.member(id);
@@ -2753,10 +2772,10 @@ export class ConsentNetwork implements NetworkUnderTest {
       // The calendar and weekly check-in offer rides once, in the member's first booked plan (decision 4c, 4d).
       const offer = !m.offerMade && !m.minor;
       const text = this.opts.hooks?.booked?.(this.hookOpp(o), id, { others, where, when }) ?? copy.booked(others, why, where, when, offer);
-      this.send(m, text, {
+      this.send(m, text + source, {
         type: "proposal", proposalId: o.id, participants: [...o.participants], meetingAt: o.meetingAt,
         booked: { proposalId: o.id, at: o.meetingAt, optOutHours: OPT_OUT_HOURS }, proactive: !this.opts.probes && !o.primed.has(id),
-      }, "reveal", { about: o.participants, fallback: copy.booked(others, capitalize(GOOD_FIT), where, when, offer), hook: { t: "reveal", oppId: o.id, id } });
+      }, "reveal", { about: o.participants, fallback: copy.booked(others, capitalize(GOOD_FIT), where, when, offer) + source, hook: { t: "reveal", oppId: o.id, id } });
     }
   }
 
@@ -3253,6 +3272,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       primed: [], explanations: prop.explanations, score: plan.score, generator: plan.crewId ? "crew" : "plan", tags: a.tags.slice(0, 4),
     });
     o.plan = plan;
+    this.bindPublishedEvent(o, plan.eventId);
     for (const id of plan.invited) this.lastPlannedAt.set(id, now);
     this.plansCounters.plansProposed++;
     this.submit(o);
@@ -3272,6 +3292,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** Probes whose turn has come go out when the member's plan lane allows (send window, one a day, allowance). */
   private planLane(o: Opp, now: number) {
+    if (o.stage === "probing" && o.publicEventRevision && !this.currentPublishedEvent(o)) return this.close(o, "public event changed");
     if (!o.planRun) return;
     // spec/planDispatch.md, "Only an open plan can invite a pending member"
     const booked = o.stage === "scheduled";
@@ -3390,6 +3411,8 @@ export class ConsentNetwork implements NetworkUnderTest {
    * booked plan to each member who said yes: names, time, public place, "everyone pays their own way".
    */
   private bookPlan(o: Opp, going: MemberId[], fromFallback = false): void {
+    const publicEvent = this.currentPublishedEvent(o);
+    if (o.publicEventRevision && !publicEvent) return this.close(o, "public event changed");
     const plan = o.plan!;
     const a = plans.activityById.get(plan.activityId)!;
     let keep = going.filter(id => {
@@ -3418,7 +3441,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const now = this.now();
     o.meetingAt = plan.window.start; o.venue = plan.place.name; o.venueArea = plan.place.area ?? "";
     const gv = VENUES.find(v => v.id === plan.venueId);
-    this.ctx.log("venue", { oppId: o.id, venueId: plan.venueId ?? plan.eventId ?? null, venue: plan.place.name, lat: gv?.lat ?? null, lng: gv?.lng ?? null, meetingAt: o.meetingAt, time: "plan" });
+    this.ctx.log("venue", { oppId: o.id, venueId: plan.venueId ?? plan.eventId ?? null, venue: plan.place.name, lat: gv?.lat ?? publicEvent?.listing?.lat ?? null, lng: gv?.lng ?? publicEvent?.listing?.lng ?? null, meetingAt: o.meetingAt, time: "plan" });
     this.counters.oppsRevealed++; this.counters.oppsAllYes++; this.counters.scheduled++; this.plansCounters.plansBooked++;
     o.stage = STAGE_BY_PHASE[next.phase];
     o.planRun = { ...o.planRun!, stage: "booked" };
@@ -3437,7 +3460,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     const a = plans.activityById.get(plan.activityId)!;
     const where = `${plan.place.name}${plan.place.area ? ` (${plan.place.area})` : ""}`, when = whenPhrase(plan.window.start);
     const offer = !m.offerMade && !m.minor;
-    this.send(m, copy.planBooked(a.label, others, where, when, offer), {
+    const listing = this.currentPublishedEvent(o)?.listing;
+    this.send(m, copy.planBooked(a.label, others, where, when, offer) + (listing ? `\n${listing.url}` : ""), {
       type: "proposal", proposalId: o.id, participants: [...going], meetingAt: plan.window.start,
       booked: { proposalId: o.id, at: plan.window.start, optOutHours: OPT_OUT_HOURS }, proactive: false,
     }, "reveal", { about: going, hook: { t: "reveal", oppId: o.id, id } });
@@ -3446,6 +3470,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** A late yes after booking (until 6 hours before): the member joins and gets the booked plan; the sim's meeting is updated in place. */
   private planJoin(o: Opp, id: MemberId) {
     const plan = o.plan!;
+    if (o.publicEventRevision && !this.currentPublishedEvent(o)) { o.status.set(id, "unavailable"); return; }
     if (this.bookedNear(id, plan.window.start, o.id) || !this.checkRecipient(id, "reveal", { about: o.participants.filter(p => o.status.get(p) === "yes"), reply: false }).ok) { o.status.set(id, "unavailable"); return; }
     o.status.set(id, "yes"); this.plansCounters.planLateJoins++;
     this.ctx.recordMeeting({ proposalId: o.id, participants: [id], at: plan.window.start, city: "nyc", kind: "plan" });
@@ -3473,7 +3498,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       const ev = w.events.find(e => e.id === fallback.eventId);
       for (const id of fallback.members) {
         const m = this.members.get(id);
-        if (m && ev) this.send(m, copy.planEvent(ev.title, whenPhrase(ev.start), ev.area), { type: "info", items: [{ key: ev.id, label: ev.title, tags: ev.tags }] }, "info");
+        if (m && ev) this.send(m, copy.planEvent(ev.title, whenPhrase(ev.start), ev.listing?.venue ?? ev.area) + (ev.listing ? `\n${ev.listing.url}` : ""),
+          { type: "info", items: [{ key: ev.id, label: ev.title, tags: ev.tags }] }, "info");
       }
     } else if (fallback.kind === "next_week") for (const id of fallback.members) this.noteFor(id, copy.planNotTogether);
   }
@@ -3638,6 +3664,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.lastTick = now;
     // The member records can change between units (staff edits, the member's settings): read them again first.
     for (const m of [...this.members.values()]) this.syncMember(m);
+    for (const o of this.openOpps()) {
+      if (o.stage !== "scheduled" && o.publicEventRevision && !this.currentPublishedEvent(o)) this.close(o, "public event changed");
+    }
     // Deferred sends whose window may have come. Each one runs every send-time check again.
     const waiting = this.deferred; this.deferred = [];
     for (const d of waiting) {
@@ -4108,16 +4137,36 @@ export class ConsentNetwork implements NetworkUnderTest {
     // What the gates need to run again when a reviewer approves it (approvalCheck).
     if (origin === "engine") { const e = p as Partial<EngineProposal>; o.anchor = e.anchor; o.roles = e.roles; }
     if (p.seat) o.seat = { ...p.seat };
-    if (o.anchor?.type === "event" && p.window) o.anchorWindow = { ...p.window };
+    if (o.anchor?.type === "event") {
+      if (p.window) o.anchorWindow = { ...p.window };
+      this.bindPublishedEvent(o, o.anchor.id);
+    }
     // Engine text can quote matchable facets: every member-facing reason is rebuilt from shareable facts (network-consent-11).
     if (origin === "engine") this.reexplain(o);
     this.submit(o);
     return o;
   }
 
+  private bindPublishedEvent(o: Opp, eventId?: string) {
+    if (!eventId) return;
+    const event = this.snapshotCached().events?.find(value => value.id === eventId);
+    if (event?.listing) {
+      o.publicEventRevision = sha256(stableStringify(event));
+      o.anchorWindow = { start: event.start, end: event.end };
+      o.venueArea = event.area;
+    }
+  }
+
+  private currentPublishedEvent(o: Opp): NetworkEvent | undefined {
+    if (!o.publicEventRevision) return undefined;
+    const id = o.plan?.eventId ?? o.anchor?.id;
+    const event = this.snapshotCached().events?.find(value => value.id === id);
+    return event?.listing && publicEventRevisionMatches(o.publicEventRevision, sha256(stableStringify(event))) ? event : undefined;
+  }
+
   /** The engine's input: the public snapshot plus everything the Network has learned and observed. */
   engineInput(now: number): EngineInput {
-    const snap = this.controlledIntentSnapshot(this.ctx.snapshot()) as WorldSnapshot & Pick<EngineInput, "events">;
+    const snap = this.controlledIntentSnapshot(this.ctx.snapshot());
     const nyc = new Set(snap.members.filter(m => m.homeCity === "nyc" && !this.declinedIds.has(m.id)).map(m => m.id));
     const facets: Facet[] = snap.facets.filter(f => nyc.has(f.memberId));
     const intents: Intent[] = snap.intents.filter(i => nyc.has(i.memberId));

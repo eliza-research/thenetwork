@@ -10,6 +10,7 @@ import { participationOverride, validWindow, windowIsActive } from "../../core/s
 import { presenceWindowCurrentOrFuture } from "../../core/src/generated/travelPresence.ts";
 import type { SetStateRequest } from "../../core/src/svc/contract.ts";
 import { peonSeats } from "@thenetwork/engine";
+import { readPublicEvents } from "./public-events.ts";
 
 /** Static SQL-only purpose fence for automated inputs; never interpolate a caller-provided identifier. */
 export function automatedFacetPredicate(sql: SQL, memberJoin = false) {
@@ -90,7 +91,7 @@ export interface SnapshotScope { app: string; city?: string; homeCities?: readon
  */
 export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope = { app: "ntwrk" }): Promise<WorldSnapshot> {
   const app = scope.app;
-  const [members, facets, intents, presence, edges, recent, parts, personBlocks] = await Promise.all([
+  const [members, facets, intents, presence, edges, recent, parts, personBlocks, events] = await Promise.all([
     sql`select m.*, a.age as matching_age from network.members m
       left join platform.matching_ages a on a.app_id = m.app_id and a.member_id = m.id
       where m.app_id = ${app} and m.account_status not in ('invited', 'removed') order by m.id`,
@@ -107,6 +108,7 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
     sql`select f.id as from_id, t.id as to_id, pb.at as created_at from platform.person_blocks pb
       join network.members f on f.person_id = pb.from_person and f.app_id = ${app}
       join network.members t on t.person_id = pb.to_person and t.app_id = ${app} order by f.id, t.id`,
+    scope.purpose === "profile_review" ? [] : readPublicEvents(sql, now, scope.city),
   ]);
   // Runtime conversation ownership takes precedence; it never creates or changes physical presence.
   const joined = new Set((members as any[]).map(r => r.id as string));
@@ -122,6 +124,7 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
   for (const p of parts as any[]) { if (!partsBy.has(p.opportunity_id)) partsBy.set(p.opportunity_id, []); partsBy.get(p.opportunity_id)!.push(p); }
   const snap: WorldSnapshot = {
     now,
+    ...(events.length ? { events } : {}),
     // The account status rides along (the Network reads it): a paused or restricted account is never matched and gets no
     // proactive message; replies to its own messages, compliance texts and safety notices still go (founder, 2026-10-11).
     members: (members as any[]).filter(r => keep(r.id)).map((r): Member & { accountStatus: string } => ({

@@ -265,6 +265,18 @@ Rules for the boundary:
 - **Phones of platform members are in `platform.phone_identities` only.** `network.channel_identities` allows one member per address, so it cannot hold a phone that is a member of two apps. Console views that read phones from `channel_identities` do not see platform members.
 
 
+### Public event catalog
+
+The NYC matcher reads upcoming public listings from the catalog after a successful import. This can recheck a standing intent on the next matching tick. A changed listing requires another approval before anyone is contacted about it. Matching ticks and member turns read Postgres only. [NYC Parks public events dataset](https://data.cityofnewyork.us/City-Government/NYC-Parks-Public-Events-Upcoming-14-Days/w3wp-dpdi)
+
+Migration `0042` creates the catalog and its restricted ingest role. Give the feed runner a separate login with `network_public_event_ingest` and set `NETWORK_PUBLIC_EVENTS_DATABASE_URL` for that runner. Run one refresh explicitly with Node 26.
+
+```sh
+node --import tsx packages/network/service/import-public-events.ts
+```
+
+The command fetches the city dataset once and publishes the normalized scan in one transaction. The daily source expires from matching after two days without a successful refresh. The repo's backend starts with the catalog empty. A recurring production refresh requires an operator to schedule this command with the ingest login. [Catalog rules](../../../spec/publicEventCatalog.md)
+
 ### Isolated signed-route receiver
 
 `NETWORK_ROUTE_AUTHORITY_POLICY` is optional server-only JSON, accepted only with

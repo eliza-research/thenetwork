@@ -6,12 +6,15 @@ import { findExecutable } from "../../core/src/runtime/process.ts";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { existsSync } from "node:fs";
 import { SQL } from "../../core/src/runtime/postgres.ts";
-import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
+import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import type { SendRequest } from "../../blooio/src/types.ts";
+import { GENERATOR_NAMES } from "../../engine/src/config.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { BlooioAdapter } from "../service/channel.ts";
+import { importPublicEvents } from "../service/import-public-events.ts";
 import { NetworkService, WEBHOOK_PATH, type ServiceOptions } from "../service/service.ts";
+import { loadSnapshot } from "../service/snapshot.ts";
 import { START } from "./mini.ts";
 
 const T = 300_000;
@@ -270,6 +273,78 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     for (const text of ONBOARD) await say(restarted, clock, "c", text);
     expect(await restarted.tick()).toBe(true);
     expect(await runCount()).toBe(3);
+  }, T);
+
+  // spec/publicEventCatalog.md, "A successful complete scan replaces the previous source and expires if refresh stops"
+  test("publishes current public Parks events and rechecks standing intents through the production tick", async () => {
+    await reset();
+    await sql`update network.members set account_status = 'invited' where id <> 'a'`;
+    const clock = new SimClock(START);
+    const s = service(clock, "public-events", { network: { seed: 1, plans: false, growth: false, selective: false, engine: {
+      generators: Object.fromEntries(GENERATOR_NAMES.map(name => [name, name === "event_anchor"])),
+      floors: { fit: 0, mutualBenefit: 0, confidence: 0 }, retrieval: { minSim: 0 }, thresholds: { byGenerator: { event_anchor: 0 } },
+    } } });
+    expect((await staff(s, "adm-tok", "POST", "/matching", { on: true })).status).toBe(200);
+    for (const message of ONBOARD) await say(s, clock, "a", message);
+    const runCount = async () => (await sql<{ n: number }[]>`select count(*)::int as n from network.matching_runs where app_id = 'ntwrk'`)[0]!.n;
+    expect(await s.tick()).toBe(true);
+    expect(await runCount()).toBe(1);
+    const fixture = {
+      guid: "2257118", title: "Outdoor climbing", categories: "Fitness | Climbing", location: "McCarren Park",
+      starttime: "2026-10-07T18:00:00.000", endtime: "2026-10-07T19:00:00.000", coordinates: "40.7206,-73.9518",
+      link: { url: "http://www.nycgovparks.org/events/2026/10/07/fitness" }, contact_phone: "unneeded value", description: "unneeded copy",
+    };
+    const fetchFixture: typeof fetch = async input => {
+      const url = new URL(String(input));
+      expect(`${url.origin}${url.pathname}`).toBe("https://data.cityofnewyork.us/resource/w3wp-dpdi.json");
+      expect(url.searchParams.get("$select")).not.toContain("contact_phone");
+      return Response.json([fixture, fixture, { ...fixture, guid: "2", title: "Kids yoga" },
+        { ...fixture, guid: "3", location: "Virtual workshop" }, { ...fixture, guid: "4", endtime: fixture.starttime }]);
+    };
+    clock.advance(MINUTE);
+    expect(await importPublicEvents(sql, clock, fetchFixture)).toEqual({ published: true, events: 1 });
+    const publishedAt = clock.now();
+    const snapshot = await s.runtimeFor("ntwrk")!.scoped(tx => loadSnapshot(tx, clock.now(), { app: "ntwrk", city: "nyc" }));
+    expect(snapshot.events).toEqual([{
+      id: "nyc-parks:2257118", title: "Outdoor climbing", city: "nyc", area: "Williamsburg",
+      start: Date.UTC(2026, 9, 7, 22), end: Date.UTC(2026, 9, 7, 23), tags: ["climbing", "fitness"], category: "hobby",
+      listing: { venue: "McCarren Park", lat: 40.7206, lng: -73.9518, url: "https://www.nycgovparks.org/events/2026/10/07/fitness" },
+    }]);
+    expect((await loadSnapshot(sql, clock.now(), { app: "ntwrk", city: "sf" })).events).toBeUndefined();
+    expect((await loadSnapshot(sql, clock.now(), { app: "ntwrk", purpose: "profile_review" })).events).toBeUndefined();
+    expect(await s.tick()).toBe(true);
+    expect(await runCount()).toBe(2);
+    expect(await importPublicEvents(sql, clock, fetchFixture)).toEqual({ published: false, events: 0 });
+
+    clock.advance(MINUTE);
+    expect(await importPublicEvents(sql, clock, fetchFixture)).toEqual({ published: true, events: 1 });
+    await expect(importPublicEvents(sql, clock, async () => new Response(null, { status: 503 }))).rejects.toThrow("HTTP 503");
+    expect(await s.tick()).toBe(true);
+    expect(await runCount()).toBe(2);
+    expect((await loadSnapshot(sql, publishedAt + 2 * DAY + MINUTE, { app: "ntwrk" })).events).toBeUndefined();
+    const [grants] = await sql`select has_table_privilege('network_service', 'network.public_events', 'SELECT') reader,
+      has_table_privilege('network_service', 'network.public_events', 'INSERT') reader_can_publish,
+      has_table_privilege('network_public_event_ingest', 'network.members', 'SELECT') publisher_can_read_members`;
+    expect(grants).toEqual({ reader: true, reader_can_publish: false, publisher_can_read_members: false });
+
+    // The reviewed opportunity names the publisher's end-to-end window. A moved listing cannot
+    // authorize contact for the old opportunity even before the next tick notices the move.
+    await sql`update network.members set account_status = 'active' where id = 'b'`;
+    for (const message of ONBOARD) await say(s, clock, "b", message);
+    expect(await s.tick()).toBe(true);
+    const review = await (await staff(s, "rev-tok", "GET", "/review")).json();
+    const pending = review.items.find((row: { proposal: { kind: string } }) => row.proposal.kind === "event_coattend");
+    const [latest] = await sql`select summary->'funnel' as funnel from network.matching_runs where app_id = 'ntwrk' order by at desc limit 1`;
+    expect(pending, JSON.stringify({ funnel: latest?.funnel, gateReasons: (await s.pg.load())?.gateReasons })).toBeDefined();
+    expect(pending?.proposal.window).toEqual({ start: Date.UTC(2026, 9, 7, 22), end: Date.UTC(2026, 9, 7, 23) });
+    clock.advance(MINUTE);
+    expect(await importPublicEvents(sql, clock, async () => Response.json([{ ...fixture, location: "Transmitter Park" }]))).toEqual({ published: true, events: 1 });
+    const approval = await staff(s, "rev-tok", "POST", `/review/${pending.oppId}`, { decision: "approve" });
+    expect(approval.status).toBe(409);
+    expect(await approval.json()).toMatchObject({ reason: "public_event_changed" });
+    expect(await sql`select id from network.messages where opportunity_id = ${pending.oppId}`).toHaveLength(0);
+    expect(s.adapter.name).toBe("dry_run");
+    await s.close();
   }, T);
 
   test("an item past its review SLA expires unsent even when the reviewer acts before the next tick", async () => {

@@ -318,7 +318,7 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
       const minG = Math.max(pcfg.size.min, a.groupSize[0]);
       // Use the event site or an open venue. Prefer venues that can host a full group before comparing area coverage.
       let place: { name: string; area?: string; venueId?: string; ageMin: number; priceTier: number; capacity?: number };
-      if (wh.event) place = { name: wh.event.title, area: wh.event.area, ageMin: a.ageMin, priceTier: a.costTier };
+      if (wh.event) place = { name: wh.event.listing?.venue ?? wh.event.title, area: wh.event.area, ageMin: a.ageMin, priceTier: a.costTier };
       else {
         const vs = inp.venues.filter(v => venueCanHostActivity(v.public, v.city === city, v.activities.includes(a.id), v.capacity === undefined ? Infinity : v.capacity)
           && openAt(v, wh.slot, a.durationMin, tz, att));

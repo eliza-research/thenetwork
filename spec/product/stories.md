@@ -90,7 +90,7 @@ Models: [agent loop](../models/chatjson_loop.md), [member request admission](../
 
 Record the objective, essential constraints, source and time horizon. List, pause or close it on request. Re-evaluate when relevant evidence or supply changes. Expire or reconfirm at 60 days. A later suggestion still needs current eligibility and consent.
 
-Models: [profile learning](../models/profile_learning.md), [standing intent freshness](../standingIntent.md), [standing intent management](../standingIntentManagement.md), [request retry and withdrawal](../memberRequest.md), [matching engine](../models/matching_engine.md).
+Models: [profile learning](../models/profile_learning.md), [standing intent freshness](../standingIntent.md), [standing intent management](../standingIntentManagement.md), [public event supply](../publicEventCatalog.md), [request retry and withdrawal](../memberRequest.md), [matching engine](../models/matching_engine.md).
 
 ## Story F10 — Get concierge value
 
@@ -130,7 +130,9 @@ Models: [plan run](../models/plan_run.md), [opportunity](../models/opportunity.m
 
 Suggest public events independently. When connecting members at the event, check compatible plans, review the proposal and ask each participant independently before disclosing identities. A minor's event suggestion is solo.
 
-Models: [matching engine](../models/matching_engine.md), [opportunity](../models/opportunity.md).
+Use a current listing from an accepted source. If the listed place or time changes during review or consent, retire the pending proposal. A booking uses the reviewed listing's place and time.
+
+Models: [public event catalog](../publicEventCatalog.md), [matching engine](../models/matching_engine.md), [opportunity](../models/opportunity.md).
 
 ## Story F14 — Ask for bounded help
 

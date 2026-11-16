@@ -4,11 +4,7 @@ import type {
   Category, City, MemberId, OpenOpportunity, OpportunityKind, Proposal, ScoreComponents, WorldSnapshot,
 } from "@thenetwork/core";
 
-export interface NetworkEvent {
-  id: string; title: string; description?: string; city: City; area?: string;
-  start: number; end: number; tags: string[]; category: Category; capacity?: number;
-  riskTags?: string[];
-}
+export type { NetworkEvent } from "@thenetwork/core";
 export interface SafetyHold { memberId: MemberId; from: number; to?: number; reason?: string }
 export interface FeedbackRecord {
   id: string; from: MemberId; about: MemberId; opportunityId?: string; at: number;
@@ -51,7 +47,6 @@ export interface ReliabilityEvidence { noShows: number; completedSinceLastNoShow
 
 /** What the engine reads: the core snapshot plus optional extension fields. */
 export interface EngineInput extends WorldSnapshot {
-  events?: NetworkEvent[];
   /** An evidence-triggered run considers only these live standing intents and their events. */
   standingIntentSearch?: string[];
   safetyHolds?: SafetyHold[];
