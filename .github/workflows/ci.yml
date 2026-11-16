@@ -74,6 +74,9 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
         timeout-minutes: 5
+      - name: Install the toolkit (tools/vibestack)
+        run: pnpm run spec:setup
+        timeout-minutes: 5
       - name: Require Postgres
         run: |
           pg_isready -h localhost -p 54339
