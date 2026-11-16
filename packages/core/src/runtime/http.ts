@@ -118,7 +118,9 @@ export async function serveHttp<Data = unknown>(options: Options<Data>): Promise
       else { out.statusCode = 500; out.end("Internal Server Error"); }
     });
   });
-  if (options.idleTimeout !== undefined) http.keepAliveTimeout = options.idleTimeout * 1000;
+  const idleTimeoutMs = (options.idleTimeout ?? 10) * 1000;
+  http.setTimeout(idleTimeoutMs);
+  http.keepAliveTimeout = idleTimeoutMs;
   http.on("upgrade", (incoming, socket, head) => {
     if (!sockets) { socket.destroy(); return; }
     socket.on("error", () => socket.destroy());
@@ -182,11 +184,15 @@ export async function serveHttp<Data = unknown>(options: Options<Data>): Promise
       }
     },
     stop(force = false) {
-      closing ??= new Promise<void>((resolve, reject) => http.close(error => error ? reject(error) : resolve()));
+      closing ??= Promise.all([
+        new Promise<void>((resolve, reject) => http.close(error => error ? reject(error) : resolve())),
+        sockets ? new Promise<void>((resolve, reject) => sockets.close(error => error ? reject(error) : resolve())) : undefined,
+      ]).then(() => undefined);
       void closing.catch(() => {});
-      if (!force) return Promise.resolve();
-      for (const socket of topics.keys()) socket.terminate();
-      http.closeAllConnections();
+      if (force) {
+        for (const socket of topics.keys()) socket.terminate();
+        http.closeAllConnections();
+      }
       return closing;
     },
   };
