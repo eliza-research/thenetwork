@@ -40,7 +40,8 @@ import { reconcileLegacyIntentRows } from "./standing-intent-reconciliation.ts";
 import { appWiring, type AppWiring } from "./packs.ts";
 import { BlooioAdapter, DryRunAdapter, WAITING_STATUSES, type ChannelAdapter, type Delivery, type Outbound } from "./channel.ts";
 import { normalizeAddress } from "../../blooio/src/phone.ts";
-import type { InboundTurn, CollectedReply, InvitationReplyReason } from "./inbox.ts";
+import type { InboundTurn, CollectedReply, AtomicReplyReason } from "./inbox.ts";
+import { BOUNDED_HOME_HELP_PROMPT } from "./bounded-home-help-intake.ts";
 import { parseApprovedRelayPhotos, type TurnContext } from "../../core/src/svc/contract.ts";
 import { ADULT_AGE, canBeMatched } from "../../core/src/policy.ts";
 import type { PhotoRelayService } from "../../platform/src/photo-relay.ts";
@@ -66,12 +67,14 @@ export type StagedMemberInvitation =
   | { status: "issued"; referral: ReferralJoin; url: string; relationship: InviteRelationship;
       evidence: MemberInviteEvidence; at: number; reviewId?: string };
 
-const privateInviteMessage = (type?: string) => type?.startsWith("member_invitation") === true;
+const privateMemberMessage = (type?: string) => type === "bounded_home_help" || type?.startsWith("member_invitation") === true;
 
 /** What one unit of work produced. Written in the save transaction, then delivered. */
 export interface Unit {
   inbound?: Row;
   privateInviteTurn?: true;
+  privateHomeHelpTurn?: true;
+  atomicHomeHelpReceipt?: true;
   memberInvitation?: StagedMemberInvitation;
   standingIntent?: StoredStandingIntentChange;
   legacyIntentState?: NetworkState;
@@ -107,7 +110,7 @@ export interface RuntimeHost {
   /** Canonical read checks inside an existing admission transaction, without another pool lease. */
   accountsFor?(tx: SQL): Pick<Accounts, "activeMembership" | "lowestAge" | "phoneHash">;
   inboundTurn?(): InboundTurn | undefined;
-  collectReplies?(tx: SQL, replies: CollectedReply[], invitation?: InvitationReplyReason): Promise<void>;
+  collectReplies?(tx: SQL, replies: CollectedReply[], reason?: AtomicReplyReason): Promise<void>;
   stageMemberInvitation?(rt: NetworkRuntime, request: MemberInviteRequest): StagedMemberInvitation | undefined;
   saveMemberInvitation?(tx: SQL, rt: NetworkRuntime, staged: StagedMemberInvitation): Promise<void>;
   /** Proactive sends of this batch the person-level daily cap refuses (ids). Called before delivery. */
@@ -194,9 +197,14 @@ export class NetworkRuntime {
       onAgeStated: (memberId, age, o) => { this.statedAges.push({ memberId, age, ...o }); },
       // peon (#9): a posting the manager confirmed (or staff saved) is written with the unit (writeUnit).
       onPosting: p => { this.unit.postings.push(p); },
-      memberInviteTurnAllowed: (memberId, messageId) => this.signedInviteTurn(memberId, messageId),
+      memberInviteTurnAllowed: (memberId, messageId) => this.signedMemberTurn(memberId, messageId),
       onPrivateInviteTurn: (memberId, messageId) => {
-        if (this.signedInviteTurn(memberId, messageId)) this.unit.privateInviteTurn = true;
+        if (this.signedMemberTurn(memberId, messageId)) this.unit.privateInviteTurn = true;
+      },
+      homeHelpIntakePrompt: memberId => {
+        if (!this.signedMemberTurn(memberId)) return;
+        this.unit.privateHomeHelpTurn = true;
+        return BOUNDED_HOME_HELP_PROMPT;
       },
       issueMemberInvite: request => {
         const staged = this.host.stageMemberInvitation?.(this, request);
@@ -495,9 +503,9 @@ export class NetworkRuntime {
   memberOf = (address: string): MemberId | undefined => this.addrToMember.get(normalizeAddress(address));
   addressOf = (id: MemberId): string | undefined => this.memberToAddr.get(id);
 
-  signedInviteTurn(memberId: MemberId, messageId: string): boolean {
+  signedMemberTurn(memberId: MemberId, messageId?: string): boolean {
     const turn = this.host.inboundTurn?.();
-    return !!turn && turn.app === this.app.id && turn.memberId === memberId && `in:${turn.id.slice(4)}` === messageId
+    return !!turn && turn.app === this.app.id && turn.memberId === memberId && (messageId === undefined || `in:${turn.id.slice(4)}` === messageId)
       && normalizeAddress(this.addressOf(memberId) ?? "") === normalizeAddress(turn.from);
   }
 
@@ -524,7 +532,8 @@ export class NetworkRuntime {
         }
         if (meta.privateInviteVouch && !causal) throw new Error("Private invitation text requires its signed member reply");
         const type = meta.approvedInviteLink ? "member_invitation" : meta.privateInviteVouch
-          ? pendingInvite?.status === "review" ? "member_invitation_review" : "member_invitation_vouch" : meta.type;
+          ? pendingInvite?.status === "review" ? "member_invitation_review" : "member_invitation_vouch"
+          : this.unit.privateHomeHelpTurn && causal ? "bounded_home_help" : meta.type;
         if (causal) this.unit.collected.add(id);
         this.unit.sends.push({
           id, memberId, to: this.memberToAddr.get(memberId), body,
@@ -557,7 +566,7 @@ export class NetworkRuntime {
 
   /** A directly requested result for this signed member. Source links grant only a per-reply contact exception. */
   collectedMemberReply(memberId: MemberId, id: string, body: string,
-    type: "solo_events" | "contribution_history" | "member_invitation" | "member_invitation_vouch", publicLinks: readonly string[] = []) {
+    type: "solo_events" | "contribution_history" | "member_invitation" | "member_invitation_vouch" | "bounded_home_help", publicLinks: readonly string[] = []) {
     const turn = this.host.inboundTurn?.();
     if (turn?.app !== this.app.id || turn.memberId !== memberId
       || normalizeAddress(this.addressOf(memberId) ?? "") !== normalizeAddress(turn.from)) return;
@@ -601,7 +610,8 @@ export class NetworkRuntime {
       await reconcileLegacyIntentRows(tx, app, this.host.conversationCities?.(this) ?? [this.city], u.legacyIntentState, this.clock.now(), inactive);
     }
     if (u.inbound && ok(u.inbound.member_id as string)) {
-      const privateFields = u.privateInviteTurn ? { body: "Private invitation request.", type: "member_invitation_vouch" } : {};
+      const privateFields = u.privateHomeHelpTurn ? { body: "Private home-help request.", type: "bounded_home_help" }
+        : u.privateInviteTurn ? { body: "Private invitation request.", type: "member_invitation_vouch" } : {};
       await tx`insert into network.messages ${tx({ ...u.inbound, ...privateFields, app_id: app })} on conflict (id) do nothing`;
     }
     const turn = this.host.inboundTurn?.();
@@ -623,7 +633,7 @@ export class NetworkRuntime {
       const reasons = await queue.collectedLeaks(tx, { id: s.id, ...(u.forget.has(s.memberId) ? {} : { memberId: s.memberId }), to: s.to, kind: s.kind, text: s.body, contactAllow });
       if (reasons.length) {
         u.collected.delete(s.id);
-        if (s.type === "solo_events" || s.type === "contribution_history" || privateInviteMessage(s.type)) {
+        if (s.type === "solo_events" || s.type === "contribution_history" || privateMemberMessage(s.type)) {
           // This result was authorized for the signed reply only.
           u.sends = u.sends.filter(message => message.id !== s.id);
           this.host.log(`[alert] a ${s.type} reply failed the collected leak guard (${this.id}, ${s.id})`);
@@ -631,23 +641,27 @@ export class NetworkRuntime {
       }
     }
     const captured = u.sends.filter(s => u.collected.has(s.id) && (ok(s.memberId) || u.forget.has(s.memberId)));
-    let invitationReply: InvitationReplyReason | undefined;
+    let replyReason: AtomicReplyReason | undefined;
+    if (u.atomicHomeHelpReceipt) {
+      if (!captured.some(send => send.type === "bounded_home_help")) throw new Error("Home-help receipt was not collected");
+      replyReason = "bounded_home_help";
+    }
     if (u.memberInvitation) {
       const staged = u.memberInvitation;
-      invitationReply = staged.status === "issued" ? "member_invitation" : "member_invitation_review";
+      replyReason = staged.status === "issued" ? "member_invitation" : "member_invitation_review";
       const inviterId = staged.status === "issued" ? staged.referral.inviterMemberId : staged.review.inviterMemberId;
-      const reply = captured.find(s => s.type === invitationReply && s.memberId === inviterId && ok(s.memberId));
+      const reply = captured.find(s => s.type === replyReason && s.memberId === inviterId && ok(s.memberId));
       // The invitation outcome and its allowance must roll back together if the exact reply was withheld.
       if (!reply || !this.host.saveMemberInvitation) throw new Error("Member invitation reply was not collected");
       await this.host.saveMemberInvitation(tx, this, staged);
     }
     if (captured.length) {
       if (!turn || !this.host.collectReplies) throw new Error("Signed turn collector is unavailable");
-      await this.host.collectReplies(tx, captured.map(s => ({id:s.id, body:s.body, kind:s.kind === "compliance" ? "compliance" : "reply"})), invitationReply);
+      await this.host.collectReplies(tx, captured.map(s => ({id:s.id, body:s.body, kind:s.kind === "compliance" ? "compliance" : "reply"})), replyReason);
     }
     const out = u.sends.filter(s => ok(s.memberId)).map(s => ({
       id: s.id, app_id: app, member_id: s.memberId, direction: "outbound", channel: "imessage",
-      body: privateInviteMessage(s.type) ? "Private invitation reply." : s.body,
+      body: s.type === "bounded_home_help" ? "Private home-help reply." : privateMemberMessage(s.type) ? "Private invitation reply." : s.body,
       status: u.collected.has(s.id) ? "collected" : this.adapter.storedStatus,
       inbound_id: u.collected.has(s.id) ? turn!.id : null,
       invite_join_members: s.invitationJoins ? tx.array([...s.invitationJoins], "TEXT") : null,
@@ -655,7 +669,7 @@ export class NetworkRuntime {
     }));
     // Collected replies to members join the line's thread history (platform.outbound "collected"; sent_at when Cloud accepts), so the
     // leak guard's thread check (core-14) sees what Cloud delivered, and a value split across a reply and a later text is caught.
-    if (queue) await queue.recordCollected(tx, captured.filter(s => ok(s.memberId) && s.to && !privateInviteMessage(s.type))
+    if (queue) await queue.recordCollected(tx, captured.filter(s => ok(s.memberId) && s.to && !privateMemberMessage(s.type))
       .map(s => ({ id: s.id, memberId: s.memberId, to: s.to!, kind: s.kind, text: s.body })));
     for (let i = 0; i < out.length; i += 500) {
       const chunk = out.slice(i, i + 500);

@@ -253,6 +253,24 @@ Rules for the boundary:
 3. **Joining is a membership.** The platform creates members after a verified join (`POST /api/join`) or a join by text on an open app. A new membership through a forwarding link commits with consent, the Network member, and the app-scoped attribution. An `invited` member still has to complete signup.
 4. **No shared process state.** The two talk only through Postgres (the `network` schema) and the channel gateway. Nothing here imports Eliza, and the plugin does not import this service.
 
+## Private home-help review
+
+An eligible adult who asks for home entry receives a private intake prompt. The
+signed reply records the confirmed moving task, NYC neighborhood, time window,
+effort and outcome of considering a service. The owner can revise or close the
+plan by ID and revision. Members can express or withdraw willingness with
+`OFFER HOME HELP` and `WITHDRAW HOME HELP OFFER`.
+
+Safety staff on the app use `GET /apps/<app>/safety/home-help` for the queue.
+`POST /apps/<app>/safety/home-help/<id>` takes `nominate`, `approve` or `close`
+as the action, with the current revision and the exact helper IDs for nomination
+and approval. Nomination creates a new revision. Approval rereads age, consent,
+holds, blocks, offers, availability and capacity. A singleton also needs recorded
+prior contact at a shared public plan or a confirmed meeting edge. Staff decisions
+and their audits commit in one transaction. The plan holds structured data only.
+Private venue collection, helper contact and address release are separate stages
+of [bounded help](../../../spec/boundedHelp.md).
+
 ## Limits
 
 - **No live send has been made.** The Blooio path is tested only with a fake provider.

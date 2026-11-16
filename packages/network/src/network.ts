@@ -233,6 +233,8 @@ export interface NetworkOptions {
   memberInviteTurnAllowed?: (memberId: MemberId, messageId: string) => boolean;
   /** Mark the input for private invitation retention in the current service transaction. */
   onPrivateInviteTurn?: (memberId: MemberId, messageId: string) => void;
+  /** Private intake instructions for a current signed home-entry request. */
+  homeHelpIntakePrompt?: (memberId: MemberId) => string | undefined;
   /** Growth asks per day across the network (default 8). */
   maxGrowthAsksPerDay?: number;
   /** Open a quiet standing request for a specific want named during onboarding (default false). */
@@ -694,8 +696,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** The app this Network serves, and its member-facing copy. */
   readonly app: AppInfo;
   private readonly copy: Copy;
-  private opts: Required<Omit<NetworkOptions, "app" | "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "plansConfig" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "allowedCategories" | "hooks" | "onPosting" | "issueMemberInvite" | "memberInviteTurnAllowed" | "onPrivateInviteTurn">>
-    & Pick<NetworkOptions, "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "hooks" | "onPosting" | "issueMemberInvite" | "memberInviteTurnAllowed" | "onPrivateInviteTurn">;
+  private opts: Required<Omit<NetworkOptions, "app" | "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "plansConfig" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "allowedCategories" | "hooks" | "onPosting" | "issueMemberInvite" | "memberInviteTurnAllowed" | "onPrivateInviteTurn" | "homeHelpIntakePrompt">>
+    & Pick<NetworkOptions, "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "hooks" | "onPosting" | "issueMemberInvite" | "memberInviteTurnAllowed" | "onPrivateInviteTurn" | "homeHelpIntakePrompt">;
   /** The categories this app may start opportunities in (ALLOWED_CATEGORIES). */
   readonly allowedCategories: ReadonlySet<Category>;
   private pcfg: PlansConfig;
@@ -713,6 +715,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       understand: opts.understand, onAgeStated: opts.onAgeStated, engineLLM: opts.engineLLM, pack: opts.pack, hooks: opts.hooks, onPosting: opts.onPosting,
       issueMemberInvite: opts.issueMemberInvite,
       memberInviteTurnAllowed: opts.memberInviteTurnAllowed, onPrivateInviteTurn: opts.onPrivateInviteTurn,
+      homeHelpIntakePrompt: opts.homeHelpIntakePrompt,
     };
     this.allowedCategories = new Set(opts.allowedCategories ?? ALLOWED_CATEGORIES[this.app.id] ?? ALLOWED_CATEGORIES.ntwrk!);
     this.pcfg = resolvePlans(opts.plansConfig ?? {});
@@ -896,6 +899,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (!c.abuse.length && this.opts.memberInviteTurnAllowed?.(m.id, msg.id)) this.handleInviteVouchTurn(m, msg.id, body);
       return;
     }
+
+    if (!mcp && c.kind === "people_request" && c.category === "help" && this.allowedCategories.has("help")
+      && this.opts.homeHelpIntakePrompt && this.routeBoundedHelp(m, body, false)) return;
 
     // peon (#9): a job post by text, read back and saved only on the manager's yes (rules only, never an open-turn LLM output).
     if (this.opts.hooks?.postings && this.postingTurn(m, body)) return;
@@ -1894,15 +1900,17 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** Give a home-entry request to safety staff before it can become a contact. */
   private routeBoundedHelp(m: MemberState, text: string, quiet: boolean): boolean {
     const cfg = resolveConfig(this.effectiveEngineConfig());
-    const route = boundedHelpRoute(riskTerms(cfg, text).length > 0, isHomeEntry(cfg, text));
+    const homeEntry = isHomeEntry(cfg, text);
+    const route = boundedHelpRoute(riskTerms(cfg, text).length > 0, homeEntry);
     if (route === "SearchPublicHelp") return false;
+    const prompt = homeEntry && !quiet ? this.opts.homeHelpIntakePrompt?.(m.id) : undefined;
     if (route === "ReviewHomeEntryHelp" && canBeMatched(this.ageOf(m))) {
       const kind = "home_entry_help";
       if (openHomeHelpCase(true, this.openCase(m.id)?.events.some(e => e.kind === kind) === true)) {
         this.caseEvent(m.id, { at: this.now(), kind, points: 0 });
         this.ctx.log("request_result", { memberId: m.id, kind: "people", category: "help", outcome: "safety_review", reason: kind });
       }
-      if (!quiet) this.send(m, copy.homeHelpSafetyReview, { type: "info" }, "reply");
+      if (!quiet) this.send(m, prompt ?? copy.homeHelpSafetyReview, { type: "info" }, "reply");
     } else if (!quiet) {
       this.send(m, copy.requestOutOfScope, { type: "info" }, "reply");
     }

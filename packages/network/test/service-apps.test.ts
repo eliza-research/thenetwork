@@ -789,6 +789,67 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(await nyc.scoped(tx => nyc.invitationNoticeAdmission(tx, noticeId, inviter.memberId))).toBe(false);
   }, T);
 
+  // spec/boundedHelp.md, "Intake keeps only structured home-help details after considering a service"
+  // spec/boundedHelp.md, "Fix the roster before review and recheck it at approval"
+  test("signed home-help intake and staff review bind confirmed offers to one exact roster", async () => {
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
+    const { s } = service(clock, { env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret },
+      networks: [{ id: "ntwrk:nyc" }], network: { matchingEnabled: true }, tokens: "safety@ntwrk:saf-tok,reviewer@ntwrk:rev-tok" });
+    await s.start();
+    const consent = { sms: true as const, wording: APPS.ntwrk.consent.text };
+    async function enroll(firstName: string) {
+      const phone = newPhone();
+      const incoming = await s.accounts.invite(APPS.ntwrk, phone);
+      if (!incoming) throw new Error("Missing fixture invitation");
+      const joined = await s.accounts.join(APPS.ntwrk, { e164: phone, personId: incoming.personId },
+        { firstName, age: 30, homeCity: "nyc", neighborhood: "Greenpoint", consent });
+      if (!joined.ok) throw new Error(`Fixture join failed: ${joined.error}`);
+      return { id: joined.membership.memberId, phone };
+    }
+    const owner = await enroll("Ari"), first = await enroll("Ben"), second = await enroll("Cora");
+    const send = invitationTurn(s, clock);
+    const turn = (from: string, messageId: string, text: string): TurnRequest =>
+      ({ from, messageId, text, to: null, channel: "blooio", transport: "imessage", receivedAt: clock.now(), app: "ntwrk" });
+    const initial = await send(turn(owner.phone, "home-help-ask", "Could someone help me move my couch into my apartment in Greenpoint?"));
+    expect((await initial.json()).replies.join("\n")).toContain("SUBMIT HOME HELP");
+    const command = turn(owner.phone, "home-help-submit",
+      "SUBMIT HOME HELP | move furniture | Greenpoint | 2026-10-10T19:00Z | 2026-10-10T20:00Z | 30 | service unavailable");
+    const submitted = await send(command);
+    expect(submitted.status).toBe(200);
+    const response = await submitted.json();
+    expect(response).toMatchObject({ reason: "bounded_home_help" });
+    expect(await (await send(command)).json()).toEqual(response);
+    const [plan] = await sql`select id,revision,phase,task,area,alternative,helper_ids from network.bounded_home_help`;
+    expect(plan).toMatchObject({ revision: 1, phase: "AwaitingHelpers", task: "MoveFurniture", area: "Greenpoint", alternative: "ServiceUnavailable", helper_ids: [] });
+    expect(JSON.stringify(await sql`select body from network.messages`)).not.toMatch(/move my couch|service unavailable/i);
+
+    const staff = (method: string, token: string, data?: Record<string, unknown>) => s.fetch(new Request(
+      `http://127.0.0.1/apps/ntwrk/safety/home-help${method === "POST" ? `/${plan.id as string}` : ""}`,
+      { method, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, ...(data ? { body: JSON.stringify(data) } : {}) },
+    ));
+    expect((await staff("GET", "rev-tok")).status).toBe(403);
+    expect((await staff("GET", "saf-tok")).status).toBe(200);
+    const helperIds = [first.id, second.id];
+    expect((await staff("POST", "saf-tok", { action: "nominate", revision: 1, helperIds })).status).toBe(409);
+    for (const helper of [first, second]) {
+      const offered = await send(turn(helper.phone, `offer-${helper.id}`, "OFFER HOME HELP"));
+      expect((await offered.json()).replies.join("\n")).toContain("saved your offer");
+    }
+    expect((await staff("POST", "saf-tok", { action: "nominate", revision: 1, helperIds: [first.id] })).status).toBe(409);
+    const nominated = await staff("POST", "saf-tok", { action: "nominate", revision: 1, helperIds });
+    expect(await nominated.json()).toMatchObject({ ok: true, result: { phase: "AwaitingReview", revision: 2 } });
+    await send(turn(second.phone, "withdraw-home-offer", "WITHDRAW HOME HELP OFFER"));
+    expect((await staff("POST", "saf-tok", { action: "approve", revision: 2, helperIds })).status).toBe(409);
+    await send(turn(second.phone, "restore-home-offer", "OFFER HOME HELP"));
+    const approved = await staff("POST", "saf-tok", { action: "approve", revision: 2, helperIds });
+    expect(await approved.json()).toMatchObject({ ok: true, result: { phase: "Approved", revision: 2 } });
+    expect(await count(sql`select count(*)::int as n from network.messages where opportunity_id is not null`)).toBe(0);
+    const closed = await send(turn(owner.phone, "close-home-help", `CLOSE HOME HELP ${plan.id as string} 2`));
+    expect((await closed.json()).replies.join("\n")).toContain("is closed");
+    expect((await sql`select phase from network.bounded_home_help`)[0]!.phase).toBe("Closed");
+  }, T);
+
   test("slop onboarding is the engine's loop: one question at a time, bi asked again in other words, the read-back, tags and state without the member's words", async () => {
     await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
