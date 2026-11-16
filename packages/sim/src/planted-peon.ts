@@ -16,6 +16,7 @@ export function plantedPeonHire(member: PlantedMember, intent: Intent, area: str
   const site = marketAreas[hash32("planted-peon-site", area) % marketAreas.length]!;
   const seniority = 1 + Math.floor(lane.observed / 20.2);
   const median = payMid(family.id, seniority, member.market);
+  const provenance = lane.reviewed > 0 ? "connected_source" : "said";
   const skillsOf = (items: readonly PlantedSkill[]) => {
     const skills = new Map<string, number>();
     for (const item of items) {
@@ -44,16 +45,17 @@ export function plantedPeonHire(member: PlantedMember, intent: Intent, area: str
       add("skill", `${human(skill)} at level ${required}`, [`${T.must}${skill}:${required}`, skill], "shareable");
     }
     if (family.cred) add("fact", `Requires ${family.cred.id}`, [`${T.credRequired}${family.cred.id}`], "shareable");
-    add("fact", "One opening", [`${T.openings}1`], "matchable");
+    const openings = 1 + hash32("planted-peon-openings", member.id) % 3;
+    add("fact", "Open positions", [`${T.openings}${openings}`], "matchable");
     return { facets, intent: { ...intent, objective: `Hire: ${family.title}`, details: JOB_INTENT } };
   }
 
   const floor = Math.round(median * 0.85);
   const commute = [site.id, ...site.neighbours];
   add("fact", "Candidate profile", [`${T.entity}candidate`], "matchable");
-  add("goal", `Find a ${family.title} role`, role, "matchable");
+  add("goal", `Find a ${family.title} role`, role, "matchable", provenance);
   for (const [skill, level] of skillsOf(member.offers)) {
-    add("skill", `${human(skill)} at level ${level}`, [`${T.skill}${skill}:${level}`, skill], "shareable", lane.reviewed > 0 ? "connected_source" : "said");
+    add("skill", `${human(skill)} at level ${level}`, [`${T.skill}${skill}:${level}`, skill], "shareable", provenance);
   }
   add("preference", `Pay floor $${floor}k`, [`${T.floor}${floor}`], "matchable");
   add("preference", "Hybrid within my commute", [`${T.mode}hybrid`, ...commute.map(id => `${T.area}${id}`)], "matchable");
