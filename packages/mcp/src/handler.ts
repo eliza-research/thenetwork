@@ -15,7 +15,8 @@ import {
   type BrowserForm, type StoredPage, initial as browserInitial, mayCompareBrowserDigest,
   sessionMatchesConsent, step as stepBrowser,
 } from "../../core/src/generated/oauthBrowserAuthorization.ts";
-import { initial as issuanceInitial, requestIsLive, step as stepIssuance } from "../../core/src/generated/oauthGrantIssuance.ts";
+import { requestIsLive } from "../../core/src/generated/oauthGrantIssuance.ts";
+import { issueConnectorGrant } from "../../core/src/vibe/oauthGrantIssuanceShell.js";
 import {
   type TokenAuthority, type TokenFlow, type TokenReason, canReadAuthority, canReadCodeBinding, canReadRefreshBinding,
   canRecordRotation, canRecordTokens, codeCanBeConsumed, initial as tokenInitial, step as stepToken, tokenRevocation,
@@ -595,37 +596,52 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   /** Validate Cloud authority before single-use consumption so outages remain retryable. */
   async function finishAuthorization(c: Ctx, r: AuthRequest & { e164: string }, client: OAuthClient, authority?: Grant["cloudAuthority"]): Promise<Response> {
     const clearCookie = `${browserCookie(c.app)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies(c.app) ? "; Secure" : ""}`;
-    const at = now();
-    const expired = () => messagePage(c.app, "This page has expired", "Go back to the assistant and connect again.");
-    const began = stepIssuance(issuanceInitial, { type: "beginApproval", requestLive: requestIsLive(at, r.expiresAt) });
-    if (began.phase !== "AwaitingAuthority") return expired();
-    const grant: Grant = { id: `${authority ? "grant_cloud_" : "grant_"}${randomId()}`, clientId: client.id, app: c.app.id, phoneKey: o.platform.phoneKey(r.e164), personId: r.personId, scopes: r.scopes, resource: r.resource, createdAt: at, expiresAt: Math.min(at + ttl.grantMs, authority?.expiresAt ?? Infinity), revokedAt: null, ...(authority ? { cloudAuthority: authority } : {}) };
-    const cloudStatus = await cloudGrantCurrent(grant);
-    const checked = stepIssuance(began, {
-      type: "checkGrantAuthority",
-      authority: cloudStatus === "valid" ? "AuthorityValid" : cloudStatus === "unavailable" ? "AuthorityUnavailable" : "AuthorityInvalid",
+    const issued = await issueConnectorGrant<Grant>(r, {
+      now,
+      makeGrant: at => ({
+        id: `${authority ? "grant_cloud_" : "grant_"}${randomId()}`,
+        clientId: client.id,
+        app: c.app.id,
+        phoneKey: o.platform.phoneKey(r.e164),
+        personId: r.personId,
+        scopes: r.scopes,
+        resource: r.resource,
+        createdAt: at,
+        expiresAt: Math.min(at + ttl.grantMs, authority?.expiresAt ?? Infinity),
+        revokedAt: null,
+        ...(authority ? { cloudAuthority: authority } : {}),
+      }),
+      checkAuthority: cloudGrantCurrent,
+      consumeApproval: at => store.takeConsentRequest(r.id, at),
+      putGrant: async grant => {
+        await store.putGrant(grant);
+        await linked(grant, true);
+      },
+      putCode: async (grant, at) => {
+        const code = randomToken("ntwc_");
+        const ac: AuthCode = {
+          hash: sha256hex(code), grantId: grant.id, clientId: client.id, redirectUri: r.redirectUri,
+          codeChallenge: r.codeChallenge, resource: r.resource, scopes: r.scopes,
+          createdAt: at, expiresAt: at + ttl.codeMs, usedAt: null,
+        };
+        await store.putCode(ac);
+        return code;
+      },
+      audit: async (grant, at) => {
+        await store.audit({ at, kind: "consent_granted", clientId: client.id, grantId: grant.id, app: c.app.id, detail: r.scopes.join(" ") });
+        await store.audit({ at, kind: "code_issued", clientId: client.id, grantId: grant.id, app: c.app.id, detail: null });
+      },
     });
-    if (checked.phase === "RetryAuthority") return consentUnavailable(c, r, client);
-    if (checked.phase !== "AwaitingConsumption") return messagePage(c.app, "Connect again", "This connection is no longer valid. Return to your agent or text conversation and connect again.", 403);
-    const approved = await store.takeConsentRequest(r.id, now());
-    const ownerMatches = !!approved?.e164 && approved.e164 === r.e164 && approved.personId === r.personId;
-    const consumedRequestLive = ownerMatches && requestIsLive(now(), approved.expiresAt);
-    const consumed = stepIssuance(checked, {
-      type: "checkConsumption",
-      consumption: { ownerMatches, consumedRequestLive, pendingGrantLive: consumedRequestLive && requestIsLive(now(), grant.expiresAt) },
-    });
-    if (consumed.phase !== "AwaitingPersistence") return expired();
-    await store.putGrant(grant);
-    await linked(grant, true);
-    const code = randomToken("ntwc_");
-    const ac: AuthCode = { hash: sha256hex(code), grantId: grant.id, clientId: client.id, redirectUri: r.redirectUri, codeChallenge: r.codeChallenge, resource: r.resource, scopes: r.scopes, createdAt: at, expiresAt: at + ttl.codeMs, usedAt: null };
-    await store.putCode(ac);
-    await store.audit({ at, kind: "consent_granted", clientId: client.id, grantId: grant.id, app: c.app.id, detail: r.scopes.join(" ") });
-    await store.audit({ at, kind: "code_issued", clientId: client.id, grantId: grant.id, app: c.app.id, detail: null });
-    const issued = stepIssuance(consumed, { type: "recordIssuance" });
-    return issued.phase === "GrantIssued"
-      ? redirectTo(r.redirectUri, { code, state: r.state, iss: c.issuer }, 303, { "set-cookie": clearCookie })
-      : expired();
+    switch (issued.kind) {
+      case "expired":
+        return messagePage(c.app, "This page has expired", "Go back to the assistant and connect again.");
+      case "retry":
+        return consentUnavailable(c, r, client);
+      case "denied":
+        return messagePage(c.app, "Connect again", "This connection is no longer valid. Return to your agent or text conversation and connect again.", 403);
+      case "issued":
+        return redirectTo(r.redirectUri, { code: issued.code, state: r.state, iss: c.issuer }, 303, { "set-cookie": clearCookie });
+    }
   }
 
   // ---------------------------------------------------------------- token, revoke

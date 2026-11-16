@@ -579,6 +579,24 @@ describe("explicit client approval boundary", () => {
     expect(store.rows.filter(r => r.kind === "consent_granted")).toHaveLength(1);
   });
 
+  // spec/oauthGrantIssuance.md, "A successful response follows the grant, code and audit writes"
+  test("an issuance audit failure does not redirect with a code", async () => {
+    const env = setup();
+    const who = await member(env);
+    const client = await register(env, DOMAIN);
+    const request = await begin(env, client.body.client_id, who.cookie);
+    const audit = env.store.audit.bind(env.store);
+    env.store.audit = async row => {
+      if (row.kind === "code_issued") throw new Error("Synthetic issuance audit failure");
+      await audit(row);
+    };
+
+    const response = await post(env, "/oauth/authorize/consent", request.rid, request.cookie, { decision: "approve" });
+    expect(response.status).toBe(500);
+    expect(response.headers.has("location")).toBe(false);
+    expect(await response.json()).toEqual({ error: "server_error" });
+  });
+
   test("an approval expiring during storage consumption cannot issue access", async () => {
     const env = setup(); const who = await member(env); const client = await register(env, DOMAIN);
     const request = await begin(env, client.body.client_id, who.cookie);

@@ -2,9 +2,9 @@
 //@ backend dafny
 
 /** Story: Connect my agent after I approve access / An expired request cannot begin issuance (spec/oauthGrantIssuance.md:9) */
-export type AuthorityResult = "AuthorityValid" | "AuthorityInvalid" | "AuthorityUnavailable";
+export type IssuancePhase = "StartApproval" | "AwaitingAuthority" | "RetryAuthority" | "DeniedAuthority" | "ExpiredApproval" | "AwaitingConsumption" | "AwaitingPersistence" | "AwaitingCode" | "AwaitingAudit" | "GrantIssued";
 /** Story: Connect my agent after I approve access / An expired request cannot begin issuance (spec/oauthGrantIssuance.md:9) */
-export type IssuancePhase = "StartApproval" | "AwaitingAuthority" | "RetryAuthority" | "DeniedAuthority" | "ExpiredApproval" | "AwaitingConsumption" | "AwaitingPersistence" | "GrantIssued";
+export type AuthorityResult = "AuthorityValid" | "AuthorityInvalid" | "AuthorityUnavailable";
 /** Story: Connect my agent after I approve access / An expired request cannot begin issuance (spec/oauthGrantIssuance.md:9) */
 export interface Issuance { phase: IssuancePhase; authorityAccepted: boolean; sameOwner: boolean; requestLive: boolean; grantLive: boolean }
 /** Story: Connect my agent after I approve access / Consumed approval must still match the owner and both deadlines (spec/oauthGrantIssuance.md:47) */
@@ -15,6 +15,8 @@ export type Event =
   | { type: "beginApproval"; requestLive: boolean }
   | { type: "checkGrantAuthority"; authority: AuthorityResult }
   | { type: "checkConsumption"; consumption: ConsumedApproval }
+  | { type: "recordGrant" }
+  | { type: "recordCode" }
   | { type: "recordIssuance" };
 
 /** Story: Connect my agent after I approve access / Consumed approval must still match the owner and both deadlines (spec/oauthGrantIssuance.md:47) */
@@ -36,8 +38,15 @@ export function requestIsLive(asOf: number, expiresAt: number): boolean {
 
 /** Story: Connect my agent after I approve access / An expired request cannot begin issuance (spec/oauthGrantIssuance.md:9) */
 //@ pure
+export function canBeginApproval(issuance: Issuance): boolean {
+  return issuance.phase === "StartApproval";
+}
+
+/** Story: Connect my agent after I approve access / An expired request cannot begin issuance (spec/oauthGrantIssuance.md:9) */
+//@ pure
 export function beginApproval(issuance: Issuance, requestLive: boolean): Issuance {
   //@ ensures (inv(issuance) && canBeginApproval(issuance)) ==> alwaysIssuanceRequiresCurrentApproval(\result)
+  //@ ensures (inv(issuance) && canBeginApproval(issuance)) ==> stepIssuanceFollowsAudit(issuance, "beginApproval", \result)
   return { ...issuance, phase: requestLive ? "AwaitingAuthority" : "ExpiredApproval", requestLive: requestLive };
 }
 
@@ -46,12 +55,6 @@ export function beginApproval(issuance: Issuance, requestLive: boolean): Issuanc
 export function lawDeadlineExcludesExpiry(expiresAt: number): boolean {
   //@ ensures \result === true
   return !requestIsLive(expiresAt, expiresAt);
-}
-
-/** Story: Connect my agent after I approve access / An expired request cannot begin issuance (spec/oauthGrantIssuance.md:9) */
-//@ pure
-export function canBeginApproval(issuance: Issuance): boolean {
-  return issuance.phase === "StartApproval";
 }
 
 /** Story: Connect my agent after I approve access / Authority is checked before the consent request is consumed (spec/oauthGrantIssuance.md:32) */
@@ -64,6 +67,7 @@ export function canCheckGrantAuthority(issuance: Issuance): boolean {
 //@ pure
 export function checkGrantAuthority(issuance: Issuance, authority: AuthorityResult): Issuance {
   //@ ensures (inv(issuance) && canCheckGrantAuthority(issuance)) ==> alwaysIssuanceRequiresCurrentApproval(\result)
+  //@ ensures (inv(issuance) && canCheckGrantAuthority(issuance)) ==> stepIssuanceFollowsAudit(issuance, "checkGrantAuthority", \result)
   return { ...issuance, authorityAccepted: authority === "AuthorityValid", phase: authority === "AuthorityValid" ? "AwaitingConsumption" : (authority === "AuthorityUnavailable" ? "RetryAuthority" : "DeniedAuthority") };
 }
 
@@ -77,48 +81,84 @@ export function canCheckConsumption(issuance: Issuance): boolean {
 //@ pure
 export function checkConsumption(issuance: Issuance, consumption: ConsumedApproval): Issuance {
   //@ ensures (inv(issuance) && canCheckConsumption(issuance)) ==> alwaysIssuanceRequiresCurrentApproval(\result)
+  //@ ensures (inv(issuance) && canCheckConsumption(issuance)) ==> stepIssuanceFollowsAudit(issuance, "checkConsumption", \result)
   const local_0 = consumption.ownerMatches && consumption.consumedRequestLive && consumption.pendingGrantLive;
   return { ...issuance, sameOwner: consumption.ownerMatches, requestLive: consumption.consumedRequestLive, grantLive: consumption.pendingGrantLive, phase: local_0 ? "AwaitingPersistence" : "ExpiredApproval" };
 }
 
-/** Story: Connect my agent after I approve access / A successful response follows grant and code persistence (spec/oauthGrantIssuance.md:68) */
+/** Story: Connect my agent after I approve access / A successful response follows the grant, code and audit writes (spec/oauthGrantIssuance.md:68) */
 //@ pure
-export function canRecordIssuance(issuance: Issuance): boolean {
+export function canRecordGrant(issuance: Issuance): boolean {
   return issuance.phase === "AwaitingPersistence" && issuance.authorityAccepted && issuance.sameOwner && issuance.requestLive && issuance.grantLive;
 }
 
-/** Story: Connect my agent after I approve access / A successful response follows grant and code persistence (spec/oauthGrantIssuance.md:68) */
+/** Story: Connect my agent after I approve access / A successful response follows the grant, code and audit writes (spec/oauthGrantIssuance.md:68) */
+//@ pure
+export function recordGrant(issuance: Issuance): Issuance {
+  //@ ensures (inv(issuance) && canRecordGrant(issuance)) ==> alwaysIssuanceRequiresCurrentApproval(\result)
+  //@ ensures (inv(issuance) && canRecordGrant(issuance)) ==> stepIssuanceFollowsAudit(issuance, "recordGrant", \result)
+  return { ...issuance, phase: "AwaitingCode" };
+}
+
+/** Story: Connect my agent after I approve access / A successful response follows the grant, code and audit writes (spec/oauthGrantIssuance.md:68) */
+//@ pure
+export function canRecordCode(issuance: Issuance): boolean {
+  return issuance.phase === "AwaitingCode";
+}
+
+/** Story: Connect my agent after I approve access / A successful response follows the grant, code and audit writes (spec/oauthGrantIssuance.md:68) */
+//@ pure
+export function recordCode(issuance: Issuance): Issuance {
+  //@ ensures (inv(issuance) && canRecordCode(issuance)) ==> alwaysIssuanceRequiresCurrentApproval(\result)
+  //@ ensures (inv(issuance) && canRecordCode(issuance)) ==> stepIssuanceFollowsAudit(issuance, "recordCode", \result)
+  return { ...issuance, phase: "AwaitingAudit" };
+}
+
+/** Story: Connect my agent after I approve access / A successful response follows the grant, code and audit writes (spec/oauthGrantIssuance.md:68) */
+//@ pure
+export function canRecordIssuance(issuance: Issuance): boolean {
+  return issuance.phase === "AwaitingAudit";
+}
+
+/** Story: Connect my agent after I approve access / A successful response follows the grant, code and audit writes (spec/oauthGrantIssuance.md:68) */
 //@ pure
 export function recordIssuance(issuance: Issuance): Issuance {
   //@ ensures (inv(issuance) && canRecordIssuance(issuance)) ==> alwaysIssuanceRequiresCurrentApproval(\result)
+  //@ ensures (inv(issuance) && canRecordIssuance(issuance)) ==> stepIssuanceFollowsAudit(issuance, "recordIssuance", \result)
   return { ...issuance, phase: "GrantIssued" };
 }
 
-/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:80) */
+/** Story: Connect my agent after I approve access / A successful response follows the grant, code and audit writes (spec/oauthGrantIssuance.md:68) */
 //@ pure
-export function alwaysIssuanceRequiresCurrentApproval(issuance: Issuance): boolean {
-  return !(issuance.phase === "AwaitingPersistence" || issuance.phase === "GrantIssued") || (issuance.authorityAccepted && issuance.sameOwner && issuance.requestLive && issuance.grantLive);
+export function stepIssuanceFollowsAudit(before: Issuance, via: string, after: Issuance): boolean {
+  return !(after.phase === "GrantIssued") || (before.phase === "AwaitingAudit" && via === "recordIssuance");
 }
 
-/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:80) */
+/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:89) */
+//@ pure
+export function alwaysIssuanceRequiresCurrentApproval(issuance: Issuance): boolean {
+  return !(issuance.phase === "AwaitingPersistence" || issuance.phase === "AwaitingCode" || issuance.phase === "AwaitingAudit" || issuance.phase === "GrantIssued") || (issuance.authorityAccepted && issuance.sameOwner && issuance.requestLive && issuance.grantLive);
+}
+
+/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:89) */
 //@ pure
 export function sometimesIssuesGrant(issuance: Issuance): boolean {
   return issuance.phase === "GrantIssued";
 }
 
-/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:80) */
+/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:89) */
 //@ pure
 export function sometimesRetriesAuthority(issuance: Issuance): boolean {
   return issuance.phase === "RetryAuthority";
 }
 
-/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:80) */
+/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:89) */
 //@ pure
 export function sometimesDeniesAuthority(issuance: Issuance): boolean {
   return issuance.phase === "DeniedAuthority";
 }
 
-/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:80) */
+/** Story: Connect my agent after I approve access / An issued grant had current authority, owner and deadlines (spec/oauthGrantIssuance.md:89) */
 //@ pure
 export function sometimesExpiresApproval(issuance: Issuance): boolean {
   return issuance.phase === "ExpiredApproval";
@@ -130,6 +170,8 @@ export function enabled(current: Issuance, event: Event): boolean {
   if (event.type === "beginApproval") return canBeginApproval(current);
   if (event.type === "checkGrantAuthority") return canCheckGrantAuthority(current);
   if (event.type === "checkConsumption") return canCheckConsumption(current);
+  if (event.type === "recordGrant") return canRecordGrant(current);
+  if (event.type === "recordCode") return canRecordCode(current);
   if (event.type === "recordIssuance") return canRecordIssuance(current);
   return false;
 }
@@ -142,6 +184,8 @@ export function step(current: Issuance, event: Event): Issuance {
   if (event.type === "beginApproval" && canBeginApproval(current)) return beginApproval(current, event.requestLive);
   if (event.type === "checkGrantAuthority" && canCheckGrantAuthority(current)) return checkGrantAuthority(current, event.authority);
   if (event.type === "checkConsumption" && canCheckConsumption(current)) return checkConsumption(current, event.consumption);
+  if (event.type === "recordGrant" && canRecordGrant(current)) return recordGrant(current);
+  if (event.type === "recordCode" && canRecordCode(current)) return recordCode(current);
   if (event.type === "recordIssuance" && canRecordIssuance(current)) return recordIssuance(current);
   return current;
 }
@@ -164,6 +208,8 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "beginApproval" && typeof raw.requestLive === "boolean") return { type: "beginApproval", requestLive: raw.requestLive };
   if (raw.type === "checkGrantAuthority" && (raw.authority === "AuthorityValid" || raw.authority === "AuthorityInvalid" || raw.authority === "AuthorityUnavailable")) return { type: "checkGrantAuthority", authority: raw.authority };
   if (raw.type === "checkConsumption" && is_ConsumedApproval(raw.consumption)) return { type: "checkConsumption", consumption: ({ ownerMatches: raw.consumption.ownerMatches, consumedRequestLive: raw.consumption.consumedRequestLive, pendingGrantLive: raw.consumption.pendingGrantLive }) };
+  if (raw.type === "recordGrant") return { type: "recordGrant" };
+  if (raw.type === "recordCode") return { type: "recordCode" };
   if (raw.type === "recordIssuance") return { type: "recordIssuance" };
   return undefined;
 }
@@ -182,7 +228,7 @@ export function parseState(x: unknown): Issuance | undefined {
   } catch {
     return undefined;
   }
-  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "StartApproval" || raw.phase === "AwaitingAuthority" || raw.phase === "RetryAuthority" || raw.phase === "DeniedAuthority" || raw.phase === "ExpiredApproval" || raw.phase === "AwaitingConsumption" || raw.phase === "AwaitingPersistence" || raw.phase === "GrantIssued") && typeof raw.authorityAccepted === "boolean" && typeof raw.sameOwner === "boolean" && typeof raw.requestLive === "boolean" && typeof raw.grantLive === "boolean" && Object.keys(raw).length === 5)) return undefined;
+  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "StartApproval" || raw.phase === "AwaitingAuthority" || raw.phase === "RetryAuthority" || raw.phase === "DeniedAuthority" || raw.phase === "ExpiredApproval" || raw.phase === "AwaitingConsumption" || raw.phase === "AwaitingPersistence" || raw.phase === "AwaitingCode" || raw.phase === "AwaitingAudit" || raw.phase === "GrantIssued") && typeof raw.authorityAccepted === "boolean" && typeof raw.sameOwner === "boolean" && typeof raw.requestLive === "boolean" && typeof raw.grantLive === "boolean" && Object.keys(raw).length === 5)) return undefined;
   const parsed: Issuance = ({ phase: raw.phase, authorityAccepted: raw.authorityAccepted, sameOwner: raw.sameOwner, requestLive: raw.requestLive, grantLive: raw.grantLive });
   return inv(parsed) ? parsed : undefined;
 }

@@ -1,6 +1,6 @@
 # Issue an approved connector grant
 
-The consent endpoint identifies an authenticated member, the registered app and client, the approved scopes, and the pending request. This flow governs issuance after the member approves. The shell owns transport, credentials, clock reads, storage, audit and redirect.
+The consent endpoint identifies an authenticated member, the registered app and client, the approved scopes, and the pending request. The [VibeLang issuance shell](../packages/core/src/vibe/oauthGrantIssuanceShell.vibe) orders the effects after the member approves. The MCP handler supplies the clock, credentials, storage and audit operations and builds the response.
 
 ## Story: Connect my agent after I approve access
 
@@ -11,7 +11,7 @@ The consent endpoint identifies an authenticated member, the registered app and 
 The pending approval must still be live when issuance starts. A request expires at its deadline. An expired request gets the existing retry-from-the-agent response.
 
 ```quint
-type IssuancePhase = StartApproval | AwaitingAuthority | RetryAuthority | DeniedAuthority | ExpiredApproval | AwaitingConsumption | AwaitingPersistence | GrantIssued
+type IssuancePhase = StartApproval | AwaitingAuthority | RetryAuthority | DeniedAuthority | ExpiredApproval | AwaitingConsumption | AwaitingPersistence | AwaitingCode | AwaitingAudit | GrantIssued
 type AuthorityResult = AuthorityValid | AuthorityInvalid | AuthorityUnavailable
 type Issuance = {
   phase: IssuancePhase, authorityAccepted: bool, sameOwner: bool, requestLive: bool, grantLive: bool,
@@ -65,16 +65,25 @@ pure def checkConsumption(issuance: Issuance, consumption: ConsumedApproval): Is
     grantLive: consumption.pendingGrantLive, phase: if (eligible) AwaitingPersistence else ExpiredApproval }
 ```
 
-### A successful response follows grant and code persistence
+### A successful response follows the grant, code and audit writes
 
-The shell stores the grant and its authorization code and records the issuance audits. It sends a success redirect only after that work completes. Failure to persist throws through the existing endpoint handling.
+Store the grant before the authorization code. Record the issuance audit after both writes. Return a success redirect only after those operations complete. The endpoint reports an error if an operation fails. The store's successful earlier writes can remain after a later failure.
 
 ```quint
-pure def canRecordIssuance(issuance: Issuance): bool =
+pure def canRecordGrant(issuance: Issuance): bool =
   issuance.phase == AwaitingPersistence and issuance.authorityAccepted and issuance.sameOwner and
     issuance.requestLive and issuance.grantLive
 
+pure def recordGrant(issuance: Issuance): Issuance = { ...issuance, phase: AwaitingCode }
+
+pure def canRecordCode(issuance: Issuance): bool = issuance.phase == AwaitingCode
+pure def recordCode(issuance: Issuance): Issuance = { ...issuance, phase: AwaitingAudit }
+
+pure def canRecordIssuance(issuance: Issuance): bool = issuance.phase == AwaitingAudit
 pure def recordIssuance(issuance: Issuance): Issuance = { ...issuance, phase: GrantIssued }
+
+pure def stepIssuanceFollowsAudit(before: Issuance, via: str, after: Issuance): bool =
+  after.phase == GrantIssued implies (before.phase == AwaitingAudit and via == "recordIssuance")
 ```
 
 ### An issued grant had current authority, owner and deadlines
@@ -83,7 +92,8 @@ A grant can be written and returned only after the authority check and the post-
 
 ```quint
 pure def alwaysIssuanceRequiresCurrentApproval(issuance: Issuance): bool =
-  (issuance.phase == AwaitingPersistence or issuance.phase == GrantIssued) implies
+  (issuance.phase == AwaitingPersistence or issuance.phase == AwaitingCode or
+    issuance.phase == AwaitingAudit or issuance.phase == GrantIssued) implies
     (issuance.authorityAccepted and issuance.sameOwner and issuance.requestLive and issuance.grantLive)
 
 pure def sometimesIssuesGrant(issuance: Issuance): bool = issuance.phase == GrantIssued
