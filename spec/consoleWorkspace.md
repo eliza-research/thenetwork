@@ -2,6 +2,8 @@
 
 The staff console (`packages/observatory/web`) puts the admin work in drawer panels and in the inspector. This spec owns the view states of that work: held texts, safety cases, post-date reports, member requests, the matching switch, the audit log, the propose tray and the world menu of the simulated world, the PII reveal, and the loading, empty and error rows of each panel. The [safety case spec](safetyCase.md) owns what the Network does with a case or a report. The [review spec](staffReview.md) owns the review card. The [member view spec](consoleMemberView.md) owns the detail reads and the Slop photos. The [navigation spec](consoleNavigation.md) owns which tab shows. The server writes an audit row before every staff read and action, and it checks every role again. The shell owns the fetches, the timers and the toasts.
 
+The shell calls each answer guard (`canReceiveHeldText`, `canReceiveHeldAnswer`, `canReceiveCaseAnswer`, `canReceiveReportAnswer`, `canReceiveSwitchAnswer`, `canReceiveAudit`) before it applies the answer. The reveal form goes through the generated `step`, which checks the guards of the reveal. These definitions are model-only helpers that the generated guards call: `staffActs`, `heldReleasable`, `reportDecision`, `reportOutcome`, `switchShown` and `proposeAllowed`.
+
 ## Story: Work only in the panels my role and mode allow
 
 > As a staff member, I want each panel to show its controls only to the roles and modes that can use them, so that I never press a control that the server must refuse.
@@ -439,11 +441,22 @@ pure def sometimesAuditShown(w: Workspace): bool = w.audit == AuditShown
 
 ### The propose tray sends a proposal for two to six adults with a spark left
 
-The tray shows in the simulated world to a viewer with a simulation role while the viewer has picks. A proposal needs two to six picks, no member under 18, a spark left and a game that is not over. One proposal is on its way at a time.
+The tray shows in the simulated world to a viewer with a simulation role while the viewer has picks. The proposal form shows from two picks, also when Propose is off, so that staff see why. Two picks make an intro, and more than two picks make a group. A proposal needs two to six picks, no member under 18, a spark left and a game that is not over. One proposal is on its way at a time.
 
 ```quint
+pure val minProposalPicks: int = 2
+
+pure def proposalFormShown(pickCount: int): bool = pickCount >= minProposalPicks
+
+pure def groupProposal(pickCount: int): bool = pickCount > minProposalPicks
+
 pure def proposeAllowed(pickCount: int, minorPicked: bool, sparksLeft: int, gameOver: bool): bool =
-  pickCount >= 2 and pickCount <= 6 and not(minorPicked) and sparksLeft > 0 and not(gameOver)
+  proposalFormShown(pickCount) and pickCount <= 6 and not(minorPicked) and sparksLeft > 0 and not(gameOver)
+
+pure def lawProposalNeedsTheForm(pickCount: int, minorPicked: bool, sparksLeft: int, gameOver: bool): bool =
+  proposeAllowed(pickCount, minorPicked, sparksLeft, gameOver) implies proposalFormShown(pickCount)
+
+pure def lawAGroupShowsTheForm(pickCount: int): bool = groupProposal(pickCount) implies proposalFormShown(pickCount)
 
 pure def trayShown(staff: StaffView, pickCount: int): bool = staff.mode == SimulatedWorld and staff.simRole and pickCount > 0
 

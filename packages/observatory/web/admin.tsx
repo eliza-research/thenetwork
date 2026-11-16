@@ -32,9 +32,12 @@ import {
   diffRowShown,
   initial as initialPanels,
   inviterMark,
+  inviterTargetPercent,
   labBody,
   labPolls,
   labStartShown,
+  maxLabDays,
+  maxLabSeeds,
   receiveLab,
   receiveLabStart,
   startLab,
@@ -60,9 +63,15 @@ import {
   canLoadHeldPhoto,
   canMarkPhotoReviewed,
   canPressMatchingSwitch,
+  canReceiveAudit,
   canReceiveCase,
+  canReceiveCaseAnswer,
   canReceiveConfig,
+  canReceiveHeldAnswer,
+  canReceiveHeldText,
   canReceiveReport,
+  canReceiveReportAnswer,
+  canReceiveSwitchAnswer,
   canToggleCaseRow,
   canTypeHeldReason,
   canTypeReportNote,
@@ -72,11 +81,13 @@ import {
   decideHeld,
   endConfirmation,
   initial,
+  loadAudit,
   loadHeldPhoto,
   markPhotoReviewed,
   panelAllowed,
   panelView,
   pressMatchingSwitch,
+  receiveAudit,
   receiveCase,
   receiveCaseAnswer,
   receiveConfig,
@@ -296,7 +307,7 @@ function HeldTexts() {
 function HeldItem({ x, onDone }: { x: HeldText; onDone(): void }) {
   const scope = useStore(), photo = x.queue === "relay" && x.kind === "photo";
   const viewer = useViewer("RealWithService");
-  const [held, setHeld] = useState(() => receiveHeldText(viewer, photo, !!x.textHidden).held);
+  const [held, setHeld] = useState(() => (canReceiveHeldText(viewer) ? receiveHeldText(viewer, photo, !!x.textHidden) : viewer).held);
   const [reason, setReason] = useState("");
   const identity = JSON.stringify([scope.mode, scope.app, x.id, x.createdAt ?? null, scope.me?.id, scope.me?.grants, scope.me?.roles, scope.authEpoch, scope.authNeeded]), active = useRef(identity); active.current = identity;
   const [preview, setPreview] = useState<string>(), [previewIdentity, setPreviewIdentity] = useState(""), [previewError, setPreviewError] = useState(""), [loading, setLoading] = useState(false);
@@ -317,10 +328,11 @@ function HeldItem({ x, onDone }: { x: HeldText; onDone(): void }) {
     if (!canDecideHeld(ws, choice) || (photo && decision === "release" && !currentPreview)) return;
     move(w => decideHeld(w, choice));
     const res = await store.heldDecision(x.queue, x.id, decision, reason.trim(), photo && currentPreview && held.photoLoaded && held.photoReviewed);
-    move(w => receiveHeldAnswer(w, !!res.data?.ok));
+    move(w => (canReceiveHeldAnswer(w) ? receiveHeldAnswer(w, !!res.data?.ok) : w));
     if (res.data?.ok) { store.toast(decision === "release" ? "Released: every other send check runs again" : "Rejected: nothing is sent", "good"); setReason(""); onDone(); }
     else store.toast(res.data?.error ?? res.error ?? "refused", "bad");
   };
+  if (held.status === "HeldEmpty") return null;
   return (
     <HeldItemCard
       held={held}
@@ -366,7 +378,7 @@ function CaseItem({ c, mode, canAct, onDone }: { c: ObsSafetyCase; mode: WorkMod
     setRow(actOnCase(ws, step).caseRow);
     const r = await store.safetyAction(step === "LiftStep" ? { action: "lift", memberId: c.memberId, note: note.trim() || undefined } : { action: "close", caseId: c.id, note: note.trim() || undefined });
     const res = r.data;
-    setRow(x => receiveCaseAnswer({ ...viewer, caseRow: x }, !!res?.ok).caseRow);
+    setRow(x => { const w = { ...viewer, caseRow: x }; return canReceiveCaseAnswer(w) ? receiveCaseAnswer(w, !!res?.ok).caseRow : x; });
     if (res?.ok) { store.toast(step === "LiftStep" ? `Hold lifted · ${c.memberName}` : `Case closed · ${c.memberName}`, "good"); setNote(""); onDone(); }
     else store.toast(res?.error ?? r.error ?? "refused", "bad");
   };
@@ -426,7 +438,7 @@ function ReportItem({ r, mode, onDone }: { r: SafetyReport; mode: WorkMode; onDo
     setRow(actOnReport(ws, step).report);
     const [action, done] = reportAction(step, r, n);
     const res = await store.safetyAction(action);
-    setRow(x => receiveReportAnswer({ ...viewer, report: x }, !!res.data?.ok).report);
+    setRow(x => { const w = { ...viewer, report: x }; return canReceiveReportAnswer(w) ? receiveReportAnswer(w, !!res.data?.ok).report : x; });
     if (res.data?.ok) { store.toast(done, "good"); setNote(""); onDone(); } else store.toast(res.data?.error ?? res.error ?? "refused", "bad");
   };
   const steps = reportOpen(ws) && viewer.staff.safety ? REPORT_STEPS.filter(step => reportStepAllowed(step, viewer.staff.mode, current.minorReport)).map(step => ({ step, enabled: canActOnReport(ws, step) })) : [];
@@ -547,7 +559,7 @@ export function Growth() {
         <Kpi label="invites sent" value={num(g.invitesSent)} />
         <Kpi label="invitees joined" value={num(g.inviteesJoined)} />
         <Kpi label="growth asks" value={num(g.growthAsks)} />
-        <Kpi label="invited someone" value={inviter === "ShareUnknown" ? "–" : pct(g.inviterShare ?? 0)} tone={inviter === "ShareMet" ? "ok" : undefined} title="Joined members who invited someone. PRD 28.2 target: at least 30%." />
+        <Kpi label="invited someone" value={inviter === "ShareUnknown" ? "–" : pct(g.inviterShare ?? 0)} tone={inviter === "ShareMet" ? "ok" : undefined} title={`Joined members who invited someone. PRD 28.2 target: at least ${inviterTargetPercent}%.`} />
       </KpiGrid>
       <DataTable columns={cohortColumns} title="Activated: joined and had a first outcome (attended a meeting, or a request was fulfilled or answered)">
         {row("Seed", g.seed)}{row("Invitees", g.invitees)}
@@ -580,7 +592,7 @@ export function Config() {
     const saving = confirmMatchingSwitch(ws);
     setEdit({ of: c, config: saving.config });
     const x = await store.control({ type: "matching", on: !c.matchingEnabled });
-    setEdit({ of: c, config: receiveSwitchAnswer(saving, x.ok).config, error: x.ok ? undefined : x.error ?? "refused" });
+    setEdit({ of: c, config: (canReceiveSwitchAnswer(saving) ? receiveSwitchAnswer(saving, x.ok) : saving).config, error: x.ok ? undefined : x.error ?? "refused" });
     if (x.ok) { store.toast(`Proactive matching ${c.matchingEnabled ? "off" : "on"}`, c.matchingEnabled ? "info" : "good"); r.reload(); }
   };
   return (
@@ -630,7 +642,9 @@ function AuditLog() {
   const [q, setQ] = useState({ actor: "", target: "" });
   const viewer = useViewer(store.mode === "real" ? "RealWithService" : "SimulatedWorld");
   const r = useFetch<{ sink: string; entries: AuditEntry[] }>(() => store.audit({ limit: 200, actor: q.actor || undefined, targetId: q.target || undefined }), `${q.actor}|${q.target}`);
-  const phase: AuditPhase = r.status === undefined ? "AuditLoading" : r.data ? "AuditShown" : "AuditFailed";
+  const asked = loadAudit(viewer);
+  const phase: AuditPhase = r.status === undefined || !canReceiveAudit(asked) ? asked.audit : receiveAudit(asked, !!r.data).audit;
+  const canLoad = canLoadAudit({ ...viewer, audit: phase });
   const entries = r.data?.entries ?? [];
   return (
     <InspectorSection
@@ -638,12 +652,12 @@ function AuditLog() {
       action={
         <AuditQuery
           phase={phase}
-          canLoad={canLoadAudit({ ...viewer, audit: phase })}
+          canLoad={canLoad}
           actor={actor}
           onActorChange={setActor}
           target={target}
           onTargetChange={setTarget}
-          onLoad={() => { if (q.actor === actor.trim() && q.target === target.trim()) r.reload(); else setQ({ actor: actor.trim(), target: target.trim() }); }}
+          onLoad={() => { if (!canLoad) return; if (q.actor === actor.trim() && q.target === target.trim()) r.reload(); else setQ({ actor: actor.trim(), target: target.trim() }); }}
         />
       }
     >
@@ -719,8 +733,8 @@ export function Lab() {
               <Checkbox checked={arms.includes(k)} onCheckedChange={v => setArms(v === true ? [...arms, k] : arms.filter(a => a !== k))} />{l}
             </Label>
           ))}
-          <Label className="font-normal">seeds <Input className="w-24" value={seeds} onChange={e => setSeeds(e.target.value)} title="1-5 seeds, comma-separated" /></Label>
-          <Label className="font-normal">days <Input className="w-20" type="number" min={1} max={60} value={days} onChange={e => setDays(Number(e.target.value))} /></Label>
+          <Label className="font-normal">seeds <Input className="w-24" value={seeds} onChange={e => setSeeds(e.target.value)} title={`1-${maxLabSeeds} seeds, comma-separated`} /></Label>
+          <Label className="font-normal">days <Input className="w-20" type="number" min={1} max={maxLabDays} value={days} onChange={e => setDays(Number(e.target.value))} /></Label>
           <Button type="submit" disabled={!ready}>Start run</Button>
           <span className={quiet}>{data.running} running</span>
           {err && <span role="alert" className="text-sm text-destructive">{err}</span>}

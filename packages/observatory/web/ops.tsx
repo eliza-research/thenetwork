@@ -2,15 +2,19 @@
 // spec/consolePanels.md, "A cost budget turns amber at 80 percent and red at 100 percent"
 import { useEffect, useState } from "react";
 import { DataCell, DataTable, Kpi, KpiGrid, StatusRow, TableRow, type DataColumn, type KpiTone } from "@thenetwork/ui";
-import { budgetMark, costKindShown, costView, initial as initialPanels, receiveViewer, type BudgetMark, type PanelStaff } from "../../core/src/generated/consolePanels.ts";
+import { budgetMark, canReceiveViewer, costKindShown, costView, initial as initialPanels, receiveViewer, type BudgetMark, type PanelMode, type PanelStaff } from "../../core/src/generated/consolePanels.ts";
 import type { PanelAnswer } from "../../core/src/generated/consoleWorkspace.ts";
 import type { CostSummary } from "../src/ops.ts";
 import { store, useStore } from "./store.ts";
 import { num, pct } from "./ui.tsx";
 
-/** The analysis-panel viewer from the store, through the generated `receiveViewer`: the mode of the panels and the roles. */
+/**
+ * The analysis-panel viewer from the store, through the generated `receiveViewer`: the mode of the panels and the roles.
+ * A simulated mode that the generated `canReceiveViewer` refuses (a real-only server) falls back to read-only real data.
+ */
 export function panelStaffOf(s: typeof store): PanelStaff {
-  const mode = s.mode === "game" || s.env?.capabilities.hiddenTruth ? "SimulatedPanels" : s.canAct() ? "RealActing" : "RealReadOnly";
+  const wanted: PanelMode = s.mode === "game" || s.env?.capabilities.hiddenTruth ? "SimulatedPanels" : s.canAct() ? "RealActing" : "RealReadOnly";
+  const mode: PanelMode = canReceiveViewer(initialPanels, wanted, s.realOnly()) ? wanted : "RealReadOnly";
   return receiveViewer(initialPanels, mode, s.can("analyst"), s.isAdmin(), s.canSim(), s.realOnly()).staff;
 }
 

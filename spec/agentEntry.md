@@ -2,6 +2,8 @@
 
 A person reaches the agent experience in four ways: the prompt on an app's landing page, a plugin in their agent, the agent skill catalog of a site, or a link in an update text. The landing page, its prompt and its agent tiles are in [landing entry](landingEntry.md). The skill files and the skill catalog of each site are in [site pages](sitePages.md). The brand data, with the skill name of each app, is in [brand identity](brandIdentity.md). The plugin build owns the plugin skill copies and their MCP endpoints. The notification service owns the update reference and the link in the text. The agent owns what it does with the skill ([agent signup](agentSignup.md)) and with the connector ([connector tools](connectorTools.md)). This spec models how each entry resolves to one app skill or to the updates tool. Public sites have no sign-in link, settings page or member dashboard.
 
+The person's agent follows the text of the site prompt and of the app's SKILL.md. No code of this repository runs inside that agent. The plugin build calls `pluginListsSkill`, `pluginEndpoint` and `skillFor` when it writes the plugin skill copies. The site build checks the signup step markers of each SKILL.md against the [agent signup](agentSignup.md) model. No runtime code enforces the entry routes of this model, or `canSubmitProfile` and `canRequestNewCode` of the agent signup model, on the agent side. The connector server enforces its own rules on each tool call ([connector tools](connectorTools.md)).
+
 ## Story: Get from an app site or a text into my own agent
 
 > As a person who found an app, I want one prompt or one link to open my own agent with the right app's skill, so that the agent can sign me up or show my update without a website account.

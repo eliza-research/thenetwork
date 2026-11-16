@@ -15,9 +15,9 @@ import {
 } from "@thenetwork/ui";
 import { ntwrkBrand } from "../../core/src/generated/brandIdentity.ts";
 import {
-  backShown, type ConsoleNav, conversationSearchShown, type HitGroups, hitGroups, modeSwitchShown, searchShown, switcherShown, tabNow, viewFor,
+  backShown, canTypeQuery, type ConsoleNav, conversationSearchShown, type HitGroups, hitGroups, modeSwitchShown, searchShown, switcherShown, tabNow, viewFor,
 } from "../../core/src/generated/consoleNavigation.ts";
-import { canReceiveProposalAnswer, canSubmitProposal, initial as initialWorkspace, receiveProposalAnswer, submitProposal, trayShown, type TrayPhase } from "../../core/src/generated/consoleWorkspace.ts";
+import { canReceiveProposalAnswer, canSubmitProposal, groupProposal, initial as initialWorkspace, proposalFormShown, receiveProposalAnswer, submitProposal, trayShown, type TrayPhase } from "../../core/src/generated/consoleWorkspace.ts";
 import { signInView } from "../../core/src/generated/staffSignIn.ts";
 import type { EnvInfo, Mode, SearchHit } from "../src/types.ts";
 import { AppPage } from "./apps.tsx";
@@ -187,14 +187,14 @@ function searchHits(query: string, groups: HitGroups): Hit[] {
   const q = query.trim().toLowerCase();
   for (const m of store.members.values()) {
     if (hits.length >= 5) break;
-    if (m.name.toLowerCase().includes(q) || m.id === q) hits.push({ key: `m${m.id}`, label: m.name, meta: m.area ?? "", go: () => store.focus({ kind: "member", id: m.id }) });
+    if (m.name.toLowerCase().includes(q) || m.id === q) hits.push({ key: `m${m.id}`, label: m.name, meta: m.area ?? "", go: () => store.pickHit({ kind: "member", id: m.id }) });
   }
-  for (const n of NEIGHBORHOODS.filter(n => n.name.toLowerCase().includes(q)).slice(0, 3)) hits.push({ key: `n${n.name}`, label: n.name, meta: n.borough, go: () => store.focus({ kind: "neighborhood", id: n.name }) });
+  for (const n of NEIGHBORHOODS.filter(n => n.name.toLowerCase().includes(q)).slice(0, 3)) hits.push({ key: `n${n.name}`, label: n.name, meta: n.borough, go: () => store.pickHit({ kind: "neighborhood", id: n.name }) });
   if (groups === "NamesPlacesAndIds") {
     let k = 0;
     for (const o of store.opps.values()) {
       if (k >= 3) break;
-      if (o.id.toLowerCase().includes(q)) { k++; hits.push({ key: `o${o.id}`, label: store.oppTitle(o), meta: o.id.slice(0, 12), go: () => store.focus({ kind: "opportunity", id: o.id }) }); }
+      if (o.id.toLowerCase().includes(q)) { k++; hits.push({ key: `o${o.id}`, label: store.oppTitle(o), meta: o.id.slice(0, 12), go: () => store.pickHit({ kind: "opportunity", id: o.id }) }); }
     }
   }
   return hits;
@@ -231,7 +231,7 @@ function Search({ nav }: { nav: ConsoleNav }) {
   };
   return (
     <SearchBox
-      value={s.ui.query} onValueChange={v => store.setUI({ query: v })} groups={groups} hits={hits}
+      value={s.ui.query} onValueChange={v => { if (canTypeQuery(nav)) store.setUI({ query: v }); }} groups={groups} hits={hits}
       onPick={h => { hits.find(x => x.key === h.key)?.go(); done(); }}
       conversationSearch={canConv} onSearchConversations={runConv} conversation={conversation}
       onPickConversation={h => { const x = shown?.hits?.[Number(h.key)]; if (x) openHit(x); }} onCloseConversation={() => setConv(null)}
@@ -422,6 +422,8 @@ function Tray() {
       className="absolute inset-x-4 bottom-4 z-20 mx-auto max-w-3xl"
       phase={tray}
       picks={picks.map(id => { const m = s.members.get(id); return { id, name: m?.name ?? id, minor: m?.minor, busy: busy.has(id) }; })}
+      formShown={proposalFormShown(picks.length)}
+      group={groupProposal(picks.length)}
       canPropose={canSubmitProposal(w, picks.length, minor, sparks, over)}
       minorPicked={minor}
       sparksLeft={sparks}

@@ -1,9 +1,10 @@
 import { useSyncExternalStore } from "react";
 import { acceptsFeedItem, deltaAction, initial as initialSync, ownsLoad, step as stepSync } from "../../core/src/generated/observatorySync.ts";
 import {
-  canClearFocus, canClosePerson, canFlyToVenue, canFocusOn, canGoBack, canOpenAllApps, canOpenPerson, canReceiveModeChange, canReplaceFocus, canSelectApp, canShowStage,
-  canSwitchMode, canTogglePick, clearFocus as clearNavFocus, closePerson, type ConsoleMode, type ConsoleNav, type ConsolePage, type DrawerTab as NavTab, flyToVenue, focusOn,
-  goBack, maxFocusHistory, maxPicks, openAllApps, openPerson as openNavPerson, pageForViewer, pressEscape, queryClass, receiveModeChange, replaceFocus, selectApp, showStage,
+  canClearFocus, canClosePerson, canDropMissingSubjects, canFlyToVenue, canFocusOn, canGoBack, canOpenAllApps, canOpenPerson, canPickHit, canReceiveModeChange, canReceiveQueues,
+  canReplaceFocus, canSelectApp, canShowStage, canSwitchMode, canTogglePick, clearFocus as clearNavFocus, closePerson, type ConsoleMode, type ConsoleNav, type ConsolePage,
+  type DrawerTab as NavTab, dropMissingSubjects, flyToVenue, focusOn, goBack, initial as initialNav, maxFocusHistory, maxPicks, openAllApps, openPerson as openNavPerson,
+  pageForViewer, pickHit, pressEscape, queryClass, receiveModeChange, receiveQueues, replaceFocus, selectApp, showStage,
   type Subject, switchMode, toggleHelp, togglePick as toggleNavPick,
 } from "../../core/src/generated/consoleNavigation.ts";
 import { allowedByRole, scopedGrants } from "../../core/src/generated/staffPermissions.ts";
@@ -402,8 +403,7 @@ class ObsStore {
     this.requests = s.requests ?? [];
     this.members = members; this.edges = edges; this.opps = opps;
     this.feed = feed; this.pulses = [];
-    if (!this.focusExists(this.ui.focus)) { this.ui = { ...this.ui, focus: null }; this.focusHistory = []; }
-    this.focusHistory = this.focusHistory.filter(f => this.focusExists(f));
+    this.dropMissingFocus();
     this.ui = { ...this.ui, picks: this.ui.picks.filter(id => this.members.has(id)) };
     this.graphTick++;
   }
@@ -418,6 +418,24 @@ class ObsStore {
     this.truth = undefined; this.network = undefined; this.requests = []; this.reveals = [];
     this.graphTick++;
     return true;
+  }
+
+  /**
+   * After new data: the generated `dropMissingSubjects` drops the history entries whose subject is gone, and returns to the overview
+   * when the focused subject is gone. A history that the generated guard refuses is filtered the same way.
+   */
+  private dropMissingFocus() {
+    const nav = this.nav();
+    const kept = this.focusHistory.filter(f => this.focusExists(f));
+    const exists = this.focusExists(this.ui.focus);
+    const dropped = this.focusHistory.length - kept.length;
+    if (!canDropMissingSubjects(nav, dropped)) {
+      if (!exists) { this.ui = { ...this.ui, focus: null }; this.focusHistory = []; } else this.focusHistory = kept;
+      return;
+    }
+    const next = dropMissingSubjects(nav, exists, dropped);
+    if (next.subject === "Overview" && this.ui.focus) this.ui = { ...this.ui, focus: null };
+    this.focusHistory = next.depth > 0 ? kept.slice(-next.depth) : [];
   }
 
   private focusExists(f: Focus) {
@@ -669,7 +687,7 @@ class ObsStore {
     const subject = subjectOf(this.ui.focus);
     let reviewItems = false;
     for (const o of this.opps.values()) if (o.state === "IN_REVIEW") { reviewItems = true; break; }
-    return {
+    const base: ConsoleNav = {
       page: me ? pageForViewer(page, appsHeld, crossApp, mode) : page,
       stage: this.ui.view === "graph" ? "GraphStage" : "MapStage",
       subject,
@@ -682,8 +700,9 @@ class ObsStore {
       viewer: {
         known: !!me, mode, appsHeld, crossApp, admin: !!me && this.isAdmin(), analyst: this.can("analyst"), simRole: this.canSim(), safety: this.can("safety"), realOnly: this.realOnly(),
       },
-      queues: { humanReview: this.reviewMode() === "human", reviewItems, requestsKnown: this.requests.length > 0 || this.network?.kind === "consent" },
+      queues: initialNav.queues,
     };
+    return canReceiveQueues(base) ? receiveQueues(base, this.reviewMode() === "human", reviewItems, this.requests.length > 0 || this.network?.kind === "consent") : base;
   }
 
   /**
@@ -727,6 +746,15 @@ class ObsStore {
     if (!canFocusOn(nav, target, false)) return;
     this.commitNav(focusOn(nav, target, false), { focus: f, history: cur ? [...this.focusHistory, cur] : this.focusHistory });
     this.pushHash(f);
+  }
+  // spec/consoleNavigation.md, "Search offers names and places from two characters and ids from three"
+  /** Open a search hit: the generated `pickHit` focuses the subject, keeps the last one on the history and clears the search. */
+  pickHit(f: NonNullable<Focus>) {
+    const cur = this.ui.focus;
+    const nav = this.nav(), target = subjectOf(f), same = sameFocus(cur, f);
+    if (!canPickHit(nav, target, same)) return;
+    this.commitNav(pickHit(nav, target, same), { focus: f, history: cur && !same ? [...this.focusHistory, cur] : this.focusHistory });
+    if (!same) this.pushHash(f);
   }
   // spec/consoleNavigation.md, "Back returns to the last subject and clear returns to the overview"
   /** Return to the previous focus: the generated `goBack`. Uses the browser history when this page pushed the entry. */

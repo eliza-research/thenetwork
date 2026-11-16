@@ -18,6 +18,10 @@ export type ProposeTrayProps = Omit<ComponentProps<"div">, "children"> & {
   phase: TrayPhase;
   /** The picks, oldest first. */
   picks: TrayPick[];
+  /** The generated `proposalFormShown(pickCount)`: the category, the plan, the reason and Propose show. */
+  formShown: boolean;
+  /** The generated `groupProposal(pickCount)`: the proposal is a group, not an intro. */
+  group: boolean;
   /** The generated `canSubmitProposal(w, pickCount, minorPicked, sparksLeft, gameOver)`. */
   canPropose: boolean;
   /** True when a picked member is under 18; Propose then says why it is off. */
@@ -52,6 +56,8 @@ export type ProposeTrayProps = Omit<ComponentProps<"div">, "children"> & {
 export function ProposeTray({
   phase,
   picks,
+  formShown,
+  group,
   canPropose,
   minorPicked,
   sparksLeft,
@@ -70,7 +76,6 @@ export function ProposeTray({
   className,
   ...props
 }: ProposeTrayProps) {
-  const group = picks.length > 2;
   return (
     <div className={cn("flex flex-col gap-3 rounded-lg border border-border bg-popover p-3 text-sm text-popover-foreground shadow-lg", className)} {...props}>
       <ul aria-label="Picked members" className="flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -83,9 +88,9 @@ export function ProposeTray({
             </Button>
           </li>
         ))}
-        {picks.length < 2 ? <li className="text-muted-foreground">Shift-click 1-{maxPicks - 1} more</li> : null}
+        {formShown ? null : <li className="text-muted-foreground">Shift-click 1-{maxPicks - 1} more</li>}
       </ul>
-      {picks.length >= 2 ? (
+      {formShown ? (
         <div className="flex flex-wrap items-center gap-2">
           <Select className="w-36" aria-label="Category" value={category} onValueChange={onCategoryChange}>
             {categories.map((choice) => (

@@ -235,15 +235,26 @@ pure def alwaysCodeStepUsesTextCodes(page: JoinPage): bool =
 
 ### Only a well-formed code goes to the server, and only a verified code signs the person in
 
-The page refuses a code with fewer than 4 or more than 8 digits. A wrong or expired code, too many tries, or a general failure keeps the code step and shows why. A verified code clears the notice and the page reads the session again.
+The page refuses a code with fewer than 4 or more than 8 digits. The shell removes all characters that are not digits and sends only the count of the digits. This model keeps the two limits, and the shell does not compare the count itself. A code with a count out of the limits never goes to the server. A wrong or expired code, too many tries, or a general failure keeps the code step and shows why. A verified code clears the notice and the page reads the session again.
 
 ```quint
 type VerifyResult = Verified | WrongCode | VerifyRateLimited | VerifyFailed
 
+pure val codeDigitsMin = 4
+pure val codeDigitsMax = 8
+pure val codeDigitCountValues = Set(0, 3, 4, 8, 9)
+
+pure def codeLengthAccepted(codeDigitCount: int): bool =
+  codeDigitCount >= codeDigitsMin and codeDigitCount <= codeDigitsMax
+
 pure def canSubmitCode(page: JoinPage): bool = page.screen == Code and page.pending == Idle
 
-pure def submitCode(page: JoinPage, codeWellFormed: bool): JoinPage =
-  if (codeWellFormed) { ...page, pending: VerifyingCode } else { ...page, formError: CodeFormat }
+pure def submitCode(page: JoinPage, codeDigitCount: int): JoinPage =
+  if (codeLengthAccepted(codeDigitCount)) { ...page, pending: VerifyingCode } else { ...page, formError: CodeFormat }
+
+pure def lawCodeOutsideLimitsNeverVerified(page: JoinPage, codeDigitCount: int): bool =
+  (codeDigitCount < codeDigitsMin or codeDigitCount > codeDigitsMax)
+    implies submitCode(page, codeDigitCount).pending == page.pending
 
 pure def canAnswerVerify(page: JoinPage): bool = page.pending == VerifyingCode
 

@@ -198,7 +198,7 @@ export function useJoin({ siteKey, pageMinAge, pageInviteOnly = false, returnPat
       },
       onSubmitCode: async () => {
         const digits = current.current.code.replace(/\D/g, "");
-        const next = send({ type: "submitCode", codeWellFormed: digits.length >= 4 && digits.length <= 8 });
+        const next = send({ type: "submitCode", codeDigitCount: digits.length });
         if (!next || !canAnswerVerify(next)) return;
         const answer = await verifyCode(sentTo.current, digits);
         const after = send({ type: "answerVerify", verifyAnswer: answer.result }, { failure: answer.error });

@@ -6,6 +6,7 @@
   "exports": {
     "./theme.css": "./generated/theme.css",
     "./brands.css": "./generated/brands.css",
+    "./fonts.css": "./fonts.css",
     "./brands": "./src/brands.ts",
     "./network/tokens.json": "./brands/network/tokens.json",
     "./slop/tokens.json": "./brands/slop/tokens.json",

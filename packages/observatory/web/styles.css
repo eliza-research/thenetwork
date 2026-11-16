@@ -6,19 +6,20 @@
   font: inherit;
 }
 [data-map] .leaflet-tooltip {
-  background: var(--popover);
-  color: var(--popover-foreground);
-  border: 1px solid var(--border);
-  box-shadow: none;
+  @apply border border-border bg-popover text-popover-foreground shadow-none;
 }
 [data-map] .leaflet-tooltip-top::before {
-  border-top-color: var(--border);
+  @apply border-t-border;
+}
+[data-map] {
+  /* Leaflet draws raster map tiles, which no theme token colors: this ordered filter darkens them, and the filter utilities cannot keep its order. */
+  --map-tiles-dark-filter: invert(1) hue-rotate(195deg) brightness(0.72) contrast(0.92) saturate(0.55);
 }
 .dark [data-map] .tiles-dark {
-  filter: invert(1) hue-rotate(195deg) brightness(0.72) contrast(0.92) saturate(0.55);
+  filter: var(--map-tiles-dark-filter);
 }
 @media (prefers-color-scheme: dark) {
   :root:not(.light) [data-map] .tiles-dark {
-    filter: invert(1) hue-rotate(195deg) brightness(0.72) contrast(0.92) saturate(0.55);
+    filter: var(--map-tiles-dark-filter);
   }
 }

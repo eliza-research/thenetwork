@@ -3,19 +3,59 @@
 // or updates in the one app the client is bound to. No tool takes a phone number, a code or an age, and every
 // input schema refuses properties it does not list. prepare_signup alone takes approved Join name/home city.
 import {
-  initial as initialDraftPreparation, signupDraftAppEnabled, signupDraftDeadline, signupDraftLifetimeMs,
+  initial as initialDraftPreparation, signupDraftDeadline, signupDraftLifetimeMs,
   signupDraftRequestAllowed, step as stepDraftPreparation,
 } from "../../core/src/generated/mcpSignupDraft.ts";
-import { type MemberStatus, type NextStep, nextStepFor, toolAllowedFor } from "../../core/src/generated/connectorTools.ts";
+import {
+  type Connection, type MemberStatus, type NextStep, type Scope as ConnectorScope, type ToolName as ConnectorTool,
+  canCallCheckStatus, canCallGetUpdates, canCallPrepareSignup, canCallPublicTool, canCallSubmitProfile, grantCovers,
+  initial as connectionInitial, nextStepFor, scopeFor, toolAllowedFor, toolListed,
+} from "../../core/src/generated/connectorTools.ts";
 import { publicSignupUsesBrowser } from "../../core/src/generated/siteEnrollment.ts";
-import { appsOn, type McpApp, type McpAppId, type Surface } from "./apps.ts";
+import { appsOn, connectorApp, connectorSurface, type McpApp, type McpAppId, type Surface } from "./apps.ts";
 import type { AssistantKind, PlatformHooks, PublicStatus } from "./hooks.ts";
 import type { Grant, Scope, OAuthStore, SignupDraftFields } from "./store.ts";
 import { outputLeaks } from "./leaks.ts";
 
 export const TOOL_NAMES = ["app_info", "start_signup", "check_status", "submit_profile", "get_updates", "prepare_signup"] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
-export const TOOL_SCOPE: Record<ToolName, Scope | null> = { app_info: null, start_signup: null, check_status: "membership:read", submit_profile: "profile:write", get_updates: "membership:read", prepare_signup: "profile:write" };
+/** The generated name of each tool (spec/connectorTools.md, "Each surface lists only the apps it may offer"). */
+export const connectorTool: Record<ToolName, ConnectorTool> = {
+  app_info: "AppInfoTool", start_signup: "StartSignupTool", check_status: "CheckStatusTool",
+  submit_profile: "SubmitProfileTool", get_updates: "GetUpdatesTool", prepare_signup: "PrepareSignupTool",
+};
+/** The OAuth scope of each generated scope; a public tool needs none (spec/connectorTools.md, "Public tools need no sign-in"). */
+const oauthScope: Record<ConnectorScope, Scope | null> = { NoScope: null, MembershipRead: "membership:read", ProfileWrite: "profile:write" };
+/** The OAuth scope that each tool needs, from the generated `scopeFor` (spec/connectorTools.md, "Public tools need no sign-in"). */
+export const TOOL_SCOPE = Object.fromEntries(TOOL_NAMES.map(t => [t, oauthScope[scopeFor(connectorTool[t])]])) as Record<ToolName, Scope | null>;
+
+/** Whether the token's scopes cover the tool (spec/connectorTools.md, "Public tools need no sign-in"). */
+export const tokenCovers = (tool: ToolName, scopes: readonly Scope[]): boolean =>
+  grantCovers(connectorTool[tool], scopes.includes("membership:read"), scopes.includes("profile:write"));
+
+/**
+ * The model connection of one MCP request (spec/connectorTools.md, "what the shell owns"): connected with a token,
+ * anonymous without one, with the profile write scope only when the token holds it, and with an approved profile
+ * that is not sent yet (the agent owns the read-back). The platform reads the member status inside the tool.
+ */
+export function connectionOf(host: McpApp, surface: Surface, scopes: readonly Scope[] | null, sentToday = 0): Connection {
+  return {
+    ...connectionInitial, phase: scopes ? "Connected" : "Anonymous", host: connectorApp[host.id], surface: connectorSurface[surface],
+    hasWrite: !!scopes?.includes("profile:write"), profileApproved: true, profileSent: false, sentToday,
+  };
+}
+
+/** The generated guard of each tool call (spec/connectorTools.md). */
+export function canCallTool(c: Connection, tool: ToolName): boolean {
+  switch (tool) {
+    case "app_info": case "start_signup": return canCallPublicTool(c, connectorTool[tool]);
+    case "check_status": return canCallCheckStatus(c);
+    case "get_updates": return canCallGetUpdates(c);
+    case "submit_profile": return canCallSubmitProfile(c);
+    case "prepare_signup": return canCallPrepareSignup(c);
+  }
+}
+
 /** An update reference from a Network text (packages/notify task tokens): a pointer, never a credential. */
 export const UPDATE_TOKEN = /^T-[2-9A-HJKMNP-TV-Z]{6}$/;
 /** The longest profile text the assistant may submit (a few short paragraphs). */
@@ -32,8 +72,12 @@ const annotations = (title: string) => ({ title, readOnlyHint: true, destructive
 export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host: McpApp) {
   const ids = appsOn(apps, surface).map(a => a.id);
   const appProp = (description: string) => ({ type: "string", enum: ids, description });
-  const noauth = [{ type: "noauth" }];
-  const oauth = [{ type: "oauth2", scopes: ["membership:read"] }];
+  // The security scheme of each tool, from its generated scope (spec/connectorTools.md, "Public tools need no sign-in").
+  const schemes = (tool: ToolName) => {
+    const scope = TOOL_SCOPE[tool];
+    const list = scope ? [{ type: "oauth2", scopes: [scope] }] : [{ type: "noauth" }];
+    return { securitySchemes: list, _meta: { securitySchemes: list } };
+  };
   const text = { type: "string" };
   const nullableText = { type: ["string", "null"] };
   const object = (properties: Record<string, unknown>) => ({ type: "object", properties, required: Object.keys(properties), additionalProperties: false });
@@ -57,8 +101,7 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
       inputSchema: { type: "object", properties: { app: appProp("One app. Leave it out for all apps.") }, additionalProperties: false },
       outputSchema: { type: "object", anyOf: [publicApp, object({ apps: { type: "array", items: publicApp } })] },
       annotations: annotations("About the apps"),
-      securitySchemes: noauth,
-      _meta: { securitySchemes: noauth },
+      ...schemes("app_info"),
     },
     {
       name: "start_signup",
@@ -67,18 +110,16 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
       inputSchema: { type: "object", properties: { app: appProp("The app to join.") }, required: ["app"], additionalProperties: false },
       outputSchema: object({ app: appId, join_mode: joinMode, url: text, keyword: nullableText, instructions_for_person: text, ages }),
       annotations: annotations("Get the sign-up link"),
-      securitySchemes: noauth,
-      _meta: { securitySchemes: noauth },
+      ...schemes("start_signup"),
     },
-    ...(signupDraftAppEnabled(host.id) ? [{
+    {
       name: "prepare_signup", title: "Prepare my Join form",
       description: "After verified phone sign-in and OAuth approval, save only the first name and optional home city the person explicitly approved for this app. They must open Join, review or edit every field and consent themselves. Never creates a person, membership or text consent. One draft per grant; no age, phone, code, gender or dating preferences.",
       inputSchema: { type: "object", properties: { app: { type: "string", enum: [host.id] }, firstName: { type: "string", minLength: 1, maxLength: 50 }, homeCity: { type: "string", enum: ["nyc", "sf"] } }, required: ["firstName"], additionalProperties: false },
       outputSchema: object({ prepared: { type: "boolean", const: true }, app: ownApp, url: text, next_step: text }),
       annotations: { title: "Prepare my Join form", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-      securitySchemes: [{ type: "oauth2", scopes: ["profile:write"] }],
-      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["profile:write"] }] },
-    }] : []),
+      ...schemes("prepare_signup"),
+    },
     {
       name: "check_status",
       title: `My ${host.name} status`,
@@ -86,8 +127,7 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
       inputSchema: { type: "object", properties: { app: { type: "string", enum: [host.id], description: `Optional. Always ${host.id}: this connection covers ${host.name} only.` } }, additionalProperties: false },
       outputSchema: object({ app: ownApp, status, next_step: text, manage_url: text }),
       annotations: annotations(`My ${host.name} status`),
-      securitySchemes: oauth,
-      _meta: { securitySchemes: oauth },
+      ...schemes("check_status"),
     },
     {
       name: "submit_profile",
@@ -106,8 +146,7 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
         object({ app: ownApp, submitted: { type: "boolean", const: false }, status, next_step: text }),
       ] },
       annotations: { title: `Send my profile to ${host.name}`, readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-      securitySchemes: [{ type: "oauth2", scopes: ["profile:write"] }],
-      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["profile:write"] }] },
+      ...schemes("submit_profile"),
     },
     {
       name: "get_updates",
@@ -124,10 +163,9 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
       outputSchema: object({ app: ownApp, updates: { type: "array", items: object({ summary: text, at: text, kind: text }) }, next_step: text }),
       // Reading marks items seen and every call updates the assistant's last-used time.
       annotations: { title: `My ${host.name} updates`, readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-      securitySchemes: oauth,
-      _meta: { securitySchemes: oauth },
+      ...schemes("get_updates"),
     },
-  ];
+  ].filter(t => toolListed(connectorApp[host.id], connectorSurface[surface], connectorTool[t.name as ToolName]));
 }
 
 export type ToolOutcome =
@@ -241,7 +279,7 @@ const NEXT_TEXT: Record<NextStep, (a: McpApp) => string> = {
   EmailSupport: a => `On hold. The person should email ${a.links.support.replace("mailto:", "")}.`,
 };
 
-/** The next-step text for a status (spec/connectorTools.md:50). */
+/** The next-step text for a status (spec/connectorTools.md, "The member status decides which member tool can act"). */
 const nextStep = (status: PublicStatus, a: McpApp): string => NEXT_TEXT[nextStepFor(memberStatus[status], a.joinMode === "invite")](a);
 
 export interface CallContext {

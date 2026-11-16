@@ -41,7 +41,7 @@ export type Event =
   | { type: "submitPhone"; phoneValid: boolean }
   | { type: "settleCheck"; passed: boolean }
   | { type: "answerCodeStart"; started: StartResult }
-  | { type: "submitCode"; codeWellFormed: boolean }
+  | { type: "submitCode"; codeDigitCount: number }
   | { type: "answerVerify"; verifyAnswer: VerifyResult }
   | { type: "resendCode" }
   | { type: "changeNumber" }
@@ -53,6 +53,10 @@ export type Event =
   | { type: "submitProfile"; form: ProfileForm }
   | { type: "answerJoin"; joinAnswer: JoinOutcome };
 
+/** Story: Confirm my own phone / Only a well-formed code goes to the server, and only a verified code signs the person in (spec/browserJoin.md) */
+export const codeDigitsMin: number = 4;
+/** Story: Confirm my own phone / Only a well-formed code goes to the server, and only a verified code signs the person in (spec/browserJoin.md) */
+export const codeDigitsMax: number = 8;
 /** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
 export const fragmentNameMax: number = 50;
 /** Story: Open the join page from my agent's link / The page takes the approved name and age from the fragment and then removes the fragment (spec/browserJoin.md) */
@@ -419,13 +423,19 @@ export function answerCodeStart(page: JoinPage, started: StartResult): JoinPage 
 
 /** Story: Confirm my own phone / Only a well-formed code goes to the server, and only a verified code signs the person in (spec/browserJoin.md) */
 //@ pure
+export function codeLengthAccepted(codeDigitCount: number): boolean {
+  return codeDigitCount >= codeDigitsMin && codeDigitCount <= codeDigitsMax;
+}
+
+/** Story: Confirm my own phone / Only a well-formed code goes to the server, and only a verified code signs the person in (spec/browserJoin.md) */
+//@ pure
 export function canSubmitCode(page: JoinPage): boolean {
   return page.screen === "Code" && page.pending === "Idle";
 }
 
 /** Story: Confirm my own phone / Only a well-formed code goes to the server, and only a verified code signs the person in (spec/browserJoin.md) */
 //@ pure
-export function submitCode(page: JoinPage, codeWellFormed: boolean): JoinPage {
+export function submitCode(page: JoinPage, codeDigitCount: number): JoinPage {
   //@ ensures (inv(page) && canSubmitCode(page)) ==> alwaysAddressCleanAfterOpening(\result)
   //@ ensures (inv(page) && canSubmitCode(page)) ==> alwaysBlockedHasReason(\result)
   //@ ensures (inv(page) && canSubmitCode(page)) ==> alwaysPhoneStepsHaveNoAccount(\result)
@@ -441,7 +451,7 @@ export function submitCode(page: JoinPage, codeWellFormed: boolean): JoinPage {
   //@ ensures (inv(page) && canSubmitCode(page)) ==> stepSignInKeepsFormValues(page, "submitCode", \result)
   //@ ensures (inv(page) && canSubmitCode(page)) ==> stepDoneFollowsSavedProfile(page, "submitCode", \result)
   //@ ensures (inv(page) && canSubmitCode(page)) ==> stepOneRequestAtATime(page, \result)
-  return codeWellFormed ? ({ ...page, pending: "VerifyingCode" } as JoinPage) : ({ ...page, formError: "CodeFormat" } as JoinPage);
+  return codeLengthAccepted(codeDigitCount) ? ({ ...page, pending: "VerifyingCode" } as JoinPage) : ({ ...page, formError: "CodeFormat" } as JoinPage);
 }
 
 /** Story: Confirm my own phone / Only a well-formed code goes to the server, and only a verified code signs the person in (spec/browserJoin.md) */
@@ -469,6 +479,13 @@ export function answerVerify(page: JoinPage, verifyAnswer: VerifyResult): JoinPa
   //@ ensures (inv(page) && canAnswerVerify(page)) ==> stepDoneFollowsSavedProfile(page, "answerVerify", \result)
   //@ ensures (inv(page) && canAnswerVerify(page)) ==> stepOneRequestAtATime(page, \result)
   return verifyAnswer === "Verified" ? ({ ...page, pending: "Idle", screen: "Checking", notice: "NoNotice", formError: "NoError" } as JoinPage) : (verifyAnswer === "WrongCode" ? ({ ...page, pending: "Idle", formError: "InvalidCode" } as JoinPage) : (verifyAnswer === "VerifyRateLimited" ? ({ ...page, pending: "Idle", formError: "RateLimited" } as JoinPage) : ({ ...page, pending: "Idle", formError: "RequestFailed" } as JoinPage)));
+}
+
+/** Story: Confirm my own phone / Only a well-formed code goes to the server, and only a verified code signs the person in (spec/browserJoin.md) */
+//@ pure
+export function lawCodeOutsideLimitsNeverVerified(page: JoinPage, codeDigitCount: number): boolean {
+  //@ ensures \result === true
+  return !(codeDigitCount < codeDigitsMin || codeDigitCount > codeDigitsMax) || submitCode(page, codeDigitCount).pending === page.pending;
 }
 
 /** Story: Confirm my own phone / A new code needs a new security check when the check is on (spec/browserJoin.md) */
@@ -1020,7 +1037,7 @@ export function step(current: JoinPage, event: Event): JoinPage {
   if (event.type === "submitPhone" && canSubmitPhone(current)) return submitPhone(current, event.phoneValid);
   if (event.type === "settleCheck" && canSettleCheck(current)) return settleCheck(current, event.passed);
   if (event.type === "answerCodeStart" && canAnswerCodeStart(current)) return answerCodeStart(current, event.started);
-  if (event.type === "submitCode" && canSubmitCode(current)) return submitCode(current, event.codeWellFormed);
+  if (event.type === "submitCode" && canSubmitCode(current)) return submitCode(current, event.codeDigitCount);
   if (event.type === "answerVerify" && canAnswerVerify(current)) return answerVerify(current, event.verifyAnswer);
   if (event.type === "resendCode" && canResendCode(current)) return resendCode(current);
   if (event.type === "changeNumber" && canChangeNumber(current)) return changeNumber(current);
@@ -1057,7 +1074,7 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "submitPhone" && typeof raw.phoneValid === "boolean") return { type: "submitPhone", phoneValid: raw.phoneValid };
   if (raw.type === "settleCheck" && typeof raw.passed === "boolean") return { type: "settleCheck", passed: raw.passed };
   if (raw.type === "answerCodeStart" && (raw.started === "CodeSent" || raw.started === "StartRateLimited" || raw.started === "StartCheckRejected" || raw.started === "StartFailed")) return { type: "answerCodeStart", started: raw.started };
-  if (raw.type === "submitCode" && typeof raw.codeWellFormed === "boolean") return { type: "submitCode", codeWellFormed: raw.codeWellFormed };
+  if (raw.type === "submitCode" && Number.isSafeInteger(raw.codeDigitCount)) return { type: "submitCode", codeDigitCount: raw.codeDigitCount };
   if (raw.type === "answerVerify" && (raw.verifyAnswer === "Verified" || raw.verifyAnswer === "WrongCode" || raw.verifyAnswer === "VerifyRateLimited" || raw.verifyAnswer === "VerifyFailed")) return { type: "answerVerify", verifyAnswer: raw.verifyAnswer };
   if (raw.type === "resendCode") return { type: "resendCode" };
   if (raw.type === "changeNumber") return { type: "changeNumber" };

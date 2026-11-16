@@ -12,14 +12,14 @@
 // spec/consolePanels.md, "Only an admin resets the world, chooses a level or chooses the reviewer"
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
-  canChooseFeedSegment, canPickRun, canReceiveDiff, canReceiveGame, canReceiveRuns, canResetWorld, canToggleCompare, columnShown, compareShown, feedEmptyNote,
-  feedSegmentNow, feedSegmentOffered, feedShows, gameView, initial as initialPanels, ladderView, metricsSectionShown, pickRun, proactiveWarns, receiveDiff,
-  receiveGame, receiveRuns, reviewerSwitchShown, runsView, toggleCompare, type ConsolePanels, type EventGroup, type FeedNote, type FeedSegment,
+  canChooseFeedSegment, canPickRun, canReceiveDiff, canReceiveRuns, canResetWorld, canToggleCompare, chooseFeedSegment, columnShown, compareShown, feedEmptyNote,
+  feedSegmentNow, feedSegmentOffered, feedShows, gameView, initial as initialPanels, ladderView, maxProactiveHundredths, maxRunPicks, metricsSectionShown, pickRun, proactiveWarns, receiveDiff,
+  receiveRuns, reviewerSwitchShown, runsView, toggleCompare, type ConsolePanels, type EventGroup, type FeedNote, type FeedSegment,
   type PipelineColumn, type RunCompare, type StateFilter,
 } from "../../core/src/generated/consolePanels.ts";
 import { panelStaffOf } from "./ops.tsx";
 import {
-  canChooseTab, canToggleDrawer, chooseTab, filterApplies as tabFilterApplies, initial as initialNav, tabNow, toggleDrawer,
+  canChooseTab, canToggleDrawer, chooseTab, filterApplies as tabFilterApplies, tabNow, toggleDrawer,
   type ConsoleNav, type DrawerTab as NavTab, type FilterKey as NavFilterKey,
 } from "../../core/src/generated/consoleNavigation.ts";
 import {
@@ -28,7 +28,7 @@ import {
 } from "@thenetwork/ui";
 import type { EngineRunSummary, ObsFeedItem } from "../src/types.ts";
 import { BiasMonitor, Config, Growth, Lab, Requests, RunDiffView, SafetyCases, Scorecard } from "./admin.tsx";
-import { Levels } from "./network.tsx";
+import { gamePanelsOf, Levels } from "./network.tsx";
 import { CostPanel } from "./ops.tsx";
 import { stateLabel } from "./panels.tsx";
 import { MemberName, ReviewerSwitch, ReviewQueue, ScoreParts } from "./review.tsx";
@@ -52,20 +52,9 @@ export const TAB_LABEL = Object.fromEntries(DRAWER_TABS.map(t => [t, drawerTabLa
 /** True when a global filter applies to a stored drawer tab: the generated `filterApplies`. */
 export const filterApplies = (tab: DrawerTab, k: FilterKey) => tabFilterApplies(navTab[tab], navFilter[k]);
 
-/** The console navigation state that the drawer reads, built from the store: the viewer roles, the queue facts, the wanted tab and the open drawer. */
+/** The console navigation state that the drawer reads: the store's `nav()`, with the queue facts through the generated `receiveQueues`. */
 export function navOf(s: typeof store): ConsoleNav {
-  let reviewItems = false;
-  for (const o of s.opps.values()) if (o.state === "IN_REVIEW") { reviewItems = true; break; }
-  return {
-    ...initialNav,
-    wantedTab: navTab[s.ui.drawer],
-    drawerOpen: s.ui.drawerOpen,
-    viewer: {
-      known: !!s.me, mode: s.mode === "real" ? "RealMode" : "SimulatedMode", appsHeld: s.me?.apps?.length ?? 0, crossApp: !!s.me?.crossApp,
-      admin: s.isAdmin(), analyst: s.can("analyst"), simRole: s.canSim(), safety: s.can("safety"), realOnly: s.realOnly(),
-    },
-    queues: { humanReview: s.reviewMode() === "human", reviewItems, requestsKnown: s.requests.length > 0 || s.network?.kind === "consent" },
-  };
+  return s.nav();
 }
 
 const panels: Record<NavTab, () => ReactNode> = {
@@ -165,7 +154,7 @@ function Feed() {
   };
   return (
     <div className="flex flex-col gap-3">
-      <Segments aria-label="Feed" value={seg} onValueChange={v => { if (canChooseFeedSegment(panels, v as FeedSegment)) setWanted(v as FeedSegment); }} options={segs} className="self-start" />
+      <Segments aria-label="Feed" value={seg} onValueChange={v => { if (canChooseFeedSegment(panels, v as FeedSegment)) setWanted(chooseFeedSegment(panels, v as FeedSegment).feedSegment); }} options={segs} className="self-start" />
       <div className="flex flex-col">
         {items.map(x => <FeedLine key={x.seq} x={x} onOpen={() => open(x)} />)}
         {!items.length && <EmptyState title={note === "NothingMatchesNote" ? s.nothing() : FEED_NOTE[note]} />}
@@ -307,10 +296,10 @@ function Engine() {
   const pick = (id: string) => {
     const already = compare.ids.includes(id);
     if (!canPickRun(panels, already)) return;
-    setCompare({ model: pickRun(panels, already).runs, ids: already ? compare.ids.filter(x => x !== id) : [...compare.ids, id].slice(-2) });
+    setCompare({ model: pickRun(panels, already).runs, ids: already ? compare.ids.filter(x => x !== id) : [...compare.ids, id].slice(-maxRunPicks) });
   };
   const answer = (loaded: boolean) => setCompare(c => (canReceiveDiff(panelsWith(c.model)) ? { ...c, model: receiveDiff(panelsWith(c.model), loaded).runs } : c));
-  const pair = compare.ids.length === 2 ? compare.ids.map(id => s.runs.find(r => r.id === id)!).filter(Boolean).sort((a, b) => a.at - b.at) : [];
+  const pair = compare.ids.length === maxRunPicks ? compare.ids.map(id => s.runs.find(r => r.id === id)!).filter(Boolean).sort((a, b) => a.at - b.at) : [];
   const runText = (r: EngineRunSummary) => <>{stamp(r.at)} <span className="text-muted-foreground">· {r.proposals} proposals{r.shadow ? " · shadow" : ""}</span></>;
   return (
     <div className="flex gap-4">
@@ -481,7 +470,7 @@ function Metrics() {
     <div className="flex flex-col gap-4">
       <KpiGrid className="lg:grid-cols-4">
         <Kpi label="messages / member / week" value={(st.messages / Math.max(1, st.joined) / weeks).toFixed(1)} />
-        <Kpi label="proactive / member / week" value={proactive.toFixed(2)} tone={proactiveWarns(Math.ceil(proactive * 100)) ? "warn" : undefined} title="Budget: normal ≤ 2 proactive messages per member per week" />
+        <Kpi label="proactive / member / week" value={proactive.toFixed(2)} tone={proactiveWarns(Math.ceil(proactive * 100)) ? "warn" : undefined} title={`Budget: normal ≤ ${maxProactiveHundredths / 100} proactive messages per member per week`} />
         <Kpi label="invite yes rate" value={pct(inviteYes)} title={n?.kind === "consent" ? "Yes answers to revealed invitations" : "Accepts per invite sent"} />
         <Kpi label={`show rate · ${st.noShows} no-shows · ${st.cancelledWithNotice} with notice`} value={pct(showDen ? st.attended / showDen : 0)} />
         <Kpi label="mean enjoyment" value={st.enjoymentN ? pct(st.enjoymentSum / st.enjoymentN) : "–"} />
@@ -519,8 +508,7 @@ function Game() {
   const s = useStore();
   const g = s.game;
   const [resetSeed, setResetSeed] = useState(1);
-  const base: ConsolePanels = { ...initialPanels, staff: panelStaffOf(s) };
-  const panels = canReceiveGame(base) ? receiveGame(base, !!g, !!g?.over, !!s.network?.scenario) : base;
+  const panels = gamePanelsOf(s);
   const view = gameView(panels.game);
   if (view === "NoGameView" || !g) return <EmptyState title="The game runs in the simulated world only." />;
   const mode = s.reviewMode();

@@ -101,6 +101,19 @@ export function lawPublicToolsNeedNoSignIn(tool: ToolName): boolean {
   return (scopeFor(tool) === "NoScope") === (tool === "AppInfoTool" || tool === "StartSignupTool");
 }
 
+/** Story: Use my app's connector from my agent / Public tools need no sign-in, and member tools need the person's own grant (spec/connectorTools.md) */
+//@ pure
+export function grantCovers(tool: ToolName, hasRead: boolean, hasWrite: boolean): boolean {
+  return scopeFor(tool) === "NoScope" || (scopeFor(tool) === "MembershipRead" && hasRead) || (scopeFor(tool) === "ProfileWrite" && hasWrite);
+}
+
+/** Story: Use my app's connector from my agent / Public tools need no sign-in, and member tools need the person's own grant (spec/connectorTools.md) */
+//@ pure
+export function lawGrantCoversPublicTools(tool: ToolName, hasRead: boolean, hasWrite: boolean): boolean {
+  //@ ensures \result === true
+  return !(scopeFor(tool) === "NoScope") || grantCovers(tool, hasRead, hasWrite);
+}
+
 /** Story: Use my app's connector from my agent / The member status decides which member tool can act (spec/connectorTools.md) */
 //@ pure
 export function liveMember(status: MemberStatus): boolean {
@@ -339,6 +352,18 @@ export function canChangeMemberStatus(c: Connection, newStatus: MemberStatus): b
 
 /** Story: Use my app's connector from my agent / The agent sends an approved profile once, only for a live member, within the daily limit (spec/connectorTools.md) */
 //@ pure
+export function profileLimitReached(sentToday: number): boolean {
+  return sentToday >= profileDailyCap;
+}
+
+/** Story: Use my app's connector from my agent / The agent sends an approved profile once, only for a live member, within the daily limit (spec/connectorTools.md) */
+//@ pure
+export function canCallSubmitProfile(c: Connection): boolean {
+  return c.phase === "Connected" && c.hasWrite && c.profileApproved && !c.profileSent;
+}
+
+/** Story: Use my app's connector from my agent / The agent sends an approved profile once, only for a live member, within the daily limit (spec/connectorTools.md) */
+//@ pure
 export function canStartNewDay(c: Connection): boolean {
   return c.sentToday > 0;
 }
@@ -403,12 +428,6 @@ export function approveProfile(c: Connection): Connection {
 
 /** Story: Use my app's connector from my agent / The agent sends an approved profile once, only for a live member, within the daily limit (spec/connectorTools.md) */
 //@ pure
-export function canCallSubmitProfile(c: Connection): boolean {
-  return c.phase === "Connected" && c.hasWrite && c.profileApproved && !c.profileSent;
-}
-
-/** Story: Use my app's connector from my agent / The agent sends an approved profile once, only for a live member, within the daily limit (spec/connectorTools.md) */
-//@ pure
 export function callSubmitProfile(c: Connection, accepted: boolean): Connection {
   //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> alwaysWriteNeedsConnection(\result)
   //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> alwaysUnboundHasNoDraft(\result)
@@ -421,7 +440,7 @@ export function callSubmitProfile(c: Connection, accepted: boolean): Connection 
   //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> stepNothingSentAtTheLimit(c, "callSubmitProfile", \result)
   //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> stepSubmitOnlyForLiveMember(c, "callSubmitProfile", \result)
   //@ ensures (inv(c) && canCallSubmitProfile(c)) ==> stepReadingNeverAddsUnseen(c, "callSubmitProfile", \result)
-  return c.sentToday >= profileDailyCap ? ({ ...c, lastResult: "TooManyToday" } as Connection) : (liveMember(c.status) && accepted ? ({ ...c, sentToday: exact_connectorTools(c.sentToday + 1), profileSent: true, lastResult: "ProfileAccepted" } as Connection) : ({ ...c, sentToday: exact_connectorTools(c.sentToday + 1), lastResult: "ProfileNotForStatus" } as Connection));
+  return profileLimitReached(c.sentToday) ? ({ ...c, lastResult: "TooManyToday" } as Connection) : (liveMember(c.status) && accepted ? ({ ...c, sentToday: exact_connectorTools(c.sentToday + 1), profileSent: true, lastResult: "ProfileAccepted" } as Connection) : ({ ...c, sentToday: exact_connectorTools(c.sentToday + 1), lastResult: "ProfileNotForStatus" } as Connection));
 }
 
 /** Story: Use my app's connector from my agent / The agent sends an approved profile once, only for a live member, within the daily limit (spec/connectorTools.md) */
@@ -456,7 +475,7 @@ export function callPrepareSignup(c: Connection, joinAgeAllowed: boolean): Conne
   //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> stepNothingSentAtTheLimit(c, "callPrepareSignup", \result)
   //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> stepSubmitOnlyForLiveMember(c, "callPrepareSignup", \result)
   //@ ensures (inv(c) && canCallPrepareSignup(c)) ==> stepReadingNeverAddsUnseen(c, "callPrepareSignup", \result)
-  return c.sentToday >= profileDailyCap ? ({ ...c, lastResult: "TooManyToday" } as Connection) : (joinAgeAllowed && toolAllowedFor("PrepareSignupTool", c.status) && !c.draftPrepared ? ({ ...c, sentToday: exact_connectorTools(c.sentToday + 1), draftPrepared: true, lastResult: "DraftSaved" } as Connection) : ({ ...c, sentToday: exact_connectorTools(c.sentToday + 1), lastResult: "DraftRefused" } as Connection));
+  return profileLimitReached(c.sentToday) ? ({ ...c, lastResult: "TooManyToday" } as Connection) : (joinAgeAllowed && toolAllowedFor("PrepareSignupTool", c.status) && !c.draftPrepared ? ({ ...c, sentToday: exact_connectorTools(c.sentToday + 1), draftPrepared: true, lastResult: "DraftSaved" } as Connection) : ({ ...c, sentToday: exact_connectorTools(c.sentToday + 1), lastResult: "DraftRefused" } as Connection));
 }
 
 /** Story: Use my app's connector from my agent / Reading updates shows the person's own new updates and marks them seen (spec/connectorTools.md) */

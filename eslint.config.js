@@ -16,7 +16,7 @@ const ui = ["packages/ui/**/*.{ts,tsx}", "apps/**/*.{ts,tsx}"]
 const design = "packages/design-system"
 const theme = JSON.parse(readFileSync(`${design}/package.json`, "utf8")).exports["./theme.css"]
 const tokens = designSystem({ tailwind, tokens: parseTokens(JSON.parse(readFileSync(`${design}/brands/network/tokens.json`, "utf8"))), entryPoint: `${import.meta.dirname}/${design}/${theme}` })
-const consoles = { "packages/observatory": "packages/observatory/web/**/*.{ts,tsx}", "packages/mcp": "packages/mcp/src/pages/**/*.{ts,tsx}" }
+const consoles = { "packages/observatory": ["packages/observatory/web/**/*.{ts,tsx}"], "packages/mcp": ["packages/mcp/src/pages/**/*.{ts,tsx}", "packages/mcp/src/pages.ts"] }
 
 export default defineConfig(
   globalIgnores(["**/node_modules/", "**/dist/", "**/generated/", "**/storybook-static/", "**/.cache/", "**/gen/"]),
@@ -43,7 +43,7 @@ export default defineConfig(
     settings: { "better-tailwindcss": { cwd: "packages/ui" } },
   },
   ...Object.entries(consoles).map(([cwd, files]) => ({
-    files: [files],
+    files,
     extends: [tseslint.configs.base, tokens],
     settings: { "better-tailwindcss": { cwd } },
   })),
@@ -53,7 +53,7 @@ export default defineConfig(
   },
   { files: ["**/.storybook/**"], extends: [tseslint.configs.disableTypeChecked] },
   {
-    files: ui,
+    files: [...ui, ...Object.values(consoles).flat()],
     ignores: ["packages/ui/**"],
     rules: {
       "no-restricted-globals": ["error", ...["alert", "confirm", "prompt"].map((name) => ({ name, message: "Use Dialog or Alert from @thenetwork/ui." }))],
