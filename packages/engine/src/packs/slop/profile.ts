@@ -19,6 +19,7 @@
 // rule, score or explanation can read them (PRD 40.5; conformance test "no race filters").
 import type { City, Facet, MemberId } from "@thenetwork/core";
 import { canBeMatched, DAY } from "@thenetwork/core";
+import { standingIntentLive } from "../../../../core/src/standing-intent.ts";
 import type { EngineInput } from "../../types.ts";
 import { cellOfZip, isKnownZip, MARKET_ANCHOR_ZIP, normalizeZip, zipForArea, type Cell } from "./zips.ts";
 import { APPEARANCE_PREFIX, canRatePhotos, parseAppearance } from "./appearance.ts";
@@ -271,7 +272,10 @@ function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<Membe
   for (const [id, set] of negFrom) h(id).negativeFrom = set.size;
   for (const [id, d] of lastDate) { const y = h(id); y.lastDateAt = d.at; y.lastDateLiked = d.liked; }
   for (const e of input.edges) if (e.type === "blocked") h(C(e.to)).blockedBy++;
-  for (const it of input.intents) if (it.category === "romance") { const y = h(C(it.memberId)); y.lastAskAt = Math.max(y.lastAskAt ?? -Infinity, it.createdAt); }
+  for (const it of input.intents) if (it.category === "romance" && standingIntentLive(it, input.now)) {
+    const y = h(C(it.memberId));
+    y.lastAskAt = Math.max(y.lastAskAt ?? -Infinity, it.createdAt);
+  }
   return out;
 }
 

@@ -58,6 +58,8 @@ import {
   replacementRoute, shouldLookForOtherTimes, step as stepProbe, turnReached, type ParticipantProbe,
 } from "../../core/src/generated/probeDispatch.ts";
 import { reviewLate } from "../../core/src/generated/reviewDeadline.ts";
+import { cachedStandingIntentsCurrent, learnedIntentDays, learnedIntentMayProject, standingIntentBlocksLearnedCopy } from "../../core/src/generated/standingIntent.ts";
+import { standingIntentDeadline, standingIntentLive, standingIntentPhaseAt } from "../../core/src/standing-intent.ts";
 import {
   caseCloseResult, holdAuthority, holdLiftResult, holdSubjectKnown, initial as initialCase, minorClearResult, reportAfterDecision,
   reportRestrictsMatching, step as stepSafetyCase, type CasePhase, type ReportPhase, type StaffActionResult,
@@ -510,8 +512,6 @@ const MIN_NOTICE = 6 * HOUR, PARTNER_LEAD = 12 * HOUR;
 /** Employer-like facets never go in a probe (D5). Same rule as the engine's buildProbe, which does not export it. */
 const EMPLOYER_TAGS = /^(employer|employer_type|occupation|company|job|job_title|workplace|work|role|title)$/i;
 const EMPLOYER_TEXT = /\b(works? (at|for)|employer|employed|company|job|occupation|workplace|engineer at|manager at)\b/i;
-/** How long a want a member told us about stays fresh (the engine's intent horizon). */
-const LEARNED_DESIRE_DAYS = 60;
 const OPEN_STAGES = new Set(["review", "probing", "scheduled"]);
 const EMPTY_SET: ReadonlySet<string> = new Set();
 const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
@@ -1789,8 +1789,9 @@ export class ConsentNetwork implements NetworkUnderTest {
   private withdrew(id: MemberId, desireId: string | undefined): boolean {
     const def = desireId ? desireById.get(desireId) : undefined;
     if (!def) return false;
+    const now = this.now();
     const mine = this.snapshotCached().intents.filter(i => i.memberId === id && i.objective === def.text);
-    return requestDesireWithdrawn(mine.some(i => i.status === "closed"), mine.some(i => i.status === "active"));
+    return requestDesireWithdrawn(mine.some(i => i.status === "closed"), mine.some(i => standingIntentLive(i, now)));
   }
 
   /** Search and, if anyone fits, build the opportunity (the caller submits it). Undefined when no one fits yet. */
@@ -3974,10 +3975,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       m.learned.skills.forEach(t => add("skill", t, skillLabel(t)));
       for (const [d, statedAt] of m.learned.desires) {
         const def = desireById.get(d);
-        if (!def || !this.learnedLive(m.id, d, statedAt, now)) continue;
-        if (intents.some(i => i.memberId === m.id && i.objective === def.text)) continue;
+        if (!def || !this.learnedLive(m.id, d, statedAt, now, snap.intents)) continue;
         // The intent is as old as the member's statement, not refreshed on every run.
-        intents.push({ id: `${m.id}:li:${d}`, memberId: m.id, objective: def.text, category: def.category, details: `format: ${def.format}; tags: ${[...def.needsInterests, ...def.needsSkills, def.pool ?? ""].filter(Boolean).join(",")}`, horizonDays: LEARNED_DESIRE_DAYS, status: "active", createdAt: statedAt });
+        intents.push({ id: `${m.id}:li:${d}`, memberId: m.id, objective: def.text, category: def.category, details: `format: ${def.format}; tags: ${[...def.needsInterests, ...def.needsSkills, def.pool ?? ""].filter(Boolean).join(",")}`, horizonDays: learnedIntentDays, status: "active", createdAt: statedAt });
       }
     }
     const holds = [...this.members.values()].filter(m => !this.trust.ok(m.id) || m.minor || m.minorSignal || this.reportHeld(m.id)).map(m => ({ memberId: m.id, from: now - HOUR }));
@@ -4043,9 +4043,13 @@ export class ConsentNetwork implements NetworkUnderTest {
     return this.opts.hooks?.engineInput?.(this.seatView(out)) ?? this.seatView(out);
   }
 
-  /** A want the member told us stays live for its horizon, unless they later withdrew it. */
-  private learnedLive(id: MemberId, desireId: string, statedAt: number, now: number): boolean {
-    return now - statedAt <= LEARNED_DESIRE_DAYS * DAY && !this.withdrew(id, desireId);
+  /** A fresh learned statement fills in for an absent or expired record of the same want. */
+  private learnedLive(id: MemberId, desireId: string, statedAt: number, now: number, stored: readonly Intent[]): boolean {
+    const phase = standingIntentPhaseAt({ status: "active", createdAt: statedAt, horizonDays: learnedIntentDays }, now);
+    const objective = desireById.get(desireId)?.text;
+    const blockingRecord = phase === "IntentLive" && objective !== undefined && stored.some(i =>
+      i.memberId === id && i.objective === objective && standingIntentBlocksLearnedCopy(standingIntentPhaseAt(i, now)));
+    return learnedIntentMayProject(phase, blockingRecord);
   }
 
   /**
@@ -4553,11 +4557,12 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   // ================================================================== helpers
   /** Known profile per member: snapshot facets (what onboarding/sources captured) + learned. */
-  private knownCache?: Map<MemberId, KnownProfile>;
+  private knownCache?: { profiles: Map<MemberId, KnownProfile>; firstIntentExpiry: number };
   private knownProfiles() {
     const snap = this.snapshotCached();
-    if (this.knownCache) return this.knownCache;
     const now = this.now();
+    if (this.knownCache && cachedStandingIntentsCurrent(this.knownCache.firstIntentExpiry, now)) return this.knownCache.profiles;
+    let firstIntentExpiry = Infinity;
     const map = new Map<MemberId, KnownProfile>();
     const get = (id: MemberId) => { let x = map.get(id); if (!x) { x = { interests: new Set(), skills: new Set(), strongSkills: new Set(), desires: new Set(), intents: 0, sharedInterests: new Set(), sharedSkills: new Set() }; map.set(id, x); } return x; };
     const skillSources = new Map<string, Set<string>>();
@@ -4589,7 +4594,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (srcs.size >= 2 || this.vouchedSkills.get(id)?.has(t)) get(id).strongSkills.add(t);
     }
     for (const i of snap.intents) {
-      if (i.status !== "active" || this.declinedIds.has(i.memberId)) continue;
+      if (!standingIntentLive(i, now) || this.declinedIds.has(i.memberId)) continue;
+      firstIntentExpiry = Math.min(firstIntentExpiry, standingIntentDeadline(i));
       const x = get(i.memberId); x.intents++;
       const def = [...desireById.values()].find(d => d.text === i.objective);
       if (def) x.desires.add(def.id);
@@ -4598,9 +4604,13 @@ export class ConsentNetwork implements NetworkUnderTest {
       const x = get(m.id);
       m.learned.interests.forEach(t => x.interests.add(t)); m.learned.skills.forEach(t => x.skills.add(t));
       this.vouchedSkills.get(m.id)?.forEach(t => x.strongSkills.add(t));
-      for (const [d, at] of m.learned.desires) if (this.learnedLive(m.id, d, at, now)) { x.desires.add(d); x.intents++; }
+      for (const [d, at] of m.learned.desires) if (this.learnedLive(m.id, d, at, now, snap.intents)) {
+        firstIntentExpiry = Math.min(firstIntentExpiry, standingIntentDeadline({ createdAt: at, horizonDays: learnedIntentDays }));
+        x.desires.add(d);
+        x.intents++;
+      }
     }
-    this.knownCache = map;
+    this.knownCache = { profiles: map, firstIntentExpiry };
     return map;
   }
 

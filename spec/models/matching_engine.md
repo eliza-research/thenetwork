@@ -14,6 +14,9 @@ The [candidate screening spec](../candidateScreening.md) generates the ordered h
 
 The [matching question spec](../engineAsks.md) generates Network and Slop question eligibility, per-question timing and caps, and the engine's proactive reservations before proposal selection.
 
+[Standing intent freshness](../standingIntent.md) governs matching
+evidence, judgment views, probe order, and cached matching profiles.
+
 Imported from `quint/matching_engine.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
