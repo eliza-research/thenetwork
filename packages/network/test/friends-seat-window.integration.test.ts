@@ -38,3 +38,55 @@ test("friends: a fitting triangle whose strongest member has no window still sea
   expect(week.plans.some(p => ["a", "b", "c"].every(id => p.invited.includes(id)))).toBe(true);
   expect([...week.plans, ...week.partners].some(p => p.invited.includes("d") || p.alternates.includes("d"))).toBe(false);
 });
+
+// spec/planFormation.md, "Alternates must fit the entire offered group"
+test("friends: alternates need a Friend pair value with everyone before they can fill a seat", () => {
+  const venue = PLAN_VENUES.find(v => v.activities.includes("coffee_crawl"));
+  if (!venue) throw new Error("Missing curated coffee crawl venue");
+  const wide = ["coffee", "climbing"];
+  const samples = [
+    { id: "a", name: "Ana Diaz", interests: wide },
+    { id: "b", name: "Ben Ito", interests: wide },
+    { id: "c", name: "Cara Li", interests: ["climbing"] },
+    { id: "d", name: "Dan Wu", interests: wide },
+    { id: "e", name: "Eve Lu", interests: ["coffee"] },
+    { id: "f", name: "Felix Chen", interests: wide },
+    { id: "g", name: "Grace Park", interests: wide },
+  ];
+  const mini = new Mini(samples.map(sample => ({ ...sample, age: 30, area: venue.area })));
+  for (const { id } of samples) mini.facets.push({
+    id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified", tags: ["verify:liveness:pass", "verify:age:pass"],
+    scope: "agent_private", provenance: "said", confidence: 1,
+  });
+  const snap = mini.ctx().snapshot();
+  const cfg = resolveConfig({ seed: 1, cities: ["nyc"] });
+  const policy = { ...DEFAULT_FRIENDS_POLICY, crews: false, openTable: false, partnerIntros: 0 };
+  const run = (world: World, evidence: Map<MemberId, plans.PlanEvidence>, outcomes: plans.PlanOutcomeRecord[] = []) =>
+    planFriendsWeek(world, { now: START, tz: TZ, evidence, venues: [venue], crews: [], outcomes, offered: [] }, policy, FRIENDS_PLANS);
+
+  const available = new Set(["a", "b", "c", "e"]);
+  const newWorld = new World({ ...snap, members: snap.members.filter(m => available.has(m.id)),
+    facets: snap.facets.filter(f => available.has(f.memberId)), presence: snap.presence.filter(p => available.has(p.memberId)),
+  }, cfg, localEmbed, friendsPack);
+  const windows = [10, 11].map(day => {
+    const start = Date.UTC(2026, 9, day, 16);
+    return { start, end: start + 5 * HOUR };
+  });
+  const evidence = new Map<MemberId, plans.PlanEvidence>([...available].map(id =>
+    [id, { memberId: id, tz: TZ, quietHours: [22, 8], stated: { windows, at: START, until: START + 7 * DAY } }]));
+  // e is near and unblocked. The search keeps e for a and b, but e and c share too little for a pair.
+  const newGroup = run(newWorld, evidence).plans;
+  expect(newGroup).toMatchObject([{ invited: ["a", "b", "c"], alternates: [] }]);
+
+  const repeatWorld = new World({
+    ...snap, facets: snap.facets.map(f => f.id === "b:verified" ? { ...f, tags: [...f.tags, "friends:max_travel:1"] } : f),
+    edges: [["c", "d"], ["f", "g"]].map(([from, to]) => ({ from: from!, to: to!, type: "blocked", strength: 1, explicit: true, createdAt: START - DAY })),
+  }, cfg, localEmbed, friendsPack);
+  const outcome: plans.PlanOutcomeRecord = { planId: "prior-table", activityId: "coffee_crawl", venueId: venue.id,
+    city: "nyc", at: Date.UTC(2026, 9, 3, 16), attended: samples.map(({ id }) => id), positive: ["a", "b", "c"], recurringWant: [] };
+  // b cannot make the trip. The blocked attendee d and weak fit e cannot take the seat, and g
+  // cannot be kept as an alternate once f fills it.
+  const repeats = run(repeatWorld, new Map(), [outcome]).repeats;
+  expect(repeats).toMatchObject([{ invited: ["a", "c", "f"], alternates: [] }]);
+  expect(repeats).toEqual(run(repeatWorld, new Map(), [{ ...outcome, attended: ["a", "b", "c", "f"] }]).repeats);
+});

@@ -31,6 +31,7 @@ import {
   recurringAvailable, step as stepWeek,
 } from "../../../../core/src/generated/friendsWeek.ts";
 import { pairValueScale } from "../../../../core/src/generated/pairValue.ts";
+import { isPlanAlternate } from "../../../../core/src/generated/planFormation.ts";
 import { candidateSlots, type TimeSlot } from "../../attention.ts";
 import { DEFAULT_ATTENTION, DEFAULT_PLANS, type AttentionConfig, type PlansConfig } from "../../config.ts";
 import { isMinor, memberReason, pairReason } from "../../filters.ts";
@@ -186,6 +187,20 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
   const slotsAll = candidateSlots(tz, now, { window: { start: now + pcfg.minLeadHours * HOUR, end: now + pcfg.horizonDays * DAY } }, att);
   const dayKey = (t: number) => { const lp = localParts(t, tz); return `${lp.month}-${lp.day}`; };
 
+  // spec/planFormation.md, "Alternates must fit the entire offered group"
+  const compatibleAlternates = (invited: readonly MemberId[], ranked: readonly MemberId[], limit: number): MemberId[] => {
+    const table = invited.map(id => w.match.profileIn(id, "Friend"));
+    const kept: MemberId[] = [];
+    for (const id of ranked) {
+      if (kept.length >= limit) break;
+      const profile = w.match.profileIn(id, "Friend");
+      if (!profile || !isPlanAlternate(!isMinor(w, id), table.every(peer => !!peer && w.match.value(profile, peer) >= 0))) continue;
+      kept.push(id);
+      table.push(profile);
+    }
+    return kept;
+  };
+
   const finish = (p: Plan, source: FriendsPlanSource): FriendsPlan | null => {
     const a = activityById.get(p.activityId);
     if (!a) return null;
@@ -205,7 +220,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
     const fits = (id: MemberId) => (minutes[id] ?? 99) <= tolOf(id) * pol.toleranceSlack;
     const invited = p.invited.filter(fits);
     const alternates = p.alternates.filter(fits);
-    // Fill dropped seats from alternates (group plans only).
+    // Moving an already compatible alternate into a seat preserves every pair at the table.
     while (!p.partner && invited.length < p.invited.length && alternates.length) invited.push(alternates.shift()!);
     if (invited.length < (p.partner ? 2 : Math.min(p.quorum, 3))) return null;
     if (!p.partner && invited.length < pcfg.size.min && source === "new") return null;
@@ -285,10 +300,11 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       if (start > now + pcfg.horizonDays * DAY + DAY) continue;
       const v = o.venueId ? venueById.get(o.venueId) : undefined;
       const partner = ids.length === 2;
+      const alternates = compatibleAlternates(ids, o.attended.filter(id => !ids.includes(id) && eligible(id) && recurringAvailable(week, id)), partner ? 0 : 2);
       const base: Plan = {
         id: `plan_${sha256(`repeat|${o.planId}|${start}|${ids.join(",")}`).slice(0, 16)}`, city: FRIENDS_CITY, activityId: a.id, ...(v ? { venueId: v.id } : {}),
         place: v ? { name: v.name, area: v.area } : { name: "the same spot" }, window: { start, end: start + a.durationMin * 60_000 },
-        invited: ids, alternates: o.attended.filter(id => !ids.includes(id) && eligible(id) && recurringAvailable(week, id)).slice(0, partner ? 0 : 2), partner,
+        invited: ids, alternates, partner,
         size: partner ? { min: 2, target: 2, max: 2 } : { min: 3, target: ids.length, max: 6 }, quorum: partner ? 2 : Math.min(3, ids.length),
         probeDeadline: start - pcfg.deadlineBeforeStartHours * HOUR, score: circleScore(circle), u: {}, familiar: {}, createdAt: now, category: "social",
       };
@@ -339,9 +355,10 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
         links.set(other.memberId, { count: link.count + 1, total: link.total + value });
       }
     }
-    return [...links].filter(([id]) => open(id) && fitsActivity(id, a) && invited.every(x => pairReason(w, id, x, "social") === null))
+    const ranked = [...links].filter(([id]) => open(id) && fitsActivity(id, a))
       .sort(([x, lx], [y, ly]) => (ly.count - lx.count) || (ly.total - lx.total) || (x < y ? -1 : 1))
-      .slice(0, pcfg.alternates).map(([id]) => id);
+      .map(([id]) => id);
+    return compatibleAlternates(invited, ranked, pcfg.alternates);
   };
 
   const circleTable = (circle: Circle): FriendsPlan | null => {
