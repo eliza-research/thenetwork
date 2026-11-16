@@ -30,7 +30,7 @@ test("candidate search can finish exactly with untagged pairs and still checks b
   expect(result.kept).toEqual(bruteForceCandidates(world, world.match.index, profile));
   expect(result.kept.map(candidate => [candidate.profile.memberId, candidate.value])).toEqual([["adult-a", 300], ["adult-b", 300]]);
   expect(world.match.profileIn("minor", "Friend")).toBeUndefined();
-  expect(world.match.tally()).toMatchObject({ members: 1, exact: 1, checks: 3, touches: 4 });
+  expect(world.match.tally()).toMatchObject({ members: 1, exact: 1, checks: 3, touches: 4, empty: 0 });
 });
 
 test("an unfinished dense posting keeps a sound bound before spending the pair-check budget", () => {
@@ -58,5 +58,5 @@ test("an unfinished dense posting keeps a sound bound before spending the pair-c
   const oracle = bruteForceCandidates(world, world.match.index, profile);
   expect(oracle.map(candidate => candidate.profile.memberId)).toEqual(["winner"]);
   expect(result.unseenBound).toBeGreaterThanOrEqual(oracle[0]!.value);
-  expect(world.match.tally()).toEqual({ members: 1, checks: 0, touches: touchLimit, exact: 0, budgeted: 1, largestUnseenBound: result.unseenBound });
+  expect(world.match.tally()).toEqual({ members: 1, checks: 0, touches: touchLimit, exact: 0, budgeted: 1, empty: 1, largestUnseenBound: result.unseenBound });
 });

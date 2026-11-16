@@ -207,7 +207,7 @@ export function bruteForceCandidates(w: World, index: CandidateIndex, profile: M
     .slice(0, laneLimits(profile.lane).searchLimit);
 }
 
-export const emptySearchTally: SearchTally = { members: 0, checks: 0, touches: 0, exact: 0, budgeted: 0, largestUnseenBound: -1 };
+export const emptySearchTally: SearchTally = { members: 0, checks: 0, touches: 0, exact: 0, budgeted: 0, empty: 0, largestUnseenBound: -1 };
 
 export function tallySearch(tally: SearchTally, result: SearchResult): SearchTally {
   return {
@@ -216,6 +216,7 @@ export function tallySearch(tally: SearchTally, result: SearchResult): SearchTal
     touches: tally.touches + result.touches,
     exact: tally.exact + (result.exact ? 1 : 0),
     budgeted: tally.budgeted + (result.exact ? 0 : 1),
+    empty: tally.empty + (result.kept.length === 0 ? 1 : 0),
     largestUnseenBound: result.exact ? tally.largestUnseenBound : Math.max(tally.largestUnseenBound, result.unseenBound),
   };
 }

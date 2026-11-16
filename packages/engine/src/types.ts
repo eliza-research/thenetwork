@@ -218,7 +218,7 @@ export interface MatchingRunLog {
   search?: SearchTally;
 }
 /** Search costs and outcomes. The largest unseen bound is -1 when every result is exact. */
-export interface SearchTally { members: number; checks: number; touches: number; exact: number; budgeted: number; largestUnseenBound: number }
+export interface SearchTally { members: number; checks: number; touches: number; exact: number; budgeted: number; empty: number; largestUnseenBound: number }
 
 // ------------------------------------------------------------------------------------------------
 // Attention budget data model (docs/design/2026-10-07-experience-design.md 1.2; engine-local first,
