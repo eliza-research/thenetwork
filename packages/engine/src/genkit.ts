@@ -1,21 +1,22 @@
 // Generator building blocks (core, pack-independent): the candidate constructors over the match
 // core, event retrieval by tag postings, shareable labels and format inference. Packs compose their
 // generators from these; pair candidates come only from the bounded search (searchFor).
-import type { Facet, Intent, MemberId } from "@thenetwork/core";
+import type { Facet, MemberId } from "@thenetwork/core";
 import { pairValueScale } from "../../core/src/generated/pairValue.ts";
 import type { MatchLane } from "../../core/src/generated/matchLane.ts";
-import { cosine } from "./embed.ts";
-import { memberReason } from "./filters.ts";
+import { memberReason, type FilterReason } from "./filters.ts";
 import type { Circle } from "./match/circles.ts";
-import { pairSideOf, vectorsOf } from "./match/pair.ts";
-import { wholeNumber, type EntityId, type MatchProfile } from "./match/profile.ts";
+import { packValueOf, pairSideOf, vectorsOf } from "./match/pair.ts";
+import type { EntityId, MatchProfile } from "./match/profile.ts";
 import type { SearchResult } from "./match/search.ts";
-import { countExclusion, type RetrievalCtx } from "./retrieval.ts";
 import type { EngineRng as Rng } from "@thenetwork/core";
-import type { Candidate, Format, NetworkEvent, Role } from "./types.ts";
-import { intentText, type MemberIndex, type World } from "./world.ts";
+import type { Candidate, NetworkEvent, Role } from "./types.ts";
+import type { World } from "./world.ts";
 
-export interface GenCtx extends RetrievalCtx {
+export interface GenCtx {
+  w: World;
+  /** Members by first failing member-level filter (funnel.memberExclusions). */
+  memberExclusions: Record<string, number>;
   rng: Rng;
   /** Intents for which retrieval found nobody (input to network growth + empty states). */
   unmatchedIntents: Set<string>;
@@ -34,14 +35,17 @@ export function makeCandidate(p: CandidateFields): Candidate {
   } as Candidate;
 }
 
+export function countExclusion(ctx: GenCtx, r: FilterReason) {
+  ctx.memberExclusions[r] = (ctx.memberExclusions[r] ?? 0) + 1;
+}
+
 /** The best partners of one profile: the bounded, memoized search of the match core. */
 export const searchFor = (ctx: GenCtx, profile: MatchProfile): SearchResult => ctx.w.match.candidates(profile);
 
 /** a's PairSide utility toward b over 1000: the value a receives, never a constant. */
 function sideBenefit(w: World, a: MatchProfile, b: MatchProfile): number {
   const vectors = vectorsOf(w);
-  const packValue = vectors.packValue ? wholeNumber(vectors.packValue(w, a, b), "pack value") : undefined;
-  return pairSideOf(a, b, vectors.traits?.costs ?? [], packValue).utility / pairValueScale;
+  return pairSideOf(a, b, vectors.traits?.costs ?? [], packValueOf(w, vectors, a, b)).utility / pairValueScale;
 }
 
 /** Participant -> entity for every participant matched through an entity that is not itself. */
@@ -103,20 +107,6 @@ export function label(f: Facet | undefined): string | undefined {
   if (!f || f.scope !== "shareable") return undefined;
   return f.tags[0] ?? f.value.split(/[.,;]/)[0]!.slice(0, 40);
 }
-
-/** Best shareable facet of `of` relative to embedding q (used for objectives / explanations). */
-export function bestShareable(of: MemberIndex, q: number[]): Facet | undefined {
-  let best: Facet | undefined; let bs = -1;
-  for (const f of of.share) {
-    const e = of.facetEmb.get(f.id);
-    if (!e) continue;
-    const s = cosine(q, e);
-    if (s > bs || (s === bs && best && f.id < best.id)) { bs = s; best = f; }
-  }
-  return best;
-}
-
-export function intentFormat(i: Intent): Format { return /\b(group|band|team|crew|club|doubles|people)\b/i.test(intentText(i)) ? "small_group" : "one_to_one"; }
 
 /**
  * Warm-path value as an inverted U in tie strength (research: matching-and-graphs.md 4.9,

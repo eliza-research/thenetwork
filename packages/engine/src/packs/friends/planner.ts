@@ -238,7 +238,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
     const members = crew.members.filter(eligible);
     if (members.length < 2) continue;
     const v = crew.venueId ? venueById.get(crew.venueId) : undefined;
-    const p = crewSessionPlan({ ...crew, members }, now, v ? { name: v.name, area: v.area } : { name: "the usual spot" }, pcfg, w.pack);
+    const p = crewSessionPlan(w, { ...crew, members }, now, v ? { name: v.name, area: v.area } : { name: "the usual spot" }, pcfg);
     if (!p) continue;
     const fp = finish({ ...p, quorum: Math.min(3, members.length) }, "crew_session");
     if (!fp || !reserve({ type: "reserveRecurring", kind: "Session", members: fp.invited })) continue;
@@ -262,7 +262,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       if (members.length < pcfg.crews.minMembers) continue;
       const v = crew.venueId ? venueById.get(crew.venueId) : undefined;
       const c2: Crew = { ...crew, members, hostRotation: crew.hostRotation.filter(m => members.includes(m)).length ? crew.hostRotation.filter(m => members.includes(m)) : members };
-      const p = crewSessionPlan(c2, now, v ? { name: v.name, area: v.area } : { name: "the usual spot" }, pcfg, w.pack);
+      const p = crewSessionPlan(w, c2, now, v ? { name: v.name, area: v.area } : { name: "the usual spot" }, pcfg);
       if (!p) continue;
       const fp = finish({ ...p, quorum: Math.min(3, members.length) }, "crew_offer");
       if (!fp || !reserve({ type: "reserveRecurring", kind: "Offer", members: fp.invited })) continue;

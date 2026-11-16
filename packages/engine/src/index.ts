@@ -6,7 +6,7 @@ export { JudgeCache, judgeCacheKey, parseVerdict, buildJudgeMessages, judgeOne }
 export { candidateReason, memberReason, pairReason, type FilterReason } from "./filters.ts";
 export { composeGroup } from "./group.ts";
 export { gini, lorenz } from "./policy.ts";
-export { harmonic, mutualBenefit, netValue } from "./scoring.ts";
+export { netValue } from "./scoring.ts";
 export { World, buildWorld } from "./world.ts";
 export { EngineRng as Rng } from "@thenetwork/core";
 export * as attention from "./attention.ts";

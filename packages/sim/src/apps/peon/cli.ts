@@ -21,8 +21,8 @@ async function main() {
     all[a] = [];
     for (const seed of seeds) {
       const t = performance.now();
-      const r = await runPeonWorld({ seed, perCity, jobsPerCity, weeks, matcher: arm.matcher, realism });
-      all[a]!.push(peonMetrics(r));
+      const run = await runPeonWorld({ seed, perCity, jobsPerCity, weeks, matcher: arm.matcher, realism });
+      all[a]!.push(peonMetrics(run));
       console.error(`${a} seed ${seed}: hires ${all[a]!.at(-1)!.hires} (${((performance.now() - t) / 1000).toFixed(1)}s)`);
     }
   }

@@ -298,11 +298,11 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
       city: c.city!, window: c.window ? { ...c.window } : undefined, score: round(score), components: roundAll(components),
       exploration: sel.exploration || c.exploration, explanations, generator: c.generator, createdAt: w.now,
       category: c.category, roles: { ...c.roles }, expiresAt: w.now + (sameDay ? cfg.sameDayInviteTtlMs : cfg.inviteTtlMs),
-      ...(c.lane ? { lane: c.lane } : {}), ...(c.entities ? { entities: { ...c.entities } } : {}),
-      ...(c.cofounderIntents ? { cofounderIntents: { ...c.cofounderIntents } } : {}),
       anchor: c.anchor ? { ...c.anchor } : undefined, via: c.via, safetyClass: c.safetyClass, threshold,
       channels: [...c.channels].sort(), judged: !!verdict, selectorRank: sel.rank, selectionProbability: round(sel.probability),
       acceptance: Object.fromEntries(c.participants.map(id => [id, round(w.get(id)?.acceptance ?? cfg.acceptance.prior)])),
+      ...(c.lane ? { lane: c.lane } : {}), ...(c.entities ? { entities: { ...c.entities } } : {}),
+      ...(c.cofounderIntents ? { cofounderIntents: { ...c.cofounderIntents } } : {}),
     };
   });
   for (const p of proposals) runLog.proposalsByGenerator[p.generator] = (runLog.proposalsByGenerator[p.generator] ?? 0) + 1;

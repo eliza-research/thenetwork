@@ -45,17 +45,34 @@ lemma PairValueQuotientBounds(numerator: int, divisor: int, low: int, high: int)
   requires low * divisor <= numerator <= high * divisor
   ensures low <= quotient_pairValue(numerator, divisor) <= high
 {
+  PairValueDivideLower(numerator, divisor, low);
+  PairValueDivideUpper(numerator, divisor, high);
+  assert quotient_pairValue(numerator, divisor) == numerator / divisor;
+}
+
+lemma PairValueDivideLower(numerator: int, divisor: int, low: int)
+  requires numerator >= 0 && divisor > 0 && low * divisor <= numerator
+  ensures low <= numerator / divisor
+{
   var q := numerator / divisor;
-  var r := numerator % divisor;
-  assert quotient_pairValue(numerator, divisor) == q;
-  assert numerator == q * divisor + r;
-  assert 0 <= r < divisor;
   if q < low {
+    var r := numerator % divisor;
+    assert numerator == q * divisor + r;
+    assert 0 <= r < divisor;
     assert 0 <= (low - q - 1) * divisor;
     assert (q + 1) * divisor <= low * divisor;
     assert numerator < (q + 1) * divisor;
   }
+}
+
+lemma PairValueDivideUpper(numerator: int, divisor: int, high: int)
+  requires numerator >= 0 && divisor > 0 && numerator <= high * divisor
+  ensures numerator / divisor <= high
+{
+  var q := numerator / divisor;
   if q > high {
+    assert numerator == q * divisor + numerator % divisor;
+    assert 0 <= numerator % divisor;
     assert 0 < (q - high) * divisor;
     assert high * divisor < q * divisor <= numerator;
   }
@@ -109,13 +126,21 @@ lemma lawHarmonicBetweenSides_ensures(left: int, right: int)
   ensures (lawHarmonicBetweenSides(left, right) == true)
 {
   if left > 0 && right > 0 {
-    if left <= right {
+    if left < right {
       PairValueOrderedMean(left, right);
     } else {
-      assert harmonicValue(left, right) == harmonicValue(right, left);
       PairValueOrderedMean(right, left);
+      PairValueMeansSymmetric(left, right);
     }
   }
+}
+
+lemma PairValueMeansSymmetric(left: int, right: int)
+  requires left > 0 && right > 0
+  ensures harmonicValue(left, right) == harmonicValue(right, left)
+{
+  assert 2 * left * right == 2 * right * left;
+  assert left + right == right + left;
 }
 
 lemma lawHarmonicMonotone_ensures(left: int, raised: int, right: int)

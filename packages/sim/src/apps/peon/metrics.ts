@@ -54,6 +54,8 @@ export interface PeonMetrics {
     fakeReachedEmployer: number; fakeHires: number;
   };
   discrimination: { employers: number; detected: number; falseFlags: number; requests: number; requestsApplied: number };
+  /** Proposed intros whose candidate level is backed, and those with a role-level gap over 1 (spec/matchLane.md, Hire). */
+  levels: { backedPairs: number; gapOverOne: number };
   impact: ImpactTable;
 }
 
@@ -86,6 +88,14 @@ export function peonMetrics(r: PeonRunResult, o: { requestsApplied?: number } = 
   const uaHires = hires.filter(h => h.underApplied);
   // Discriminatory employers and the audit.
   const discCos = pop.companies.filter(c => c.adversary === "discriminatory");
+  // Role levels of every proposed intro. A seat's level is always backed (the employer is verified);
+  // a candidate's stated level is backed by a demonstrated skill at or above it.
+  const levelGaps = flows.flatMap(f => {
+    const c = oracle.cand.get(f.cand), j = oracle.job.get(f.job);
+    if (!c || !j) return [];
+    const backed = Object.entries(c.stated.skills).some(([skill, level]) => c.stated.demonstrated.includes(skill) && level >= c.stated.seniority);
+    return backed ? [Math.abs(j.seniority - c.stated.seniority)] : [];
+  });
   const flagged = new Set(r.audits.flat().map(f => f.company));
   return {
     intros: flows.length, probesDelivered: delivered.length, dropped,
@@ -126,6 +136,7 @@ export function peonMetrics(r: PeonRunResult, o: { requestsApplied?: number } = 
       falseFlags: [...flagged].filter(id => oracle.company.get(id)?.adversary !== "discriminatory").length,
       requests: discCos.filter(c => c.discriminatoryRequest).length, requestsApplied: o.requestsApplied ?? 0,
     },
+    levels: { backedPairs: levelGaps.length, gapOverOne: levelGaps.filter(gap => gap > 1).length },
     impact: impactTable(r, real.map(c => c.id)),
   };
 }

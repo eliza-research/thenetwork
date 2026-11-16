@@ -63,7 +63,6 @@ import { NOT_SENT, type RecipientCheck } from "../../blooio/src/outbound-queue.t
 import { summarizeRun } from "../../observatory/src/engineCapture.ts";
 import type { JobPosting } from "../src/jobs.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
-import { emptySearchTally } from "@thenetwork/engine";
 import { savePosting } from "./postings.ts";
 
 type Row = Record<string, unknown>;
@@ -112,7 +111,6 @@ export interface RuntimeHost {
   clock: Clock;
   instance: string;
   log: (line: string) => void;
-  conversationCities?(rt: NetworkRuntime): readonly string[];
   conversationNetworkId?(app: AppId, homeCity: string): string | undefined;
   accounts?: Pick<Accounts, "activeMembership" | "lowestAge" | "phoneHash">;
   photoRelay?: PhotoRelayService;
@@ -145,6 +143,11 @@ export interface RuntimeOptions {
   id: string;
   app: AppInfo;
   city: string;
+  /**
+   * The homes whose conversations this network owns (runtimeForHome). Matching stays in the network's
+   * own city unless the app's wiring sets its markets: owning a conversation is not a matching market.
+   */
+  cities: readonly City[];
   /** platform.networks.matching_enabled: false keeps matching off whatever the stored switch says. */
   matchingAllowed: boolean;
   network?: Omit<NetworkOptions, "store" | "onEngineRun" | "app">;
@@ -155,6 +158,7 @@ export class NetworkRuntime {
   readonly id: string;
   readonly app: AppInfo;
   readonly city: string;
+  readonly cities: readonly City[];
   readonly net: ConsentNetwork;
   readonly pg: PgStore;
   readonly store: NetworkStore;
@@ -189,7 +193,7 @@ export class NetworkRuntime {
   lastTick?: { at: number; ran: boolean };
 
   constructor(private readonly host: RuntimeHost, o: RuntimeOptions) {
-    this.id = o.id; this.app = o.app; this.city = o.city; this.matchingAllowed = o.matchingAllowed;
+    this.id = o.id; this.app = o.app; this.city = o.city; this.cities = o.cities; this.matchingAllowed = o.matchingAllowed;
     this.pg = new PgStore(host.sql, o.id);
     this.store = this.serviceStore();
     this.wiring = appWiring(o.app.id);
@@ -199,11 +203,11 @@ export class NetworkRuntime {
       // The app's pack and the engine config it was tuned with (options may override single fields).
       ...(w.pack ? { pack: w.pack } : {}), ...(w.hooks ? { hooks: w.hooks } : {}), ...(w.plansConfig ? { plansConfig: w.plansConfig } : {}), ...(w.plans !== undefined ? { plans: w.plans } : {}),
       ...o.network,
-      ...(w.engine || o.network?.engine ? { engine: { ...w.engine, ...o.network?.engine } } : {}),
+      engine: { cities: o.cities.filter(c => c === o.city), ...w.engine, ...o.network?.engine },
       app: o.app, review: "human", store: this.store,
       onEngineRun: (log, proposals, at) => {
         const s = summarizeRun(log, proposals, { at, city: this.city as City, wallMs: Math.round(log.timingsMs.total ?? 0) });
-        this.unit.runs.push({ id: this.app.id === "ntwrk" ? s.id : `${this.app.id}.${s.id}`, app_id: this.app.id, at: new Date(at), city: this.city, engine_version: s.engineVersion, proposals: s.proposals, wall_ms: s.wallMs, summary: { ...s, search: log.search ?? emptySearchTally } });
+        this.unit.runs.push({ id: this.app.id === "ntwrk" ? s.id : `${this.app.id}.${s.id}`, app_id: this.app.id, at: new Date(at), city: this.city, engine_version: s.engineVersion, proposals: s.proposals, wall_ms: s.wallMs, summary: s });
       },
       onLedger: e => { this.capital.onLedger(e); this.unit.capital.push(e); },
       // An age a member stated (network-consent-12): the service writes it to the person after the unit.
@@ -531,13 +535,13 @@ export class NetworkRuntime {
 
   /** The snapshot and the address book, read fresh for every unit (inside the lock), in one app-scoped transaction. */
   private async refresh() {
-    const app = this.app.id, now = this.clock.now(), homes = this.host.conversationCities?.(this);
+    const app = this.app.id, now = this.clock.now(), homes = this.cities;
     await this.scoped(async tx => {
       const [snapshot, names] = await Promise.all([
         loadSnapshot(tx, now, { app, city: this.city, homeCities: homes }),
         tx`select i.id,i.invited_by,i.name from network.members i join network.members v on v.app_id=i.app_id and v.id=i.invited_by
           join platform.matching_ages a on a.app_id=i.app_id and a.member_id=i.id
-          where i.app_id=${app} and v.home_city in ${tx([...(homes ?? [this.city])])} and i.home_city not in ${tx([...(homes ?? [this.city])])}
+          where i.app_id=${app} and v.home_city in ${tx([...homes])} and i.home_city not in ${tx([...homes])}
             and i.joined_at>${new Date(now - inviteJoinNoticeLifetimeMs)} and i.account_status='active' and not i.opted_out and a.age>=${ADULT_AGE}`,
       ]);
       this.snap = snapshot;
@@ -565,9 +569,8 @@ export class NetworkRuntime {
         where m.app_id = ${this.app.id} and m.account_status not in ('invited', 'removed') and ph.hold is null order by m.id`,
     ]);
     this.addrToMember.clear(); this.memberToAddr.clear();
-    const homes = this.host.conversationCities?.(this);
     for (const r of [...platform, ...legacy] as any[]) {
-      if (homes && !homes.includes(r.home_city)) continue;
+      if (!this.cities.includes(r.home_city)) continue;
       const a = normalizeAddress(r.address);
       this.addrToMember.set(a, r.member_id);
       if (!this.memberToAddr.has(r.member_id)) this.memberToAddr.set(r.member_id, a);
@@ -712,7 +715,7 @@ export class NetworkRuntime {
     if (u.legacyIntentState) {
       const inactive = new Set(u.forget);
       for (const [member, optedOut] of u.optOut) if (optedOut) inactive.add(member);
-      await reconcileLegacyIntentRows(tx, app, this.host.conversationCities?.(this) ?? [this.city], u.legacyIntentState, this.clock.now(), inactive);
+      await reconcileLegacyIntentRows(tx, app, this.cities, u.legacyIntentState, this.clock.now(), inactive);
     }
     if (u.inbound && ok(u.inbound.member_id as string)) {
       const privateFields = u.privateHomeHelpTurn ? { body: "Private home-help request.", type: "bounded_home_help" }

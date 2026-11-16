@@ -97,13 +97,9 @@ export interface SlopPackOptions {
   appearance: {
     minConfidence: number;
     bodyType: { enabled: boolean; statedWeight: number; revealedWeight: number; revealedShrink: number; minConfidence: number };
-    /** Accepted for callers that still pass them; nothing reads them. */
-    mode?: string; band?: number;
   };
   /** Pairs whose score is below this are not proposed (a dud first date costs both people an evening). */
   minValue: number;
-  /** Accepted for callers that still pass it; nothing reads it (the assignment is greedy). */
-  assignment?: string;
 }
 
 export const SLOP_DEFAULT_OPTIONS: SlopPackOptions = {

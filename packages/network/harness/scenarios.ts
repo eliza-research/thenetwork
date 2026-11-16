@@ -387,7 +387,7 @@ export async function runScenario(s: NetScenario, opts: { seed?: number } = {}):
   const personas = await nycPersonas();
   const start = (await fileAt(`${DATA_DIR}/manifest.json`).json()).snapshotNow as number;
   const { ids, actions, badInvitees, joinText } = s.setup(personas, start);
-  const net = new ConsentNetwork({ seed, review: "auto" });
+  const net = new ConsentNetwork({ seed, review: "auto", engine: { cities: ["nyc"] } });
   const records: RunRecord[] = [];
   const world = new World({
     seed, personas, days: s.days, start, writeLog: false, network: net, agent: joinText ? new ScriptedJoinAgent(start, joinText) : new PolicyPersonaAgent(start),

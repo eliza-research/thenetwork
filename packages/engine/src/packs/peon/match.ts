@@ -106,10 +106,16 @@ function standing(w: World, e: MatchEntity): EntityStanding {
   if (e.lane === "Cofounder") return networkVectors.standing(w, e);
   const p = profileOf(w, e.memberId)!;
   const level = [{ points: levelPoints(p.seniority!), reviewed: true }];
-  // The employer is staff-verified (an unverified seat has no membership): one reviewed fact.
-  // A candidate's level is backed by each demonstrated or interview-verified skill at or above it.
-  const backing = p.kind === "job" ? 1 : [...p.skills.values()].filter(s => s.evidence !== "claimed" && s.level >= p.seniority!).length;
-  return { standing: standingFromEvidence(level), uncertainty: standingUncertainty(backing) };
+  // spec/memberStanding.md, "A member with no reviewed facts gets the widest uncertainty".
+  // A seat's level is part of a staff-verified posting (an unverified seat has no membership): one
+  // reviewed fact. A candidate's reviewed facts are the level itself when a trusted source gave it,
+  // and each demonstrated or interview-verified skill at or above it. One fact per facet, as in the
+  // network pack: a trusted facet that carries the level and a skill is one reviewed fact.
+  const reviewed = p.kind === "job" ? 1 : new Set([
+    p.seniorityReviewedIn,
+    ...[...p.skills.values()].filter(s => s.level >= p.seniority!).map(s => s.reviewedIn),
+  ].filter(id => id !== undefined)).size;
+  return { standing: standingFromEvidence(level), uncertainty: standingUncertainty(reviewed) };
 }
 
 const clampValue = (v: number) => Math.max(0, Math.min(pairValueScale, v));

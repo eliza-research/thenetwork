@@ -8,12 +8,14 @@ import type { MatchEdge } from "./search.ts";
 
 export interface Circle { readonly members: readonly EntityId[]; readonly evidence: CircleEvidence }
 
-type Links = ReadonlyMap<EntityId, ReadonlyMap<EntityId, number>>;
-
-function evidenceOf(group: readonly MatchProfile[], links: Links): CircleEvidence {
+/**
+ * The admission evidence of a group (spec/groupFormation.md, CircleEvidence). A pair without a value
+ * (`valueOf` undefined) is not counted, so circleCoherent refuses the group (pairCount is short).
+ */
+export function circleEvidence(group: readonly MatchProfile[], valueOf: (a: MatchProfile, b: MatchProfile) => number | undefined): CircleEvidence {
   let lowestPairValue = Number.MAX_SAFE_INTEGER, pairValueTotal = 0, pairCount = 0;
   for (let i = 0; i < group.length; i++) for (let j = i + 1; j < group.length; j++) {
-    const value = links.get(group[i].id)?.get(group[j].id);
+    const value = valueOf(group[i], group[j]);
     if (value === undefined) continue;
     lowestPairValue = Math.min(lowestPairValue, value);
     pairValueTotal += value;
@@ -95,7 +97,7 @@ export function buildCircles(
       if (!best) break;
       group.push(best.item);
     }
-    const evidence = evidenceOf(group, links);
+    const evidence = circleEvidence(group, (a, b) => links.get(a.id)?.get(b.id));
     if (!circleCoherent(evidence, limits.circleMinimum, limits.circleMaximum, limits.circlePairFloor, band)) continue;
     for (const p of group) used.add(p.memberId);
     circles.push({ members: group.map(p => p.id).sort(compareText), evidence });

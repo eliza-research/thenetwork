@@ -13,11 +13,14 @@ import type { World } from "../../world.ts";
 import { JOB_INTENT, SAFETY, SEARCH_INTENT, T, type PeonMode } from "./schema.ts";
 
 export type Evidence = "claimed" | "demonstrated" | "interview";
-export interface SkillClaim { level: number; evidence: Evidence; facetId: string; shareable: boolean }
+/** `reviewedIn`: the facet that reviewed the skill (a trusted source or an interview); none for a claim. */
+export interface SkillClaim { level: number; evidence: Evidence; facetId: string; shareable: boolean; reviewedIn?: string }
 
 export interface CandidateProfile {
   kind: "candidate"; id: MemberId;
   families: string[]; seniority?: number;
+  /** The facet of a trusted source (connected source or vouch) that gave the level; none when only the candidate stated it. */
+  seniorityReviewedIn?: string;
   skills: Map<string, SkillClaim>;
   floor?: number; modes: Set<PeonMode>; areas: Set<string>;
   auth?: boolean; needsSponsor?: boolean; creds: Set<string>; excluded: Set<string>;
@@ -46,6 +49,9 @@ export interface JobProfile {
   shareFacetIds: string[];
 }
 export type PeonProfile = CandidateProfile | JobProfile;
+
+/** A fact from a connected source or a member's vouch: reviewed (spec/memberStanding.md), not only stated. */
+const trustedSource = (f: Facet): boolean => f.provenance === "connected_source" || f.provenance === "vouched";
 
 /** Pipeline state per member, from the Network's own interaction log. */
 export interface PeonHistory {
@@ -118,12 +124,12 @@ function build(w: World): Cache {
       const demonstrated = new Map<string, { level: number; facetId: string }>();
       for (const f of fs) for (const t of tags(f)) {
         if (t.startsWith(T.family)) { const v = t.slice(T.family.length); if (!p.families.includes(v)) p.families.push(v); }
-        else if (t.startsWith(T.seniority)) p.seniority = Number(t.slice(T.seniority.length));
+        else if (t.startsWith(T.seniority)) { p.seniority = Number(t.slice(T.seniority.length)); p.seniorityReviewedIn = trustedSource(f) ? f.id : undefined; }
         else if (t.startsWith(T.skill)) {
           const [skill, lvl] = rest(t, T.skill);
-          const evidence: Evidence = f.provenance === "connected_source" || f.provenance === "vouched" ? "demonstrated" : "claimed";
+          const evidence: Evidence = trustedSource(f) ? "demonstrated" : "claimed";
           const cur = p.skills.get(skill!);
-          if (!cur || (evidence === "demonstrated" && cur.evidence === "claimed")) p.skills.set(skill!, { level: Number(lvl), evidence, facetId: f.id, shareable: f.scope === "shareable" });
+          if (!cur || (evidence === "demonstrated" && cur.evidence === "claimed")) p.skills.set(skill!, { level: Number(lvl), evidence, facetId: f.id, shareable: f.scope === "shareable", reviewedIn: evidence === "demonstrated" ? f.id : undefined });
         } else if (t.startsWith(T.demonstrated)) {
           const [skill, lvl] = rest(t, T.demonstrated);
           const cur = demonstrated.get(skill!);
@@ -141,7 +147,7 @@ function build(w: World): Cache {
       }
       for (const [skill, d] of demonstrated) {
         const cur = p.skills.get(skill);
-        p.skills.set(skill, { level: d.level, evidence: "interview", facetId: cur?.facetId ?? d.facetId, shareable: cur?.shareable ?? false });
+        p.skills.set(skill, { level: d.level, evidence: "interview", facetId: cur?.facetId ?? d.facetId, shareable: cur?.shareable ?? false, reviewedIn: d.facetId });
       }
       const it = mi.intents.find(i => i.category === "professional" && (i.details ?? "").startsWith(SEARCH_INTENT));
       p.searching = !!it; p.searchIntentAt = it?.createdAt;

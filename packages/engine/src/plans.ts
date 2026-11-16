@@ -26,10 +26,10 @@ import {
 } from "../../core/src/generated/planFormation.ts";
 import { activitiesForTags, activityById, type ActivityType, type Daypart, type Venue } from "./packs/network/activities.ts";
 import { availabilityProb, candidateSlots, timeOptionsPhrase, type AvailabilityEvidence, type TimeSlot } from "./attention.ts";
-import { DEFAULT_ATTENTION, DEFAULT_CONFIG, DEFAULT_PLANS, type AttentionConfig, type PlansConfig } from "./config.ts";
+import { DEFAULT_ATTENTION, DEFAULT_PLANS, type AttentionConfig, type PlansConfig } from "./config.ts";
 import { tokenize } from "./embed.ts";
 import { privateVocabulary } from "./explain.ts";
-import { isMinor, memberReason, publicEventPreferencesAllow } from "./filters.ts";
+import { isMinor, memberReason, publicEventPreferencesAllow, requiredPairValues } from "./filters.ts";
 import { initial as initialFormation, step as stepFormation } from "../../core/src/generated/groupFormation.ts";
 import { pairValueScale } from "../../core/src/generated/pairValue.ts";
 import { chooseCircle, circleKey, formsGroups, groupLane, leastMiseryUtility, pairCircle, poolCircles, poolGraph, type GroupCircle } from "./group.ts";
@@ -39,8 +39,7 @@ import { checkMemberFacing } from "./judgeCommon.ts";
 import { fromLocal, localParts } from "@thenetwork/core";
 import { sha256 } from "./hash.ts";
 import type { AttentionItem, EngineProposal, NetworkEvent, Role } from "./types.ts";
-import type { AppPack, PlansPack } from "./pack.ts";
-import { networkPack } from "./packs/network/index.ts";
+import type { PlansPack } from "./pack.ts";
 import type { World } from "./world.ts";
 
 export { ACTIVITIES, activityById, type ActivityType, type Venue } from "./packs/network/activities.ts";
@@ -747,10 +746,18 @@ export function crewOptIn(crew: Crew, optedIn: readonly MemberId[], pcfg: PlansC
   return { ...crew, members, hostRotation: crewHostOrder(members, crew.hostRotation) };
 }
 
-/** The crew's next session (same weekday and time, `cadenceDays` after the last), as a plan; each session is opt-in. Hosts rotate. */
-export function crewSessionPlan(crew: Crew, now: number, place: Plan["place"], pcfg: PlansConfig = DEFAULT_PLANS, pack: AppPack = networkPack,
-  tz: string | undefined = DEFAULT_CONFIG.timezones[crew.city]): Plan | null {
+/**
+ * The crew's next session (same weekday and time, `cadenceDays` after the last), as a plan; each
+ * session is opt-in. Hosts rotate. Null when the crew is handed off, or when a pair of its members
+ * has no pair value in the plans lane today (a block, a minor, a hold, or a pair below the lane's
+ * rules): a crew session passes the same pair gate as every other configuration.
+ */
+export function crewSessionPlan(w: World, crew: Crew, now: number, place: Plan["place"], pcfg: PlansConfig = DEFAULT_PLANS): Plan | null {
   if (crew.handedOff) return null;
+  const category = plansOf(w).lane;
+  const values = requiredPairValues(w, { participants: crew.members, lane: groupLane(category) });
+  if (!values || values.some(v => v < 0)) return null;
+  const tz: string | undefined = w.cfg.timezones[crew.city];
   // Advance in local wall-clock time (same weekday and local time), so sessions do not drift an
   // hour across a DST change (engine-attention-plans-4). Without a time zone: fixed 24-hour days.
   const first = crew.slot.start;
@@ -769,7 +776,7 @@ export function crewSessionPlan(crew: Crew, now: number, place: Plan["place"], p
     id: `plan_${sha256(`${crew.id}|${start}`).slice(0, 16)}`, city: crew.city, activityId: crew.activityId, ...(crew.venueId ? { venueId: crew.venueId } : {}),
     place, window: { start, end: start + a.durationMin * 60_000 }, invited: [...crew.members], alternates: [], ...(host ? { hostId: host } : {}), crewId: crew.id,
     partner: false, size: { min: Math.min(3, n), target: n, max: Math.max(n, 3) }, quorum: Math.min(pcfg.quorum.group, n),
-    probeDeadline: Math.min(start - pcfg.deadlineBeforeStartHours * HOUR, now + pcfg.probeWindowHours * HOUR), score: 0.6, u: {}, familiar: {}, createdAt: now, category: pack.plans!.lane,
+    probeDeadline: Math.min(start - pcfg.deadlineBeforeStartHours * HOUR, now + pcfg.probeWindowHours * HOUR), score: 0.6, u: {}, familiar: {}, createdAt: now, category,
   };
 }
 

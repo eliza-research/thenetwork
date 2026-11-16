@@ -120,7 +120,7 @@ export async function friendsScheduleGates(b: Block): Promise<void> {
           memberId: id, tz: NYC_TZ, quietHours: [22, 8], stated: { windows, at: s.now, until: s.now + 7 * DAY },
         }]));
         const input = { now: s.now, tz: NYC_TZ, evidence, venues, crews: [], outcomes: [], offered: [] };
-        const policy = { ...DEFAULT_FRIENDS_POLICY, crews: false, repeat: false, universal: false, universalFirst: false, singleSlot: false, loosePass: false };
+        const policy = { ...DEFAULT_FRIENDS_POLICY, crews: false, repeat: false, universal: false };
         const partners = planFriendsWeek(w, input, policy, FRIENDS_PLANS).partners;
         expect(partners.length).toBe(1);
         const open = planFriendsWeek(w, { ...input, venues: venues.map(v => ({ ...v, hours: { ...v.hours, weekend: [9, 23] as [number, number] } })) }, policy, FRIENDS_PLANS).partners;

@@ -18,21 +18,6 @@ export interface Scored {
 
 const clamp = (x: number, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, Number.isFinite(x) ? x : lo));
 
-/** Compatibility helper for pack consumers outside the lane scoring pipeline. */
-export function harmonic(xs: number[]): number {
-  if (!xs.length || xs.some(x => x <= 0)) return 0;
-  return xs.length / xs.reduce((s, x) => s + 1 / x, 0);
-}
-
-/** Compatibility helper for single, reciprocal, and group benefit summaries. */
-export function mutualBenefit(benefits: number[]): number {
-  if (benefits.length === 0) return 0;
-  if (benefits.length === 1) return clamp(benefits[0]!);
-  if (benefits.length === 2) return clamp(harmonic(benefits.map(b => clamp(b))));
-  const mean = benefits.reduce((s, b) => s + b, 0) / benefits.length;
-  return clamp(Math.min(mean, 2 * Math.min(...benefits)));
-}
-
 /**
  * Fit and mutual benefit. With two or more participants both come from the lane's required pair
  * values (spec/pairValue.md, "The two utilities combine as an integer harmonic mean"): fit is the

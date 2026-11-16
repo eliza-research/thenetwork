@@ -10,7 +10,7 @@ import type { GeoModel } from "../../pack.ts";
 import type { World } from "../../world.ts";
 import type { SlopPackOptions } from "./options.ts";
 import { cellIn, datingMarkets, slopProfiles, type SlopProfile } from "./profile.ts";
-import { cellMiles, distanceBand } from "./zips.ts";
+import { cellMiles } from "./zips.ts";
 
 /** A member's distance limit in miles: radius scope, else their stated max, else the configured default (asks off). */
 export function limitMiles(p: SlopProfile, o: SlopPackOptions): number | undefined {
@@ -39,9 +39,7 @@ export function mutualMarkets(a: SlopProfile, b: SlopProfile, o: SlopPackOptions
 export function makeRadiusGeo(o: SlopPackOptions): GeoModel {
   const prof = (w: World) => slopProfiles(w.input, w.canonical);
   return {
-    kind: "radius",
     markets: cfg => cfg.cities,
-    tz: (market, cfg) => cfg.timezones[market] ?? "UTC",
     location: (w, id, start, end) => cityBucketGeo.location(w, id, start, end),
     overlap: (w, ids, start, end, preferred) => cityBucketGeo.overlap(w, ids, start, end, preferred),
     /** Same coarse cell (activation cost). */
@@ -59,6 +57,5 @@ export function makeRadiusGeo(o: SlopPackOptions): GeoModel {
       if (limitMiles(pa, o) === undefined || limitMiles(pb, o) === undefined) return "distance_unknown";
       return mutualMarkets(pa, pb, o, w.pack.geo.markets(w.cfg)).length ? null : "outside_radius";
     },
-    displayDistance: km => distanceBand(km / 1.609344),
   };
 }

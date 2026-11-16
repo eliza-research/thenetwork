@@ -1,6 +1,6 @@
 // Generic match profiles: one per lane membership of a matchable member or entity (a member, or a
 // peon job seat owned by a manager). Packs supply the vectors; the engine owns the rest.
-import type { Category, FacetKind, MemberId } from "@thenetwork/core";
+import type { Category, City, FacetKind, MemberId } from "@thenetwork/core";
 import {
   laneOffered, laneShape, laneSidesCompatible, standingCeiling, standingUncertaintyCeiling,
   type LaneSide, type MatchLane,
@@ -20,7 +20,7 @@ export interface Membership {
   readonly id: string;
   readonly lane: MatchLane;
   readonly side: LaneSide;
-  readonly market: string;
+  readonly market: City;
   /** Introductions this entity can still take this week; 0 or less gives no profile. */
   readonly capacity: number;
 }
@@ -55,7 +55,7 @@ export interface MatchProfile {
   readonly ordinal: number;
   readonly lane: MatchLane;
   readonly side: LaneSide;
-  readonly market: string;
+  readonly market: City;
   readonly standing: number;
   readonly uncertainty: number;
   readonly capacity: number;
@@ -83,7 +83,7 @@ export function partnerSide(lane: MatchLane, side: LaneSide): LaneSide {
   }
 }
 
-export const blockKey = (lane: MatchLane, side: LaneSide, market: string): string => `${lane}\u0000${side}\u0000${market}`;
+export const blockKey = (lane: MatchLane, side: LaneSide, market: City): string => `${lane}\u0000${side}\u0000${market}`;
 export const compareText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 export function wholeNumber(value: number, what: string): number {

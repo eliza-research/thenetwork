@@ -31,7 +31,7 @@ import {
   type Category, type Facet, type Intent, type LeakOptions, type LLM, type MemberId, type NetworkEvent, type ParticipationState, type Proposal, type ScoreComponents, type WorldSnapshot,
 } from "@thenetwork/core";
 import {
-  attention, buildWorld, CONTRIBUTOR_ROLES, DEFAULT_ATTENTION, localEmbed, networkPack, plans, resolveConfig, resolvePlans, runEngine,
+  attention, CONTRIBUTOR_ROLES, DEFAULT_ATTENTION, localEmbed, networkPack, plans, resolveConfig, resolvePlans, runEngine,
   type AskRecord, type EngineAsk, type EngineConfigInput, type EngineInput, type EngineProposal, type FeedbackRecord, type InteractionRecord, type MatchingRunLog,
   type AppPack, type PlansConfig, type PlansConfigInput, World as EngineWorld, DEFAULT_FRIENDS_POLICY, planFriendsWeek,
 } from "@thenetwork/engine";
@@ -3482,12 +3482,17 @@ export class ConsentNetwork implements NetworkUnderTest {
   // ================================================================== plans (plans v1.1)
   private plansOn() { return this.opts.plans && this.opts.matchingEnabled; }
 
-  /** The engine World the planner and the plan probe copy read (engine-visible inputs only), built at most once per New York day. */
+  /**
+   * The engine World the planner, crew sessions and the plan probe copy read (engine-visible inputs
+   * only), built at most once per New York day. An app's own pack gets its adult input and its own
+   * lane vectors, so a friends crew is pair-gated on Friend profiles, not on The Network's.
+   */
   private planWorldCache?: { day: string; w: EngineWorld };
   private planWorld(now: number, fresh = false): EngineWorld {
     const day = nyParts(now).day;
     if (!fresh && this.planWorldCache?.day === day) return this.planWorldCache.w;
-    const w = buildWorld(this.engineInput(now), resolveConfig({ ...this.opts.engine }), localEmbed);
+    const pack = this.appPack();
+    const w = new EngineWorld(pack ? this.packInput(now) : this.engineInput(now), resolveConfig({ ...this.opts.engine }), localEmbed, pack ?? networkPack);
     this.planWorldCache = { day, w };
     return w;
   }
@@ -3544,7 +3549,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     this.planCarry = this.planCarry.filter(c => c.until > now);
     const pack = this.appPack();
-    const made: plans.Plan[] = pack?.id === "friends" ? this.friendsWeekPlans(pack, now, evidence) : plans.planProposals(this.planWorld(now, true), {
+    const made: plans.Plan[] = pack?.id === "friends" ? this.friendsWeekPlans(now, evidence) : plans.planProposals(this.planWorld(now, true), {
       now, city: "nyc", tz: NY, evidence, venues: PLAN_VENUES, exclude, carry: this.planCarry, lastPlannedAt: this.lastPlannedAt,
       hints: new Map([...this.members.values()].filter(m => m.hints?.length && m.stated && m.stated.until > now).map(m => [m.id, m.hints!] as [MemberId, string[]])),
       busyAt: (id, slot) => this.bookedNear(id, slot.start),
@@ -3560,9 +3565,8 @@ export class ConsentNetwork implements NetworkUnderTest {
    * stay with the Network, so the planner gets no crews or outcomes here. Production probes the
    * alternates only as replacements (no open table), and does not use the plans' time options.
    */
-  private friendsWeekPlans(pack: AppPack, now: number, evidence: ReadonlyMap<MemberId, plans.PlanEvidence>): plans.Plan[] {
-    const w = new EngineWorld(this.packInput(now), resolveConfig({ ...this.opts.engine }), localEmbed, pack);
-    const week = planFriendsWeek(w, { now, tz: NY, evidence, venues: PLAN_VENUES, crews: [], outcomes: [], offered: [], lastPlannedAt: this.lastPlannedAt }, { ...DEFAULT_FRIENDS_POLICY, openTable: false }, this.pcfg);
+  private friendsWeekPlans(now: number, evidence: ReadonlyMap<MemberId, plans.PlanEvidence>): plans.Plan[] {
+    const week = planFriendsWeek(this.planWorld(now, true), { now, tz: NY, evidence, venues: PLAN_VENUES, crews: [], outcomes: [], offered: [], lastPlannedAt: this.lastPlannedAt }, { ...DEFAULT_FRIENDS_POLICY, openTable: false }, this.pcfg);
     return [...week.plans, ...week.partners];
   }
 
@@ -3808,7 +3812,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     const w = this.planWorld(now);
     const candidates = eligible ? { ...run, answers: Object.fromEntries(eligible.map(id => [id, run.answers[id]!])) } : run;
     const { fallback, carry } = plans.planFallback(candidates, now, w.events, this.pcfg);
-    this.planCarry.push(...carry);
+    // The friends planner does not read the carry (planFriendsWeek), so friends keeps none.
+    if (this.appPack()?.id !== "friends") this.planCarry.push(...carry);
     if (!again) this.ctx.log("plan_fallback", { oppId: o.id, kind: fallback.kind, members: fallback.kind === "none" ? 0 : fallback.members.length });
     if (fallback.kind === "smaller") {
       if (!fallback.partnerPlan) return this.bookPlan(o, fallback.members, true);
@@ -3949,7 +3954,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       const place = v ? { name: v.name, area: v.area } : { name: "the usual spot" };
       const members = crew.members.filter(id => { const m = this.members.get(id); return !!m && this.planSeatOk(m); });
       if (members.length < this.pcfg.crews.minMembers) continue;
-      const next = plans.crewSessionPlan({ ...crew, members, hostRotation: crew.hostRotation.filter(h => members.includes(h)).length ? crew.hostRotation.filter(h => members.includes(h)) : members }, now, place, this.pcfg);
+      const next = plans.crewSessionPlan(this.planWorld(now), { ...crew, members, hostRotation: crew.hostRotation.filter(h => members.includes(h)).length ? crew.hostRotation.filter(h => members.includes(h)) : members }, now, place, this.pcfg);
       if (!next || crew.sessions.some(id => this.opps.get(id)?.plan?.window.start === next.window.start)) continue;
       const plan = this.withReach(next, now);
       crew.sessions.push(plan.id);
@@ -4216,6 +4221,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         && !state.optedOut && m.state !== "paused" && m.accountStatus !== "paused" && m.accountStatus !== "restricted";
     });
     const ids = new Set(members.map(m => m.id));
+    const markets = new Set(this.effectiveEngineConfig().cities);
     const intents = input.intents.filter(i => ids.has(i.memberId) && standingIntentLive(i, input.now));
     if (!intents.length) return { fingerprint: "", intentIds: [] };
     const facets = input.facets.filter(f => ids.has(f.memberId) && standingIntentFacetEvidence(f.scope,
@@ -4227,7 +4233,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       members: members.map(({ id, age, state, homeCity, prefs }) => ({ id, age, state, homeCity, prefs })).map(stableStringify).sort(),
       facets: facetEvidence.map(stableStringify).sort(),
       intents: intents.map(stableStringify).sort(),
-      events: (input.events ?? []).filter(event => event.city === "nyc" && event.end > input.now).map(stableStringify).sort(),
+      events: (input.events ?? []).filter(event => markets.has(event.city) && event.end > input.now).map(stableStringify).sort(),
     };
     return { fingerprint: sha256(stableStringify(evidence)), intentIds: intents.map(i => i.id).sort() };
   }
@@ -4587,11 +4593,13 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** The engine's input: the public snapshot plus everything the Network has learned and observed. */
   engineInput(now: number): EngineInput {
     const snap = this.controlledIntentSnapshot(this.ctx.snapshot());
-    const nyc = new Set(snap.members.filter(m => m.homeCity === "nyc" && !this.declinedIds.has(m.id)).map(m => m.id));
-    const facets: Facet[] = snap.facets.filter(f => nyc.has(f.memberId));
-    const intents: Intent[] = snap.intents.filter(i => nyc.has(i.memberId));
+    // The configured markets only (effectiveEngineConfig), never a market taken from member data.
+    const markets = new Set(this.effectiveEngineConfig().cities);
+    const local = new Set(snap.members.filter(m => markets.has(m.homeCity) && !this.declinedIds.has(m.id)).map(m => m.id));
+    const facets: Facet[] = snap.facets.filter(f => local.has(f.memberId));
+    const intents: Intent[] = snap.intents.filter(i => local.has(i.memberId));
     for (const m of this.members.values()) {
-      if (!nyc.has(m.id)) continue;
+      if (!local.has(m.id)) continue;
       const have = new Set(facets.filter(f => f.memberId === m.id).flatMap(f => f.tags));
       const add = (kind: Facet["kind"], tag: string, value: string) => {
         if (have.has(tag)) return;
@@ -4612,11 +4620,11 @@ export class ConsentNetwork implements NetworkUnderTest {
       && !closedPublicEventIsUnsent(!!o.publicEventRevision, o.stage === "closed", o.contacted.size > 0)).map(o => this.toProposal(o));
     const engineInput: EngineInput = {
       // A member with no valid age on the record who told us they are an adult (6.3) goes in with that age.
-      now, members: snap.members.filter(m => nyc.has(m.id)).map(x => { const m = this.members.get(x.id); return !validAge(x.age) && m && !m.minor && validAge(m.statedAge) ? { ...x, age: m.statedAge } : x; }),
-      facets, intents, presence: snap.presence.filter(p => nyc.has(p.memberId)),
+      now, members: snap.members.filter(m => local.has(m.id)).map(x => { const m = this.members.get(x.id); return !validAge(x.age) && m && !m.minor && validAge(m.statedAge) ? { ...x, age: m.statedAge } : x; }),
+      facets, intents, presence: snap.presence.filter(p => local.has(p.memberId)),
       ...(snap.events ? { events: snap.events } : {}),
       edges: [
-        ...snap.edges.filter(e => nyc.has(e.from) && nyc.has(e.to)),
+        ...snap.edges.filter(e => local.has(e.from) && local.has(e.to)),
         ...this.repeatSources(now).filter(({ firstYes, secondYes, pair }) => firstYes && secondYes && !this.blocked(...pair) && !this.avoid.has(pairKey(...pair)))
           .map(({ source, pair: [from, to] }) => ({ from, to, type: "would_interact_again" as const, strength: 0.8, explicit: false, createdAt: source.meetingAt! })),
         ...[...this.avoid].map(k => { const [a, b] = k.split("|") as [string, string]; return { from: a, to: b, type: "avoid" as const, strength: 1, explicit: false, createdAt: now }; }),

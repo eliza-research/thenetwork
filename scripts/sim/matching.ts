@@ -161,8 +161,11 @@ async function engineGates(pack: AppPack, seed: number, input: EngineInput, trut
   const proposed = new Set<MemberId>();
   for (const p of shipped.proposals) {
     if (p.participants.some(id => minors.has(id))) { fault(s.minors, `${at}: proposal ${p.id} includes a minor`); continue; }
-    if (p.participants.length < 2 || p.lane !== lane) continue;
+    if (p.participants.length < 2) continue;
+    if (!p.lane) { fault(s.unprofiled, `${at}: multi-member proposal ${p.id} has no lane`); continue; }
+    if (p.lane !== lane) continue;
     for (const id of p.participants) proposed.add(id);
+    // The proposal names each participant's matched entity when it differs from the member.
     const group = p.participants.flatMap(id => {
       const entity = p.entities?.[id];
       const q = entity ? w.match.profile(entity) : w.match.profileIn(id, lane);

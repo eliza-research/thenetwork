@@ -1,4 +1,5 @@
-// Current Peon baselines, pack and ablations. Each ablation changes one pack slot or harness setting.
+// The Peon baselines and ablations in docs/results/2026-10-08-peon-pack.md.
+// Each ablation changes one pack slot or harness setting.
 import { laneLimits } from "@thenetwork/core/src/generated/matchLane.ts";
 import type { AppPack } from "@thenetwork/engine/src/pack.ts";
 import { peonPack } from "@thenetwork/engine/src/packs/peon/index.ts";
@@ -32,7 +33,7 @@ export const ARMS: Record<string, Arm> = {
   pack: { name: "peon-pack", about: "the pack (engine-backed)", matcher: packMatcher() },
   // ---- ablations -------------------------------------------------------------------------------
   "no-congestion": {
-    name: "pack: no congestion control", about: "no slate cap (candidate cap kept)",
+    name: "pack: no congestion control", about: "no job slate cap (the Hire lane's candidate cap kept)",
     matcher: packMatcher({ name: "pack-no-congestion", pack: withPack({ selection: { ...peonPack.selection, adjust: (w, candidate, value, times) => {
       const match = sides(w, candidate.participants);
       return match && times(match.cand.id) < laneLimits("Hire").weeklyCapacity ? value : -Infinity;

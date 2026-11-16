@@ -76,7 +76,8 @@ export function vectorsOf(w: World): PackVectors {
   return vectors;
 }
 
-const packValueOf = (w: World, vectors: PackVectors, a: MatchProfile, b: MatchProfile): number | undefined =>
+/** The pack's directed value of `b` for `a` (a whole number), or undefined when the pack supplies none. */
+export const packValueOf = (w: World, vectors: PackVectors, a: MatchProfile, b: MatchProfile): number | undefined =>
   vectors.packValue ? wholeNumber(vectors.packValue(w, a, b), "pack value") : undefined;
 
 /** The pair value of (a, b), or noPairValue. Symmetric: lanePairValue mirrors the offset. */
