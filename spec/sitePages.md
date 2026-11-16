@@ -137,7 +137,8 @@ pure def mayLinkTo(app: AppKey, path: PathKind): bool =
 pure def lawTermsNameOnlyAServedJoinPage(app: AppKey, way: OptInWay): bool =
   (way == OptInOnJoinPage and optInWays(app).includes(way)) implies mayLinkTo(app, JoinPath)
 
-pure def lawTermsAlwaysOfferText(app: AppKey): bool = optInWays(app).includes(OptInByText)
+pure def lawTermsAlwaysOfferText(app: AppKey, way: OptInWay): bool =
+  way == OptInByText implies optInWays(app).includes(way)
 ```
 
 ### An unknown path shows the not-found page and every served page exists

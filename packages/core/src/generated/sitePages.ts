@@ -16,7 +16,7 @@ export type SiteRoute = "ServeLanding" | "ServePrivacy" | "ServeTerms" | "ServeJ
 export interface SiteAnswer { status: number; noStore: boolean; hasBody: boolean; toLanding: boolean }
 /** Story: Old links never open a retired page / The terms name the join page as a way to opt in only where the site serves it (spec/sitePages.md:123) */
 export type OptInWay = "OptInOnJoinPage" | "OptInInAgent" | "OptInByText";
-/** Story: Let my agent read the signup skill from the site / Skill files are plain text that any origin can read (spec/sitePages.md:187) */
+/** Story: Let my agent read the signup skill from the site / Skill files are plain text that any origin can read (spec/sitePages.md:188) */
 export type SkillDoc = "RootSkill" | "CatalogIndex" | "CatalogSkill";
 
 /** Story: Read the pages of the site / The terms page has a text messaging section that a link can open (spec/sitePages.md:38) */
@@ -25,9 +25,9 @@ export const smsTermsAnchor: string = "sms";
 export const retiredSettingsPaths: string[] = ["/settings", "/settings/", "/settings.html"];
 /** Story: Old links never open a retired page / A request routes by its path kind, the site and the method (spec/sitePages.md:59) */
 export const retiredJoinPaths: string[] = ["/join", "/join/", "/join.html"];
-/** Story: Let my agent read the signup skill from the site / Skill files are plain text that any origin can read (spec/sitePages.md:187) */
+/** Story: Let my agent read the signup skill from the site / Skill files are plain text that any origin can read (spec/sitePages.md:188) */
 export const skillAllowOrigin: string = "*";
-/** Story: Let my agent read the signup skill from the site / Skill files are plain text that any origin can read (spec/sitePages.md:187) */
+/** Story: Let my agent read the signup skill from the site / Skill files are plain text that any origin can read (spec/sitePages.md:188) */
 export const skillCacheSeconds: number = 300;
 /** Story: Read the pages of the site / The terms page has a text messaging section that a link can open (spec/sitePages.md:38) */
 export const smsTermsItems: SmsTermsItem[] = ["SmsProgram", "SmsOptIn", "SmsFrequency", "SmsStopEverything", "SmsLeaveOne", "SmsStartAgain", "SmsHelp", "SmsCosts", "SmsNoMarketingShare"];
@@ -130,9 +130,9 @@ export function optInWays(app: brandIdentity_AppKey): OptInWay[] {
 
 /** Story: Old links never open a retired page / The terms name the join page as a way to opt in only where the site serves it (spec/sitePages.md:123) */
 //@ pure
-export function lawTermsAlwaysOfferText(app: brandIdentity_AppKey): boolean {
+export function lawTermsAlwaysOfferText(app: brandIdentity_AppKey, way: OptInWay): boolean {
   //@ ensures \result === true
-  return optInWays(app).includes("OptInByText");
+  return !(way === "OptInByText") || optInWays(app).includes(way);
 }
 
 /** Story: Old links never open a retired page / The terms name the join page as a way to opt in only where the site serves it (spec/sitePages.md:123) */
@@ -149,26 +149,26 @@ export function lawTermsNameOnlyAServedJoinPage(app: brandIdentity_AppKey, way: 
   return !(way === "OptInOnJoinPage" && optInWays(app).includes(way)) || mayLinkTo(app, "JoinPath");
 }
 
-/** Story: Old links never open a retired page / An unknown path shows the not-found page and every served page exists (spec/sitePages.md:143) */
+/** Story: Old links never open a retired page / An unknown path shows the not-found page and every served page exists (spec/sitePages.md:144) */
 //@ pure
 export function servesPage(route: SiteRoute): boolean {
   return route === "ServeLanding" || route === "ServePrivacy" || route === "ServeTerms" || route === "ServeJoin" || route === "ServeNotFound";
 }
 
-/** Story: Old links never open a retired page / An unknown path shows the not-found page and every served page exists (spec/sitePages.md:143) */
+/** Story: Old links never open a retired page / An unknown path shows the not-found page and every served page exists (spec/sitePages.md:144) */
 //@ pure
 export function pageOfRoute(route: SiteRoute): SitePage {
   return route === "ServeLanding" ? "LandingPage" : (route === "ServePrivacy" ? "PrivacyPage" : (route === "ServeTerms" ? "TermsPage" : (route === "ServeJoin" ? "JoinPage" : "NotFoundPage")));
 }
 
-/** Story: Old links never open a retired page / An unknown path shows the not-found page and every served page exists (spec/sitePages.md:143) */
+/** Story: Old links never open a retired page / An unknown path shows the not-found page and every served page exists (spec/sitePages.md:144) */
 //@ pure
 export function lawUnknownPathsShowNotFound(app: brandIdentity_AppKey, method: RequestMethod): boolean {
   //@ ensures \result === true
   return routeFor(app, "UnknownPath", method) === "ServeNotFound";
 }
 
-/** Story: Old links never open a retired page / An unknown path shows the not-found page and every served page exists (spec/sitePages.md:143) */
+/** Story: Old links never open a retired page / An unknown path shows the not-found page and every served page exists (spec/sitePages.md:144) */
 //@ pure
 export function lawServedPagesExist(app: brandIdentity_AppKey, path: PathKind, method: RequestMethod): boolean {
   //@ ensures \result === true
@@ -176,54 +176,54 @@ export function lawServedPagesExist(app: brandIdentity_AppKey, path: PathKind, m
   return !servesPage(local_1) || siteHasPage(app, pageOfRoute(local_1));
 }
 
-/** Story: Let my agent read the signup skill from the site / Each site serves its own skill at /SKILL.md and lists it in its catalog (spec/sitePages.md:170) */
+/** Story: Let my agent read the signup skill from the site / Each site serves its own skill at /SKILL.md and lists it in its catalog (spec/sitePages.md:171) */
 //@ pure
 export function catalogListsSkillOf(site: brandIdentity_AppKey, owner: brandIdentity_AppKey): boolean {
   return brandIdentity_mayName(site, owner, "CatalogSurface");
 }
 
-/** Story: Let my agent read the signup skill from the site / Each site serves its own skill at /SKILL.md and lists it in its catalog (spec/sitePages.md:170) */
+/** Story: Let my agent read the signup skill from the site / Each site serves its own skill at /SKILL.md and lists it in its catalog (spec/sitePages.md:171) */
 //@ pure
 export function lawAppCatalogListsOnlyItself(site: brandIdentity_AppKey, owner: brandIdentity_AppKey): boolean {
   //@ ensures \result === true
   return !(site !== "Ntwrk" && owner !== site) || !catalogListsSkillOf(site, owner);
 }
 
-/** Story: Let my agent read the signup skill from the site / Each site serves its own skill at /SKILL.md and lists it in its catalog (spec/sitePages.md:170) */
+/** Story: Let my agent read the signup skill from the site / Each site serves its own skill at /SKILL.md and lists it in its catalog (spec/sitePages.md:171) */
 //@ pure
 export function lawEveryCatalogListsItsOwnSkill(site: brandIdentity_AppKey, method: RequestMethod): boolean {
   //@ ensures \result === true
   return catalogListsSkillOf(site, site) && routeFor(site, "OwnCatalogSkillPath", method) === "ServeSkill";
 }
 
-/** Story: Let my agent read the signup skill from the site / Each site serves its own skill at /SKILL.md and lists it in its catalog (spec/sitePages.md:170) */
+/** Story: Let my agent read the signup skill from the site / Each site serves its own skill at /SKILL.md and lists it in its catalog (spec/sitePages.md:171) */
 //@ pure
 export function lawCatalogRouteFollowsListing(site: brandIdentity_AppKey, owner: brandIdentity_AppKey, method: RequestMethod): boolean {
   //@ ensures \result === true
   return !(owner !== site) || (routeFor(site, "OtherCatalogSkillPath", method) === "ServeSkill") === catalogListsSkillOf(site, owner);
 }
 
-/** Story: Let my agent read the signup skill from the site / Skill files are plain text that any origin can read (spec/sitePages.md:187) */
+/** Story: Let my agent read the signup skill from the site / Skill files are plain text that any origin can read (spec/sitePages.md:188) */
 //@ pure
 export function skillContentType(doc: SkillDoc): string {
   return doc === "CatalogIndex" ? "application/json" : "text/plain; charset=utf-8";
 }
 
-/** Story: Let my agent read the signup skill from the site / Skill files are plain text that any origin can read (spec/sitePages.md:187) */
+/** Story: Let my agent read the signup skill from the site / Skill files are plain text that any origin can read (spec/sitePages.md:188) */
 //@ pure
 export function lawSkillTextIsPlainText(doc: SkillDoc): boolean {
   //@ ensures \result === true
   return !(doc !== "CatalogIndex") || skillContentType(doc) === "text/plain; charset=utf-8";
 }
 
-/** Story: Let my agent read the signup skill from the site / Backend paths go to the shared backend (spec/sitePages.md:204) */
+/** Story: Let my agent read the signup skill from the site / Backend paths go to the shared backend (spec/sitePages.md:205) */
 //@ pure
 export function lawBackendPathsAreForwarded(app: brandIdentity_AppKey, method: RequestMethod): boolean {
   //@ ensures \result === true
   return routeFor(app, "BackendPath", method) === "ForwardToBackend";
 }
 
-/** Story: Let my agent read the signup skill from the site / Backend paths go to the shared backend (spec/sitePages.md:204) */
+/** Story: Let my agent read the signup skill from the site / Backend paths go to the shared backend (spec/sitePages.md:205) */
 //@ pure
 export function lawRetiredPathsNeverReachTheBackend(app: brandIdentity_AppKey, method: RequestMethod): boolean {
   //@ ensures \result === true

@@ -12,7 +12,7 @@ export type NotFoundViewProps = ComponentProps<"div"> & {
 
 /**
  * The content of the not-found page: the heading, one line and a link back to the landing page.
- * @model spec/sitePages.md
+ * Its rules come from `spec/sitePages.md`, a spec of decisions with no state of its own.
  */
 export function NotFoundView({ name, href = "/", className, ...props }: NotFoundViewProps) {
   return (

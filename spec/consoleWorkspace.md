@@ -245,7 +245,7 @@ pure def sometimesHoldLifted(w: Workspace): bool = w.caseRow.status == CaseRowOp
 
 ### A report decision needs a note and the Network service
 
-A report decision needs a note of five characters or more. Hold, ban by phone, ban by person and dismiss need the Network service. Clear minor signal needs a minor report and a mode that acts. The [safety case spec](safetyCase.md) decides the report status after a decision: a hold marks the report held, a ban marks it banned, and a dismissal marks it dismissed. A minor clear dismisses the minor report. The row shows that status only after the server accepts the decision. A refused decision keeps the report open.
+A report decision needs a note of five characters or more. Hold, ban by phone, ban by person and dismiss need the Network service. Clear minor signal needs a minor report and a mode that acts. The [safety case spec](safetyCase.md) decides the report status after a decision: a hold marks the report held, a ban marks it banned, and a dismissal marks it dismissed. A minor clear dismisses the minor report. The row shows that status only after the server accepts the decision. While a decision is with the server, it stays a decision that the report and the mode allow. A refused decision keeps the report open.
 
 ```quint
 pure def reportStepAllowed(reportStep: ReportStep, mode: WorkMode, minorReport: bool): bool =
@@ -285,6 +285,10 @@ pure def receiveReportAnswer(w: Workspace, accepted: bool): Workspace =
 
 pure def alwaysBanNeedsTheService(w: Workspace): bool =
   (w.report.status == S::ReportBanned or w.report.status == S::ReportHeld) implies (w.report.present and w.staff.mode == RealWithService)
+
+pure def alwaysASentReportDecisionIsAllowed(w: Workspace): bool =
+  w.report.reportSending implies
+    (w.report.present and reportStepAllowed(w.report.reportStep, w.staff.mode, w.report.minorReport))
 
 pure def alwaysReportDecisionNeedsANote(w: Workspace): bool =
   (w.report.reportSending or w.report.status != S::ReportOpen) implies (w.report.present and w.report.noteReady)
@@ -497,7 +501,7 @@ pure def sometimesWorldEventSent(w: Workspace): bool = w.worldEventSent
 
 ### A reveal needs real data, the safety role and a reason
 
-The reveal control shows on real data to a safety viewer when the server does not already show all data. The form needs a reason of five characters or more and a length of 5, 10 or 15 minutes. Cancel closes the form. A reveal shows only after the server grants it. The server records the reason before it grants the reveal. A refused reveal keeps the form open.
+The reveal control shows on real data to a safety viewer when the server does not already show all data. The form needs a reason of five characters or more and a length of 5, 10 or 15 minutes. The length is always one of these three; the form starts at 15 minutes. Cancel closes the form. A reveal shows only after the server grants it. The server records the reason before it grants the reveal. A refused reveal keeps the form open.
 
 ```quint
 pure def revealOffered(staff: StaffView): bool = staff.safety and staff.mode != SimulatedWorld and not(staff.globalPii)
@@ -537,6 +541,8 @@ pure def receiveRevealAnswer(w: Workspace, granted: bool): Workspace =
 pure def alwaysRevealHasAReasonAndALimit(w: Workspace): bool =
   (w.reveal.phase == RevealSending or w.reveal.phase == RevealGranted)
     implies (w.reveal.reasonReady and revealMinuteChoices.contains(w.reveal.minutes) and revealOffered(w.staff))
+
+pure def alwaysRevealLengthIsAChoice(w: Workspace): bool = revealMinuteChoices.contains(w.reveal.minutes)
 
 pure def stepRevealFollowsAGrant(before: Workspace, via: str, after: Workspace): bool =
   (after.reveal.phase == RevealGranted and before.reveal.phase != RevealGranted)

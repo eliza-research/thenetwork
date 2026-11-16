@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 const sourceConditions = ["eliza-source", "node", "module", "development|production"];
 
@@ -24,6 +24,8 @@ export default defineConfig({
         test: {
           name: "integration",
           include: ["{deploy,packages,sites}/**/*.test.{ts,tsx}"],
+          // The UI package's generated story tests need happy-dom or Chromium; its own projects run them (pnpm run ui:test, test:browser).
+          exclude: [...configDefaults.exclude, "packages/ui/**"],
           testTimeout: 120_000,
           hookTimeout: 120_000,
         },

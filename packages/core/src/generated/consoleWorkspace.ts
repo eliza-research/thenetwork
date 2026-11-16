@@ -44,11 +44,11 @@ export type WorkPanel = "HeldPanel" | "CasesPanel" | "ReportsPanel" | "RequestsP
 export type PanelAnswer = "NotAnswered" | "AnswerRows" | "AnswerForbidden" | "AnswerMissing" | "AnswerFailed";
 /** Story: Work only in the panels my role and mode allow / Each panel shows a loading, refused, unavailable, failed, empty or full view (spec/consoleWorkspace.md:78) */
 export type PanelView = "PanelLoading" | "PanelForbidden" | "PanelUnavailable" | "PanelFailed" | "PanelEmpty" | "PanelRows";
-/** Story: See what members asked for / The request segments group the outcomes (spec/consoleWorkspace.md:311) */
+/** Story: See what members asked for / The request segments group the outcomes (spec/consoleWorkspace.md:315) */
 export type RequestOutcome = "ProbingOutcome" | "OpenOutcome" | "FulfilledOutcome" | "BookedOutcome" | "NoneOutcome" | "AnsweredOutcome";
-/** Story: Change the matching switch with a confirmation / The switch shows only to an admin who can change it (spec/consoleWorkspace.md:340) */
+/** Story: Change the matching switch with a confirmation / The switch shows only to an admin who can change it (spec/consoleWorkspace.md:344) */
 export type ConfigControl = "SwitchControl" | "LockedNote" | "AdminOnlyNote" | "ReadOnlyNote";
-/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:467) */
+/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:471) */
 export type WorldEvent = "GoSilent" | "ForceFlake" | "TextStop";
 
 /** One variant per transition in the spec. */
@@ -92,17 +92,17 @@ export type Event =
 
 /** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
 export const minReasonChars: number = 5;
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:498) */
-export const revealMinuteChoices: number[] = [5, 10, 15];
 /** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
 export const maxRevealMinutes: number = 15;
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
+export const revealMinuteChoices: number[] = [5, 10, 15];
 /** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
 export const initial: Workspace = { staff: ({ mode: "RealWithoutService", safety: false, admin: false, analyst: false, simRole: false, globalPii: false } as StaffView), held: ({ status: "HeldEmpty", choice: "RejectHeld", photo: false, minorHidden: false, reasonReady: false, photoLoaded: false, photoReviewed: false } as HeldRow), caseRow: ({ status: "CaseRowEmpty", onHold: false, expanded: false, caseSending: false, caseStep: "CloseStep" } as CaseRow), report: ({ present: false, status: "ReportOpen", minorReport: false, noteReady: false, reportSending: false, reportStep: "DismissStep" } as ReportRow), requestSegment: "OpenSegment", config: ({ phase: "ConfigLoading", matchingOn: false, packLocked: false, changeable: false, saved: false } as ConfigEditor), audit: "AuditClosed", tray: "TrayIdle", worldMenuOpen: false, worldEventSent: false, reveal: ({ phase: "RevealHidden", reasonReady: false, minutes: maxRevealMinutes } as RevealForm) };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current: Workspace): boolean {
-  return alwaysAdminHoldsEveryRole(current) && alwaysSimulatedWorldShowsNoRealData(current) && alwaysReleaseWasReleasable(current) && alwaysHiddenMinorTextIsNeverReleased(current) && alwaysCaseActionNeedsAnActingSafetyViewer(current) && alwaysBanNeedsTheService(current) && alwaysReportDecisionNeedsANote(current) && alwaysConfigNeedsTheAnalystRole(current) && alwaysSavedSwitchWasShown(current) && alwaysSavingNeedsTheSwitch(current) && alwaysAuditLogNeedsAnAdmin(current) && alwaysTrayWorkIsSimulated(current) && alwaysWorldMenuIsSimulated(current) && alwaysRevealHasAReasonAndALimit(current);
+  return alwaysAdminHoldsEveryRole(current) && alwaysSimulatedWorldShowsNoRealData(current) && alwaysReleaseWasReleasable(current) && alwaysHiddenMinorTextIsNeverReleased(current) && alwaysCaseActionNeedsAnActingSafetyViewer(current) && alwaysBanNeedsTheService(current) && alwaysASentReportDecisionIsAllowed(current) && alwaysReportDecisionNeedsANote(current) && alwaysConfigNeedsTheAnalystRole(current) && alwaysSavedSwitchWasShown(current) && alwaysSavingNeedsTheSwitch(current) && alwaysAuditLogNeedsAnAdmin(current) && alwaysTrayWorkIsSimulated(current) && alwaysWorldMenuIsSimulated(current) && alwaysRevealHasAReasonAndALimit(current) && alwaysRevealLengthIsAChoice(current);
 }
 
 /** Story: Work only in the panels my role and mode allow / A new viewer or mode starts every panel again (spec/consoleWorkspace.md:9) */
@@ -138,6 +138,7 @@ export function receiveViewer(w: Workspace, viewMode: WorkMode, safetyRole: bool
   //@ ensures (inv(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -146,6 +147,7 @@ export function receiveViewer(w: Workspace, viewMode: WorkMode, safetyRole: bool
   //@ ensures (inv(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w)) ==> stepNewViewerClosesForms(w, "receiveViewer", \result)
   //@ ensures (inv(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "receiveViewer", \result)
   //@ ensures (inv(w)) ==> stepRevealFollowsAGrant(w, "receiveViewer", \result)
@@ -200,6 +202,7 @@ export function receiveHeldText(w: Workspace, photoItem: boolean, minorItem: boo
   //@ ensures (inv(w) && canReceiveHeldText(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canReceiveHeldText(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canReceiveHeldText(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canReceiveHeldText(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canReceiveHeldText(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canReceiveHeldText(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canReceiveHeldText(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -208,6 +211,7 @@ export function receiveHeldText(w: Workspace, photoItem: boolean, minorItem: boo
   //@ ensures (inv(w) && canReceiveHeldText(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canReceiveHeldText(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canReceiveHeldText(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canReceiveHeldText(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canReceiveHeldText(w)) ==> stepNewViewerClosesForms(w, "receiveHeldText", \result)
   //@ ensures (inv(w) && canReceiveHeldText(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "receiveHeldText", \result)
   //@ ensures (inv(w) && canReceiveHeldText(w)) ==> stepRevealFollowsAGrant(w, "receiveHeldText", \result)
@@ -229,6 +233,7 @@ export function typeHeldReason(w: Workspace, reasonChars: number): Workspace {
   //@ ensures (inv(w) && canTypeHeldReason(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canTypeHeldReason(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canTypeHeldReason(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canTypeHeldReason(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canTypeHeldReason(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canTypeHeldReason(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canTypeHeldReason(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -237,6 +242,7 @@ export function typeHeldReason(w: Workspace, reasonChars: number): Workspace {
   //@ ensures (inv(w) && canTypeHeldReason(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canTypeHeldReason(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canTypeHeldReason(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canTypeHeldReason(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canTypeHeldReason(w)) ==> stepNewViewerClosesForms(w, "typeHeldReason", \result)
   //@ ensures (inv(w) && canTypeHeldReason(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "typeHeldReason", \result)
   //@ ensures (inv(w) && canTypeHeldReason(w)) ==> stepRevealFollowsAGrant(w, "typeHeldReason", \result)
@@ -252,6 +258,7 @@ export function markPhotoReviewed(w: Workspace, reviewed: boolean): Workspace {
   //@ ensures (inv(w) && canMarkPhotoReviewed(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canMarkPhotoReviewed(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canMarkPhotoReviewed(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canMarkPhotoReviewed(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canMarkPhotoReviewed(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canMarkPhotoReviewed(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canMarkPhotoReviewed(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -260,6 +267,7 @@ export function markPhotoReviewed(w: Workspace, reviewed: boolean): Workspace {
   //@ ensures (inv(w) && canMarkPhotoReviewed(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canMarkPhotoReviewed(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canMarkPhotoReviewed(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canMarkPhotoReviewed(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canMarkPhotoReviewed(w)) ==> stepNewViewerClosesForms(w, "markPhotoReviewed", \result)
   //@ ensures (inv(w) && canMarkPhotoReviewed(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "markPhotoReviewed", \result)
   //@ ensures (inv(w) && canMarkPhotoReviewed(w)) ==> stepRevealFollowsAGrant(w, "markPhotoReviewed", \result)
@@ -281,6 +289,7 @@ export function loadHeldPhoto(w: Workspace, loaded: boolean): Workspace {
   //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -289,6 +298,7 @@ export function loadHeldPhoto(w: Workspace, loaded: boolean): Workspace {
   //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> stepNewViewerClosesForms(w, "loadHeldPhoto", \result)
   //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "loadHeldPhoto", \result)
   //@ ensures (inv(w) && canLoadHeldPhoto(w)) ==> stepRevealFollowsAGrant(w, "loadHeldPhoto", \result)
@@ -322,6 +332,7 @@ export function decideHeld(w: Workspace, choice: HeldChoice): Workspace {
   //@ ensures (inv(w) && canDecideHeld(w, choice)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canDecideHeld(w, choice)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canDecideHeld(w, choice)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canDecideHeld(w, choice)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canDecideHeld(w, choice)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canDecideHeld(w, choice)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canDecideHeld(w, choice)) ==> alwaysSavedSwitchWasShown(\result)
@@ -330,6 +341,7 @@ export function decideHeld(w: Workspace, choice: HeldChoice): Workspace {
   //@ ensures (inv(w) && canDecideHeld(w, choice)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canDecideHeld(w, choice)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canDecideHeld(w, choice)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canDecideHeld(w, choice)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canDecideHeld(w, choice)) ==> stepNewViewerClosesForms(w, "decideHeld", \result)
   //@ ensures (inv(w) && canDecideHeld(w, choice)) ==> stepSwitchChangesOnlyAfterSaving(w, "decideHeld", \result)
   //@ ensures (inv(w) && canDecideHeld(w, choice)) ==> stepRevealFollowsAGrant(w, "decideHeld", \result)
@@ -351,6 +363,7 @@ export function receiveHeldAnswer(w: Workspace, accepted: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveHeldAnswer(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canReceiveHeldAnswer(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canReceiveHeldAnswer(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canReceiveHeldAnswer(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canReceiveHeldAnswer(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canReceiveHeldAnswer(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canReceiveHeldAnswer(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -359,6 +372,7 @@ export function receiveHeldAnswer(w: Workspace, accepted: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveHeldAnswer(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canReceiveHeldAnswer(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canReceiveHeldAnswer(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canReceiveHeldAnswer(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canReceiveHeldAnswer(w)) ==> stepNewViewerClosesForms(w, "receiveHeldAnswer", \result)
   //@ ensures (inv(w) && canReceiveHeldAnswer(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "receiveHeldAnswer", \result)
   //@ ensures (inv(w) && canReceiveHeldAnswer(w)) ==> stepRevealFollowsAGrant(w, "receiveHeldAnswer", \result)
@@ -410,6 +424,7 @@ export function receiveCase(w: Workspace, heldCase: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveCase(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canReceiveCase(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canReceiveCase(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canReceiveCase(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canReceiveCase(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canReceiveCase(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canReceiveCase(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -418,6 +433,7 @@ export function receiveCase(w: Workspace, heldCase: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveCase(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canReceiveCase(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canReceiveCase(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canReceiveCase(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canReceiveCase(w)) ==> stepNewViewerClosesForms(w, "receiveCase", \result)
   //@ ensures (inv(w) && canReceiveCase(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "receiveCase", \result)
   //@ ensures (inv(w) && canReceiveCase(w)) ==> stepRevealFollowsAGrant(w, "receiveCase", \result)
@@ -439,6 +455,7 @@ export function toggleCaseRow(w: Workspace): Workspace {
   //@ ensures (inv(w) && canToggleCaseRow(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canToggleCaseRow(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canToggleCaseRow(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canToggleCaseRow(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canToggleCaseRow(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canToggleCaseRow(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canToggleCaseRow(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -447,6 +464,7 @@ export function toggleCaseRow(w: Workspace): Workspace {
   //@ ensures (inv(w) && canToggleCaseRow(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canToggleCaseRow(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canToggleCaseRow(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canToggleCaseRow(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canToggleCaseRow(w)) ==> stepNewViewerClosesForms(w, "toggleCaseRow", \result)
   //@ ensures (inv(w) && canToggleCaseRow(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "toggleCaseRow", \result)
   //@ ensures (inv(w) && canToggleCaseRow(w)) ==> stepRevealFollowsAGrant(w, "toggleCaseRow", \result)
@@ -468,6 +486,7 @@ export function actOnCase(w: Workspace, caseStep: CaseStep): Workspace {
   //@ ensures (inv(w) && canActOnCase(w, caseStep)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canActOnCase(w, caseStep)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canActOnCase(w, caseStep)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canActOnCase(w, caseStep)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canActOnCase(w, caseStep)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canActOnCase(w, caseStep)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canActOnCase(w, caseStep)) ==> alwaysSavedSwitchWasShown(\result)
@@ -476,6 +495,7 @@ export function actOnCase(w: Workspace, caseStep: CaseStep): Workspace {
   //@ ensures (inv(w) && canActOnCase(w, caseStep)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canActOnCase(w, caseStep)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canActOnCase(w, caseStep)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canActOnCase(w, caseStep)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canActOnCase(w, caseStep)) ==> stepNewViewerClosesForms(w, "actOnCase", \result)
   //@ ensures (inv(w) && canActOnCase(w, caseStep)) ==> stepSwitchChangesOnlyAfterSaving(w, "actOnCase", \result)
   //@ ensures (inv(w) && canActOnCase(w, caseStep)) ==> stepRevealFollowsAGrant(w, "actOnCase", \result)
@@ -497,6 +517,7 @@ export function receiveCaseAnswer(w: Workspace, accepted: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveCaseAnswer(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canReceiveCaseAnswer(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canReceiveCaseAnswer(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canReceiveCaseAnswer(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canReceiveCaseAnswer(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canReceiveCaseAnswer(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canReceiveCaseAnswer(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -505,6 +526,7 @@ export function receiveCaseAnswer(w: Workspace, accepted: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveCaseAnswer(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canReceiveCaseAnswer(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canReceiveCaseAnswer(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canReceiveCaseAnswer(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canReceiveCaseAnswer(w)) ==> stepNewViewerClosesForms(w, "receiveCaseAnswer", \result)
   //@ ensures (inv(w) && canReceiveCaseAnswer(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "receiveCaseAnswer", \result)
   //@ ensures (inv(w) && canReceiveCaseAnswer(w)) ==> stepRevealFollowsAGrant(w, "receiveCaseAnswer", \result)
@@ -577,6 +599,7 @@ export function receiveReport(w: Workspace, minorKind: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveReport(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canReceiveReport(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canReceiveReport(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canReceiveReport(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canReceiveReport(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canReceiveReport(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canReceiveReport(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -585,6 +608,7 @@ export function receiveReport(w: Workspace, minorKind: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveReport(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canReceiveReport(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canReceiveReport(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canReceiveReport(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canReceiveReport(w)) ==> stepNewViewerClosesForms(w, "receiveReport", \result)
   //@ ensures (inv(w) && canReceiveReport(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "receiveReport", \result)
   //@ ensures (inv(w) && canReceiveReport(w)) ==> stepRevealFollowsAGrant(w, "receiveReport", \result)
@@ -606,6 +630,7 @@ export function typeReportNote(w: Workspace, noteChars: number): Workspace {
   //@ ensures (inv(w) && canTypeReportNote(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canTypeReportNote(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canTypeReportNote(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canTypeReportNote(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canTypeReportNote(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canTypeReportNote(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canTypeReportNote(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -614,6 +639,7 @@ export function typeReportNote(w: Workspace, noteChars: number): Workspace {
   //@ ensures (inv(w) && canTypeReportNote(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canTypeReportNote(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canTypeReportNote(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canTypeReportNote(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canTypeReportNote(w)) ==> stepNewViewerClosesForms(w, "typeReportNote", \result)
   //@ ensures (inv(w) && canTypeReportNote(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "typeReportNote", \result)
   //@ ensures (inv(w) && canTypeReportNote(w)) ==> stepRevealFollowsAGrant(w, "typeReportNote", \result)
@@ -629,6 +655,7 @@ export function actOnReport(w: Workspace, reportStep: ReportStep): Workspace {
   //@ ensures (inv(w) && canActOnReport(w, reportStep)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canActOnReport(w, reportStep)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canActOnReport(w, reportStep)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canActOnReport(w, reportStep)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canActOnReport(w, reportStep)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canActOnReport(w, reportStep)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canActOnReport(w, reportStep)) ==> alwaysSavedSwitchWasShown(\result)
@@ -637,6 +664,7 @@ export function actOnReport(w: Workspace, reportStep: ReportStep): Workspace {
   //@ ensures (inv(w) && canActOnReport(w, reportStep)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canActOnReport(w, reportStep)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canActOnReport(w, reportStep)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canActOnReport(w, reportStep)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canActOnReport(w, reportStep)) ==> stepNewViewerClosesForms(w, "actOnReport", \result)
   //@ ensures (inv(w) && canActOnReport(w, reportStep)) ==> stepSwitchChangesOnlyAfterSaving(w, "actOnReport", \result)
   //@ ensures (inv(w) && canActOnReport(w, reportStep)) ==> stepRevealFollowsAGrant(w, "actOnReport", \result)
@@ -658,6 +686,7 @@ export function receiveReportAnswer(w: Workspace, accepted: boolean): Workspace 
   //@ ensures (inv(w) && canReceiveReportAnswer(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canReceiveReportAnswer(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canReceiveReportAnswer(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canReceiveReportAnswer(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canReceiveReportAnswer(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canReceiveReportAnswer(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canReceiveReportAnswer(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -666,6 +695,7 @@ export function receiveReportAnswer(w: Workspace, accepted: boolean): Workspace 
   //@ ensures (inv(w) && canReceiveReportAnswer(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canReceiveReportAnswer(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canReceiveReportAnswer(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canReceiveReportAnswer(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canReceiveReportAnswer(w)) ==> stepNewViewerClosesForms(w, "receiveReportAnswer", \result)
   //@ ensures (inv(w) && canReceiveReportAnswer(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "receiveReportAnswer", \result)
   //@ ensures (inv(w) && canReceiveReportAnswer(w)) ==> stepRevealFollowsAGrant(w, "receiveReportAnswer", \result)
@@ -676,6 +706,12 @@ export function receiveReportAnswer(w: Workspace, accepted: boolean): Workspace 
 //@ pure
 export function alwaysBanNeedsTheService(w: Workspace): boolean {
   return !(w.report.status === "ReportBanned" || w.report.status === "ReportHeld") || (w.report.present && w.staff.mode === "RealWithService");
+}
+
+/** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md:246) */
+//@ pure
+export function alwaysASentReportDecisionIsAllowed(w: Workspace): boolean {
+  return !w.report.reportSending || (w.report.present && reportStepAllowed(w.report.reportStep, w.staff.mode, w.report.minorReport));
 }
 
 /** Story: Act on safety cases and reports / A report decision needs a note and the Network service (spec/consoleWorkspace.md:246) */
@@ -721,27 +757,27 @@ export function canActOnReport(w: Workspace, reportStep: ReportStep): boolean {
   return reportOpen(w) && !w.report.reportSending && w.staff.safety && w.report.noteReady && reportStepAllowed(reportStep, w.staff.mode, w.report.minorReport);
 }
 
-/** Story: See what members asked for / The request segments group the outcomes (spec/consoleWorkspace.md:311) */
+/** Story: See what members asked for / The request segments group the outcomes (spec/consoleWorkspace.md:315) */
 //@ pure
 export function requestShown(requestOutcome: RequestOutcome, segment: RequestSegment): boolean {
   return segment === "AllSegment" ? true : (segment === "OpenSegment" ? requestOutcome === "ProbingOutcome" || requestOutcome === "OpenOutcome" : (segment === "FulfilledSegment" ? requestOutcome === "FulfilledOutcome" || requestOutcome === "BookedOutcome" : (segment === "NoneSegment" ? requestOutcome === "NoneOutcome" : requestOutcome === "AnsweredOutcome")));
 }
 
-/** Story: See what members asked for / The request segments group the outcomes (spec/consoleWorkspace.md:311) */
+/** Story: See what members asked for / The request segments group the outcomes (spec/consoleWorkspace.md:315) */
 //@ pure
 export function lawEveryOutcomeHasASegment(requestOutcome: RequestOutcome): boolean {
   //@ ensures \result === true
   return requestShown(requestOutcome, "OpenSegment") || requestShown(requestOutcome, "FulfilledSegment") || requestShown(requestOutcome, "NoneSegment") || requestShown(requestOutcome, "AnsweredSegment");
 }
 
-/** Story: See what members asked for / The request segments group the outcomes (spec/consoleWorkspace.md:311) */
+/** Story: See what members asked for / The request segments group the outcomes (spec/consoleWorkspace.md:315) */
 //@ pure
 export function lawAllShowsEveryOutcome(requestOutcome: RequestOutcome): boolean {
   //@ ensures \result === true
   return requestShown(requestOutcome, "AllSegment");
 }
 
-/** Story: See what members asked for / The request segments group the outcomes (spec/consoleWorkspace.md:311) */
+/** Story: See what members asked for / The request segments group the outcomes (spec/consoleWorkspace.md:315) */
 //@ pure
 export function chooseRequestSegment(w: Workspace, segment: RequestSegment): Workspace {
   //@ ensures (inv(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -750,6 +786,7 @@ export function chooseRequestSegment(w: Workspace, segment: RequestSegment): Wor
   //@ ensures (inv(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -758,44 +795,45 @@ export function chooseRequestSegment(w: Workspace, segment: RequestSegment): Wor
   //@ ensures (inv(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w)) ==> stepNewViewerClosesForms(w, "chooseRequestSegment", \result)
   //@ ensures (inv(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "chooseRequestSegment", \result)
   //@ ensures (inv(w)) ==> stepRevealFollowsAGrant(w, "chooseRequestSegment", \result)
   return { ...w, requestSegment: segment };
 }
 
-/** Story: See what members asked for / The request segments group the outcomes (spec/consoleWorkspace.md:311) */
+/** Story: See what members asked for / The request segments group the outcomes (spec/consoleWorkspace.md:315) */
 //@ pure
 export function sometimesAllRequests(w: Workspace): boolean {
   return w.requestSegment === "AllSegment";
 }
 
-/** Story: Change the matching switch with a confirmation / The switch shows only to an admin who can change it (spec/consoleWorkspace.md:340) */
+/** Story: Change the matching switch with a confirmation / The switch shows only to an admin who can change it (spec/consoleWorkspace.md:344) */
 //@ pure
 export function configControl(changeable: boolean, adminRole: boolean, packLocked: boolean, matchingOn: boolean): ConfigControl {
   return packLocked && !matchingOn ? "LockedNote" : (changeable && adminRole ? "SwitchControl" : (changeable ? "AdminOnlyNote" : "ReadOnlyNote"));
 }
 
-/** Story: Change the matching switch with a confirmation / The switch shows only to an admin who can change it (spec/consoleWorkspace.md:340) */
+/** Story: Change the matching switch with a confirmation / The switch shows only to an admin who can change it (spec/consoleWorkspace.md:344) */
 //@ pure
 export function lawOnlyAdminsGetTheSwitch(changeable: boolean, packLocked: boolean, matchingOn: boolean): boolean {
   //@ ensures \result === true
   return configControl(changeable, false, packLocked, matchingOn) !== "SwitchControl";
 }
 
-/** Story: Change the matching switch with a confirmation / The switch shows only to an admin who can change it (spec/consoleWorkspace.md:340) */
+/** Story: Change the matching switch with a confirmation / The switch shows only to an admin who can change it (spec/consoleWorkspace.md:344) */
 //@ pure
 export function switchShown(w: Workspace): boolean {
   return w.config.phase !== "ConfigLoading" && configControl(w.config.changeable, w.staff.admin, w.config.packLocked, w.config.matchingOn) === "SwitchControl";
 }
 
-/** Story: Change the matching switch with a confirmation / The switch shows only to an admin who can change it (spec/consoleWorkspace.md:340) */
+/** Story: Change the matching switch with a confirmation / The switch shows only to an admin who can change it (spec/consoleWorkspace.md:344) */
 //@ pure
 export function canReceiveConfig(w: Workspace): boolean {
   return w.staff.analyst && w.config.phase !== "ConfigSaving";
 }
 
-/** Story: Change the matching switch with a confirmation / The switch shows only to an admin who can change it (spec/consoleWorkspace.md:340) */
+/** Story: Change the matching switch with a confirmation / The switch shows only to an admin who can change it (spec/consoleWorkspace.md:344) */
 //@ pure
 export function receiveConfig(w: Workspace, matchingEnabled: boolean, locked: boolean, canChange: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveConfig(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -804,6 +842,7 @@ export function receiveConfig(w: Workspace, matchingEnabled: boolean, locked: bo
   //@ ensures (inv(w) && canReceiveConfig(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canReceiveConfig(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canReceiveConfig(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canReceiveConfig(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canReceiveConfig(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canReceiveConfig(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canReceiveConfig(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -812,13 +851,14 @@ export function receiveConfig(w: Workspace, matchingEnabled: boolean, locked: bo
   //@ ensures (inv(w) && canReceiveConfig(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canReceiveConfig(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canReceiveConfig(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canReceiveConfig(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canReceiveConfig(w)) ==> stepNewViewerClosesForms(w, "receiveConfig", \result)
   //@ ensures (inv(w) && canReceiveConfig(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "receiveConfig", \result)
   //@ ensures (inv(w) && canReceiveConfig(w)) ==> stepRevealFollowsAGrant(w, "receiveConfig", \result)
   return { ...w, config: ({ phase: "ConfigShown", matchingOn: matchingEnabled, packLocked: locked, changeable: canChange, saved: false } as ConfigEditor) };
 }
 
-/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:366) */
+/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:370) */
 //@ pure
 export function pressMatchingSwitch(w: Workspace): Workspace {
   //@ ensures (inv(w) && canPressMatchingSwitch(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -827,6 +867,7 @@ export function pressMatchingSwitch(w: Workspace): Workspace {
   //@ ensures (inv(w) && canPressMatchingSwitch(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canPressMatchingSwitch(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canPressMatchingSwitch(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canPressMatchingSwitch(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canPressMatchingSwitch(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canPressMatchingSwitch(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canPressMatchingSwitch(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -835,19 +876,20 @@ export function pressMatchingSwitch(w: Workspace): Workspace {
   //@ ensures (inv(w) && canPressMatchingSwitch(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canPressMatchingSwitch(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canPressMatchingSwitch(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canPressMatchingSwitch(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canPressMatchingSwitch(w)) ==> stepNewViewerClosesForms(w, "pressMatchingSwitch", \result)
   //@ ensures (inv(w) && canPressMatchingSwitch(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "pressMatchingSwitch", \result)
   //@ ensures (inv(w) && canPressMatchingSwitch(w)) ==> stepRevealFollowsAGrant(w, "pressMatchingSwitch", \result)
   return { ...w, config: ({ ...w.config, phase: "ConfigConfirming", saved: false } as ConfigEditor) };
 }
 
-/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:366) */
+/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:370) */
 //@ pure
 export function canEndConfirmation(w: Workspace): boolean {
   return w.config.phase === "ConfigConfirming";
 }
 
-/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:366) */
+/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:370) */
 //@ pure
 export function endConfirmation(w: Workspace): Workspace {
   //@ ensures (inv(w) && canEndConfirmation(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -856,6 +898,7 @@ export function endConfirmation(w: Workspace): Workspace {
   //@ ensures (inv(w) && canEndConfirmation(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canEndConfirmation(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canEndConfirmation(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canEndConfirmation(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canEndConfirmation(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canEndConfirmation(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canEndConfirmation(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -864,13 +907,14 @@ export function endConfirmation(w: Workspace): Workspace {
   //@ ensures (inv(w) && canEndConfirmation(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canEndConfirmation(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canEndConfirmation(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canEndConfirmation(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canEndConfirmation(w)) ==> stepNewViewerClosesForms(w, "endConfirmation", \result)
   //@ ensures (inv(w) && canEndConfirmation(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "endConfirmation", \result)
   //@ ensures (inv(w) && canEndConfirmation(w)) ==> stepRevealFollowsAGrant(w, "endConfirmation", \result)
   return { ...w, config: ({ ...w.config, phase: "ConfigShown" } as ConfigEditor) };
 }
 
-/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:366) */
+/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:370) */
 //@ pure
 export function confirmMatchingSwitch(w: Workspace): Workspace {
   //@ ensures (inv(w) && canConfirmMatchingSwitch(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -879,6 +923,7 @@ export function confirmMatchingSwitch(w: Workspace): Workspace {
   //@ ensures (inv(w) && canConfirmMatchingSwitch(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canConfirmMatchingSwitch(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canConfirmMatchingSwitch(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canConfirmMatchingSwitch(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canConfirmMatchingSwitch(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canConfirmMatchingSwitch(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canConfirmMatchingSwitch(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -887,19 +932,20 @@ export function confirmMatchingSwitch(w: Workspace): Workspace {
   //@ ensures (inv(w) && canConfirmMatchingSwitch(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canConfirmMatchingSwitch(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canConfirmMatchingSwitch(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canConfirmMatchingSwitch(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canConfirmMatchingSwitch(w)) ==> stepNewViewerClosesForms(w, "confirmMatchingSwitch", \result)
   //@ ensures (inv(w) && canConfirmMatchingSwitch(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "confirmMatchingSwitch", \result)
   //@ ensures (inv(w) && canConfirmMatchingSwitch(w)) ==> stepRevealFollowsAGrant(w, "confirmMatchingSwitch", \result)
   return { ...w, config: ({ ...w.config, phase: "ConfigSaving" } as ConfigEditor) };
 }
 
-/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:366) */
+/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:370) */
 //@ pure
 export function canReceiveSwitchAnswer(w: Workspace): boolean {
   return w.config.phase === "ConfigSaving";
 }
 
-/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:366) */
+/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:370) */
 //@ pure
 export function receiveSwitchAnswer(w: Workspace, accepted: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveSwitchAnswer(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -908,6 +954,7 @@ export function receiveSwitchAnswer(w: Workspace, accepted: boolean): Workspace 
   //@ ensures (inv(w) && canReceiveSwitchAnswer(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canReceiveSwitchAnswer(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canReceiveSwitchAnswer(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canReceiveSwitchAnswer(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canReceiveSwitchAnswer(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canReceiveSwitchAnswer(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canReceiveSwitchAnswer(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -916,67 +963,68 @@ export function receiveSwitchAnswer(w: Workspace, accepted: boolean): Workspace 
   //@ ensures (inv(w) && canReceiveSwitchAnswer(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canReceiveSwitchAnswer(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canReceiveSwitchAnswer(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canReceiveSwitchAnswer(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canReceiveSwitchAnswer(w)) ==> stepNewViewerClosesForms(w, "receiveSwitchAnswer", \result)
   //@ ensures (inv(w) && canReceiveSwitchAnswer(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "receiveSwitchAnswer", \result)
   //@ ensures (inv(w) && canReceiveSwitchAnswer(w)) ==> stepRevealFollowsAGrant(w, "receiveSwitchAnswer", \result)
   return { ...w, config: ({ ...w.config, phase: accepted ? "ConfigShown" : "ConfigFailed", saved: accepted, matchingOn: accepted ? !w.config.matchingOn : w.config.matchingOn } as ConfigEditor) };
 }
 
-/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:366) */
+/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:370) */
 //@ pure
 export function alwaysConfigNeedsTheAnalystRole(w: Workspace): boolean {
   return !(w.config.phase !== "ConfigLoading") || w.staff.analyst;
 }
 
-/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:366) */
+/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:370) */
 //@ pure
 export function stepSwitchChangesOnlyAfterSaving(before: Workspace, via: string, after: Workspace): boolean {
   return !(after.config.matchingOn !== before.config.matchingOn && via !== "receiveConfig" && via !== "receiveViewer") || (via === "receiveSwitchAnswer" && before.config.phase === "ConfigSaving");
 }
 
-/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:366) */
+/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:370) */
 //@ pure
 export function alwaysSavedSwitchWasShown(w: Workspace): boolean {
   return !w.config.saved || (w.staff.admin && w.config.changeable);
 }
 
-/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:366) */
+/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:370) */
 //@ pure
 export function sometimesSwitchSaved(w: Workspace): boolean {
   return w.config.saved;
 }
 
-/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:366) */
+/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:370) */
 //@ pure
 export function sometimesSwitchRefused(w: Workspace): boolean {
   return w.config.phase === "ConfigFailed";
 }
 
-/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:366) */
+/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:370) */
 //@ pure
 export function canPressMatchingSwitch(w: Workspace): boolean {
   return (w.config.phase === "ConfigShown" || w.config.phase === "ConfigFailed") && switchShown(w);
 }
 
-/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:366) */
+/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:370) */
 //@ pure
 export function canConfirmMatchingSwitch(w: Workspace): boolean {
   return w.config.phase === "ConfigConfirming" && switchShown(w);
 }
 
-/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:366) */
+/** Story: Change the matching switch with a confirmation / The first press asks for a confirmation and the second press saves (spec/consoleWorkspace.md:370) */
 //@ pure
 export function alwaysSavingNeedsTheSwitch(w: Workspace): boolean {
   return !(w.config.phase === "ConfigConfirming" || w.config.phase === "ConfigSaving") || switchShown(w);
 }
 
-/** Story: Read the audit log as an admin / Only an admin loads the audit log (spec/consoleWorkspace.md:414) */
+/** Story: Read the audit log as an admin / Only an admin loads the audit log (spec/consoleWorkspace.md:418) */
 //@ pure
 export function canLoadAudit(w: Workspace): boolean {
   return w.staff.admin && w.audit !== "AuditLoading";
 }
 
-/** Story: Read the audit log as an admin / Only an admin loads the audit log (spec/consoleWorkspace.md:414) */
+/** Story: Read the audit log as an admin / Only an admin loads the audit log (spec/consoleWorkspace.md:418) */
 //@ pure
 export function loadAudit(w: Workspace): Workspace {
   //@ ensures (inv(w) && canLoadAudit(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -985,6 +1033,7 @@ export function loadAudit(w: Workspace): Workspace {
   //@ ensures (inv(w) && canLoadAudit(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canLoadAudit(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canLoadAudit(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canLoadAudit(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canLoadAudit(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canLoadAudit(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canLoadAudit(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -993,19 +1042,20 @@ export function loadAudit(w: Workspace): Workspace {
   //@ ensures (inv(w) && canLoadAudit(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canLoadAudit(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canLoadAudit(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canLoadAudit(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canLoadAudit(w)) ==> stepNewViewerClosesForms(w, "loadAudit", \result)
   //@ ensures (inv(w) && canLoadAudit(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "loadAudit", \result)
   //@ ensures (inv(w) && canLoadAudit(w)) ==> stepRevealFollowsAGrant(w, "loadAudit", \result)
   return { ...w, audit: "AuditLoading" };
 }
 
-/** Story: Read the audit log as an admin / Only an admin loads the audit log (spec/consoleWorkspace.md:414) */
+/** Story: Read the audit log as an admin / Only an admin loads the audit log (spec/consoleWorkspace.md:418) */
 //@ pure
 export function canReceiveAudit(w: Workspace): boolean {
   return w.audit === "AuditLoading";
 }
 
-/** Story: Read the audit log as an admin / Only an admin loads the audit log (spec/consoleWorkspace.md:414) */
+/** Story: Read the audit log as an admin / Only an admin loads the audit log (spec/consoleWorkspace.md:418) */
 //@ pure
 export function receiveAudit(w: Workspace, loaded: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveAudit(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1014,6 +1064,7 @@ export function receiveAudit(w: Workspace, loaded: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveAudit(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canReceiveAudit(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canReceiveAudit(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canReceiveAudit(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canReceiveAudit(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canReceiveAudit(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canReceiveAudit(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -1022,50 +1073,51 @@ export function receiveAudit(w: Workspace, loaded: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveAudit(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canReceiveAudit(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canReceiveAudit(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canReceiveAudit(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canReceiveAudit(w)) ==> stepNewViewerClosesForms(w, "receiveAudit", \result)
   //@ ensures (inv(w) && canReceiveAudit(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "receiveAudit", \result)
   //@ ensures (inv(w) && canReceiveAudit(w)) ==> stepRevealFollowsAGrant(w, "receiveAudit", \result)
   return { ...w, audit: loaded ? "AuditShown" : "AuditFailed" };
 }
 
-/** Story: Read the audit log as an admin / Only an admin loads the audit log (spec/consoleWorkspace.md:414) */
+/** Story: Read the audit log as an admin / Only an admin loads the audit log (spec/consoleWorkspace.md:418) */
 //@ pure
 export function alwaysAuditLogNeedsAnAdmin(w: Workspace): boolean {
   return !(w.audit !== "AuditClosed") || w.staff.admin;
 }
 
-/** Story: Read the audit log as an admin / Only an admin loads the audit log (spec/consoleWorkspace.md:414) */
+/** Story: Read the audit log as an admin / Only an admin loads the audit log (spec/consoleWorkspace.md:418) */
 //@ pure
 export function sometimesAuditShown(w: Workspace): boolean {
   return w.audit === "AuditShown";
 }
 
-/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md:436) */
+/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md:440) */
 //@ pure
 export function proposeAllowed(pickCount: number, minorPicked: boolean, sparksLeft: number, gameOver: boolean): boolean {
   return pickCount >= 2 && pickCount <= 6 && !minorPicked && sparksLeft > 0 && !gameOver;
 }
 
-/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md:436) */
+/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md:440) */
 //@ pure
 export function trayShown(staff: StaffView, pickCount: number): boolean {
   return staff.mode === "SimulatedWorld" && staff.simRole && pickCount > 0;
 }
 
-/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md:436) */
+/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md:440) */
 //@ pure
 export function lawMinorsAreNeverProposed(pickCount: number, sparksLeft: number, gameOver: boolean): boolean {
   //@ ensures \result === true
   return !proposeAllowed(pickCount, true, sparksLeft, gameOver);
 }
 
-/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md:436) */
+/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md:440) */
 //@ pure
 export function canSubmitProposal(w: Workspace, pickCount: number, minorPicked: boolean, sparksLeft: number, gameOver: boolean): boolean {
   return w.tray !== "TraySending" && trayShown(w.staff, pickCount) && proposeAllowed(pickCount, minorPicked, sparksLeft, gameOver);
 }
 
-/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md:436) */
+/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md:440) */
 //@ pure
 export function submitProposal(w: Workspace, pickCount: number, minorPicked: boolean, sparksLeft: number, gameOver: boolean): Workspace {
   //@ ensures (inv(w) && canSubmitProposal(w, pickCount, minorPicked, sparksLeft, gameOver)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1074,6 +1126,7 @@ export function submitProposal(w: Workspace, pickCount: number, minorPicked: boo
   //@ ensures (inv(w) && canSubmitProposal(w, pickCount, minorPicked, sparksLeft, gameOver)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canSubmitProposal(w, pickCount, minorPicked, sparksLeft, gameOver)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canSubmitProposal(w, pickCount, minorPicked, sparksLeft, gameOver)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canSubmitProposal(w, pickCount, minorPicked, sparksLeft, gameOver)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canSubmitProposal(w, pickCount, minorPicked, sparksLeft, gameOver)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canSubmitProposal(w, pickCount, minorPicked, sparksLeft, gameOver)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canSubmitProposal(w, pickCount, minorPicked, sparksLeft, gameOver)) ==> alwaysSavedSwitchWasShown(\result)
@@ -1082,19 +1135,20 @@ export function submitProposal(w: Workspace, pickCount: number, minorPicked: boo
   //@ ensures (inv(w) && canSubmitProposal(w, pickCount, minorPicked, sparksLeft, gameOver)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canSubmitProposal(w, pickCount, minorPicked, sparksLeft, gameOver)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canSubmitProposal(w, pickCount, minorPicked, sparksLeft, gameOver)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canSubmitProposal(w, pickCount, minorPicked, sparksLeft, gameOver)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canSubmitProposal(w, pickCount, minorPicked, sparksLeft, gameOver)) ==> stepNewViewerClosesForms(w, "submitProposal", \result)
   //@ ensures (inv(w) && canSubmitProposal(w, pickCount, minorPicked, sparksLeft, gameOver)) ==> stepSwitchChangesOnlyAfterSaving(w, "submitProposal", \result)
   //@ ensures (inv(w) && canSubmitProposal(w, pickCount, minorPicked, sparksLeft, gameOver)) ==> stepRevealFollowsAGrant(w, "submitProposal", \result)
   return { ...w, tray: "TraySending" };
 }
 
-/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md:436) */
+/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md:440) */
 //@ pure
 export function canReceiveProposalAnswer(w: Workspace): boolean {
   return w.tray === "TraySending";
 }
 
-/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md:436) */
+/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md:440) */
 //@ pure
 export function receiveProposalAnswer(w: Workspace, accepted: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveProposalAnswer(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1103,6 +1157,7 @@ export function receiveProposalAnswer(w: Workspace, accepted: boolean): Workspac
   //@ ensures (inv(w) && canReceiveProposalAnswer(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canReceiveProposalAnswer(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canReceiveProposalAnswer(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canReceiveProposalAnswer(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canReceiveProposalAnswer(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canReceiveProposalAnswer(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canReceiveProposalAnswer(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -1111,37 +1166,38 @@ export function receiveProposalAnswer(w: Workspace, accepted: boolean): Workspac
   //@ ensures (inv(w) && canReceiveProposalAnswer(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canReceiveProposalAnswer(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canReceiveProposalAnswer(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canReceiveProposalAnswer(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canReceiveProposalAnswer(w)) ==> stepNewViewerClosesForms(w, "receiveProposalAnswer", \result)
   //@ ensures (inv(w) && canReceiveProposalAnswer(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "receiveProposalAnswer", \result)
   //@ ensures (inv(w) && canReceiveProposalAnswer(w)) ==> stepRevealFollowsAGrant(w, "receiveProposalAnswer", \result)
   return { ...w, tray: accepted ? "TrayProposed" : "TrayIdle" };
 }
 
-/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md:436) */
+/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md:440) */
 //@ pure
 export function alwaysTrayWorkIsSimulated(w: Workspace): boolean {
   return !(w.tray !== "TrayIdle") || (w.staff.mode === "SimulatedWorld" && w.staff.simRole);
 }
 
-/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md:436) */
+/** Story: Play the simulated world / The propose tray sends a proposal for two to six adults with a spark left (spec/consoleWorkspace.md:440) */
 //@ pure
 export function sometimesProposed(w: Workspace): boolean {
   return w.tray === "TrayProposed";
 }
 
-/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:467) */
+/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:471) */
 //@ pure
 export function worldMenuShown(staff: StaffView): boolean {
   return staff.mode === "SimulatedWorld" && staff.simRole;
 }
 
-/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:467) */
+/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:471) */
 //@ pure
 export function canOpenWorldMenu(w: Workspace): boolean {
   return worldMenuShown(w.staff) && !w.worldMenuOpen;
 }
 
-/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:467) */
+/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:471) */
 //@ pure
 export function openWorldMenu(w: Workspace): Workspace {
   //@ ensures (inv(w) && canOpenWorldMenu(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1150,6 +1206,7 @@ export function openWorldMenu(w: Workspace): Workspace {
   //@ ensures (inv(w) && canOpenWorldMenu(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canOpenWorldMenu(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canOpenWorldMenu(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canOpenWorldMenu(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canOpenWorldMenu(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canOpenWorldMenu(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canOpenWorldMenu(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -1158,19 +1215,20 @@ export function openWorldMenu(w: Workspace): Workspace {
   //@ ensures (inv(w) && canOpenWorldMenu(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canOpenWorldMenu(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canOpenWorldMenu(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canOpenWorldMenu(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canOpenWorldMenu(w)) ==> stepNewViewerClosesForms(w, "openWorldMenu", \result)
   //@ ensures (inv(w) && canOpenWorldMenu(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "openWorldMenu", \result)
   //@ ensures (inv(w) && canOpenWorldMenu(w)) ==> stepRevealFollowsAGrant(w, "openWorldMenu", \result)
   return { ...w, worldMenuOpen: true };
 }
 
-/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:467) */
+/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:471) */
 //@ pure
 export function canCloseWorldMenu(w: Workspace): boolean {
   return w.worldMenuOpen;
 }
 
-/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:467) */
+/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:471) */
 //@ pure
 export function closeWorldMenu(w: Workspace): Workspace {
   //@ ensures (inv(w) && canCloseWorldMenu(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1179,6 +1237,7 @@ export function closeWorldMenu(w: Workspace): Workspace {
   //@ ensures (inv(w) && canCloseWorldMenu(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canCloseWorldMenu(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canCloseWorldMenu(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canCloseWorldMenu(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canCloseWorldMenu(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canCloseWorldMenu(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canCloseWorldMenu(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -1187,19 +1246,20 @@ export function closeWorldMenu(w: Workspace): Workspace {
   //@ ensures (inv(w) && canCloseWorldMenu(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canCloseWorldMenu(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canCloseWorldMenu(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canCloseWorldMenu(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canCloseWorldMenu(w)) ==> stepNewViewerClosesForms(w, "closeWorldMenu", \result)
   //@ ensures (inv(w) && canCloseWorldMenu(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "closeWorldMenu", \result)
   //@ ensures (inv(w) && canCloseWorldMenu(w)) ==> stepRevealFollowsAGrant(w, "closeWorldMenu", \result)
   return { ...w, worldMenuOpen: false };
 }
 
-/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:467) */
+/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:471) */
 //@ pure
 export function canSendWorldEvent(w: Workspace, worldEvent: WorldEvent): boolean {
   return w.worldMenuOpen && worldMenuShown(w.staff);
 }
 
-/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:467) */
+/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:471) */
 //@ pure
 export function sendWorldEvent(w: Workspace, worldEvent: WorldEvent): Workspace {
   //@ ensures (inv(w) && canSendWorldEvent(w, worldEvent)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1208,6 +1268,7 @@ export function sendWorldEvent(w: Workspace, worldEvent: WorldEvent): Workspace 
   //@ ensures (inv(w) && canSendWorldEvent(w, worldEvent)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canSendWorldEvent(w, worldEvent)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canSendWorldEvent(w, worldEvent)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canSendWorldEvent(w, worldEvent)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canSendWorldEvent(w, worldEvent)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canSendWorldEvent(w, worldEvent)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canSendWorldEvent(w, worldEvent)) ==> alwaysSavedSwitchWasShown(\result)
@@ -1216,37 +1277,38 @@ export function sendWorldEvent(w: Workspace, worldEvent: WorldEvent): Workspace 
   //@ ensures (inv(w) && canSendWorldEvent(w, worldEvent)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canSendWorldEvent(w, worldEvent)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canSendWorldEvent(w, worldEvent)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canSendWorldEvent(w, worldEvent)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canSendWorldEvent(w, worldEvent)) ==> stepNewViewerClosesForms(w, "sendWorldEvent", \result)
   //@ ensures (inv(w) && canSendWorldEvent(w, worldEvent)) ==> stepSwitchChangesOnlyAfterSaving(w, "sendWorldEvent", \result)
   //@ ensures (inv(w) && canSendWorldEvent(w, worldEvent)) ==> stepRevealFollowsAGrant(w, "sendWorldEvent", \result)
   return { ...w, worldMenuOpen: false, worldEventSent: true };
 }
 
-/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:467) */
+/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:471) */
 //@ pure
 export function alwaysWorldMenuIsSimulated(w: Workspace): boolean {
   return !(w.worldMenuOpen || w.worldEventSent) || (w.staff.mode === "SimulatedWorld" && w.staff.simRole);
 }
 
-/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:467) */
+/** Story: Play the simulated world / The world menu exists only in the simulated world (spec/consoleWorkspace.md:471) */
 //@ pure
 export function sometimesWorldEventSent(w: Workspace): boolean {
   return w.worldEventSent;
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:498) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
 //@ pure
 export function revealOffered(staff: StaffView): boolean {
   return staff.safety && staff.mode !== "SimulatedWorld" && !staff.globalPii;
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:498) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
 //@ pure
 export function canStartReveal(w: Workspace): boolean {
   return revealOffered(w.staff) && w.reveal.phase === "RevealHidden";
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:498) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
 //@ pure
 export function startReveal(w: Workspace): Workspace {
   //@ ensures (inv(w) && canStartReveal(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1255,6 +1317,7 @@ export function startReveal(w: Workspace): Workspace {
   //@ ensures (inv(w) && canStartReveal(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canStartReveal(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canStartReveal(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canStartReveal(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canStartReveal(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canStartReveal(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canStartReveal(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -1263,19 +1326,20 @@ export function startReveal(w: Workspace): Workspace {
   //@ ensures (inv(w) && canStartReveal(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canStartReveal(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canStartReveal(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canStartReveal(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canStartReveal(w)) ==> stepNewViewerClosesForms(w, "startReveal", \result)
   //@ ensures (inv(w) && canStartReveal(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "startReveal", \result)
   //@ ensures (inv(w) && canStartReveal(w)) ==> stepRevealFollowsAGrant(w, "startReveal", \result)
   return { ...w, reveal: ({ phase: "RevealDrafting", reasonReady: false, minutes: maxRevealMinutes } as RevealForm) };
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:498) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
 //@ pure
 export function canTypeRevealReason(w: Workspace): boolean {
   return w.reveal.phase === "RevealDrafting";
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:498) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
 //@ pure
 export function typeRevealReason(w: Workspace, reasonChars: number): Workspace {
   //@ ensures (inv(w) && canTypeRevealReason(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1284,6 +1348,7 @@ export function typeRevealReason(w: Workspace, reasonChars: number): Workspace {
   //@ ensures (inv(w) && canTypeRevealReason(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canTypeRevealReason(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canTypeRevealReason(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canTypeRevealReason(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canTypeRevealReason(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canTypeRevealReason(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canTypeRevealReason(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -1292,19 +1357,20 @@ export function typeRevealReason(w: Workspace, reasonChars: number): Workspace {
   //@ ensures (inv(w) && canTypeRevealReason(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canTypeRevealReason(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canTypeRevealReason(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canTypeRevealReason(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canTypeRevealReason(w)) ==> stepNewViewerClosesForms(w, "typeRevealReason", \result)
   //@ ensures (inv(w) && canTypeRevealReason(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "typeRevealReason", \result)
   //@ ensures (inv(w) && canTypeRevealReason(w)) ==> stepRevealFollowsAGrant(w, "typeRevealReason", \result)
   return { ...w, reveal: ({ ...w.reveal, reasonReady: reasonChars >= minReasonChars } as RevealForm) };
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:498) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
 //@ pure
 export function canChooseRevealMinutes(w: Workspace, minutes: number): boolean {
   return w.reveal.phase === "RevealDrafting" && revealMinuteChoices.includes(minutes);
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:498) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
 //@ pure
 export function chooseRevealMinutes(w: Workspace, minutes: number): Workspace {
   //@ ensures (inv(w) && canChooseRevealMinutes(w, minutes)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1313,6 +1379,7 @@ export function chooseRevealMinutes(w: Workspace, minutes: number): Workspace {
   //@ ensures (inv(w) && canChooseRevealMinutes(w, minutes)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canChooseRevealMinutes(w, minutes)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canChooseRevealMinutes(w, minutes)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canChooseRevealMinutes(w, minutes)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canChooseRevealMinutes(w, minutes)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canChooseRevealMinutes(w, minutes)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canChooseRevealMinutes(w, minutes)) ==> alwaysSavedSwitchWasShown(\result)
@@ -1321,19 +1388,20 @@ export function chooseRevealMinutes(w: Workspace, minutes: number): Workspace {
   //@ ensures (inv(w) && canChooseRevealMinutes(w, minutes)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canChooseRevealMinutes(w, minutes)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canChooseRevealMinutes(w, minutes)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canChooseRevealMinutes(w, minutes)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canChooseRevealMinutes(w, minutes)) ==> stepNewViewerClosesForms(w, "chooseRevealMinutes", \result)
   //@ ensures (inv(w) && canChooseRevealMinutes(w, minutes)) ==> stepSwitchChangesOnlyAfterSaving(w, "chooseRevealMinutes", \result)
   //@ ensures (inv(w) && canChooseRevealMinutes(w, minutes)) ==> stepRevealFollowsAGrant(w, "chooseRevealMinutes", \result)
   return { ...w, reveal: ({ ...w.reveal, minutes: minutes } as RevealForm) };
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:498) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
 //@ pure
 export function canCancelReveal(w: Workspace): boolean {
   return w.reveal.phase === "RevealDrafting";
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:498) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
 //@ pure
 export function cancelReveal(w: Workspace): Workspace {
   //@ ensures (inv(w) && canCancelReveal(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1342,6 +1410,7 @@ export function cancelReveal(w: Workspace): Workspace {
   //@ ensures (inv(w) && canCancelReveal(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canCancelReveal(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canCancelReveal(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canCancelReveal(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canCancelReveal(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canCancelReveal(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canCancelReveal(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -1350,19 +1419,20 @@ export function cancelReveal(w: Workspace): Workspace {
   //@ ensures (inv(w) && canCancelReveal(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canCancelReveal(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canCancelReveal(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canCancelReveal(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canCancelReveal(w)) ==> stepNewViewerClosesForms(w, "cancelReveal", \result)
   //@ ensures (inv(w) && canCancelReveal(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "cancelReveal", \result)
   //@ ensures (inv(w) && canCancelReveal(w)) ==> stepRevealFollowsAGrant(w, "cancelReveal", \result)
   return { ...w, reveal: ({ ...w.reveal, phase: "RevealHidden" } as RevealForm) };
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:498) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
 //@ pure
 export function canSubmitReveal(w: Workspace): boolean {
   return w.reveal.phase === "RevealDrafting" && w.reveal.reasonReady && revealOffered(w.staff);
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:498) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
 //@ pure
 export function submitReveal(w: Workspace): Workspace {
   //@ ensures (inv(w) && canSubmitReveal(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1371,6 +1441,7 @@ export function submitReveal(w: Workspace): Workspace {
   //@ ensures (inv(w) && canSubmitReveal(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canSubmitReveal(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canSubmitReveal(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canSubmitReveal(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canSubmitReveal(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canSubmitReveal(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canSubmitReveal(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -1379,19 +1450,20 @@ export function submitReveal(w: Workspace): Workspace {
   //@ ensures (inv(w) && canSubmitReveal(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canSubmitReveal(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canSubmitReveal(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canSubmitReveal(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canSubmitReveal(w)) ==> stepNewViewerClosesForms(w, "submitReveal", \result)
   //@ ensures (inv(w) && canSubmitReveal(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "submitReveal", \result)
   //@ ensures (inv(w) && canSubmitReveal(w)) ==> stepRevealFollowsAGrant(w, "submitReveal", \result)
   return { ...w, reveal: ({ ...w.reveal, phase: "RevealSending" } as RevealForm) };
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:498) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
 //@ pure
 export function canReceiveRevealAnswer(w: Workspace): boolean {
   return w.reveal.phase === "RevealSending";
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:498) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
 //@ pure
 export function receiveRevealAnswer(w: Workspace, granted: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveRevealAnswer(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1400,6 +1472,7 @@ export function receiveRevealAnswer(w: Workspace, granted: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveRevealAnswer(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canReceiveRevealAnswer(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canReceiveRevealAnswer(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canReceiveRevealAnswer(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canReceiveRevealAnswer(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canReceiveRevealAnswer(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canReceiveRevealAnswer(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -1408,31 +1481,38 @@ export function receiveRevealAnswer(w: Workspace, granted: boolean): Workspace {
   //@ ensures (inv(w) && canReceiveRevealAnswer(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canReceiveRevealAnswer(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canReceiveRevealAnswer(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canReceiveRevealAnswer(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canReceiveRevealAnswer(w)) ==> stepNewViewerClosesForms(w, "receiveRevealAnswer", \result)
   //@ ensures (inv(w) && canReceiveRevealAnswer(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "receiveRevealAnswer", \result)
   //@ ensures (inv(w) && canReceiveRevealAnswer(w)) ==> stepRevealFollowsAGrant(w, "receiveRevealAnswer", \result)
   return { ...w, reveal: ({ ...w.reveal, phase: granted ? "RevealGranted" : "RevealDrafting" } as RevealForm) };
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:498) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
 //@ pure
 export function alwaysRevealHasAReasonAndALimit(w: Workspace): boolean {
   return !(w.reveal.phase === "RevealSending" || w.reveal.phase === "RevealGranted") || (w.reveal.reasonReady && revealMinuteChoices.includes(w.reveal.minutes) && revealOffered(w.staff));
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:498) */
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
+//@ pure
+export function alwaysRevealLengthIsAChoice(w: Workspace): boolean {
+  return revealMinuteChoices.includes(w.reveal.minutes);
+}
+
+/** Story: Reveal one member's private data with a logged reason / A reveal needs real data, the safety role and a reason (spec/consoleWorkspace.md:502) */
 //@ pure
 export function stepRevealFollowsAGrant(before: Workspace, via: string, after: Workspace): boolean {
   return !(after.reveal.phase === "RevealGranted" && before.reveal.phase !== "RevealGranted") || (via === "receiveRevealAnswer" && before.reveal.phase === "RevealSending");
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal ends early on request or when its time passes (spec/consoleWorkspace.md:549) */
+/** Story: Reveal one member's private data with a logged reason / A reveal ends early on request or when its time passes (spec/consoleWorkspace.md:555) */
 //@ pure
 export function canEndReveal(w: Workspace): boolean {
   return w.reveal.phase === "RevealGranted";
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal ends early on request or when its time passes (spec/consoleWorkspace.md:549) */
+/** Story: Reveal one member's private data with a logged reason / A reveal ends early on request or when its time passes (spec/consoleWorkspace.md:555) */
 //@ pure
 export function endReveal(w: Workspace): Workspace {
   //@ ensures (inv(w) && canEndReveal(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1441,6 +1521,7 @@ export function endReveal(w: Workspace): Workspace {
   //@ ensures (inv(w) && canEndReveal(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canEndReveal(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canEndReveal(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canEndReveal(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canEndReveal(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canEndReveal(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canEndReveal(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -1449,19 +1530,20 @@ export function endReveal(w: Workspace): Workspace {
   //@ ensures (inv(w) && canEndReveal(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canEndReveal(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canEndReveal(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canEndReveal(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canEndReveal(w)) ==> stepNewViewerClosesForms(w, "endReveal", \result)
   //@ ensures (inv(w) && canEndReveal(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "endReveal", \result)
   //@ ensures (inv(w) && canEndReveal(w)) ==> stepRevealFollowsAGrant(w, "endReveal", \result)
   return { ...w, reveal: ({ ...w.reveal, phase: "RevealHidden" } as RevealForm) };
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal ends early on request or when its time passes (spec/consoleWorkspace.md:549) */
+/** Story: Reveal one member's private data with a logged reason / A reveal ends early on request or when its time passes (spec/consoleWorkspace.md:555) */
 //@ pure
 export function canExpireReveal(w: Workspace): boolean {
   return w.reveal.phase === "RevealGranted";
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal ends early on request or when its time passes (spec/consoleWorkspace.md:549) */
+/** Story: Reveal one member's private data with a logged reason / A reveal ends early on request or when its time passes (spec/consoleWorkspace.md:555) */
 //@ pure
 export function expireReveal(w: Workspace): Workspace {
   //@ ensures (inv(w) && canExpireReveal(w)) ==> alwaysAdminHoldsEveryRole(\result)
@@ -1470,6 +1552,7 @@ export function expireReveal(w: Workspace): Workspace {
   //@ ensures (inv(w) && canExpireReveal(w)) ==> alwaysHiddenMinorTextIsNeverReleased(\result)
   //@ ensures (inv(w) && canExpireReveal(w)) ==> alwaysCaseActionNeedsAnActingSafetyViewer(\result)
   //@ ensures (inv(w) && canExpireReveal(w)) ==> alwaysBanNeedsTheService(\result)
+  //@ ensures (inv(w) && canExpireReveal(w)) ==> alwaysASentReportDecisionIsAllowed(\result)
   //@ ensures (inv(w) && canExpireReveal(w)) ==> alwaysReportDecisionNeedsANote(\result)
   //@ ensures (inv(w) && canExpireReveal(w)) ==> alwaysConfigNeedsTheAnalystRole(\result)
   //@ ensures (inv(w) && canExpireReveal(w)) ==> alwaysSavedSwitchWasShown(\result)
@@ -1478,13 +1561,14 @@ export function expireReveal(w: Workspace): Workspace {
   //@ ensures (inv(w) && canExpireReveal(w)) ==> alwaysTrayWorkIsSimulated(\result)
   //@ ensures (inv(w) && canExpireReveal(w)) ==> alwaysWorldMenuIsSimulated(\result)
   //@ ensures (inv(w) && canExpireReveal(w)) ==> alwaysRevealHasAReasonAndALimit(\result)
+  //@ ensures (inv(w) && canExpireReveal(w)) ==> alwaysRevealLengthIsAChoice(\result)
   //@ ensures (inv(w) && canExpireReveal(w)) ==> stepNewViewerClosesForms(w, "expireReveal", \result)
   //@ ensures (inv(w) && canExpireReveal(w)) ==> stepSwitchChangesOnlyAfterSaving(w, "expireReveal", \result)
   //@ ensures (inv(w) && canExpireReveal(w)) ==> stepRevealFollowsAGrant(w, "expireReveal", \result)
   return { ...w, reveal: ({ ...w.reveal, phase: "RevealHidden" } as RevealForm) };
 }
 
-/** Story: Reveal one member's private data with a logged reason / A reveal ends early on request or when its time passes (spec/consoleWorkspace.md:549) */
+/** Story: Reveal one member's private data with a logged reason / A reveal ends early on request or when its time passes (spec/consoleWorkspace.md:555) */
 //@ pure
 export function sometimesRevealGranted(w: Workspace): boolean {
   return w.reveal.phase === "RevealGranted";

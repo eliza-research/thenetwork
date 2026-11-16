@@ -10,16 +10,19 @@ import { type AuthMessage, AuthMessageView } from "../../ui/src/components/AuthM
 import { AuthPhoneView, type PhoneFieldError } from "../../ui/src/components/AuthPhoneView.tsx";
 import { ConnectedAssistantsView } from "../../ui/src/components/ConnectedAssistantsView.tsx";
 import { ConsentView } from "../../ui/src/components/ConsentView.tsx";
-import type { McpApp } from "./apps.ts";
+import { connectorApp, type McpApp } from "./apps.ts";
 import { connectorCss, styleSource } from "./pages/styles.ts";
 import type { Grant, Scope } from "./store.ts";
 
 const TURNSTILE = "https://challenges.cloudflare.com";
 
-/** The brand record of the app that serves the page. */
+/**
+ * The brand record of the app that serves the page, by its registry id. The id, not the host, names the brand:
+ * a staging or development host (STAGING_SITE_ORIGINS) serves the same app as its production domain.
+ */
 export function appKeyOf(app: McpApp): AppKey {
-  const key = appKeys.find(k => brandFor(k).domain === app.domain);
-  if (!key) throw new Error(`No brand record for ${app.domain}`);
+  const key = appKeys.find(k => k === connectorApp[app.id] && brandFor(k).app === k);
+  if (!key) throw new Error(`No brand record for app ${app.id}`);
   return key;
 }
 

@@ -13,7 +13,7 @@ export type WordmarkProps = ComponentProps<"a"> & {
 
 /**
  * The header mark of a site: the logo and the name, as a link to the landing page.
- * @model spec/brandIdentity.md
+ * Its rules come from `spec/brandIdentity.md`, a spec of decisions with no state of its own.
  */
 export function Wordmark({ brand, href = "/", className, children = brand.name, ...props }: WordmarkProps) {
   return (
