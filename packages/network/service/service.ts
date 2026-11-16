@@ -2987,7 +2987,7 @@ export class NetworkService implements RuntimeHost {
     }
     if (result.status===200 && result.body && typeof result.body==="object" && "outcome" in result.body && result.body.outcome==="handled") {
       const handled=result.body as Extract<TurnResponse,{outcome:"handled"}>;
-      if (handled.app && handled.memberId && handled.replyIds?.length) {
+      if (handled.replyKind !== "compliance" && handled.app && handled.memberId && handled.replyIds?.length) {
         const memberId = handled.memberId;
         const rt = await this.runtimeOfMember(handled.app, memberId);
         const replyIds = handled.replyIds;

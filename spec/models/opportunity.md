@@ -12,6 +12,8 @@ Production uses the generated [opportunity lifecycle](../opportunityLifecycle.md
 
 The [outreach policy](../outreachPolicy.md) counts a confirmed initial invitation at probe expiry or after 72 hours. This model covers the pair path. Group deadlines, pre-receipt stored entries, and the one-time re-engagement are outside its bounds.
 
+The executable [rescheduling rules](../meetingReschedule.md) cover independent consent to a new start and the booked revision. The [calendar](../calendarInvite.md) and [group late arrival](../groupLateArrival.md) rules use that revision to validate a later download or send. The retained model below abstracts from revised starts and group logistics.
+
 Imported from `quint/opportunity.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
