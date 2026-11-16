@@ -1,7 +1,7 @@
 # Spec reference
 
 This is the Vibestack spec-language reference at revision
-[`8eac8889`](https://github.com/lalalune/vibestack/blob/8eac88896b72146440d09d91a009fc66a4501e5a/SPEC.md).
+[`3cd9d765`](https://github.com/lalalune/vibestack/blob/3cd9d765e9d17cbcbfd0789db86cb4236bb53087/SPEC.md).
 Use [The Network command map](README.md#commands) when this reference uses
 standalone Vibestack commands. The Network keeps its product requirements in
 [`spec/product/`](spec/product/README.md) and the action-based Quint flow
@@ -508,7 +508,7 @@ change when read again, which must do what the clean event does. `options`
 are `view` (what of the state `observe` shows), `keys` (the entities walks
 interleave), `walks` (at most this many; `0` for a slow driver) and `steps`.
 The walks use the fixed normal or nightly profile
-([budgets](https://github.com/lalalune/vibestack/blob/8eac88896b72146440d09d91a009fc66a4501e5a/CONTRIBUTING.md#seeds-and-budgets)).
+([budgets](https://github.com/lalalune/vibestack/blob/3cd9d765e9d17cbcbfd0789db86cb4236bb53087/CONTRIBUTING.md#seeds-and-budgets)).
 
 - **A disagreement is saved.** A journey or walk that disagrees is shrunk
   and written to `test/counterexamples/<name>/<hash>.json`, which every
@@ -539,7 +539,7 @@ under `src/`.
   arm64 and on Apple silicon; elsewhere the stage prints a `-` line and CI
   explores the page.
 - **For a fixed time, from no seed.** The fixed profile's seconds, Chrome's
-  start included ([budgets](https://github.com/lalalune/vibestack/blob/8eac88896b72146440d09d91a009fc66a4501e5a/CONTRIBUTING.md#seeds-and-budgets)). The
+  start included ([budgets](https://github.com/lalalune/vibestack/blob/3cd9d765e9d17cbcbfd0789db86cb4236bb53087/CONTRIBUTING.md#seeds-and-budgets)). The
   actions are random, so two runs explore differently.
 - **`test/bombadil.ts` says what must hold.** It is an ES module Bombadil
   bundles itself. Re-export `@antithesishq/bombadil/browser/defaults` (no
@@ -588,9 +588,11 @@ under `src/`.
   the changed code. A passing typecheck is kept under what the compiler read:
   the package's files but its Markdown and Quint, its `tsconfig.json` and the
   configurations it extends, every file outside `node_modules` the compile
-  read, the lock file and the compiler's bytes. A driver's passing run is kept
-  under the files its tests read and the events the simulator found; a
-  failure, and a `driver:` program, run every time.
+  read, the lock file and the compiler's bytes. A cached test pass follows
+  the files the tests read. Its inputs exclude Markdown under `spec/` and
+  the Quint copy in `gen/`, since the tests read the generated modules.
+  A cached driver's pass also follows the events found by the simulator.
+  Failed tests and `driver:` programs run every time.
   The specs are simulated at once.
 - **The spec covers the rules, not the plumbing.** Chat, HTTP and storage stay
   hand-written around the generated core, as `vibestack/examples/dashboard/src/notify.vibe`
