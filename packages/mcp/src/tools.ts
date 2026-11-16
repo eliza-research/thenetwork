@@ -6,6 +6,7 @@ import {
   initial as initialDraftPreparation, signupDraftAppEnabled, signupDraftDeadline, signupDraftLifetimeMs,
   signupDraftRequestAllowed, step as stepDraftPreparation,
 } from "../../core/src/generated/mcpSignupDraft.ts";
+import { type MemberStatus, type NextStep, nextStepFor, toolAllowedFor } from "../../core/src/generated/connectorTools.ts";
 import { publicSignupUsesBrowser } from "../../core/src/generated/siteEnrollment.ts";
 import { appsOn, type McpApp, type McpAppId, type Surface } from "./apps.ts";
 import type { AssistantKind, PlatformHooks, PublicStatus } from "./hooks.ts";
@@ -40,7 +41,7 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
   const ownApp = { type: "string", enum: [host.id] };
   const joinMode = { type: "string", enum: ["invite", "open", "waitlist"] };
   const ages = object({ join: { type: "integer" }, matching: { type: "integer" } });
-  const status = { type: "string", enum: Object.keys(NEXT) };
+  const status = { type: "string", enum: Object.keys(memberStatus) };
   const publicApp = object({
     id: appId, name: text, site: text, what: text, powered_by: text,
     join: object({ mode: joinMode, url: text, keyword: nullableText, how: text }),
@@ -228,16 +229,20 @@ function publicInfo(a: McpApp, surface: Surface) {
   };
 }
 
-const NEXT: Record<PublicStatus, (a: McpApp) => string> = {
-  not_joined: a => a.joinMode === "invite"
-    ? `Not joined. ${invitationGuidance(a)}`
-    : `Not joined. ${publicSignupUsesBrowser(a.id) ? `Open ${publicSignupUrl(a)} to sign up.` : skillSignup(a)}`,
-  invited: a => `Invited. Reply to the invitation text or ${publicSignupUsesBrowser(a.id) ? `open ${publicSignupUrl(a)}.` : `follow ${publicSignupUrl(a)} in your agent.`}`,
-  onboarding: () => "Joining is not finished. Reply to the last text from the agent to finish.",
-  active: () => "You are signed up.",
-  stopped: () => `Messages are stopped. To start again, text START to the line.`,
-  on_hold: a => `On hold. The person should email ${a.links.support.replace("mailto:", "")}.`,
+const memberStatus: Record<PublicStatus, MemberStatus> = { not_joined: "NotJoined", invited: "Invited", onboarding: "Onboarding", active: "Active", stopped: "Stopped", on_hold: "OnHold" };
+
+const NEXT_TEXT: Record<NextStep, (a: McpApp) => string> = {
+  GetInvitation: a => `Not joined. ${invitationGuidance(a)}`,
+  JoinOnSite: a => `Not joined. ${publicSignupUsesBrowser(a.id) ? `Open ${publicSignupUrl(a)} to sign up.` : skillSignup(a)}`,
+  AcceptInvitation: a => `Invited. Reply to the invitation text or ${publicSignupUsesBrowser(a.id) ? `open ${publicSignupUrl(a)}.` : `follow ${publicSignupUrl(a)} in your agent.`}`,
+  ReplyToLastText: () => "Joining is not finished. Reply to the last text from the agent to finish.",
+  AlreadySignedUp: () => "You are signed up.",
+  TextStart: () => `Messages are stopped. To start again, text START to the line.`,
+  EmailSupport: a => `On hold. The person should email ${a.links.support.replace("mailto:", "")}.`,
 };
+
+/** The next-step text for a status (spec/connectorTools.md:50). */
+const nextStep = (status: PublicStatus, a: McpApp): string => NEXT_TEXT[nextStepFor(memberStatus[status], a.joinMode === "invite")](a);
 
 export interface CallContext {
   apps: Record<McpAppId, McpApp>;
@@ -317,7 +322,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       if (!grantStillTheirs(g.personId, now)) return { kind: "invalid_grant" };
       const status: PublicStatus = now === null ? "not_joined" : await c.hooks.status(now, g.app);
       const a = c.apps[g.app];
-      return { kind: "ok", data: { app: a.id, status, next_step: NEXT[status](a), manage_url: a.links.support } };
+      return { kind: "ok", data: { app: a.id, status, next_step: nextStep(status, a), manage_url: a.links.support } };
     }
     case "submit_profile": {
       const g = c.grant;
@@ -328,9 +333,9 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       if (!c.hooks.submitProfile) return { kind: "error", message: "Profiles cannot be sent here yet." };
       const status: PublicStatus = now === null ? "not_joined" : await c.hooks.status(now, g.app);
       // Only a joined, live member: the profile never creates a member and never reaches a stopped or held one.
-      if (now === null || (status !== "active" && status !== "onboarding")) return { kind: "ok", data: { app: a.id, submitted: false, status, next_step: NEXT[status](a) } };
+      if (now === null || !toolAllowedFor("SubmitProfileTool", memberStatus[status])) return { kind: "ok", data: { app: a.id, submitted: false, status, next_step: nextStep(status, a) } };
       const r = await c.hooks.submitProfile(now, g.app, g.phoneKey, chk.about!);
-      if (r !== "accepted") return { kind: "ok", data: { app: a.id, submitted: false, status: "not_joined", next_step: NEXT.not_joined(a) } };
+      if (r !== "accepted") return { kind: "ok", data: { app: a.id, submitted: false, status: "not_joined", next_step: nextStep("not_joined", a) } };
       return { kind: "ok", data: { app: a.id, submitted: true, next_step: `${a.name} has it. It may text the person a short question or two.` } };
     }
     case "get_updates": {

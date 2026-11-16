@@ -1,11 +1,11 @@
 // GENERATED from spec/observatorySync.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: See the selected app and mode / Changing the view invalidates the old snapshot and pending reads (spec/observatorySync.md:9) */
+/** Story: See the selected app and mode / Changing the view invalidates the old snapshot and pending reads (spec/observatorySync.md) */
 export type SnapshotPhase = "Unsynced" | "Loading" | "Live";
-/** Story: See the selected app and mode / Changing the view invalidates the old snapshot and pending reads (spec/observatorySync.md:9) */
+/** Story: See the selected app and mode / Changing the view invalidates the old snapshot and pending reads (spec/observatorySync.md) */
 export interface ObservatorySync { appName: string; viewMode: string; generation: number; phase: SnapshotPhase; version: number }
-/** Story: Follow live updates without replaying changes / Only the next data version can change the view (spec/observatorySync.md:60) */
+/** Story: Follow live updates without replaying changes / Only the next data version can change the view (spec/observatorySync.md) */
 export type DeltaAction = "BufferDelta" | "ReloadSnapshot" | "DropDelta" | "RefreshMetadata" | "ApplyData";
 
 /** One variant per transition in the spec. */
@@ -16,7 +16,7 @@ export type Event =
   | { type: "startLoad" }
   | { type: "acceptDelta"; version: number };
 
-/** Story: See the selected app and mode / Changing the view invalidates the old snapshot and pending reads (spec/observatorySync.md:9) */
+/** Story: See the selected app and mode / Changing the view invalidates the old snapshot and pending reads (spec/observatorySync.md) */
 export const initial: ObservatorySync = { appName: "ntwrk", viewMode: "game", generation: 0, phase: "Unsynced", version: 0 };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -25,13 +25,13 @@ export function inv(current: ObservatorySync): boolean {
   return true;
 }
 
-/** Story: See the selected app and mode / Changing the view invalidates the old snapshot and pending reads (spec/observatorySync.md:9) */
+/** Story: See the selected app and mode / Changing the view invalidates the old snapshot and pending reads (spec/observatorySync.md) */
 //@ pure
 export function canChangeView(s: ObservatorySync, appName: string, viewMode: string): boolean {
   return appName !== s.appName || viewMode !== s.viewMode;
 }
 
-/** Story: See the selected app and mode / Changing the view invalidates the old snapshot and pending reads (spec/observatorySync.md:9) */
+/** Story: See the selected app and mode / Changing the view invalidates the old snapshot and pending reads (spec/observatorySync.md) */
 //@ pure
 export function changeView(s: ObservatorySync, appName: string, viewMode: string): ObservatorySync {
   //@ ensures (inv(s) && canChangeView(s, appName, viewMode)) ==> stepReadGenerationNeverFalls(s, \result)
@@ -39,13 +39,13 @@ export function changeView(s: ObservatorySync, appName: string, viewMode: string
   return { appName: appName, viewMode: viewMode, generation: exact_observatorySync(s.generation + 1), phase: "Unsynced", version: 0 };
 }
 
-/** Story: See the selected app and mode / Only the current load can publish or fail a snapshot (spec/observatorySync.md:30) */
+/** Story: See the selected app and mode / Only the current load can publish or fail a snapshot (spec/observatorySync.md) */
 //@ pure
 export function ownsLoad(s: ObservatorySync, generation: number): boolean {
   return s.phase === "Loading" && s.generation === generation;
 }
 
-/** Story: See the selected app and mode / Only the current load can publish or fail a snapshot (spec/observatorySync.md:30) */
+/** Story: See the selected app and mode / Only the current load can publish or fail a snapshot (spec/observatorySync.md) */
 //@ pure
 export function publishSnapshot(s: ObservatorySync, generation: number, appName: string, viewMode: string, version: number): ObservatorySync {
   //@ ensures (inv(s) && canPublishSnapshot(s, generation, appName, viewMode)) ==> stepReadGenerationNeverFalls(s, \result)
@@ -53,7 +53,7 @@ export function publishSnapshot(s: ObservatorySync, generation: number, appName:
   return { ...s, phase: "Live", version: version };
 }
 
-/** Story: See the selected app and mode / Only the current load can publish or fail a snapshot (spec/observatorySync.md:30) */
+/** Story: See the selected app and mode / Only the current load can publish or fail a snapshot (spec/observatorySync.md) */
 //@ pure
 export function failLoad(s: ObservatorySync, generation: number): ObservatorySync {
   //@ ensures (inv(s) && canFailLoad(s, generation)) ==> stepReadGenerationNeverFalls(s, \result)
@@ -61,19 +61,19 @@ export function failLoad(s: ObservatorySync, generation: number): ObservatorySyn
   return { ...s, phase: "Unsynced" };
 }
 
-/** Story: See the selected app and mode / Only the current load can publish or fail a snapshot (spec/observatorySync.md:30) */
+/** Story: See the selected app and mode / Only the current load can publish or fail a snapshot (spec/observatorySync.md) */
 //@ pure
 export function stepReadGenerationNeverFalls(before: ObservatorySync, after: ObservatorySync): boolean {
   return after.generation >= before.generation;
 }
 
-/** Story: See the selected app and mode / Only the current load can publish or fail a snapshot (spec/observatorySync.md:30) */
+/** Story: See the selected app and mode / Only the current load can publish or fail a snapshot (spec/observatorySync.md) */
 //@ pure
 export function sometimesSnapshotIsLive(s: ObservatorySync): boolean {
   return s.phase === "Live";
 }
 
-/** Story: See the selected app and mode / Only the current load can publish or fail a snapshot (spec/observatorySync.md:30) */
+/** Story: See the selected app and mode / Only the current load can publish or fail a snapshot (spec/observatorySync.md) */
 //@ pure
 export function startLoad(s: ObservatorySync): ObservatorySync {
   //@ ensures (inv(s)) ==> stepReadGenerationNeverFalls(s, \result)
@@ -81,25 +81,25 @@ export function startLoad(s: ObservatorySync): ObservatorySync {
   return { ...s, generation: exact_observatorySync(s.generation + 1), phase: "Loading" };
 }
 
-/** Story: See the selected app and mode / Only the current load can publish or fail a snapshot (spec/observatorySync.md:30) */
+/** Story: See the selected app and mode / Only the current load can publish or fail a snapshot (spec/observatorySync.md) */
 //@ pure
 export function canPublishSnapshot(s: ObservatorySync, generation: number, appName: string, viewMode: string): boolean {
   return ownsLoad(s, generation) && s.appName === appName && s.viewMode === viewMode;
 }
 
-/** Story: See the selected app and mode / Only the current load can publish or fail a snapshot (spec/observatorySync.md:30) */
+/** Story: See the selected app and mode / Only the current load can publish or fail a snapshot (spec/observatorySync.md) */
 //@ pure
 export function canFailLoad(s: ObservatorySync, generation: number): boolean {
   return ownsLoad(s, generation);
 }
 
-/** Story: Follow live updates without replaying changes / Only the next data version can change the view (spec/observatorySync.md:60) */
+/** Story: Follow live updates without replaying changes / Only the next data version can change the view (spec/observatorySync.md) */
 //@ pure
 export function deltaAction(s: ObservatorySync, version: number, resetSignal: boolean): DeltaAction {
   return resetSignal ? "ReloadSnapshot" : (s.phase === "Loading" ? "BufferDelta" : (s.phase === "Unsynced" ? "ReloadSnapshot" : (version < s.version ? "DropDelta" : (version === s.version ? "RefreshMetadata" : (version > exact_observatorySync(s.version + 1) ? "ReloadSnapshot" : "ApplyData")))));
 }
 
-/** Story: Follow live updates without replaying changes / Only the next data version can change the view (spec/observatorySync.md:60) */
+/** Story: Follow live updates without replaying changes / Only the next data version can change the view (spec/observatorySync.md) */
 //@ pure
 export function acceptDelta(s: ObservatorySync, version: number): ObservatorySync {
   //@ ensures (inv(s) && canAcceptDelta(s, version)) ==> stepReadGenerationNeverFalls(s, \result)
@@ -107,19 +107,19 @@ export function acceptDelta(s: ObservatorySync, version: number): ObservatorySyn
   return { ...s, version: version };
 }
 
-/** Story: Follow live updates without replaying changes / Only the next data version can change the view (spec/observatorySync.md:60) */
+/** Story: Follow live updates without replaying changes / Only the next data version can change the view (spec/observatorySync.md) */
 //@ pure
 export function stepDeltasAdvanceOneVersion(before: ObservatorySync, via: string, after: ObservatorySync): boolean {
   return !(via === "acceptDelta") || (before.phase === "Live" && after.version === exact_observatorySync(before.version + 1));
 }
 
-/** Story: Follow live updates without replaying changes / Only the next data version can change the view (spec/observatorySync.md:60) */
+/** Story: Follow live updates without replaying changes / Only the next data version can change the view (spec/observatorySync.md) */
 //@ pure
 export function canAcceptDelta(s: ObservatorySync, version: number): boolean {
   return deltaAction(s, version, false) === "ApplyData";
 }
 
-/** Story: Follow live updates without replaying changes / The activity feed adds each new sequence once (spec/observatorySync.md:83) */
+/** Story: Follow live updates without replaying changes / The activity feed adds each new sequence once (spec/observatorySync.md) */
 //@ pure
 export function acceptsFeedItem(hasTail: boolean, tailSeq: number, itemSeq: number): boolean {
   return !hasTail || itemSeq > tailSeq;

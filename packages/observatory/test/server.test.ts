@@ -49,7 +49,7 @@ describe("observatory server", () => {
     expect(page.status).toBe(200);
     expect(page.headers.get("content-type")).toContain("text/html");
     const html = await page.text();
-    expect(html).toContain('<div id="root">');
+    expect(html).toContain('<div id="root"');
     expect(html).toContain("Network Observatory");
     expect(html).toContain("script-src 'self'");
     expect(html).toContain('<meta name="referrer" content="no-referrer"');
@@ -59,7 +59,7 @@ describe("observatory server", () => {
     for (const [path, contentType, content] of [
       ["/assets/main.js", "text/javascript", "Observatory token"],
       ["/assets/main.css", "text/css", ".leaflet-container"],
-      ["/assets/styles.css", "text/css", ".app"],
+      ["/assets/styles.css", "text/css", ".bg-background"],
     ]) {
       const response = await fetch(base + path);
       expect(response.status).toBe(200);

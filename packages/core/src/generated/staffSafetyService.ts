@@ -1,11 +1,11 @@
 // GENERATED from spec/staffSafetyService.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first (spec/staffSafetyService.md:26) */
+/** Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first (spec/staffSafetyService.md) */
 export type ServiceSafetyPhase = "ServiceSafetyStarting" | "HoldRemainingTargets" | "HoldDidNotApply" | "BanNeedsCrossApp" | "BanNoPerson" | "ReadingBanPhones" | "BanNoPhone" | "ReadingExistingBan" | "BanAlreadyExists" | "ApplyingPhoneBan" | "ApplyingPersonBan" | "PerformingAuditedAction" | "RecordingAuditResult";
-/** Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first (spec/staffSafetyService.md:26) */
+/** Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first (spec/staffSafetyService.md) */
 export interface ServiceSafetyFlow { phase: ServiceSafetyPhase; phoneOnly: boolean }
-/** Story: Resolve a minor signal without dismissing a valid concern / Age clearance dismisses only the selected member's open minor reports (spec/staffSafetyService.md:66) */
+/** Story: Resolve a minor signal without dismissing a valid concern / Age clearance dismisses only the selected member's open minor reports (spec/staffSafetyService.md) */
 export type StaffClearSummary = "ClearRefused" | "ClearSucceeded" | "ClearNoSignal";
 
 /** One variant per transition in the spec. */
@@ -17,7 +17,7 @@ export type Event =
   | { type: "readStaffBanPhones"; hasPhone: boolean }
   | { type: "checkExistingStaffBan"; alreadyBanned: boolean };
 
-/** Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first (spec/staffSafetyService.md:26) */
+/** Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first (spec/staffSafetyService.md) */
 export const initial: ServiceSafetyFlow = { phase: "ServiceSafetyStarting", phoneOnly: false };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -26,152 +26,152 @@ export function inv(current: ServiceSafetyFlow): boolean {
   return true;
 }
 
-/** Story: Hold a member without exposing their other memberships / Staff act within their resolved scope (spec/staffSafetyService.md:9) */
+/** Story: Hold a member without exposing their other memberships / Staff act within their resolved scope (spec/staffSafetyService.md) */
 //@ pure
 export function staffSafetyMembershipLive(membership: string): boolean {
   return membership !== "removed" && membership !== "invited";
 }
 
-/** Story: Hold a member without exposing their other memberships / Staff act within their resolved scope (spec/staffSafetyService.md:9) */
+/** Story: Hold a member without exposing their other memberships / Staff act within their resolved scope (spec/staffSafetyService.md) */
 //@ pure
 export function staffSafetySelectsTarget(everywhere: boolean, requestedRuntime: boolean): boolean {
   return everywhere || requestedRuntime;
 }
 
-/** Story: Hold a member without exposing their other memberships / Staff act within their resolved scope (spec/staffSafetyService.md:9) */
+/** Story: Hold a member without exposing their other memberships / Staff act within their resolved scope (spec/staffSafetyService.md) */
 //@ pure
 export function staffSafetyAuditScope(targets: number): string {
   return targets > 1 ? "every_app" : "this_app";
 }
 
-/** Story: Hold a member without exposing their other memberships / Staff act within their resolved scope (spec/staffSafetyService.md:9) */
+/** Story: Hold a member without exposing their other memberships / Staff act within their resolved scope (spec/staffSafetyService.md) */
 //@ pure
 export function lawLocalStaffTargetStaysInScope(requestedRuntime: boolean): boolean {
   //@ ensures \result === true
   return !staffSafetySelectsTarget(false, requestedRuntime) || requestedRuntime;
 }
 
-/** Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first (spec/staffSafetyService.md:26) */
+/** Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first (spec/staffSafetyService.md) */
 //@ pure
 export function canReadPrimaryHold(flow: ServiceSafetyFlow): boolean {
   return flow.phase === "ServiceSafetyStarting";
 }
 
-/** Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first (spec/staffSafetyService.md:26) */
+/** Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first (spec/staffSafetyService.md) */
 //@ pure
 export function readPrimaryHold(flow: ServiceSafetyFlow, applied: boolean): ServiceSafetyFlow {
   //@ ensures (inv(flow) && canReadPrimaryHold(flow)) ==> stepSafetyResultFollowsAction(flow, "readPrimaryHold", \result)
   return { ...flow, phase: applied ? "HoldRemainingTargets" : "HoldDidNotApply" };
 }
 
-/** Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first (spec/staffSafetyService.md:26) */
+/** Story: Hold a member without exposing their other memberships / Apply a hold to the requested member first (spec/staffSafetyService.md) */
 //@ pure
 export function sometimesCanHoldRelatedTargets(flow: ServiceSafetyFlow): boolean {
   return flow.phase === "HoldRemainingTargets";
 }
 
-/** Story: Hold a member without exposing their other memberships / Keep the requested and result audits in order (spec/staffSafetyService.md:45) */
+/** Story: Hold a member without exposing their other memberships / Keep the requested and result audits in order (spec/staffSafetyService.md) */
 //@ pure
 export function canRecordRequestedSafetyAudit(flow: ServiceSafetyFlow): boolean {
   return flow.phase === "ServiceSafetyStarting";
 }
 
-/** Story: Hold a member without exposing their other memberships / Keep the requested and result audits in order (spec/staffSafetyService.md:45) */
+/** Story: Hold a member without exposing their other memberships / Keep the requested and result audits in order (spec/staffSafetyService.md) */
 //@ pure
 export function recordRequestedSafetyAudit(flow: ServiceSafetyFlow): ServiceSafetyFlow {
   //@ ensures (inv(flow) && canRecordRequestedSafetyAudit(flow)) ==> stepSafetyResultFollowsAction(flow, "recordRequestedSafetyAudit", \result)
   return { ...flow, phase: "PerformingAuditedAction" };
 }
 
-/** Story: Hold a member without exposing their other memberships / Keep the requested and result audits in order (spec/staffSafetyService.md:45) */
+/** Story: Hold a member without exposing their other memberships / Keep the requested and result audits in order (spec/staffSafetyService.md) */
 //@ pure
 export function canRecordCompletedSafetyAction(flow: ServiceSafetyFlow): boolean {
   return flow.phase === "PerformingAuditedAction";
 }
 
-/** Story: Hold a member without exposing their other memberships / Keep the requested and result audits in order (spec/staffSafetyService.md:45) */
+/** Story: Hold a member without exposing their other memberships / Keep the requested and result audits in order (spec/staffSafetyService.md) */
 //@ pure
 export function recordCompletedSafetyAction(flow: ServiceSafetyFlow): ServiceSafetyFlow {
   //@ ensures (inv(flow) && canRecordCompletedSafetyAction(flow)) ==> stepSafetyResultFollowsAction(flow, "recordCompletedSafetyAction", \result)
   return { ...flow, phase: "RecordingAuditResult" };
 }
 
-/** Story: Hold a member without exposing their other memberships / Keep the requested and result audits in order (spec/staffSafetyService.md:45) */
+/** Story: Hold a member without exposing their other memberships / Keep the requested and result audits in order (spec/staffSafetyService.md) */
 //@ pure
 export function stepSafetyResultFollowsAction(before: ServiceSafetyFlow, via: string, after: ServiceSafetyFlow): boolean {
   return !(after.phase === "RecordingAuditResult") || (before.phase === "PerformingAuditedAction" && via === "recordCompletedSafetyAction");
 }
 
-/** Story: Resolve a minor signal without dismissing a valid concern / Age clearance dismisses only the selected member's open minor reports (spec/staffSafetyService.md:66) */
+/** Story: Resolve a minor signal without dismissing a valid concern / Age clearance dismisses only the selected member's open minor reports (spec/staffSafetyService.md) */
 //@ pure
 export function staffAgeMayReviewReports(cleared: boolean, noSignal: boolean): boolean {
   return cleared || noSignal;
 }
 
-/** Story: Resolve a minor signal without dismissing a valid concern / Age clearance dismisses only the selected member's open minor reports (spec/staffSafetyService.md:66) */
+/** Story: Resolve a minor signal without dismissing a valid concern / Age clearance dismisses only the selected member's open minor reports (spec/staffSafetyService.md) */
 //@ pure
 export function staffMinorReportDismissible(sameMember: boolean, minorReport: boolean, open: boolean): boolean {
   return sameMember && minorReport && open;
 }
 
-/** Story: Resolve a minor signal without dismissing a valid concern / Age clearance dismisses only the selected member's open minor reports (spec/staffSafetyService.md:66) */
+/** Story: Resolve a minor signal without dismissing a valid concern / Age clearance dismisses only the selected member's open minor reports (spec/staffSafetyService.md) */
 //@ pure
 export function staffAgeAppCleared(cleared: boolean, dismissed: boolean): boolean {
   return cleared || dismissed;
 }
 
-/** Story: Resolve a minor signal without dismissing a valid concern / Age clearance dismisses only the selected member's open minor reports (spec/staffSafetyService.md:66) */
+/** Story: Resolve a minor signal without dismissing a valid concern / Age clearance dismisses only the selected member's open minor reports (spec/staffSafetyService.md) */
 //@ pure
 export function staffAgeClearSummary(refused: boolean, anyCleared: boolean): StaffClearSummary {
   return refused ? "ClearRefused" : (anyCleared ? "ClearSucceeded" : "ClearNoSignal");
 }
 
-/** Story: Apply a confirmed phone or person ban / Both ban scopes require authority on every app and a linked person (spec/staffSafetyService.md:87) */
+/** Story: Apply a confirmed phone or person ban / Both ban scopes require authority on every app and a linked person (spec/staffSafetyService.md) */
 //@ pure
 export function canStartStaffBan(flow: ServiceSafetyFlow): boolean {
   return flow.phase === "ServiceSafetyStarting";
 }
 
-/** Story: Apply a confirmed phone or person ban / Both ban scopes require authority on every app and a linked person (spec/staffSafetyService.md:87) */
+/** Story: Apply a confirmed phone or person ban / Both ban scopes require authority on every app and a linked person (spec/staffSafetyService.md) */
 //@ pure
 export function startStaffBan(flow: ServiceSafetyFlow, everywhere: boolean, hasPerson: boolean, phoneOnly: boolean): ServiceSafetyFlow {
   //@ ensures (inv(flow) && canStartStaffBan(flow)) ==> stepSafetyResultFollowsAction(flow, "startStaffBan", \result)
   return { phoneOnly: phoneOnly, phase: !everywhere ? "BanNeedsCrossApp" : (!hasPerson ? "BanNoPerson" : "ReadingBanPhones") };
 }
 
-/** Story: Apply a confirmed phone or person ban / Both ban scopes require authority on every app and a linked person (spec/staffSafetyService.md:87) */
+/** Story: Apply a confirmed phone or person ban / Both ban scopes require authority on every app and a linked person (spec/staffSafetyService.md) */
 //@ pure
 export function canReadStaffBanPhones(flow: ServiceSafetyFlow): boolean {
   return flow.phase === "ReadingBanPhones";
 }
 
-/** Story: Apply a confirmed phone or person ban / Both ban scopes require authority on every app and a linked person (spec/staffSafetyService.md:87) */
+/** Story: Apply a confirmed phone or person ban / Both ban scopes require authority on every app and a linked person (spec/staffSafetyService.md) */
 //@ pure
 export function readStaffBanPhones(flow: ServiceSafetyFlow, hasPhone: boolean): ServiceSafetyFlow {
   //@ ensures (inv(flow) && canReadStaffBanPhones(flow)) ==> stepSafetyResultFollowsAction(flow, "readStaffBanPhones", \result)
   return { ...flow, phase: flow.phoneOnly && !hasPhone ? "BanNoPhone" : "ReadingExistingBan" };
 }
 
-/** Story: Apply a confirmed phone or person ban / Both ban scopes require authority on every app and a linked person (spec/staffSafetyService.md:87) */
+/** Story: Apply a confirmed phone or person ban / Both ban scopes require authority on every app and a linked person (spec/staffSafetyService.md) */
 //@ pure
 export function canCheckExistingStaffBan(flow: ServiceSafetyFlow): boolean {
   return flow.phase === "ReadingExistingBan";
 }
 
-/** Story: Apply a confirmed phone or person ban / Both ban scopes require authority on every app and a linked person (spec/staffSafetyService.md:87) */
+/** Story: Apply a confirmed phone or person ban / Both ban scopes require authority on every app and a linked person (spec/staffSafetyService.md) */
 //@ pure
 export function checkExistingStaffBan(flow: ServiceSafetyFlow, alreadyBanned: boolean): ServiceSafetyFlow {
   //@ ensures (inv(flow) && canCheckExistingStaffBan(flow)) ==> stepSafetyResultFollowsAction(flow, "checkExistingStaffBan", \result)
   return { ...flow, phase: alreadyBanned ? "BanAlreadyExists" : (flow.phoneOnly ? "ApplyingPhoneBan" : "ApplyingPersonBan") };
 }
 
-/** Story: Apply a confirmed phone or person ban / Both ban scopes require authority on every app and a linked person (spec/staffSafetyService.md:87) */
+/** Story: Apply a confirmed phone or person ban / Both ban scopes require authority on every app and a linked person (spec/staffSafetyService.md) */
 //@ pure
 export function sometimesAppliesPhoneBan(flow: ServiceSafetyFlow): boolean {
   return flow.phase === "ApplyingPhoneBan";
 }
 
-/** Story: Apply a confirmed phone or person ban / Both ban scopes require authority on every app and a linked person (spec/staffSafetyService.md:87) */
+/** Story: Apply a confirmed phone or person ban / Both ban scopes require authority on every app and a linked person (spec/staffSafetyService.md) */
 //@ pure
 export function sometimesAppliesPersonBan(flow: ServiceSafetyFlow): boolean {
   return flow.phase === "ApplyingPersonBan";

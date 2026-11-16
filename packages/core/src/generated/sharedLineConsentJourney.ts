@@ -2,13 +2,13 @@
 //@ backend dafny
 import { appOptInBeatsStop as carrierConsent_appOptInBeatsStop, lawStopWinsATie as carrierConsent_lawStopWinsATie, appMayText as carrierConsent_appMayText, lawNoAppOptInMeansNoPermission as carrierConsent_lawNoAppOptInMeansNoPermission } from "./carrierConsent.ts";
 
-/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md:15) */
+/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
 export type ConsentUpdate = "AllOptedOut" | "SlopOptedIn" | "FriendsOptedIn";
-/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md:15) */
+/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
 export interface LineConsent { slopMayText: boolean; friendsMayText: boolean }
-/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md:15) */
+/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
 export type AppUnderObservation = "Slop" | "Friends";
-/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md:15) */
+/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
 export interface Turn { state: LineConsent; out: ConsentUpdate[] }
 
 /** One variant per transition in the spec. */
@@ -16,7 +16,7 @@ export type Event =
   | { type: "textStop" }
   | { type: "textStart"; app: AppUnderObservation; sentWithLastStop: boolean };
 
-/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md:15) */
+/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
 export const initial: LineConsent = { slopMayText: true, friendsMayText: true };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -25,62 +25,62 @@ export function inv(current: LineConsent): boolean {
   return true;
 }
 
-/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md:15) */
+/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
 //@ pure
 export function stopCoversEveryApp(explicitAll: boolean, sharedLine: boolean, dedicatedLineGlobal: boolean): boolean {
   return explicitAll || sharedLine || dedicatedLineGlobal;
 }
 
-/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md:15) */
+/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
 //@ pure
 export function canTextStop(s: LineConsent): boolean {
   return true;
 }
 
-/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md:15) */
+/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
 //@ pure
 export function sometimesBothAppsStop(s: LineConsent): boolean {
   return !s.slopMayText && !s.friendsMayText;
 }
 
-/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md:15) */
+/** Story: Stop the shared line and resume one app / STOP on the shared line withdraws every app's permission (spec/sharedLineConsentJourney.md) */
 //@ pure
 export function textStop(s: LineConsent): Turn {
   //@ ensures (inv(s) && canTextStop(s)) ==> stepOneTextCannotRestoreBoth(s, \result.state)
   return { state: ({ slopMayText: false, friendsMayText: false } as LineConsent), out: (["AllOptedOut"] as ConsentUpdate[]) };
 }
 
-/** Story: Stop the shared line and resume one app / A new START permits texts in the chosen app only (spec/sharedLineConsentJourney.md:43) */
+/** Story: Stop the shared line and resume one app / A new START permits texts in the chosen app only (spec/sharedLineConsentJourney.md) */
 //@ pure
 export function canTextStart(s: LineConsent, app: AppUnderObservation, sentWithLastStop: boolean): boolean {
   return true;
 }
 
-/** Story: Stop the shared line and resume one app / A new START permits texts in the chosen app only (spec/sharedLineConsentJourney.md:43) */
+/** Story: Stop the shared line and resume one app / A new START permits texts in the chosen app only (spec/sharedLineConsentJourney.md) */
 //@ pure
 export function sometimesOnlySlopResumes(s: LineConsent): boolean {
   return s.slopMayText && !s.friendsMayText;
 }
 
-/** Story: Stop the shared line and resume one app / A new START permits texts in the chosen app only (spec/sharedLineConsentJourney.md:43) */
+/** Story: Stop the shared line and resume one app / A new START permits texts in the chosen app only (spec/sharedLineConsentJourney.md) */
 //@ pure
 export function sometimesOnlyFriendsResumes(s: LineConsent): boolean {
   return s.friendsMayText && !s.slopMayText;
 }
 
-/** Story: Stop the shared line and resume one app / A new START permits texts in the chosen app only (spec/sharedLineConsentJourney.md:43) */
+/** Story: Stop the shared line and resume one app / A new START permits texts in the chosen app only (spec/sharedLineConsentJourney.md) */
 //@ pure
 export function stepOneTextCannotRestoreBoth(before: LineConsent, after: LineConsent): boolean {
   return !(!before.slopMayText && !before.friendsMayText) || !(after.slopMayText && after.friendsMayText);
 }
 
-/** Story: Stop the shared line and resume one app / A new START permits texts in the chosen app only (spec/sharedLineConsentJourney.md:43) */
+/** Story: Stop the shared line and resume one app / A new START permits texts in the chosen app only (spec/sharedLineConsentJourney.md) */
 //@ pure
 export function mayTextAfterStart(alreadyAllowed: boolean, sentWithLastStop: boolean): boolean {
   return alreadyAllowed || carrierConsent_appMayText(true, true, sentWithLastStop ? 0 : 1, 0);
 }
 
-/** Story: Stop the shared line and resume one app / A new START permits texts in the chosen app only (spec/sharedLineConsentJourney.md:43) */
+/** Story: Stop the shared line and resume one app / A new START permits texts in the chosen app only (spec/sharedLineConsentJourney.md) */
 //@ pure
 export function textStart(s: LineConsent, app: AppUnderObservation, sentWithLastStop: boolean): Turn {
   //@ ensures (inv(s) && canTextStart(s, app, sentWithLastStop)) ==> stepOneTextCannotRestoreBoth(s, \result.state)

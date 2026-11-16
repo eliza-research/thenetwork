@@ -1,28 +1,48 @@
 // The four app sites. One shared backend serves /api/*, /mcp and /oauth/* for all of them
 // (deploy/router.ts forwards those paths; everything else is a static file from dist/).
+// The pages come from one React app (apps/site), prerendered per brand; this file adds what
+// Cloudflare serves as it is: _headers, _worker.js, _routes.json, the skill files and static/.
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { build as buildWorker, formatMessages } from "esbuild";
-import { build as buildPages } from "vite";
 import { parse as parseYaml } from "yaml";
 import { mcpUrlFor, skillsConfig } from "./skills.config.ts";
 import { RESPONSE_STYLE } from "./skill-responses.ts";
-import { agentRow, messagesHref, joinMessageFor, promptFor } from "./agents.ts";
 import { RUN_WORKER_FIRST } from "../deploy/router.ts";
-import { stagingSiteOrigins } from "../packages/platform/src/apps.ts";
+import { APPS, stagingSiteOrigins } from "../packages/platform/src/apps.ts";
+import { siteApp } from "../apps/site/prerender.ts";
+import type { AppKey } from "../packages/core/src/generated/brandIdentity.ts";
+import { type SitePage, siteHasPage, sitePageList } from "../packages/core/src/generated/sitePages.ts";
+import { brandFor } from "../packages/core/src/generated/brandIdentity.ts";
+import {
+  type AgentSignup,
+  type Event as SignupEvent,
+  type Transport,
+  enabled as signupEnabled,
+  endReportFor,
+  initial as signupStart,
+  inv as signupInvariants,
+  reportFor,
+  skillKindFor,
+  step as signupStep,
+  transportFor,
+} from "../packages/core/src/generated/agentSignup.ts";
 
 import type { AppId } from "../packages/core/src/types.ts";
 export type { AppId };
+export { resetSiteApp } from "../apps/site/prerender.ts";
 
 export interface Site {
   app: AppId;
+  /** The app in the specs (spec/brandIdentity.md): the brand record, the page set and the landing page read it. */
+  key: AppKey;
   domain: string;
   /** The Cloudflare Pages project (founder decision 8): <project>.pages.dev. */
   project: string;
   /** Local dev port for scripts/sites-dev.ts. */
   port: number;
-  /** Source pages (HTML, CSS, TS). */
+  /** The files that Cloudflare serves as they are (robots.txt, _redirects, .well-known/...). The pages and the favicon come from apps/site. */
   src: string;
   /** Agent Skills name: sites/skills/<skill>/SKILL.md (kebab-case of the domain). */
   skill: string;
@@ -49,10 +69,10 @@ export const SECURITY_HEADERS: Record<string, string> = {
 };
 
 export const SITES: Site[] = [
-  { app: "ntwrk", domain: "ntwrk.party", project: "ntwrk-party", port: 5101, src: join(here, "ntwrk.party/public"), skill: "ntwrk-party" },
-  { app: "slop", domain: "slop.date", project: "slop-date", port: 5102, src: join(here, "slop.date/public"), skill: "slop-date" },
-  { app: "peon", domain: "peon.biz", project: "peon-biz", port: 5103, src: join(here, "peon.biz/public"), skill: "peon-biz" },
-  { app: "friends", domain: "friends.help", project: "friends-help", port: 5104, src: join(here, "friends.help/public"), skill: "friends-help" },
+  { app: "ntwrk", key: "Ntwrk", domain: "ntwrk.party", project: "ntwrk-party", port: 5101, src: join(here, "ntwrk.party/static"), skill: "ntwrk-party" },
+  { app: "slop", key: "Slop", domain: "slop.date", project: "slop-date", port: 5102, src: join(here, "slop.date/static"), skill: "slop-date" },
+  { app: "peon", key: "Peon", domain: "peon.biz", project: "peon-biz", port: 5103, src: join(here, "peon.biz/static"), skill: "peon-biz" },
+  { app: "friends", key: "Friends", domain: "friends.help", project: "friends-help", port: 5104, src: join(here, "friends.help/static"), skill: "friends-help" },
 ];
 
 export function site(app: string): Site {
@@ -61,11 +81,18 @@ export function site(app: string): Site {
   return s;
 }
 
-export function pages(s: Site): string[] {
-  return readdirSync(s.src)
-    .filter((f) => f.endsWith(".html"))
-    .sort()
-    .map((f) => join(s.src, f));
+/** The file that serves each page; Cloudflare Pages serves 404.html for every unknown path. */
+export const PAGE_FILES: Record<SitePage, string> = {
+  LandingPage: "index.html",
+  PrivacyPage: "privacy.html",
+  TermsPage: "terms.html",
+  NotFoundPage: "404.html",
+  JoinPage: "join.html",
+};
+
+/** The pages of one site (spec/sitePages.md: only peon.biz keeps the browser join page). */
+export function pages(s: Site): SitePage[] {
+  return sitePageList.filter((page) => siteHasPage(s.key, page));
 }
 
 /** Files under a directory, recursively, as paths relative to it (dot-folders such as .well-known included). */
@@ -81,10 +108,10 @@ export function walk(dir: string): string[] {
 }
 
 /** The SKILL.md for a skill name with the config values filled in. */
-export function skillText(name: string, env: Record<string, string | undefined> = process.env): string {
+export function skillText(name: string, env: Record<string, string | undefined> = process.env, dir = SKILLS_DIR): string {
   const s = SITES.find((x) => x.skill === name);
   if (!s) throw new Error(`no site for skill ${name}`);
-  const source = readFileSync(join(SKILLS_DIR, name, "SKILL.md"), "utf8").replaceAll("{{RESPONSE_STYLE}}", RESPONSE_STYLE.trim());
+  const source = readFileSync(join(dir, name, "SKILL.md"), "utf8").replaceAll("{{RESPONSE_STYLE}}", RESPONSE_STYLE.trim());
   return fill(source, env, s.domain).replaceAll("\r\n", "\n");
 }
 
@@ -95,14 +122,111 @@ export function skillDescription(text: string): string {
   return typeof parsed?.description === "string" ? parsed.description : "";
 }
 
+/** The metadata.version of a SKILL.md: the landing prompt names it. */
+export function skillVersion(text: string): string {
+  const fm = text.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
+  const parsed = parseYaml(fm) as { metadata?: { version?: unknown } } | null;
+  const version = parsed?.metadata?.version;
+  if (typeof version !== "string" || version === "") throw new Error("the skill has no metadata.version");
+  return version;
+}
+
+/** One signup step marker of a SKILL.md: `<!-- agentSignup: <event>... -->`, or `<!-- agentSignup <Transport>: <event>... -->` for the steps of one transport. */
+export interface SignupMarker { line: number; transport: string | null; event: string }
+
+const SIGNUP_MARKER = /<!--\s*agentSignup(?:\s+(\w+))?\s*:\s*([\w\s]+?)\s*-->/g;
+
+/** The signup step markers of a SKILL.md, in document order (spec/agentSignup.md:9). */
+export function signupMarkers(text: string): SignupMarker[] {
+  const out: SignupMarker[] = [];
+  text.split("\n").forEach((source, index) => {
+    for (const m of source.matchAll(SIGNUP_MARKER)) {
+      for (const event of m[2]!.split(/\s+/)) out.push({ line: index + 1, transport: m[1] ?? null, event });
+    }
+  });
+  return out;
+}
+
+/** The transports a skill of this app reaches when the agent has the capability (spec/agentSignup.md:9). */
+function skillTransports(s: Site): Transport[] {
+  const kind = skillKindFor(s.key);
+  const reached = [true, false].flatMap((httpsSession) => [true, false].map((connectorTools) => transportFor(kind, httpsSession, connectorTools)));
+  return [...new Set(reached)].filter((t) => t !== "NoTransport");
+}
+
+/** The event of one marked step when the step succeeds. `chooseTransport` takes the capabilities that reach `transport`. */
+function successfulEvent(s: Site, event: string, transport: Transport, forwarded: boolean): SignupEvent | undefined {
+  const kind = skillKindFor(s.key);
+  switch (event) {
+    case "chooseTransport": {
+      const caps = [true, false].flatMap((httpsSession) => [true, false].map((connectorTools) => ({ httpsSession, connectorTools })));
+      const cap = caps.find((c) => transportFor(kind, c.httpsSession, c.connectorTools) === transport)!;
+      return { type: "chooseTransport", skillKind: kind, ...cap };
+    }
+    case "readAppFacts": return { type: "readAppFacts", appMatches: true, inviteMode: brandFor(s.key).joinMode === "InviteOnly" };
+    case "draftProfile": return { type: "draftProfile", statedAge: "Adult" };
+    case "decideApproval": return { type: "decideApproval", decision: "ApproveExact" };
+    case "checkSession": return { type: "checkSession", sessionLive: false };
+    case "readAuthMode": return { type: "readAuthMode", codeMode: true };
+    case "startCode": return { type: "startCode", codeStart: "CodeSent" };
+    case "checkCode": return { type: "checkCode", verified: true };
+    case "readAccount": return {
+      type: "readAccount",
+      account: forwarded ? "InviteRequired" : "JoinableAccount",
+      invitation: { forwarded, sameApp: forwarded, approved: forwarded },
+    };
+    case "joinApp": return { type: "joinApp", joinResult: "JoinCreated", invitationSubmitted: forwarded };
+    case "readBack": return { type: "readBack", readBackMatches: true };
+    case "checkSiteStatus": return { type: "checkSiteStatus", siteApp: true, siteStatus: "SiteActive" };
+    case "submitProfile": return { type: "submitProfile", accepted: true };
+    case "confirmProfile": return { type: "confirmProfile", stillLive: true };
+    default: return undefined;
+  }
+}
+
+/**
+ * The problems of a skill's signup steps: for each transport of the app's skill, the marked steps in document order must be
+ * a path that the generated agentSignup machine allows from `initial`, and the path must end at that transport's end report
+ * (spec/agentSignup.md:9, spec/agentSignup.md:331). The machine fixes the order: the auth mode before the number, one code
+ * request, and approval of the exact profile and consent before Join.
+ */
+export function signupStepProblems(s: Site, text: string): string[] {
+  const markers = signupMarkers(text);
+  const transports = skillTransports(s);
+  const problems: string[] = [];
+  if (markers.length === 0) return [`${s.skill}/SKILL.md has no agentSignup step markers`];
+  for (const m of markers) {
+    if (m.transport !== null && !transports.includes(m.transport as Transport)) problems.push(`${s.skill}/SKILL.md:${m.line} marks a step for ${m.transport}, which the ${s.domain} skill does not use (${transports.join(", ")})`);
+  }
+  const cases = transports.map(transport => ({ transport, forwarded: false }));
+  if (transports.includes("InAgentCode") && brandFor(s.key).joinMode === "InviteOnly") {
+    cases.push({ transport: "InAgentCode", forwarded: true });
+  }
+  for (const { transport, forwarded } of cases) {
+    const route = forwarded ? `${transport} with a forwarded invitation` : transport;
+    let state: AgentSignup = signupStart;
+    for (const m of markers.filter((x) => x.transport === null || x.transport === transport)) {
+      const event = successfulEvent(s, m.event, transport, forwarded);
+      if (!event) { problems.push(`${s.skill}/SKILL.md:${m.line} names "${m.event}", which is not a step of a successful signup`); break; }
+      if (!signupEnabled(state, event)) { problems.push(`${s.skill}/SKILL.md:${m.line}: the agentSignup model does not allow "${m.event}" in phase ${state.phase} (${route})`); break; }
+      state = signupStep(state, event);
+      if (!signupInvariants(state)) { problems.push(`${s.skill}/SKILL.md:${m.line}: "${m.event}" breaks an agentSignup rule (${route})`); break; }
+    }
+    if (problems.length) break;
+    const want = endReportFor(transport);
+    const got = reportFor(state.phase);
+    if (got !== want) problems.push(`${s.skill}/SKILL.md: the ${route} steps end in phase ${state.phase} (${got}), not at ${want}`);
+  }
+  return problems;
+}
+
 /** Files that may hold placeholders. Bundled JS and CSS never do (minified JS can contain "{{" legitimately). */
 const TEXT = /\.(html|md|txt|json|xml)$/;
 
 /** Placeholders that the build fills: {{BACKEND_ORIGIN}}, {{MCP_URL}} (this site's MCP endpoint), {{TEXT_LINE}} and {{TURNSTILE_SITE_KEY}}. */
 export function fill(text: string, env: Record<string, string | undefined> = process.env, domain = "ntwrk.party"): string {
   const cfg = skillsConfig(env);
-  const key = (env.TURNSTILE_SITE_KEY ?? "").trim();
-  if (key && !/^[0-9A-Za-z_-]{1,64}$/.test(key)) throw new Error("TURNSTILE_SITE_KEY has unexpected characters");
+  const key = turnstileKey(env);
   let filled = text
     .replaceAll("{{BACKEND_ORIGIN}}", cfg.BACKEND_ORIGIN)
     .replaceAll("{{MCP_URL}}", mcpUrlFor(domain, env))
@@ -125,9 +249,16 @@ export function fill(text: string, env: Record<string, string | undefined> = pro
   return filled;
 }
 
+/** The public Turnstile site key of this build, or "" for none. */
+function turnstileKey(env: Record<string, string | undefined>): string {
+  const key = (env.TURNSTILE_SITE_KEY ?? "").trim();
+  if (key && !/^[0-9A-Za-z_-]{1,64}$/.test(key)) throw new Error("TURNSTILE_SITE_KEY has unexpected characters");
+  return key;
+}
+
 const sha256 = (b: string | Buffer) => createHash("sha256").update(b).digest("hex");
 
-function write(path: string, body: string): void {
+function write(path: string, body: string | Buffer): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, body);
 }
@@ -149,15 +280,18 @@ export function headersFile(): string {
  * /SKILL.md and /.well-known/agent-skills/<name>/SKILL.md, and an index with a sha256 digest of the
  * exact bytes. ntwrk.party is the hub: its index lists every app's skill.
  */
-function writeSkills(s: Site, outdir: string, env: Record<string, string | undefined>): void {
+function writeSkills(s: Site, outdir: string, env: Record<string, string | undefined>, dir: string): string[] {
   const listed = s.app === "ntwrk" ? SITES : [s];
+  const problems = listed.flatMap((x) => signupStepProblems(x, skillText(x.skill, env, dir)));
+  if (problems.length) return problems;
   const skills = listed.map((x) => {
-    const text = skillText(x.skill, env);
+    const text = skillText(x.skill, env, dir);
     write(join(outdir, ".well-known/agent-skills", x.skill, "SKILL.md"), text);
     return { name: x.skill, type: "skill-md", description: skillDescription(text), url: `/.well-known/agent-skills/${x.skill}/SKILL.md`, digest: `sha256:${sha256(text)}` };
   });
-  write(join(outdir, "SKILL.md"), skillText(s.skill, env));
+  write(join(outdir, "SKILL.md"), skillText(s.skill, env, dir));
   write(join(outdir, ".well-known/agent-skills/index.json"), JSON.stringify({ $schema: "https://schemas.agentskills.io/discovery/0.2.0/schema.json", skills }, null, 2) + "\n");
+  return [];
 }
 
 /** The router every site runs on its backend paths (Pages advanced mode _worker.js): an entry with the default export only. */
@@ -169,73 +303,55 @@ export const routesFile = (): string => JSON.stringify({ version: 1, include: RU
 export const DRAFT_MARKERS = [/\bDraft\b/, /Not yet in effect/i];
 
 /**
- * Builds one site with Vite for the pages, then adds the files Cloudflare serves as they are:
- * sites/<domain>/static/ (robots.txt, _redirects, .well-known/...), _headers and the skill files.
- * Placeholders are filled in every text file, and a leftover "{{" fails the build.
+ * Builds one site: the site app's client files (built once per process, shared by every site), one
+ * prerendered page for each page of the site, the hashed favicon drawn from the brand mark, then the files
+ * Cloudflare serves as they are: sites/<domain>/static/ (robots.txt, _redirects, .well-known/...), _headers, the router and
+ * the skill files. Placeholders are filled in every text file, and a leftover "{{" fails the build.
  */
-export async function buildSite(s: Site, outdir: string, env: Record<string, string | undefined> = process.env): Promise<{ ok: boolean; logs: string[] }> {
+export async function buildSite(s: Site, outdir: string, env: Record<string, string | undefined> = process.env, skillsDir = SKILLS_DIR): Promise<{ ok: boolean; logs: string[] }> {
   rmSync(outdir, { recursive: true, force: true });
   const logs: string[] = [];
   try {
-    await buildPages({
-      root: s.src,
-      configFile: false,
-      publicDir: false,
-      base: "/",
-      logLevel: "silent",
-      build: {
-        outDir: outdir,
-        assetsInlineLimit: 0,
-        modulePreload: { polyfill: false },
-        minify: true,
-        rolldownOptions: {
-          input: pages(s),
-          onwarn: warning => logs.push(warning.message),
-          output: {
-            entryFileNames: "[name]-[hash].js",
-            chunkFileNames: "[name]-[hash].js",
-            assetFileNames: asset => asset.names.some(name => name.endsWith("host-grotesk.woff2"))
-              ? "fonts/host-grotesk.woff2" : "[name]-[hash][extname]",
-          },
-        },
-      },
-    });
-    const staticDir = join(dirname(s.src), "static");
-    if (existsSync(staticDir)) cpSync(staticDir, outdir, { recursive: true });
-    const font = join(outdir, "fonts/host-grotesk.woff2");
-    if (!existsSync(font)) {
-      // Keep the shared font available even when a standalone page does not import landing.css.
-      mkdirSync(dirname(font), { recursive: true });
-      writeFileSync(font, readFileSync(join(here, "shared/fonts/host-grotesk.woff2")));
-    }
+    const app = await siteApp();
+    cpSync(app.clientDir, outdir, { recursive: true, filter: (from) => relative(app.clientDir, from) !== "index.html" });
+    const icon = app.favicon(s.key);
+    const favicon = `/favicon-${sha256(icon).slice(0, 8)}.svg`;
+    write(join(outdir, favicon.slice(1)), icon);
+    const cfg = skillsConfig(env);
+    const stagingOrigin = stagingSiteOrigins(env)[s.app];
+    const siteHost = stagingOrigin ? new URL(stagingOrigin).host : "";
+    const input = {
+      favicon,
+      siteHost,
+      skillVersion: skillVersion(skillText(s.skill, env, skillsDir)),
+      textLine: cfg.TEXT_LINE,
+      minJoinAge: APPS[s.app].minJoinAge,
+      consentText: APPS[s.app].consent.text,
+      turnstileSiteKey: turnstileKey(env),
+    };
+    for (const page of pages(s)) write(join(outdir, PAGE_FILES[page]), app.page(s.key, page, input));
+    if (existsSync(s.src)) cpSync(s.src, outdir, { recursive: true });
     write(join(outdir, "_headers"), headersFile());
     // Cloudflare Pages advanced mode: _worker.js is the router, and _routes.json runs it only on the
     // backend paths (every other path is a static file, served without the Worker).
-    const stagingOrigin = stagingSiteOrigins(env)[s.app];
     const worker = await buildWorker({
       entryPoints: [ROUTER], bundle: true, platform: "browser", format: "esm", minify: true,
       outfile: join(outdir, "_worker.js"), write: false, logLevel: "silent",
-      define: { __SITE_APP_ID__: JSON.stringify(s.app), __SITE_HOST__: JSON.stringify(stagingOrigin ? new URL(stagingOrigin).host : s.domain), __SITE_BACKEND_ORIGIN__: JSON.stringify(skillsConfig(env).BACKEND_ORIGIN) },
+      define: { __SITE_APP_ID__: JSON.stringify(s.app), __SITE_HOST__: JSON.stringify(siteHost || s.domain), __SITE_BACKEND_ORIGIN__: JSON.stringify(cfg.BACKEND_ORIGIN) },
     });
     logs.push(...await formatMessages(worker.warnings, { kind: "warning" }));
     if (worker.outputFiles.length !== 1) return { ok: false, logs: [...logs, "the router bundle (_worker.js) failed"] };
     write(join(outdir, "_worker.js"), worker.outputFiles[0]!.text);
     write(join(outdir, "_routes.json"), routesFile());
-    writeSkills(s, outdir, env);
-    // The landing page's logo row (agents.ts), before fill() so a staging build rewrites its links too.
-    const home = join(outdir, "index.html");
-    const skill = skillText(s.skill, env);
-    const version = (parseYaml(skill.match(/^---\n([\s\S]*?)\n---/)![1]!) as { metadata: { version: string } }).metadata.version;
-    writeFileSync(home, readFileSync(home, "utf8")
-      .replace(/(<code data-prompt>)[\s\S]*?(<\/code>)/, (_all, open, close) => `${open}${promptFor(s, version)}${close}`)
-      .replaceAll("{{AGENTS}}", agentRow(s, version)));
+    const skillProblems = writeSkills(s, outdir, env, skillsDir);
+    if (skillProblems.length) return { ok: false, logs: [...logs, ...skillProblems] };
     const problems: string[] = [];
     for (const f of walk(outdir)) {
       const full = join(outdir, f);
       if (statSync(full).size === 0) problems.push(`${f} is empty`);
       if (!TEXT.test(f)) continue;
       const before = readFileSync(full, "utf8");
-      const after = fill(before.replaceAll("{{MESSAGES_HREF}}", messagesHref(s, skillsConfig(env).TEXT_LINE)).replaceAll("{{TEXT_MESSAGE}}", joinMessageFor(s)), env, s.domain);
+      const after = fill(before, env, s.domain);
       if (after !== before) writeFileSync(full, after);
       if (after.includes("{{")) problems.push(`${f} has an unfilled {{placeholder}}`);
       if (env.DEPLOY_TARGET === "production" && f.endsWith(".html")) {
@@ -251,7 +367,7 @@ export async function buildSite(s: Site, outdir: string, env: Record<string, str
 }
 
 if (import.meta.main) {
-  // pnpm sites:build [app...] builds into sites/<domain>/dist.
+  // pnpm run sites:build [app...]   builds into sites/<domain>/dist
   const wanted = process.argv.slice(2);
   let failed = false;
   for (const s of wanted.length ? wanted.map(site) : SITES) {

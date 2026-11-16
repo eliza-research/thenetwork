@@ -1,7 +1,8 @@
-// The sites' API client (sites/shared/api.ts) against the real platform API (createPublicApi) in the
-// same process: every call the pages make, with the same headers and bodies a browser sends. A fake
-// OTP provider keeps the code in memory (nothing is sent). Audit SITE-01, SITE-02 and SITE-22.
-//   pnpm exec vitest run sites
+// The sites' typed API client (packages/ui/src/api) against the real platform API (createPublicApi) in the
+// same process: the join flow that peon.biz calls, and the member endpoints through the same `call`, with
+// the same headers and bodies a browser sends. A fake OTP provider keeps the code in memory (nothing is
+// sent). Audit SITE-01, SITE-02 and SITE-22.
+//   pnpm run test:integration sites
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -9,7 +10,8 @@ import { APPS, type AppId } from "../../packages/platform/src/apps.ts";
 import { createPublicApi, type PublicApi } from "../../packages/platform/src/api.ts";
 import type { OtpProvider } from "../../packages/platform/src/otp.ts";
 import { MemoryPeopleStore } from "../../packages/platform/src/store.ts";
-import { api, call, MESSAGES, PLATFORM_ERRORS } from "../shared/api.ts";
+import { apiMessages, call, platformErrors } from "../../packages/ui/src/api/client.ts";
+import { joinApp, readApp, readSession, startCode, verifyCode } from "../../packages/ui/src/api/join.ts";
 
 const HOST = "slop.date";
 const APP: AppId = "slop";
@@ -64,68 +66,96 @@ afterAll(() => {
   globalThis.fetch = realFetch;
 });
 
-describe("the client against createPublicApi", () => {
+describe("the member endpoints through the typed client", () => {
   const phone = "+12125550142";
 
   test("app info", async () => {
-    const r = await api.app();
+    const r = await call("GET", "/api/app");
     expect(r.ok && r.data.id).toBe(APP);
     expect(r.ok && r.data.minJoinAge).toBe(APPS[APP].minJoinAge);
   });
 
   test("sign in, join, export", async () => {
-    expect((await api.me()).ok).toBe(false);
-    expect(await api.otpStart(phone)).toMatchObject({ ok: true });
-    expect(await api.otpVerify(phone, "000000")).toMatchObject({ ok: false, error: "invalid_code" });
-    expect(await api.otpVerify(phone, otp.codes.get(phone)!)).toMatchObject({ ok: true });
-    const me = await api.me();
-    expect(me.ok && me.data.canJoin).toBe(true);
-    const joined = await api.join({ firstName: "Ana", age: 30, zip: "11201", consent: { sms: true, wording: APPS[APP].consent.text } });
+    jar = "";
+    expect((await call("GET", "/api/me")).ok).toBe(false);
+    expect(await startCode(phone)).toEqual({ result: "CodeSent" });
+    expect(await verifyCode(phone, "000000")).toEqual({ result: "WrongCode" });
+    expect(await verifyCode(phone, otp.codes.get(phone)!)).toEqual({ result: "Verified" });
+    expect((await readSession()).result).toBe("MayJoin");
+    const joined = await call("POST", "/api/join", { firstName: "Ana", age: 30, zip: "11201", consent: { sms: true, wording: APPS[APP].consent.text } });
     expect(joined.ok, JSON.stringify(joined)).toBe(true);
-    const exp = await api.exportData();
-    expect(exp.ok).toBe(true);
+    expect((await call("GET", "/api/me/export")).ok).toBe(true);
   });
 
   test("stop works: it sends JSON and the API accepts it (audit sites-infra-1: it was always 415)", async () => {
-    const r = await api.stop();
+    const r = await call("POST", "/api/me/stop");
     expect(r, JSON.stringify(r)).toMatchObject({ ok: true });
     const last = sent.at(-1)!;
     expect(last).toMatchObject({ method: "POST", path: "/api/me/stop", body: "{}" });
     expect(last.contentType).toBe("application/json");
-    // /api/me does not report the consent state yet (open issue), so the page shows its own status text.
-    expect((await api.me()).ok).toBe(true);
+    expect((await call("GET", "/api/me")).ok).toBe(true);
   });
 
   test("logout ends the session on the server before the page says so", async () => {
-    const r = await api.logout();
+    const r = await call("POST", "/api/auth/logout");
     expect(r).toMatchObject({ ok: true });
     expect(sent.at(-1)).toMatchObject({ method: "POST", path: "/api/auth/logout", body: "{}", contentType: "application/json" });
-    expect(await api.me()).toMatchObject({ ok: false, error: "unauthorized" });
+    expect(await call("GET", "/api/me")).toMatchObject({ ok: false, error: "unauthorized" });
   });
 
   test("leave and delete-all after a new login", async () => {
     const other = "+12125550143";
-    expect(await api.otpStart(other)).toMatchObject({ ok: true });
-    expect(await api.otpVerify(other, otp.codes.get(other)!)).toMatchObject({ ok: true });
-    expect(await api.join({ firstName: "Bo", age: 31, consent: { sms: true, wording: APPS[APP].consent.text } })).toMatchObject({ ok: true });
-    expect(await api.remove("app")).toMatchObject({ ok: true });
-    expect(await api.remove("all")).toMatchObject({ ok: true });
-  });
-
-  test("a bad phone maps to its own message", async () => {
-    expect(await api.otpStart("+1555")).toMatchObject({ ok: false, error: "invalid_phone" });
+    expect(await startCode(other)).toEqual({ result: "CodeSent" });
+    expect(await verifyCode(other, otp.codes.get(other)!)).toEqual({ result: "Verified" });
+    expect(await joinApp({ firstName: "Bo", age: 31, consent: { sms: true, wording: APPS[APP].consent.text } })).toMatchObject({ result: "JoinedOk", firstName: "Bo" });
+    expect(await call("POST", "/api/me/delete", { scope: "app" })).toMatchObject({ ok: true });
+    expect(await call("POST", "/api/me/delete", { scope: "all" })).toMatchObject({ ok: true });
   });
 });
 
-describe("error parity (audit sites-infra-17)", () => {
-  test("every error code the platform API can send has a message on the sites", () => {
+describe("the join page client (packages/ui/src/api) against createPublicApi", () => {
+  const phone = "+12125550144";
+  const platformCodes = () => {
     const src = ["api.ts", "accounts.ts"].map((f) => readFileSync(join(import.meta.dirname, "../../packages/platform/src", f), "utf8")).join("\n");
-    const codes = new Set([...src.matchAll(/error: "([a-z_]+)"/g)].map((m) => m[1]!));
-    expect(codes.size).toBeGreaterThan(5);
-    for (const c of codes) {
-      expect(PLATFORM_ERRORS[c], `platform code ${c} has no mapping`).toBeDefined();
-      expect(MESSAGES[PLATFORM_ERRORS[c]!], c).toBeTruthy();
+    return new Set([...src.matchAll(/error: "([a-z_]+)"/g)].map((m) => m[1]!));
+  };
+
+  test("reads the app, confirms the phone with a code, and joins with the canonical consent wording", async () => {
+    jar = "";
+    expect(await readApp()).toEqual({ read: true, inviteOnly: false, minJoinAge: APPS[APP].minJoinAge });
+    expect((await readSession()).result).toBe("SignedOut");
+    expect(await startCode(phone)).toEqual({ result: "CodeSent" });
+    expect(sent.at(-1)).toMatchObject({ method: "POST", path: "/api/auth/otp/start", contentType: "application/json", body: JSON.stringify({ phone }) });
+    expect(await verifyCode(phone, "000000")).toEqual({ result: "WrongCode" });
+    expect(await verifyCode(phone, otp.codes.get(phone)!)).toEqual({ result: "Verified" });
+    const session = await readSession();
+    expect(session.result).toBe("MayJoin");
+    expect(session.account).not.toBe("");
+    const joined = await joinApp({ ...(session.signupView ? { signupView: session.signupView } : {}), firstName: "Cy", age: 29, consent: { sms: true, wording: APPS[APP].consent.text } });
+    expect(joined, JSON.stringify(joined)).toMatchObject({ result: "JoinedOk", firstName: "Cy" });
+    expect((await readSession()).result).toBe("AlreadyIn");
+  });
+
+  test("a bad phone maps to its own message", async () => {
+    jar = "";
+    expect(await startCode("+1555")).toEqual({ result: "StartFailed", error: "invalid_phone" });
+    expect(apiMessages.invalid_phone).toBe("Enter a 10-digit US mobile number.");
+  });
+
+  test("the security check token goes in the otp/start body only when there is one", async () => {
+    const bodies: string[] = [];
+    const keep = globalThis.fetch;
+    try {
+      globalThis.fetch = (async (_p: RequestInfo | URL, init: RequestInit = {}) => {
+        bodies.push(String(init.body));
+        return Response.json({ ok: true });
+      }) as typeof fetch;
+      await startCode("+12125550142");
+      await startCode("+12125550142", "tok-1");
+    } finally {
+      globalThis.fetch = keep;
     }
+    expect(bodies.map((b) => JSON.parse(b))).toEqual([{ phone: "+12125550142" }, { phone: "+12125550142", turnstileToken: "tok-1" }]);
   });
 
   test("a JSON 500 is a server error, not 'unreachable'; a non-JSON 200 is an error", async () => {
@@ -141,25 +171,28 @@ describe("error parity (audit sites-infra-17)", () => {
       globalThis.fetch = answer(new Response("Bad gateway", { status: 502 }));
       expect(await call("GET", "/api/me")).toMatchObject({ ok: false, error: "api_unreachable" });
       globalThis.fetch = answer(Response.json({ ok: false, error: "turnstile" }, { status: 400 }));
-      expect(await call("POST", "/api/auth/otp/start", { phone: "+12125550142" })).toMatchObject({ ok: false, error: "turnstile" });
+      expect(await startCode("+12125550142")).toEqual({ result: "StartCheckRejected" });
     } finally {
       globalThis.fetch = keep;
     }
   });
 
-  test("the Turnstile token goes in the otp/start body only when there is one", async () => {
-    const bodies: string[] = [];
+  test("each platform error used by the browser signup gives the join page a message", async () => {
+    const codes = platformCodes();
+    expect(codes.size).toBeGreaterThan(5);
     const keep = globalThis.fetch;
     try {
-      globalThis.fetch = (async (_p: RequestInfo | URL, init: RequestInit = {}) => {
-        bodies.push(String(init.body));
-        return Response.json({ ok: true });
-      }) as typeof fetch;
-      await api.otpStart("+12125550142");
-      await api.otpStart("+12125550142", "tok-1");
+      for (const c of codes) {
+        globalThis.fetch = (async () => Response.json({ ok: false, error: c }, { status: 400 })) as unknown as typeof fetch;
+        const r = await call("POST", "/api/join", {});
+        expect(r.ok, c).toBe(false);
+        if (!r.ok) expect(apiMessages[r.error], c).toBeTruthy();
+      }
     } finally {
       globalThis.fetch = keep;
     }
-    expect(bodies.map((b) => JSON.parse(b))).toEqual([{ phone: "+12125550142" }, { phone: "+12125550142", turnstileToken: "tok-1" }]);
+    // The browser join sends no invitation token and uses neither of the private home endpoints.
+    const agentOrAccountOnly = new Set(["home_runtime_conflict", "invalid_invitation", "home_help_venue_unavailable"]);
+    expect([...codes].filter((c) => !platformErrors[c] && !agentOrAccountOnly.has(c))).toEqual([]);
   });
 });

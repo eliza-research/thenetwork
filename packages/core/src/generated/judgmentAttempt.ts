@@ -1,9 +1,9 @@
 // GENERATED from spec/judgmentAttempt.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Reuse recent judgments and retry failures on a later run / An expired entry or a backward clock reading forces a request (spec/judgmentAttempt.md:9) */
+/** Story: Reuse recent judgments and retry failures on a later run / An expired entry or a backward clock reading forces a request (spec/judgmentAttempt.md) */
 export type AttemptPhase = "LookupCache" | "ReuseVerdict" | "RequestVerdict" | "StoreVerdict" | "NewVerdict" | "AttemptFailed";
-/** Story: Reuse recent judgments and retry failures on a later run / An expired entry or a backward clock reading forces a request (spec/judgmentAttempt.md:9) */
+/** Story: Reuse recent judgments and retry failures on a later run / An expired entry or a backward clock reading forces a request (spec/judgmentAttempt.md) */
 export interface JudgmentAttempt { phase: AttemptPhase }
 
 /** One variant per transition in the spec. */
@@ -13,7 +13,7 @@ export type Event =
   | { type: "completeWrite" }
   | { type: "failAttempt" };
 
-/** Story: Reuse recent judgments and retry failures on a later run / An expired entry or a backward clock reading forces a request (spec/judgmentAttempt.md:9) */
+/** Story: Reuse recent judgments and retry failures on a later run / An expired entry or a backward clock reading forces a request (spec/judgmentAttempt.md) */
 export const initial: JudgmentAttempt = { phase: "LookupCache" };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -22,19 +22,19 @@ export function inv(current: JudgmentAttempt): boolean {
   return true;
 }
 
-/** Story: Reuse recent judgments and retry failures on a later run / An expired entry or a backward clock reading forces a request (spec/judgmentAttempt.md:9) */
+/** Story: Reuse recent judgments and retry failures on a later run / An expired entry or a backward clock reading forces a request (spec/judgmentAttempt.md) */
 //@ pure
 export function cacheEntryExpired(elapsedMs: number, ttlMs: number, rewound: boolean): boolean {
   return elapsedMs >= ttlMs || rewound;
 }
 
-/** Story: Reuse recent judgments and retry failures on a later run / An expired entry or a backward clock reading forces a request (spec/judgmentAttempt.md:9) */
+/** Story: Reuse recent judgments and retry failures on a later run / An expired entry or a backward clock reading forces a request (spec/judgmentAttempt.md) */
 //@ pure
 export function canReadCache(a: JudgmentAttempt): boolean {
   return a.phase === "LookupCache";
 }
 
-/** Story: Reuse recent judgments and retry failures on a later run / An expired entry or a backward clock reading forces a request (spec/judgmentAttempt.md:9) */
+/** Story: Reuse recent judgments and retry failures on a later run / An expired entry or a backward clock reading forces a request (spec/judgmentAttempt.md) */
 //@ pure
 export function readCache(a: JudgmentAttempt, available: boolean): JudgmentAttempt {
   //@ ensures (inv(a) && canReadCache(a)) ==> stepStorageRequiresResponse(a, \result)
@@ -42,27 +42,27 @@ export function readCache(a: JudgmentAttempt, available: boolean): JudgmentAttem
   return { phase: available ? "ReuseVerdict" : "RequestVerdict" };
 }
 
-/** Story: Reuse recent judgments and retry failures on a later run / An expired entry or a backward clock reading forces a request (spec/judgmentAttempt.md:9) */
+/** Story: Reuse recent judgments and retry failures on a later run / An expired entry or a backward clock reading forces a request (spec/judgmentAttempt.md) */
 //@ pure
 export function lawTtlBoundaryExpires(ttlMs: number): boolean {
   //@ ensures \result === true
   return cacheEntryExpired(ttlMs, ttlMs, false);
 }
 
-/** Story: Reuse recent judgments and retry failures on a later run / An expired entry or a backward clock reading forces a request (spec/judgmentAttempt.md:9) */
+/** Story: Reuse recent judgments and retry failures on a later run / An expired entry or a backward clock reading forces a request (spec/judgmentAttempt.md) */
 //@ pure
 export function lawRewindExpires(elapsedMs: number, ttlMs: number): boolean {
   //@ ensures \result === true
   return cacheEntryExpired(elapsedMs, ttlMs, true);
 }
 
-/** Story: Reuse recent judgments and retry failures on a later run / Only a returned judgment is eligible for storage (spec/judgmentAttempt.md:29) */
+/** Story: Reuse recent judgments and retry failures on a later run / Only a returned judgment is eligible for storage (spec/judgmentAttempt.md) */
 //@ pure
 export function canReceiveVerdict(a: JudgmentAttempt): boolean {
   return a.phase === "RequestVerdict";
 }
 
-/** Story: Reuse recent judgments and retry failures on a later run / Only a returned judgment is eligible for storage (spec/judgmentAttempt.md:29) */
+/** Story: Reuse recent judgments and retry failures on a later run / Only a returned judgment is eligible for storage (spec/judgmentAttempt.md) */
 //@ pure
 export function receiveVerdict(a: JudgmentAttempt): JudgmentAttempt {
   //@ ensures (inv(a) && canReceiveVerdict(a)) ==> stepStorageRequiresResponse(a, \result)
@@ -70,13 +70,13 @@ export function receiveVerdict(a: JudgmentAttempt): JudgmentAttempt {
   return { phase: "StoreVerdict" };
 }
 
-/** Story: Reuse recent judgments and retry failures on a later run / Only a returned judgment is eligible for storage (spec/judgmentAttempt.md:29) */
+/** Story: Reuse recent judgments and retry failures on a later run / Only a returned judgment is eligible for storage (spec/judgmentAttempt.md) */
 //@ pure
 export function canCompleteWrite(a: JudgmentAttempt): boolean {
   return a.phase === "StoreVerdict";
 }
 
-/** Story: Reuse recent judgments and retry failures on a later run / Only a returned judgment is eligible for storage (spec/judgmentAttempt.md:29) */
+/** Story: Reuse recent judgments and retry failures on a later run / Only a returned judgment is eligible for storage (spec/judgmentAttempt.md) */
 //@ pure
 export function completeWrite(a: JudgmentAttempt): JudgmentAttempt {
   //@ ensures (inv(a) && canCompleteWrite(a)) ==> stepStorageRequiresResponse(a, \result)
@@ -84,13 +84,13 @@ export function completeWrite(a: JudgmentAttempt): JudgmentAttempt {
   return { phase: "NewVerdict" };
 }
 
-/** Story: Reuse recent judgments and retry failures on a later run / Only a returned judgment is eligible for storage (spec/judgmentAttempt.md:29) */
+/** Story: Reuse recent judgments and retry failures on a later run / Only a returned judgment is eligible for storage (spec/judgmentAttempt.md) */
 //@ pure
 export function canFailAttempt(a: JudgmentAttempt): boolean {
   return a.phase === "RequestVerdict" || a.phase === "StoreVerdict";
 }
 
-/** Story: Reuse recent judgments and retry failures on a later run / Only a returned judgment is eligible for storage (spec/judgmentAttempt.md:29) */
+/** Story: Reuse recent judgments and retry failures on a later run / Only a returned judgment is eligible for storage (spec/judgmentAttempt.md) */
 //@ pure
 export function failAttempt(a: JudgmentAttempt): JudgmentAttempt {
   //@ ensures (inv(a) && canFailAttempt(a)) ==> stepStorageRequiresResponse(a, \result)
@@ -98,31 +98,31 @@ export function failAttempt(a: JudgmentAttempt): JudgmentAttempt {
   return { phase: "AttemptFailed" };
 }
 
-/** Story: Reuse recent judgments and retry failures on a later run / Only a returned judgment is eligible for storage (spec/judgmentAttempt.md:29) */
+/** Story: Reuse recent judgments and retry failures on a later run / Only a returned judgment is eligible for storage (spec/judgmentAttempt.md) */
 //@ pure
 export function stepStorageRequiresResponse(before: JudgmentAttempt, after: JudgmentAttempt): boolean {
   return !(before.phase !== "StoreVerdict" && after.phase === "StoreVerdict") || before.phase === "RequestVerdict";
 }
 
-/** Story: Reuse recent judgments and retry failures on a later run / Only a returned judgment is eligible for storage (spec/judgmentAttempt.md:29) */
+/** Story: Reuse recent judgments and retry failures on a later run / Only a returned judgment is eligible for storage (spec/judgmentAttempt.md) */
 //@ pure
 export function stepFinishedAttemptStaysClosed(before: JudgmentAttempt, after: JudgmentAttempt): boolean {
   return !(before.phase === "ReuseVerdict" || before.phase === "NewVerdict" || before.phase === "AttemptFailed") || equal_judgmentAttempt(after, before);
 }
 
-/** Story: Reuse recent judgments and retry failures on a later run / Only a returned judgment is eligible for storage (spec/judgmentAttempt.md:29) */
+/** Story: Reuse recent judgments and retry failures on a later run / Only a returned judgment is eligible for storage (spec/judgmentAttempt.md) */
 //@ pure
 export function sometimesReusedVerdict(a: JudgmentAttempt): boolean {
   return a.phase === "ReuseVerdict";
 }
 
-/** Story: Reuse recent judgments and retry failures on a later run / Only a returned judgment is eligible for storage (spec/judgmentAttempt.md:29) */
+/** Story: Reuse recent judgments and retry failures on a later run / Only a returned judgment is eligible for storage (spec/judgmentAttempt.md) */
 //@ pure
 export function sometimesNewVerdict(a: JudgmentAttempt): boolean {
   return a.phase === "NewVerdict";
 }
 
-/** Story: Reuse recent judgments and retry failures on a later run / Only a returned judgment is eligible for storage (spec/judgmentAttempt.md:29) */
+/** Story: Reuse recent judgments and retry failures on a later run / Only a returned judgment is eligible for storage (spec/judgmentAttempt.md) */
 //@ pure
 export function sometimesAttemptFailed(a: JudgmentAttempt): boolean {
   return a.phase === "AttemptFailed";

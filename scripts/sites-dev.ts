@@ -2,7 +2,7 @@ import { serveHttp } from "../packages/core/src/runtime/http.ts";
 // Local dev server for the four app sites (sites/*).
 //   pnpm run sites:dev                 all four: ntwrk 5101, slop 5102, peon 5103, friends 5104
 //   pnpm run sites:dev slop peon       only some
-// Each site is built with Vite's HTML build into sites/<domain>/dist and rebuilt on change.
+// Each site is prerendered by the shared React app into sites/<domain>/dist and rebuilt on change.
 // The backend paths of the production router (deploy/router.ts: /api/*, /mcp, /oauth/*,
 // /.well-known/oauth-*) are proxied to PLATFORM_API_ORIGIN (default http://127.0.0.1:8790), the
 // shared backend. With PLATFORM_PROXY_SECRET set (scripts/platform-dev.ts sets it) those paths run
@@ -14,7 +14,7 @@ import { fileAt } from "../packages/core/src/runtime/files.ts";
 import { existsSync, statSync, watch } from "node:fs";
 import { join, normalize, sep } from "node:path";
 import { handle as routerHandle, isBackendPath, isProxyHeader, retiredSitePage } from "../deploy/router.ts";
-import { SECURITY_HEADERS, SITES, buildSite, site as findSite, type Site } from "../sites/sites.ts";
+import { SECURITY_HEADERS, SITES, buildSite, resetSiteApp, site as findSite, type Site } from "../sites/sites.ts";
 
 const HOP = ["host", "connection", "keep-alive", "transfer-encoding", "upgrade", "content-length", "accept-encoding"];
 /** Client-set IP headers are dropped: the backend never takes a rate-limit bucket from a header a browser sets. */
@@ -131,12 +131,20 @@ if (import.meta.main) {
     await serveSite(s, { port: s.port, apiOrigin, outdir });
     console.log(`[sites] ${s.domain.padEnd(12)} http://127.0.0.1:${s.port}  (api -> ${apiOrigin})`);
   }
-  // Rebuild on change. A change in sites/shared rebuilds every site.
+  // Rebuild on change. A change in the site app, the components, the design system or a skill
+  // builds the app again and rebuilds every site; a change in a site's own files rebuilds that site.
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const schedule = (s: Site) => {
     clearTimeout(timers.get(s.domain));
     timers.set(s.domain, setTimeout(() => void rebuild(s, join(sitesDir, s.domain, "dist")), 120));
   };
   for (const s of chosen) watch(s.src, { recursive: true }, () => schedule(s));
-  watch(join(sitesDir, "shared"), { recursive: true }, () => chosen.forEach(schedule));
+  const repo = join(import.meta.dirname, "..");
+  const shared = ["apps/site/src", "apps/site/index.html", "packages/ui/src", "packages/design-system/generated", "packages/core/src/generated", "sites/skills"];
+  for (const path of shared) {
+    watch(join(repo, path), { recursive: true }, () => {
+      resetSiteApp();
+      chosen.forEach(schedule);
+    });
+  }
 }

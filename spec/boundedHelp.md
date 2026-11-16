@@ -53,3 +53,120 @@ pure def needsSecondHomeHelper(homeEntry: bool, requestedHelpers: int, knownSing
 pure def lawUnfamiliarHomeSingletonIsDisallowed(helperCount: int): bool =
   helperCount < 2 implies not(homeHelperSetAllowed(helperCount, false))
 ```
+
+## Story: Review a private home-help plan with a fixed roster
+
+> As a member, I want staff to review the exact help I need and who can help before anyone is contacted.
+
+### A moving-help offer comes from its own eligible member
+
+An eligible adult can add or withdraw a moving-help offer in their signed conversation. Only their express choice creates the offer. A skill or a match prediction gives no permission to nominate them.
+
+```quint
+pure def homeHelpOfferChangeAllowed(eligibleAdultOwner: bool, explicitChoice: bool): bool = eligibleAdultOwner and explicitChoice
+```
+
+### Intake keeps only structured home-help details after considering a service
+
+Record a confirmed task from the supported moving-help vocabulary, a coarse neighborhood, an exact time window, and the estimated minutes of help. Record why a service could not solve the task. Store the app, requester, and expiry. Keep street addresses, free text, service links, and messages out of the plan. The review deadline cannot be later than the start of the task.
+
+```quint
+type HomeHelpTask = MoveFurniture | CarryBoxes
+type HomeHelpAlternative = NoSuitableService | ServiceUnavailable | MemberDeclinedService
+type HomeHelpPhase = NotSubmitted | AwaitingHelpers | AwaitingReview | Approved | Closed
+type HomeHelpPlan = { phase: HomeHelpPhase, revision: int, expiresAt: int, rosterKey: str }
+
+pure val initial: HomeHelpPlan = { phase: NotSubmitted, revision: 0, expiresAt: 0, rosterKey: "" }
+
+pure def homeHelpTaskKnown(task: str): bool = task == "MoveFurniture" or task == "CarryBoxes"
+
+pure def homeHelpAlternativeKnown(alternative: str): bool =
+  alternative == "NoSuitableService" or alternative == "ServiceUnavailable" or alternative == "MemberDeclinedService"
+
+pure def homeHelpDraftAllowed(ownerEligible: bool, detailsConfirmed: bool, knownArea: bool, alternativeChecked: bool,
+  now: int, expiresAt: int, startsAt: int, endsAt: int, effortMinutes: int): bool =
+  ownerEligible and detailsConfirmed and knownArea and alternativeChecked and now < expiresAt and expiresAt <= startsAt
+  and startsAt < endsAt and effortMinutes > 0 and effortMinutes * 60000 <= endsAt - startsAt
+
+pure def canSubmitHomeHelp(plan: HomeHelpPlan, draftAllowed: bool, expiresAt: int): bool =
+  plan.phase == NotSubmitted and draftAllowed and expiresAt > 0
+
+pure def submitHomeHelp(plan: HomeHelpPlan, draftAllowed: bool, expiresAt: int): HomeHelpPlan =
+  { phase: AwaitingHelpers, revision: 1, expiresAt: expiresAt, rosterKey: "" }
+
+pure def homeHelpOpen(plan: HomeHelpPlan, now: int): bool =
+  (plan.phase == AwaitingHelpers or plan.phase == AwaitingReview or plan.phase == Approved) and now < plan.expiresAt
+
+pure def alwaysSubmittedHomeHelpHasDeadline(plan: HomeHelpPlan): bool =
+  plan.phase != NotSubmitted implies plan.revision > 0 and plan.expiresAt > 0
+```
+
+### Fix the roster before review and recheck it at approval
+
+Before asking a person, save the exact helper roster for staff review. The owner and distinct helpers must be eligible for the task, time and format, and a singleton must have met the owner before. Safety staff in this app can approve only the current revision and the exact roster they reviewed. Audit each staff read and decision before returning it. At approval, check the roster again. Replacing a helper or changing the task, time, or area requires a new revision and fresh approval. A revision can shorten the deadline without extending it.
+
+```quint
+pure def homeHelpRosterAllowed(helperCount: int, knownSingleton: bool, currentEligibility: bool): bool =
+  helperCount <= 3 and homeHelperSetAllowed(helperCount, knownSingleton) and currentEligibility
+
+pure def canSetHomeHelpRoster(plan: HomeHelpPlan, now: int, revision: int, rosterKey: str, rosterAllowed: bool): bool =
+  homeHelpOpen(plan, now) and revision == plan.revision and rosterAllowed and rosterKey != "" and rosterKey != plan.rosterKey
+
+pure def setHomeHelpRoster(plan: HomeHelpPlan, now: int, revision: int, rosterKey: str, rosterAllowed: bool): HomeHelpPlan =
+  { ...plan, phase: AwaitingReview, revision: plan.revision + 1, rosterKey: rosterKey }
+
+pure def canReviseHomeHelp(plan: HomeHelpPlan, now: int, revision: int, draftAllowed: bool, expiresAt: int): bool =
+  homeHelpOpen(plan, now) and revision == plan.revision and draftAllowed and expiresAt > 0 and now < expiresAt and expiresAt <= plan.expiresAt
+
+pure def reviseHomeHelp(plan: HomeHelpPlan, now: int, revision: int, draftAllowed: bool, expiresAt: int): HomeHelpPlan =
+  { phase: AwaitingHelpers, revision: plan.revision + 1, expiresAt: expiresAt, rosterKey: "" }
+
+pure def homeHelpRevisionMatches(plan: HomeHelpPlan, revision: int, rosterKey: str): bool =
+  revision == plan.revision and rosterKey != "" and rosterKey == plan.rosterKey
+
+pure def canApproveHomeHelp(plan: HomeHelpPlan, now: int, revision: int, rosterKey: str, reviewerAuthorized: bool, rosterAllowed: bool): bool =
+  plan.phase == AwaitingReview and homeHelpOpen(plan, now) and reviewerAuthorized and rosterAllowed
+  and homeHelpRevisionMatches(plan, revision, rosterKey)
+
+pure def approveHomeHelp(plan: HomeHelpPlan, now: int, revision: int, rosterKey: str, reviewerAuthorized: bool, rosterAllowed: bool): HomeHelpPlan =
+  { ...plan, phase: Approved }
+
+pure def homeHelpApprovalCurrent(plan: HomeHelpPlan, now: int, revision: int, rosterKey: str, rosterAllowed: bool): bool =
+  plan.phase == Approved and homeHelpOpen(plan, now) and rosterAllowed and homeHelpRevisionMatches(plan, revision, rosterKey)
+
+pure def lawHomeHelpApprovalNeedsExactRoster(plan: HomeHelpPlan, now: int, revision: int, rosterKey: str, rosterAllowed: bool): bool =
+  homeHelpApprovalCurrent(plan, now, revision, rosterKey, rosterAllowed) implies homeHelpRevisionMatches(plan, revision, rosterKey)
+
+pure def stepHomeHelpRevisionClearsApproval(before: HomeHelpPlan, after: HomeHelpPlan): bool =
+  after.revision > before.revision implies after.phase != Approved
+
+pure def alwaysHomeHelpReviewHasFixedRoster(plan: HomeHelpPlan): bool =
+  (plan.phase == AwaitingReview or plan.phase == Approved) iff plan.rosterKey != ""
+```
+
+### Closure and expiry end authority for this plan
+
+Only the owner or an authorized reviewer can close a current revision. Expiry also ends its authority. A closed or expired plan cannot approve or authorize contact. A current approval records a staff decision. It does not contact a person or release a private location.
+
+```quint
+pure def canCloseHomeHelp(plan: HomeHelpPlan, now: int, revision: int, authorized: bool): bool =
+  homeHelpOpen(plan, now) and revision == plan.revision and authorized
+
+pure def closeHomeHelp(plan: HomeHelpPlan, now: int, revision: int, authorized: bool): HomeHelpPlan =
+  { ...plan, phase: Closed, rosterKey: "" }
+
+pure def canExpireHomeHelp(plan: HomeHelpPlan, now: int): bool =
+  (plan.phase == AwaitingHelpers or plan.phase == AwaitingReview or plan.phase == Approved) and now >= plan.expiresAt
+
+pure def expireHomeHelp(plan: HomeHelpPlan, now: int): HomeHelpPlan =
+  { ...plan, phase: Closed, rosterKey: "" }
+
+pure def lawExpiredHomeHelpHasNoApproval(plan: HomeHelpPlan, revision: int, rosterKey: str, rosterAllowed: bool): bool =
+  not(homeHelpApprovalCurrent(plan, plan.expiresAt, revision, rosterKey, rosterAllowed))
+
+pure def stepClosedHomeHelpStaysClosed(before: HomeHelpPlan, after: HomeHelpPlan): bool =
+  before.phase == Closed implies after.phase == Closed
+
+pure def sometimesHomeHelpCanReachReview(plan: HomeHelpPlan): bool = plan.phase == AwaitingReview
+pure def sometimesHomeHelpCanBeApproved(plan: HomeHelpPlan): bool = plan.phase == Approved
+```

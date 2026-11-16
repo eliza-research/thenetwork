@@ -18,25 +18,25 @@ type TokenFlow = { phase: TokenPhase, reason: TokenReason, refresh: bool }
 
 pure val initial: TokenFlow = { phase: Beginning, reason: NoReason, refresh: false }
 
-pure def refuse(flow: TokenFlow, reason: TokenReason): TokenFlow = { ...flow, phase: Refused, reason: reason }
+pure def refuse(reason: TokenReason, flow: TokenFlow): TokenFlow = { ...flow, phase: Refused, reason: reason }
 
 pure def canReadCode(flow: TokenFlow): bool = flow.phase == Beginning
 pure def readCode(flow: TokenFlow, clientMatches: bool, used: bool, live: bool): TokenFlow =
-  if (not(clientMatches)) refuse(flow, InvalidGrant)
+  if (not(clientMatches)) refuse(InvalidGrant, flow)
   else if (used) { ...flow, phase: RevokeGrant }
-  else if (not(live)) refuse(flow, CodeExpired)
+  else if (not(live)) refuse(CodeExpired, flow)
   else { ...flow, phase: CheckingCodeBinding }
 
 pure def canReadCodeBinding(flow: TokenFlow): bool = flow.phase == CheckingCodeBinding
 pure def readCodeBinding(flow: TokenFlow, redirectMatches: bool, verifierMatches: bool, resourceMatches: bool): TokenFlow =
-  if (not(redirectMatches)) refuse(flow, RedirectMismatch)
-  else if (not(verifierMatches)) refuse(flow, VerifierMismatch)
-  else if (not(resourceMatches)) refuse(flow, InvalidTarget)
+  if (not(redirectMatches)) refuse(RedirectMismatch, flow)
+  else if (not(verifierMatches)) refuse(VerifierMismatch, flow)
+  else if (not(resourceMatches)) refuse(InvalidTarget, flow)
   else { ...flow, phase: CheckingGrant }
 
 pure def canReadRefresh(flow: TokenFlow): bool = flow.phase == Beginning
 pure def readRefresh(flow: TokenFlow, refreshMatches: bool): TokenFlow =
-  if (refreshMatches) { ...flow, phase: CheckingGrant, refresh: true } else refuse(flow, InvalidGrant)
+  if (refreshMatches) { ...flow, phase: CheckingGrant, refresh: true } else refuse(InvalidGrant, flow)
 ```
 
 ### The request needs current grant authority and must stay within its consent
@@ -48,20 +48,20 @@ type TokenAuthority = Current | Invalid | Unavailable
 
 pure def canReadGrant(flow: TokenFlow): bool = flow.phase == CheckingGrant
 pure def readGrant(flow: TokenFlow, grantLive: bool, eligible: bool): TokenFlow =
-  if (grantLive and eligible) { ...flow, phase: CheckingAuthority } else refuse(flow, InvalidGrant)
+  if (grantLive and eligible) { ...flow, phase: CheckingAuthority } else refuse(InvalidGrant, flow)
 
 pure def canReadAuthority(flow: TokenFlow): bool = flow.phase == CheckingAuthority
 pure def readAuthority(flow: TokenFlow, credentialLive: bool, authority: TokenAuthority): TokenFlow =
-  if (not(credentialLive)) refuse(flow, InvalidGrant)
+  if (not(credentialLive)) refuse(InvalidGrant, flow)
   else if (authority == Unavailable) { ...flow, phase: RetryAuthority }
-  else if (authority == Invalid) refuse(flow, InvalidGrant)
+  else if (authority == Invalid) refuse(InvalidGrant, flow)
   else { ...flow, phase: if (flow.refresh) CheckingRefreshBinding else AwaitingConsumption }
 
 pure def canReadRefreshBinding(flow: TokenFlow): bool = flow.phase == CheckingRefreshBinding
 pure def readRefreshBinding(flow: TokenFlow, scopeAllowed: bool, resourceMatches: bool, bothLive: bool): TokenFlow =
-  if (not(scopeAllowed)) refuse(flow, InvalidScope)
-  else if (not(resourceMatches)) refuse(flow, InvalidTarget)
-  else if (not(bothLive)) refuse(flow, InvalidGrant)
+  if (not(scopeAllowed)) refuse(InvalidScope, flow)
+  else if (not(resourceMatches)) refuse(InvalidTarget, flow)
+  else if (not(bothLive)) refuse(InvalidGrant, flow)
   else { ...flow, phase: AwaitingRotation }
 
 pure def codeCanBeConsumed(flow: TokenFlow, bothLive: bool): bool = flow.phase == AwaitingConsumption and bothLive
@@ -77,7 +77,7 @@ type CodeConsumption = NoCode | PreviousUse | CodeConsumed
 pure def canReadConsumption(flow: TokenFlow): bool = flow.phase == AwaitingConsumption
 pure def readConsumption(flow: TokenFlow, consumption: CodeConsumption, bothLive: bool): TokenFlow =
   if (consumption == PreviousUse) { ...flow, phase: RevokeGrant }
-  else if (consumption != CodeConsumed or not(bothLive)) refuse(flow, InvalidGrant)
+  else if (consumption != CodeConsumed or not(bothLive)) refuse(InvalidGrant, flow)
   else { ...flow, phase: AwaitingTokenWrite }
 
 pure def canRecordTokens(flow: TokenFlow): bool = flow.phase == AwaitingTokenWrite

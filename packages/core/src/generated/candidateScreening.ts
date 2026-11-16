@@ -1,16 +1,16 @@
 // GENERATED from spec/candidateScreening.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Refuse an ineligible match before scoring it / Hard checks run in a fixed order (spec/candidateScreening.md:9) */
+/** Story: Refuse an ineligible match before scoring it / Hard checks run in a fixed order (spec/candidateScreening.md) */
 export type CheckPhase = "Duplicates" | "PackPre" | "Age" | "Intermediary" | "Members" | "Pairs" | "PackPost" | "Presence" | "Passed" | "Refused";
-/** Story: Refuse an ineligible match before scoring it / Hard checks run in a fixed order (spec/candidateScreening.md:9) */
+/** Story: Refuse an ineligible match before scoring it / Hard checks run in a fixed order (spec/candidateScreening.md) */
 export interface Screening { phase: CheckPhase; refusal: string }
 
 /** One variant per transition in the spec. */
 export type Event =
   | { type: "recordCheck"; checked: CheckPhase; reason: string };
 
-/** Story: Refuse an ineligible match before scoring it / Hard checks run in a fixed order (spec/candidateScreening.md:9) */
+/** Story: Refuse an ineligible match before scoring it / Hard checks run in a fixed order (spec/candidateScreening.md) */
 export const initial: Screening = { phase: "Duplicates", refusal: "" };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -19,19 +19,19 @@ export function inv(current: Screening): boolean {
   return alwaysRefusalHasReason(current);
 }
 
-/** Story: Refuse an ineligible match before scoring it / Hard checks run in a fixed order (spec/candidateScreening.md:9) */
+/** Story: Refuse an ineligible match before scoring it / Hard checks run in a fixed order (spec/candidateScreening.md) */
 //@ pure
 export function nextPhase(phase: CheckPhase): CheckPhase {
   return phase === "Duplicates" ? "PackPre" : (phase === "PackPre" ? "Age" : (phase === "Age" ? "Intermediary" : (phase === "Intermediary" ? "Members" : (phase === "Members" ? "Pairs" : (phase === "Pairs" ? "PackPost" : (phase === "PackPost" ? "Presence" : "Passed"))))));
 }
 
-/** Story: Refuse an ineligible match before scoring it / Hard checks run in a fixed order (spec/candidateScreening.md:9) */
+/** Story: Refuse an ineligible match before scoring it / Hard checks run in a fixed order (spec/candidateScreening.md) */
 //@ pure
 export function canRecordCheck(s: Screening, checked: CheckPhase): boolean {
   return s.phase === checked && s.phase !== "Passed" && s.phase !== "Refused";
 }
 
-/** Story: Refuse an ineligible match before scoring it / Hard checks run in a fixed order (spec/candidateScreening.md:9) */
+/** Story: Refuse an ineligible match before scoring it / Hard checks run in a fixed order (spec/candidateScreening.md) */
 //@ pure
 export function recordCheck(s: Screening, checked: CheckPhase, reason: string): Screening {
   //@ ensures (inv(s) && canRecordCheck(s, checked)) ==> alwaysRefusalHasReason(\result)
@@ -40,31 +40,31 @@ export function recordCheck(s: Screening, checked: CheckPhase, reason: string): 
   return reason === "" ? ({ phase: nextPhase(s.phase), refusal: "" } as Screening) : ({ phase: "Refused", refusal: reason } as Screening);
 }
 
-/** Story: Refuse an ineligible match before scoring it / The first refusal ends screening (spec/candidateScreening.md:38) */
+/** Story: Refuse an ineligible match before scoring it / The first refusal ends screening (spec/candidateScreening.md) */
 //@ pure
 export function alwaysRefusalHasReason(s: Screening): boolean {
   return (s.phase === "Refused") === (s.refusal !== "");
 }
 
-/** Story: Refuse an ineligible match before scoring it / The first refusal ends screening (spec/candidateScreening.md:38) */
+/** Story: Refuse an ineligible match before scoring it / The first refusal ends screening (spec/candidateScreening.md) */
 //@ pure
 export function stepCompletedScreenStaysClosed(before: Screening, after: Screening): boolean {
   return !(before.phase === "Refused" || before.phase === "Passed") || (after.phase === before.phase && after.refusal === before.refusal);
 }
 
-/** Story: Refuse an ineligible match before scoring it / The first refusal ends screening (spec/candidateScreening.md:38) */
+/** Story: Refuse an ineligible match before scoring it / The first refusal ends screening (spec/candidateScreening.md) */
 //@ pure
 export function stepPassedRequiresPresence(before: Screening, after: Screening): boolean {
   return !(after.phase === "Passed" && before.phase !== "Passed") || before.phase === "Presence";
 }
 
-/** Story: Refuse an ineligible match before scoring it / The first refusal ends screening (spec/candidateScreening.md:38) */
+/** Story: Refuse an ineligible match before scoring it / The first refusal ends screening (spec/candidateScreening.md) */
 //@ pure
 export function sometimesPassed(s: Screening): boolean {
   return s.phase === "Passed";
 }
 
-/** Story: Refuse an ineligible match before scoring it / The first refusal ends screening (spec/candidateScreening.md:38) */
+/** Story: Refuse an ineligible match before scoring it / The first refusal ends screening (spec/candidateScreening.md) */
 //@ pure
 export function sometimesRefused(s: Screening): boolean {
   return s.phase === "Refused";

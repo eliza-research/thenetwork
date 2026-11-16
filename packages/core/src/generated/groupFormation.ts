@@ -1,13 +1,13 @@
 // GENERATED from spec/groupFormation.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Form a compatible group and keep eligible backups / Only eligible adults enter the group search (spec/groupFormation.md:9) */
+/** Story: Form a compatible group and keep eligible backups / Only eligible adults enter the group search (spec/groupFormation.md) */
 export type FormationPhase = "AwaitingPool" | "Forming" | "PrimaryChosen" | "RankingAlternates" | "Finished";
-/** Story: Form a compatible group and keep eligible backups / Only eligible adults enter the group search (spec/groupFormation.md:9) */
+/** Story: Form a compatible group and keep eligible backups / Only eligible adults enter the group search (spec/groupFormation.md) */
 export interface Formation { phase: FormationPhase; hostRequired: boolean; primary: string[]; alternates: string[]; alternateLimit: number; circle: CircleEvidence; circleLimits: CircleLimits }
-/** Story: Form a compatible group and keep eligible backups / A primary circle values every pair and keeps a narrow standing spread (spec/groupFormation.md:69) */
+/** Story: Form a compatible group and keep eligible backups / A primary circle values every pair and keeps a narrow standing spread (spec/groupFormation.md) */
 export interface CircleEvidence { size: number; lowestPairValue: number; pairValueTotal: number; pairCount: number; standingLow: number; standingHigh: number; uncertaintyTotal: number }
-/** Story: Form a compatible group and keep eligible backups / A primary circle values every pair and keeps a narrow standing spread (spec/groupFormation.md:69) */
+/** Story: Form a compatible group and keep eligible backups / A primary circle values every pair and keeps a narrow standing spread (spec/groupFormation.md) */
 export interface CircleLimits { minimum: number; maximum: number; pairFloor: number; parityBand: number }
 
 /** One variant per transition in the spec. */
@@ -18,9 +18,9 @@ export type Event =
   | { type: "reserveAlternate"; member: string }
   | { type: "finishGroup" };
 
-/** Story: Form a compatible group and keep eligible backups / A member's share of a circle is highest when the circle is a clique (spec/groupFormation.md:115) */
+/** Story: Form a compatible group and keep eligible backups / A member's share of a circle is highest when the circle is a clique (spec/groupFormation.md) */
 export const circleShareScale: number = 1000;
-/** Story: Form a compatible group and keep eligible backups / Only eligible adults enter the group search (spec/groupFormation.md:9) */
+/** Story: Form a compatible group and keep eligible backups / Only eligible adults enter the group search (spec/groupFormation.md) */
 export const initial: Formation = { phase: "AwaitingPool", hostRequired: false, primary: ([] as string[]), alternates: ([] as string[]), alternateLimit: 0, circle: ({ size: 0, lowestPairValue: 0, pairValueTotal: 0, pairCount: 0, standingLow: 0, standingHigh: 0, uncertaintyTotal: 0 } as CircleEvidence), circleLimits: ({ minimum: 0, maximum: 0, pairFloor: 0, parityBand: 0 } as CircleLimits) };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -29,19 +29,19 @@ export function inv(current: Formation): boolean {
   return alwaysPrimaryRequiredAfterSearch(current) && alwaysPrimaryCircleCoherent(current) && alwaysAlternateLimitHolds(current);
 }
 
-/** Story: Form a compatible group and keep eligible backups / Only eligible adults enter the group search (spec/groupFormation.md:9) */
+/** Story: Form a compatible group and keep eligible backups / Only eligible adults enter the group search (spec/groupFormation.md) */
 //@ pure
 export function poolEligible(adult: boolean): boolean {
   return adult;
 }
 
-/** Story: Form a compatible group and keep eligible backups / Only eligible adults enter the group search (spec/groupFormation.md:9) */
+/** Story: Form a compatible group and keep eligible backups / Only eligible adults enter the group search (spec/groupFormation.md) */
 //@ pure
 export function extensionAllowed(alreadyIncluded: boolean, compatible: boolean): boolean {
   return !alreadyIncluded && compatible;
 }
 
-/** Story: Form a compatible group and keep eligible backups / Only eligible adults enter the group search (spec/groupFormation.md:9) */
+/** Story: Form a compatible group and keep eligible backups / Only eligible adults enter the group search (spec/groupFormation.md) */
 //@ pure
 export function startSearch(g: Formation, forcedEligible: boolean, hostRequired: boolean): Formation {
   //@ ensures (inv(g) && canStartSearch(g, forcedEligible)) ==> alwaysPrimaryRequiredAfterSearch(\result)
@@ -51,31 +51,31 @@ export function startSearch(g: Formation, forcedEligible: boolean, hostRequired:
   return { ...g, phase: "Forming", hostRequired: hostRequired };
 }
 
-/** Story: Form a compatible group and keep eligible backups / Only eligible adults enter the group search (spec/groupFormation.md:9) */
+/** Story: Form a compatible group and keep eligible backups / Only eligible adults enter the group search (spec/groupFormation.md) */
 //@ pure
 export function canStartSearch(g: Formation, forcedEligible: boolean): boolean {
   return g.phase === "AwaitingPool" && forcedEligible;
 }
 
-/** Story: Form a compatible group and keep eligible backups / A primary group has a common place and meets its requirements (spec/groupFormation.md:37) */
+/** Story: Form a compatible group and keep eligible backups / A primary group has a common place and meets its requirements (spec/groupFormation.md) */
 //@ pure
 export function groupLocationAllowed(hasOverlap: boolean, requiresCity: boolean, matchingCity: boolean): boolean {
   return hasOverlap && (!requiresCity || matchingCity);
 }
 
-/** Story: Form a compatible group and keep eligible backups / A primary group has a common place and meets its requirements (spec/groupFormation.md:37) */
+/** Story: Form a compatible group and keep eligible backups / A primary group has a common place and meets its requirements (spec/groupFormation.md) */
 //@ pure
 export function groupFitAllowed(hasPairs: boolean, belowPairFloor: boolean): boolean {
   return !hasPairs || !belowPairFloor;
 }
 
-/** Story: Form a compatible group and keep eligible backups / A primary group has a common place and meets its requirements (spec/groupFormation.md:37) */
+/** Story: Form a compatible group and keep eligible backups / A primary group has a common place and meets its requirements (spec/groupFormation.md) */
 //@ pure
 export function primaryAllowed(g: Formation, meetsMinimum: boolean, hasHost: boolean): boolean {
   return g.phase === "Forming" && meetsMinimum && (!g.hostRequired || hasHost);
 }
 
-/** Story: Form a compatible group and keep eligible backups / A primary group has a common place and meets its requirements (spec/groupFormation.md:37) */
+/** Story: Form a compatible group and keep eligible backups / A primary group has a common place and meets its requirements (spec/groupFormation.md) */
 //@ pure
 export function choosePrimary(g: Formation, members: string[], meetsMinimum: boolean, hasHost: boolean, circle: CircleEvidence, circleLimits: CircleLimits): Formation {
   //@ ensures (inv(g) && canChoosePrimary(g, members, meetsMinimum, hasHost, circle, circleLimits)) ==> alwaysPrimaryRequiredAfterSearch(\result)
@@ -85,63 +85,63 @@ export function choosePrimary(g: Formation, members: string[], meetsMinimum: boo
   return { ...g, phase: "PrimaryChosen", primary: members, circle: circle, circleLimits: circleLimits };
 }
 
-/** Story: Form a compatible group and keep eligible backups / A primary group has a common place and meets its requirements (spec/groupFormation.md:37) */
+/** Story: Form a compatible group and keep eligible backups / A primary group has a common place and meets its requirements (spec/groupFormation.md) */
 //@ pure
 export function alwaysPrimaryRequiredAfterSearch(g: Formation): boolean {
   return !(g.phase === "PrimaryChosen" || g.phase === "RankingAlternates" || g.phase === "Finished") || g.primary.length > 0;
 }
 
-/** Story: Form a compatible group and keep eligible backups / A primary group has a common place and meets its requirements (spec/groupFormation.md:37) */
+/** Story: Form a compatible group and keep eligible backups / A primary group has a common place and meets its requirements (spec/groupFormation.md) */
 //@ pure
 export function canChoosePrimary(g: Formation, members: string[], meetsMinimum: boolean, hasHost: boolean, circle: CircleEvidence, circleLimits: CircleLimits): boolean {
   return members.length > 0 && circle.size === members.length && circleCoherent(circle, circleLimits.minimum, circleLimits.maximum, circleLimits.pairFloor, circleLimits.parityBand) && primaryAllowed(g, meetsMinimum, hasHost);
 }
 
-/** Story: Form a compatible group and keep eligible backups / A primary circle values every pair and keeps a narrow standing spread (spec/groupFormation.md:69) */
+/** Story: Form a compatible group and keep eligible backups / A primary circle values every pair and keeps a narrow standing spread (spec/groupFormation.md) */
 //@ pure
 export function circleCoherent(e: CircleEvidence, minimum: number, maximum: number, pairFloor: number, parityBand: number): boolean {
   return e.size >= 1 && minimum <= e.size && e.size <= maximum && e.pairCount === quotient_groupFormation(exact_groupFormation(e.size * exact_groupFormation(e.size - 1)), 2) && (e.pairCount === 0 || (e.lowestPairValue >= 0 && e.lowestPairValue >= pairFloor && e.pairValueTotal >= exact_groupFormation(pairFloor * e.pairCount))) && e.uncertaintyTotal >= 0 && e.standingLow <= e.standingHigh && exact_groupFormation(e.standingHigh - e.standingLow) <= exact_groupFormation(parityBand + e.uncertaintyTotal);
 }
 
-/** Story: Form a compatible group and keep eligible backups / A primary circle values every pair and keeps a narrow standing spread (spec/groupFormation.md:69) */
+/** Story: Form a compatible group and keep eligible backups / A primary circle values every pair and keeps a narrow standing spread (spec/groupFormation.md) */
 //@ pure
 export function alwaysPrimaryCircleCoherent(g: Formation): boolean {
   return !(g.phase === "PrimaryChosen" || g.phase === "RankingAlternates" || g.phase === "Finished") || (g.circle.size === g.primary.length && circleCoherent(g.circle, g.circleLimits.minimum, g.circleLimits.maximum, g.circleLimits.pairFloor, g.circleLimits.parityBand));
 }
 
-/** Story: Form a compatible group and keep eligible backups / A primary circle values every pair and keeps a narrow standing spread (spec/groupFormation.md:69) */
+/** Story: Form a compatible group and keep eligible backups / A primary circle values every pair and keeps a narrow standing spread (spec/groupFormation.md) */
 //@ pure
 export function sometimesPairCircleChosen(g: Formation): boolean {
   return g.phase === "PrimaryChosen" && g.circle.size === 2;
 }
 
-/** Story: Form a compatible group and keep eligible backups / A member's share of a circle is highest when the circle is a clique (spec/groupFormation.md:115) */
+/** Story: Form a compatible group and keep eligible backups / A member's share of a circle is highest when the circle is a clique (spec/groupFormation.md) */
 //@ pure
 export function circleMemberShare(neighbours: number, circleSize: number): number {
   const local_0 = neighbours < 0 ? 0 : (neighbours > exact_groupFormation(circleSize - 1) ? exact_groupFormation(circleSize - 1) : neighbours);
   return circleSize <= 0 ? 0 : quotient_groupFormation(exact_groupFormation(circleShareScale * local_0), circleSize);
 }
 
-/** Story: Form a compatible group and keep eligible backups / A member's share of a circle is highest when the circle is a clique (spec/groupFormation.md:115) */
+/** Story: Form a compatible group and keep eligible backups / A member's share of a circle is highest when the circle is a clique (spec/groupFormation.md) */
 //@ pure
 export function lawCliqueShareIsHighest(neighbours: number, circleSize: number): boolean {
   //@ ensures \result === true
   return circleMemberShare(neighbours, circleSize) <= circleMemberShare(exact_groupFormation(circleSize - 1), circleSize);
 }
 
-/** Story: Form a compatible group and keep eligible backups / An alternate can join the primary group in its city (spec/groupFormation.md:130) */
+/** Story: Form a compatible group and keep eligible backups / An alternate can join the primary group in its city (spec/groupFormation.md) */
 //@ pure
 export function alternateAllowed(alreadyPrimary: boolean, compatible: boolean, sameCityOverlap: boolean): boolean {
   return !alreadyPrimary && compatible && sameCityOverlap;
 }
 
-/** Story: Form a compatible group and keep eligible backups / An alternate can join the primary group in its city (spec/groupFormation.md:130) */
+/** Story: Form a compatible group and keep eligible backups / An alternate can join the primary group in its city (spec/groupFormation.md) */
 //@ pure
 export function canOpenAlternates(g: Formation, alternateLimit: number): boolean {
   return g.phase === "PrimaryChosen" && alternateLimit >= 0;
 }
 
-/** Story: Form a compatible group and keep eligible backups / An alternate can join the primary group in its city (spec/groupFormation.md:130) */
+/** Story: Form a compatible group and keep eligible backups / An alternate can join the primary group in its city (spec/groupFormation.md) */
 //@ pure
 export function openAlternates(g: Formation, alternateLimit: number): Formation {
   //@ ensures (inv(g) && canOpenAlternates(g, alternateLimit)) ==> alwaysPrimaryRequiredAfterSearch(\result)
@@ -151,13 +151,13 @@ export function openAlternates(g: Formation, alternateLimit: number): Formation 
   return { ...g, phase: "RankingAlternates", alternateLimit: alternateLimit };
 }
 
-/** Story: Form a compatible group and keep eligible backups / An alternate can join the primary group in its city (spec/groupFormation.md:130) */
+/** Story: Form a compatible group and keep eligible backups / An alternate can join the primary group in its city (spec/groupFormation.md) */
 //@ pure
 export function canReserveAlternate(g: Formation, member: string): boolean {
   return g.phase === "RankingAlternates" && g.alternates.length < g.alternateLimit && !g.primary.includes(member);
 }
 
-/** Story: Form a compatible group and keep eligible backups / An alternate can join the primary group in its city (spec/groupFormation.md:130) */
+/** Story: Form a compatible group and keep eligible backups / An alternate can join the primary group in its city (spec/groupFormation.md) */
 //@ pure
 export function reserveAlternate(g: Formation, member: string): Formation {
   //@ ensures (inv(g) && canReserveAlternate(g, member)) ==> alwaysPrimaryRequiredAfterSearch(\result)
@@ -167,13 +167,13 @@ export function reserveAlternate(g: Formation, member: string): Formation {
   return { ...g, alternates: g.alternates.concat([member]) };
 }
 
-/** Story: Form a compatible group and keep eligible backups / An alternate can join the primary group in its city (spec/groupFormation.md:130) */
+/** Story: Form a compatible group and keep eligible backups / An alternate can join the primary group in its city (spec/groupFormation.md) */
 //@ pure
 export function canFinishGroup(g: Formation): boolean {
   return g.phase === "RankingAlternates";
 }
 
-/** Story: Form a compatible group and keep eligible backups / An alternate can join the primary group in its city (spec/groupFormation.md:130) */
+/** Story: Form a compatible group and keep eligible backups / An alternate can join the primary group in its city (spec/groupFormation.md) */
 //@ pure
 export function finishGroup(g: Formation): Formation {
   //@ ensures (inv(g) && canFinishGroup(g)) ==> alwaysPrimaryRequiredAfterSearch(\result)
@@ -183,19 +183,19 @@ export function finishGroup(g: Formation): Formation {
   return { ...g, phase: "Finished" };
 }
 
-/** Story: Form a compatible group and keep eligible backups / An alternate can join the primary group in its city (spec/groupFormation.md:130) */
+/** Story: Form a compatible group and keep eligible backups / An alternate can join the primary group in its city (spec/groupFormation.md) */
 //@ pure
 export function alwaysAlternateLimitHolds(g: Formation): boolean {
   return g.alternates.length <= g.alternateLimit && (!(g.phase === "AwaitingPool" || g.phase === "Forming" || g.phase === "PrimaryChosen") || g.alternates.length === 0);
 }
 
-/** Story: Form a compatible group and keep eligible backups / An alternate can join the primary group in its city (spec/groupFormation.md:130) */
+/** Story: Form a compatible group and keep eligible backups / An alternate can join the primary group in its city (spec/groupFormation.md) */
 //@ pure
 export function stepFinishedStaysFinished(before: Formation, after: Formation): boolean {
   return !(before.phase === "Finished") || after.phase === "Finished";
 }
 
-/** Story: Form a compatible group and keep eligible backups / An alternate can join the primary group in its city (spec/groupFormation.md:130) */
+/** Story: Form a compatible group and keep eligible backups / An alternate can join the primary group in its city (spec/groupFormation.md) */
 //@ pure
 export function sometimesFinishedWithAlternate(g: Formation): boolean {
   return g.phase === "Finished" && g.alternates.length > 0;

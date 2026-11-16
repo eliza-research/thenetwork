@@ -1,19 +1,22 @@
-// The Network on a real map of New York: members at their home neighborhoods (jittered), the
-// relationships between them, open opportunities as dashed lines, meetings at the public venues
-// they were scheduled at, and every venue the Network can suggest. Leaflet + OSM tiles.
-// Filters and focus come from the store: the borough filter hides members, the members filter and
-// the focus dim them, and a focus change flies (member) or fits (opportunity, neighborhood) once.
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { memberPoint, NEIGHBORHOOD, VENUES } from "@thenetwork/network/geo"; // geo only: the package root pulls server code into the browser bundle
+import { memberPoint, NEIGHBORHOOD, VENUES } from "@thenetwork/network/geo";
 import type { ObsMember } from "../src/types.ts";
-import { EDGE_STYLE, memberColor, OPP_COLOR } from "./graph.ts";
+import { EDGE_STYLE, memberPaint, oppInk, type Palette, readPalette } from "./graph.ts";
 import { memberTooltipText, textNode } from "./safe.ts";
 import { focusKey, OPEN, store } from "./store.ts";
+import { pickMember } from "./ui.tsx";
 
 const NYC: L.LatLngExpression = [40.73, -73.95];
 const MEETING_STATES = new Set(["SCHEDULED", "COMPLETED", "FEEDBACK_COLLECTED"]);
 
+/**
+ * The Network on a map of New York, drawn with Leaflet on OpenStreetMap tiles (attribution required; the tiles are
+ * darkened in dark mode by the `[data-map] .tiles-dark` rule in styles.css). Members stand at their home neighborhoods,
+ * with their relationships, open opportunities as dashed lines, meetings at their public venues, and every venue the
+ * Network can suggest. The borough filter hides members; the members filter and the focus dim them; a focus change flies
+ * to a member, or fits an opportunity or a neighborhood, once. Colors come from the design-system CSS variables at each update.
+ */
 export class MapView {
   private map: L.Map;
   private renderer = L.canvas({ padding: 0.3 });
@@ -22,6 +25,8 @@ export class MapView {
   private oppLayer = L.layerGroup();
   private venueLayer = L.layerGroup();
   private meetLayer = L.layerGroup();
+  private venues: L.CircleMarker[] = [];
+  private venueInk = "";
   private oppVersion = "";
   private edgeKey = "";
   private lastFocusKey = "";
@@ -31,16 +36,14 @@ export class MapView {
 
   constructor(el: HTMLElement) {
     this.map = L.map(el, { zoomControl: true, preferCanvas: true, attributionControl: true }).setView(NYC, 12);
-    // OpenStreetMap's standard tiles (attribution required; light, local use per the OSM tile policy),
-    // darkened with a CSS filter (.nyc-map .tiles-dark) to match the observatory.
     L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19, className: "tiles-dark",
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     }).addTo(this.map);
     this.edgeLayer.addTo(this.map); this.oppLayer.addTo(this.map); this.meetLayer.addTo(this.map); this.venueLayer.addTo(this.map);
     for (const v of VENUES) {
-      L.circleMarker([v.lat, v.lng], { renderer: this.renderer, radius: 3.5, color: "#ffd45c", weight: 1, fillColor: "#ffd45c", fillOpacity: 0.25 })
-        .bindTooltip(textNode(`${v.name} · ${v.neighborhood}`), { direction: "top" }).addTo(this.venueLayer);
+      this.venues.push(L.circleMarker([v.lat, v.lng], { renderer: this.renderer, radius: 3.5, weight: 1, fillOpacity: 0.25 })
+        .bindTooltip(textNode(`${v.name} · ${v.neighborhood}`), { direction: "top" }).addTo(this.venueLayer));
     }
     if (store.pendingFly) { this.map.setView([store.pendingFly.lat, store.pendingFly.lng], 15); store.pendingFly = null; this.lastFocusKey = focusKey(store.ui.focus); }
     this.raf = requestAnimationFrame(this.frame);
@@ -63,7 +66,7 @@ export class MapView {
 
   private frame = (t: number) => {
     this.raf = requestAnimationFrame(this.frame);
-    if (t - this.last < 250) return; // 4 updates a second is plenty for a map
+    if (t - this.last < 250) return;
     this.last = t;
     this.sync();
   };
@@ -71,7 +74,7 @@ export class MapView {
   /** On a focus change: fly to a member, or fit the bounds of an opportunity or neighborhood, once. */
   private followFocus() {
     const f = store.ui.focus, key = focusKey(f);
-    if (key === this.lastFocusKey || (f && !store.members.size)) return; // wait for data before following a focus from the URL
+    if (key === this.lastFocusKey || (f && !store.members.size)) return;
     this.lastFocusKey = key;
     if (!f) return;
     if (f.kind === "member") { this.focus(f.id); return; }
@@ -96,38 +99,38 @@ export class MapView {
     const area = f?.kind === "neighborhood" ? f.id : null;
     const busy = store.busy();
     const bright = store.focusSet();
+    const ink = readPalette();
+    this.restyleVenues(ink);
     this.followFocus();
     if (ui.filters.borough !== this.lastBorough && store.members.size) {
-      // A new borough: fit the members it shows (unless a focus already moved the map).
       this.lastBorough = ui.filters.borough;
       const pts = [...store.members.values()].filter(m => store.inBorough(m)).map(m => this.point(m));
       if (!f && pts.length > 1) this.map.flyToBounds(L.latLngBounds(pts), { padding: [40, 40], maxZoom: 14, duration: 0.6 });
     }
-    // Members (create once, restyle each update). The borough filter hides; the members filter and the focus dim.
     for (const m of store.members.values()) {
       let mk = this.members.get(m.id);
-      const shown = store.inBorough(m) || !!bright?.has(m.id); // the focus and the picks stay visible outside the borough
+      const shown = store.inBorough(m) || !!bright?.has(m.id);
       if (!shown) { if (mk) { mk.remove(); this.members.delete(m.id); } continue; }
       if (!mk) {
         mk = L.circleMarker(this.point(m), { renderer: this.renderer, radius: 4 });
-        mk.on("click", e => { if ((e.originalEvent as MouseEvent).shiftKey) store.togglePick(m.id); else store.focus({ kind: "member", id: m.id }); });
+        mk.on("click", e => { if ((e.originalEvent as MouseEvent).shiftKey) pickMember(m.id); else store.focus({ kind: "member", id: m.id }); });
         mk.bindTooltip(() => textNode(memberTooltipText(store.members.get(m.id) ?? m)), { direction: "top" });
         mk.addTo(this.map);
         this.members.set(m.id, mk);
       }
       const picked = ui.picks.includes(m.id);
       const dim = (bright && !bright.has(m.id)) || !store.matchMemberFilter(m);
-      const color = m.trust === "hold" ? "#ff3b4e" : m.trust === "watch" ? "#ff9a6b" : memberColor(m, ui.colorBy);
+      const paint = m.trust === "hold" ? { ink: "destructive" as const, alpha: 1 } : m.trust === "watch" ? { ink: "warn" as const, alpha: 1 } : memberPaint(m, ui.colorBy);
+      const ring = busy.has(m.id) && !dim;
       mk.setStyle({
-        color: picked ? "#ffd45c" : sel === m.id ? "#ffffff" : busy.has(m.id) && !dim ? "rgba(255,255,255,0.7)" : color,
-        weight: picked || sel === m.id ? 3 : busy.has(m.id) && !dim ? 1.5 : 1,
-        opacity: dim ? 0.3 : 1,
-        fillColor: color, fillOpacity: dim ? 0.15 : m.joined ? (m.state === "opted_out" ? 0.1 : 0.85) : 0.25,
+        color: picked ? ink.warn : sel === m.id || ring ? ink.foreground : ink[paint.ink],
+        weight: picked || sel === m.id ? 3 : ring ? 1.5 : 1,
+        opacity: dim ? 0.3 : ring && !picked && sel !== m.id ? 0.7 : 1,
+        fillColor: ink[paint.ink], fillOpacity: (dim ? 0.15 : m.joined ? (m.state === "opted_out" ? 0.1 : 0.85) : 0.25) * paint.alpha,
       });
       mk.setRadius(3 + Math.min(5, Math.sqrt(m.counters.meetings * 2 + m.counters.accepted)));
     }
-    // Relationships: rebuilt when the graph, the layer toggles, the borough or the focus change.
-    const edgeKey = `${store.graphTick}|${JSON.stringify(ui.edgeTypes)}|${ui.filters.borough}|${focusKey(f)}`;
+    const edgeKey = `${store.graphTick}|${JSON.stringify(ui.edgeTypes)}|${ui.filters.borough}|${focusKey(f)}|${this.venueInk}`;
     if (edgeKey !== this.edgeKey) {
       this.edgeKey = edgeKey;
       this.edgeLayer.clearLayers();
@@ -137,13 +140,13 @@ export class MapView {
         if (!a || !b || !store.inBorough(a) || !store.inBorough(b)) continue;
         if (sel && e.from !== sel && e.to !== sel) continue;
         if (area && (a.area !== area || b.area !== area)) continue;
-        const st = EDGE_STYLE[e.type]!;
+        const st = EDGE_STYLE[e.type as keyof typeof EDGE_STYLE];
+        if (!st) continue;
         const strong = !!sel || !!area;
-        L.polyline([this.point(a), this.point(b)], { renderer: this.renderer, color: st.color, weight: strong ? st.width * 2 : st.width, opacity: strong ? 0.9 : Math.min(0.9, st.alpha * 2.2), dashArray: st.dash?.join(" "), interactive: false }).addTo(this.edgeLayer);
+        L.polyline([this.point(a), this.point(b)], { renderer: this.renderer, color: ink[st.ink], weight: strong ? st.width * 2 : st.width, opacity: strong ? 0.9 : Math.min(0.9, st.alpha * 2.2), dashArray: st.dash?.join(" "), interactive: false }).addTo(this.edgeLayer);
       }
     }
-    // Opportunities and meetings: rebuilt when they, the filters or the focus change.
-    const oppVersion = `${store.version}|${ui.showOpps}|${JSON.stringify(ui.filters)}|${focusKey(f)}|${Math.floor(store.now() / 3_600_000)}`;
+    const oppVersion = `${store.version}|${ui.showOpps}|${JSON.stringify(ui.filters)}|${focusKey(f)}|${Math.floor(store.now() / 3_600_000)}|${this.venueInk}`;
     if (oppVersion !== this.oppVersion) {
       this.oppVersion = oppVersion;
       this.oppLayer.clearLayers(); this.meetLayer.clearLayers();
@@ -158,18 +161,18 @@ export class MapView {
           const cur = meetings.get(k) ?? { ...o.venue, n: 0, upcoming: 0, opps: [] };
           cur.n++; cur.opps.push(o.id); if (o.state === "SCHEDULED") cur.upcoming++;
           meetings.set(k, cur);
-          if (ui.showOpps && o.state === "SCHEDULED") for (const m of ms) L.polyline([this.point(m), [o.venue.lat, o.venue.lng]], { renderer: this.renderer, color: OPP_COLOR.SCHEDULED, weight: focused ? 3 : 1.5, opacity: faded ? 0.15 : 0.8, interactive: false }).addTo(this.oppLayer);
+          if (ui.showOpps && o.state === "SCHEDULED") for (const m of ms) L.polyline([this.point(m), [o.venue.lat, o.venue.lng]], { renderer: this.renderer, color: ink.ok, weight: focused ? 3 : 1.5, opacity: faded ? 0.15 : 0.8, interactive: false }).addTo(this.oppLayer);
           continue;
         }
         if (!ui.showOpps || !(OPEN.has(o.state) || o.source === "shadow")) continue;
-        const color = o.source === "shadow" ? "#ffffff" : OPP_COLOR[o.state] ?? "#aaa";
+        const color = ink[oppInk(o)];
         const dash = o.state === "IN_REVIEW" ? "1 4" : o.state === "PROPOSED" ? "2 5" : "6 4";
         const line = L.polyline(ms.map(m => this.point(m)), { renderer: this.renderer, color, weight: focused ? 4 : o.source === "player" ? 2.5 : 1.5, opacity: faded ? 0.15 : 0.85, dashArray: dash });
         line.on("click", () => store.focus({ kind: "opportunity", id: o.id }));
         line.addTo(this.oppLayer);
       }
       for (const v of meetings.values()) {
-        const mk = L.circleMarker([v.lat, v.lng], { renderer: this.renderer, radius: 6 + Math.min(10, v.n * 1.5), color: "#3dff9a", weight: 2, fillColor: "#3dff9a", fillOpacity: v.upcoming ? 0.45 : 0.18 })
+        const mk = L.circleMarker([v.lat, v.lng], { renderer: this.renderer, radius: 6 + Math.min(10, v.n * 1.5), color: ink.ok, weight: 2, fillColor: ink.ok, fillOpacity: v.upcoming ? 0.45 : 0.18 })
           .bindTooltip(textNode(`${v.name}: ${v.n} meeting${v.n > 1 ? "s" : ""}${v.upcoming ? ` (${v.upcoming} upcoming)` : ""}`), { direction: "top" });
         mk.on("click", () => {
           if (v.opps.length === 1) { store.focus({ kind: "opportunity", id: v.opps[0]! }); return; }
@@ -179,5 +182,13 @@ export class MapView {
         mk.addTo(this.meetLayer);
       }
     }
+  }
+
+  /** Gives the venue markers the warn ink again when the brand colors change, and records the colors that the layers were drawn with. */
+  private restyleVenues(ink: Palette) {
+    const key = JSON.stringify(ink);
+    if (key === this.venueInk) return;
+    this.venueInk = key;
+    for (const v of this.venues) v.setStyle({ color: ink.warn, fillColor: ink.warn });
   }
 }

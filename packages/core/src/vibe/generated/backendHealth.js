@@ -1,66 +1,66 @@
 // Generated from spec/backendHealth.md via Vibestack and VibeLang. Run pnpm run spec:sync.
 // GENERATED from spec/backendHealth.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-/** Story: Tell operators when a backend cannot serve / Admit the check before reading the database (spec/backendHealth.md:9) */
+/** Story: Tell operators when a backend cannot serve / Admit the check before reading the database (spec/backendHealth.md) */
 export const initial = { tag: "CheckingAdmission" };
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current) {
     return true;
 }
-/** Story: Tell operators when a backend cannot serve / Admit the check before reading the database (spec/backendHealth.md:9) */
+/** Story: Tell operators when a backend cannot serve / Admit the check before reading the database (spec/backendHealth.md) */
 //@ pure
 export function canCheckAdmission(s) {
     return equal_backendHealth(s, { tag: "CheckingAdmission" });
 }
-/** Story: Tell operators when a backend cannot serve / Admit the check before reading the database (spec/backendHealth.md:9) */
+/** Story: Tell operators when a backend cannot serve / Admit the check before reading the database (spec/backendHealth.md) */
 //@ pure
 export function checkAdmission(s, serving) {
     //@ ensures (inv(s) && canCheckAdmission(s)) ==> stepReportIsFinal(s, \result)
     return serving ? { tag: "CheckingDatabase" } : { tag: "Reported", status: "Draining" };
 }
-/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md:24) */
+/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
 //@ pure
 export function stepReportIsFinal(before, after) {
     return before.tag === "Reported" ? equal_backendHealth(after, before) : true;
 }
-/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md:24) */
+/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
 //@ pure
 export function canCheckTicks(s) {
     return equal_backendHealth(s, { tag: "CheckingTicks" });
 }
-/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md:24) */
+/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
 //@ pure
 export function checkTicks(s, late) {
     //@ ensures (inv(s) && canCheckTicks(s)) ==> stepReportIsFinal(s, \result)
     return { tag: "Reported", status: late ? "TickLate" : "Ready" };
 }
-/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md:24) */
+/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
 //@ pure
 export function sometimesReportsReady(s) {
     return equal_backendHealth(s, { tag: "Reported", status: "Ready" });
 }
-/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md:24) */
+/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
 //@ pure
 export function sometimesReportsDraining(s) {
     return equal_backendHealth(s, { tag: "Reported", status: "Draining" });
 }
-/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md:24) */
+/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
 //@ pure
 export function sometimesReportsDatabaseDown(s) {
     return equal_backendHealth(s, { tag: "Reported", status: "DatabaseDown" });
 }
-/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md:24) */
+/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
 //@ pure
 export function sometimesReportsLateTick(s) {
     return equal_backendHealth(s, { tag: "Reported", status: "TickLate" });
 }
-/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md:24) */
+/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
 //@ pure
 export function canCheckDatabase(s) {
     return equal_backendHealth(s, { tag: "CheckingDatabase" });
 }
-/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md:24) */
+/** Story: Tell operators when a backend cannot serve / Read tick lateness only after a successful database ping (spec/backendHealth.md) */
 //@ pure
 export function checkDatabase(s, reachable) {
     //@ ensures (inv(s) && canCheckDatabase(s)) ==> stepReportIsFinal(s, \result)

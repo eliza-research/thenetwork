@@ -1,9 +1,9 @@
 // GENERATED from spec/opportunityLifecycle.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md:9) */
+/** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md) */
 export type OpportunityPhase = "InReview" | "Probing" | "Scheduled" | "Done" | "Closed";
-/** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md:9) */
+/** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md) */
 export interface OpportunityLifecycle { phase: OpportunityPhase; approved: boolean }
 
 /** One variant per transition in the spec. */
@@ -13,7 +13,7 @@ export type Event =
   | { type: "complete"; feedbackDue: boolean }
   | { type: "close" };
 
-/** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md:9) */
+/** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md) */
 export const initial: OpportunityLifecycle = { phase: "InReview", approved: false };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -22,13 +22,13 @@ export function inv(current: OpportunityLifecycle): boolean {
   return alwaysContactStagesRequireApproval(current);
 }
 
-/** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md:9) */
+/** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md) */
 //@ pure
 export function canStartProbing(proposal: OpportunityLifecycle, approvalRecorded: boolean, eligible: boolean): boolean {
   return proposal.phase === "InReview" && approvalRecorded && eligible;
 }
 
-/** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md:9) */
+/** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md) */
 //@ pure
 export function startProbing(proposal: OpportunityLifecycle, approvalRecorded: boolean, eligible: boolean): OpportunityLifecycle {
   //@ ensures (inv(proposal) && canStartProbing(proposal, approvalRecorded, eligible)) ==> alwaysContactStagesRequireApproval(\result)
@@ -36,25 +36,25 @@ export function startProbing(proposal: OpportunityLifecycle, approvalRecorded: b
   return { phase: "Probing", approved: true };
 }
 
-/** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md:9) */
+/** Story: Review a proposal before contacting anyone / An opportunity starts in review (spec/opportunityLifecycle.md) */
 //@ pure
 export function alwaysContactStagesRequireApproval(proposal: OpportunityLifecycle): boolean {
   return !(proposal.phase === "Probing" || proposal.phase === "Scheduled" || proposal.phase === "Done") || proposal.approved;
 }
 
-/** Story: Book and conclude a proposal that comes together / Only an approved proposal with enough consent can book (spec/opportunityLifecycle.md:33) */
+/** Story: Book and conclude a proposal that comes together / Only an approved proposal with enough consent can book (spec/opportunityLifecycle.md) */
 //@ pure
 export function groupCanContinue(remaining: number): boolean {
   return remaining >= 3;
 }
 
-/** Story: Book and conclude a proposal that comes together / Only an approved proposal with enough consent can book (spec/opportunityLifecycle.md:33) */
+/** Story: Book and conclude a proposal that comes together / Only an approved proposal with enough consent can book (spec/opportunityLifecycle.md) */
 //@ pure
 export function canBook(proposal: OpportunityLifecycle, hasConsent: boolean): boolean {
   return proposal.phase === "Probing" && proposal.approved && hasConsent;
 }
 
-/** Story: Book and conclude a proposal that comes together / Only an approved proposal with enough consent can book (spec/opportunityLifecycle.md:33) */
+/** Story: Book and conclude a proposal that comes together / Only an approved proposal with enough consent can book (spec/opportunityLifecycle.md) */
 //@ pure
 export function book(proposal: OpportunityLifecycle, hasConsent: boolean): OpportunityLifecycle {
   //@ ensures (inv(proposal) && canBook(proposal, hasConsent)) ==> alwaysContactStagesRequireApproval(\result)
@@ -62,33 +62,33 @@ export function book(proposal: OpportunityLifecycle, hasConsent: boolean): Oppor
   return { ...proposal, phase: "Scheduled" };
 }
 
-/** Story: Book and conclude a proposal that comes together / Only an approved proposal with enough consent can book (spec/opportunityLifecycle.md:33) */
+/** Story: Book and conclude a proposal that comes together / Only an approved proposal with enough consent can book (spec/opportunityLifecycle.md) */
 //@ pure
 export function lawAGroupNeedsAtLeastThree(remaining: number): boolean {
   //@ ensures \result === true
   return !groupCanContinue(remaining) || remaining >= 3;
 }
 
-/** Story: Book and conclude a proposal that comes together / A new minor signal closes an unbooked opportunity involving that person (spec/opportunityLifecycle.md:50) */
+/** Story: Book and conclude a proposal that comes together / A new minor signal closes an unbooked opportunity involving that person (spec/opportunityLifecycle.md) */
 //@ pure
 export function closesForMinor(proposal: OpportunityLifecycle, minorSignal: boolean, participant: boolean, alternate: boolean, contacted: boolean): boolean {
   return (proposal.phase === "InReview" || proposal.phase === "Probing") && minorSignal && (participant || alternate || contacted);
 }
 
-/** Story: Book and conclude a proposal that comes together / A new minor signal closes an unbooked opportunity involving that person (spec/opportunityLifecycle.md:50) */
+/** Story: Book and conclude a proposal that comes together / A new minor signal closes an unbooked opportunity involving that person (spec/opportunityLifecycle.md) */
 //@ pure
 export function lawMinorContactClosesAnUnbookedOpportunity(proposal: OpportunityLifecycle): boolean {
   //@ ensures \result === true
   return !(proposal.phase === "InReview" || proposal.phase === "Probing") || closesForMinor(proposal, true, false, false, true);
 }
 
-/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md:62) */
+/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md) */
 //@ pure
 export function canComplete(proposal: OpportunityLifecycle, feedbackDue: boolean): boolean {
   return proposal.phase === "Scheduled" && feedbackDue;
 }
 
-/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md:62) */
+/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md) */
 //@ pure
 export function complete(proposal: OpportunityLifecycle, feedbackDue: boolean): OpportunityLifecycle {
   //@ ensures (inv(proposal) && canComplete(proposal, feedbackDue)) ==> alwaysContactStagesRequireApproval(\result)
@@ -96,13 +96,13 @@ export function complete(proposal: OpportunityLifecycle, feedbackDue: boolean): 
   return { ...proposal, phase: "Done" };
 }
 
-/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md:62) */
+/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md) */
 //@ pure
 export function canClose(proposal: OpportunityLifecycle): boolean {
   return proposal.phase === "InReview" || proposal.phase === "Probing" || proposal.phase === "Scheduled";
 }
 
-/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md:62) */
+/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md) */
 //@ pure
 export function close(proposal: OpportunityLifecycle): OpportunityLifecycle {
   //@ ensures (inv(proposal) && canClose(proposal)) ==> alwaysContactStagesRequireApproval(\result)
@@ -110,25 +110,25 @@ export function close(proposal: OpportunityLifecycle): OpportunityLifecycle {
   return { ...proposal, phase: "Closed" };
 }
 
-/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md:62) */
+/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md) */
 //@ pure
 export function stepTerminalOpportunityCannotReopen(before: OpportunityLifecycle, after: OpportunityLifecycle): boolean {
   return !(before.phase === "Closed" || before.phase === "Done") || before.phase === after.phase;
 }
 
-/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md:62) */
+/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md) */
 //@ pure
 export function sometimesCanBook(proposal: OpportunityLifecycle): boolean {
   return proposal.phase === "Scheduled";
 }
 
-/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md:62) */
+/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md) */
 //@ pure
 export function sometimesCanComplete(proposal: OpportunityLifecycle): boolean {
   return proposal.phase === "Done";
 }
 
-/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md:62) */
+/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md) */
 //@ pure
 export function sometimesCanCloseBeforeContact(proposal: OpportunityLifecycle): boolean {
   return proposal.phase === "Closed" && !proposal.approved;

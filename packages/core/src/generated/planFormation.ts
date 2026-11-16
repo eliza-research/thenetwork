@@ -1,9 +1,9 @@
 // GENERATED from spec/planFormation.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Give each invited member one plan per city run / Reserve ranked plans until the city limit is reached (spec/planFormation.md:53) */
+/** Story: Give each invited member one plan per city run / Reserve ranked plans until the city limit is reached (spec/planFormation.md) */
 export type PlanRunPhase = "ReservingPlans" | "PlansPublished";
-/** Story: Give each invited member one plan per city run / Reserve ranked plans until the city limit is reached (spec/planFormation.md:53) */
+/** Story: Give each invited member one plan per city run / Reserve ranked plans until the city limit is reached (spec/planFormation.md) */
 export interface CityPlanRun { phase: PlanRunPhase; count: number; occupied: Record<string, boolean> }
 
 /** One variant per transition in the spec. */
@@ -11,7 +11,7 @@ export type Event =
   | { type: "reservePlan"; invited: string[]; limit: number }
   | { type: "publishPlans" };
 
-/** Story: Give each invited member one plan per city run / Reserve ranked plans until the city limit is reached (spec/planFormation.md:53) */
+/** Story: Give each invited member one plan per city run / Reserve ranked plans until the city limit is reached (spec/planFormation.md) */
 export const initial: CityPlanRun = { phase: "ReservingPlans", count: 0, occupied: ({} as Record<string, boolean>) };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -20,67 +20,67 @@ export function inv(current: CityPlanRun): boolean {
   return true;
 }
 
-/** Story: Find a public activity that fits the group / A public venue must fit the activity and the proposed number of people (spec/planFormation.md:9) */
+/** Story: Find a public activity that fits the group / A public venue must fit the activity and the proposed number of people (spec/planFormation.md) */
 //@ pure
 export function venueCanHostActivity(isPublic: boolean, sameCity: boolean, supportsActivity: boolean, capacity: number): boolean {
   return isPublic && sameCity && supportsActivity && capacity >= 2;
 }
 
-/** Story: Find a public activity that fits the group / A public venue must fit the activity and the proposed number of people (spec/planFormation.md:9) */
+/** Story: Find a public activity that fits the group / A public venue must fit the activity and the proposed number of people (spec/planFormation.md) */
 //@ pure
 export function venueCanHoldGroup(capacity: number, eligiblePeople: number, minimumGroup: number): boolean {
   return capacity >= minimumGroup && eligiblePeople >= minimumGroup;
 }
 
-/** Story: Find a public activity that fits the group / A public venue must fit the activity and the proposed number of people (spec/planFormation.md:9) */
+/** Story: Find a public activity that fits the group / A public venue must fit the activity and the proposed number of people (spec/planFormation.md) */
 //@ pure
 export function planCanFitPlace(maximumGroup: number, minimumPlace: number): boolean {
   return !(maximumGroup < minimumPlace);
 }
 
-/** Story: Find a public activity that fits the group / Search for a qualifying group before an activity partner (spec/planFormation.md:23) */
+/** Story: Find a public activity that fits the group / Search for a qualifying group before an activity partner (spec/planFormation.md) */
 //@ pure
 export function searchForPlanPartner(hasGroup: boolean, partnerEnabled: boolean, activityMinimum: number, capacity: number): boolean {
   return !hasGroup && partnerEnabled && activityMinimum <= 2 && capacity >= 2;
 }
 
-/** Story: Find a public activity that fits the group / Search for a qualifying group before an activity partner (spec/planFormation.md:23) */
+/** Story: Find a public activity that fits the group / Search for a qualifying group before an activity partner (spec/planFormation.md) */
 //@ pure
 export function searchForPlanGroup(available: number, minimumInvite: number, maximumGroup: number, minimumGroup: number): boolean {
   return available >= minimumInvite && maximumGroup >= minimumGroup;
 }
 
-/** Story: Find a public activity that fits the group / Search for a qualifying group before an activity partner (spec/planFormation.md:23) */
+/** Story: Find a public activity that fits the group / Search for a qualifying group before an activity partner (spec/planFormation.md) */
 //@ pure
 export function planScoreQualifies(minimumScore: number, overallScore: number, memberFloor: number, planFloor: number): boolean {
   return minimumScore >= memberFloor && overallScore >= planFloor;
 }
 
-/** Story: Find a public activity that fits the group / Alternates must fit the entire offered group (spec/planFormation.md:38) */
+/** Story: Find a public activity that fits the group / Alternates must fit the entire offered group (spec/planFormation.md) */
 //@ pure
 export function isPlanAlternate(adult: boolean, compatibleWithEveryone: boolean): boolean {
   return adult && compatibleWithEveryone;
 }
 
-/** Story: Find a public activity that fits the group / Alternates must fit the entire offered group (spec/planFormation.md:38) */
+/** Story: Find a public activity that fits the group / Alternates must fit the entire offered group (spec/planFormation.md) */
 //@ pure
 export function planAlternateLimitReached(alternates: number, partner: boolean, groupLimit: number): boolean {
   return alternates >= (partner ? 1 : groupLimit);
 }
 
-/** Story: Give each invited member one plan per city run / Reserve ranked plans until the city limit is reached (spec/planFormation.md:53) */
+/** Story: Give each invited member one plan per city run / Reserve ranked plans until the city limit is reached (spec/planFormation.md) */
 //@ pure
 export function cityPlanLimitReached(s: CityPlanRun, limit: number): boolean {
   return s.count >= limit;
 }
 
-/** Story: Give each invited member one plan per city run / Reserve ranked plans until the city limit is reached (spec/planFormation.md:53) */
+/** Story: Give each invited member one plan per city run / Reserve ranked plans until the city limit is reached (spec/planFormation.md) */
 //@ pure
 export function memberAlreadyInvited(s: CityPlanRun, memberId: string): boolean {
   return ("$" + memberId) in s.occupied;
 }
 
-/** Story: Give each invited member one plan per city run / Reserve ranked plans until the city limit is reached (spec/planFormation.md:53) */
+/** Story: Give each invited member one plan per city run / Reserve ranked plans until the city limit is reached (spec/planFormation.md) */
 //@ pure
 export function reservePlan(s: CityPlanRun, invited: string[], limit: number): CityPlanRun {
   //@ ensures (inv(s) && canReservePlan(s, invited, limit)) ==> stepPlanCountChangesOnlyOnReservation(s, "reservePlan", \result)
@@ -88,25 +88,25 @@ export function reservePlan(s: CityPlanRun, invited: string[], limit: number): C
   return { ...s, count: exact_planFormation(s.count + 1), occupied: invited.reduce((members: Record<string, boolean>, memberId: string) => ({ ...members, ["$" + memberId]: true } as Record<string, boolean>), s.occupied) };
 }
 
-/** Story: Give each invited member one plan per city run / Reserve ranked plans until the city limit is reached (spec/planFormation.md:53) */
+/** Story: Give each invited member one plan per city run / Reserve ranked plans until the city limit is reached (spec/planFormation.md) */
 //@ pure
 export function stepPlanCountChangesOnlyOnReservation(before: CityPlanRun, via: string, after: CityPlanRun): boolean {
   return via === "reservePlan" ? after.count === exact_planFormation(before.count + 1) : after.count === before.count;
 }
 
-/** Story: Give each invited member one plan per city run / Reserve ranked plans until the city limit is reached (spec/planFormation.md:53) */
+/** Story: Give each invited member one plan per city run / Reserve ranked plans until the city limit is reached (spec/planFormation.md) */
 //@ pure
 export function canReservePlan(s: CityPlanRun, invited: string[], limit: number): boolean {
   return s.phase === "ReservingPlans" && !cityPlanLimitReached(s, limit) && !invited.some((memberId: string) => !(!memberAlreadyInvited(s, memberId)));
 }
 
-/** Story: Give each invited member one plan per city run / Publish alternates after all invitations are reserved (spec/planFormation.md:80) */
+/** Story: Give each invited member one plan per city run / Publish alternates after all invitations are reserved (spec/planFormation.md) */
 //@ pure
 export function canPublishPlans(s: CityPlanRun): boolean {
   return s.phase === "ReservingPlans";
 }
 
-/** Story: Give each invited member one plan per city run / Publish alternates after all invitations are reserved (spec/planFormation.md:80) */
+/** Story: Give each invited member one plan per city run / Publish alternates after all invitations are reserved (spec/planFormation.md) */
 //@ pure
 export function publishPlans(s: CityPlanRun): CityPlanRun {
   //@ ensures (inv(s) && canPublishPlans(s)) ==> stepPlanCountChangesOnlyOnReservation(s, "publishPlans", \result)
@@ -114,19 +114,19 @@ export function publishPlans(s: CityPlanRun): CityPlanRun {
   return { ...s, phase: "PlansPublished" };
 }
 
-/** Story: Give each invited member one plan per city run / Publish alternates after all invitations are reserved (spec/planFormation.md:80) */
+/** Story: Give each invited member one plan per city run / Publish alternates after all invitations are reserved (spec/planFormation.md) */
 //@ pure
 export function stepPublishedPlansStayClosed(before: CityPlanRun, after: CityPlanRun): boolean {
   return !(before.phase === "PlansPublished") || equal_planFormation(after, before);
 }
 
-/** Story: Give each invited member one plan per city run / Publish alternates after all invitations are reserved (spec/planFormation.md:80) */
+/** Story: Give each invited member one plan per city run / Publish alternates after all invitations are reserved (spec/planFormation.md) */
 //@ pure
 export function sometimesPublishesAnInvitation(s: CityPlanRun): boolean {
   return s.phase === "PlansPublished" && s.count > 0;
 }
 
-/** Story: Give each invited member one plan per city run / Publish alternates after all invitations are reserved (spec/planFormation.md:80) */
+/** Story: Give each invited member one plan per city run / Publish alternates after all invitations are reserved (spec/planFormation.md) */
 //@ pure
 export function planAlternateCanRemain(s: CityPlanRun, memberId: string): boolean {
   return s.phase === "PlansPublished" && !memberAlreadyInvited(s, memberId);

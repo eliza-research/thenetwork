@@ -1,9 +1,9 @@
 // GENERATED from spec/staffReview.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Review the opportunity I selected / A changed card or revision starts a fresh draft (spec/staffReview.md:21) */
+/** Story: Review the opportunity I selected / A changed card or revision starts a fresh draft (spec/staffReview.md) */
 export type ReviewMode = "IdleReview" | "RejectReview" | "EditReview" | "RerollReview";
-/** Story: Review the opportunity I selected / A changed card or revision starts a fresh draft (spec/staffReview.md:21) */
+/** Story: Review the opportunity I selected / A changed card or revision starts a fresh draft (spec/staffReview.md) */
 export interface ReviewCtl { cardKey: string; revision: number; mode: ReviewMode; noteNeeded: boolean }
 
 /** One variant per transition in the spec. */
@@ -13,7 +13,7 @@ export type Event =
   | { type: "requireReviewNote" }
   | { type: "settleReview"; cardKey: string; revision: number };
 
-/** Story: Review the opportunity I selected / A changed card or revision starts a fresh draft (spec/staffReview.md:21) */
+/** Story: Review the opportunity I selected / A changed card or revision starts a fresh draft (spec/staffReview.md) */
 export const initial: ReviewCtl = { cardKey: "", revision: 0, mode: "IdleReview", noteNeeded: false };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -22,13 +22,13 @@ export function inv(current: ReviewCtl): boolean {
   return alwaysRequiredNoteBelongsToRejection(current);
 }
 
-/** Story: Review the opportunity I selected / The visible card follows focus and queue order (spec/staffReview.md:9) */
+/** Story: Review the opportunity I selected / The visible card follows focus and queue order (spec/staffReview.md) */
 //@ pure
 export function selectedReviewCard(pendingCards: string[], focusedCard: string, heldCard: string): string {
   return pendingCards.includes(focusedCard) ? focusedCard : (pendingCards.includes(heldCard) ? heldCard : (pendingCards.length > 0 ? nth_staffReview(pendingCards, 0) : ""));
 }
 
-/** Story: Review the opportunity I selected / A changed card or revision starts a fresh draft (spec/staffReview.md:21) */
+/** Story: Review the opportunity I selected / A changed card or revision starts a fresh draft (spec/staffReview.md) */
 //@ pure
 export function bindCard(ctl: ReviewCtl, cardKey: string): ReviewCtl {
   //@ ensures (inv(ctl) && canBindCard(ctl, cardKey)) ==> alwaysRequiredNoteBelongsToRejection(\result)
@@ -36,19 +36,19 @@ export function bindCard(ctl: ReviewCtl, cardKey: string): ReviewCtl {
   return { cardKey: cardKey, revision: exact_staffReview(ctl.revision + 1), mode: "IdleReview", noteNeeded: false };
 }
 
-/** Story: Review the opportunity I selected / A changed card or revision starts a fresh draft (spec/staffReview.md:21) */
+/** Story: Review the opportunity I selected / A changed card or revision starts a fresh draft (spec/staffReview.md) */
 //@ pure
 export function canBindCard(ctl: ReviewCtl, cardKey: string): boolean {
   return cardKey !== ctl.cardKey;
 }
 
-/** Story: Review the opportunity I selected / A mode change applies only to a bound card (spec/staffReview.md:35) */
+/** Story: Review the opportunity I selected / A mode change applies only to a bound card (spec/staffReview.md) */
 //@ pure
 export function canChangeReviewMode(ctl: ReviewCtl): boolean {
   return ctl.cardKey !== "";
 }
 
-/** Story: Review the opportunity I selected / A mode change applies only to a bound card (spec/staffReview.md:35) */
+/** Story: Review the opportunity I selected / A mode change applies only to a bound card (spec/staffReview.md) */
 //@ pure
 export function changeReviewMode(ctl: ReviewCtl, requestedMode: ReviewMode, togglePanel: boolean): ReviewCtl {
   //@ ensures (inv(ctl) && canChangeReviewMode(ctl)) ==> alwaysRequiredNoteBelongsToRejection(\result)
@@ -56,13 +56,13 @@ export function changeReviewMode(ctl: ReviewCtl, requestedMode: ReviewMode, togg
   return { ...ctl, mode: togglePanel && requestedMode === ctl.mode ? "IdleReview" : requestedMode, noteNeeded: false };
 }
 
-/** Story: Review the opportunity I selected / A mode change applies only to a bound card (spec/staffReview.md:35) */
+/** Story: Review the opportunity I selected / A mode change applies only to a bound card (spec/staffReview.md) */
 //@ pure
 export function canRequireReviewNote(ctl: ReviewCtl): boolean {
   return ctl.cardKey !== "" && ctl.mode === "RejectReview";
 }
 
-/** Story: Review the opportunity I selected / A mode change applies only to a bound card (spec/staffReview.md:35) */
+/** Story: Review the opportunity I selected / A mode change applies only to a bound card (spec/staffReview.md) */
 //@ pure
 export function requireReviewNote(ctl: ReviewCtl): ReviewCtl {
   //@ ensures (inv(ctl) && canRequireReviewNote(ctl)) ==> alwaysRequiredNoteBelongsToRejection(\result)
@@ -70,19 +70,19 @@ export function requireReviewNote(ctl: ReviewCtl): ReviewCtl {
   return { ...ctl, noteNeeded: true };
 }
 
-/** Story: Review the opportunity I selected / A mode change applies only to a bound card (spec/staffReview.md:35) */
+/** Story: Review the opportunity I selected / A mode change applies only to a bound card (spec/staffReview.md) */
 //@ pure
 export function alwaysRequiredNoteBelongsToRejection(ctl: ReviewCtl): boolean {
   return !ctl.noteNeeded || ctl.mode === "RejectReview";
 }
 
-/** Story: Review the opportunity I selected / An old response cannot clear or move a newer selection (spec/staffReview.md:51) */
+/** Story: Review the opportunity I selected / An old response cannot clear or move a newer selection (spec/staffReview.md) */
 //@ pure
 export function ownsReviewResponse(ctl: ReviewCtl, cardKey: string, revision: number): boolean {
   return ctl.cardKey !== "" && ctl.cardKey === cardKey && ctl.revision === revision;
 }
 
-/** Story: Review the opportunity I selected / An old response cannot clear or move a newer selection (spec/staffReview.md:51) */
+/** Story: Review the opportunity I selected / An old response cannot clear or move a newer selection (spec/staffReview.md) */
 //@ pure
 export function settleReview(ctl: ReviewCtl, cardKey: string, revision: number): ReviewCtl {
   //@ ensures (inv(ctl) && canSettleReview(ctl, cardKey, revision)) ==> alwaysRequiredNoteBelongsToRejection(\result)
@@ -90,19 +90,19 @@ export function settleReview(ctl: ReviewCtl, cardKey: string, revision: number):
   return { ...ctl, revision: exact_staffReview(ctl.revision + 1), mode: "IdleReview", noteNeeded: false };
 }
 
-/** Story: Review the opportunity I selected / An old response cannot clear or move a newer selection (spec/staffReview.md:51) */
+/** Story: Review the opportunity I selected / An old response cannot clear or move a newer selection (spec/staffReview.md) */
 //@ pure
 export function stepRevisionNeverFalls(before: ReviewCtl, after: ReviewCtl): boolean {
   return after.revision >= before.revision;
 }
 
-/** Story: Review the opportunity I selected / An old response cannot clear or move a newer selection (spec/staffReview.md:51) */
+/** Story: Review the opportunity I selected / An old response cannot clear or move a newer selection (spec/staffReview.md) */
 //@ pure
 export function sometimesReviewDraftOpens(ctl: ReviewCtl): boolean {
   return ctl.mode === "EditReview";
 }
 
-/** Story: Review the opportunity I selected / An old response cannot clear or move a newer selection (spec/staffReview.md:51) */
+/** Story: Review the opportunity I selected / An old response cannot clear or move a newer selection (spec/staffReview.md) */
 //@ pure
 export function canSettleReview(ctl: ReviewCtl, cardKey: string, revision: number): boolean {
   return ownsReviewResponse(ctl, cardKey, revision);

@@ -1,9 +1,8 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-brand="network" class="h-full">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <!-- Audit observatory-20 and -M2: no script from anywhere else, no inline script, no Referer (a token never leaves in one). -->
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: https:; connect-src 'self' ws: wss:; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'" />
     <meta name="referrer" content="no-referrer" />
     <title>Network Observatory</title>
@@ -11,8 +10,8 @@
     <link rel="stylesheet" href="/assets/main.css" />
     <link rel="stylesheet" href="/assets/styles.css" />
   </head>
-  <body>
-    <div id="root"></div>
+  <body class="h-full overflow-hidden bg-background font-sans text-foreground antialiased">
+    <div id="root" class="h-full"></div>
     <script type="module" src="/assets/main.js"></script>
   </body>
 </html>

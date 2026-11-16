@@ -58,7 +58,7 @@ export const OUTREACH = {
  */
 export type SendKind =
   | "reply" | "safety" | "interview" | "probe" | "reveal" | "nudge" | "scheduling" | "reminder" | "feedback"
-  | "growth" | "reengage" | "cancellation" | "info" | "checkin" | "invite_notice"
+  | "growth" | "reengage" | "cancellation" | "info" | "checkin" | "invite_notice" | "home_help_consent"
   /** A message one matched member asked the agent to pass to the other (relay.ts): logistics inside a match both said yes to. */
   | "relay";
 
@@ -67,7 +67,7 @@ export const ASK_KINDS: ReadonlySet<SendKind> = new Set<SendKind>(["interview", 
 /** Interruptions that wait for the member's send slot (initial invites are added by the send path). */
 export const SLOT_KINDS: ReadonlySet<SendKind> = new Set<SendKind>(["interview", "growth", "checkin", "reengage"]);
 /** Never a direct reply, even when sent while handling the member's message. */
-export const NEVER_REPLY: ReadonlySet<SendKind> = new Set<SendKind>(["growth", "reengage", "checkin"]);
+export const NEVER_REPLY: ReadonlySet<SendKind> = new Set<SendKind>(["growth", "reengage", "checkin", "home_help_consent"]);
 
 const fmt = new Intl.DateTimeFormat("en-US", { timeZone: NY, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", weekday: "short" });
 export function nyParts(t: number) {

@@ -2,24 +2,24 @@
 //@ backend dafny
 import { type ReceiptPhase as turnReceipt_ReceiptPhase, type TurnReceipt as turnReceipt_TurnReceipt, receiptReplyIdsMatch as turnReceipt_receiptReplyIdsMatch, noHistoryAllowed as turnReceipt_noHistoryAllowed, receiptAccepted as turnReceipt_receiptAccepted, checkTurn as turnReceipt_checkTurn, canCheckAuthority as turnReceipt_canCheckAuthority, checkAuthority as turnReceipt_checkAuthority, canReadPrevious as turnReceipt_canReadPrevious, readPrevious as turnReceipt_readPrevious, canCheckScope as turnReceipt_canCheckScope, checkScope as turnReceipt_checkScope, canCheckDelivery as turnReceipt_canCheckDelivery, checkDelivery as turnReceipt_checkDelivery, lawReceiptRequiresExactOrder as turnReceipt_lawReceiptRequiresExactOrder, lawAccountBoundReceiptNeedsHistory as turnReceipt_lawAccountBoundReceiptNeedsHistory, canRecordReceipt as turnReceipt_canRecordReceipt, recordReceipt as turnReceipt_recordReceipt, receiptFinal as turnReceipt_receiptFinal, receiptMessageStatus as turnReceipt_receiptMessageStatus, sometimesCanStoreReceipt as turnReceipt_sometimesCanStoreReceipt, sometimesCanReplayReceipt as turnReceipt_sometimesCanReplayReceipt, initial as turnReceipt_initial, canCheckTurn as turnReceipt_canCheckTurn, stepReceiptNeedsAdmission as turnReceipt_stepReceiptNeedsAdmission } from "./turnReceipt.ts";
 
-/** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md:9) */
+/** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md) */
 export type ReceiptJourneyResult = "ReportStored" | "ReportReplayed" | "ReportConflict";
-/** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md:9) */
+/** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md) */
 export type DeliveryReport = "UnknownReport" | "AcceptedReport" | "AlternativeAcceptance" | "RejectedReport";
-/** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md:9) */
+/** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md) */
 export type ReceiptObservation =
   | { tag: "NoReceipt" }
   | { tag: "SavedReceipt"; report: DeliveryReport };
-/** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md:9) */
+/** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md) */
 export interface ReceiptJourney { receipt: ReceiptObservation; replyStatus: string }
-/** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md:9) */
+/** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md) */
 export interface ReceiptJourneyStep { state: ReceiptJourney; out: ReceiptJourneyResult[] }
 
 /** One variant per transition in the spec. */
 export type Event =
   | { type: "reportDelivery"; report: DeliveryReport };
 
-/** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md:9) */
+/** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md) */
 export const initial: ReceiptJourney = { receipt: ({ tag: "NoReceipt" } as ReceiptObservation), replyStatus: "collected" };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -28,55 +28,55 @@ export function inv(current: ReceiptJourney): boolean {
   return alwaysReplyStatusMatchesReceipt(current);
 }
 
-/** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md:9) */
+/** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md) */
 //@ pure
 export function delivery(report: DeliveryReport): string {
   return report === "UnknownReport" ? "unknown" : (report === "RejectedReport" ? "rejected" : "accepted");
 }
 
-/** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md:9) */
+/** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md) */
 //@ pure
 export function replyStatusFor(receipt: ReceiptObservation): string {
   return receipt.tag === "NoReceipt" ? "collected" : turnReceipt_receiptMessageStatus(delivery(receipt.report));
 }
 
-/** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md:9) */
+/** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md) */
 //@ pure
 export function sometimesStoresAnUnknownReceipt(s: ReceiptJourney): boolean {
   return equal_turnReceiptJourney(s.receipt, ({ tag: "SavedReceipt", report: "UnknownReport" } as ReceiptObservation));
 }
 
-/** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md:9) */
+/** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md) */
 //@ pure
 export function sometimesStoresAnAcceptedReceipt(s: ReceiptJourney): boolean {
   return equal_turnReceiptJourney(s.receipt, ({ tag: "SavedReceipt", report: "AcceptedReport" } as ReceiptObservation));
 }
 
-/** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md:9) */
+/** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md) */
 //@ pure
 export function sometimesStoresARejectedReceipt(s: ReceiptJourney): boolean {
   return equal_turnReceiptJourney(s.receipt, ({ tag: "SavedReceipt", report: "RejectedReport" } as ReceiptObservation));
 }
 
-/** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md:9) */
+/** Story: Keep a single delivery result for a collected reply / A receipt and its reply status change together (spec/turnReceiptJourney.md) */
 //@ pure
 export function alwaysReplyStatusMatchesReceipt(s: ReceiptJourney): boolean {
   return s.replyStatus === replyStatusFor(s.receipt);
 }
 
-/** Story: Keep a single delivery result for a collected reply / An exact replay leaves both records unchanged (spec/turnReceiptJourney.md:41) */
+/** Story: Keep a single delivery result for a collected reply / An exact replay leaves both records unchanged (spec/turnReceiptJourney.md) */
 //@ pure
 export function canReportDelivery(s: ReceiptJourney, report: DeliveryReport): boolean {
   return true;
 }
 
-/** Story: Keep a single delivery result for a collected reply / An exact replay leaves both records unchanged (spec/turnReceiptJourney.md:41) */
+/** Story: Keep a single delivery result for a collected reply / An exact replay leaves both records unchanged (spec/turnReceiptJourney.md) */
 //@ pure
 export function stepAStoredFinalReportStays(before: ReceiptJourney, after: ReceiptJourney): boolean {
   return !(!equal_turnReceiptJourney(before.receipt, ({ tag: "NoReceipt" } as ReceiptObservation)) && !equal_turnReceiptJourney(before.receipt, ({ tag: "SavedReceipt", report: "UnknownReport" } as ReceiptObservation))) || equal_turnReceiptJourney(after, before);
 }
 
-/** Story: Keep a single delivery result for a collected reply / An exact replay leaves both records unchanged (spec/turnReceiptJourney.md:41) */
+/** Story: Keep a single delivery result for a collected reply / An exact replay leaves both records unchanged (spec/turnReceiptJourney.md) */
 //@ pure
 export function reportDelivery(s: ReceiptJourney, report: DeliveryReport): ReceiptJourneyStep {
   //@ ensures (inv(s) && canReportDelivery(s, report)) ==> alwaysReplyStatusMatchesReceipt(\result.state)

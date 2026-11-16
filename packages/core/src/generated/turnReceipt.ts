@@ -1,9 +1,9 @@
 // GENERATED from spec/turnReceipt.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Record the gateway's delivery result once / A receipt belongs to a completed handled turn under current authority (spec/turnReceipt.md:9) */
+/** Story: Record the gateway's delivery result once / A receipt belongs to a completed handled turn under current authority (spec/turnReceipt.md) */
 export type ReceiptPhase = "ReadingTurn" | "CheckingAuthority" | "CheckingPrevious" | "CheckingScope" | "CheckingDelivery" | "AwaitingEmptyWrite" | "AwaitingReplyWrite" | "Stored" | "Replayed" | "TurnUnavailable" | "AuthorityInvalid" | "Conflict" | "ScopeInvalid" | "DeliveryInvalid";
-/** Story: Record the gateway's delivery result once / A receipt belongs to a completed handled turn under current authority (spec/turnReceipt.md:9) */
+/** Story: Record the gateway's delivery result once / A receipt belongs to a completed handled turn under current authority (spec/turnReceipt.md) */
 export interface TurnReceipt { phase: ReceiptPhase }
 
 /** One variant per transition in the spec. */
@@ -15,7 +15,7 @@ export type Event =
   | { type: "checkDelivery"; accepted: boolean; providerIds: boolean; history: boolean; accountFree: boolean }
   | { type: "recordReceipt" };
 
-/** Story: Record the gateway's delivery result once / A receipt belongs to a completed handled turn under current authority (spec/turnReceipt.md:9) */
+/** Story: Record the gateway's delivery result once / A receipt belongs to a completed handled turn under current authority (spec/turnReceipt.md) */
 export const initial: TurnReceipt = { phase: "ReadingTurn" };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -24,141 +24,141 @@ export function inv(current: TurnReceipt): boolean {
   return true;
 }
 
-/** Story: Record the gateway's delivery result once / A receipt belongs to a completed handled turn under current authority (spec/turnReceipt.md:9) */
+/** Story: Record the gateway's delivery result once / A receipt belongs to a completed handled turn under current authority (spec/turnReceipt.md) */
 //@ pure
 export function checkTurn(receipt: TurnReceipt, handled: boolean): TurnReceipt {
   //@ ensures (inv(receipt) && canCheckTurn(receipt)) ==> stepReceiptNeedsAdmission(receipt, "checkTurn", \result)
   return { phase: handled ? "CheckingAuthority" : "TurnUnavailable" };
 }
 
-/** Story: Record the gateway's delivery result once / A receipt belongs to a completed handled turn under current authority (spec/turnReceipt.md:9) */
+/** Story: Record the gateway's delivery result once / A receipt belongs to a completed handled turn under current authority (spec/turnReceipt.md) */
 //@ pure
 export function canCheckAuthority(receipt: TurnReceipt): boolean {
   return receipt.phase === "CheckingAuthority";
 }
 
-/** Story: Record the gateway's delivery result once / A receipt belongs to a completed handled turn under current authority (spec/turnReceipt.md:9) */
+/** Story: Record the gateway's delivery result once / A receipt belongs to a completed handled turn under current authority (spec/turnReceipt.md) */
 //@ pure
 export function checkAuthority(receipt: TurnReceipt, validAuthority: boolean): TurnReceipt {
   //@ ensures (inv(receipt) && canCheckAuthority(receipt)) ==> stepReceiptNeedsAdmission(receipt, "checkAuthority", \result)
   return { phase: validAuthority ? "CheckingPrevious" : "AuthorityInvalid" };
 }
 
-/** Story: Record the gateway's delivery result once / A receipt belongs to a completed handled turn under current authority (spec/turnReceipt.md:9) */
+/** Story: Record the gateway's delivery result once / A receipt belongs to a completed handled turn under current authority (spec/turnReceipt.md) */
 //@ pure
 export function canReadPrevious(receipt: TurnReceipt): boolean {
   return receipt.phase === "CheckingPrevious";
 }
 
-/** Story: Record the gateway's delivery result once / A receipt belongs to a completed handled turn under current authority (spec/turnReceipt.md:9) */
+/** Story: Record the gateway's delivery result once / A receipt belongs to a completed handled turn under current authority (spec/turnReceipt.md) */
 //@ pure
 export function readPrevious(receipt: TurnReceipt, identical: boolean, alreadyStored: boolean, previouslyUnknown: boolean, finalDelivery: boolean): TurnReceipt {
   //@ ensures (inv(receipt) && canReadPrevious(receipt)) ==> stepReceiptNeedsAdmission(receipt, "readPrevious", \result)
   return identical ? ({ phase: "Replayed" } as TurnReceipt) : (alreadyStored && !(previouslyUnknown && finalDelivery) ? ({ phase: "Conflict" } as TurnReceipt) : ({ phase: "CheckingScope" } as TurnReceipt));
 }
 
-/** Story: Record the gateway's delivery result once / A receipt belongs to a completed handled turn under current authority (spec/turnReceipt.md:9) */
+/** Story: Record the gateway's delivery result once / A receipt belongs to a completed handled turn under current authority (spec/turnReceipt.md) */
 //@ pure
 export function canCheckTurn(receipt: TurnReceipt): boolean {
   return receipt.phase === "ReadingTurn";
 }
 
-/** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md:35) */
+/** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md) */
 //@ pure
 export function receiptReplyIdsMatch(loadedIds: string[], submittedIds: string[]): boolean {
   return equal_turnReceipt(loadedIds, submittedIds);
 }
 
-/** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md:35) */
+/** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md) */
 //@ pure
 export function noHistoryAllowed(accountFree: boolean, replyKind: string, reason: string, memberAbsent: boolean, knownApp: boolean): boolean {
   return accountFree && (replyKind === "compliance" || (replyKind === "reply" && reason === "onboarding_asked" && memberAbsent && knownApp));
 }
 
-/** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md:35) */
+/** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md) */
 //@ pure
 export function canCheckScope(receipt: TurnReceipt): boolean {
   return receipt.phase === "CheckingScope";
 }
 
-/** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md:35) */
+/** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md) */
 //@ pure
 export function checkScope(receipt: TurnReceipt, collectedReplies: boolean, orderedIdsMatch: boolean, providerIds: boolean, history: boolean): TurnReceipt {
   //@ ensures (inv(receipt) && canCheckScope(receipt)) ==> stepReceiptNeedsAdmission(receipt, "checkScope", \result)
   return !orderedIdsMatch || (!collectedReplies && (providerIds || history)) ? ({ phase: "ScopeInvalid" } as TurnReceipt) : ({ phase: collectedReplies ? "CheckingDelivery" : "AwaitingEmptyWrite" } as TurnReceipt);
 }
 
-/** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md:35) */
+/** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md) */
 //@ pure
 export function canCheckDelivery(receipt: TurnReceipt): boolean {
   return receipt.phase === "CheckingDelivery";
 }
 
-/** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md:35) */
+/** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md) */
 //@ pure
 export function checkDelivery(receipt: TurnReceipt, accepted: boolean, providerIds: boolean, history: boolean, accountFree: boolean): TurnReceipt {
   //@ ensures (inv(receipt) && canCheckDelivery(receipt)) ==> stepReceiptNeedsAdmission(receipt, "checkDelivery", \result)
   return (accepted ? providerIds && (history || accountFree) : !history) ? ({ phase: "AwaitingReplyWrite" } as TurnReceipt) : ({ phase: "DeliveryInvalid" } as TurnReceipt);
 }
 
-/** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md:35) */
+/** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md) */
 //@ pure
 export function lawReceiptRequiresExactOrder(firstId: string, secondId: string): boolean {
   //@ ensures \result === true
   return !(firstId !== secondId) || !receiptReplyIdsMatch(([firstId, secondId] as string[]), ([secondId, firstId] as string[]));
 }
 
-/** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md:35) */
+/** Story: Record the gateway's delivery result once / A receipt names exactly the replies the turn collected (spec/turnReceipt.md) */
 //@ pure
 export function lawAccountBoundReceiptNeedsHistory(replyKind: string, reason: string, memberAbsent: boolean, knownApp: boolean): boolean {
   //@ ensures \result === true
   return !noHistoryAllowed(false, replyKind, reason, memberAbsent, knownApp);
 }
 
-/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md:63) */
+/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md) */
 //@ pure
 export function receiptAccepted(delivery: string): boolean {
   return delivery === "accepted";
 }
 
-/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md:63) */
+/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md) */
 //@ pure
 export function canRecordReceipt(receipt: TurnReceipt): boolean {
   return receipt.phase === "AwaitingEmptyWrite" || receipt.phase === "AwaitingReplyWrite";
 }
 
-/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md:63) */
+/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md) */
 //@ pure
 export function recordReceipt(receipt: TurnReceipt): TurnReceipt {
   //@ ensures (inv(receipt) && canRecordReceipt(receipt)) ==> stepReceiptNeedsAdmission(receipt, "recordReceipt", \result)
   return { phase: "Stored" };
 }
 
-/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md:63) */
+/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md) */
 //@ pure
 export function receiptFinal(delivery: string): boolean {
   return receiptAccepted(delivery) || delivery === "rejected";
 }
 
-/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md:63) */
+/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md) */
 //@ pure
 export function receiptMessageStatus(delivery: string): string {
   return receiptAccepted(delivery) ? "sent" : (delivery === "unknown" ? "send_unknown" : "refused_gateway");
 }
 
-/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md:63) */
+/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md) */
 //@ pure
 export function sometimesCanStoreReceipt(receipt: TurnReceipt): boolean {
   return receipt.phase === "Stored";
 }
 
-/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md:63) */
+/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md) */
 //@ pure
 export function sometimesCanReplayReceipt(receipt: TurnReceipt): boolean {
   return receipt.phase === "Replayed";
 }
 
-/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md:63) */
+/** Story: Record the gateway's delivery result once / Update the turn and the reply history together (spec/turnReceipt.md) */
 //@ pure
 export function stepReceiptNeedsAdmission(before: TurnReceipt, via: string, after: TurnReceipt): boolean {
   return !(after.phase === "Stored") || (via === "recordReceipt" && canRecordReceipt(before));

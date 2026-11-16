@@ -1,13 +1,13 @@
 // GENERATED from spec/relayLifecycle.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md:9) */
+/** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md) */
 export type RelayPhase = "AwaitingVerdict" | "Blocked" | "RateLimited" | "Held" | "ReadyToSend" | "Released" | "Rejected" | "Sent" | "Deferred" | "SendRefused";
-/** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md:9) */
+/** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md) */
 export type DeliveryResult = "Delivered" | "Queued" | "Refused";
-/** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md:9) */
+/** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md) */
 export type RelayVerdict = "Pass" | "Hold" | "Block";
-/** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md:9) */
+/** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md) */
 export interface RelayLifecycle { phase: RelayPhase; staffReviewed: boolean; retainsText: boolean }
 
 /** One variant per transition in the spec. */
@@ -16,9 +16,9 @@ export type Event =
   | { type: "recordDelivery"; delivery: DeliveryResult }
   | { type: "reviewHold"; released: boolean };
 
-/** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md:9) */
+/** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md) */
 export const initial: RelayLifecycle = { phase: "AwaitingVerdict", staffReviewed: false, retainsText: false };
-/** Story: Resolve a held item / Staff review clears the held text (spec/relayLifecycle.md:50) */
+/** Story: Resolve a held item / Staff review clears the held text (spec/relayLifecycle.md) */
 export const storedHold: RelayLifecycle = { ...initial, phase: "Held" };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -27,13 +27,13 @@ export function inv(current: RelayLifecycle): boolean {
   return alwaysOnlyHeldItemRetainsText(current);
 }
 
-/** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md:9) */
+/** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md) */
 //@ pure
 export function canRecordVerdict(relay: RelayLifecycle): boolean {
   return relay.phase === "AwaitingVerdict";
 }
 
-/** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md:9) */
+/** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md) */
 //@ pure
 export function recordVerdict(relay: RelayLifecycle, verdict: RelayVerdict, rateOnly: boolean, hasText: boolean, ageSignal: boolean): RelayLifecycle {
   //@ ensures (inv(relay) && canRecordVerdict(relay)) ==> alwaysOnlyHeldItemRetainsText(\result)
@@ -41,19 +41,19 @@ export function recordVerdict(relay: RelayLifecycle, verdict: RelayVerdict, rate
   return verdict === "Block" ? ({ ...relay, phase: "Blocked" } as RelayLifecycle) : (verdict === "Pass" ? ({ ...relay, phase: "ReadyToSend" } as RelayLifecycle) : (rateOnly ? ({ ...relay, phase: "RateLimited" } as RelayLifecycle) : ({ ...relay, phase: "Held", retainsText: hasText && !ageSignal } as RelayLifecycle)));
 }
 
-/** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md:9) */
+/** Story: Decide and deliver a selected relay item / A first decision can block, hold, or admit an item (spec/relayLifecycle.md) */
 //@ pure
 export function alwaysOnlyHeldItemRetainsText(relay: RelayLifecycle): boolean {
   return !relay.retainsText || relay.phase === "Held";
 }
 
-/** Story: Decide and deliver a selected relay item / The send path determines the result of an admitted item (spec/relayLifecycle.md:33) */
+/** Story: Decide and deliver a selected relay item / The send path determines the result of an admitted item (spec/relayLifecycle.md) */
 //@ pure
 export function canRecordDelivery(relay: RelayLifecycle): boolean {
   return relay.phase === "ReadyToSend" || relay.phase === "Released";
 }
 
-/** Story: Decide and deliver a selected relay item / The send path determines the result of an admitted item (spec/relayLifecycle.md:33) */
+/** Story: Decide and deliver a selected relay item / The send path determines the result of an admitted item (spec/relayLifecycle.md) */
 //@ pure
 export function recordDelivery(relay: RelayLifecycle, delivery: DeliveryResult): RelayLifecycle {
   //@ ensures (inv(relay) && canRecordDelivery(relay)) ==> alwaysOnlyHeldItemRetainsText(\result)
@@ -61,19 +61,19 @@ export function recordDelivery(relay: RelayLifecycle, delivery: DeliveryResult):
   return { ...relay, phase: delivery === "Delivered" ? "Sent" : (delivery === "Queued" ? "Deferred" : "SendRefused") };
 }
 
-/** Story: Decide and deliver a selected relay item / The send path determines the result of an admitted item (spec/relayLifecycle.md:33) */
+/** Story: Decide and deliver a selected relay item / The send path determines the result of an admitted item (spec/relayLifecycle.md) */
 //@ pure
 export function sometimesDeliveryWaits(relay: RelayLifecycle): boolean {
   return relay.phase === "Deferred";
 }
 
-/** Story: Resolve a held item / Staff review clears the held text (spec/relayLifecycle.md:50) */
+/** Story: Resolve a held item / Staff review clears the held text (spec/relayLifecycle.md) */
 //@ pure
 export function canReviewHold(relay: RelayLifecycle): boolean {
   return relay.phase === "Held";
 }
 
-/** Story: Resolve a held item / Staff review clears the held text (spec/relayLifecycle.md:50) */
+/** Story: Resolve a held item / Staff review clears the held text (spec/relayLifecycle.md) */
 //@ pure
 export function reviewHold(relay: RelayLifecycle, released: boolean): RelayLifecycle {
   //@ ensures (inv(relay) && canReviewHold(relay)) ==> alwaysOnlyHeldItemRetainsText(\result)
@@ -81,19 +81,19 @@ export function reviewHold(relay: RelayLifecycle, released: boolean): RelayLifec
   return { phase: released ? "Released" : "Rejected", staffReviewed: true, retainsText: false };
 }
 
-/** Story: Resolve a held item / Staff review clears the held text (spec/relayLifecycle.md:50) */
+/** Story: Resolve a held item / Staff review clears the held text (spec/relayLifecycle.md) */
 //@ pure
 export function stepReviewRemainsRecorded(before: RelayLifecycle, after: RelayLifecycle): boolean {
   return !before.staffReviewed || after.staffReviewed;
 }
 
-/** Story: Resolve a held item / Staff review clears the held text (spec/relayLifecycle.md:50) */
+/** Story: Resolve a held item / Staff review clears the held text (spec/relayLifecycle.md) */
 //@ pure
 export function sometimesReviewReleases(relay: RelayLifecycle): boolean {
   return relay.phase === "Released";
 }
 
-/** Story: Resolve a held item / Staff review clears the held text (spec/relayLifecycle.md:50) */
+/** Story: Resolve a held item / Staff review clears the held text (spec/relayLifecycle.md) */
 //@ pure
 export function sometimesReviewRejects(relay: RelayLifecycle): boolean {
   return relay.phase === "Rejected";

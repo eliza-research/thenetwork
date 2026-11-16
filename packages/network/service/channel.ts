@@ -16,6 +16,8 @@ import { OutboundQueue, WAITING, type AppChecks, type MessageKind } from "../../
 import type { Clock, ChannelAdapter as ProviderAdapter, StatusUpdate } from "../../blooio/src/types.ts";
 import type { NetworkRuntime } from "./runtime.ts";
 import { APPS } from "../../platform/src/apps.ts";
+import { isMemberInvitationLink } from "../src/invitation.ts";
+import { EXPECTED_INVITATION_PREFIX } from "./expected-invitation-store.ts";
 
 /** The apps' own domains: the Network's fixed copy names them ("you're in friends.help and peon.biz"), so the contact check allows them. */
 const OWN_DOMAINS = Object.values(APPS).flatMap(a => [`https://${a.domain}`, `www.${a.domain}`, a.domain]);
@@ -181,6 +183,7 @@ export class BlooioAdapter implements ChannelAdapter {
       stale: async row => row.id.startsWith("ntf_") ? !await rt.notificationCurrent(row.id)
         : !!row.oppId && (row.id.startsWith("relay:") ? (rt.net.opps.get(row.oppId)?.stage ?? "closed") === "closed" : CLOSED_STAGES.has(rt.net.opps.get(row.oppId)?.stage ?? "")),
       optedOut: row => rt.optedOut(row.id, row.memberId as MemberId | undefined, row.to),
+      privatePayload: row => row.id.startsWith(EXPECTED_INVITATION_PREFIX),
       // A direct text to someone who is not a member of this app (no member on the row, none at the address)
       // is fixed copy: the member policy has nobody to check. Consent, quiet hours, caps and the leak guard still apply.
       recipient: (row, agentInitiated) => !row.memberId && !rt.memberOf(row.to) ? { ok: true }
@@ -191,6 +194,8 @@ export class BlooioAdapter implements ChannelAdapter {
       leaks: row => {
         const sender = rt.net.relaySenderOf(row.id), recipient = (row.memberId as MemberId | undefined) ?? rt.memberOf(row.to);
         const base = sender && recipient ? rt.net.leakSources([recipient], [sender]) : leaks(row.to);
+        const inviteLink = row.id.startsWith(EXPECTED_INVITATION_PREFIX) && row.text.split("\n")[1];
+        if (inviteLink && isMemberInvitationLink(rt.app, inviteLink)) return { ...base, contactAllow: [inviteLink] };
         const from = rt.net.relayContactShareFrom(row.id), number = from && rt.addressOf(from);
         const publicEventLink = row.kind === "reply" || row.kind === "transactional"
           ? rt.net.approvedPublicEventLink(row.oppId, recipient, row.text) : undefined;
@@ -200,7 +205,10 @@ export class BlooioAdapter implements ChannelAdapter {
       // PgStore.save locks the state before erasing members. Dispatch takes the
       // same order, then the existing admit check revalidates current parties.
       lockAdmission: async (row, tx) => {
-        if (row.id.startsWith("relay:") || row.id.startsWith("invite-notice:")) await tx`select id from network.network_state where id=${rt.pg.id} for share`;
+        if (row.id.startsWith("relay:") || row.id.startsWith("invite-notice:") || row.id.startsWith(EXPECTED_INVITATION_PREFIX)) {
+          await tx`select id from network.network_state where id=${rt.pg.id} for share`;
+        }
+        if (row.id.startsWith("home-help-consent:")) await rt.lockHomeHelpConsentAdmission(tx, row.id, row.memberId);
       },
       // A relayed item: its match and both members are read again inside the admission transaction (runtime.ts).
       admit: async (row, tx) => {
@@ -208,7 +216,14 @@ export class BlooioAdapter implements ChannelAdapter {
         if (row.id.startsWith("relay:")) return rt.relayAdmission(tx, row);
         if (row.id.startsWith("invite-notice:")) return await rt.invitationNoticeAdmission(tx, row.id, row.memberId)
           ? { ok: true } : { ok: false, reason: "invitation_notice_changed" };
+        if (row.id.startsWith("home-help-consent:")) return await rt.homeHelpConsentAdmission(tx, row)
+          ? { ok: true } : { ok: false, reason: "home_help_consent_changed" };
+        if (row.id.startsWith(EXPECTED_INVITATION_PREFIX)) return !row.memberId && row.kind === "transactional" && await rt.expectedInvitationAdmission(tx, row)
+          ? { ok: true } : { ok: false, reason: "expected_invitation_changed" };
         return { ok: true };
+      },
+      claimed: async (row, tx) => {
+        if (row.id.startsWith(EXPECTED_INVITATION_PREFIX)) await rt.expectedInvitationClaimed(tx, row);
       },
       capTake: row => rt.capTake(row.id, row.memberId as MemberId),
       capRelease: row => rt.capRelease(row.id),

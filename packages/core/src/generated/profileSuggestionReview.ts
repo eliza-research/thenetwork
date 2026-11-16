@@ -1,11 +1,11 @@
 // GENERATED from spec/profileSuggestionReview.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Review suggestions before they change my profile / A review starts with no authorized batch (spec/profileSuggestionReview.md:9) */
+/** Story: Review suggestions before they change my profile / A review starts with no authorized batch (spec/profileSuggestionReview.md) */
 export type ReviewVerb = "AcceptVerb" | "RejectVerb" | "EditVerb";
-/** Story: Review suggestions before they change my profile / A review starts with no authorized batch (spec/profileSuggestionReview.md:9) */
+/** Story: Review suggestions before they change my profile / A review starts with no authorized batch (spec/profileSuggestionReview.md) */
 export type ReviewPhase = "Unchecked" | "NeedsItems" | "BatchUnavailable" | "ReadyToReview" | "CommandRefused" | "AcceptItem" | "RejectItem" | "PreviewEdit";
-/** Story: Review suggestions before they change my profile / A review starts with no authorized batch (spec/profileSuggestionReview.md:9) */
+/** Story: Review suggestions before they change my profile / A review starts with no authorized batch (spec/profileSuggestionReview.md) */
 export interface ReviewRequest { phase: ReviewPhase; metadataApproved: boolean; itemsApproved: boolean; commandBound: boolean }
 
 /** One variant per transition in the spec. */
@@ -14,9 +14,9 @@ export type Event =
   | { type: "checkItems"; itemCount: number; distinctIds: boolean; allItemsValid: boolean }
   | { type: "readCommand"; verb: ReviewVerb; tokenMatches: boolean; itemExists: boolean; scopeGiven: boolean; wordingGiven: boolean; wordingValid: boolean };
 
-/** Story: Review suggestions before they change my profile / Only a bounded batch of distinct, valid suggestions can be shown (spec/profileSuggestionReview.md:41) */
+/** Story: Review suggestions before they change my profile / Only a bounded batch of distinct, valid suggestions can be shown (spec/profileSuggestionReview.md) */
 export const maxSuggestions: number = 10;
-/** Story: Review suggestions before they change my profile / A review starts with no authorized batch (spec/profileSuggestionReview.md:9) */
+/** Story: Review suggestions before they change my profile / A review starts with no authorized batch (spec/profileSuggestionReview.md) */
 export const initial: ReviewRequest = { phase: "Unchecked", metadataApproved: false, itemsApproved: false, commandBound: false };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -25,26 +25,26 @@ export function inv(current: ReviewRequest): boolean {
   return alwaysReviewNeedsEligibleBatch(current) && alwaysActionNeedsBoundCommand(current);
 }
 
-/** Story: Review suggestions before they change my profile / Only a current batch for the same person, app and chat enters review (spec/profileSuggestionReview.md:23) */
+/** Story: Review suggestions before they change my profile / Only a current batch for the same person, app and chat enters review (spec/profileSuggestionReview.md) */
 //@ pure
 export function reviewBeforeExpiry(asOf: number, expiresAt: number): boolean {
   return asOf < expiresAt;
 }
 
-/** Story: Review suggestions before they change my profile / Only a current batch for the same person, app and chat enters review (spec/profileSuggestionReview.md:23) */
+/** Story: Review suggestions before they change my profile / Only a current batch for the same person, app and chat enters review (spec/profileSuggestionReview.md) */
 //@ pure
 export function lawDeadlineDoesNotIncludeExpiry(expiresAt: number): boolean {
   //@ ensures \result === true
   return !reviewBeforeExpiry(expiresAt, expiresAt);
 }
 
-/** Story: Review suggestions before they change my profile / Only a current batch for the same person, app and chat enters review (spec/profileSuggestionReview.md:23) */
+/** Story: Review suggestions before they change my profile / Only a current batch for the same person, app and chat enters review (spec/profileSuggestionReview.md) */
 //@ pure
 export function canCheckBatch(review: ReviewRequest): boolean {
   return review.phase === "Unchecked";
 }
 
-/** Story: Review suggestions before they change my profile / Only a current batch for the same person, app and chat enters review (spec/profileSuggestionReview.md:23) */
+/** Story: Review suggestions before they change my profile / Only a current batch for the same person, app and chat enters review (spec/profileSuggestionReview.md) */
 //@ pure
 export function checkBatch(review: ReviewRequest, pending: boolean, ownerMatches: boolean, batchIdValid: boolean, revision: number, asOf: number, expiresAt: number): ReviewRequest {
   //@ ensures (inv(review) && canCheckBatch(review)) ==> alwaysReviewNeedsEligibleBatch(\result)
@@ -53,13 +53,13 @@ export function checkBatch(review: ReviewRequest, pending: boolean, ownerMatches
   return { ...review, metadataApproved: local_0, phase: local_0 ? "NeedsItems" : "BatchUnavailable" };
 }
 
-/** Story: Review suggestions before they change my profile / Only a bounded batch of distinct, valid suggestions can be shown (spec/profileSuggestionReview.md:41) */
+/** Story: Review suggestions before they change my profile / Only a bounded batch of distinct, valid suggestions can be shown (spec/profileSuggestionReview.md) */
 //@ pure
 export function canCheckItems(review: ReviewRequest): boolean {
   return review.phase === "NeedsItems" && review.metadataApproved;
 }
 
-/** Story: Review suggestions before they change my profile / Only a bounded batch of distinct, valid suggestions can be shown (spec/profileSuggestionReview.md:41) */
+/** Story: Review suggestions before they change my profile / Only a bounded batch of distinct, valid suggestions can be shown (spec/profileSuggestionReview.md) */
 //@ pure
 export function checkItems(review: ReviewRequest, itemCount: number, distinctIds: boolean, allItemsValid: boolean): ReviewRequest {
   //@ ensures (inv(review) && canCheckItems(review)) ==> alwaysReviewNeedsEligibleBatch(\result)
@@ -68,13 +68,13 @@ export function checkItems(review: ReviewRequest, itemCount: number, distinctIds
   return { ...review, itemsApproved: local_1, phase: local_1 ? "ReadyToReview" : "BatchUnavailable" };
 }
 
-/** Story: Review suggestions before they change my profile / A command targets this batch revision and one existing item (spec/profileSuggestionReview.md:57) */
+/** Story: Review suggestions before they change my profile / A command targets this batch revision and one existing item (spec/profileSuggestionReview.md) */
 //@ pure
 export function canReadCommand(review: ReviewRequest): boolean {
   return review.phase === "ReadyToReview" && review.metadataApproved && review.itemsApproved;
 }
 
-/** Story: Review suggestions before they change my profile / A command targets this batch revision and one existing item (spec/profileSuggestionReview.md:57) */
+/** Story: Review suggestions before they change my profile / A command targets this batch revision and one existing item (spec/profileSuggestionReview.md) */
 //@ pure
 export function readCommand(review: ReviewRequest, verb: ReviewVerb, tokenMatches: boolean, itemExists: boolean, scopeGiven: boolean, wordingGiven: boolean, wordingValid: boolean): ReviewRequest {
   //@ ensures (inv(review) && canReadCommand(review)) ==> alwaysReviewNeedsEligibleBatch(\result)
@@ -84,43 +84,43 @@ export function readCommand(review: ReviewRequest, verb: ReviewVerb, tokenMatche
   return { ...review, phase: local_3, commandBound: local_2 };
 }
 
-/** Story: Review suggestions before they change my profile / A review action requires an eligible batch and a bound command (spec/profileSuggestionReview.md:77) */
+/** Story: Review suggestions before they change my profile / A review action requires an eligible batch and a bound command (spec/profileSuggestionReview.md) */
 //@ pure
 export function alwaysReviewNeedsEligibleBatch(review: ReviewRequest): boolean {
   return !(review.phase === "ReadyToReview" || review.phase === "AcceptItem" || review.phase === "RejectItem" || review.phase === "PreviewEdit") || (review.metadataApproved && review.itemsApproved);
 }
 
-/** Story: Review suggestions before they change my profile / A review action requires an eligible batch and a bound command (spec/profileSuggestionReview.md:77) */
+/** Story: Review suggestions before they change my profile / A review action requires an eligible batch and a bound command (spec/profileSuggestionReview.md) */
 //@ pure
 export function alwaysActionNeedsBoundCommand(review: ReviewRequest): boolean {
   return !(review.phase === "AcceptItem" || review.phase === "RejectItem" || review.phase === "PreviewEdit") || review.commandBound;
 }
 
-/** Story: Review suggestions before they change my profile / A member can reach review, accept, reject and edit (spec/profileSuggestionReview.md:92) */
+/** Story: Review suggestions before they change my profile / A member can reach review, accept, reject and edit (spec/profileSuggestionReview.md) */
 //@ pure
 export function sometimesReadyToReview(review: ReviewRequest): boolean {
   return review.phase === "ReadyToReview";
 }
 
-/** Story: Review suggestions before they change my profile / A member can reach review, accept, reject and edit (spec/profileSuggestionReview.md:92) */
+/** Story: Review suggestions before they change my profile / A member can reach review, accept, reject and edit (spec/profileSuggestionReview.md) */
 //@ pure
 export function sometimesCanAccept(review: ReviewRequest): boolean {
   return review.phase === "AcceptItem";
 }
 
-/** Story: Review suggestions before they change my profile / A member can reach review, accept, reject and edit (spec/profileSuggestionReview.md:92) */
+/** Story: Review suggestions before they change my profile / A member can reach review, accept, reject and edit (spec/profileSuggestionReview.md) */
 //@ pure
 export function sometimesCanReject(review: ReviewRequest): boolean {
   return review.phase === "RejectItem";
 }
 
-/** Story: Review suggestions before they change my profile / A member can reach review, accept, reject and edit (spec/profileSuggestionReview.md:92) */
+/** Story: Review suggestions before they change my profile / A member can reach review, accept, reject and edit (spec/profileSuggestionReview.md) */
 //@ pure
 export function sometimesCanEdit(review: ReviewRequest): boolean {
   return review.phase === "PreviewEdit";
 }
 
-/** Story: Review suggestions before they change my profile / A member can reach review, accept, reject and edit (spec/profileSuggestionReview.md:92) */
+/** Story: Review suggestions before they change my profile / A member can reach review, accept, reject and edit (spec/profileSuggestionReview.md) */
 //@ pure
 export function sometimesBatchUnavailable(review: ReviewRequest): boolean {
   return review.phase === "BatchUnavailable";

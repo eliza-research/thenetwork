@@ -1,7 +1,7 @@
 # Spec reference
 
 This is the Vibestack spec-language reference at revision
-[`d063ec75`](https://github.com/lalalune/vibestack/blob/d063ec7588c54c4405987b2622be06566a60dd6e/SPEC.md).
+[`9901a846`](https://github.com/lalalune/vibestack/blob/9901a846b2d8f8c3330ea902112ce2efd6f087f7/SPEC.md).
 Use [The Network command map](README.md#commands) when this reference uses
 standalone Vibestack commands. The Network keeps its product requirements in
 [`spec/product/`](spec/product/README.md) and the action-based Quint flow
@@ -509,7 +509,7 @@ change when read again, which must do what the clean event does. `options`
 are `view` (what of the state `observe` shows), `keys` (the entities walks
 interleave), `walks` (at most this many; `0` for a slow driver) and `steps`.
 The walks use the fixed normal or nightly profile
-([budgets](https://github.com/lalalune/vibestack/blob/d063ec7588c54c4405987b2622be06566a60dd6e/CONTRIBUTING.md#seeds-and-budgets)).
+([budgets](https://github.com/lalalune/vibestack/blob/9901a846b2d8f8c3330ea902112ce2efd6f087f7/CONTRIBUTING.md#seeds-and-budgets)).
 
 - **A disagreement is saved.** A journey or walk that disagrees is shrunk
   and written to `test/counterexamples/<name>/<hash>.json`, which every
@@ -540,7 +540,7 @@ under `src/`.
   arm64 and on Apple silicon; elsewhere the stage prints a `-` line and CI
   explores the page.
 - **For a fixed time, from no seed.** The fixed profile's seconds, Chrome's
-  start included ([budgets](https://github.com/lalalune/vibestack/blob/d063ec7588c54c4405987b2622be06566a60dd6e/CONTRIBUTING.md#seeds-and-budgets)). The
+  start included ([budgets](https://github.com/lalalune/vibestack/blob/9901a846b2d8f8c3330ea902112ce2efd6f087f7/CONTRIBUTING.md#seeds-and-budgets)). The
   actions are random, so two runs explore differently.
 - **`test/bombadil.ts` says what must hold.** It is an ES module Bombadil
   bundles itself. Re-export `@antithesishq/bombadil/browser/defaults` (no
@@ -555,8 +555,15 @@ under `src/`.
   state. Later runs replay it first: one that still breaks fails, one that
   cannot run keeps it, and one that breaks nothing or no longer applies to
   the page removes it. A bug worth keeping fixed becomes a step of the journey it broke.
-- **A pass is remembered** until the package's test inputs, Bombadil's
-  version or the script change. The nightly check always explores afresh.
+- **A pass is remembered** until what the page reads changes, or the
+  installed Bombadil and the packages it loads, or the script: the package's
+  files but its tests and their configuration, drivers, traces,
+  counterexamples, contracts, proofs and `spec/`; each file and directory its
+  code or scripts name by a path; what each workspace package its code
+  imports, or its scripts run, exports; and the generated modules it imports,
+  or all of them where its code names none. A page that runs the tools, as
+  Studio's does, reads the code of them all. The nightly check always
+  explores afresh.
 
 ## Large applications
 
@@ -577,7 +584,14 @@ under `src/`.
   checks and the Dafny and Z3 installed. Each
   simulation result, a failing one too (its seed is fixed), and each passing
   proof result is kept beside them, under a fingerprint of the spec's Quint
-  without its comments, everything it imports and the versions of the tools.
+  without its comments, everything it imports and the versions of the tools
+  that compute it, so a change to the tools reruns only the stages that run
+  the changed code. A passing typecheck is kept under what the compiler read:
+  the package's files but its Markdown and Quint, its `tsconfig.json` and the
+  configurations it extends, every file outside `node_modules` the compile
+  read, the lock file and the compiler's bytes. A driver's passing run is kept
+  under the files its tests read and the events the simulator found; a
+  failure, and a `driver:` program, run every time.
   The specs are simulated at once.
 - **The spec covers the rules, not the plumbing.** Chat, HTTP and storage stay
   hand-written around the generated core, as `vibestack/examples/dashboard/src/notify.vibe`

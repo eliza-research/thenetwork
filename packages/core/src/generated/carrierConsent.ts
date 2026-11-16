@@ -3,26 +3,26 @@
 
 
 
-/** Story: Stop texts across apps and resume an app / A global STOP beats an older or simultaneous app opt-in (spec/carrierConsent.md:9) */
+/** Story: Stop texts across apps and resume an app / A global STOP beats an older or simultaneous app opt-in (spec/carrierConsent.md) */
 //@ pure
 export function appOptInBeatsStop(appAt: number, stopAt: number): boolean {
   return appAt > stopAt;
 }
 
-/** Story: Stop texts across apps and resume an app / A global STOP beats an older or simultaneous app opt-in (spec/carrierConsent.md:9) */
+/** Story: Stop texts across apps and resume an app / A global STOP beats an older or simultaneous app opt-in (spec/carrierConsent.md) */
 //@ pure
 export function lawStopWinsATie(at: number): boolean {
   //@ ensures \result === true
   return !appOptInBeatsStop(at, at);
 }
 
-/** Story: Stop texts across apps and resume an app / An app with no opt-in has no permission to send (spec/carrierConsent.md:21) */
+/** Story: Stop texts across apps and resume an app / An app with no opt-in has no permission to send (spec/carrierConsent.md) */
 //@ pure
 export function appMayText(appOptedIn: boolean, globalOptedOut: boolean, appAt: number, globalAt: number): boolean {
   return appOptedIn && (!globalOptedOut || appOptInBeatsStop(appAt, globalAt));
 }
 
-/** Story: Stop texts across apps and resume an app / An app with no opt-in has no permission to send (spec/carrierConsent.md:21) */
+/** Story: Stop texts across apps and resume an app / An app with no opt-in has no permission to send (spec/carrierConsent.md) */
 //@ pure
 export function lawNoAppOptInMeansNoPermission(globalOptedOut: boolean, appAt: number, globalAt: number): boolean {
   //@ ensures \result === true

@@ -1,15 +1,15 @@
 // GENERATED from spec/standingIntentManagement.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents (spec/standingIntentManagement.md:9) */
+/** Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents (spec/standingIntentManagement.md) */
 export type IntentCommandPhase = "AwaitingMember" | "ShowIntents" | "SelectIntent" | "MemberRefused" | "UnknownIntent" | "AmbiguousIntent" | "IntentUnchanged" | "PauseSelected" | "CloseSelected";
-/** Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents (spec/standingIntentManagement.md:9) */
+/** Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents (spec/standingIntentManagement.md) */
 export type IntentCommand = "ListIntents" | "PauseIntent" | "CloseIntent";
-/** Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents (spec/standingIntentManagement.md:9) */
+/** Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents (spec/standingIntentManagement.md) */
 export interface IntentManagement { phase: IntentCommandPhase; command: IntentCommand }
-/** Story: See and manage the things the Network is looking for / Change only the single matching reference the member supplied (spec/standingIntentManagement.md:31) */
+/** Story: See and manage the things the Network is looking for / Change only the single matching reference the member supplied (spec/standingIntentManagement.md) */
 export type IntentControl = "PauseControl" | "CloseControl";
-/** Story: See and manage the things the Network is looking for / Reconcile older saved controls during the first normal save (spec/standingIntentManagement.md:67) */
+/** Story: See and manage the things the Network is looking for / Reconcile older saved controls during the first normal save (spec/standingIntentManagement.md) */
 export type LegacyIntentChange = "KeepIntentStatus" | "ReconcilePause" | "ReconcileClose";
 
 /** One variant per transition in the spec. */
@@ -17,7 +17,7 @@ export type Event =
   | { type: "authorizeIntentCommand"; allowed: boolean; command: IntentCommand }
   | { type: "chooseOwnedIntent"; matches: number; live: boolean; paused: boolean };
 
-/** Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents (spec/standingIntentManagement.md:9) */
+/** Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents (spec/standingIntentManagement.md) */
 export const initial: IntentManagement = { phase: "AwaitingMember", command: "ListIntents" };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -26,107 +26,107 @@ export function inv(current: IntentManagement): boolean {
   return true;
 }
 
-/** Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents (spec/standingIntentManagement.md:9) */
+/** Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents (spec/standingIntentManagement.md) */
 //@ pure
 export function standingIntentReplayAllowed(canonicalMember: boolean): boolean {
   return canonicalMember;
 }
 
-/** Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents (spec/standingIntentManagement.md:9) */
+/** Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents (spec/standingIntentManagement.md) */
 //@ pure
 export function intentManagementAllowed(canonicalMembership: boolean, ownNetworkMember: boolean, optedOut: boolean): boolean {
   return canonicalMembership && ownNetworkMember && !optedOut;
 }
 
-/** Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents (spec/standingIntentManagement.md:9) */
+/** Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents (spec/standingIntentManagement.md) */
 //@ pure
 export function canAuthorizeIntentCommand(s: IntentManagement): boolean {
   return s.phase === "AwaitingMember";
 }
 
-/** Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents (spec/standingIntentManagement.md:9) */
+/** Story: See and manage the things the Network is looking for / Only the canonical member can list or manage the app's own intents (spec/standingIntentManagement.md) */
 //@ pure
 export function authorizeIntentCommand(s: IntentManagement, allowed: boolean, command: IntentCommand): IntentManagement {
   //@ ensures (inv(s) && canAuthorizeIntentCommand(s)) ==> stepChangeRequiresSelection(s, \result)
   return { command: command, phase: !allowed ? "MemberRefused" : (command === "ListIntents" ? "ShowIntents" : "SelectIntent") };
 }
 
-/** Story: See and manage the things the Network is looking for / Change only the single matching reference the member supplied (spec/standingIntentManagement.md:31) */
+/** Story: See and manage the things the Network is looking for / Change only the single matching reference the member supplied (spec/standingIntentManagement.md) */
 //@ pure
 export function canChooseOwnedIntent(s: IntentManagement): boolean {
   return s.phase === "SelectIntent";
 }
 
-/** Story: See and manage the things the Network is looking for / Change only the single matching reference the member supplied (spec/standingIntentManagement.md:31) */
+/** Story: See and manage the things the Network is looking for / Change only the single matching reference the member supplied (spec/standingIntentManagement.md) */
 //@ pure
 export function chooseOwnedIntent(s: IntentManagement, matches: number, live: boolean, paused: boolean): IntentManagement {
   //@ ensures (inv(s) && canChooseOwnedIntent(s)) ==> stepChangeRequiresSelection(s, \result)
   return { ...s, phase: matches === 0 ? "UnknownIntent" : (matches !== 1 ? "AmbiguousIntent" : (s.command === "PauseIntent" && live ? "PauseSelected" : (s.command === "CloseIntent" && (live || paused) ? "CloseSelected" : "IntentUnchanged"))) };
 }
 
-/** Story: See and manage the things the Network is looking for / Change only the single matching reference the member supplied (spec/standingIntentManagement.md:31) */
+/** Story: See and manage the things the Network is looking for / Change only the single matching reference the member supplied (spec/standingIntentManagement.md) */
 //@ pure
 export function effectiveStandingControl(storedStatus: string, control: IntentControl): IntentControl {
   return storedStatus === "closed" || control === "CloseControl" ? "CloseControl" : "PauseControl";
 }
 
-/** Story: See and manage the things the Network is looking for / Change only the single matching reference the member supplied (spec/standingIntentManagement.md:31) */
+/** Story: See and manage the things the Network is looking for / Change only the single matching reference the member supplied (spec/standingIntentManagement.md) */
 //@ pure
 export function stepChangeRequiresSelection(before: IntentManagement, after: IntentManagement): boolean {
   return !(before.phase !== after.phase && (after.phase === "PauseSelected" || after.phase === "CloseSelected")) || before.phase === "SelectIntent";
 }
 
-/** Story: See and manage the things the Network is looking for / Change only the single matching reference the member supplied (spec/standingIntentManagement.md:31) */
+/** Story: See and manage the things the Network is looking for / Change only the single matching reference the member supplied (spec/standingIntentManagement.md) */
 //@ pure
 export function sometimesPausesAnIntent(s: IntentManagement): boolean {
   return s.phase === "PauseSelected";
 }
 
-/** Story: See and manage the things the Network is looking for / Change only the single matching reference the member supplied (spec/standingIntentManagement.md:31) */
+/** Story: See and manage the things the Network is looking for / Change only the single matching reference the member supplied (spec/standingIntentManagement.md) */
 //@ pure
 export function sometimesClosesAnIntent(s: IntentManagement): boolean {
   return s.phase === "CloseSelected";
 }
 
-/** Story: See and manage the things the Network is looking for / Commit a stored intent change with its acknowledgment (spec/standingIntentManagement.md:58) */
+/** Story: See and manage the things the Network is looking for / Commit a stored intent change with its acknowledgment (spec/standingIntentManagement.md) */
 //@ pure
 export function writesStandingIntentRow(s: IntentManagement, stored: boolean): boolean {
   return stored && (s.phase === "PauseSelected" || s.phase === "CloseSelected");
 }
 
-/** Story: See and manage the things the Network is looking for / Reconcile older saved controls during the first normal save (spec/standingIntentManagement.md:67) */
+/** Story: See and manage the things the Network is looking for / Reconcile older saved controls during the first normal save (spec/standingIntentManagement.md) */
 //@ pure
 export function legacyIntentReconciliationDue(savedState: boolean, completed: boolean): boolean {
   return savedState && !completed;
 }
 
-/** Story: See and manage the things the Network is looking for / Reconcile older saved controls during the first normal save (spec/standingIntentManagement.md:67) */
+/** Story: See and manage the things the Network is looking for / Reconcile older saved controls during the first normal save (spec/standingIntentManagement.md) */
 //@ pure
 export function reconcileLegacyIntent(storedStatus: string, control: IntentControl, ownerActive: boolean, hadRowAtSave: boolean, withinHorizon: boolean, job: boolean): LegacyIntentChange {
   return !(ownerActive && hadRowAtSave && withinHorizon) || job ? "KeepIntentStatus" : (storedStatus === "active" && control === "PauseControl" ? "ReconcilePause" : ((storedStatus === "active" || storedStatus === "paused") && control === "CloseControl" ? "ReconcileClose" : "KeepIntentStatus"));
 }
 
-/** Story: See and manage the things the Network is looking for / Reconcile older saved controls during the first normal save (spec/standingIntentManagement.md:67) */
+/** Story: See and manage the things the Network is looking for / Reconcile older saved controls during the first normal save (spec/standingIntentManagement.md) */
 //@ pure
 export function lawLegacyReconciliationNeverUncloses(control: IntentControl, ownerActive: boolean, hadRowAtSave: boolean, withinHorizon: boolean, job: boolean): boolean {
   //@ ensures \result === true
   return reconcileLegacyIntent("closed", control, ownerActive, hadRowAtSave, withinHorizon, job) === "KeepIntentStatus";
 }
 
-/** Story: See and manage the things the Network is looking for / Reconcile older saved controls during the first normal save (spec/standingIntentManagement.md:67) */
+/** Story: See and manage the things the Network is looking for / Reconcile older saved controls during the first normal save (spec/standingIntentManagement.md) */
 //@ pure
 export function lawLegacyReconciliationKeepsIneligible(storedStatus: string, control: IntentControl, ownerActive: boolean, hadRowAtSave: boolean, withinHorizon: boolean, job: boolean): boolean {
   //@ ensures \result === true
   return !(!(ownerActive && hadRowAtSave && withinHorizon) || job) || reconcileLegacyIntent(storedStatus, control, ownerActive, hadRowAtSave, withinHorizon, job) === "KeepIntentStatus";
 }
 
-/** Story: See and manage the things the Network is looking for / A pause or close stops only the work linked to that intent (spec/standingIntentManagement.md:93) */
+/** Story: See and manage the things the Network is looking for / A pause or close stops only the work linked to that intent (spec/standingIntentManagement.md) */
 //@ pure
 export function retireIntentOpportunity(directAnchor: boolean, beforeBooking: boolean): boolean {
   return directAnchor && beforeBooking;
 }
 
-/** Story: See and manage the things the Network is looking for / A pause or close stops only the work linked to that intent (spec/standingIntentManagement.md:93) */
+/** Story: See and manage the things the Network is looking for / A pause or close stops only the work linked to that intent (spec/standingIntentManagement.md) */
 //@ pure
 export function retireIntentSearch(recognizedDesire: boolean, stillLive: boolean): boolean {
   return recognizedDesire && !stillLive;

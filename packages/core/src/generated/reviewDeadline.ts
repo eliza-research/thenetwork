@@ -3,33 +3,33 @@
 
 
 
-/** Story: Act on a proposal while review is open / An opportunity expires at its review deadline (spec/reviewDeadline.md:7) */
+/** Story: Act on a proposal while review is open / An opportunity expires at its review deadline (spec/reviewDeadline.md) */
 //@ pure
 export function reviewLate(currentTime: number, deadline: number): boolean {
   return currentTime >= deadline;
 }
 
-/** Story: Act on a proposal while review is open / An opportunity expires at its review deadline (spec/reviewDeadline.md:7) */
+/** Story: Act on a proposal while review is open / An opportunity expires at its review deadline (spec/reviewDeadline.md) */
 //@ pure
 export function lawReviewDeadlineIsExclusive(deadline: number): boolean {
   //@ ensures \result === true
   return reviewLate(deadline, deadline);
 }
 
-/** Story: Act on a proposal while review is open / A decision applies only to the revision the reviewer saw (spec/reviewDeadline.md:19) */
+/** Story: Act on a proposal while review is open / A decision applies only to the revision the reviewer saw (spec/reviewDeadline.md) */
 //@ pure
 export function reviewRevisionCurrent(seenRevision: number, currentRevision: number): boolean {
   return seenRevision === currentRevision;
 }
 
-/** Story: Act on a proposal while review is open / A decision applies only to the revision the reviewer saw (spec/reviewDeadline.md:19) */
+/** Story: Act on a proposal while review is open / A decision applies only to the revision the reviewer saw (spec/reviewDeadline.md) */
 //@ pure
 export function lawSeenReviewRevisionIsCurrent(revision: number): boolean {
   //@ ensures \result === true
   return reviewRevisionCurrent(revision, revision);
 }
 
-/** Story: Act on a proposal while review is open / A decision applies only to the revision the reviewer saw (spec/reviewDeadline.md:19) */
+/** Story: Act on a proposal while review is open / A decision applies only to the revision the reviewer saw (spec/reviewDeadline.md) */
 //@ pure
 export function lawRerolledReviewIsStale(seenRevision: number): boolean {
   //@ ensures \result === true

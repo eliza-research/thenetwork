@@ -789,6 +789,268 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(await nyc.scoped(tx => nyc.invitationNoticeAdmission(tx, noticeId, inviter.memberId))).toBe(false);
   }, T);
 
+  // spec/expectedMemberInvitation.md, "Only a confirmed expected invitation can enter the shared line queue"
+  test("the signed turn sends one expected invitation and only the intended verified phone can use it", async () => {
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
+    const sent: SendRequest[] = [];
+    const { s, otp } = service(clock, {
+      env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret }, networks: [{ id: "ntwrk:nyc" }],
+      adapter: (_net, rt) => new BlooioAdapter({ app: rt.app.id, from: LINE, clock, liveGate: () => true, log: () => {},
+        provider: { kind: "sim", async send(request) {
+          sent.push(request);
+          return { providerMessageId: `expected-invite-fixture-${sent.length}`, status: "sent", acceptedAt: clock.now() };
+        } },
+      }),
+    });
+    await s.start();
+    const inviterPhone = newPhone(), target = newPhone(), wrongPhone = newPhone(), declinePhone = newPhone(), stoppedPhone = newPhone();
+    const inviter = await s.accounts.invite(APPS.ntwrk, inviterPhone);
+    if (!inviter) throw new Error("Missing staff invitation for the fixture");
+    const profile = (firstName: string) => ({ firstName, age: 30, homeCity: "nyc" as const, consent: { sms: true as const, wording: APPS.ntwrk.consent.text } });
+    expect(await s.accounts.join(APPS.ntwrk, { e164: inviterPhone, personId: inviter.personId }, profile("Ari"))).toMatchObject({ ok: true });
+    const send = invitationTurn(s, clock);
+    const turn = (from: string, messageId: string, text: string): TurnRequest =>
+      ({ from, messageId, text, to: null, channel: "blooio", transport: "imessage", receivedAt: clock.now(), app: "ntwrk" });
+    const rt = s.runtimeFor("ntwrk")!;
+    const recipientSends = () => sent.filter(request => [target, wrongPhone, declinePhone].includes(request.to));
+    const queued = () => sql`select id,status,provider_message_ids from platform.outbound where id like 'expected-invite:%'`;
+
+    async function prepare(id: string, name: string, phone: string) {
+      const { response } = await confirmInvitationVouch(send, turn(inviterPhone, `${id}-vouch`, `Can you invite my friend ${name}?`), "I know them well, for three years.");
+      const link = (response.replies.join("\n") as string).match(/https:\/\/ntwrk\.party\/SKILL\.md#invite=[A-Za-z0-9_-]{43}/)?.[0];
+      if (!link) throw new Error("The default vouch flow did not return a forwarding link");
+      expect(sent.some(request => request.to === phone)).toBe(false);
+      const requested = await send(turn(inviterPhone, `${id}-stage`, `SEND INVITE ${link} TO ${phone}`));
+      expect(requested.status).toBe(200);
+      const prompt = (await requested.json()).replies.join("\n") as string;
+      expect(prompt).not.toContain(phone);
+      expect(prompt).not.toContain(link);
+      const confirmation = prompt.match(/CONFIRM EXPECTED INVITE mit_[a-p]{32}/)?.[0];
+      if (!confirmation) throw new Error("The expected-invite receipt did not ask for confirmation");
+      expect(sent.some(request => request.to === phone)).toBe(false);
+      return { input: turn(inviterPhone, `${id}-confirm`, confirmation), link, token: new URL(link).hash.slice("#invite=".length) };
+    }
+
+    const first = await prepare("expected-invite-first", "Maya", target);
+    expect(await queued()).toHaveLength(0);
+    expect(await count(sql`select count(*)::int as n from platform.expected_member_invitations where ciphertext is not null and queued_at is null`)).toBe(1);
+    const wrongCode = first.input.text.endsWith("p") ? "a" : "p";
+    await send({ ...first.input, messageId: "expected-invite-wrong-code", text: first.input.text.slice(0, -1) + wrongCode });
+    await send({ ...first.input, messageId: "expected-invite-bare-yes", text: "yes" });
+    await rt.tick();
+    expect(recipientSends()).toEqual([]);
+    expect(await queued()).toHaveLength(0);
+
+    const confirmed = await send(first.input);
+    expect(confirmed.status).toBe(200);
+    const confirmationReceipt = await confirmed.json();
+    const acknowledgement = confirmationReceipt.replies.join("\n") as string;
+    expect(acknowledgement).toContain("recorded your confirmation");
+    expect(acknowledgement).not.toMatch(/Maya|#invite=/);
+    expect(acknowledgement).not.toContain(target);
+    const replayed = await send(first.input);
+    expect(replayed.status).toBe(200);
+    expect(await replayed.json()).toEqual(confirmationReceipt);
+    await send({ ...first.input, messageId: "expected-invite-confirm-again" });
+    await rt.adapter.deliver([]);
+    expect(recipientSends().map(request => request.to)).toEqual([target]);
+    const [delivery] = recipientSends();
+    expect(delivery!.text).toMatch(/Ari invited you to ntwrk\.party[\s\S]*STOP to opt out/i);
+    expect(delivery!.text).toContain(first.link);
+    expect(delivery!.text).not.toMatch(/Maya|three years/);
+    expect(delivery!.text).not.toContain(target);
+    expect([...(await queued())]).toEqual([{ id: expect.stringMatching(/^expected-invite:/), status: "sent", provider_message_ids: [expect.any(String)] }]);
+    expect(await count(sql`select count(*)::int as n from platform.expected_member_invitations where queued_at is not null and attempted_at is not null and ciphertext is null`)).toBe(1);
+    expect(JSON.stringify(await sql`select body from network.messages`)).not.toContain(first.token);
+    expect(JSON.stringify(await sql`select body from network.messages`)).not.toContain(target);
+    const privateTurn = JSON.stringify(await sql`select event,response,replies from platform.inbound where id='msg:blooio:expected-invite-first-stage'`);
+    expect(privateTurn).not.toContain(first.token);
+    expect(privateTurn).not.toContain(target);
+
+    const authenticate = async (phone: string) => {
+      let cookie = "";
+      const call = async (path: string, data: Record<string, unknown>) => {
+        const res = await s.publicFetch(new Request(`http://localhost:5101${path}`, { method: "POST",
+          headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(data),
+        }));
+        cookie = res.headers.get("set-cookie")?.split(";")[0] ?? cookie;
+        return { status: res.status, body: await res.json() };
+      };
+      clock.advance(31_000);
+      expect((await call("/api/auth/otp/start", { phone })).status).toBe(200);
+      expect((await call("/api/auth/otp/verify", { phone, code: otp.codes.get(phone) })).status).toBe(200);
+      return call;
+    };
+    const wrong = await authenticate(wrongPhone), right = await authenticate(target);
+    expect(await wrong("/api/join", { ...profile("Maya"), inviteToken: first.token })).toMatchObject({ status: 400 });
+    expect(await memberOf("ntwrk", wrongPhone)).toBeUndefined();
+    expect(await right("/api/join", { ...profile("Maya"), inviteToken: first.token })).toMatchObject({ status: 200, body: { ok: true } });
+    const joined = await memberOf("ntwrk", target);
+    if (!joined) throw new Error("The verified recipient did not become a member");
+    expect((await sql`select invited_by from network.members where id=${joined.id}`)[0]).toMatchObject({ invited_by: inviter.memberId });
+
+    clock.advance(MINUTE);
+    const second = await prepare("expected-invite-decline", "Dara", declinePhone);
+    expect((await send(second.input)).status).toBe(200);
+    await rt.adapter.deliver([]);
+    expect(sent.filter(request => request.to === declinePhone)).toHaveLength(1);
+    const declined = await send(turn(declinePhone, "expected-invite-decline-target", "DECLINE INVITE"));
+    expect(declined.status).toBe(200);
+    expect((await declined.json()).replies ?? []).toEqual([]);
+    const declinedSession = await authenticate(declinePhone);
+    expect(await declinedSession("/api/join", { ...profile("Dara"), inviteToken: second.token })).toMatchObject({ status: 400 });
+    expect(await memberOf("ntwrk", declinePhone)).toBeUndefined();
+    await rt.adapter.deliver([]);
+    expect(sent.filter(request => request.to === declinePhone)).toHaveLength(1);
+
+    clock.advance(25 * HOUR); // past the vouch burst window, still inside the monthly allowance
+    const third = await prepare("expected-invite-stopped", "Troy", stoppedPhone);
+    const stopped = await send(turn(stoppedPhone, "expected-invite-stop-target", "STOP"));
+    expect(stopped.status).toBe(200);
+    const blocked = await send(third.input);
+    expect((await blocked.json()).replies.join("\n")).toBe(acknowledgement);
+    await rt.adapter.deliver([]);
+    expect(await queued()).toHaveLength(2);
+    expect(sent.some(request => request.to === stoppedPhone && request.text.includes("#invite="))).toBe(false);
+  }, T);
+
+  // spec/boundedHelp.md, "Intake keeps only structured home-help details after considering a service"
+  // spec/boundedHelp.md, "Fix the roster before review and recheck it at approval"
+  // spec/homeHelpConsent.md, spec/privateHomeHelpVenue.md
+  test("reviewed home help reaches only the exact roster and shares the address privately after unanimous consent", async () => {
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
+    const sent: SendRequest[] = [];
+    let simulatedDelivery = false;
+    const { s, otp } = service(clock, { env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret },
+      networks: [{ id: "ntwrk:nyc" }], network: { matchingEnabled: true }, tokens: "safety@ntwrk:saf-tok,reviewer@ntwrk:rev-tok",
+      adapter: (_net, rt) => new BlooioAdapter({ app: rt.app.id, from: LINE, clock, liveGate: () => simulatedDelivery, log: () => {},
+        provider: { kind: "sim", async send(request) {
+          sent.push(request);
+          return { providerMessageId: `fixture-${sent.length}`, status: "sent", acceptedAt: clock.now() };
+        } },
+      }),
+    });
+    await s.start();
+    const consent = { sms: true as const, wording: APPS.ntwrk.consent.text };
+    async function enroll(firstName: string) {
+      const phone = newPhone();
+      const incoming = await s.accounts.invite(APPS.ntwrk, phone);
+      if (!incoming) throw new Error("Missing fixture invitation");
+      const joined = await s.accounts.join(APPS.ntwrk, { e164: phone, personId: incoming.personId },
+        { firstName, age: 30, homeCity: "nyc", neighborhood: "Greenpoint", consent });
+      if (!joined.ok) throw new Error(`Fixture join failed: ${joined.error}`);
+      return { id: joined.membership.memberId, phone };
+    }
+    const owner = await enroll("Ari"), first = await enroll("Ben"), second = await enroll("Cora");
+    const send = invitationTurn(s, clock);
+    const turn = (from: string, messageId: string, text: string): TurnRequest =>
+      ({ from, messageId, text, to: null, channel: "blooio", transport: "imessage", receivedAt: clock.now(), app: "ntwrk" });
+    const initial = await send(turn(owner.phone, "home-help-ask", "Could someone help me move my couch into my apartment in Greenpoint?"));
+    expect((await initial.json()).replies.join("\n")).toContain("SUBMIT HOME HELP");
+    const command = turn(owner.phone, "home-help-submit",
+      "SUBMIT HOME HELP | move furniture | Greenpoint | 2026-10-10T19:00Z | 2026-10-10T20:00Z | 30 | service unavailable");
+    const submitted = await send(command);
+    expect(submitted.status).toBe(200);
+    const response = await submitted.json();
+    expect(response).toMatchObject({ reason: "bounded_home_help" });
+    expect(await (await send(command)).json()).toEqual(response);
+    const [plan] = await sql`select id,revision,phase,task,area,alternative,helper_ids from network.bounded_home_help`;
+    expect(plan).toMatchObject({ revision: 1, phase: "AwaitingHelpers", task: "MoveFurniture", area: "Greenpoint", alternative: "ServiceUnavailable", helper_ids: [] });
+    expect(JSON.stringify(await sql`select body from network.messages`)).not.toMatch(/move my couch|service unavailable/i);
+    const code = (response.replies.join("\n") as string).match(/hh_[a-p]{32}/)?.[0];
+    if (!code) throw new Error("The receipt did not include the plan code");
+
+    const staff = (method: string, token: string, data?: Record<string, unknown>) => s.fetch(new Request(
+      `http://127.0.0.1/apps/ntwrk/safety/home-help${method === "POST" ? `/${plan.id as string}` : ""}`,
+      { method, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, ...(data ? { body: JSON.stringify(data) } : {}) },
+    ));
+    expect((await staff("GET", "rev-tok")).status).toBe(403);
+    expect((await staff("GET", "saf-tok")).status).toBe(200);
+    const helperIds = [first.id, second.id];
+    expect((await staff("POST", "saf-tok", { action: "nominate", revision: 1, helperIds })).status).toBe(409);
+    for (const helper of [first, second]) {
+      const offered = await send(turn(helper.phone, `offer-${helper.id}`, "OFFER HOME HELP"));
+      expect((await offered.json()).replies.join("\n")).toContain("saved your offer");
+    }
+    expect((await staff("POST", "saf-tok", { action: "nominate", revision: 1, helperIds: [first.id] })).status).toBe(409);
+    const nominated = await staff("POST", "saf-tok", { action: "nominate", revision: 1, helperIds });
+    expect(await nominated.json()).toMatchObject({ ok: true, result: { phase: "AwaitingReview", revision: 2 } });
+    await send(turn(second.phone, "withdraw-home-offer", "WITHDRAW HOME HELP OFFER"));
+    expect((await staff("POST", "saf-tok", { action: "approve", revision: 2, helperIds })).status).toBe(409);
+    await send(turn(second.phone, "restore-home-offer", "OFFER HOME HELP"));
+    const approved = await staff("POST", "saf-tok", { action: "approve", revision: 2, helperIds });
+    expect(await approved.json()).toMatchObject({ ok: true, result: { phase: "Approved", revision: 2 } });
+    expect(await count(sql`select count(*)::int as n from network.messages where opportunity_id is not null`)).toBe(0);
+
+    const rt = s.runtimeFor("ntwrk")!;
+    const cards = () => sent.filter(request => request.text.includes(`YES HOME HELP ${code} 2`));
+    const answer = (person: { phone: string }, messageId: string, choice = "YES", revision = 2) =>
+      send(turn(person.phone, messageId, `${choice} HOME HELP ${code} ${revision}`)).then(r => r.json());
+    await s.afterTick(rt);
+    expect(cards()).toEqual([]);
+    expect((await answer(owner, "owner-before-receipt")).replies.join("\n")).toContain("unavailable");
+    simulatedDelivery = true;
+    await s.afterTick(rt);
+    expect(cards().map(card => card.to)).toEqual([owner.phone]);
+    await send(turn(owner.phone, "bare-home-help-yes", "yes"));
+    expect((await answer(owner, "wrong-home-help-revision", "YES", 1)).replies.join("\n")).toContain("unavailable");
+    await s.afterTick(rt);
+    expect(cards().map(card => card.to)).toEqual([owner.phone]);
+    expect((await answer(owner, "confirmed-owner")).replies.join("\n")).toContain("recorded your yes");
+    clock.advance(2 * HOUR); // both helpers are past the spread of their noon sending slots
+    await s.afterTick(rt);
+    expect(cards().map(card => card.to).sort()).toEqual([owner.phone, first.phone, second.phone].sort());
+    expect(cards().every(card => card.text.includes("Greenpoint") && !/Ari|Ben|Cora/.test(card.text))).toBe(true);
+    expect(await count(sql`select count(*)::int as n from platform.outbound where id like 'home-help-consent:%'
+      and status='sent' and jsonb_array_length(provider_message_ids)=1`)).toBe(3);
+
+    function client(app: AppId, phone?: string) {
+      let cookie = "";
+      const call = async (path: string, body: Record<string, unknown>) => {
+        const res = await s.publicFetch(new Request(`http://localhost:${5101 + APP_IDS.indexOf(app)}${path}`, {
+          method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
+        }));
+        cookie = res.headers.get("set-cookie")?.split(";")[0] ?? cookie;
+        return { status: res.status, body: await res.json(), cache: res.headers.get("cache-control") };
+      };
+      return { call, async login() {
+        clock.advance(31_000);
+        expect((await call("/api/auth/otp/start", { phone })).status).toBe(200);
+        expect((await call("/api/auth/otp/verify", { phone, code: otp.codes.get(phone!) })).status).toBe(200);
+      } };
+    }
+    const ownerSession = client("ntwrk", owner.phone), helperSession = client("ntwrk", first.phone);
+    const outsiderSession = client("ntwrk", newPhone()), otherApp = client(FR, first.phone), signedOut = client("ntwrk");
+    for (const session of [ownerSession, helperSession, outsiderSession, otherApp]) await session.login();
+    const address = "71 Fictional Fixture Lane, Apartment 4";
+    const submit = { action: "submit", id: code, revision: 2, address };
+    const reveal = { action: "reveal", id: code, revision: 2 };
+    const venue = "/api/home-help/venue";
+    expect((await signedOut.call(venue, reveal)).status).toBe(401);
+    expect((await ownerSession.call(venue, submit)).status).toBe(409);
+    expect((await answer(first, "confirmed-helper-one")).replies.join("\n")).toContain("recorded your yes");
+    expect((await ownerSession.call(venue, submit)).status).toBe(409);
+    expect((await answer(second, "confirmed-helper-two")).replies.join("\n")).toContain("recorded your yes");
+    expect((await helperSession.call(venue, submit)).status).toBe(409);
+    expect(await ownerSession.call(venue, submit)).toMatchObject({ status: 200, body: { ok: true }, cache: "no-store" });
+    expect(await helperSession.call(venue, reveal)).toMatchObject({ status: 200, body: { ok: true, address }, cache: "no-store" });
+    expect((await outsiderSession.call(venue, reveal)).status).toBe(409);
+    expect((await otherApp.call(venue, reveal)).status).toBe(409);
+    expect((await helperSession.call(venue, { ...reveal, revision: 1 })).status).toBe(409);
+    expect(sent.every(request => !request.text.includes(address))).toBe(true);
+    expect(JSON.stringify(await sql`select body from network.messages`)).not.toContain(address);
+    expect(await count(sql`select count(*)::int as n from network.bounded_home_help_venue where ciphertext is not null`)).toBe(1);
+    expect((await answer(second, "withdrawn-helper-two", "WITHDRAW")).replies.join("\n")).toContain("withdrawn your consent");
+    expect((await helperSession.call(venue, reveal)).status).toBe(409);
+    expect(await count(sql`select count(*)::int as n from network.bounded_home_help_venue where ciphertext is not null`)).toBe(0);
+
+    const closed = await send(turn(owner.phone, "close-home-help", `CLOSE HOME HELP ${code} 2`));
+    expect((await closed.json()).replies.join("\n")).toContain("is closed");
+    expect((await sql`select phase from network.bounded_home_help`)[0]!.phase).toBe("Closed");
+  }, T);
+
   test("slop onboarding is the engine's loop: one question at a time, bi asked again in other words, the read-back, tags and state without the member's words", async () => {
     await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);

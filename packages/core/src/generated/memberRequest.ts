@@ -1,9 +1,9 @@
 // GENERATED from spec/memberRequest.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Ask to meet someone and change my mind while the search is open / A repeat ask keeps the newest matching request (spec/memberRequest.md:21) */
+/** Story: Ask to meet someone and change my mind while the search is open / A repeat ask keeps the newest matching request (spec/memberRequest.md) */
 export type MemberRequestPhase = "RequestStarting" | "RequestRepeated" | "RequestAdmitted" | "RequestOutOfScope" | "RequestQuietRepeat" | "RequestAlreadyProbing" | "RequestMatchingPaused" | "CheckingImmediateRetry" | "RequestOnHold" | "RequestMemberBusy" | "CheckingScheduledMember" | "RequestDeferred" | "RequestSearching" | "RequestAwaitingReview" | "RequestWithoutCandidate" | "RequestWithdrawn" | "RequestKept";
-/** Story: Ask to meet someone and change my mind while the search is open / A repeat ask keeps the newest matching request (spec/memberRequest.md:21) */
+/** Story: Ask to meet someone and change my mind while the search is open / A repeat ask keeps the newest matching request (spec/memberRequest.md) */
 export interface MemberRequestFlow { phase: MemberRequestPhase }
 
 /** One variant per transition in the spec. */
@@ -17,15 +17,15 @@ export type Event =
   | { type: "routeScheduledRequestRetry"; eligible: boolean; busy: boolean }
   | { type: "readRequestCandidates"; anyCandidate: boolean };
 
-/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md:70) */
+/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md) */
 export const immediateRetryMs: number = 3600000;
-/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md:70) */
+/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md) */
 export const scheduledRetryMs: number = 72000000;
-/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md:70) */
+/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md) */
 export const requesterConfirmCooldownMs: number = 259200000;
-/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md:70) */
+/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md) */
 export const scheduledRequestLifetimeMs: number = 604800000;
-/** Story: Ask to meet someone and change my mind while the search is open / A repeat ask keeps the newest matching request (spec/memberRequest.md:21) */
+/** Story: Ask to meet someone and change my mind while the search is open / A repeat ask keeps the newest matching request (spec/memberRequest.md) */
 export const initial: MemberRequestFlow = { phase: "RequestStarting" };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -34,209 +34,209 @@ export function inv(current: MemberRequestFlow): boolean {
   return true;
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A direct request can interrupt the initial interview (spec/memberRequest.md:9) */
+/** Story: Ask to meet someone and change my mind while the search is open / A direct request can interrupt the initial interview (spec/memberRequest.md) */
 //@ pure
 export function learnDuringRequestIntake(interviewPending: boolean, initialOnboarding: boolean, directRequest: boolean): boolean {
   return interviewPending && initialOnboarding && !directRequest;
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A direct request can interrupt the initial interview (spec/memberRequest.md:9) */
+/** Story: Ask to meet someone and change my mind while the search is open / A direct request can interrupt the initial interview (spec/memberRequest.md) */
 //@ pure
 export function lawDirectRequestPassesInterview(interviewPending: boolean, initialOnboarding: boolean): boolean {
   //@ ensures \result === true
   return !learnDuringRequestIntake(interviewPending, initialOnboarding, true);
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A repeat ask keeps the newest matching request (spec/memberRequest.md:21) */
+/** Story: Ask to meet someone and change my mind while the search is open / A repeat ask keeps the newest matching request (spec/memberRequest.md) */
 //@ pure
 export function sameStandingRequest(sameMember: boolean, people: boolean, sameWant: boolean, withdrawn: boolean, status: string): boolean {
   return sameMember && people && sameWant && !withdrawn && status !== "booked" && status !== "fulfilled";
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A repeat ask keeps the newest matching request (spec/memberRequest.md:21) */
+/** Story: Ask to meet someone and change my mind while the search is open / A repeat ask keeps the newest matching request (spec/memberRequest.md) */
 //@ pure
 export function requestInReuseWindow(probing: boolean, age: number, interval: number): boolean {
   return probing || age < interval;
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A repeat ask keeps the newest matching request (spec/memberRequest.md:21) */
+/** Story: Ask to meet someone and change my mind while the search is open / A repeat ask keeps the newest matching request (spec/memberRequest.md) */
 //@ pure
 export function canCheckRequestAdmission(flow: MemberRequestFlow): boolean {
   return flow.phase === "RequestStarting";
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A repeat ask keeps the newest matching request (spec/memberRequest.md:21) */
+/** Story: Ask to meet someone and change my mind while the search is open / A repeat ask keeps the newest matching request (spec/memberRequest.md) */
 //@ pure
 export function checkRequestAdmission(flow: MemberRequestFlow, repeat: boolean, categoryAllowed: boolean): MemberRequestFlow {
   //@ ensures (inv(flow) && canCheckRequestAdmission(flow)) ==> stepRequestReviewFollowsSearch(flow, "checkRequestAdmission", \result)
   return { phase: repeat ? "RequestRepeated" : (categoryAllowed ? "RequestAdmitted" : "RequestOutOfScope") };
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A repeat ask keeps the newest matching request (spec/memberRequest.md:21) */
+/** Story: Ask to meet someone and change my mind while the search is open / A repeat ask keeps the newest matching request (spec/memberRequest.md) */
 //@ pure
 export function canRouteRepeatedRequest(flow: MemberRequestFlow): boolean {
   return flow.phase === "RequestRepeated";
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A repeat ask keeps the newest matching request (spec/memberRequest.md:21) */
+/** Story: Ask to meet someone and change my mind while the search is open / A repeat ask keeps the newest matching request (spec/memberRequest.md) */
 //@ pure
 export function routeRepeatedRequest(flow: MemberRequestFlow, quiet: boolean, probing: boolean, matching: boolean): MemberRequestFlow {
   //@ ensures (inv(flow) && canRouteRepeatedRequest(flow)) ==> stepRequestReviewFollowsSearch(flow, "routeRepeatedRequest", \result)
   return { phase: quiet ? "RequestQuietRepeat" : (probing ? "RequestAlreadyProbing" : (!matching ? "RequestMatchingPaused" : "CheckingImmediateRetry")) };
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A repeat ask keeps the newest matching request (spec/memberRequest.md:21) */
+/** Story: Ask to meet someone and change my mind while the search is open / A repeat ask keeps the newest matching request (spec/memberRequest.md) */
 //@ pure
 export function canRouteNewRequest(flow: MemberRequestFlow): boolean {
   return flow.phase === "RequestAdmitted";
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A repeat ask keeps the newest matching request (spec/memberRequest.md:21) */
+/** Story: Ask to meet someone and change my mind while the search is open / A repeat ask keeps the newest matching request (spec/memberRequest.md) */
 //@ pure
 export function routeNewRequest(flow: MemberRequestFlow, matching: boolean, eligible: boolean, busy: boolean): MemberRequestFlow {
   //@ ensures (inv(flow) && canRouteNewRequest(flow)) ==> stepRequestReviewFollowsSearch(flow, "routeNewRequest", \result)
   return { phase: !matching ? "RequestMatchingPaused" : (!eligible ? "RequestOnHold" : (busy ? "RequestMemberBusy" : "RequestSearching")) };
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / Only the member's pending request for a withdrawn desire closes (spec/memberRequest.md:55) */
+/** Story: Ask to meet someone and change my mind while the search is open / Only the member's pending request for a withdrawn desire closes (spec/memberRequest.md) */
 //@ pure
 export function memberRequestWithdrawable(sameMember: boolean, people: boolean, desireMatches: boolean, withdrawn: boolean, status: string): boolean {
   return sameMember && people && desireMatches && !withdrawn && (status === "none" || status === "probing");
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / Only the member's pending request for a withdrawn desire closes (spec/memberRequest.md:55) */
+/** Story: Ask to meet someone and change my mind while the search is open / Only the member's pending request for a withdrawn desire closes (spec/memberRequest.md) */
 //@ pure
 export function closeOpportunityForRequestWithdrawal(stage: string): boolean {
   return stage === "review" || stage === "probing";
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / Only the member's pending request for a withdrawn desire closes (spec/memberRequest.md:55) */
+/** Story: Ask to meet someone and change my mind while the search is open / Only the member's pending request for a withdrawn desire closes (spec/memberRequest.md) */
 //@ pure
 export function canApplyRequestWithdrawal(flow: MemberRequestFlow): boolean {
   return flow.phase === "RequestStarting";
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / Only the member's pending request for a withdrawn desire closes (spec/memberRequest.md:55) */
+/** Story: Ask to meet someone and change my mind while the search is open / Only the member's pending request for a withdrawn desire closes (spec/memberRequest.md) */
 //@ pure
 export function applyRequestWithdrawal(flow: MemberRequestFlow, matched: boolean): MemberRequestFlow {
   //@ ensures (inv(flow) && canApplyRequestWithdrawal(flow)) ==> stepRequestReviewFollowsSearch(flow, "applyRequestWithdrawal", \result)
   return { phase: matched ? "RequestWithdrawn" : "RequestKept" };
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md:70) */
+/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md) */
 //@ pure
 export function waitingMemberRequest(status: string, closed: boolean): boolean {
   return status === "none" && !closed;
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md:70) */
+/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md) */
 //@ pure
 export function requesterConfirmationAllowsRetry(asked: boolean, elapsed: number): boolean {
   return !(asked && elapsed < requesterConfirmCooldownMs);
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md:70) */
+/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md) */
 //@ pure
 export function immediateRequestRetryReady(attempted: boolean, attemptAge: number, asked: boolean, confirmAge: number): boolean {
   return (!attempted || attemptAge > immediateRetryMs) && requesterConfirmationAllowsRetry(asked, confirmAge);
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md:70) */
+/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md) */
 //@ pure
 export function scheduledRequestRetryReady(people: boolean, waiting: boolean, age: number, attempted: boolean, attemptAge: number, asked: boolean, confirmAge: number): boolean {
   return people && waiting && !(age > scheduledRequestLifetimeMs) && !(attempted && attemptAge < scheduledRetryMs) && requesterConfirmationAllowsRetry(asked, confirmAge);
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md:70) */
+/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md) */
 //@ pure
 export function canRouteImmediateRequestRetry(flow: MemberRequestFlow): boolean {
   return flow.phase === "CheckingImmediateRetry";
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md:70) */
+/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md) */
 //@ pure
 export function routeImmediateRequestRetry(flow: MemberRequestFlow, ready: boolean): MemberRequestFlow {
   //@ ensures (inv(flow) && canRouteImmediateRequestRetry(flow)) ==> stepRequestReviewFollowsSearch(flow, "routeImmediateRequestRetry", \result)
   return { phase: ready ? "RequestSearching" : "RequestDeferred" };
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md:70) */
+/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md) */
 //@ pure
 export function canConsiderScheduledRequestRetry(flow: MemberRequestFlow): boolean {
   return flow.phase === "RequestStarting";
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md:70) */
+/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md) */
 //@ pure
 export function considerScheduledRequestRetry(flow: MemberRequestFlow, due: boolean): MemberRequestFlow {
   //@ ensures (inv(flow) && canConsiderScheduledRequestRetry(flow)) ==> stepRequestReviewFollowsSearch(flow, "considerScheduledRequestRetry", \result)
   return { phase: due ? "CheckingScheduledMember" : "RequestDeferred" };
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md:70) */
+/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md) */
 //@ pure
 export function canRouteScheduledRequestRetry(flow: MemberRequestFlow): boolean {
   return flow.phase === "CheckingScheduledMember";
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md:70) */
+/** Story: Ask to meet someone and change my mind while the search is open / A standing request waits for its next search window (spec/memberRequest.md) */
 //@ pure
 export function routeScheduledRequestRetry(flow: MemberRequestFlow, eligible: boolean, busy: boolean): MemberRequestFlow {
   //@ ensures (inv(flow) && canRouteScheduledRequestRetry(flow)) ==> stepRequestReviewFollowsSearch(flow, "routeScheduledRequestRetry", \result)
   return { phase: eligible && !busy ? "RequestSearching" : "RequestDeferred" };
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A candidate proceeds to review with prior interest only when appropriate (spec/memberRequest.md:105) */
+/** Story: Ask to meet someone and change my mind while the search is open / A candidate proceeds to review with prior interest only when appropriate (spec/memberRequest.md) */
 //@ pure
 export function requestDesireWithdrawn(closedIntent: boolean, activeIntent: boolean): boolean {
   return closedIntent && !activeIntent;
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A candidate proceeds to review with prior interest only when appropriate (spec/memberRequest.md:105) */
+/** Story: Ask to meet someone and change my mind while the search is open / A candidate proceeds to review with prior interest only when appropriate (spec/memberRequest.md) */
 //@ pure
 export function primeMemberRequest(withdrawnIntent: boolean, strongFit: boolean, selective: boolean): boolean {
   return !withdrawnIntent && (strongFit || !selective);
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A candidate proceeds to review with prior interest only when appropriate (spec/memberRequest.md:105) */
+/** Story: Ask to meet someone and change my mind while the search is open / A candidate proceeds to review with prior interest only when appropriate (spec/memberRequest.md) */
 //@ pure
 export function canReadRequestCandidates(flow: MemberRequestFlow): boolean {
   return flow.phase === "RequestSearching";
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A candidate proceeds to review with prior interest only when appropriate (spec/memberRequest.md:105) */
+/** Story: Ask to meet someone and change my mind while the search is open / A candidate proceeds to review with prior interest only when appropriate (spec/memberRequest.md) */
 //@ pure
 export function readRequestCandidates(flow: MemberRequestFlow, anyCandidate: boolean): MemberRequestFlow {
   //@ ensures (inv(flow) && canReadRequestCandidates(flow)) ==> stepRequestReviewFollowsSearch(flow, "readRequestCandidates", \result)
   return { phase: anyCandidate ? "RequestAwaitingReview" : "RequestWithoutCandidate" };
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A candidate proceeds to review with prior interest only when appropriate (spec/memberRequest.md:105) */
+/** Story: Ask to meet someone and change my mind while the search is open / A candidate proceeds to review with prior interest only when appropriate (spec/memberRequest.md) */
 //@ pure
 export function lawWithdrawalPreventsRequestPriming(strongFit: boolean, selective: boolean): boolean {
   //@ ensures \result === true
   return !primeMemberRequest(true, strongFit, selective);
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A candidate proceeds to review with prior interest only when appropriate (spec/memberRequest.md:105) */
+/** Story: Ask to meet someone and change my mind while the search is open / A candidate proceeds to review with prior interest only when appropriate (spec/memberRequest.md) */
 //@ pure
 export function stepRequestReviewFollowsSearch(before: MemberRequestFlow, via: string, after: MemberRequestFlow): boolean {
   return !(after.phase === "RequestAwaitingReview") || (before.phase === "RequestSearching" && via === "readRequestCandidates");
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A candidate proceeds to review with prior interest only when appropriate (spec/memberRequest.md:105) */
+/** Story: Ask to meet someone and change my mind while the search is open / A candidate proceeds to review with prior interest only when appropriate (spec/memberRequest.md) */
 //@ pure
 export function sometimesReviewsMemberRequest(flow: MemberRequestFlow): boolean {
   return flow.phase === "RequestAwaitingReview";
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A candidate proceeds to review with prior interest only when appropriate (spec/memberRequest.md:105) */
+/** Story: Ask to meet someone and change my mind while the search is open / A candidate proceeds to review with prior interest only when appropriate (spec/memberRequest.md) */
 //@ pure
 export function sometimesFindsNoRequestCandidate(flow: MemberRequestFlow): boolean {
   return flow.phase === "RequestWithoutCandidate";
 }
 
-/** Story: Ask to meet someone and change my mind while the search is open / A candidate proceeds to review with prior interest only when appropriate (spec/memberRequest.md:105) */
+/** Story: Ask to meet someone and change my mind while the search is open / A candidate proceeds to review with prior interest only when appropriate (spec/memberRequest.md) */
 //@ pure
 export function sometimesWithdrawsMemberRequest(flow: MemberRequestFlow): boolean {
   return flow.phase === "RequestWithdrawn";

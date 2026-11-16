@@ -141,7 +141,7 @@ export interface MemberHookContext { app: AppInfo; personId: string; memberId: s
 
 export interface AccountHooks {
   /** Resolve an explicit member invitation for this app after the account and consent gates. */
-  findInvitation?(app: AppId, token: string, at: number): Promise<ReferralJoin | undefined>;
+  findInvitation?(app: AppId, token: string, at: number, verifiedPhone: string): Promise<ReferralJoin | undefined>;
   /** Commit the referred membership, opt-in, session attachment, Network member and invitation together. */
   commitReferredJoin?(ctx: JoinHookContext & { referral: ReferralJoin }): Promise<void>;
   /** Create the network member (the service mounts this). A throw undoes the join. */
@@ -426,7 +426,7 @@ export class Accounts {
     const existingMember = !!existing && existing.state !== "removed" && existing.state !== "invited";
     const attemptedReferral = !existingMember && inviteToken !== undefined;
     const referral = attemptedReferral && app.joinMode !== "waitlist" && this.hooks.commitReferredJoin
-      ? await this.hooks.findInvitation?.(app.id, inviteToken, at) : undefined;
+      ? await this.hooks.findInvitation?.(app.id, inviteToken, at, who.e164) : undefined;
     const membershipCheck = stepEnrollment(eligibility, {
       type: "checkMembership",
       membershipFacts: {

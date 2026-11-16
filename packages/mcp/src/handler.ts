@@ -452,7 +452,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       cookieOut.push(handoff.setCookie);
       res=new Response(null,{status:302,headers:{location:handoff.url,"cache-control":"no-store"}});
     } else {
-      res = phonePage(c.app, r.id, client.name, redirectHost, { turnstileSiteKey: o.turnstile?.siteKey });
+      res = phonePage(c.app, r.id, { turnstileSiteKey: o.turnstile?.siteKey });
     }
     for (const c2 of cookieOut) res.headers.append("set-cookie", c2);
     return res;
@@ -520,16 +520,16 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       const t0 = performance.now();
       const pad = async () => { const left = (o.minOtpStartMs ?? 700) - (performance.now() - t0); if (left > 0) await waitForMs(left); };
       if (o.turnstile && !(await o.turnstile.verify(form.get("cf-turnstile-response") ?? undefined, c.ip, c.app.id))) {
-        return phonePage(c.app, r.id, client.name, redirectHost, { error: "Please complete the check and try again.", turnstileSiteKey: o.turnstile.siteKey });
+        return phonePage(c.app, r.id, { error: "Please complete the check and try again.", turnstileSiteKey: o.turnstile.siteKey });
       }
       const e164 = o.platform.normalizePhone(form.get("phone"));
-      if (!e164) return phonePage(c.app, r.id, client.name, redirectHost, { error: "Enter a US or Canada phone number.", turnstileSiteKey: o.turnstile?.siteKey });
+      if (!e164) return phonePage(c.app, r.id, { error: "Enter a US or Canada phone number.", turnstileSiteKey: o.turnstile?.siteKey });
       const sent = await o.platform.startOtp(c.app.id, e164, c.ip);
       await pad();
       const next = stepBrowser(action, { type: "recordOtpSend", sent: sent.ok });
       if (next.phase !== "ShowingCode") {
         const text = !sent.ok && sent.error === "rate_limited" ? "Too many codes were asked for. Please wait and try again." : "Sign-in is not available for this app right now.";
-        return phonePage(c.app, r.id, client.name, redirectHost, { error: text, turnstileSiteKey: o.turnstile?.siteKey });
+        return phonePage(c.app, r.id, { error: text, turnstileSiteKey: o.turnstile?.siteKey });
       }
       await store.updateAuthRequest(r.id, { e164, step: "code" });
       return codePage(c.app, r.id, e164.slice(-4));
@@ -793,7 +793,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const who = o.platform.session ? await o.platform.session(c.app.id, c.req) : undefined;
     if(who==="unavailable")return browserUnavailable(c);
     if (!who) return messagePage(c.app, "Sign in first", "Connect this app in your agent and confirm your phone during authorization, then open this page again.", 401);
-    let notice: string | undefined;
+    let removal: "Removed" | "NothingRemoved" | undefined;
     if (revokeOne) {
       if (c.req.method !== "POST") return json(405, { error: "method_not_allowed" }, { allow: "POST" });
       // A cross-site form cannot remove access for the person: the Origin must be this site.
@@ -802,12 +802,12 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       const g = form?.get("grant") ? await store.getGrant(form.get("grant")!) : undefined;
       if (g && g.phoneKey === o.platform.phoneKey(who.e164) && g.app === c.app.id && (await revokeGrant(g.id, now()))) {
         await store.audit({ at: now(), kind: "consent_revoked", clientId: g.clientId, grantId: g.id, app: c.app.id, detail: "by the person" });
-        notice = "Access removed.";
-      }
+        removal = "Removed";
+      } else removal = "NothingRemoved";
     }
     const grants = await store.grantsFor(o.platform.phoneKey(who.e164), c.app.id, now());
     const named = await Promise.all(grants.map(async g => ({ ...g, clientName: (await store.getClient(g.clientId))?.name ?? null })));
-    const page = consentsPage(c.app, named, ms => new Date(ms).toISOString().slice(0, 10), notice);
+    const page = consentsPage(c.app, named, ms => new Date(ms).toISOString().slice(0, 10), { removal, confirming: revokeOne ? undefined : c.url.searchParams.get("remove") ?? undefined });
     if (who.setCookie) page.headers.append("set-cookie", who.setCookie);
     return page;
   }

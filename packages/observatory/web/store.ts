@@ -1,13 +1,14 @@
-// Client-side observatory state: full state from /api/state, then WebSocket deltas. The map and
-// graph renderers read the maps directly (no React); React components subscribe via useStore().
-// One focus model (member, opportunity or neighborhood; mirrored to location.hash) and one set of
-// global filters (range, borough, members, origin, state group). Every panel filters through the
-// predicates on ObsStore, never its own copy.
 import { useSyncExternalStore } from "react";
 import { acceptsFeedItem, deltaAction, initial as initialSync, ownsLoad, step as stepSync } from "../../core/src/generated/observatorySync.ts";
+import {
+  canClearFocus, canClosePerson, canFlyToVenue, canFocusOn, canGoBack, canOpenAllApps, canOpenPerson, canReceiveModeChange, canReplaceFocus, canSelectApp, canShowStage,
+  canSwitchMode, canTogglePick, clearFocus as clearNavFocus, closePerson, type ConsoleMode, type ConsoleNav, type ConsolePage, type DrawerTab as NavTab, flyToVenue, focusOn,
+  goBack, maxFocusHistory, maxPicks, openAllApps, openPerson as openNavPerson, pageForViewer, pressEscape, queryClass, receiveModeChange, replaceFocus, selectApp, showStage,
+  type Subject, switchMode, toggleHelp, togglePick as toggleNavPick,
+} from "../../core/src/generated/consoleNavigation.ts";
 import { allowedByRole, scopedGrants } from "../../core/src/generated/staffPermissions.ts";
 import { APP_IDS } from "../../core/src/types.ts";
-import { NEIGHBORHOOD, type Borough } from "@thenetwork/network/geo"; // geo only: the package root pulls server code into the browser bundle
+import { NEIGHBORHOOD, type Borough } from "@thenetwork/network/geo";
 import type { ConsoleApp } from "../src/apps.ts";
 import type {
   AppHealth, AppProfile360, AuditEntry, BiasReportView, HeldQueue, HeldText, ClockInfo, ConfigInfo, ControlCommand, ControlResult, EngineRunSummary, EnvInfo, GameState, LabRequest, LabRun, MemberDetail, MemberTimeline,
@@ -21,7 +22,6 @@ export const APP_ORDER: readonly string[] = APP_IDS;
 export type Page = { kind: "app" } | { kind: "all" } | { kind: "person"; id: string };
 export type Me = StaffUser & { realOnly?: boolean; apps?: string[]; crossApp?: boolean; appInfo?: ConsoleApp[] };
 
-// ---------------------------------------------------------------- types
 export type Focus = { kind: "member" | "opportunity" | "neighborhood"; id: string } | null;
 export type ColorLens = "community" | "state" | "activity" | "truth";
 export type RangeKey = "today" | "7d" | "30d" | "all";
@@ -92,7 +92,6 @@ import { DAY, HOUR } from "../../core/src/clock.ts";
 export { DAY, HOUR };
 export const DEFAULT_FILTERS: Filters = { range: "7d", borough: "all", members: "all", origin: "all", stateGroup: "all" };
 
-// ---------------------------------------------------------------- small helpers
 const NYC_TZ = "America/New_York";
 const hms = new Intl.DateTimeFormat("en-US", { timeZone: NYC_TZ, hour: "numeric", minute: "numeric", second: "numeric", hourCycle: "h23" });
 /** Start of the NYC calendar day that contains t. */
@@ -100,6 +99,19 @@ export function nycDayStart(t: number): number {
   const p = Object.fromEntries(hms.formatToParts(t).map(x => [x.type, x.value]));
   return t - ((Number(p.hour) % 24) * 3600 + Number(p.minute) * 60 + Number(p.second)) * 1000 - (t % 1000);
 }
+const NAV_TAB: Record<DrawerTab, NavTab> = {
+  review: "ReviewTab", feed: "FeedTab", pipeline: "PipelineTab", requests: "RequestsTab", engine: "EngineTab",
+  safety: "SafetyTab", metrics: "MetricsTab", lab: "LabTab", config: "ConfigTab", game: "GameTab",
+};
+/** The store name of each generated drawer tab. */
+export const STORE_TAB = Object.fromEntries(Object.entries(NAV_TAB).map(([k, v]) => [v, k])) as Record<NavTab, DrawerTab>;
+/** The generated drawer tab of a store tab. */
+export const navTab = (t: DrawerTab): NavTab => NAV_TAB[t];
+const SUBJECT: Record<NonNullable<Focus>["kind"], Subject> = { member: "MemberSubject", opportunity: "OpportunitySubject", neighborhood: "NeighborhoodSubject" };
+/** The generated subject of a store focus. */
+export const subjectOf = (f: Focus): Subject => (f ? SUBJECT[f.kind] : "Overview");
+const navMode = (mode: Mode): ConsoleMode => (mode === "real" ? "RealMode" : "SimulatedMode");
+
 export const sameFocus = (a: Focus, b: Focus) => a === b || (!!a && !!b && a.kind === b.kind && a.id === b.id);
 export const focusKey = (f: Focus) => (f ? `${f.kind}:${f.id}` : "");
 export const isMemberActive = (m: ObsMember) => m.joined && m.state !== "opted_out" && m.state !== "paused" && m.state !== "not_joined";
@@ -109,7 +121,7 @@ export const originOf = (o: ObsOpportunity) => (o.source === "shadow" || o.sourc
 function readJSON<T>(key: string): Partial<T> | undefined {
   try { const s = localStorage.getItem(key); return s ? JSON.parse(s) as Partial<T> : undefined; } catch { return undefined; }
 }
-function writeJSON(key: string, v: unknown) { try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* storage blocked: keep defaults */ } }
+function writeJSON(key: string, v: unknown) { try { localStorage.setItem(key, JSON.stringify(v)); } catch { return; } }
 const pick = <T extends string>(v: unknown, allowed: readonly T[], d: T): T => (allowed.includes(v as T) ? v as T : d);
 
 function loadFilters(mode: Mode): Filters {
@@ -158,7 +170,6 @@ function hashOf(f: Focus, app: string): string {
   return parts.length ? `#${parts.join("&")}` : "";
 }
 
-// ---------------------------------------------------------------- auth
 const TOKEN_KEY = "obs.token";
 class AuthError extends Error {}
 /** A detail fetch: the data, or the HTTP status and error (403 = this role cannot open it). */
@@ -181,17 +192,22 @@ function initialToken(): string {
     const h = new URLSearchParams(u.hash.slice(1));
     t = h.get("token") ?? u.searchParams.get("token");
     if (t) {
-      try { sessionStorage.setItem(TOKEN_KEY, t); } catch { /* keep it in memory only */ }
+      try { sessionStorage.setItem(TOKEN_KEY, t); } catch {}
       u.searchParams.delete("token"); h.delete("token");
       const rest = h.toString();
       history.replaceState(history.state, "", u.pathname + u.search + (rest ? `#${rest}` : ""));
     }
-  } catch { /* no URL access */ }
+  } catch {}
   if (!t) { try { t = sessionStorage.getItem(TOKEN_KEY); } catch { t = null; } }
   return t ?? "";
 }
 
-// ---------------------------------------------------------------- store
+/**
+ * The client state of the console: the full state from /api/state, then WebSocket deltas. The map and graph renderers read
+ * the maps directly; React components subscribe with `useStore()`. One focus model (member, opportunity or neighborhood,
+ * mirrored to location.hash) and one set of global filters (range, borough, members, origin, state group). Every panel
+ * filters through the predicates of this store, never through its own copy.
+ */
 class ObsStore {
   private sync = stepSync(initialSync, { type: "changeView", appName: parseApp(), viewMode: "game" });
   get mode(): Mode { return this.sync.viewMode === "real" ? "real" : "game"; }
@@ -260,11 +276,10 @@ class ObsStore {
 
   subscribe = (fn: () => void) => { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; };
   getTick = () => this.tick;
+  /** Tells the subscribers after a short timer. The timer is not requestAnimationFrame, because that pauses in hidden or throttled tabs and would freeze the state of the UI, clicks included. */
   notify() {
     if (this.notifyQueued) return;
     this.notifyQueued = true;
-    // A short timer, not requestAnimationFrame: rAF pauses in hidden or throttled tabs, which would
-    // freeze the UI's state (clicks included) until the tab is painted again.
     setTimeout(() => { this.notifyQueued = false; this.tick++; for (const l of this.listeners) l(); }, 30);
   }
 
@@ -281,13 +296,12 @@ class ObsStore {
   filtersChanged() { const f = this.ui.filters; return (Object.keys(DEFAULT_FILTERS) as FilterKey[]).some(k => f[k] !== DEFAULT_FILTERS[k]); }
   toast(text: string, tone: "info" | "good" | "bad" = "info") { this.setUI({ toast: { text, tone, at: Date.now() } }); }
 
-  // -------------------------------------------------------------- transport
   /** Every request names the app (the server checks the role for it). */
   private withApp(path: string) { return /[?&]app=/.test(path) ? path : `${path}${path.includes("?") ? "&" : "?"}app=${encodeURIComponent(this.app)}`; }
+  /** Sends a request with the token and the mode that this page shows; the server refuses a change meant for the other mode (409 mode_changed). */
   private async api(path: string, init: RequestInit = {}): Promise<Response> {
     const headers = new Headers(init.headers);
     if (this.token) headers.set("authorization", `Bearer ${this.token}`);
-    // The mode this page shows: the server refuses a change meant for the other mode (409 mode_changed).
     headers.set("x-observatory-mode", this.mode);
     const r = await fetch(this.withApp(path), { ...init, headers });
     if (r.status === 401) {
@@ -317,7 +331,7 @@ class ObsStore {
   setToken(t: string) {
     if(t.trim()!==this.token)this.authEpoch++;
     this.token = t.trim();
-    try { sessionStorage.setItem(TOKEN_KEY, this.token); } catch { /* memory only */ }
+    try { sessionStorage.setItem(TOKEN_KEY, this.token); } catch {}
     this.authNeeded = false;
     this.notify();
     this.connect();
@@ -336,12 +350,10 @@ class ObsStore {
     try {
       const [mode, me] = await Promise.all([this.getJSON<{ mode: Mode }>("/api/mode"), this.fetch<Me>("/api/me")]);
       if (!ownsLoad(this.sync, generation)) return;
-      // An older server has no /api/me: it has one admin token.
       if (!me.data && me.status !== 404) throw me.status === 401 ? new AuthError(me.error) : new Error(me.error);
       const viewer: Me = me.data ?? { id: "token", roles: ["admin"], grants: [{ role: "admin", app: "*" }], via: "token" };
       if (JSON.stringify([this.me?.id, this.me?.grants, this.me?.roles]) !== JSON.stringify([viewer.id, viewer.grants, viewer.roles])) this.authEpoch++;
       this.me = viewer;
-      // No role for this app: the first app this person holds one for. None (cross_app_safety only): the person view.
       const apps = this.me.apps ?? APP_ORDER;
       const selectedApp = this.app;
       const app = apps.includes(selectedApp) ? selectedApp : apps[0];
@@ -419,7 +431,6 @@ class ObsStore {
     if (!d.reset && !Number.isSafeInteger(d.version)) return;
     const action = deltaAction(this.sync, d.version, !!d.reset);
     if (action === "BufferDelta") { this.buffered.push(d); return; }
-    // A version was skipped (a delta was dropped or arrived under a full load): read the full state again.
     if (action === "ReloadSnapshot") { this.load(); return; }
     if (action === "DropDelta") return;
     this.clock = d.clock;
@@ -479,7 +490,6 @@ class ObsStore {
     ws.onclose = ev => {
       if (gen !== this.wsGen) return;
       this.connected = false; this.notify();
-      // 4401: the sign-in ended; 4403: no role for this app any more. Load again (it shows why) instead of reconnecting in a loop.
       if (ev.code === 4401 || ev.code === 4403) { this.toast(ev.code === 4401 ? "Signed out: sign in again" : `No role for ${this.app} any more`, "bad"); this.load(); return; }
       setTimeout(() => { if (gen === this.wsGen && !this.authNeeded) { this.connect(); this.load(); } }, 1500);
     };
@@ -489,7 +499,7 @@ class ObsStore {
       if (msg.app !== undefined && msg.app !== this.app) return;
       if (msg.type === "delta" && msg.mode === this.mode) this.applyDelta(msg.delta);
       else if (msg.type === "clock" && this.sync.phase === "Live") { this.clock = msg.clock; this.notify(); }
-      else if (msg.type === "mode") { if (msg.mode !== this.mode) { this.mode = msg.mode; this.ui = { ...this.ui, picks: [] }; this.clearFocus(); this.load(); } }
+      else if (msg.type === "mode") { if (msg.mode !== this.mode) { this.applyModeChange(msg.mode, true); this.load(); } }
     };
   }
 
@@ -504,16 +514,28 @@ class ObsStore {
     return r;
   }
 
+  // spec/consoleNavigation.md, "A mode change clears the subject and the picks"
+  /** Switches the data mode on the server, then applies the generated `switchMode`. */
   async setMode(mode: Mode) {
+    if (!canSwitchMode(this.nav(), navMode(mode))) return;
     let r: { ok: boolean; error?: string };
     try {
       r = await this.api("/api/mode", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode }) }).then(x => x.json());
     } catch (e) { r = { ok: false, error: (e as Error).message }; }
     if (!r.ok) { this.toast(r.error ?? "could not switch mode", "bad"); return; }
-    this.mode = mode;
-    this.ui = { ...this.ui, picks: [], drawer: mode === "real" && this.ui.drawer === "game" ? "feed" : this.ui.drawer };
-    this.clearFocus();
+    this.applyModeChange(mode, false);
     await this.load();
+  }
+
+  /** Moves the store to a data mode with the generated `switchMode` (this viewer's switch) or `receiveModeChange` (the server's announcement). */
+  private applyModeChange(mode: Mode, received: boolean) {
+    const nav = this.nav(), target = navMode(mode), had = !!this.ui.focus;
+    const allowed = received ? canReceiveModeChange(nav, target) : canSwitchMode(nav, target);
+    if (!allowed) return;
+    const next = received ? receiveModeChange(nav, target) : switchMode(nav, target);
+    this.mode = mode;
+    this.commitNav(next);
+    if (had) this.pushHash(null);
   }
 
   member(id: string) { return this.fetch<MemberDetail>(`/api/member/${encodeURIComponent(id)}`); }
@@ -552,7 +574,6 @@ class ObsStore {
   person(id: string) { return this.fetch<PersonSummary>(`/api/person/${encodeURIComponent(id)}`); }
   openPersonApp(id: string, app: string, reason: string) { return this.fetch<PersonAppPanel>(`/api/person/${encodeURIComponent(id)}/open`, { app, reason }); }
 
-  // -------------------------------------------------------------- apps
   /** Apps this person may open, in switcher order, with their names. */
   apps(): ConsoleApp[] {
     const info = this.me?.appInfo ?? [];
@@ -566,29 +587,42 @@ class ObsStore {
     return r?.length ? r.map(x => [x.code, x.label]) : REVIEW_REASONS;
   }
   /** Switch the app: every panel reloads for it. "all": the health of every app. */
+  // spec/consoleNavigation.md, "The app switcher opens one app or the all-apps page"
   setApp(app: string) {
-    if (app === "all") { this.page = { kind: "all" }; this.replaceHash(); this.notify(); return; }
-    const changed = this.changeView(app, this.mode);
-    this.page = { kind: "app" };
-    if (changed) {
-      this.ui = { ...this.ui, picks: [], focus: null };
-      this.focusHistory = [];
-      this.connect();
-      this.load();
+    const nav = this.nav();
+    if (app === "all") {
+      if (!canOpenAllApps(nav)) return;
+      this.commitNav(openAllApps(nav));
+      this.replaceHash();
+      return;
     }
+    if (!canSelectApp(nav)) return;
+    const changed = this.changeView(app, this.mode);
+    this.commitNav(selectApp(nav, !changed));
+    if (changed) { this.connect(); this.load(); }
     this.replaceHash();
-    this.notify();
   }
+  // spec/consoleNavigation.md, "Only a cross-app viewer in real mode opens one person across apps"
   /** The cross-app person view (cross_app_safety or admin; the server checks). */
-  openPerson(id: string) { this.page = { kind: "person", id }; this.replaceHash(); this.notify(); }
-  closePage() { this.page = { kind: "app" }; this.replaceHash(); this.notify(); }
+  openPerson(id: string) {
+    const nav = this.nav();
+    if (!canOpenPerson(nav)) return;
+    this.commitNav(openNavPerson(nav), { person: id });
+    this.replaceHash();
+  }
+  /** Leaves the person view for the all-apps page: the generated `closePerson`. */
+  closePage() {
+    const nav = this.nav();
+    if (!canClosePerson(nav)) return;
+    this.commitNav(closePerson(nav));
+    this.replaceHash();
+  }
   private replaceHash() {
     const h = this.page.kind === "person" ? `#p=${encodeURIComponent(this.page.id)}` : this.page.kind === "all" ? "#a=all" : hashOf(this.ui.focus, this.app);
-    try { history.replaceState(history.state, "", location.pathname + location.search + h); } catch { /* ignore */ }
+    try { history.replaceState(history.state, "", location.pathname + location.search + h); } catch { return; }
   }
   labRun(req: LabRequest) { return this.fetch<{ ok: boolean; run: LabRun }>("/api/lab/run", req); }
 
-  // -------------------------------------------------------------- roles and PII reveal
   /** The caller holds one of these roles; admin passes every check (server rule). False until /api/me answers. */
   can(...roles: StaffRole[]): boolean {
     if (!this.me) return false;
@@ -613,7 +647,7 @@ class ObsStore {
   revealFor(memberId: string): RevealGrant | undefined { return this.reveals.find(g => g.memberId === memberId && g.until > Date.now()); }
   /** End a reveal before its time (audited). */
   async unreveal(memberId: string): Promise<void> {
-    try { await this.api(`/api/reveal?memberId=${encodeURIComponent(memberId)}`, { method: "DELETE" }); } catch { /* the 401 prompt shows */ }
+    try { await this.api(`/api/reveal?memberId=${encodeURIComponent(memberId)}`, { method: "DELETE" }); } catch {}
     this.reveals = this.reveals.filter(g => g.memberId !== memberId);
     this.notify();
   }
@@ -625,72 +659,159 @@ class ObsStore {
     return true;
   }
 
-  // -------------------------------------------------------------- focus
-  /** Enter a focus. The previous one goes on the history (max 20); the URL hash follows. */
+  /** The console navigation state of the store, for the generated consoleNavigation guards and transitions. */
+  nav(): ConsoleNav {
+    const me = this.me;
+    const appsHeld = me ? (me.apps ?? APP_ORDER).length : 0;
+    const crossApp = !!me?.crossApp;
+    const mode = navMode(this.mode);
+    const page: ConsolePage = this.page.kind === "all" ? "AllAppsPage" : this.page.kind === "person" ? "PersonPage" : "AppPage";
+    const subject = subjectOf(this.ui.focus);
+    let reviewItems = false;
+    for (const o of this.opps.values()) if (o.state === "IN_REVIEW") { reviewItems = true; break; }
+    return {
+      page: me ? pageForViewer(page, appsHeld, crossApp, mode) : page,
+      stage: this.ui.view === "graph" ? "GraphStage" : "MapStage",
+      subject,
+      depth: subject === "Overview" ? 0 : Math.min(maxFocusHistory, this.focusHistory.length),
+      wantedTab: NAV_TAB[this.ui.drawer],
+      drawerOpen: this.ui.drawerOpen,
+      popoverOpen: !!this.ui.popover,
+      queryChars: queryClass(this.ui.query.trim().length),
+      picks: Math.min(maxPicks, this.ui.picks.length),
+      viewer: {
+        known: !!me, mode, appsHeld, crossApp, admin: !!me && this.isAdmin(), analyst: this.can("analyst"), simRole: this.canSim(), safety: this.can("safety"), realOnly: this.realOnly(),
+      },
+      queues: { humanReview: this.reviewMode() === "human", reviewItems, requestsKnown: this.requests.length > 0 || this.network?.kind === "consent" },
+    };
+  }
+
+  /**
+   * Writes a generated navigation state back to the store: the page, the stage, the drawer, the popover, the search text, the picks, and the focus with its history.
+   * `focus` is the subject that the new state names, and `history` is the list that its depth counts from the end.
+   */
+  private commitNav(next: ConsoleNav, opts: { focus?: Focus; history?: Focus[]; person?: string } = {}) {
+    const before = this.nav();
+    const patch: Partial<UIState> = {};
+    const view = next.stage === "GraphStage" ? "graph" : "map";
+    if (view !== this.ui.view) patch.view = view;
+    if (STORE_TAB[next.wantedTab] !== this.ui.drawer) patch.drawer = STORE_TAB[next.wantedTab];
+    if (next.drawerOpen !== this.ui.drawerOpen) patch.drawerOpen = next.drawerOpen;
+    if (!next.popoverOpen && this.ui.popover) patch.popover = null;
+    if (next.queryChars === 0 && this.ui.query) patch.query = "";
+    if (next.picks === 0 && this.ui.picks.length) patch.picks = [];
+    const focus = next.subject === "Overview" ? null : opts.focus ?? this.ui.focus;
+    if (!sameFocus(focus, this.ui.focus)) patch.focus = focus;
+    this.focusHistory = next.depth > 0 ? (opts.history ?? this.focusHistory).slice(-next.depth) : [];
+    if (next.page !== before.page || opts.person !== undefined) {
+      if (next.page === "AllAppsPage") this.page = { kind: "all" };
+      else if (next.page === "AppPage") this.page = { kind: "app" };
+      else if (next.page === "PersonPage") this.page = { kind: "person", id: opts.person ?? (this.page.kind === "person" ? this.page.id : "") };
+    }
+    this.setUI(patch);
+  }
+
+  // spec/consoleNavigation.md, "Focus on a new subject keeps the last one in a short history"
+  /** Enter a focus: the generated `focusOn` (or `replaceFocus` with `replace`). The previous one goes on the history (max 20); the URL hash follows. */
   focus(f: Focus, opts: { replace?: boolean } = {}) {
     if (!f) { this.clearFocus(); return; }
     const cur = this.ui.focus;
     if (sameFocus(cur, f)) return;
+    const nav = this.nav(), target = subjectOf(f);
     if (opts.replace) {
-      // Stepping through a list (review j/k): move the focus without growing the history.
-      this.setUI({ focus: f });
-      try { history.replaceState(history.state, "", location.pathname + location.search + hashOf(f, this.app)); } catch { /* ignore */ }
+      if (!canReplaceFocus(nav, target)) return;
+      this.commitNav(replaceFocus(nav, target), { focus: f });
+      try { history.replaceState(history.state, "", location.pathname + location.search + hashOf(f, this.app)); } catch { return; }
       return;
     }
-    if (cur) this.focusHistory = [...this.focusHistory, cur].slice(-20);
-    this.setUI({ focus: f });
+    if (!canFocusOn(nav, target, false)) return;
+    this.commitNav(focusOn(nav, target, false), { focus: f, history: cur ? [...this.focusHistory, cur] : this.focusHistory });
     this.pushHash(f);
   }
-  /** Return to the previous focus. Uses the browser history when this page pushed the entry. */
+  // spec/consoleNavigation.md, "Back returns to the last subject and clear returns to the overview"
+  /** Return to the previous focus: the generated `goBack`. Uses the browser history when this page pushed the entry. */
   back() {
-    if (!this.focusHistory.length) return;
+    const prev = this.focusHistory.at(-1) ?? null;
+    const nav = this.nav();
+    if (!prev || !canGoBack(nav, subjectOf(prev))) return;
     if (((history.state as { obsDepth?: number } | null)?.obsDepth ?? 0) > 0) { history.back(); return; }
-    const prev = this.focusHistory[this.focusHistory.length - 1]!;
-    this.focusHistory = this.focusHistory.slice(0, -1);
-    this.setUI({ focus: prev });
-    try { history.replaceState({ obsDepth: 0 }, "", location.pathname + location.search + hashOf(prev, this.app)); } catch { /* ignore */ }
+    this.commitNav(goBack(nav, subjectOf(prev)), { focus: prev, history: this.focusHistory.slice(0, -1) });
+    try { history.replaceState({ obsDepth: 0 }, "", location.pathname + location.search + hashOf(prev, this.app)); } catch { return; }
   }
+  /** Back to the overview: the generated `clearFocus`. */
   clearFocus() {
-    const had = !!this.ui.focus;
-    this.focusHistory = [];
-    this.setUI({ focus: null });
-    if (had) this.pushHash(null);
+    const nav = this.nav();
+    if (!canClearFocus(nav)) { this.focusHistory = []; return; }
+    this.commitNav(clearNavFocus(nav));
+    this.pushHash(null);
   }
   private pushHash(f: Focus) {
     try {
       const depth = ((history.state as { obsDepth?: number } | null)?.obsDepth ?? 0) + 1;
       history.pushState({ obsDepth: depth }, "", location.pathname + location.search + hashOf(f, this.app));
-    } catch { /* ignore */ }
+    } catch { return; }
   }
   private onPopState() {
     const page = parsePage(), app = parseApp();
-    if (page.kind !== this.page.kind || (page.kind === "person" && this.page.kind === "person" && page.id !== this.page.id)) { this.page = page; this.notify(); }
-    if (page.kind === "app" && app !== this.app) { this.setApp(app); return; }
+    if (page.kind === "all") { if (this.page.kind !== "all") this.setApp("all"); return; }
+    if (page.kind === "person") { if (this.page.kind !== "person" || this.page.id !== page.id) this.openPerson(page.id); return; }
+    if (this.page.kind !== "app" || app !== this.app) {
+      const switching = app !== this.app;
+      this.setApp(app);
+      if (switching) return;
+    }
     const f = parseHash();
     if (sameFocus(f, this.ui.focus)) return;
-    const top = this.focusHistory[this.focusHistory.length - 1];
-    if (top !== undefined && sameFocus(top, f)) this.focusHistory = this.focusHistory.slice(0, -1);
-    else if (this.ui.focus && f) this.focusHistory = [...this.focusHistory, this.ui.focus].slice(-20);
-    if (!f) this.focusHistory = [];
-    this.setUI({ focus: this.focusExists(f) ? f : null });
+    const nav = this.nav();
+    if (!f || !this.focusExists(f)) { if (canClearFocus(nav)) this.commitNav(clearNavFocus(nav)); return; }
+    const top = this.focusHistory.at(-1) ?? null;
+    if (top && sameFocus(top, f) && canGoBack(nav, subjectOf(f))) { this.commitNav(goBack(nav, subjectOf(f)), { focus: f, history: this.focusHistory.slice(0, -1) }); return; }
+    const cur = this.ui.focus;
+    if (canFocusOn(nav, subjectOf(f), false)) this.commitNav(focusOn(nav, subjectOf(f), false), { focus: f, history: cur ? [...this.focusHistory, cur] : this.focusHistory });
+  }
+  // spec/consoleNavigation.md, "Escape closes one thing at a time"
+  /** Esc does the one step that the generated `pressEscape` takes: close the popover, clear the search, clear the picks or clear the focus. */
+  escape() {
+    const had = !!this.ui.focus;
+    this.commitNav(pressEscape(this.nav()));
+    if (had && !this.ui.focus) this.pushHash(null);
+  }
+  /** Opens or closes the popover: the generated `toggleHelp`. It opens the help. */
+  toggleHelp() {
+    const next = toggleHelp(this.nav());
+    if (next.popoverOpen) this.setUI({ popover: "help" });
+    else this.commitNav(next);
   }
 
+  // spec/consoleNavigation.md, "The stage shows the map or the graph"
+  /** Shows the map or the graph: the generated `showStage`. */
+  showStage(view: UIState["view"]) {
+    const nav = this.nav(), target = view === "graph" ? "GraphStage" : "MapStage";
+    if (canShowStage(nav, target)) this.commitNav(showStage(nav, target));
+  }
   /** The live map or graph (set by the stage while mounted). */
   stage: { focus(id: string): void; flyTo?(lat: number, lng: number): void } | null = null;
   /** A map fly-to waiting for the map to mount (venue links clicked in graph view). */
   pendingFly: { lat: number; lng: number } | null = null;
+  /** Shows a venue on the map: the generated `flyToVenue`, which opens the map stage. */
   flyTo(lat: number, lng: number) {
-    if (this.ui.view === "map" && this.stage?.flyTo) { this.stage.flyTo(lat, lng); return; }
+    const nav = this.nav();
+    if (!canFlyToVenue(nav)) return;
+    if (nav.stage === "MapStage" && this.stage?.flyTo) { this.stage.flyTo(lat, lng); return; }
     this.pendingFly = { lat, lng };
-    this.setUI({ view: "map" });
+    this.commitNav(flyToVenue(nav));
   }
 
+  // spec/consoleNavigation.md, "Picks exist only for a viewer who plays the simulated world"
+  /** Picks or unpicks a member: the generated `togglePick`, for a simulated-world player and never for a minor. */
   togglePick(id: string) {
-    const picks = this.ui.picks.includes(id) ? this.ui.picks.filter(x => x !== id) : [...this.ui.picks, id].slice(-6);
-    this.setUI({ picks });
+    const nav = this.nav(), already = this.ui.picks.includes(id), minor = !!this.members.get(id)?.minor;
+    if (!canTogglePick(nav, already, minor)) return;
+    const next = toggleNavPick(nav, already, minor);
+    const picks = [...this.ui.picks.filter(x => x !== id), ...(already ? [] : [id])];
+    this.setUI({ picks: next.picks > 0 ? picks.slice(-next.picks) : [] });
   }
 
-  // -------------------------------------------------------------- derived sets (cached per tick)
   private cache = new Map<string, unknown>();
   private cached<T>(name: string, key: string, f: () => T): T {
     const k = `${name}|${this.tick}|${this.version}|${key}`;
@@ -730,7 +851,6 @@ class ObsStore {
     });
   }
 
-  // -------------------------------------------------------------- filter predicates
   now() { return this.clock?.now ?? 0; }
   borough(area?: string): Borough | undefined { return area ? NEIGHBORHOOD.get(area)?.borough : undefined; }
   rangeStart(): number {
@@ -779,7 +899,6 @@ class ObsStore {
     return true;
   }
 
-  // -------------------------------------------------------------- focus predicates
   focusOpp(o: ObsOpportunity) {
     const f = this.ui.focus;
     if (!f) return true;
@@ -814,7 +933,6 @@ class ObsStore {
     return `Nothing${who ? ` for ${who}` : ""}${r === "all" ? "" : r === "today" ? " today" : ` in ${r}`}`;
   }
 
-  // -------------------------------------------------------------- names
   name(id: string) { return this.members.get(id)?.name ?? id; }
   firstName(id: string) { return this.members.get(id)?.name.split(" ")[0] ?? id; }
   /** "Maya + Jon" for a pair, "Maya, Jon +2" for a group. */
@@ -823,7 +941,6 @@ class ObsStore {
     return n.length <= 2 ? n.join(" + ") : `${n.slice(0, 2).join(", ")} +${n.length - 2}`;
   }
 
-  // -------------------------------------------------------------- review gate
   reviewMode(): "human" | "auto" | undefined { return this.network?.review?.mode; }
   /**
    * Opportunities waiting for review, soonest deadline first (filters: borough, members, origin).
@@ -841,12 +958,6 @@ class ObsStore {
       .filter(o => o.review?.decision && this.inRange(o.review.decidedAt ?? o.updatedAt) && this.matchOpp(o, { range: true, stateGroup: true }) && this.focusOpp(o))
       .sort((a, b) => (b.review?.decidedAt ?? b.updatedAt) - (a.review?.decidedAt ?? a.updatedAt));
   }
-  /** Game: the tab shows when a person reviews. Real: when items exist. */
-  showReviewTab(): boolean {
-    if (this.env?.capabilities.canIntervene) return this.reviewMode() === "human";
-    for (const o of this.opps.values()) if (o.state === "IN_REVIEW") return true;
-    return false;
-  }
   canWrite() { return !!this.env && !this.env.capabilities.readOnly; }
   /** Review, safety and matching actions work here: game mode, or real mode through the Network service. */
   canAct() { return !!this.env && (this.env.capabilities.staffActions ?? !this.env.capabilities.readOnly); }
@@ -857,10 +968,10 @@ class ObsStore {
   reviewOpen(id: string) { if (!this.reviewOpened.has(id)) this.reviewOpened.set(id, Date.now()); }
   /**
    * Approve, reject, edit or re-roll. A toast confirms; errors come back with their code (and a toast
-   * unless `quiet`). Seconds since the card was opened go with the decision.
+   * unless `quiet`). Seconds since the card was opened go with the decision. Only one decision per item is in flight, so a
+   * double press does not come back "not_in_review". A refused action keeps the timer; any other result stops it.
    */
   async decide(o: ObsOpportunity, decision: ReviewDecision, opts: DecideOpts = {}, quiet = false): Promise<ControlResult> {
-    // One decision per item at a time: a double press (or "a" held down) would come back "not_in_review".
     if (this.deciding.has(o.id)) return { ok: false, code: "in_flight", error: "a decision on this item is on its way" };
     const opened = this.reviewOpened.get(o.id);
     const secondsSpent = opened === undefined ? undefined : Math.min(REVIEW_SECONDS_CAP, Math.round((Date.now() - opened) / 1000));

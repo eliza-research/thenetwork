@@ -23,9 +23,39 @@ name: deploy-sites
 on:
   push:
     branches: [main]
-    paths: ["sites/**", "deploy/router.ts", "deploy/smoke.ts", "packages/platform/src/proxy.ts", "packages/platform/src/apps.ts", ".github/workflows/deploy-sites.yml"]
+    paths:
+      - 'apps/site/**'
+      - 'sites/**'
+      - 'packages/design-system/**'
+      - 'packages/ui/**'
+      - 'packages/core/src/generated/**'
+      - 'packages/platform/src/proxy.ts'
+      - 'packages/platform/src/apps.ts'
+      - 'deploy/router.ts'
+      - 'deploy/smoke.ts'
+      - 'tools/vibestack/vibestack/design/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.nvmrc'
+      - '.github/workflows/deploy-sites.yml'
   pull_request:
-    paths: ["sites/**", "deploy/router.ts", "deploy/smoke.ts", "packages/platform/src/proxy.ts", "packages/platform/src/apps.ts", ".github/workflows/deploy-sites.yml"]
+    paths:
+      - 'apps/site/**'
+      - 'sites/**'
+      - 'packages/design-system/**'
+      - 'packages/ui/**'
+      - 'packages/core/src/generated/**'
+      - 'packages/platform/src/proxy.ts'
+      - 'packages/platform/src/apps.ts'
+      - 'deploy/router.ts'
+      - 'deploy/smoke.ts'
+      - 'tools/vibestack/vibestack/design/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.nvmrc'
+      - '.github/workflows/deploy-sites.yml'
   workflow_dispatch:
     inputs:
       pages_operation:
@@ -60,7 +90,9 @@ jobs:
       - run: npm install --global corepack@0.35.0 && corepack enable pnpm
       - run: pnpm install --frozen-lockfile
       - name: Typecheck sites, router and scripts
-        run: pnpm exec tsc --noEmit -p sites/tsconfig.json
+        run: |
+          pnpm exec tsc --noEmit -p sites/tsconfig.json
+          pnpm --filter @thenetwork/site run typecheck
 
   build:
     needs: test
@@ -76,7 +108,7 @@ jobs:
       - run: npm install --global corepack@0.35.0 && corepack enable pnpm
       - run: pnpm install --frozen-lockfile
       - name: Production build (refuses draft legal text and unfilled placeholders)
-        run: node --import tsx sites/sites.ts
+        run: pnpm run sites:build
         env:
           DEPLOY_TARGET: production
           BACKEND_ORIGIN: ${{ vars.BACKEND_ORIGIN }}
@@ -182,7 +214,7 @@ jobs:
         if: github.event_name != 'workflow_dispatch' || (inputs.pages_operation == 'repair-and-deploy' || inputs.pages_operation == 'repair-proxy-and-deploy')
         run: |
           test -n "$TURNSTILE_SITE_KEY" || { echo "Missing real public Turnstile key"; exit 1; }
-          node --import tsx sites/sites.ts ${{ matrix.app }}
+          pnpm run sites:build ${{ matrix.app }}
         env:
           DEPLOY_TARGET: production
           BACKEND_ORIGIN: ${{ vars.BACKEND_ORIGIN }}

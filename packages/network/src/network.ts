@@ -242,6 +242,8 @@ export interface NetworkOptions {
   memberInviteTurnAllowed?: (memberId: MemberId, messageId: string) => boolean;
   /** Mark the input for private invitation retention in the current service transaction. */
   onPrivateInviteTurn?: (memberId: MemberId, messageId: string) => void;
+  /** Private intake instructions for a current signed home-entry request. */
+  homeHelpIntakePrompt?: (memberId: MemberId) => string | undefined;
   /** Growth asks per day across the network (default 8). */
   maxGrowthAsksPerDay?: number;
   /** Open a quiet standing request for a specific want named during onboarding (default false). */
@@ -707,8 +709,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** The app this Network serves, and its member-facing copy. */
   readonly app: AppInfo;
   private readonly copy: Copy;
-  private opts: Required<Omit<NetworkOptions, "app" | "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "plansConfig" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "allowedCategories" | "hooks" | "onPosting" | "issueMemberInvite" | "memberInviteTurnAllowed" | "onPrivateInviteTurn">>
-    & Pick<NetworkOptions, "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "hooks" | "onPosting" | "issueMemberInvite" | "memberInviteTurnAllowed" | "onPrivateInviteTurn">;
+  private opts: Required<Omit<NetworkOptions, "app" | "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "plansConfig" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "allowedCategories" | "hooks" | "onPosting" | "issueMemberInvite" | "memberInviteTurnAllowed" | "onPrivateInviteTurn" | "homeHelpIntakePrompt">>
+    & Pick<NetworkOptions, "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "hooks" | "onPosting" | "issueMemberInvite" | "memberInviteTurnAllowed" | "onPrivateInviteTurn" | "homeHelpIntakePrompt">;
   /** The categories this app may start opportunities in (ALLOWED_CATEGORIES). */
   readonly allowedCategories: ReadonlySet<Category>;
   private pcfg: PlansConfig;
@@ -726,6 +728,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       understand: opts.understand, onAgeStated: opts.onAgeStated, engineLLM: opts.engineLLM, pack: opts.pack, hooks: opts.hooks, onPosting: opts.onPosting,
       issueMemberInvite: opts.issueMemberInvite,
       memberInviteTurnAllowed: opts.memberInviteTurnAllowed, onPrivateInviteTurn: opts.onPrivateInviteTurn,
+      homeHelpIntakePrompt: opts.homeHelpIntakePrompt,
     };
     this.allowedCategories = new Set(opts.allowedCategories ?? ALLOWED_CATEGORIES[this.app.id] ?? ALLOWED_CATEGORIES.ntwrk!);
     this.pcfg = resolvePlans(opts.plansConfig ?? {});
@@ -909,6 +912,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (!c.abuse.length && this.opts.memberInviteTurnAllowed?.(m.id, msg.id)) this.handleInviteVouchTurn(m, msg.id, body);
       return;
     }
+
+    if (!mcp && c.kind === "people_request" && c.category === "help" && this.allowedCategories.has("help")
+      && this.opts.homeHelpIntakePrompt && this.routeBoundedHelp(m, body, false)) return;
 
     // peon (#9): a job post by text, read back and saved only on the manager's yes (rules only, never an open-turn LLM output).
     if (this.opts.hooks?.postings && this.postingTurn(m, body)) return;
@@ -1182,6 +1188,16 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (inv.optedOut) return;
     this.counters.inviteesJoined++;
     this.queueInviteJoin(inv, { inviteeId, at });
+  }
+
+  /** Ask for a decision on a reviewed plan. Its record and current approval stay in the service. */
+  askReviewedHomeHelpConsent(input: { recipientId: MemberId; role: "requester" | "helper"; deliveryId: string; body: string }): boolean {
+    const { recipientId, role, deliveryId, body } = input;
+    if (!this.record(recipientId) || this.declinedIds.has(recipientId)) return false;
+    const member = this.member(recipientId);
+    this.dirty = true;
+    return this.send(member, body, { type: "info", proactive: role === "helper", homeHelpConsentFor: role },
+      "home_help_consent", { key: deliveryId, noDefer: true }) === "sent";
   }
 
   private queueInviteJoin(inv: MemberState, notice: InviteJoinNotice) {
@@ -1914,15 +1930,17 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** Give a home-entry request to safety staff before it can become a contact. */
   private routeBoundedHelp(m: MemberState, text: string, quiet: boolean): boolean {
     const cfg = resolveConfig(this.effectiveEngineConfig());
-    const route = boundedHelpRoute(riskTerms(cfg, text).length > 0, isHomeEntry(cfg, text));
+    const homeEntry = isHomeEntry(cfg, text);
+    const route = boundedHelpRoute(riskTerms(cfg, text).length > 0, homeEntry);
     if (route === "SearchPublicHelp") return false;
+    const prompt = homeEntry && !quiet ? this.opts.homeHelpIntakePrompt?.(m.id) : undefined;
     if (route === "ReviewHomeEntryHelp" && canBeMatched(this.ageOf(m))) {
       const kind = "home_entry_help";
       if (openHomeHelpCase(true, this.openCase(m.id)?.events.some(e => e.kind === kind) === true)) {
         this.caseEvent(m.id, { at: this.now(), kind, points: 0 });
         this.ctx.log("request_result", { memberId: m.id, kind: "people", category: "help", outcome: "safety_review", reason: kind });
       }
-      if (!quiet) this.send(m, copy.homeHelpSafetyReview, { type: "info" }, "reply");
+      if (!quiet) this.send(m, prompt ?? copy.homeHelpSafetyReview, { type: "info" }, "reply");
     } else if (!quiet) {
       this.send(m, copy.requestOutOfScope, { type: "info" }, "reply");
     }
@@ -4777,13 +4795,14 @@ export class ConsentNetwork implements NetworkUnderTest {
     // Fold a pending acknowledgement in only now, at the real send (never into a deferred body, which
     // would fold it twice), and only its first short sentence ("Got it, thanks."). Never into a relayed
     // text: that body is the other member's words, rendered by the relay policy, and goes as it is.
-    if (m.pendingAck && kind !== "safety" && kind !== "relay" && !/^(thanks|great|no problem|got it)/i.test(body)) {
+    if (m.pendingAck && kind !== "safety" && kind !== "relay" && kind !== "home_help_consent" && !/^(thanks|great|no problem|got it)/i.test(body)) {
       const ack = m.pendingAck.text.split(/(?<=[.!?])\s/)[0]!;
       body = `${ack} ${body}`;
       if (o.fallback !== undefined) o = { ...o, fallback: `${ack} ${o.fallback}` };
     }
     // A note for this member ("That plan didn't come together this time.") rides on their next message.
-    const note = m.note && !o.memberInviteLink && !meta.privateInviteVouch && kind !== "safety" && kind !== "relay" && now - m.note.at < 7 * DAY ? m.note.text : undefined;
+    const note = m.note && !o.memberInviteLink && !meta.privateInviteVouch && kind !== "safety" && kind !== "relay"
+      && kind !== "home_help_consent" && now - m.note.at < 7 * DAY ? m.note.text : undefined;
     if (note) {
       body = `${note} ${body}`;
       if (o.fallback !== undefined) o = { ...o, fallback: `${note} ${o.fallback}` };
@@ -4865,7 +4884,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const idPrefix = invitationJoins.length ? "invite-notice:" : "";
     this.ctx.send(m.id, text, { meta, idempotencyKey: o.key ?? `${idPrefix}${m.id}:${++this.seq}`, reply });
     if (deliveredInviteJoins.length) m.pendingInviteJoins = m.pendingInviteJoins?.filter(notice => !deliveredInviteJoins.includes(notice));
-    m.pendingAck = undefined;
+    if (kind !== "home_help_consent") m.pendingAck = undefined;
     if (note || (m.note && now - m.note.at >= 7 * DAY)) m.note = undefined;
     const storedText = o.memberInviteLink ? text.replace(o.memberInviteLink, "").trimEnd()
       : meta.privateInviteVouch ? "Private invitation reply"
@@ -4925,7 +4944,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    * of the 2 follow-ups to the member's own ask within 48 hours. Safety notices are never budgeted.
    */
   private classifyOutreach(m: MemberState, meta: SimMeta, now: number): "solicited" | "followup" | "unsolicited" {
-    if (meta.type === "system") return "solicited";
+    if (meta.type === "system" || meta.homeHelpConsentFor === "requester") return "solicited";
     const lastIn = Math.max(m.lastInbound, m.joinedAt);
     if (now - lastIn <= REPLY_WINDOW_MS && (m.outbound ?? 0) < REPLY_BURST) return "solicited";
     const x = meta as SimMeta & { plan?: { planId?: string } };

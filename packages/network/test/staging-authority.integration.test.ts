@@ -49,7 +49,7 @@ test('staging authority keeps signed HTTP API and OAuth on its configured app or
   expect(allowedHosts.at(-1)).toEqual([new URL(origin).hostname]);
   const verify=await call('/api/auth/otp/verify',{phone,code:st.otp.last(phone)},browser);expect(verify.status).toBe(200);expect(verify.headers.get('set-cookie')).toContain('__Host-sid=');expect(verify.headers.get('set-cookie')).toContain('Secure');
   const info=await(await call('/mcp',{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'app_info',arguments:{app:'slop'}}})).json() as any;
-  expect(info.result.structuredContent.site).toBe(origin);expect(info.result.structuredContent.join.url).toBe(`${origin}/join?via=agent`);
+  expect(info.result.structuredContent.site).toBe(origin);expect(info.result.structuredContent.join.url).toBe(`${origin}/SKILL.md`);
   expect((await call('/mcp/openai',{jsonrpc:'2.0',id:1,method:'tools/list'})).status).toBe(404);
   const stageStack={...st,sites:{...st.sites,slop:{...st.sites.slop,origin}},site:async(_app:string,path:string,init:any={})=>call(path,init.json,init.browser,init.form?{...init.form,...(path==='/oauth/authorize/phone'?{'cf-turnstile-response':'fixture'}:{})}:undefined)} as typeof st;
   const connection=await connectMcp(stageStack,'slop',phone,{browser:new Browser(),redirect:'https://chatgpt.com/connector_platform_oauth_redirect'});

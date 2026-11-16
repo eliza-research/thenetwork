@@ -257,6 +257,56 @@ Rules for the boundary:
 3. **Joining is a membership.** The platform creates members after a verified join (`POST /api/join`) or a join by text on an open app. A new membership through a forwarding link commits with consent, the Network member, and the app-scoped attribution. An `invited` member still has to complete signup.
 4. **No shared process state.** The two talk only through Postgres (the `network` schema) and the channel gateway. Nothing here imports Eliza, and the plugin does not import this service.
 
+## Expected member invitation
+
+A member can take an issued forwarding link and send a private signed turn
+`SEND INVITE <link> TO <phone>`. The service returns a short-lived reference.
+The member replies `CONFIRM EXPECTED INVITE <reference>` only if the recipient
+expects the text. The confirmation reply is the same when the recipient is
+unavailable. The normal vouch review and invitation allowance already apply to
+the link.
+
+The service-send path needs a carrier adapter that admits first contact.
+Eliza Cloud currently requires a Cloud account before it admits a proactive
+delivery. Keep the original link available for forwarding on that adapter.
+
+The existing outbound queue applies consent, quiet hours, line limits and the
+leak check. A sent invitation names the inviter and gives the recipient
+`DECLINE INVITE` and `STOP`. The queue uses the original key for any provider
+receipt lookup. Once queued, the link requires verification of the exact
+recipient phone, along with the existing age and consent checks. [Expected
+invitation rules](../../../spec/expectedMemberInvitation.md)
+
+## Private home-help review
+
+An eligible adult who asks for home entry receives a private intake prompt. The
+signed reply records the confirmed moving task, NYC neighborhood, time window,
+effort and outcome of considering a service. The owner can revise or close the
+plan by ID and revision. Members can express or withdraw willingness with
+`OFFER HOME HELP` and `WITHDRAW HOME HELP OFFER`.
+
+Safety staff on the app use `GET /apps/<app>/safety/home-help` for the queue.
+`POST /apps/<app>/safety/home-help/<id>` takes `nominate`, `approve` or `close`
+as the action, with the current revision and the exact helper IDs for nomination
+and approval. Nomination creates a new revision. Approval rereads age, consent,
+holds, blocks, offers, availability and capacity. A singleton also needs recorded
+prior contact at a shared public plan or a confirmed meeting edge. Approval, the
+exact consent roster and its staff audit commit together. The outbound queue
+sends the requester a coarse plan card, then asks the approved helpers after the
+requester's explicit yes. Each signed response names the plan code and revision
+and requires a send receipt for that member's card.
+
+An existing verified `ntwrk.party` app session can use
+`POST /api/home-help/venue`. Send `action` (`submit`, `reveal` or `revoke`),
+`id` (the plan code) and `revision`. Add `address` for `submit`. Only the
+requester can submit or revoke it. Only current, consenting helpers can retrieve
+it, after everyone on the approved roster agrees. The response is private and
+uncached. Keep the address out of SMS, agent chat and tool logs.
+
+[Review rules](../../../spec/boundedHelp.md) ·
+[Consent rules](../../../spec/homeHelpConsent.md) ·
+[Private address rules](../../../spec/privateHomeHelpVenue.md)
+
 ## Limits
 
 - **No live send has been made.** The Blooio path is tested only with a fake provider.

@@ -1,9 +1,9 @@
 // GENERATED from spec/photoRetention.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Add and remove photos for private matching / Consent, adult eligibility, and a valid image precede storage (spec/photoRetention.md:9) */
+/** Story: Add and remove photos for private matching / Consent, adult eligibility, and a valid image precede storage (spec/photoRetention.md) */
 export type PhotoPhase = "ChoosingChange" | "CheckingUploader" | "ScreeningFile" | "CheckingSlots" | "CleaningImage" | "WritingBytes" | "WritingRow" | "RemovingBytes" | "RemovingRow" | "ClearingRating" | "Rerating" | "ChangeFinished" | "UnsupportedApp" | "ConsentMissing" | "SizeExceeded" | "ChangeRefused";
-/** Story: Add and remove photos for private matching / Consent, adult eligibility, and a valid image precede storage (spec/photoRetention.md:9) */
+/** Story: Add and remove photos for private matching / Consent, adult eligibility, and a valid image precede storage (spec/photoRetention.md) */
 export interface PhotoChange { phase: PhotoPhase; rerateAfterRemoval: boolean }
 
 /** One variant per transition in the spec. */
@@ -21,7 +21,7 @@ export type Event =
   | { type: "recordRemovedRow" }
   | { type: "recordRatingClear" };
 
-/** Story: Add and remove photos for private matching / Consent, adult eligibility, and a valid image precede storage (spec/photoRetention.md:9) */
+/** Story: Add and remove photos for private matching / Consent, adult eligibility, and a valid image precede storage (spec/photoRetention.md) */
 export const initial: PhotoChange = { phase: "ChoosingChange", rerateAfterRemoval: false };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -30,13 +30,13 @@ export function inv(current: PhotoChange): boolean {
   return true;
 }
 
-/** Story: Add and remove photos for private matching / Consent, adult eligibility, and a valid image precede storage (spec/photoRetention.md:9) */
+/** Story: Add and remove photos for private matching / Consent, adult eligibility, and a valid image precede storage (spec/photoRetention.md) */
 //@ pure
 export function canBeginUpload(c: PhotoChange): boolean {
   return c.phase === "ChoosingChange";
 }
 
-/** Story: Add and remove photos for private matching / Consent, adult eligibility, and a valid image precede storage (spec/photoRetention.md:9) */
+/** Story: Add and remove photos for private matching / Consent, adult eligibility, and a valid image precede storage (spec/photoRetention.md) */
 //@ pure
 export function beginUpload(c: PhotoChange, appAllowed: boolean, consentCurrent: boolean): PhotoChange {
   //@ ensures (inv(c) && canBeginUpload(c)) ==> stepRowWriteRequiresBytes(c, "beginUpload", \result)
@@ -44,13 +44,13 @@ export function beginUpload(c: PhotoChange, appAllowed: boolean, consentCurrent:
   return { ...c, phase: !appAllowed ? "UnsupportedApp" : (!consentCurrent ? "ConsentMissing" : "CheckingUploader") };
 }
 
-/** Story: Add and remove photos for private matching / Consent, adult eligibility, and a valid image precede storage (spec/photoRetention.md:9) */
+/** Story: Add and remove photos for private matching / Consent, adult eligibility, and a valid image precede storage (spec/photoRetention.md) */
 //@ pure
 export function canCheckUploader(c: PhotoChange): boolean {
   return c.phase === "CheckingUploader";
 }
 
-/** Story: Add and remove photos for private matching / Consent, adult eligibility, and a valid image precede storage (spec/photoRetention.md:9) */
+/** Story: Add and remove photos for private matching / Consent, adult eligibility, and a valid image precede storage (spec/photoRetention.md) */
 //@ pure
 export function checkUploader(c: PhotoChange, eligible: boolean): PhotoChange {
   //@ ensures (inv(c) && canCheckUploader(c)) ==> stepRowWriteRequiresBytes(c, "checkUploader", \result)
@@ -58,13 +58,13 @@ export function checkUploader(c: PhotoChange, eligible: boolean): PhotoChange {
   return { ...c, phase: eligible ? "ScreeningFile" : "ChangeRefused" };
 }
 
-/** Story: Add and remove photos for private matching / Consent, adult eligibility, and a valid image precede storage (spec/photoRetention.md:9) */
+/** Story: Add and remove photos for private matching / Consent, adult eligibility, and a valid image precede storage (spec/photoRetention.md) */
 //@ pure
 export function canScreenFile(c: PhotoChange): boolean {
   return c.phase === "ScreeningFile";
 }
 
-/** Story: Add and remove photos for private matching / Consent, adult eligibility, and a valid image precede storage (spec/photoRetention.md:9) */
+/** Story: Add and remove photos for private matching / Consent, adult eligibility, and a valid image precede storage (spec/photoRetention.md) */
 //@ pure
 export function screenFile(c: PhotoChange, tooLarge: boolean, typeKnown: boolean): PhotoChange {
   //@ ensures (inv(c) && canScreenFile(c)) ==> stepRowWriteRequiresBytes(c, "screenFile", \result)
@@ -72,13 +72,13 @@ export function screenFile(c: PhotoChange, tooLarge: boolean, typeKnown: boolean
   return { ...c, phase: tooLarge ? "SizeExceeded" : (typeKnown ? "CheckingSlots" : "ChangeRefused") };
 }
 
-/** Story: Add and remove photos for private matching / Consent, adult eligibility, and a valid image precede storage (spec/photoRetention.md:9) */
+/** Story: Add and remove photos for private matching / Consent, adult eligibility, and a valid image precede storage (spec/photoRetention.md) */
 //@ pure
 export function canCheckSlots(c: PhotoChange): boolean {
   return c.phase === "CheckingSlots";
 }
 
-/** Story: Add and remove photos for private matching / Consent, adult eligibility, and a valid image precede storage (spec/photoRetention.md:9) */
+/** Story: Add and remove photos for private matching / Consent, adult eligibility, and a valid image precede storage (spec/photoRetention.md) */
 //@ pure
 export function checkSlots(c: PhotoChange, available: boolean): PhotoChange {
   //@ ensures (inv(c) && canCheckSlots(c)) ==> stepRowWriteRequiresBytes(c, "checkSlots", \result)
@@ -86,13 +86,13 @@ export function checkSlots(c: PhotoChange, available: boolean): PhotoChange {
   return { ...c, phase: available ? "CleaningImage" : "ChangeRefused" };
 }
 
-/** Story: Add and remove photos for private matching / Consent, adult eligibility, and a valid image precede storage (spec/photoRetention.md:9) */
+/** Story: Add and remove photos for private matching / Consent, adult eligibility, and a valid image precede storage (spec/photoRetention.md) */
 //@ pure
 export function canCleanImage(c: PhotoChange): boolean {
   return c.phase === "CleaningImage";
 }
 
-/** Story: Add and remove photos for private matching / Consent, adult eligibility, and a valid image precede storage (spec/photoRetention.md:9) */
+/** Story: Add and remove photos for private matching / Consent, adult eligibility, and a valid image precede storage (spec/photoRetention.md) */
 //@ pure
 export function cleanImage(c: PhotoChange, cleaned: boolean): PhotoChange {
   //@ ensures (inv(c) && canCleanImage(c)) ==> stepRowWriteRequiresBytes(c, "cleanImage", \result)
@@ -100,13 +100,13 @@ export function cleanImage(c: PhotoChange, cleaned: boolean): PhotoChange {
   return { ...c, phase: cleaned ? "WritingBytes" : "ChangeRefused" };
 }
 
-/** Story: Add and remove photos for private matching / Store private bytes before the photo row (spec/photoRetention.md:42) */
+/** Story: Add and remove photos for private matching / Store private bytes before the photo row (spec/photoRetention.md) */
 //@ pure
 export function canRecordUploadBytes(c: PhotoChange): boolean {
   return c.phase === "WritingBytes";
 }
 
-/** Story: Add and remove photos for private matching / Store private bytes before the photo row (spec/photoRetention.md:42) */
+/** Story: Add and remove photos for private matching / Store private bytes before the photo row (spec/photoRetention.md) */
 //@ pure
 export function recordUploadBytes(c: PhotoChange): PhotoChange {
   //@ ensures (inv(c) && canRecordUploadBytes(c)) ==> stepRowWriteRequiresBytes(c, "recordUploadBytes", \result)
@@ -114,13 +114,13 @@ export function recordUploadBytes(c: PhotoChange): PhotoChange {
   return { ...c, phase: "WritingRow" };
 }
 
-/** Story: Add and remove photos for private matching / Store private bytes before the photo row (spec/photoRetention.md:42) */
+/** Story: Add and remove photos for private matching / Store private bytes before the photo row (spec/photoRetention.md) */
 //@ pure
 export function canRecordUploadRow(c: PhotoChange): boolean {
   return c.phase === "WritingRow";
 }
 
-/** Story: Add and remove photos for private matching / Store private bytes before the photo row (spec/photoRetention.md:42) */
+/** Story: Add and remove photos for private matching / Store private bytes before the photo row (spec/photoRetention.md) */
 //@ pure
 export function recordUploadRow(c: PhotoChange): PhotoChange {
   //@ ensures (inv(c) && canRecordUploadRow(c)) ==> stepRowWriteRequiresBytes(c, "recordUploadRow", \result)
@@ -128,13 +128,13 @@ export function recordUploadRow(c: PhotoChange): PhotoChange {
   return { ...c, phase: "Rerating" };
 }
 
-/** Story: Add and remove photos for private matching / Store private bytes before the photo row (spec/photoRetention.md:42) */
+/** Story: Add and remove photos for private matching / Store private bytes before the photo row (spec/photoRetention.md) */
 //@ pure
 export function canFinishRerate(c: PhotoChange): boolean {
   return c.phase === "Rerating";
 }
 
-/** Story: Add and remove photos for private matching / Store private bytes before the photo row (spec/photoRetention.md:42) */
+/** Story: Add and remove photos for private matching / Store private bytes before the photo row (spec/photoRetention.md) */
 //@ pure
 export function finishRerate(c: PhotoChange): PhotoChange {
   //@ ensures (inv(c) && canFinishRerate(c)) ==> stepRowWriteRequiresBytes(c, "finishRerate", \result)
@@ -142,19 +142,19 @@ export function finishRerate(c: PhotoChange): PhotoChange {
   return { ...c, phase: "ChangeFinished" };
 }
 
-/** Story: Add and remove photos for private matching / Store private bytes before the photo row (spec/photoRetention.md:42) */
+/** Story: Add and remove photos for private matching / Store private bytes before the photo row (spec/photoRetention.md) */
 //@ pure
 export function stepRowWriteRequiresBytes(before: PhotoChange, via: string, after: PhotoChange): boolean {
   return !(after.phase === "WritingRow") || (before.phase === "WritingBytes" && via === "recordUploadBytes");
 }
 
-/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md:60) */
+/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md) */
 //@ pure
 export function canBeginRemoval(c: PhotoChange): boolean {
   return c.phase === "ChoosingChange";
 }
 
-/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md:60) */
+/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md) */
 //@ pure
 export function beginRemoval(c: PhotoChange, owned: boolean, rerate: boolean): PhotoChange {
   //@ ensures (inv(c) && canBeginRemoval(c)) ==> stepRowWriteRequiresBytes(c, "beginRemoval", \result)
@@ -162,13 +162,13 @@ export function beginRemoval(c: PhotoChange, owned: boolean, rerate: boolean): P
   return { phase: owned ? "RemovingBytes" : "ChangeRefused", rerateAfterRemoval: rerate };
 }
 
-/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md:60) */
+/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md) */
 //@ pure
 export function canRecordRemovedBytes(c: PhotoChange): boolean {
   return c.phase === "RemovingBytes";
 }
 
-/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md:60) */
+/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md) */
 //@ pure
 export function recordRemovedBytes(c: PhotoChange): PhotoChange {
   //@ ensures (inv(c) && canRecordRemovedBytes(c)) ==> stepRowWriteRequiresBytes(c, "recordRemovedBytes", \result)
@@ -176,13 +176,13 @@ export function recordRemovedBytes(c: PhotoChange): PhotoChange {
   return { ...c, phase: "RemovingRow" };
 }
 
-/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md:60) */
+/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md) */
 //@ pure
 export function canRecordRemovedRow(c: PhotoChange): boolean {
   return c.phase === "RemovingRow";
 }
 
-/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md:60) */
+/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md) */
 //@ pure
 export function recordRemovedRow(c: PhotoChange): PhotoChange {
   //@ ensures (inv(c) && canRecordRemovedRow(c)) ==> stepRowWriteRequiresBytes(c, "recordRemovedRow", \result)
@@ -190,13 +190,13 @@ export function recordRemovedRow(c: PhotoChange): PhotoChange {
   return { ...c, phase: "ClearingRating" };
 }
 
-/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md:60) */
+/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md) */
 //@ pure
 export function canRecordRatingClear(c: PhotoChange): boolean {
   return c.phase === "ClearingRating";
 }
 
-/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md:60) */
+/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md) */
 //@ pure
 export function recordRatingClear(c: PhotoChange): PhotoChange {
   //@ ensures (inv(c) && canRecordRatingClear(c)) ==> stepRowWriteRequiresBytes(c, "recordRatingClear", \result)
@@ -204,25 +204,25 @@ export function recordRatingClear(c: PhotoChange): PhotoChange {
   return { ...c, phase: c.rerateAfterRemoval ? "Rerating" : "ChangeFinished" };
 }
 
-/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md:60) */
+/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md) */
 //@ pure
 export function stepRatingClearRequiresRowRemoval(before: PhotoChange, via: string, after: PhotoChange): boolean {
   return !(after.phase === "ClearingRating") || (before.phase === "RemovingRow" && via === "recordRemovedRow");
 }
 
-/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md:60) */
+/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md) */
 //@ pure
 export function sometimesCompletesChange(c: PhotoChange): boolean {
   return c.phase === "ChangeFinished";
 }
 
-/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md:60) */
+/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md) */
 //@ pure
 export function sometimesWritesPhoto(c: PhotoChange): boolean {
   return c.phase === "WritingRow";
 }
 
-/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md:60) */
+/** Story: Add and remove photos for private matching / Erase bytes and metadata before dropping the old rating (spec/photoRetention.md) */
 //@ pure
 export function sometimesRemovesPhoto(c: PhotoChange): boolean {
   return c.phase === "RemovingRow";
