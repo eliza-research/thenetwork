@@ -23,7 +23,7 @@ export function calendarChoice(matches: number): CalendarChoice {
 
 /** Story: Add my booked meeting to my calendar / The member asks for one current booking (spec/calendarInvite.md) */
 //@ pure
-export function lawCalendarNeedsDeliveredBooking(currentAdult: boolean, scheduled: boolean, confirmedSeat: boolean, publicVenue: boolean, remainingMs: number): boolean {
+export function lawCalendarNeedsBookingNotice(currentAdult: boolean, scheduled: boolean, confirmedSeat: boolean, publicVenue: boolean, remainingMs: number): boolean {
   //@ ensures \result === true
   return !calendarMeetingEligible(currentAdult, scheduled, confirmedSeat, false, publicVenue, remainingMs);
 }

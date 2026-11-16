@@ -33,7 +33,7 @@ pure def lawConfirmedDoesNotRepeat(accepted: bool, bookingDelivered: bool, words
 
 ### A day-before reminder has its own send window
 
-Start at 24 hours before the meeting. The day-before reminder can wait for the member's quiet hours to end before the 12-hour cutoff. Recheck the window and the accepted seat when a queued reminder is claimed. Check that the member already received the booking details. Aim to send the near-meeting reminder three hours before the meeting, or at the last available tick if the member's window would be closed then. When the day-before reminder has been sent, the near reminder uses a separate window. A job introduction has no booked meeting for the Network to remind people about. The usual contact and content rules apply.
+Start at 24 hours before the meeting. The day-before reminder can wait for the member's quiet hours to end before the 12-hour cutoff. Recheck the window, current schedule and accepted seat when a queued reminder is claimed. Check that the member already received the booking details. Aim to send the near-meeting reminder three hours before the meeting, or at the last available tick if the member's window would be closed then. The near reminder uses the period after the day-before cutoff. A job introduction has no booked meeting for the Network to remind people about. The usual contact and content rules apply.
 
 ```quint
 pure val dayBeforeReminderStartMs = 24 * 3600000
@@ -43,6 +43,9 @@ pure val nearMeetingReminderLeadMs = 3 * 3600000
 pure def dayBeforeReminderWindow(remainingMs: int): bool =
   remainingMs <= dayBeforeReminderStartMs and remainingMs > dayBeforeReminderEndMs
 
+pure def nearMeetingReminderWindow(remainingMs: int): bool =
+  remainingMs > 0 and remainingMs <= dayBeforeReminderEndMs
+
 pure def dayBeforeReminderDue(accepted: bool, bookingDelivered: bool, earlySent: bool, remainingMs: int): bool =
   accepted and bookingDelivered and not(earlySent) and dayBeforeReminderWindow(remainingMs)
 
@@ -51,6 +54,25 @@ pure def lawDayBeforeReminderFollowsBooking(accepted: bool, earlySent: bool, rem
 
 pure def lawDayBeforeReminderDoesNotRepeat(accepted: bool, bookingDelivered: bool, remainingMs: int): bool =
   not(dayBeforeReminderDue(accepted, bookingDelivered, true, remainingMs))
+```
+
+## Story: Check whether a booked participant is still coming
+
+> As a booked participant, I want a light check-in on the day of the meeting so I can report a change or a delay.
+
+### The day-of check-in uses one near-meeting message
+
+If the near reminder falls on the meeting's local day, ask whether the participant is still coming and tell them they can report a delay or change. The check-in uses the same message slot as the near reminder. A reminder sent on the previous day stays informational. Keep an unrelated pending question intact. Use the existing booked reply when its slot is free or already refers to this meeting. Bind that reply to the meeting's current schedule and accept it only before the meeting starts. Sending the check-in and receiving no reply leave the confirmation and attendance rules as they were. A replacement schedule gets its own reminder IDs. The queue checks both the current schedule and the check-in window before delivery.
+
+```quint
+pure def dayOfCheckInWindow(sameLocalDay: bool, remainingMs: int): bool =
+  sameLocalDay and nearMeetingReminderWindow(remainingMs)
+
+pure def dayOfCheckInDue(sameLocalDay: bool, replySlotAvailable: bool, remainingMs: int): bool =
+  replySlotAvailable and dayOfCheckInWindow(sameLocalDay, remainingMs)
+
+pure def lawDayOfCheckInNeedsAFutureMeeting(sameLocalDay: bool, replySlotAvailable: bool, remainingMs: int): bool =
+  dayOfCheckInDue(sameLocalDay, replySlotAvailable, remainingMs) implies (sameLocalDay and remainingMs > 0)
 ```
 
 ## Story: Ask for feedback and close attendance once

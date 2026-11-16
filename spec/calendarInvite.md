@@ -6,7 +6,7 @@
 
 ### The member asks for one current booking
 
-In a signed conversation the member can ask for a calendar invite, optionally with the meeting's exact New York date and 24-hour time. The sender must own a current adult membership in this app. Only a future meeting with a confirmed seat and delivered booking details is eligible. A calendar invite is available for one matching meeting with a public venue. If several match, ask which one the member means.
+In a signed conversation the member can ask for a calendar invite, optionally with the meeting's exact New York date and 24-hour time. The sender must own a current adult membership in this app. Only a future meeting with a confirmed seat and a booking notice recorded for that seat is eligible. A calendar invite is available for one matching meeting with a public venue. If several match, ask which one the member means.
 
 ```quint
 type CalendarChoice = PickBooking | AskForBooking | NoBooking
@@ -17,7 +17,7 @@ pure def calendarMeetingEligible(currentAdult: bool, scheduled: bool, confirmedS
 pure def calendarChoice(matches: int): CalendarChoice =
   if (matches == 1) PickBooking else if (matches > 1) AskForBooking else NoBooking
 
-pure def lawCalendarNeedsDeliveredBooking(currentAdult: bool, scheduled: bool, confirmedSeat: bool, publicVenue: bool, remainingMs: int): bool =
+pure def lawCalendarNeedsBookingNotice(currentAdult: bool, scheduled: bool, confirmedSeat: bool, publicVenue: bool, remainingMs: int): bool =
   not(calendarMeetingEligible(currentAdult, scheduled, confirmedSeat, false, publicVenue, remainingMs))
 ```
 

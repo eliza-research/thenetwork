@@ -49,9 +49,17 @@ import {
 import {
   chooseCheckIn, confirmationChanges, confirmationWindowHours as OPT_OUT_HOURS, countAttendance, counterpartConfirmsAttendance,
   deliveredInvitee, feedbackDelayHours, initial as initialMeetingSettlement, organizerCanVerify, requestAttendanceSatisfied,
-  dayBeforeReminderDue, dayBeforeReminderWindow, nearMeetingReminderLeadMs, restoreAttendance, settlementDelayDays, silentConfirmationDue, step as stepMeetingSettlement,
+  dayBeforeReminderDue, dayBeforeReminderWindow, dayOfCheckInDue, dayOfCheckInWindow, nearMeetingReminderLeadMs, nearMeetingReminderWindow,
+  restoreAttendance, settlementDelayDays, silentConfirmationDue, step as stepMeetingSettlement,
 } from "../../core/src/generated/meetingSettlement.ts";
+import { lateArrivalGroupCurrent, lateArrivalMayDispatch, lateArrivalMayReport, lateArrivalNotice } from "../../core/src/generated/groupLateArrival.ts";
+import { isLateArrivalReport, lateArrivalDeliveryId, type LateArrivalDelivery } from "./group-late-arrival.ts";
 import { bookedCancellationAllowed, bookedCancellationPrefix } from "../../core/src/generated/outboundAdmission.ts";
+import { rescheduleDeadline, rescheduleDraftCurrent, rescheduleTimeEligible, rescheduleVote } from "../../core/src/generated/meetingReschedule.ts";
+import {
+  describeBookingStart, localBookingStart, parseRescheduleCommand, rescheduleMemberRef, rescheduleNoticeCurrent, rescheduleOfferKey,
+  rescheduleUpdateKey, sameRescheduleRoster, type RescheduleCommand, type RescheduleDraft,
+} from "./rescheduling.ts";
 import {
   bookedReplyCurrent, closesForMinor, groupCanContinue, initial as initialOpportunity, releasesPartialAcceptance, step as stepOpportunity,
   unlinkedCancellation, upcomingCancellationEligible, type OpportunityLifecycle, type OpportunityPhase,
@@ -249,6 +257,8 @@ export interface NetworkOptions {
   issueMemberInvite?: (input: MemberInviteRequest) => MemberInviteResult | undefined;
   /** Confirm this is the inviter's exact signed turn before opening, changing or confirming a draft. */
   memberInviteTurnAllowed?: (memberId: MemberId, messageId: string) => boolean;
+  /** Only the exact signed member turn can request a group logistics relay. */
+  lateArrivalTurnAllowed?: (memberId: MemberId, messageId: string) => boolean;
   /** Mark the input for private invitation retention in the current service transaction. */
   onPrivateInviteTurn?: (memberId: MemberId, messageId: string) => void;
   /** Private intake instructions for a current signed home-entry request. */
@@ -381,7 +391,11 @@ interface MemberState {
   /** When each initial invite went out (the cap counts these, founder decision 3). */
   proactive: number[]; lastInbound: number; lastAskAt: number; joinedAt: number;
   /** What the member's next message probably answers. `ask` names an engine question (EngineResult.asks). */
-  awaiting?: { kind: "probe" | "booked" | "feedback" | "growth" | "interview" | "age" | "checkin" | "crew" | "posting"; oppId?: string; ask?: AskRecord; at: number; crewId?: string; clarified?: boolean };
+  awaiting?: {
+    kind: "probe" | "booked" | "feedback" | "growth" | "interview" | "age" | "checkin" | "crew" | "posting";
+    oppId?: string; ask?: AskRecord; at: number; crewId?: string; clarified?: boolean;
+    bookedCheckIn?: { meetingAt: number; revision: number };
+  };
   /** A block or report waiting for "Who do you mean?" (ids and kinds only; what they said is not kept). */
   pendingSafety?: { verb: "block" | "report"; kind: ReportKind; at: number; targets?: MemberId[] };
   invitedBy?: MemberId; invites: number[]; invitesBlockedUntil: number; lastGrowthAsk: number;
@@ -451,12 +465,6 @@ function explicitBookingCancellation(text: string): { localStart?: string } | un
   return STANDALONE_CANCEL.test(command) ? {} : undefined;
 }
 
-function localBookingStart(at: number): string {
-  const { year, month, day, hour, minute } = localParts(at, NY);
-  const twoDigits = (n: number) => String(n).padStart(2, "0");
-  return `${year}-${twoDigits(month)}-${twoDigits(day)} ${twoDigits(hour)}:${twoDigits(minute)}`;
-}
-
 const PHASE_BY_STAGE = { review: "InReview", probing: "Probing", scheduled: "Scheduled", done: "Done", closed: "Closed" } as const;
 const STAGE_BY_PHASE = { InReview: "review", Probing: "probing", Scheduled: "scheduled", Done: "done", Closed: "closed" } as const satisfies Record<OpportunityPhase, keyof typeof PHASE_BY_STAGE>;
 
@@ -505,6 +513,9 @@ interface Opp {
   contacted: Set<MemberId>;
   reminded: Set<MemberId>;
   dayBeforeReminded?: MemberId[];
+  /** Changes only on a committed time change. Existing bookings start at revision zero. */
+  scheduleRevision?: number;
+  reschedule?: RescheduleDraft;
   fixedVenue?: Venue;
   venue?: string; venueArea?: string; meetingAt?: number; feedbackSent?: boolean; recorded?: boolean;
   tags: string[]; replacements: number; runId?: string;
@@ -526,6 +537,8 @@ interface Opp {
   timeRetry?: MemberId[];
   /** Members the booked plan reached (only they hear if it changes). */
   bookedTold?: MemberId[];
+  /** Last schedule revision each participant reported late, without the original text. */
+  lateArrivalReported?: Record<MemberId, number>;
   /** Participants who answered the feedback question. */
   feedbackFrom: Set<MemberId>;
   /** Original completed meeting behind this review item. */
@@ -589,6 +602,8 @@ type SendHook =
   | { t: "interview" } | { t: "age" } | { t: "suggested"; venues: string[] } | { t: "retry_found"; oppId: string }
   | { t: "probe"; oppId: string; id: MemberId } | { t: "reveal"; oppId: string; id: MemberId } | { t: "times"; oppId: string; id: MemberId }
   | { t: "drop_notice"; oppId: string } | { t: "feedback"; oppId: string }
+  | { t: "reschedule_offer" | "reschedule_updated"; oppId: string; key: string }
+  | ({ t: "group_late" } & LateArrivalDelivery)
   | { t: "growth"; kind: string } | { t: "reengage" } | { t: "ask"; reason: AskRecord["reason"]; also?: string[]; follow?: boolean } | { t: "checkin" }
   | { t: "plan_probe"; oppId: string; id: MemberId } | { t: "crew_offer"; crewId: string }
   | { t: "invite_notice"; notice: InviteJoinNotice }
@@ -617,6 +632,26 @@ const MIN_NOTICE = 6 * HOUR, PARTNER_LEAD = 12 * HOUR;
 const EMPLOYER_TAGS = /^(employer|employer_type|occupation|company|job|job_title|workplace|work|role|title)$/i;
 const EMPLOYER_TEXT = /\b(works? (at|for)|employer|employed|company|job|occupation|workplace|engineer at|manager at)\b/i;
 const OPEN_STAGES = new Set(["review", "probing", "scheduled"]);
+
+const BOOKED_REMINDER_KINDS = ["day-before-reminder", "near-meeting-reminder", "day-of-checkin"] as const;
+export type BookedReminderKind = typeof BOOKED_REMINDER_KINDS[number];
+
+export function bookedReminderKind(id: string): BookedReminderKind | undefined {
+  return BOOKED_REMINDER_KINDS.find(kind => id.startsWith(`${kind}:`));
+}
+
+export function bookedReminderKey(kind: BookedReminderKind, oppId: string, memberId: MemberId, revision = 0): string {
+  const scope = kind === "day-before-reminder" && revision === 0 ? oppId : `${oppId}:r${revision}`;
+  return `${kind}:${scope}:${memberId}`;
+}
+
+export function bookedReminderWindow(kind: BookedReminderKind, now: number, start: number): boolean {
+  const remaining = start - now;
+  if (kind === "day-before-reminder") return dayBeforeReminderWindow(remaining);
+  if (kind === "day-of-checkin") return dayOfCheckInWindow(nyParts(now).day === nyParts(start).day, remaining);
+  return nearMeetingReminderWindow(remaining);
+}
+
 const activeOpportunityParticipant = (o: Opp, id: MemberId) =>
   o.participants.includes(id) && !["unavailable", "no", "dropped"].includes(o.status.get(id) ?? "");
 const EMPTY_SET: ReadonlySet<string> = new Set();
@@ -738,8 +773,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** The app this Network serves, and its member-facing copy. */
   readonly app: AppInfo;
   private readonly copy: Copy;
-  private opts: Required<Omit<NetworkOptions, "app" | "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "plansConfig" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "allowedCategories" | "hooks" | "onPosting" | "issueMemberInvite" | "memberInviteTurnAllowed" | "onPrivateInviteTurn" | "homeHelpIntakePrompt">>
-    & Pick<NetworkOptions, "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "hooks" | "onPosting" | "issueMemberInvite" | "memberInviteTurnAllowed" | "onPrivateInviteTurn" | "homeHelpIntakePrompt">;
+  private opts: Required<Omit<NetworkOptions, "app" | "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "plansConfig" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "allowedCategories" | "hooks" | "onPosting" | "issueMemberInvite" | "memberInviteTurnAllowed" | "lateArrivalTurnAllowed" | "onPrivateInviteTurn" | "homeHelpIntakePrompt">>
+    & Pick<NetworkOptions, "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "hooks" | "onPosting" | "issueMemberInvite" | "memberInviteTurnAllowed" | "lateArrivalTurnAllowed" | "onPrivateInviteTurn" | "homeHelpIntakePrompt">;
   /** The categories this app may start opportunities in (ALLOWED_CATEGORIES). */
   readonly allowedCategories: ReadonlySet<Category>;
   private pcfg: PlansConfig;
@@ -757,6 +792,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       understand: opts.understand, onAgeStated: opts.onAgeStated, engineLLM: opts.engineLLM, pack: opts.pack, hooks: opts.hooks, onPosting: opts.onPosting,
       issueMemberInvite: opts.issueMemberInvite,
       memberInviteTurnAllowed: opts.memberInviteTurnAllowed, onPrivateInviteTurn: opts.onPrivateInviteTurn,
+      lateArrivalTurnAllowed: opts.lateArrivalTurnAllowed,
       homeHelpIntakePrompt: opts.homeHelpIntakePrompt,
     };
     this.allowedCategories = new Set(opts.allowedCategories ?? ALLOWED_CATEGORIES[this.app.id] ?? ALLOWED_CATEGORIES.ntwrk!);
@@ -806,6 +842,39 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** How many messages we had sent since the member's previous message, when this one came in. */
   private outboundBefore = 0;
+
+  private handleGroupLateArrival(member: MemberState, now: number): boolean {
+    if (!this.groupLateArrivalPartyCurrent(member.id)) return false;
+    const groups = [...this.opps.values()].flatMap(opp => {
+      const roster = lateArrivalRoster(opp, id => opp.status.get(id) === "yes");
+      return groupLateArrivalBookingCurrent(opp, roster, member.id, now) ? [{ opp, roster }] : [];
+    });
+    if (groups.length !== 1) return false;
+    const { opp, roster } = groups[0]!;
+    const revision = opp.scheduleRevision ?? 0;
+    if (!lateArrivalMayReport(true, true, true, groups.length, opp.lateArrivalReported?.[member.id] === revision)) return true;
+    opp.lateArrivalReported = { ...opp.lateArrivalReported, [member.id]: revision };
+    let queued = false;
+    for (const to of roster) {
+      if (to === member.id || !this.groupLateArrivalPartyCurrent(to)) continue;
+      const delivery = { app: this.app.id, oppId: opp.id, meetingAt: opp.meetingAt!, revision, from: member.id, to };
+      const result = this.send(this.members.get(to)!, lateArrivalNotice, { type: "relay", proposalId: opp.id }, "relay", {
+        key: lateArrivalDeliveryId(delivery), about: [member.id, to], hook: { t: "group_late", ...delivery },
+      });
+      if (result !== "refused") queued = true;
+    }
+    if (queued) this.send(member, "I’ll pass along a short update where I can.", { type: "confirmation" }, "reply");
+    return true;
+  }
+
+  private groupLateArrivalPartyCurrent(id: MemberId): boolean {
+    const member = this.members.get(id);
+    if (!member || this.declinedIds.has(id)) return false;
+    this.syncRecord(member);
+    const view = relayMemberOf(member, !this.trust.ok(id) || this.reportHeld(id));
+    return canBeMatched(view.age) && !view.optedOut && !view.held && member.state !== "paused";
+  }
+
 
   /** What the LLM reader made of the message being handled (undefined without a reader, or when it failed). */
   private understood?: Understood;
@@ -942,6 +1011,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       return;
     }
 
+    if (!mcp && !msg.reaction && !c.abuse.length && isLateArrivalReport(body)
+      && this.opts.lateArrivalTurnAllowed?.(m.id, msg.id) && this.handleGroupLateArrival(m, now)) return;
+
     if (parsed.cofounderAffirmed) {
       if (mcp) return this.learnFromProfile(m, undefined, c, body);
       // spec/cofounderIntent.md, "Save only the current member's own affirmative goal"
@@ -970,6 +1042,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     // Answers to what we asked (never from the assistant's profile: it can only teach, below).
     const aw = mcp && m.awaiting?.kind !== "interview" ? undefined : m.awaiting;
     if (mcp && c.kind !== "people_request") return this.learnFromProfile(m, aw, c, body);
+    const reschedule = this.memberReply ? parseRescheduleCommand(body) : undefined;
+    if (reschedule) return this.handleMeetingReschedule(m, reschedule, msg.id, now);
     if (aw?.kind === "probe" && this.opps.get(aw.oppId!)?.plan) {
       // A plan probe: yes or no to that plan at that time ("can't make that time" is a no, and a time they are not free).
       const po = this.opps.get(aw.oppId!)!;
@@ -998,7 +1072,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (aw?.kind === "booked") {
       // spec/opportunityLifecycle.md, "A closed booking releases its pending replies"
       const o = this.opps.get(aw.oppId!);
-      if (!o || !bookedReplyCurrent(opportunityLifecycle(o), o.status.get(m.id) === "yes")) {
+      const checkIn = aw.bookedCheckIn;
+      const checkInCurrent = !checkIn || (o?.meetingAt === checkIn.meetingAt && (o.scheduleRevision ?? 0) === checkIn.revision
+        && bookedReminderWindow("day-of-checkin", now, checkIn.meetingAt));
+      if (!o || !checkInCurrent || !bookedReplyCurrent(opportunityLifecycle(o), o.status.get(m.id) === "yes")) {
         m.awaiting = undefined;
       } else {
         const yn = this.yesNoOf(body);
@@ -1081,6 +1158,113 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (action === "CancelMatchingBooking") this.handleDrop(m, matches[0]!);
     else this.send(m, action === "AskWhichBooking" ? this.copy.whichBookingToCancel : this.copy.noBookingToCancel, { type: "info" }, "reply");
     return true;
+  }
+
+  private rescheduleRoster(o: Opp): MemberId[] {
+    return [...new Set(o.participants.filter(id => o.status.get(id) === "yes"))].sort();
+  }
+
+  private rescheduleSlotViable(o: Opp, roster: readonly MemberId[], start: number, now: number): boolean {
+    if (o.publicEventRevision || o.plan?.eventId || o.anchor?.type === "event" || o.seat || roster.length < 2
+      || start > now + DEFAULT_ATTENTION.availability.horizonDays * DAY) return false;
+    const venue = PLAN_VENUES.find(place => o.plan?.venueId ? place.id === o.plan.venueId : place.name === o.venue && place.area === o.venueArea);
+    const duration = o.plan ? o.plan.window.end - o.plan.window.start : DEFAULT_ATTENTION.availability.slotHours * HOUR;
+    const slot = { start, end: start + duration };
+    if (!venue || duration <= 0 || !plans.venueOpenForSlot(venue, slot, duration / MINUTE, NY)) return false;
+    return roster.every(id => {
+      const member = this.members.get(id);
+      if (!member || !this.checkRecipient(id, "scheduling", { about: [...roster], reply: false }).ok
+        || this.bookedNear(id, start, o.id)) return false;
+      const availability = this.evidence(member, now, o.id);
+      const stated = member.stated;
+      return (!stated || stated.until <= start || stated.windows.some(window => window.start <= slot.start && window.end >= slot.end))
+        && !availability.calendar?.busy.some(window => window.start < slot.end && window.end > slot.start)
+        && attention.availabilityProb(availability, slot, now) > 0;
+    });
+  }
+
+  private currentReschedule(o: Opp, draft: RescheduleDraft, now: number): boolean {
+    const roster = this.rescheduleRoster(o);
+    return rescheduleDraftCurrent(o.stage === "scheduled", o.meetingAt === draft.originalAt, sameRescheduleRoster(draft.roster, roster),
+      (o.scheduleRevision ?? 0) === draft.revision,
+      rescheduleTimeEligible(now, draft.originalAt, draft.proposedAt, MIN_NOTICE, this.rescheduleSlotViable(o, roster, draft.proposedAt, now)),
+      now, draft.expiresAt);
+  }
+
+  private handleMeetingReschedule(m: MemberState, command: RescheduleCommand, messageId: string, now: number) {
+    const reply = (body: string) => this.send(m, body, { type: "info" }, "reply");
+    if (command.kind === "format") return reply(this.copy.rescheduleFormat);
+    if (command.kind === "request") {
+      const matches = [...this.opps.values()].filter(o => o.meetingAt === command.originalAt && upcomingCancellationEligible(
+        opportunityLifecycle(o), o.participants.includes(m.id), o.status.get(m.id) === "yes", true, command.originalAt, now));
+      if (matches.length !== 1) return reply(matches.length > 1 ? this.copy.whichBookingToReschedule : this.copy.noBookingToCancel);
+      const o = matches[0]!;
+      const roster = this.rescheduleRoster(o);
+      const expiresAt = rescheduleDeadline(now, command.originalAt, command.proposedAt, MIN_NOTICE);
+      if (expiresAt <= now || !rescheduleTimeEligible(now, command.originalAt, command.proposedAt, MIN_NOTICE,
+        this.rescheduleSlotViable(o, roster, command.proposedAt, now))) return reply(this.copy.rescheduleUnavailable);
+      if (o.reschedule && this.currentReschedule(o, o.reschedule, now)) return reply(this.copy.reschedulePending);
+      const draft: RescheduleDraft = {
+        ref: sha256(stableStringify([this.app.id, o.id, m.id, messageId, command.originalAt, command.proposedAt])),
+        revision: o.scheduleRevision ?? 0, originalAt: command.originalAt, proposedAt: command.proposedAt,
+        expiresAt, roster, offered: [], accepted: [],
+      };
+      o.reschedule = draft;
+      for (const id of roster) {
+        const recipient = this.member(id), key = rescheduleOfferKey(draft, id);
+        this.send(recipient, this.copy.rescheduleOffer(describeBookingStart(draft.originalAt), describeBookingStart(draft.proposedAt), rescheduleMemberRef(draft, id)),
+          { type: "scheduling", proposalId: o.id }, "scheduling", { about: roster, key, hook: { t: "reschedule_offer", oppId: o.id, key } });
+      }
+      return;
+    }
+    const matches = [...this.opps.values()].filter(item => item.reschedule?.offered.includes(m.id) && rescheduleMemberRef(item.reschedule, m.id) === command.ref);
+    const o = matches.length === 1 ? matches[0] : undefined;
+    const draft = o?.reschedule;
+    if (!o || !draft) return reply(this.copy.rescheduleUnavailable);
+    const current = this.currentReschedule(o, draft, now);
+    const repeated = command.accepted && draft.accepted.includes(m.id);
+    const action = rescheduleVote(this.memberReply, current, draft.offered.includes(m.id), repeated,
+      command.accepted, draft.accepted.length + 1, draft.roster.length);
+    if (action === "RejectVote") {
+      if (!current) o.reschedule = undefined;
+      return reply(repeated && current ? this.copy.reschedulePending : this.copy.rescheduleUnavailable);
+    }
+    if (action === "KeepOriginal") {
+      o.reschedule = undefined;
+      return reply(this.copy.rescheduleDeclined);
+    }
+    draft.accepted.push(m.id);
+    if (action === "AwaitParticipants") return reply(this.copy.reschedulePending);
+    this.commitMeetingReschedule(o, draft, now);
+  }
+
+  private commitMeetingReschedule(o: Opp, draft: RescheduleDraft, now: number) {
+    o.reschedule = undefined;
+    o.meetingAt = draft.proposedAt;
+    o.scheduleRevision = draft.revision + 1;
+    o.reminded.clear();
+    o.dayBeforeReminded = undefined;
+    o.confirmed = [...draft.roster];
+    o.explicit = [...draft.roster];
+    if (o.plan && o.planRun) {
+      const duration = o.plan.window.end - o.plan.window.start;
+      o.plan = { ...o.plan, window: { start: draft.proposedAt, end: draft.proposedAt + duration } };
+      const answers: plans.PlanRun["answers"] = Object.fromEntries(Object.entries(o.planRun.answers).map(([id, answer]) => [id, answer === "pending" ? "no" : answer]));
+      o.planRun = { ...o.planRun, plan: o.plan, answers, bench: [] };
+    }
+    for (const id of o.participants) {
+      const member = this.members.get(id);
+      if (member?.awaiting?.oppId === o.id) member.awaiting = undefined;
+      if (o.status.get(id) === "queued" || o.status.get(id) === "probing") o.status.set(id, "unavailable");
+    }
+    o.alternates = [];
+    this.ctx.recordMeeting({ proposalId: o.id, participants: draft.roster, at: draft.proposedAt, previousAt: draft.originalAt, city: "nyc", kind: o.kind });
+    this.ctx.log("meeting_rescheduled", { oppId: o.id, revision: o.scheduleRevision, previousAt: draft.originalAt, at: draft.proposedAt, changedAt: now });
+    for (const id of draft.roster) {
+      const key = rescheduleUpdateKey(o.id, o.scheduleRevision, id);
+      this.send(this.member(id), this.copy.rescheduleUpdated(describeBookingStart(draft.proposedAt)), { type: "scheduling", proposalId: o.id },
+        "scheduling", { about: draft.roster, key, hook: { t: "reschedule_updated", oppId: o.id, key } });
+    }
   }
 
   /**
@@ -1169,7 +1353,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       for (const set of [o.primed, o.contacted, o.reminded, o.feedbackFrom]) set.delete(id);
       o.status.delete(id); delete o.explanations[id];
       // Every per-member map and list too (network-consent-16): only declinedIds may keep the id.
-      for (const k of ["offered", "picks", "turnAt", "sentAt", "bookedAt", "post"] as const) if (o[k]) delete (o[k] as Record<string, unknown>)[id];
+      for (const k of ["offered", "picks", "turnAt", "sentAt", "bookedAt", "post", "lateArrivalReported"] as const) if (o[k]) delete (o[k] as Record<string, unknown>)[id];
       for (const k of ["explicit", "confirmed", "bookedTold", "dayBeforeReminded", "deferLogged", "timeRetry"] as const) if (o[k]) o[k] = o[k]!.filter(x => x !== id);
       if (o.post) for (const v of Object.values(o.post)) v.named = v.named.filter(x => x !== id);
       if (o.plan) o.plan = this.scrubPlan(o.plan, id);
@@ -2815,14 +2999,14 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   /** What the Network knows about when a member is free (engine-visible; never shareable). */
-  private evidence(m: MemberState, now: number): attention.AvailabilityEvidence {
+  private evidence(m: MemberState, now: number, exceptOpp?: string): attention.AvailabilityEvidence {
     const snap = this.snapshotCached();
     const stated = (m.availability ?? []).filter(a => now - a.at < 7 * DAY).map(a => ({ kind: "availability_pattern", tags: a.tags, observedAt: a.at }));
     // Standing availability said at onboarding does not expire (plans ask 1).
     const said = m.standing ? [{ kind: "availability_pattern", tags: m.standing.tags, observedAt: m.standing.at }] : [];
     const standing = attention.standingFromFacets([...snap.facets.filter(f => f.memberId === m.id), ...stated, ...said], now);
     // A member's booked plans count as away when a time is chosen for anything else (plans ask 5).
-    const booked = [...this.opps.values()].filter(o => o.stage === "scheduled" && o.meetingAt !== undefined && o.status.get(m.id) === "yes").map(o => ({ start: o.meetingAt! - 2 * HOUR, end: o.meetingAt! + 3 * HOUR }));
+    const booked = [...this.opps.values()].filter(o => o.id !== exceptOpp && o.stage === "scheduled" && o.meetingAt !== undefined && o.status.get(m.id) === "yes").map(o => ({ start: o.meetingAt! - 2 * HOUR, end: o.meetingAt! + 3 * HOUR }));
     const away = [...snap.presence.filter(p => p.memberId === m.id && p.type === "temporary" && p.city !== "nyc" && p.from !== undefined && p.to !== undefined).map(p => ({ start: p.from!, end: p.to! })), ...booked];
     return { memberId: m.id, tz: NY, quietHours: m.quietHours, standing, history: m.availHistory ?? [], ...(away.length ? { away } : {}) };
   }
@@ -4268,6 +4452,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   private advance(o: Opp, now: number) {
+    if (o.reschedule && (o.stage !== "scheduled" || now >= o.reschedule.expiresAt
+      || !sameRescheduleRoster(o.reschedule.roster, this.rescheduleRoster(o)))) o.reschedule = undefined;
     if (o.stage === "review" && o.review && reviewLate(now, o.review.deadline)) {
       // Missed its SLA: expires instead of being sent late (PRD 32.8).
       o.review.decision = "expired"; o.review.decidedAt = now;
@@ -4330,21 +4516,31 @@ export class ConsentNetwork implements NetworkUnderTest {
       // otherwise at the last allowed tick before the meeting.
       // A job intro has no meeting the Network booked: no reminder (the two arrange it through the agent).
       const remaining = o.meetingAt - now;
+      const sameLocalDay = nyParts(now).day === nyParts(o.meetingAt).day;
       for (const id of o.seat ? [] : o.participants) {
         if (o.status.get(id) !== "yes" || remaining <= 0 || remaining > DAY) continue;
         const m = this.members.get(id);
         if (!m || !this.timingOk(m, "logistics", now)) continue;
         const earlySent = (o.dayBeforeReminded ?? []).includes(id);
-        const booked = o.bookedAt?.[id] !== undefined;
-        const early = dayBeforeReminderDue(true, booked, earlySent, remaining);
-        if (!early && (o.reminded.has(id) || (earlySent && dayBeforeReminderWindow(remaining)))) continue;
+        const booked = o.bookedAt?.[id] !== undefined && o.bookedTold?.includes(id) === true;
+        if (!booked) continue;
+        const early = dayBeforeReminderDue(true, true, earlySent, remaining);
+        if (!early && (o.reminded.has(id) || !nearMeetingReminderWindow(remaining))) continue;
         if (!early && remaining > nearMeetingReminderLeadMs && this.laterAllowedTick(m, now, o.meetingAt - HOUR)) continue;
-        const result = this.send(m, copy.reminder(whenPhrase(o.meetingAt), `${o.venue}`), { type: "reminder", proposalId: o.id }, "reminder", {
+        // spec/meetingSettlement.md, "The day-of check-in uses one near-meeting message"
+        const replySlotAvailable = !m.awaiting || (m.awaiting.kind === "booked" && m.awaiting.oppId === o.id);
+        const checkIn = !early && dayOfCheckInDue(sameLocalDay, replySlotAvailable, remaining);
+        const kind = early ? "day-before-reminder" : checkIn ? "day-of-checkin" : "near-meeting-reminder";
+        const text = (checkIn ? copy.dayOfCheckIn : copy.reminder)(whenPhrase(o.meetingAt), `${o.venue}`);
+        const result = this.send(m, text, { type: "reminder", proposalId: o.id }, "reminder", {
           about: o.participants.filter(p => o.status.get(p) === "yes"), noDefer: true,
-          ...(early ? { key: `day-before-reminder:${o.id}:${id}` } : {}),
+          key: bookedReminderKey(kind, o.id, id, o.scheduleRevision),
         });
-        if (!early) o.reminded.add(id);
-        else if (result === "sent") o.dayBeforeReminded = [...(o.dayBeforeReminded ?? []), id];
+        if (result !== "sent") continue;
+        if (early) o.dayBeforeReminded = [...(o.dayBeforeReminded ?? []), id];
+        else o.reminded.add(id);
+        if (checkIn) this.expect(m, { kind: "booked", oppId: o.id, at: now,
+          bookedCheckIn: { meetingAt: o.meetingAt, revision: o.scheduleRevision ?? 0 } });
       }
       const settlement = stepMeetingSettlement(initialMeetingSettlement, {
         type: "requestFeedback", unsent: !o.feedbackSent, asOf: now, feedbackAt: o.meetingAt + feedbackDelayHours * HOUR,
@@ -5312,6 +5508,19 @@ export class ConsentNetwork implements NetworkUnderTest {
       case "age": return { onSent: () => { m.awaiting = { kind: "age", at: now() }; } };
       case "suggested": return { onSent: () => this.suggested(m, h.venues) };
       case "retry_found": return { valid: () => !!o && OPEN_STAGES.has(o.stage) && o.stage !== "review" };
+      case "reschedule_offer": return {
+        valid: () => {
+          const draft = o?.reschedule;
+          return !!o && !!draft && h.key === rescheduleOfferKey(draft, m.id) && !draft.offered.includes(m.id) && this.currentReschedule(o, draft, now());
+        },
+        onSent: () => {
+          const draft = o?.reschedule;
+          if (draft && h.key === rescheduleOfferKey(draft, m.id) && !draft.offered.includes(m.id)) draft.offered.push(m.id);
+        },
+      };
+      case "reschedule_updated": return {
+        valid: () => !!o && rescheduleNoticeCurrent({ ...o, current: o.stage === "scheduled" }, this.rescheduleRoster(o), m.id, h.key, now()),
+      };
       case "invite_notice": return {
         valid: () => (m.pendingInviteJoins ?? []).some(x => x.inviteeId === h.notice.inviteeId && x.at === h.notice.at)
           && this.inviteJoinText(m, h.notice) !== undefined && !m.onlyWhenAsked,
@@ -5351,7 +5560,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         onRefused: () => { if (o && o.stage === "probing" && o.status.get(h.id) === "probing") { o.status.set(h.id, "available"); this.advanceProbes(o); } },
       };
       case "reveal": return {
-        valid: () => !!o && o.stage === "scheduled" && o.status.get(h.id) === "yes" && now() < (o.meetingAt ?? Infinity),
+        valid: () => !!o && o.stage === "scheduled" && (o.scheduleRevision ?? 0) === 0 && o.status.get(h.id) === "yes" && now() < (o.meetingAt ?? Infinity),
         onSent: () => {
           if (!o) return;
           this.expect(m, { kind: "booked", oppId: o.id, at: now() });
@@ -5379,6 +5588,10 @@ export class ConsentNetwork implements NetworkUnderTest {
       case "crew_offer": return {
         valid: () => this.crewOffers.some(c => c.crew.id === h.crewId && !c.resolved),
         onSent: () => this.expect(m, { kind: "crew", crewId: h.crewId, at: now() }),
+      };
+      case "group_late": return {
+        valid: () => !!o && this.groupLateArrivalPartyCurrent(h.from) && this.groupLateArrivalPartyCurrent(m.id)
+          && groupLateArrivalDeliveryCurrent(o, h, now(), id => o.status.get(id) === "yes") && h.app === this.app.id && m.id === h.to,
       };
       case "drop_notice": return { valid: () => !!o && now() < (o.meetingAt ?? Infinity) };
       case "feedback": return { onSent: () => { if (o) this.expect(m, { kind: "feedback", oppId: o.id, at: now() }); } };
@@ -6199,6 +6412,38 @@ function relayMemberOf(m: Pick<MemberState, "id" | "first" | "age" | "statedAge"
   const ages = [m.age, m.statedAge].filter((a): a is number => validAge(a));
   const unsure = m.minor || m.minorSignal || m.minorReported || m.ageUnknown || m.ageConflict || !ages.length;
   return { id: m.id, firstName: m.first, age: unsure ? undefined : Math.min(...ages), optedOut: m.optedOut, held: !!m.account || trustHold };
+}
+
+type LateArrivalBooking = Pick<Opp, "stage" | "review" | "participants" | "meetingAt" | "scheduleRevision" | "bookedAt" | "seat" | "lateArrivalReported">;
+
+function lateArrivalRoster(opp: LateArrivalBooking, accepted: (id: MemberId) => boolean): MemberId[] {
+  return [...new Set(opp.participants)].filter(id => accepted(id) && opp.bookedAt?.[id] !== undefined);
+}
+
+function groupLateArrivalBookingCurrent(opp: LateArrivalBooking, roster: readonly MemberId[], from: MemberId, now: number): boolean {
+  return opp.meetingAt !== undefined
+    && lateArrivalGroupCurrent(opp.stage === "scheduled", opp.review?.decision === "approve", !opp.seat, roster.includes(from), roster.length, opp.meetingAt - now);
+}
+
+function groupLateArrivalDeliveryCurrent(opp: LateArrivalBooking, delivery: LateArrivalDelivery, now: number, accepted: (id: MemberId) => boolean): boolean {
+  const roster = lateArrivalRoster(opp, accepted);
+  const { from, to, revision, meetingAt } = delivery;
+  return lateArrivalMayDispatch(groupLateArrivalBookingCurrent(opp, roster, from, now),
+    opp.lateArrivalReported?.[from] === revision, opp.meetingAt === meetingAt && (opp.scheduleRevision ?? 0) === revision,
+    roster.includes(to), from !== to, true);
+}
+
+/** Check a queued notice against the latest committed Network state for its exact app. */
+export function storedGroupLateArrivalCurrent(state: NetworkState, delivery: LateArrivalDelivery, now: number): boolean {
+  const opp = state.opps.find(o => o.id === delivery.oppId);
+  if (!opp || !groupLateArrivalDeliveryCurrent(opp, delivery, now, id => opp.status.some(([key, status]) => key === id && status === "yes"))) return false;
+  if (state.blocks.includes(pairKey(delivery.from, delivery.to))) return false;
+  return [delivery.from, delivery.to].every(id => {
+    const member = state.members.find(m => m.id === id);
+    if (!member || state.declinedIds.includes(id)) return false;
+    const view = relayMemberOf(member, state.trust?.some(record => record.id === id && record.level !== "ok") || pendingReportHold(state.reports, id));
+    return canBeMatched(view.age) && !view.optedOut && !view.held && member.state !== "paused";
+  });
 }
 
 /** Read back the issuer's current Network safety state without reloading the live runtime. */

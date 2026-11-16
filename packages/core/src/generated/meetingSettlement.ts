@@ -21,12 +21,12 @@ export type Event =
   | { type: "requestFeedback"; unsent: boolean; asOf: number; feedbackAt: number }
   | { type: "resolveAttendance"; timedOut: boolean; everyoneResponded: boolean };
 
+/** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md) */
+export const confirmationWindowHours: number = 48;
 /** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
 export const feedbackDelayHours: number = 3;
 /** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */
 export const settlementDelayDays: number = 4;
-/** Story: Confirm a booked meeting after the details arrive / Confirmation needs an accepted invitation and a delivered booking (spec/meetingSettlement.md) */
-export const confirmationWindowHours: number = 48;
 /** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
 export const dayBeforeReminderStartMs: number = exact_meetingSettlement(24 * 3600000);
 /** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
@@ -72,6 +72,12 @@ export function dayBeforeReminderWindow(remainingMs: number): boolean {
 
 /** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
 //@ pure
+export function nearMeetingReminderWindow(remainingMs: number): boolean {
+  return remainingMs > 0 && remainingMs <= dayBeforeReminderEndMs;
+}
+
+/** Story: Hear about a booked meeting the day before / A day-before reminder has its own send window (spec/meetingSettlement.md) */
+//@ pure
 export function dayBeforeReminderDue(accepted: boolean, bookingDelivered: boolean, earlySent: boolean, remainingMs: number): boolean {
   return accepted && bookingDelivered && !earlySent && dayBeforeReminderWindow(remainingMs);
 }
@@ -88,6 +94,25 @@ export function lawDayBeforeReminderFollowsBooking(accepted: boolean, earlySent:
 export function lawDayBeforeReminderDoesNotRepeat(accepted: boolean, bookingDelivered: boolean, remainingMs: number): boolean {
   //@ ensures \result === true
   return !dayBeforeReminderDue(accepted, bookingDelivered, true, remainingMs);
+}
+
+/** Story: Check whether a booked participant is still coming / The day-of check-in uses one near-meeting message (spec/meetingSettlement.md) */
+//@ pure
+export function dayOfCheckInWindow(sameLocalDay: boolean, remainingMs: number): boolean {
+  return sameLocalDay && nearMeetingReminderWindow(remainingMs);
+}
+
+/** Story: Check whether a booked participant is still coming / The day-of check-in uses one near-meeting message (spec/meetingSettlement.md) */
+//@ pure
+export function dayOfCheckInDue(sameLocalDay: boolean, replySlotAvailable: boolean, remainingMs: number): boolean {
+  return replySlotAvailable && dayOfCheckInWindow(sameLocalDay, remainingMs);
+}
+
+/** Story: Check whether a booked participant is still coming / The day-of check-in uses one near-meeting message (spec/meetingSettlement.md) */
+//@ pure
+export function lawDayOfCheckInNeedsAFutureMeeting(sameLocalDay: boolean, replySlotAvailable: boolean, remainingMs: number): boolean {
+  //@ ensures \result === true
+  return !dayOfCheckInDue(sameLocalDay, replySlotAvailable, remainingMs) || (sameLocalDay && remainingMs > 0);
 }
 
 /** Story: Ask for feedback and close attendance once / A feedback request opens the attendance period (spec/meetingSettlement.md) */

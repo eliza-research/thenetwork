@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { HOUR } from "@thenetwork/core";
+import { DAY, HOUR } from "@thenetwork/core";
 import { confirmationWindowHours } from "../../core/src/generated/meetingSettlement.ts";
 import { Mini } from "./mini.ts";
 
@@ -23,7 +23,7 @@ async function bookedPair() {
 test("an unlinked explicit cancellation selects the one future booking, even with a started booking still scheduled", async () => {
   const { w, state, booked } = await bookedPair();
   const replyExpires = w.clock.now() + confirmationWindowHours * HOUR + 1;
-  const start = replyExpires + HOUR;
+  const start = replyExpires + 2 * DAY;
   state.opps = [
     { ...booked, meetingAt: start },
     { ...booked, id: "upcoming", meetingAt: start + 2 * HOUR },

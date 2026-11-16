@@ -210,7 +210,7 @@ Models: [relay](../models/relay.md), [photo relay item](../models/photo_relay_it
 
 Use stated availability or authorized calendar free/busy, travel constraints and a public venue. Offer 2–3 viable times when a slot is unsettled. If consenting probe answers select a shared slot, the reveal can carry the booked plan. A changed time requires renewed consent. A cancellation notifies participants with minimal detail. The agent suggests booking links and gives requested calendar invites. It holds no money.
 
-Models: [requested calendar invite](../calendarInvite.md), [opportunity](../models/opportunity.md), [plan run](../models/plan_run.md).
+Models: [meeting rescheduling](../meetingReschedule.md), [requested calendar invite](../calendarInvite.md), [opportunity](../models/opportunity.md), [plan run](../models/plan_run.md).
 
 ## Story F18 — Keep a meeting on track
 
@@ -220,7 +220,7 @@ Models: [requested calendar invite](../calendarInvite.md), [opportunity](../mode
 
 Send permitted reminders and a day-of check-in. Relay a late arrival. Offer a reviewed, eligible replacement or reschedule when someone drops, or cancel gracefully if minimum participation fails. A booked group cannot continue with fewer than three people. Record attendance and apply the contextual no-show rule. STOP, bans, blocks and quiet hours still apply.
 
-Models: [meeting settlement](../meetingSettlement.md), [reviewed group journey](../reviewedGroupJourney.md), [plan run](../models/plan_run.md), [outbound queue](../models/outbound_queue.md).
+Models: [meeting settlement](../meetingSettlement.md), [late arrival in a booked group](../groupLateArrival.md), [reviewed group journey](../reviewedGroupJourney.md), [plan run](../models/plan_run.md), [outbound queue](../models/outbound_queue.md).
 
 ## Story F19 — Give feedback and meet again
 

@@ -80,6 +80,14 @@ export function copyFor(b: CopyBrand) {
   bookedThanks: "Great, see you there.",
   whichBookingToCancel: "I found more than one upcoming meeting. Which one should I cancel? Use “Please cancel my meeting on YYYY-MM-DD at HH:MM” with its New York date and 24-hour time.",
   noBookingToCancel: "I couldn't find a matching upcoming meeting.",
+  whichBookingToReschedule: "More than one booking has that start. Which meeting did you mean?",
+  rescheduleFormat: "Use RESCHEDULE YYYY-MM-DD HH:MM TO YYYY-MM-DD HH:MM with the old and proposed New York starts in 24-hour time.",
+  rescheduleUnavailable: "I couldn't apply that time change.",
+  reschedulePending: "The booking stays at its current time while I wait for everyone to accept the change.",
+  rescheduleDeclined: "Thanks for letting me know. I'll keep the original booking time.",
+  rescheduleOffer: (original: string, proposed: string, ref: string) =>
+    `Could your meeting move from ${original} to ${proposed}, New York time? The original booking stays until everyone agrees. Reply RESCHEDULE YES ${ref} or RESCHEDULE NO ${ref}.`,
+  rescheduleUpdated: (proposed: string) => `Everyone agreed. Your meeting is now ${proposed}, New York time, at the same place.`,
   /** A probe reply that was neither a clear yes nor a clear no (a condition, a maybe): asked once more. */
   probeClarify: "Just to check: is that a yes or a no? Either is fine.",
   /** The member opted in to calendar free/busy (founder decision 4c); free/busy only, never event details. */
@@ -107,6 +115,7 @@ export function copyFor(b: CopyBrand) {
   plansNoOffer: (lines: string[]) => `A few ideas nearby: ${lines.join("; ")}. Happy to suggest more anytime.`,
   declinedQuiet: "That one didn't come together this time. No action needed; I'll keep an eye out.",
   reminder: (when: string, venue: string) => `Reminder: ${when} at ${venue}. Have fun! If something comes up, just tell me.`,
+  dayOfCheckIn: (when: string, venue: string) => `Still good for ${when} at ${venue}? Tell me if you're running late or can't make it.`,
   /** Someone dropped out of a booked plan. Never says who: the plan's change is the news, not the person (judge decliner_exposed). */
   dropNotice: (_first: string, keep: boolean) => keep
     ? `Quick update: one person can't make it now, sorry. The rest of you are still on.`
