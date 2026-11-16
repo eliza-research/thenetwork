@@ -48,3 +48,15 @@
 {"text": "I couldn't share this pic with her", "want": "none"}
 {"text": "can't wait! send them my number", "want": "contact_share"}
 {"text": "tell them I can't make it at 7", "want": "text"}
+{"text": "send them my number when we meet", "want": "none"}
+{"text": "send them my number once we meet", "want": "none"}
+{"text": "send them my number when I see him", "want": "none"}
+{"text": "send them my number next week", "want": "none"}
+{"text": "send them my number on Friday", "want": "none"}
+{"text": "send them my number after our date", "want": "none"}
+{"text": "send them my number after our first date", "want": "none"}
+{"text": "send them my number when we're together", "want": "none"}
+{"text": "send them this photo when we meet", "want": "none"}
+{"text": "send them this photo next week", "want": "none"}
+{"text": "send them my number this weekend", "want": "none"}
+{"text": "send them my number in a few days", "want": "none"}

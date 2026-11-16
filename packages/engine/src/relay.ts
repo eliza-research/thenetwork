@@ -457,7 +457,9 @@ const NEG = /\b(?:don'?t|dont|do not|never|not yet|no need to|stop|shouldn'?t|wo
  * make it"). "Can't wait" is not a refusal.
  */
 const SHARE_NEG = /\b(?:not going to|not gonna|can'?t(?! wait)|cant(?! wait)|cannot(?! wait)|can not|couldn'?t|wouldn'?t|wasn'?t|didn'?t|not ready to|no way|refuse to)\b/;
-const HEDGE = /^\s*(?:should i|do you think|is it ok(?:ay)? (?:to|if)|would it be|what if|maybe|if)\b|\b(?:later|after the date|after we meet|eventually|at some point|one day|tomorrow)\b|\b(?:should i|or not)\b/;
+// A share deferred to a later time is not a share now: the list already hedges "after we meet"
+// and "tomorrow"; "when we meet", "next week" and "on Friday" are the same intent in other words.
+const HEDGE = /^\s*(?:should i|do you think|is it ok(?:ay)? (?:to|if)|would it be|what if|maybe|if)\b|\b(?:later|after the date|after we meet|eventually|at some point|one day|tomorrow)\b|\b(?:should i|or not)\b|\b(?:when|once)\s+(?:we(?:'re)?|i)\s+(?:meet|see\s+(?:him|her|them|each other)|get together|together)\b|\bafter\s+(?:our|my|the)\s+(?:first\s+)?date\b|\bnext\s+(?:week|month)\b|\bthis\s+(?:week|weekend)\b|\bin a (?:few days|week|month)\b|\b(?:on|this|next)\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/;
 const OTHER = "(?:them|him|her|my (?:match|date)|(?!(?:me|us|it|everyone|everybody|nobody|anyone|this|that)\\b)\\p{L}[\\p{L}'-]{1,30})";
 const CONTACT_REQ = new RegExp(`\\b(?:send|give|share|pass|forward|text)\\s+${OTHER}\\s+my\\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)\\b|\\b(?:share|send|give|pass)\\s+my\\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)\\s+(?:with|to)\\s+${OTHER}|^\\s*(?:yes|yeah|yep|ok|okay|sure)[,!.]?\\s+(?:send|share|give)\\s+(?:it|my number|them my number)\\b|\\b(?:they|she|he) can have my (?:number|digits|phone number)\\b`, "iu");
 const PHOTO_REQ = new RegExp(`\\b(?:send|share|forward|pass|show)\\s+${OTHER}\\s+(?:this|that|the|my|these)\\s+(?:photos?|pics?|pictures?|selfies?|images?)\\b|\\b(?:send|share|forward)\\s+(?:this|that|these|my)\\s+(?:photos?|pics?|pictures?|selfies?)\\s+(?:to|with)\\s+${OTHER}`, "iu");
