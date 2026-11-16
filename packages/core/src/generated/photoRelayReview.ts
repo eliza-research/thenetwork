@@ -1,13 +1,13 @@
 // GENERATED from spec/photoRelayReview.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md:9) */
+/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
 export type ReviewState = "PendingReview" | "ApprovedReview" | "RejectedReview" | "RevokedReview";
-/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md:9) */
+/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
 export type SelectionPhase = "Selecting" | "CheckingParties" | "CheckingPhoto" | "ResolvingNotice" | "ReadyToStore" | "StoredSelection" | "SelectionRefused";
-/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md:9) */
+/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
 export interface PhotoSelection { phase: SelectionPhase; review: ReviewState }
-/** Story: Choose one photo and allow a designated reviewer to decide / A designated reviewer can approve a current pending item (spec/photoRelayReview.md:43) */
+/** Story: Choose one photo and allow a designated reviewer to decide / A designated reviewer can approve a current pending item (spec/photoRelayReview.md) */
 export type ReviewChoice = "ApprovePhoto" | "RejectPhoto" | "KeepPending";
 
 /** One variant per transition in the spec. */
@@ -20,9 +20,9 @@ export type Event =
   | { type: "recordReview"; choice: ReviewChoice; reviewerAuthorized: boolean; currentItem: boolean; itemLive: boolean }
   | { type: "revokeSelection"; ownerMatches: boolean };
 
-/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md:9) */
+/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
 export const relayItemTtlMs: number = 900000;
-/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md:9) */
+/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
 export const initial: PhotoSelection = { phase: "Selecting", review: "PendingReview" };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -31,7 +31,7 @@ export function inv(current: PhotoSelection): boolean {
   return alwaysSelectionStartsPending(current);
 }
 
-/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md:9) */
+/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
 //@ pure
 export function checkSelection(s: PhotoSelection, inputValid: boolean, explicitConsent: boolean): PhotoSelection {
   //@ ensures (inv(s) && canCheckSelection(s)) ==> alwaysSelectionStartsPending(\result)
@@ -40,13 +40,13 @@ export function checkSelection(s: PhotoSelection, inputValid: boolean, explicitC
   return { ...s, phase: inputValid && explicitConsent ? "CheckingParties" : "SelectionRefused" };
 }
 
-/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md:9) */
+/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
 //@ pure
 export function canCheckParties(s: PhotoSelection): boolean {
   return s.phase === "CheckingParties";
 }
 
-/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md:9) */
+/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
 //@ pure
 export function checkParties(s: PhotoSelection, senderMatches: boolean, differentPeople: boolean, differentMembers: boolean): PhotoSelection {
   //@ ensures (inv(s) && canCheckParties(s)) ==> alwaysSelectionStartsPending(\result)
@@ -55,13 +55,13 @@ export function checkParties(s: PhotoSelection, senderMatches: boolean, differen
   return { ...s, phase: senderMatches && differentPeople && differentMembers ? "CheckingPhoto" : "SelectionRefused" };
 }
 
-/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md:9) */
+/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
 //@ pure
 export function canCheckPhoto(s: PhotoSelection): boolean {
   return s.phase === "CheckingPhoto";
 }
 
-/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md:9) */
+/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
 //@ pure
 export function checkPhoto(s: PhotoSelection, currentPhoto: boolean): PhotoSelection {
   //@ ensures (inv(s) && canCheckPhoto(s)) ==> alwaysSelectionStartsPending(\result)
@@ -70,13 +70,13 @@ export function checkPhoto(s: PhotoSelection, currentPhoto: boolean): PhotoSelec
   return { ...s, phase: currentPhoto ? "ResolvingNotice" : "SelectionRefused" };
 }
 
-/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md:9) */
+/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
 //@ pure
 export function canResolveNotice(s: PhotoSelection): boolean {
   return s.phase === "ResolvingNotice";
 }
 
-/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md:9) */
+/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
 //@ pure
 export function resolveNotice(s: PhotoSelection, readyNotice: boolean): PhotoSelection {
   //@ ensures (inv(s) && canResolveNotice(s)) ==> alwaysSelectionStartsPending(\result)
@@ -85,13 +85,13 @@ export function resolveNotice(s: PhotoSelection, readyNotice: boolean): PhotoSel
   return { ...s, phase: readyNotice ? "ReadyToStore" : "SelectionRefused" };
 }
 
-/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md:9) */
+/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
 //@ pure
 export function canRecordSelection(s: PhotoSelection): boolean {
   return s.phase === "ReadyToStore";
 }
 
-/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md:9) */
+/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
 //@ pure
 export function recordSelection(s: PhotoSelection): PhotoSelection {
   //@ ensures (inv(s) && canRecordSelection(s)) ==> alwaysSelectionStartsPending(\result)
@@ -100,31 +100,31 @@ export function recordSelection(s: PhotoSelection): PhotoSelection {
   return { ...s, phase: "StoredSelection" };
 }
 
-/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md:9) */
+/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
 //@ pure
 export function alwaysSelectionStartsPending(s: PhotoSelection): boolean {
   return !(s.phase !== "StoredSelection") || s.review === "PendingReview";
 }
 
-/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md:9) */
+/** Story: Choose one photo and allow a designated reviewer to decide / Select one eligible photo using the current notice (spec/photoRelayReview.md) */
 //@ pure
 export function canCheckSelection(s: PhotoSelection): boolean {
   return s.phase === "Selecting";
 }
 
-/** Story: Choose one photo and allow a designated reviewer to decide / A designated reviewer can approve a current pending item (spec/photoRelayReview.md:43) */
+/** Story: Choose one photo and allow a designated reviewer to decide / A designated reviewer can approve a current pending item (spec/photoRelayReview.md) */
 //@ pure
 export function photoReviewable(s: PhotoSelection): boolean {
   return s.phase === "StoredSelection" && (s.review === "PendingReview" || s.review === "ApprovedReview");
 }
 
-/** Story: Choose one photo and allow a designated reviewer to decide / A designated reviewer can approve a current pending item (spec/photoRelayReview.md:43) */
+/** Story: Choose one photo and allow a designated reviewer to decide / A designated reviewer can approve a current pending item (spec/photoRelayReview.md) */
 //@ pure
 export function reviewNeedsCurrent(choice: ReviewChoice): boolean {
   return choice === "ApprovePhoto";
 }
 
-/** Story: Choose one photo and allow a designated reviewer to decide / A designated reviewer can approve a current pending item (spec/photoRelayReview.md:43) */
+/** Story: Choose one photo and allow a designated reviewer to decide / A designated reviewer can approve a current pending item (spec/photoRelayReview.md) */
 //@ pure
 export function recordReview(s: PhotoSelection, choice: ReviewChoice, reviewerAuthorized: boolean, currentItem: boolean, itemLive: boolean): PhotoSelection {
   //@ ensures (inv(s) && canRecordReview(s, choice, reviewerAuthorized, currentItem, itemLive)) ==> alwaysSelectionStartsPending(\result)
@@ -133,31 +133,31 @@ export function recordReview(s: PhotoSelection, choice: ReviewChoice, reviewerAu
   return { ...s, review: choice === "ApprovePhoto" ? "ApprovedReview" : (s.review === "ApprovedReview" ? "RevokedReview" : "RejectedReview") };
 }
 
-/** Story: Choose one photo and allow a designated reviewer to decide / A designated reviewer can approve a current pending item (spec/photoRelayReview.md:43) */
+/** Story: Choose one photo and allow a designated reviewer to decide / A designated reviewer can approve a current pending item (spec/photoRelayReview.md) */
 //@ pure
 export function stepOnlyReviewApproves(before: PhotoSelection, via: string, after: PhotoSelection): boolean {
   return !(before.review !== "ApprovedReview" && after.review === "ApprovedReview") || via === "recordReview";
 }
 
-/** Story: Choose one photo and allow a designated reviewer to decide / A designated reviewer can approve a current pending item (spec/photoRelayReview.md:43) */
+/** Story: Choose one photo and allow a designated reviewer to decide / A designated reviewer can approve a current pending item (spec/photoRelayReview.md) */
 //@ pure
 export function photoReviewMayProceed(s: PhotoSelection, choice: ReviewChoice, reviewerAuthorized: boolean, itemLive: boolean): boolean {
   return photoReviewable(s) && reviewerAuthorized && itemLive && (choice === "RejectPhoto" || (choice === "ApprovePhoto" && s.review === "PendingReview"));
 }
 
-/** Story: Choose one photo and allow a designated reviewer to decide / A designated reviewer can approve a current pending item (spec/photoRelayReview.md:43) */
+/** Story: Choose one photo and allow a designated reviewer to decide / A designated reviewer can approve a current pending item (spec/photoRelayReview.md) */
 //@ pure
 export function canRecordReview(s: PhotoSelection, choice: ReviewChoice, reviewerAuthorized: boolean, currentItem: boolean, itemLive: boolean): boolean {
   return photoReviewMayProceed(s, choice, reviewerAuthorized, itemLive) && (!reviewNeedsCurrent(choice) || currentItem);
 }
 
-/** Story: Choose one photo and allow a designated reviewer to decide / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md:68) */
+/** Story: Choose one photo and allow a designated reviewer to decide / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md) */
 //@ pure
 export function canRevokeSelection(s: PhotoSelection, ownerMatches: boolean): boolean {
   return s.phase === "StoredSelection" && ownerMatches;
 }
 
-/** Story: Choose one photo and allow a designated reviewer to decide / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md:68) */
+/** Story: Choose one photo and allow a designated reviewer to decide / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md) */
 //@ pure
 export function revokeSelection(s: PhotoSelection, ownerMatches: boolean): PhotoSelection {
   //@ ensures (inv(s) && canRevokeSelection(s, ownerMatches)) ==> alwaysSelectionStartsPending(\result)
@@ -166,37 +166,37 @@ export function revokeSelection(s: PhotoSelection, ownerMatches: boolean): Photo
   return { ...s, review: "RevokedReview" };
 }
 
-/** Story: Choose one photo and allow a designated reviewer to decide / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md:68) */
+/** Story: Choose one photo and allow a designated reviewer to decide / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md) */
 //@ pure
 export function stepRevocationIsFinal(before: PhotoSelection, after: PhotoSelection): boolean {
   return !(before.review === "RevokedReview") || after.review === "RevokedReview";
 }
 
-/** Story: Choose one photo and allow a designated reviewer to decide / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md:68) */
+/** Story: Choose one photo and allow a designated reviewer to decide / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md) */
 //@ pure
 export function sometimesApproved(s: PhotoSelection): boolean {
   return s.review === "ApprovedReview";
 }
 
-/** Story: Choose one photo and allow a designated reviewer to decide / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md:68) */
+/** Story: Choose one photo and allow a designated reviewer to decide / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md) */
 //@ pure
 export function sometimesRevoked(s: PhotoSelection): boolean {
   return s.review === "RevokedReview";
 }
 
-/** Story: Choose one photo and allow a designated reviewer to decide / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md:68) */
+/** Story: Choose one photo and allow a designated reviewer to decide / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md) */
 //@ pure
 export function photoHeldForReview(s: PhotoSelection, claimed: boolean): boolean {
   return photoReviewable(s) && (s.review === "PendingReview" || !claimed);
 }
 
-/** Story: Choose one photo and allow a designated reviewer to decide / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md:68) */
+/** Story: Choose one photo and allow a designated reviewer to decide / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md) */
 //@ pure
 export function reviewAuthorizationCurrent(s: PhotoSelection, configured: boolean, reviewerAuthorized: boolean, itemLive: boolean, samePolicy: boolean): boolean {
   return photoReviewable(s) && configured && reviewerAuthorized && itemLive && samePolicy;
 }
 
-/** Story: Choose one photo and allow a designated reviewer to decide / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md:68) */
+/** Story: Choose one photo and allow a designated reviewer to decide / Held visibility is separate from delivery and owner cancellation (spec/photoRelayReview.md) */
 //@ pure
 export function reviewPreviewAllowed(s: PhotoSelection, claimed: boolean, reviewerAuthorized: boolean, itemLive: boolean): boolean {
   return photoHeldForReview(s, claimed) && reviewerAuthorized && itemLive;

@@ -1,6 +1,10 @@
 // spec/browserJoin.md, "Join in the browser"
 import { useEffect, useRef, useState } from "react";
 import {
+  browserInvitationKeepsAccount,
+  browserInvitationMayBind,
+  browserInvitationMayRetry,
+  browserInvitationMaySubmit,
   canAnswerCloudStart,
   canAnswerCodeStart,
   canAnswerJoin,
@@ -67,14 +71,26 @@ interface LinkFields {
   viaAgent: boolean;
   name: string;
   age: string;
+  invitation?: PrivateInvitation;
+}
+
+interface PrivateInvitation {
+  token?: string;
+  signupView?: string;
 }
 
 function readLink(): LinkFields {
   const fields = new URLSearchParams(window.location.hash.slice(1));
+  const invites = window.location.pathname === "/join" ? fields.getAll("invite") : [];
+  const value = invites.length === 1 ? invites[0] : undefined;
   return {
     viaAgent: new URLSearchParams(window.location.search).get("via") === "agent",
     name: (fields.get("firstName") ?? "").slice(0, fragmentNameMax),
     age: fields.get("age") ?? "",
+    ...(invites.length > 0 ? { invitation: {
+      // A 32-byte base64url token has 43 characters and zero trailing padding bits.
+      token: value && /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/.test(value) ? value : undefined,
+    } } : {}),
   };
 }
 
@@ -105,6 +121,7 @@ export function useJoin({ siteKey, pageMinAge, pageInviteOnly = false, returnPat
   const token = useRef<string | undefined>(undefined);
   const sentTo = useRef("");
   const signupView = useRef<string | undefined>(undefined);
+  const invitation = useRef<PrivateInvitation | undefined>(undefined);
   const accounts = useRef(new Map<string, number>());
 
   const [actions] = useState(() => {
@@ -117,6 +134,7 @@ export function useJoin({ siteKey, pageMinAge, pageInviteOnly = false, returnPat
       const before = current.current;
       if (!enabled(before.page, event)) return undefined;
       const page = step(before.page, event);
+      if (!browserInvitationKeepsAccount(before.page.account, page.account)) invitation.current = undefined;
       const merged = { ...before, ...fields, page };
       commit(page.formHasValues ? merged : { ...merged, values: emptyValues });
       return page;
@@ -131,10 +149,17 @@ export function useJoin({ siteKey, pageMinAge, pageInviteOnly = false, returnPat
       const lookup = await readAuthLookup();
       send({ type: "readAuthMode", lookup, checkOn: siteKey !== "" });
     };
+    const readAccount = (session: SessionAnswer) => {
+      signupView.current = session.signupView;
+      const pending = invitation.current;
+      if (pending && session.result === "MayJoin" && browserInvitationMayBind(session.peon === true, session.signupView !== undefined)) {
+        pending.signupView ??= session.signupView;
+      }
+      return viewOf(session);
+    };
     const recheck = async () => {
       const session = await readSession();
-      signupView.current = session.signupView;
-      send({ type: "recheck", view: viewOf(session) });
+      send({ type: "recheck", view: readAccount(session) });
     };
     const open = async () => {
       const link = readLink();
@@ -146,11 +171,11 @@ export function useJoin({ siteKey, pageMinAge, pageInviteOnly = false, returnPat
         { values: { firstName: link.name, age: ageAccepted ? link.age : "", consent: false } },
       );
       if (!opened) return;
+      invitation.current = link.invitation;
       clearFragment();
       const [app, session] = await Promise.all([readApp(), readSession()]);
-      signupView.current = session.signupView;
       const loaded = send(
-        { type: "loaded", view: viewOf(session), appUnreachable: !app.read && app.unreachable, inviteOnly: app.read ? app.inviteOnly : pageInviteOnly },
+        { type: "loaded", view: readAccount(session), appUnreachable: !app.read && app.unreachable, inviteOnly: app.read ? app.inviteOnly : pageInviteOnly },
         { minJoinAge: minJoinAgeShown(app.read, app.read ? app.minJoinAge : pageMinAge, pageMinAge) },
       );
       if (loaded && canReadAuthMode(loaded)) await lookUpAuth();
@@ -193,7 +218,10 @@ export function useJoin({ siteKey, pageMinAge, pageInviteOnly = false, returnPat
         if (!next || !canAnswerCloudStart(next)) return;
         const answer = await startCloud(returnPath);
         const after = send({ type: "answerCloudStart", opened: answer.ok }, answer.ok ? {} : { failure: answer.error });
-        if (answer.ok && after?.screen === "LeftForCloud") window.location.assign(answer.url);
+        if (answer.ok && after?.screen === "LeftForCloud") {
+          invitation.current = undefined;
+          window.location.assign(answer.url);
+        }
       },
       onValuesChange: (values: Partial<ProfileValues>) => {
         send({ type: "editProfile" }, { values: { ...current.current.values, ...values } });
@@ -205,7 +233,21 @@ export function useJoin({ siteKey, pageMinAge, pageInviteOnly = false, returnPat
         const age = wholeNumber(values.age);
         const next = send({ type: "submitProfile", form: { nameGiven: firstName !== "", age, consentTicked: values.consent } });
         if (!next || !canAnswerJoin(next)) return;
-        const answer = await joinApp({ ...(view ? { signupView: view } : {}), firstName, age, consent: { sms: true, wording: consentWording } });
+        const pending = invitation.current;
+        const sameAccount = view !== undefined && pending?.signupView === view;
+        if (pending && (!pending.token || !browserInvitationMaySubmit(sameAccount, next.addressClean, next.consented))) {
+          invitation.current = undefined;
+          send({ type: "answerJoin", joinAnswer: "JoinInvalidInvitation" });
+          return;
+        }
+        const answer = await joinApp({
+          ...(view ? { signupView: view } : {}),
+          ...(pending?.token ? { inviteToken: pending.token } : {}),
+          firstName,
+          age,
+          consent: { sms: true, wording: consentWording },
+        });
+        if (!browserInvitationMayRetry(answer.result)) invitation.current = undefined;
         const after = send({ type: "answerJoin", joinAnswer: answer.result }, { failure: answer.error, firstName: answer.firstName ?? firstName });
         if (after?.screen === "Checking") await recheck();
       },

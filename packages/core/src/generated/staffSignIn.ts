@@ -1,17 +1,17 @@
 // GENERATED from spec/staffSignIn.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Sign in as myself / The console takes a token out of the address before it calls the server (spec/staffSignIn.md:9) */
+/** Story: Sign in as myself / The console takes a token out of the address before it calls the server (spec/staffSignIn.md) */
 export type SignInPhase = "Opening" | "Checking" | "AskingToken" | "AskingAccess" | "SignedIn" | "NoStaffRole" | "NeedsSecondFactor" | "SiteRefused" | "CheckFailed";
-/** Story: Sign in as myself / The console takes a token out of the address before it calls the server (spec/staffSignIn.md:9) */
+/** Story: Sign in as myself / The console takes a token out of the address before it calls the server (spec/staffSignIn.md) */
 export type SignInMethod = "NoCredential" | "TokenCredential" | "AccessCredential";
-/** Story: Sign in as myself / The console takes a token out of the address before it calls the server (spec/staffSignIn.md:9) */
+/** Story: Sign in as myself / The console takes a token out of the address before it calls the server (spec/staffSignIn.md) */
 export interface StaffSignIn { phase: SignInPhase; method: SignInMethod; tokenInAddress: boolean; secondFactor: boolean; roleCount: number }
-/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md:30) */
+/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md) */
 export type IdentityAnswer = "IdentityAccepted" | "SignInNeeded" | "IdentityWithoutRole" | "SiteNotAllowed" | "ServerUnreachable";
-/** Story: Keep my session bound to my roles / Each sign-in phase has one view (spec/staffSignIn.md:150) */
+/** Story: Keep my session bound to my roles / Each sign-in phase has one view (spec/staffSignIn.md) */
 export type SignInView = "ShowLoading" | "ShowTokenForm" | "ShowAccessLink" | "ShowConsole" | "ShowNoRole" | "ShowSecondFactorNeeded" | "ShowSiteRefused" | "ShowRetry";
-/** Story: Start a console that holds real data only behind single sign-on / Real data outside a local development setup needs Cloudflare Access (spec/staffSignIn.md:176) */
+/** Story: Start a console that holds real data only behind single sign-on / Real data outside a local development setup needs Cloudflare Access (spec/staffSignIn.md) */
 export type PlatformEnv = "EnvUnset" | "EnvUnknown" | "EnvDev" | "EnvStaging" | "EnvProduction";
 
 /** One variant per transition in the spec. */
@@ -23,7 +23,7 @@ export type Event =
   | { type: "retryCheck" }
   | { type: "endSession"; roleRemoved: boolean };
 
-/** Story: Sign in as myself / The console takes a token out of the address before it calls the server (spec/staffSignIn.md:9) */
+/** Story: Sign in as myself / The console takes a token out of the address before it calls the server (spec/staffSignIn.md) */
 export const initial: StaffSignIn = { phase: "Opening", method: "NoCredential", tokenInAddress: true, secondFactor: false, roleCount: 0 };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -32,7 +32,7 @@ export function inv(current: StaffSignIn): boolean {
   return alwaysAddressHoldsNoTokenAfterOpening(current) && alwaysSignedInHoldsARole(current) && alwaysSignedInNamesItsMethod(current) && alwaysAccessSessionHasASecondFactor(current) && alwaysTokenFormOnlyForTokenServers(current) && alwaysAccessLinkOnlyForAccessServers(current);
 }
 
-/** Story: Sign in as myself / The console takes a token out of the address before it calls the server (spec/staffSignIn.md:9) */
+/** Story: Sign in as myself / The console takes a token out of the address before it calls the server (spec/staffSignIn.md) */
 //@ pure
 export function openConsole(signIn: StaffSignIn, tokenFound: boolean): StaffSignIn {
   //@ ensures (inv(signIn) && canOpenConsole(signIn)) ==> alwaysAddressHoldsNoTokenAfterOpening(\result)
@@ -46,103 +46,103 @@ export function openConsole(signIn: StaffSignIn, tokenFound: boolean): StaffSign
   return { ...signIn, phase: "Checking", tokenInAddress: false, secondFactor: false, roleCount: 0, method: tokenFound ? "TokenCredential" : signIn.method };
 }
 
-/** Story: Sign in as myself / The console takes a token out of the address before it calls the server (spec/staffSignIn.md:9) */
+/** Story: Sign in as myself / The console takes a token out of the address before it calls the server (spec/staffSignIn.md) */
 //@ pure
 export function alwaysAddressHoldsNoTokenAfterOpening(signIn: StaffSignIn): boolean {
   return !(signIn.phase !== "Opening") || !signIn.tokenInAddress;
 }
 
-/** Story: Sign in as myself / The console takes a token out of the address before it calls the server (spec/staffSignIn.md:9) */
+/** Story: Sign in as myself / The console takes a token out of the address before it calls the server (spec/staffSignIn.md) */
 //@ pure
 export function canOpenConsole(signIn: StaffSignIn): boolean {
   return signIn.phase === "Opening";
 }
 
-/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md:30) */
+/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md) */
 //@ pure
 export function phaseForAnswer(answer: IdentityAnswer, viaAccess: boolean, secondFactorShown: boolean, grants: number): SignInPhase {
   return answer === "IdentityAccepted" ? (grants <= 0 ? "NoStaffRole" : (viaAccess && !secondFactorShown ? "NeedsSecondFactor" : "SignedIn")) : (answer === "SignInNeeded" ? (viaAccess ? "AskingAccess" : "AskingToken") : (answer === "IdentityWithoutRole" ? "NoStaffRole" : (answer === "SiteNotAllowed" ? "SiteRefused" : "CheckFailed")));
 }
 
-/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md:30) */
+/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md) */
 //@ pure
 export function methodForAnswer(answer: IdentityAnswer, viaAccess: boolean, method: SignInMethod): SignInMethod {
   return answer === "IdentityAccepted" || answer === "SignInNeeded" || answer === "IdentityWithoutRole" ? (viaAccess ? "AccessCredential" : "TokenCredential") : method;
 }
 
-/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md:30) */
+/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md) */
 //@ pure
 export function canAnswerIdentity(signIn: StaffSignIn, grants: number): boolean {
   return signIn.phase === "Checking" && grants >= 0;
 }
 
-/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md:30) */
+/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md) */
 //@ pure
 export function alwaysSignedInHoldsARole(signIn: StaffSignIn): boolean {
   return !(signIn.phase === "SignedIn") || signIn.roleCount > 0;
 }
 
-/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md:30) */
+/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md) */
 //@ pure
 export function alwaysSignedInNamesItsMethod(signIn: StaffSignIn): boolean {
   return !(signIn.phase === "SignedIn" || signIn.phase === "NoStaffRole" || signIn.phase === "NeedsSecondFactor") || signIn.method !== "NoCredential";
 }
 
-/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md:30) */
+/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md) */
 //@ pure
 export function alwaysAccessSessionHasASecondFactor(signIn: StaffSignIn): boolean {
   return !(signIn.phase === "SignedIn" && signIn.method === "AccessCredential") || signIn.secondFactor;
 }
 
-/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md:30) */
+/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md) */
 //@ pure
 export function alwaysTokenFormOnlyForTokenServers(signIn: StaffSignIn): boolean {
   return !(signIn.phase === "AskingToken") || signIn.method === "TokenCredential";
 }
 
-/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md:30) */
+/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md) */
 //@ pure
 export function alwaysAccessLinkOnlyForAccessServers(signIn: StaffSignIn): boolean {
   return !(signIn.phase === "AskingAccess" || signIn.phase === "NeedsSecondFactor") || signIn.method === "AccessCredential";
 }
 
-/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md:30) */
+/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md) */
 //@ pure
 export function stepSignInFollowsAnAcceptedAnswer(before: StaffSignIn, via: string, after: StaffSignIn): boolean {
   return !(after.phase === "SignedIn" && before.phase !== "SignedIn") || (via === "answerIdentity" && before.phase === "Checking");
 }
 
-/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md:30) */
+/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md) */
 //@ pure
 export function sometimesSignedInWithAToken(signIn: StaffSignIn): boolean {
   return signIn.phase === "SignedIn" && signIn.method === "TokenCredential";
 }
 
-/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md:30) */
+/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md) */
 //@ pure
 export function sometimesSignedInWithAccess(signIn: StaffSignIn): boolean {
   return signIn.phase === "SignedIn" && signIn.method === "AccessCredential";
 }
 
-/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md:30) */
+/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md) */
 //@ pure
 export function sometimesNoStaffRole(signIn: StaffSignIn): boolean {
   return signIn.phase === "NoStaffRole";
 }
 
-/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md:30) */
+/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md) */
 //@ pure
 export function sometimesNeedsSecondFactor(signIn: StaffSignIn): boolean {
   return signIn.phase === "NeedsSecondFactor";
 }
 
-/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md:30) */
+/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md) */
 //@ pure
 export function sometimesSiteRefused(signIn: StaffSignIn): boolean {
   return signIn.phase === "SiteRefused";
 }
 
-/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md:30) */
+/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md) */
 //@ pure
 export function answerIdentity(signIn: StaffSignIn, answer: IdentityAnswer, viaAccess: boolean, secondFactorShown: boolean, grants: number): StaffSignIn {
   //@ ensures (inv(signIn) && canAnswerIdentity(signIn, grants)) ==> alwaysAddressHoldsNoTokenAfterOpening(\result)
@@ -157,27 +157,27 @@ export function answerIdentity(signIn: StaffSignIn, answer: IdentityAnswer, viaA
   return { ...signIn, phase: phaseForAnswer(answer, viaAccess, secondFactorShown, grants), method: methodForAnswer(answer, viaAccess, signIn.method), secondFactor: local_0 && viaAccess && secondFactorShown, roleCount: local_0 ? grants : 0 };
 }
 
-/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md:30) */
+/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md) */
 //@ pure
 export function lawAccessServerNeverAsksForAToken(answer: IdentityAnswer, secondFactorShown: boolean, grants: number): boolean {
   //@ ensures \result === true
   return phaseForAnswer(answer, true, secondFactorShown, grants) !== "AskingToken";
 }
 
-/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md:30) */
+/** Story: Sign in as myself / The server answer decides the sign-in phase (spec/staffSignIn.md) */
 //@ pure
 export function lawAccessNeedsTheSecondFactor(grants: number): boolean {
   //@ ensures \result === true
   return phaseForAnswer("IdentityAccepted", true, false, grants) !== "SignedIn";
 }
 
-/** Story: Sign in as myself / The token form accepts a pasted token and checks it again (spec/staffSignIn.md:90) */
+/** Story: Sign in as myself / The token form accepts a pasted token and checks it again (spec/staffSignIn.md) */
 //@ pure
 export function canSubmitToken(signIn: StaffSignIn, tokenChars: number): boolean {
   return tokenChars > 0 && (signIn.phase === "AskingToken" || (signIn.phase === "NoStaffRole" && signIn.method === "TokenCredential"));
 }
 
-/** Story: Sign in as myself / The token form accepts a pasted token and checks it again (spec/staffSignIn.md:90) */
+/** Story: Sign in as myself / The token form accepts a pasted token and checks it again (spec/staffSignIn.md) */
 //@ pure
 export function submitToken(signIn: StaffSignIn, tokenChars: number): StaffSignIn {
   //@ ensures (inv(signIn) && canSubmitToken(signIn, tokenChars)) ==> alwaysAddressHoldsNoTokenAfterOpening(\result)
@@ -191,19 +191,19 @@ export function submitToken(signIn: StaffSignIn, tokenChars: number): StaffSignI
   return { ...signIn, phase: "Checking", method: "TokenCredential", secondFactor: false, roleCount: 0 };
 }
 
-/** Story: Sign in as myself / The token form accepts a pasted token and checks it again (spec/staffSignIn.md:90) */
+/** Story: Sign in as myself / The token form accepts a pasted token and checks it again (spec/staffSignIn.md) */
 //@ pure
 export function sometimesAsksForAToken(signIn: StaffSignIn): boolean {
   return signIn.phase === "AskingToken";
 }
 
-/** Story: Sign in as myself / A single sign-on viewer signs in again through Cloudflare Access (spec/staffSignIn.md:104) */
+/** Story: Sign in as myself / A single sign-on viewer signs in again through Cloudflare Access (spec/staffSignIn.md) */
 //@ pure
 export function canSignInAgain(signIn: StaffSignIn): boolean {
   return signIn.phase === "AskingAccess" || signIn.phase === "NeedsSecondFactor" || (signIn.phase === "NoStaffRole" && signIn.method === "AccessCredential");
 }
 
-/** Story: Sign in as myself / A single sign-on viewer signs in again through Cloudflare Access (spec/staffSignIn.md:104) */
+/** Story: Sign in as myself / A single sign-on viewer signs in again through Cloudflare Access (spec/staffSignIn.md) */
 //@ pure
 export function signInAgain(signIn: StaffSignIn): StaffSignIn {
   //@ ensures (inv(signIn) && canSignInAgain(signIn)) ==> alwaysAddressHoldsNoTokenAfterOpening(\result)
@@ -217,19 +217,19 @@ export function signInAgain(signIn: StaffSignIn): StaffSignIn {
   return { ...signIn, phase: "Opening", secondFactor: false, roleCount: 0 };
 }
 
-/** Story: Sign in as myself / A single sign-on viewer signs in again through Cloudflare Access (spec/staffSignIn.md:104) */
+/** Story: Sign in as myself / A single sign-on viewer signs in again through Cloudflare Access (spec/staffSignIn.md) */
 //@ pure
 export function sometimesAsksForAccess(signIn: StaffSignIn): boolean {
   return signIn.phase === "AskingAccess";
 }
 
-/** Story: Sign in as myself / A failed check can be tried again (spec/staffSignIn.md:119) */
+/** Story: Sign in as myself / A failed check can be tried again (spec/staffSignIn.md) */
 //@ pure
 export function canRetryCheck(signIn: StaffSignIn): boolean {
   return signIn.phase === "CheckFailed";
 }
 
-/** Story: Sign in as myself / A failed check can be tried again (spec/staffSignIn.md:119) */
+/** Story: Sign in as myself / A failed check can be tried again (spec/staffSignIn.md) */
 //@ pure
 export function retryCheck(signIn: StaffSignIn): StaffSignIn {
   //@ ensures (inv(signIn) && canRetryCheck(signIn)) ==> alwaysAddressHoldsNoTokenAfterOpening(\result)
@@ -243,19 +243,19 @@ export function retryCheck(signIn: StaffSignIn): StaffSignIn {
   return { ...signIn, phase: "Checking" };
 }
 
-/** Story: Sign in as myself / A failed check can be tried again (spec/staffSignIn.md:119) */
+/** Story: Sign in as myself / A failed check can be tried again (spec/staffSignIn.md) */
 //@ pure
 export function sometimesCheckFailed(signIn: StaffSignIn): boolean {
   return signIn.phase === "CheckFailed";
 }
 
-/** Story: Keep my session bound to my roles / An expired sign-in or a changed role ends the signed-in phase (spec/staffSignIn.md:135) */
+/** Story: Keep my session bound to my roles / An expired sign-in or a changed role ends the signed-in phase (spec/staffSignIn.md) */
 //@ pure
 export function canEndSession(signIn: StaffSignIn): boolean {
   return signIn.phase === "SignedIn";
 }
 
-/** Story: Keep my session bound to my roles / An expired sign-in or a changed role ends the signed-in phase (spec/staffSignIn.md:135) */
+/** Story: Keep my session bound to my roles / An expired sign-in or a changed role ends the signed-in phase (spec/staffSignIn.md) */
 //@ pure
 export function endSession(signIn: StaffSignIn, roleRemoved: boolean): StaffSignIn {
   //@ ensures (inv(signIn) && canEndSession(signIn)) ==> alwaysAddressHoldsNoTokenAfterOpening(\result)
@@ -269,73 +269,73 @@ export function endSession(signIn: StaffSignIn, roleRemoved: boolean): StaffSign
   return { ...signIn, secondFactor: false, roleCount: 0, phase: roleRemoved ? "Checking" : (signIn.method === "AccessCredential" ? "AskingAccess" : "AskingToken") };
 }
 
-/** Story: Keep my session bound to my roles / An expired sign-in or a changed role ends the signed-in phase (spec/staffSignIn.md:135) */
+/** Story: Keep my session bound to my roles / An expired sign-in or a changed role ends the signed-in phase (spec/staffSignIn.md) */
 //@ pure
 export function stepEndedSessionHoldsNoRoles(before: StaffSignIn, via: string, after: StaffSignIn): boolean {
   return !(via === "endSession") || (after.roleCount === 0 && after.phase !== "SignedIn" && after.method === before.method);
 }
 
-/** Story: Keep my session bound to my roles / Each sign-in phase has one view (spec/staffSignIn.md:150) */
+/** Story: Keep my session bound to my roles / Each sign-in phase has one view (spec/staffSignIn.md) */
 //@ pure
 export function signInView(phase: SignInPhase): SignInView {
   return phase === "SignedIn" ? "ShowConsole" : (phase === "AskingToken" ? "ShowTokenForm" : (phase === "AskingAccess" ? "ShowAccessLink" : (phase === "NoStaffRole" ? "ShowNoRole" : (phase === "NeedsSecondFactor" ? "ShowSecondFactorNeeded" : (phase === "SiteRefused" ? "ShowSiteRefused" : (phase === "CheckFailed" ? "ShowRetry" : "ShowLoading"))))));
 }
 
-/** Story: Keep my session bound to my roles / Each sign-in phase has one view (spec/staffSignIn.md:150) */
+/** Story: Keep my session bound to my roles / Each sign-in phase has one view (spec/staffSignIn.md) */
 //@ pure
 export function lawConsoleShowsOnlyWhenSignedIn(phase: SignInPhase): boolean {
   //@ ensures \result === true
   return (signInView(phase) === "ShowConsole") === (phase === "SignedIn");
 }
 
-/** Story: Keep my session bound to my roles / Each sign-in phase has one view (spec/staffSignIn.md:150) */
+/** Story: Keep my session bound to my roles / Each sign-in phase has one view (spec/staffSignIn.md) */
 //@ pure
 export function lawTokenFormOnlyWhenAskingForAToken(phase: SignInPhase): boolean {
   //@ ensures \result === true
   return (signInView(phase) === "ShowTokenForm") === (phase === "AskingToken");
 }
 
-/** Story: Start a console that holds real data only behind single sign-on / Real data outside a local development setup needs Cloudflare Access (spec/staffSignIn.md:176) */
+/** Story: Start a console that holds real data only behind single sign-on / Real data outside a local development setup needs Cloudflare Access (spec/staffSignIn.md) */
 //@ pure
 export function tokensAccepted(accessOn: boolean): boolean {
   return !accessOn;
 }
 
-/** Story: Start a console that holds real data only behind single sign-on / Real data outside a local development setup needs Cloudflare Access (spec/staffSignIn.md:176) */
+/** Story: Start a console that holds real data only behind single sign-on / Real data outside a local development setup needs Cloudflare Access (spec/staffSignIn.md) */
 //@ pure
 export function startRefused(realOnlyServer: boolean, remoteDatabase: boolean, platformEnv: PlatformEnv, accessOn: boolean): boolean {
   return !realOnlyServer && !remoteDatabase ? false : (platformEnv === "EnvUnset" || platformEnv === "EnvUnknown" ? true : (accessOn ? false : (platformEnv !== "EnvDev" ? true : remoteDatabase)));
 }
 
-/** Story: Start a console that holds real data only behind single sign-on / Real data outside a local development setup needs Cloudflare Access (spec/staffSignIn.md:176) */
+/** Story: Start a console that holds real data only behind single sign-on / Real data outside a local development setup needs Cloudflare Access (spec/staffSignIn.md) */
 //@ pure
 export function lawDeployedRealDataUsesAccess(remoteDatabase: boolean, platformEnv: PlatformEnv, accessOn: boolean): boolean {
   //@ ensures \result === true
   return !(platformEnv !== "EnvDev" && !startRefused(true, remoteDatabase, platformEnv, accessOn)) || accessOn;
 }
 
-/** Story: Start a console that holds real data only behind single sign-on / Real data outside a local development setup needs Cloudflare Access (spec/staffSignIn.md:176) */
+/** Story: Start a console that holds real data only behind single sign-on / Real data outside a local development setup needs Cloudflare Access (spec/staffSignIn.md) */
 //@ pure
 export function lawRemoteDataUsesAccess(realOnlyServer: boolean, platformEnv: PlatformEnv, accessOn: boolean): boolean {
   //@ ensures \result === true
   return !(!startRefused(realOnlyServer, true, platformEnv, accessOn)) || accessOn;
 }
 
-/** Story: Start a console that holds real data only behind single sign-on / Real data outside a local development setup needs Cloudflare Access (spec/staffSignIn.md:176) */
+/** Story: Start a console that holds real data only behind single sign-on / Real data outside a local development setup needs Cloudflare Access (spec/staffSignIn.md) */
 //@ pure
 export function lawRealDataNeedsAKnownEnvironment(remoteDatabase: boolean, accessOn: boolean): boolean {
   //@ ensures \result === true
   return startRefused(true, remoteDatabase, "EnvUnset", accessOn) && startRefused(true, remoteDatabase, "EnvUnknown", accessOn);
 }
 
-/** Story: Start a console that holds real data only behind single sign-on / Real data outside a local development setup needs Cloudflare Access (spec/staffSignIn.md:176) */
+/** Story: Start a console that holds real data only behind single sign-on / Real data outside a local development setup needs Cloudflare Access (spec/staffSignIn.md) */
 //@ pure
 export function lawStartedRealDataTakesNoTokenOffThisMachine(realOnlyServer: boolean, platformEnv: PlatformEnv, accessOn: boolean): boolean {
   //@ ensures \result === true
   return !(!startRefused(realOnlyServer, true, platformEnv, accessOn)) || !tokensAccepted(accessOn);
 }
 
-/** Story: Start a console that holds real data only behind single sign-on / Real data outside a local development setup needs Cloudflare Access (spec/staffSignIn.md:176) */
+/** Story: Start a console that holds real data only behind single sign-on / Real data outside a local development setup needs Cloudflare Access (spec/staffSignIn.md) */
 //@ pure
 export function lawLocalSimulationNeedsNothing(platformEnv: PlatformEnv, accessOn: boolean): boolean {
   //@ ensures \result === true

@@ -2,31 +2,31 @@
 //@ backend dafny
 
 
-/** Story: Let slop use my photos for private matching / Photo intake and rating have separate limits (spec/photoPolicy.md:21) */
+/** Story: Let slop use my photos for private matching / Photo intake and rating have separate limits (spec/photoPolicy.md) */
 export const uploadMaxBytes: number = 8388608;
-/** Story: Let slop use my photos for private matching / Photo intake and rating have separate limits (spec/photoPolicy.md:21) */
+/** Story: Let slop use my photos for private matching / Photo intake and rating have separate limits (spec/photoPolicy.md) */
 export const uploadMaxPerPerson: number = 6;
-/** Story: Let slop use my photos for private matching / Photo intake and rating have separate limits (spec/photoPolicy.md:21) */
+/** Story: Let slop use my photos for private matching / Photo intake and rating have separate limits (spec/photoPolicy.md) */
 export const ratingMaxPhotos: number = 4;
-/** Story: Let slop use my photos for private matching / Photo intake and rating have separate limits (spec/photoPolicy.md:21) */
+/** Story: Let slop use my photos for private matching / Photo intake and rating have separate limits (spec/photoPolicy.md) */
 export const ratingMaxBytes: number = 4194304;
-/** Story: Let slop use my photos for private matching / Photo intake and rating have separate limits (spec/photoPolicy.md:21) */
+/** Story: Let slop use my photos for private matching / Photo intake and rating have separate limits (spec/photoPolicy.md) */
 export const photoMaxPerMessage: number = 4;
 
-/** Story: Let slop use my photos for private matching / The rater requires an adult age without a failed age check (spec/photoPolicy.md:9) */
+/** Story: Let slop use my photos for private matching / The rater requires an adult age without a failed age check (spec/photoPolicy.md) */
 //@ pure
 export function photoSubjectAllowed(adult: boolean, ageCheckFailed: boolean): boolean {
   return adult && !ageCheckFailed;
 }
 
-/** Story: Let slop use my photos for private matching / The rater requires an adult age without a failed age check (spec/photoPolicy.md:9) */
+/** Story: Let slop use my photos for private matching / The rater requires an adult age without a failed age check (spec/photoPolicy.md) */
 //@ pure
 export function lawRatingRequiresAdult(ageCheckFailed: boolean): boolean {
   //@ ensures \result === true
   return !photoSubjectAllowed(false, ageCheckFailed);
 }
 
-/** Story: Let slop use my photos for private matching / Photo intake and rating have separate limits (spec/photoPolicy.md:21) */
+/** Story: Let slop use my photos for private matching / Photo intake and rating have separate limits (spec/photoPolicy.md) */
 //@ pure
 export function photoSlotsFull(storedCount: number): boolean {
   return storedCount >= uploadMaxPerPerson;

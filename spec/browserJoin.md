@@ -349,15 +349,16 @@ pure def lawProfileNeedsConsent(form: ProfileForm): bool =
 
 ### The server answer decides between done, blocked and a new sign-in
 
-A saved profile shows the done step and clears the notice. "Under age", "invite only" and "review" show the blocked step with that reason. "Account changed" clears the form, reads the session again and shows a notice. "Session ended" clears the form and shows the phone step with a notice. Any other failure keeps the profile step and shows the server's message.
+A saved profile shows the done step and clears the notice. "Under age", "invite only", "review" and an unavailable invitation show the blocked step. "Account changed" clears the form, reads the session again and shows a notice. "Session ended" clears the form and shows the phone step with a notice. Any other failure keeps the profile step and shows the server's message.
 
 ```quint
-type JoinOutcome = JoinedOk | JoinUnderAge | JoinInviteOnly | JoinReview | JoinAccountChanged | JoinUnauthorized | JoinFailed
+type JoinOutcome = JoinedOk | JoinUnderAge | JoinInviteOnly | JoinReview | JoinAccountChanged | JoinUnauthorized | JoinInvalidInvitation | JoinFailed
 
 pure def joinRefusal(joinAnswer: JoinOutcome): BlockReason =
   if (joinAnswer == JoinUnderAge) UnderAge
   else if (joinAnswer == JoinInviteOnly) InviteOnly
   else if (joinAnswer == JoinReview) InReview
+  else if (joinAnswer == JoinInvalidInvitation) NotValid
   else NoBlock
 
 pure def canAnswerJoin(page: JoinPage): bool = page.pending == SavingProfile
@@ -372,6 +373,45 @@ pure def answerJoin(page: JoinPage, joinAnswer: JoinOutcome): JoinPage =
   else if (joinAnswer == JoinUnauthorized)
     { ...idle, screen: Phone, account: 0, formHasValues: false, consented: false, notice: SessionEnded, formError: NoError }
   else { ...idle, formError: RequestFailed }
+```
+
+### A Peon invitation stays in memory until the verified account agrees to join
+
+Read one valid token from Peon's issued `/join#invite=` link. Remove the
+fragment before making any API request. Keep the token in this page's
+memory. Only the same-origin Peon session can bind it to its verified
+account marker. When that account completes the consent form, the page sends
+the token in the same-origin Join JSON request along with its account
+marker. The server decides whether the invitation is current and can be
+accepted by that account. If it refuses the invitation, the page cannot
+join without it on that attempt. Clear the token after a definite result
+or loss or replacement of the verified account. A temporary request
+failure can retry with the same verified account.
+
+An invitation survives direct phone verification in the same page.
+The Cloud phone sign-in provider receives no invitation token. After
+Cloud returns, reopen the original invitation link in the verified
+session. The page puts no invitation in persistent storage.
+
+```quint
+pure def browserInvitationMayBind(peonApp: bool, verifiedView: bool): bool =
+  peonApp and verifiedView
+
+pure def browserInvitationMaySubmit(boundAccount: bool, addressClean: bool, consented: bool): bool =
+  boundAccount and addressClean and consented
+
+pure def browserInvitationKeepsAccount(beforeAccount: int, afterAccount: int): bool =
+  beforeAccount == 0 or beforeAccount == afterAccount
+
+pure def browserInvitationMayRetry(joinAnswer: JoinOutcome): bool =
+  joinAnswer == JoinFailed
+
+pure def lawBrowserInvitationNeedsCleanConsentedAccount(boundAccount: bool, addressClean: bool, consented: bool): bool =
+  browserInvitationMaySubmit(boundAccount, addressClean, consented) implies (boundAccount and addressClean and consented)
+
+pure def lawBrowserInvitationCannotRideAnotherAccount(beforeAccount: int, afterAccount: int): bool =
+  (beforeAccount > 0 and beforeAccount != afterAccount) implies
+    not(browserInvitationKeepsAccount(beforeAccount, afterAccount))
 ```
 
 ### Profile values never pass from one account to another

@@ -1,9 +1,9 @@
 // GENERATED from spec/planDispatch.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Ask me about one group plan during my send window / A missing seat or an absence rules out the invitation (spec/planDispatch.md:23) */
+/** Story: Ask me about one group plan during my send window / A missing seat or an absence rules out the invitation (spec/planDispatch.md) */
 export type InvitePhase = "CheckingSeat" | "CheckingPresence" | "CheckingWindow" | "CheckingAllowance" | "RenderingInvite" | "SendingInvite" | "InviteSent" | "DeliveryNotConfirmed" | "Deferred" | "Unavailable";
-/** Story: Ask me about one group plan during my send window / A missing seat or an absence rules out the invitation (spec/planDispatch.md:23) */
+/** Story: Ask me about one group plan during my send window / A missing seat or an absence rules out the invitation (spec/planDispatch.md) */
 export interface PlanDispatch { phase: InvitePhase; reason: string }
 
 /** One variant per transition in the spec. */
@@ -15,7 +15,7 @@ export type Event =
   | { type: "renderInvite"; usable: boolean }
   | { type: "recordSend"; sent: boolean };
 
-/** Story: Ask me about one group plan during my send window / A missing seat or an absence rules out the invitation (spec/planDispatch.md:23) */
+/** Story: Ask me about one group plan during my send window / A missing seat or an absence rules out the invitation (spec/planDispatch.md) */
 export const initial: PlanDispatch = { phase: "CheckingSeat", reason: "" };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -24,110 +24,110 @@ export function inv(current: PlanDispatch): boolean {
   return true;
 }
 
-/** Story: Ask me about one group plan during my send window / Only an open plan can invite a pending member (spec/planDispatch.md:9) */
+/** Story: Ask me about one group plan during my send window / Only an open plan can invite a pending member (spec/planDispatch.md) */
 //@ pure
 export function planLaneOpen(probing: boolean, booked: boolean, lateJoinOpen: boolean): boolean {
   return probing || (booked && lateJoinOpen);
 }
 
-/** Story: Ask me about one group plan during my send window / Only an open plan can invite a pending member (spec/planDispatch.md:9) */
+/** Story: Ask me about one group plan during my send window / Only an open plan can invite a pending member (spec/planDispatch.md) */
 //@ pure
 export function planTurnDue(pending: boolean, contacted: boolean): boolean {
   return pending && !contacted;
 }
 
-/** Story: Ask me about one group plan during my send window / Only an open plan can invite a pending member (spec/planDispatch.md:9) */
+/** Story: Ask me about one group plan during my send window / Only an open plan can invite a pending member (spec/planDispatch.md) */
 //@ pure
 export function lawBookedLaneRespectsLateJoinCutoff(booked: boolean): boolean {
   //@ ensures \result === true
   return !planLaneOpen(false, booked, false);
 }
 
-/** Story: Ask me about one group plan during my send window / A missing seat or an absence rules out the invitation (spec/planDispatch.md:23) */
+/** Story: Ask me about one group plan during my send window / A missing seat or an absence rules out the invitation (spec/planDispatch.md) */
 //@ pure
 export function canCheckSeat(invite: PlanDispatch): boolean {
   return invite.phase === "CheckingSeat";
 }
 
-/** Story: Ask me about one group plan during my send window / A missing seat or an absence rules out the invitation (spec/planDispatch.md:23) */
+/** Story: Ask me about one group plan during my send window / A missing seat or an absence rules out the invitation (spec/planDispatch.md) */
 //@ pure
 export function checkSeat(invite: PlanDispatch, eligible: boolean): PlanDispatch {
   //@ ensures (inv(invite) && canCheckSeat(invite)) ==> stepAnInviteNeedsAConfirmedSend(invite, "checkSeat", \result)
   return eligible ? ({ ...invite, phase: "CheckingPresence" } as PlanDispatch) : ({ phase: "Unavailable", reason: "seat" } as PlanDispatch);
 }
 
-/** Story: Ask me about one group plan during my send window / A missing seat or an absence rules out the invitation (spec/planDispatch.md:23) */
+/** Story: Ask me about one group plan during my send window / A missing seat or an absence rules out the invitation (spec/planDispatch.md) */
 //@ pure
 export function canCheckPresence(invite: PlanDispatch): boolean {
   return invite.phase === "CheckingPresence";
 }
 
-/** Story: Ask me about one group plan during my send window / A missing seat or an absence rules out the invitation (spec/planDispatch.md:23) */
+/** Story: Ask me about one group plan during my send window / A missing seat or an absence rules out the invitation (spec/planDispatch.md) */
 //@ pure
 export function checkPresence(invite: PlanDispatch, present: boolean): PlanDispatch {
   //@ ensures (inv(invite) && canCheckPresence(invite)) ==> stepAnInviteNeedsAConfirmedSend(invite, "checkPresence", \result)
   return present ? ({ ...invite, phase: "CheckingWindow" } as PlanDispatch) : ({ phase: "Unavailable", reason: "away" } as PlanDispatch);
 }
 
-/** Story: Ask me about one group plan during my send window / Wait for the send window, earlier questions, and the right allowance (spec/planDispatch.md:43) */
+/** Story: Ask me about one group plan during my send window / Wait for the send window, earlier questions, and the right allowance (spec/planDispatch.md) */
 //@ pure
 export function canCheckWindow(invite: PlanDispatch): boolean {
   return invite.phase === "CheckingWindow";
 }
 
-/** Story: Ask me about one group plan during my send window / Wait for the send window, earlier questions, and the right allowance (spec/planDispatch.md:43) */
+/** Story: Ask me about one group plan during my send window / Wait for the send window, earlier questions, and the right allowance (spec/planDispatch.md) */
 //@ pure
 export function checkWindow(invite: PlanDispatch, busy: boolean, windowOpen: boolean, awaitingAnswer: boolean, sentToday: boolean): PlanDispatch {
   //@ ensures (inv(invite) && canCheckWindow(invite)) ==> stepAnInviteNeedsAConfirmedSend(invite, "checkWindow", \result)
   return busy ? ({ phase: "Deferred", reason: "busy" } as PlanDispatch) : (!windowOpen ? ({ phase: "Deferred", reason: "send_window" } as PlanDispatch) : (awaitingAnswer ? ({ phase: "Deferred", reason: "one_question" } as PlanDispatch) : (sentToday ? ({ phase: "Deferred", reason: "one_a_day" } as PlanDispatch) : ({ ...invite, phase: "CheckingAllowance" } as PlanDispatch))));
 }
 
-/** Story: Ask me about one group plan during my send window / Wait for the send window, earlier questions, and the right allowance (spec/planDispatch.md:43) */
+/** Story: Ask me about one group plan during my send window / Wait for the send window, earlier questions, and the right allowance (spec/planDispatch.md) */
 //@ pure
 export function canCheckAllowance(invite: PlanDispatch): boolean {
   return invite.phase === "CheckingAllowance";
 }
 
-/** Story: Ask me about one group plan during my send window / Wait for the send window, earlier questions, and the right allowance (spec/planDispatch.md:43) */
+/** Story: Ask me about one group plan during my send window / Wait for the send window, earlier questions, and the right allowance (spec/planDispatch.md) */
 //@ pure
 export function checkAllowance(invite: PlanDispatch, admitted: boolean): PlanDispatch {
   //@ ensures (inv(invite) && canCheckAllowance(invite)) ==> stepAnInviteNeedsAConfirmedSend(invite, "checkAllowance", \result)
   return admitted ? ({ ...invite, phase: "RenderingInvite" } as PlanDispatch) : ({ phase: "Deferred", reason: "cap" } as PlanDispatch);
 }
 
-/** Story: Ask me about one group plan during my send window / A usable message must be sent before the daily record changes (spec/planDispatch.md:61) */
+/** Story: Ask me about one group plan during my send window / A usable message must be sent before the daily record changes (spec/planDispatch.md) */
 //@ pure
 export function canRenderInvite(invite: PlanDispatch): boolean {
   return invite.phase === "RenderingInvite";
 }
 
-/** Story: Ask me about one group plan during my send window / A usable message must be sent before the daily record changes (spec/planDispatch.md:61) */
+/** Story: Ask me about one group plan during my send window / A usable message must be sent before the daily record changes (spec/planDispatch.md) */
 //@ pure
 export function renderInvite(invite: PlanDispatch, usable: boolean): PlanDispatch {
   //@ ensures (inv(invite) && canRenderInvite(invite)) ==> stepAnInviteNeedsAConfirmedSend(invite, "renderInvite", \result)
   return usable ? ({ ...invite, phase: "SendingInvite" } as PlanDispatch) : ({ phase: "Unavailable", reason: "plan_copy" } as PlanDispatch);
 }
 
-/** Story: Ask me about one group plan during my send window / A usable message must be sent before the daily record changes (spec/planDispatch.md:61) */
+/** Story: Ask me about one group plan during my send window / A usable message must be sent before the daily record changes (spec/planDispatch.md) */
 //@ pure
 export function canRecordSend(invite: PlanDispatch): boolean {
   return invite.phase === "SendingInvite";
 }
 
-/** Story: Ask me about one group plan during my send window / A usable message must be sent before the daily record changes (spec/planDispatch.md:61) */
+/** Story: Ask me about one group plan during my send window / A usable message must be sent before the daily record changes (spec/planDispatch.md) */
 //@ pure
 export function recordSend(invite: PlanDispatch, sent: boolean): PlanDispatch {
   //@ ensures (inv(invite) && canRecordSend(invite)) ==> stepAnInviteNeedsAConfirmedSend(invite, "recordSend", \result)
   return { ...invite, phase: sent ? "InviteSent" : "DeliveryNotConfirmed" };
 }
 
-/** Story: Ask me about one group plan during my send window / A usable message must be sent before the daily record changes (spec/planDispatch.md:61) */
+/** Story: Ask me about one group plan during my send window / A usable message must be sent before the daily record changes (spec/planDispatch.md) */
 //@ pure
 export function stepAnInviteNeedsAConfirmedSend(before: PlanDispatch, via: string, after: PlanDispatch): boolean {
   return !(after.phase === "InviteSent") || (via === "recordSend" && before.phase === "SendingInvite");
 }
 
-/** Story: Ask me about one group plan during my send window / A usable message must be sent before the daily record changes (spec/planDispatch.md:61) */
+/** Story: Ask me about one group plan during my send window / A usable message must be sent before the daily record changes (spec/planDispatch.md) */
 //@ pure
 export function sometimesCanSendPlanInvite(invite: PlanDispatch): boolean {
   return invite.phase === "InviteSent";

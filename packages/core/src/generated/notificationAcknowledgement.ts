@@ -1,9 +1,9 @@
 // GENERATED from spec/notificationAcknowledgement.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md:32) */
+/** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md) */
 export type AcknowledgementPhase = "AcknowledgementStarting" | "AwaitingReadToken" | "MarkingInboxSeen" | "InboxSeen" | "NoInboxRead" | "DeliveryUnchanged" | "DeliveryActed";
-/** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md:32) */
+/** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md) */
 export interface AcknowledgementFlow { phase: AcknowledgementPhase }
 
 /** One variant per transition in the spec. */
@@ -14,7 +14,7 @@ export type Event =
   | { type: "recordInboxSeen" }
   | { type: "readDeliveryClosure"; deliveryClosed: boolean };
 
-/** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md:32) */
+/** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md) */
 export const initial: AcknowledgementFlow = { phase: "AcknowledgementStarting" };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -23,116 +23,116 @@ export function inv(current: AcknowledgementFlow): boolean {
   return true;
 }
 
-/** Story: See my own updates on the surface I am using / A scoped surface shows only items from its app (spec/notificationAcknowledgement.md:9) */
+/** Story: See my own updates on the surface I am using / A scoped surface shows only items from its app (spec/notificationAcknowledgement.md) */
 //@ pure
 export function appAllowsInboxItem(scoped: boolean, sameApp: boolean): boolean {
   return !scoped || sameApp;
 }
 
-/** Story: See my own updates on the surface I am using / A scoped surface shows only items from its app (spec/notificationAcknowledgement.md:9) */
+/** Story: See my own updates on the surface I am using / A scoped surface shows only items from its app (spec/notificationAcknowledgement.md) */
 //@ pure
 export function lawScopedReadRequiresAppMatch(sameApp: boolean): boolean {
   //@ ensures \result === true
   return !appAllowsInboxItem(true, sameApp) || sameApp;
 }
 
-/** Story: See my own updates on the surface I am using / Only a live update token of this member can resolve items (spec/notificationAcknowledgement.md:20) */
+/** Story: See my own updates on the surface I am using / Only a live update token of this member can resolve items (spec/notificationAcknowledgement.md) */
 //@ pure
 export function mayRedeemInboxToken(sameOwner: boolean, expiresAt: number, at: number): boolean {
   return sameOwner && !(expiresAt <= at);
 }
 
-/** Story: See my own updates on the surface I am using / Only a live update token of this member can resolve items (spec/notificationAcknowledgement.md:20) */
+/** Story: See my own updates on the surface I am using / Only a live update token of this member can resolve items (spec/notificationAcknowledgement.md) */
 //@ pure
 export function lawInboxTokenExpiresAtDeadline(expiresAt: number): boolean {
   //@ ensures \result === true
   return !mayRedeemInboxToken(true, expiresAt, expiresAt);
 }
 
-/** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md:32) */
+/** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md) */
 //@ pure
 export function canSelectInboxRead(flow: AcknowledgementFlow): boolean {
   return flow.phase === "AcknowledgementStarting";
 }
 
-/** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md:32) */
+/** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md) */
 //@ pure
 export function selectInboxRead(flow: AcknowledgementFlow, withToken: boolean): AcknowledgementFlow {
   //@ ensures (inv(flow) && canSelectInboxRead(flow)) ==> stepInboxResponseFollowsSeenWrite(flow, "selectInboxRead", \result)
   return { phase: withToken ? "AwaitingReadToken" : "MarkingInboxSeen" };
 }
 
-/** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md:32) */
+/** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md) */
 //@ pure
 export function canResolveInboxReadToken(flow: AcknowledgementFlow): boolean {
   return flow.phase === "AwaitingReadToken";
 }
 
-/** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md:32) */
+/** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md) */
 //@ pure
 export function resolveInboxReadToken(flow: AcknowledgementFlow, valid: boolean): AcknowledgementFlow {
   //@ ensures (inv(flow) && canResolveInboxReadToken(flow)) ==> stepInboxResponseFollowsSeenWrite(flow, "resolveInboxReadToken", \result)
   return { phase: valid ? "MarkingInboxSeen" : "NoInboxRead" };
 }
 
-/** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md:32) */
+/** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md) */
 //@ pure
 export function canSelectShownSubjects(flow: AcknowledgementFlow): boolean {
   return flow.phase === "AcknowledgementStarting";
 }
 
-/** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md:32) */
+/** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md) */
 //@ pure
 export function selectShownSubjects(flow: AcknowledgementFlow, hasVisibleItems: boolean): AcknowledgementFlow {
   //@ ensures (inv(flow) && canSelectShownSubjects(flow)) ==> stepInboxResponseFollowsSeenWrite(flow, "selectShownSubjects", \result)
   return { phase: hasVisibleItems ? "MarkingInboxSeen" : "NoInboxRead" };
 }
 
-/** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md:32) */
+/** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md) */
 //@ pure
 export function canRecordInboxSeen(flow: AcknowledgementFlow): boolean {
   return flow.phase === "MarkingInboxSeen";
 }
 
-/** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md:32) */
+/** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md) */
 //@ pure
 export function recordInboxSeen(flow: AcknowledgementFlow): AcknowledgementFlow {
   //@ ensures (inv(flow) && canRecordInboxSeen(flow)) ==> stepInboxResponseFollowsSeenWrite(flow, "recordInboxSeen", \result)
   return { phase: "InboxSeen" };
 }
 
-/** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md:32) */
+/** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md) */
 //@ pure
 export function stepInboxResponseFollowsSeenWrite(before: AcknowledgementFlow, via: string, after: AcknowledgementFlow): boolean {
   return !(after.phase === "InboxSeen") || (before.phase === "MarkingInboxSeen" && via === "recordInboxSeen");
 }
 
-/** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md:32) */
+/** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md) */
 //@ pure
 export function sometimesMarksInboxSeen(flow: AcknowledgementFlow): boolean {
   return flow.phase === "InboxSeen";
 }
 
-/** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md:32) */
+/** Story: See my own updates on the surface I am using / A read marks the selected items seen before responding (spec/notificationAcknowledgement.md) */
 //@ pure
 export function sometimesLeavesInboxUnchanged(flow: AcknowledgementFlow): boolean {
   return flow.phase === "NoInboxRead";
 }
 
-/** Story: See my own updates on the surface I am using / Count a delivery action only when the store closes a pending delivery (spec/notificationAcknowledgement.md:65) */
+/** Story: See my own updates on the surface I am using / Count a delivery action only when the store closes a pending delivery (spec/notificationAcknowledgement.md) */
 //@ pure
 export function canReadDeliveryClosure(flow: AcknowledgementFlow): boolean {
   return flow.phase === "AcknowledgementStarting";
 }
 
-/** Story: See my own updates on the surface I am using / Count a delivery action only when the store closes a pending delivery (spec/notificationAcknowledgement.md:65) */
+/** Story: See my own updates on the surface I am using / Count a delivery action only when the store closes a pending delivery (spec/notificationAcknowledgement.md) */
 //@ pure
 export function readDeliveryClosure(flow: AcknowledgementFlow, deliveryClosed: boolean): AcknowledgementFlow {
   //@ ensures (inv(flow) && canReadDeliveryClosure(flow)) ==> stepInboxResponseFollowsSeenWrite(flow, "readDeliveryClosure", \result)
   return { phase: deliveryClosed ? "DeliveryActed" : "DeliveryUnchanged" };
 }
 
-/** Story: See my own updates on the surface I am using / Count a delivery action only when the store closes a pending delivery (spec/notificationAcknowledgement.md:65) */
+/** Story: See my own updates on the surface I am using / Count a delivery action only when the store closes a pending delivery (spec/notificationAcknowledgement.md) */
 //@ pure
 export function sometimesRecordsDeliveryAction(flow: AcknowledgementFlow): boolean {
   return flow.phase === "DeliveryActed";

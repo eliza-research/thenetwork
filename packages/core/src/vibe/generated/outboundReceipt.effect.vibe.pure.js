@@ -1,46 +1,46 @@
 // Generated from spec/outboundReceipt.md via Vibestack and VibeLang. Run pnpm run spec:sync.
 import * as M from "./outboundReceipt.js";
-/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md:9) @throws {never} */
+/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) @throws {never} */
 export const initial = M.initial;
 /** Every `always` rule at once. Holds initially and after every transition. @throws {never} */
 export function inv(current) { return M.inv(current); }
-/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md:9) @throws {never} */
+/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) @throws {never} */
 export function receiptRank(phase) { return M.receiptRank(phase); }
-/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md:9) @throws {never} */
+/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) @throws {never} */
 export function recordAcceptance(outbound, providerPhase) { return M.recordAcceptance(outbound, providerPhase); }
-/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md:9) @throws {never} */
+/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) @throws {never} */
 export function applyReceipt(outbound, providerPhase) { return M.applyReceipt(outbound, providerPhase); }
-/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md:9) @throws {never} */
+/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) @throws {never} */
 export function canRecordAcceptance(outbound, providerPhase) { return M.canRecordAcceptance(outbound, providerPhase); }
-/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md:9) @throws {never} */
+/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) @throws {never} */
 export function stepReceiptsDoNotRegress(before, via, after) { return M.stepReceiptsDoNotRegress(before, via, after); }
-/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md:9) @throws {never} */
+/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) @throws {never} */
 export function canApplyReceipt(outbound, providerPhase) { return M.canApplyReceipt(outbound, providerPhase); }
-/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md:9) @throws {never} */
+/** Story: Know whether a queued message reached the provider / A provider receipt advances through acceptance, send, delivery, and read (spec/outboundReceipt.md) @throws {never} */
 export function lawDeliveredIgnoresFailure(phase) { return M.lawDeliveredIgnoresFailure(phase); }
-/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:51) @throws {never} */
+/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md) @throws {never} */
 export function canHoldUnrecordedReceipt(outbound) { return M.canHoldUnrecordedReceipt(outbound); }
-/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:51) @throws {never} */
+/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md) @throws {never} */
 export function holdUnrecordedReceipt(outbound) { return M.holdUnrecordedReceipt(outbound); }
-/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:51) @throws {never} */
+/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md) @throws {never} */
 export function stepUnrecordedReceiptWaits(before, via, after) { return M.stepUnrecordedReceiptWaits(before, via, after); }
-/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:51) @throws {never} */
+/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md) @throws {never} */
 export function canConfirmNeverAdmitted(outbound, neverAdmitted) { return M.canConfirmNeverAdmitted(outbound, neverAdmitted); }
-/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:51) @throws {never} */
+/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md) @throws {never} */
 export function confirmNeverAdmitted(outbound, neverAdmitted) { return M.confirmNeverAdmitted(outbound, neverAdmitted); }
-/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:51) @throws {never} */
+/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md) @throws {never} */
 export function canExpireUnknown(outbound, pastLimit) { return M.canExpireUnknown(outbound, pastLimit); }
-/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:51) @throws {never} */
+/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md) @throws {never} */
 export function expireUnknown(outbound, pastLimit) { return M.expireUnknown(outbound, pastLimit); }
-/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:51) @throws {never} */
+/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md) @throws {never} */
 export function sometimesCanCheckUnknown(outbound) { return M.sometimesCanCheckUnknown(outbound); }
-/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md:51) @throws {never} */
+/** Story: Know whether a queued message reached the provider / An uncertain send waits for a receipt instead of sending again (spec/outboundReceipt.md) @throws {never} */
 export function sometimesCanRead(outbound) { return M.sometimesCanRead(outbound); }
-/** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md:80) @throws {never} */
+/** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md) @throws {never} */
 export function canRecordProviderError(outbound) { return M.canRecordProviderError(outbound); }
-/** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md:80) @throws {never} */
+/** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md) @throws {never} */
 export function recordProviderError(outbound, failure, hasAttemptsLeft) { return M.recordProviderError(outbound, failure, hasAttemptsLeft); }
-/** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md:80) @throws {never} */
+/** Story: Know whether a queued message reached the provider / A provider failure either waits or ends the send (spec/outboundReceipt.md) @throws {never} */
 export function lawAnUnknownResultDoesNotRetry(hasAttemptsLeft) { return M.lawAnUnknownResultDoesNotRetry(hasAttemptsLeft); }
 /** Do the rules allow this event in this state? @throws {never} */
 export function enabled(current, event) { return M.enabled(current, event); }

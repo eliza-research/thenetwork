@@ -1,115 +1,115 @@
 // Generated from spec/notificationDispatch.md via Vibestack and VibeLang. Run pnpm run spec:sync.
 // GENERATED from spec/notificationDispatch.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md:9) */
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
 export const initial = { phase: "DigestStarting" };
 /** Every `always` rule at once. Holds initially and after every transition. */
 //@ pure
 export function inv(current) {
     return true;
 }
-/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md:9) */
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
 //@ pure
 export function inboxItemStillPending(seen, notified) {
     return !seen && !notified;
 }
-/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md:9) */
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
 //@ pure
 export function inboxItemAllowedForRecipient(requested, proactiveAllowed) {
     return requested || proactiveAllowed;
 }
-/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md:9) */
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
 //@ pure
 export function rereadItems(digest, plannedCount, remainingCount, recipientAvailable, destinationChanged) {
     //@ ensures (inv(digest) && canRereadItems(digest)) ==> stepQueueRequiresRecordedDigest(digest, "rereadItems", \result)
     return { phase: remainingCount === 0 || !recipientAvailable ? "DigestCancelled" : (remainingCount === plannedCount && !destinationChanged ? "ReusingDigest" : "RebuildingDigest") };
 }
-/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md:9) */
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
 //@ pure
 export function canRereadItems(digest) {
     return digest.phase === "DigestStarting";
 }
-/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md:9) */
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md) */
 //@ pure
 export function lawMissingRecipientCancels(plannedCount, remainingCount, destinationChanged) {
     //@ ensures \result === true
     return rereadItems(initial, plannedCount, remainingCount, false, destinationChanged).phase === "DigestCancelled";
 }
-/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md:34) */
+/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) */
 //@ pure
 export function digestItemSetCanBeRecorded(itemCount, pendingOwnedCount) {
     return itemCount > 0 && itemCount === pendingOwnedCount;
 }
-/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md:34) */
+/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) */
 //@ pure
 export function canRecordDigest(digest) {
     return digest.phase === "ReusingDigest" || digest.phase === "RebuildingDigest";
 }
-/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md:34) */
+/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) */
 //@ pure
 export function recordDigest(digest, recorded) {
     //@ ensures (inv(digest) && canRecordDigest(digest)) ==> stepQueueRequiresRecordedDigest(digest, "recordDigest", \result)
     return { phase: recorded ? "EnqueueingDigest" : "DigestCancelled" };
 }
-/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md:34) */
+/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) */
 //@ pure
 export function canEnqueueDigest(digest) {
     return digest.phase === "EnqueueingDigest";
 }
-/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md:34) */
+/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) */
 //@ pure
 export function enqueueDigest(digest) {
     //@ ensures (inv(digest) && canEnqueueDigest(digest)) ==> stepQueueRequiresRecordedDigest(digest, "enqueueDigest", \result)
     return { phase: "DigestQueued" };
 }
-/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md:34) */
+/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) */
 //@ pure
 export function stepQueueRequiresRecordedDigest(before, via, after) {
     return !(after.phase === "DigestQueued") || (before.phase === "EnqueueingDigest" && via === "enqueueDigest");
 }
-/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md:34) */
+/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) */
 //@ pure
 export function sometimesQueuesDigest(digest) {
     return digest.phase === "DigestQueued";
 }
-/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md:34) */
+/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md) */
 //@ pure
 export function sometimesCancelsDigest(digest) {
     return digest.phase === "DigestCancelled";
 }
-/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md:57) */
+/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md) */
 //@ pure
 export function inboxItemExpired(hasExpiry, expiresAt, at) {
     return hasExpiry && expiresAt <= at;
 }
-/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md:57) */
+/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md) */
 //@ pure
 export function canReadQueuedDigest(digest) {
     return digest.phase === "DigestStarting";
 }
-/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md:57) */
+/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md) */
 //@ pure
 export function readQueuedDigest(digest, sameDigest) {
     //@ ensures (inv(digest) && canReadQueuedDigest(digest)) ==> stepQueueRequiresRecordedDigest(digest, "readQueuedDigest", \result)
     return { phase: sameDigest ? "ReadingQueuedItems" : "QueuedDigestObsolete" };
 }
-/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md:57) */
+/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md) */
 //@ pure
 export function canRevalidateQueuedItems(digest) {
     return digest.phase === "ReadingQueuedItems";
 }
-/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md:57) */
+/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md) */
 //@ pure
 export function revalidateQueuedItems(digest, allPresent, anyExpired, anyUnseen) {
     //@ ensures (inv(digest) && canRevalidateQueuedItems(digest)) ==> stepQueueRequiresRecordedDigest(digest, "revalidateQueuedItems", \result)
     return { phase: allPresent && !anyExpired && anyUnseen ? "QueuedDigestNeeded" : "QueuedDigestObsolete" };
 }
-/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md:57) */
+/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md) */
 //@ pure
 export function sometimesKeepsQueuedDigest(digest) {
     return digest.phase === "QueuedDigestNeeded";
 }
-/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md:57) */
+/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md) */
 //@ pure
 export function sometimesSuppressesQueuedDigest(digest) {
     return digest.phase === "QueuedDigestObsolete";

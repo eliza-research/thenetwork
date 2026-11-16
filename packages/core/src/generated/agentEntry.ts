@@ -2,23 +2,23 @@
 //@ backend dafny
 import { type JoinMode as brandIdentity_JoinMode, type AccentTokens as brandIdentity_AccentTokens, type Accent as brandIdentity_Accent, type Surface as brandIdentity_Surface, type AppKey as brandIdentity_AppKey, type SharedPart as brandIdentity_SharedPart, type LogoMark as brandIdentity_LogoMark, type Brand as brandIdentity_Brand, supportEmail as brandIdentity_supportEmail, joinModes as brandIdentity_joinModes, accents as brandIdentity_accents, logoMarks as brandIdentity_logoMarks, ntwrkBrand as brandIdentity_ntwrkBrand, slopBrand as brandIdentity_slopBrand, peonBrand as brandIdentity_peonBrand, friendsBrand as brandIdentity_friendsBrand, accentTokens as brandIdentity_accentTokens, mayName as brandIdentity_mayName, siteUsesPart as brandIdentity_siteUsesPart, appKeys as brandIdentity_appKeys, brandFor as brandIdentity_brandFor, lawAppSiteNeverNamesTheNetwork as brandIdentity_lawAppSiteNeverNamesTheNetwork, lawAppSiteNamesNoOtherApp as brandIdentity_lawAppSiteNamesNoOtherApp, lawHubLandingNamesNoApp as brandIdentity_lawHubLandingNamesNoApp, lawSitesShareParts as brandIdentity_lawSitesShareParts, lawBrandNamesItsApp as brandIdentity_lawBrandNamesItsApp, lawOnlyTheNetworkIsInviteOnly as brandIdentity_lawOnlyTheNetworkIsInviteOnly, lawAccentInkDiffersFromAccent as brandIdentity_lawAccentInkDiffersFromAccent, lawBrandsAreDistinct as brandIdentity_lawBrandsAreDistinct } from "./brandIdentity.ts";
 
-/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, never slop.date (spec/agentEntry.md:9) */
+/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, never slop.date (spec/agentEntry.md) */
 export type McpEndpoint = "NoEndpoint" | "SiteEndpoint" | "OpenAiEndpoint";
-/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, never slop.date (spec/agentEntry.md:9) */
+/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, never slop.date (spec/agentEntry.md) */
 export type Plugin = "ClaudePlugin" | "OpenAiPlugin";
-/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md:34) */
+/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
 export type EntryKind = "NoEntry" | "FromSite" | "FromClaudePlugin" | "FromOpenAiPlugin" | "FromSkillCatalog" | "FromUpdateLink";
-/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md:34) */
+/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
 export type EntryPhase = "NotArrived" | "InAgent" | "FollowingSkill" | "Explaining" | "UpdateShown" | "NothingNewShown" | "NeedsConnection" | "EntryRefused";
-/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md:34) */
+/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
 export type Route = "SkillRoute" | "UpdatesRoute" | "NoRoute";
-/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md:34) */
+/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
 export interface Entry { phase: EntryPhase; entry: EntryKind; app: brandIdentity_AppKey; skill: string }
-/** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md:108) */
+/** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md) */
 export type Channel = "IMessage" | "Sms" | "Telegram";
-/** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md:108) */
+/** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md) */
 export type LinkedAssistant = "ChatGptAssistant" | "ClaudeAssistant" | "GrokAssistant";
-/** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md:108) */
+/** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md) */
 export type UpdateDelivery = "InThread" | "AssistantLink" | "ButtonPage";
 
 /** One variant per transition in the spec. */
@@ -27,11 +27,11 @@ export type Event =
   | { type: "resolveSkill"; wantsSignup: boolean }
   | { type: "resolveUpdate"; connected: boolean; referenceOwn: boolean };
 
-/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md:34) */
+/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
 export const noSkill: string = "";
-/** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md:108) */
+/** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md) */
 export const updatePromptLead: string = "Ask The Network for update ";
-/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md:34) */
+/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
 export const initial: Entry = { phase: "NotArrived", entry: "NoEntry", app: "Ntwrk", skill: noSkill };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -40,51 +40,51 @@ export function inv(current: Entry): boolean {
   return alwaysStartHasNoEntry(current) && alwaysSkillOnlyAfterResolution(current) && alwaysSkillMatchesApp(current) && alwaysOpenAiPluginNeverReachesSlop(current) && alwaysSitePromptStartsSignup(current) && alwaysUpdatesOnlyFromReference(current);
 }
 
-/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, never slop.date (spec/agentEntry.md:9) */
+/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, never slop.date (spec/agentEntry.md) */
 //@ pure
 export function pluginListsSkill(plugin: Plugin, app: brandIdentity_AppKey): boolean {
   return plugin === "ClaudePlugin" || app !== "Slop";
 }
 
-/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, never slop.date (spec/agentEntry.md:9) */
+/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, never slop.date (spec/agentEntry.md) */
 //@ pure
 export function pluginEndpoint(plugin: Plugin, app: brandIdentity_AppKey): McpEndpoint {
   return plugin === "ClaudePlugin" ? "SiteEndpoint" : (app === "Slop" ? "NoEndpoint" : "OpenAiEndpoint");
 }
 
-/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, never slop.date (spec/agentEntry.md:9) */
+/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, never slop.date (spec/agentEntry.md) */
 //@ pure
 export function lawClaudePluginListsEverySkill(app: brandIdentity_AppKey): boolean {
   //@ ensures \result === true
   return pluginListsSkill("ClaudePlugin", app) && pluginEndpoint("ClaudePlugin", app) === "SiteEndpoint";
 }
 
-/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, never slop.date (spec/agentEntry.md:9) */
+/** Story: Get from an app site or a text into my own agent / The Claude plugin lists four skills and the OpenAI plugin lists three, never slop.date (spec/agentEntry.md) */
 //@ pure
 export function lawOpenAiPluginOmitsSlop(app: brandIdentity_AppKey): boolean {
   //@ ensures \result === true
   return pluginListsSkill("OpenAiPlugin", app) === (app !== "Slop") && (pluginEndpoint("OpenAiPlugin", app) === "NoEndpoint") === (app === "Slop");
 }
 
-/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md:34) */
+/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
 //@ pure
 export function skillFor(app: brandIdentity_AppKey): string {
   return brandIdentity_brandFor(app).skillName;
 }
 
-/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md:34) */
+/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
 //@ pure
 export function routeFor(entryKind: EntryKind, app: brandIdentity_AppKey): Route {
   return entryKind === "NoEntry" ? "NoRoute" : (entryKind === "FromUpdateLink" ? "UpdatesRoute" : (entryKind === "FromOpenAiPlugin" && app === "Slop" ? "NoRoute" : "SkillRoute"));
 }
 
-/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md:34) */
+/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
 //@ pure
 export function canArrive(s: Entry, entryKind: EntryKind): boolean {
   return s.phase === "NotArrived" && entryKind !== "NoEntry";
 }
 
-/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md:34) */
+/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
 //@ pure
 export function arrive(s: Entry, entryKind: EntryKind, app: brandIdentity_AppKey): Entry {
   //@ ensures (inv(s) && canArrive(s, entryKind)) ==> alwaysStartHasNoEntry(\result)
@@ -97,13 +97,13 @@ export function arrive(s: Entry, entryKind: EntryKind, app: brandIdentity_AppKey
   return { ...s, entry: entryKind, app: app, phase: "InAgent" };
 }
 
-/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md:34) */
+/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
 //@ pure
 export function canResolveSkill(s: Entry): boolean {
   return s.phase === "InAgent" && routeFor(s.entry, s.app) !== "UpdatesRoute";
 }
 
-/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md:34) */
+/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
 //@ pure
 export function resolveSkill(s: Entry, wantsSignup: boolean): Entry {
   //@ ensures (inv(s) && canResolveSkill(s)) ==> alwaysStartHasNoEntry(\result)
@@ -116,57 +116,57 @@ export function resolveSkill(s: Entry, wantsSignup: boolean): Entry {
   return routeFor(s.entry, s.app) === "NoRoute" ? ({ ...s, phase: "EntryRefused" } as Entry) : ({ ...s, skill: skillFor(s.app), phase: wantsSignup || s.entry === "FromSite" ? "FollowingSkill" : "Explaining" } as Entry);
 }
 
-/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md:34) */
+/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
 //@ pure
 export function lawOpenAiPluginHasNoSlopRoute(entryKind: EntryKind): boolean {
   //@ ensures \result === true
   return !(entryKind === "FromOpenAiPlugin") || routeFor(entryKind, "Slop") === "NoRoute";
 }
 
-/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md:34) */
+/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
 //@ pure
 export function lawRouteNeedsAPluginSkill(app: brandIdentity_AppKey): boolean {
   //@ ensures \result === true
   return (routeFor("FromOpenAiPlugin", app) === "SkillRoute") === pluginListsSkill("OpenAiPlugin", app);
 }
 
-/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md:34) */
+/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
 //@ pure
 export function alwaysStartHasNoEntry(s: Entry): boolean {
   return (s.phase === "NotArrived") === (s.entry === "NoEntry");
 }
 
-/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md:34) */
+/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
 //@ pure
 export function alwaysSkillOnlyAfterResolution(s: Entry): boolean {
   return !(s.phase !== "FollowingSkill" && s.phase !== "Explaining") || s.skill === noSkill;
 }
 
-/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md:34) */
+/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
 //@ pure
 export function alwaysSkillMatchesApp(s: Entry): boolean {
   return !(s.phase === "FollowingSkill" || s.phase === "Explaining") || s.skill === skillFor(s.app);
 }
 
-/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md:34) */
+/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
 //@ pure
 export function alwaysOpenAiPluginNeverReachesSlop(s: Entry): boolean {
   return !(s.entry === "FromOpenAiPlugin") || s.skill !== skillFor("Slop");
 }
 
-/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md:34) */
+/** Story: Get from an app site or a text into my own agent / The entry decides the route, and the agent loads only the app's own skill (spec/agentEntry.md) */
 //@ pure
 export function alwaysSitePromptStartsSignup(s: Entry): boolean {
   return !(s.entry === "FromSite") || s.phase !== "Explaining";
 }
 
-/** Story: Get from an app site or a text into my own agent / An update reference shows only the person's own update on their own connection (spec/agentEntry.md:90) */
+/** Story: Get from an app site or a text into my own agent / An update reference shows only the person's own update on their own connection (spec/agentEntry.md) */
 //@ pure
 export function canResolveUpdate(s: Entry): boolean {
   return s.phase === "InAgent" && routeFor(s.entry, s.app) === "UpdatesRoute";
 }
 
-/** Story: Get from an app site or a text into my own agent / An update reference shows only the person's own update on their own connection (spec/agentEntry.md:90) */
+/** Story: Get from an app site or a text into my own agent / An update reference shows only the person's own update on their own connection (spec/agentEntry.md) */
 //@ pure
 export function resolveUpdate(s: Entry, connected: boolean, referenceOwn: boolean): Entry {
   //@ ensures (inv(s) && canResolveUpdate(s)) ==> alwaysStartHasNoEntry(\result)
@@ -179,94 +179,94 @@ export function resolveUpdate(s: Entry, connected: boolean, referenceOwn: boolea
   return { ...s, phase: !connected ? "NeedsConnection" : (referenceOwn ? "UpdateShown" : "NothingNewShown") };
 }
 
-/** Story: Get from an app site or a text into my own agent / An update reference shows only the person's own update on their own connection (spec/agentEntry.md:90) */
+/** Story: Get from an app site or a text into my own agent / An update reference shows only the person's own update on their own connection (spec/agentEntry.md) */
 //@ pure
 export function alwaysUpdatesOnlyFromReference(s: Entry): boolean {
   return !(s.phase === "UpdateShown" || s.phase === "NothingNewShown" || s.phase === "NeedsConnection") || (s.entry === "FromUpdateLink" && s.skill === noSkill);
 }
 
-/** Story: Get from an app site or a text into my own agent / An update reference shows only the person's own update on their own connection (spec/agentEntry.md:90) */
+/** Story: Get from an app site or a text into my own agent / An update reference shows only the person's own update on their own connection (spec/agentEntry.md) */
 //@ pure
 export function stepUpdateShownOnlyByTheUpdatesTool(before: Entry, via: string, after: Entry): boolean {
   return !(after.phase === "UpdateShown" && before.phase !== "UpdateShown") || via === "resolveUpdate";
 }
 
-/** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md:108) */
+/** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md) */
 //@ pure
 export function updateLinkTemplate(assistant: LinkedAssistant): string {
   return assistant === "ChatGptAssistant" ? "https://chatgpt.com/?prompt={q}" : (assistant === "ClaudeAssistant" ? "https://claude.ai/new?q={q}" : "https://grok.com/?q={q}");
 }
 
-/** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md:108) */
+/** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md) */
 //@ pure
 export function updateDeliveryFor(channel: Channel, assistantUsable: boolean): UpdateDelivery {
   return !assistantUsable ? "InThread" : (channel === "IMessage" ? "AssistantLink" : "ButtonPage");
 }
 
-/** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md:108) */
+/** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md) */
 //@ pure
 export function lawNoAssistantMeansThread(channel: Channel): boolean {
   //@ ensures \result === true
   return updateDeliveryFor(channel, false) === "InThread";
 }
 
-/** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md:108) */
+/** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md) */
 //@ pure
 export function lawOnlyIMessageLinksDirectly(channel: Channel): boolean {
   //@ ensures \result === true
   return (updateDeliveryFor(channel, true) === "AssistantLink") === (channel === "IMessage");
 }
 
-/** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md:108) */
+/** Story: Get from an app site or a text into my own agent / An update text links to an assistant only when the person uses one (spec/agentEntry.md) */
 //@ pure
 export function lawChatGptLinkNeverSends(assistant: LinkedAssistant): boolean {
   //@ ensures \result === true
   return updateLinkTemplate(assistant) !== "https://chatgpt.com/?q={q}";
 }
 
-/** Story: Get from an app site or a text into my own agent / Every entry can reach its result (spec/agentEntry.md:138) */
+/** Story: Get from an app site or a text into my own agent / Every entry can reach its result (spec/agentEntry.md) */
 //@ pure
 export function sometimesFollowingSkill(s: Entry): boolean {
   return s.phase === "FollowingSkill";
 }
 
-/** Story: Get from an app site or a text into my own agent / Every entry can reach its result (spec/agentEntry.md:138) */
+/** Story: Get from an app site or a text into my own agent / Every entry can reach its result (spec/agentEntry.md) */
 //@ pure
 export function sometimesFollowingSkillFromSite(s: Entry): boolean {
   return s.phase === "FollowingSkill" && s.entry === "FromSite";
 }
 
-/** Story: Get from an app site or a text into my own agent / Every entry can reach its result (spec/agentEntry.md:138) */
+/** Story: Get from an app site or a text into my own agent / Every entry can reach its result (spec/agentEntry.md) */
 //@ pure
 export function sometimesFollowingSkillFromCatalog(s: Entry): boolean {
   return s.phase === "FollowingSkill" && s.entry === "FromSkillCatalog";
 }
 
-/** Story: Get from an app site or a text into my own agent / Every entry can reach its result (spec/agentEntry.md:138) */
+/** Story: Get from an app site or a text into my own agent / Every entry can reach its result (spec/agentEntry.md) */
 //@ pure
 export function sometimesExplaining(s: Entry): boolean {
   return s.phase === "Explaining";
 }
 
-/** Story: Get from an app site or a text into my own agent / Every entry can reach its result (spec/agentEntry.md:138) */
+/** Story: Get from an app site or a text into my own agent / Every entry can reach its result (spec/agentEntry.md) */
 //@ pure
 export function sometimesUpdateShown(s: Entry): boolean {
   return s.phase === "UpdateShown";
 }
 
-/** Story: Get from an app site or a text into my own agent / Every entry can reach its result (spec/agentEntry.md:138) */
+/** Story: Get from an app site or a text into my own agent / Every entry can reach its result (spec/agentEntry.md) */
 //@ pure
 export function sometimesNothingNewShown(s: Entry): boolean {
   return s.phase === "NothingNewShown";
 }
 
-/** Story: Get from an app site or a text into my own agent / Every entry can reach its result (spec/agentEntry.md:138) */
+/** Story: Get from an app site or a text into my own agent / Every entry can reach its result (spec/agentEntry.md) */
 //@ pure
 export function sometimesNeedsConnection(s: Entry): boolean {
   return s.phase === "NeedsConnection";
 }
 
-/** Story: Get from an app site or a text into my own agent / Every entry can reach its result (spec/agentEntry.md:138) */
+/** Story: Get from an app site or a text into my own agent / Every entry can reach its result (spec/agentEntry.md) */
 //@ pure
 export function sometimesEntryRefused(s: Entry): boolean {
   return s.phase === "EntryRefused";

@@ -1,9 +1,9 @@
 // GENERATED from spec/exposureFloor.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Reserve exposure for eligible candidates with little history / Retrieval starts with a fixed allocation of slots (spec/exposureFloor.md:9) */
+/** Story: Reserve exposure for eligible candidates with little history / Retrieval starts with a fixed allocation of slots (spec/exposureFloor.md) */
 export type FloorPhase = "Unconfigured" | "Open" | "Full";
-/** Story: Reserve exposure for eligible candidates with little history / Retrieval starts with a fixed allocation of slots (spec/exposureFloor.md:9) */
+/** Story: Reserve exposure for eligible candidates with little history / Retrieval starts with a fixed allocation of slots (spec/exposureFloor.md) */
 export interface FloorAllocation { phase: FloorPhase; slotLimit: number; reserved: number }
 
 /** One variant per transition in the spec. */
@@ -11,7 +11,7 @@ export type Event =
   | { type: "allocate"; slotLimit: number }
   | { type: "reserveSlot"; alreadyIncluded: boolean; priority: boolean; similarityEligible: boolean };
 
-/** Story: Reserve exposure for eligible candidates with little history / Retrieval starts with a fixed allocation of slots (spec/exposureFloor.md:9) */
+/** Story: Reserve exposure for eligible candidates with little history / Retrieval starts with a fixed allocation of slots (spec/exposureFloor.md) */
 export const initial: FloorAllocation = { phase: "Unconfigured", slotLimit: 0, reserved: 0 };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -20,19 +20,19 @@ export function inv(current: FloorAllocation): boolean {
   return alwaysAllocationWithinLimit(current);
 }
 
-/** Story: Reserve exposure for eligible candidates with little history / Retrieval starts with a fixed allocation of slots (spec/exposureFloor.md:9) */
+/** Story: Reserve exposure for eligible candidates with little history / Retrieval starts with a fixed allocation of slots (spec/exposureFloor.md) */
 //@ pure
 export function alwaysAllocationWithinLimit(f: FloorAllocation): boolean {
   return f.reserved >= 0 && f.reserved <= f.slotLimit && (!(f.phase === "Unconfigured") || f.reserved === 0) && (!(f.phase === "Open") || f.reserved < f.slotLimit) && (!(f.phase === "Full") || f.reserved === f.slotLimit);
 }
 
-/** Story: Reserve exposure for eligible candidates with little history / Retrieval starts with a fixed allocation of slots (spec/exposureFloor.md:9) */
+/** Story: Reserve exposure for eligible candidates with little history / Retrieval starts with a fixed allocation of slots (spec/exposureFloor.md) */
 //@ pure
 export function canAllocate(f: FloorAllocation, slotLimit: number): boolean {
   return f.phase === "Unconfigured" && slotLimit >= 0;
 }
 
-/** Story: Reserve exposure for eligible candidates with little history / Retrieval starts with a fixed allocation of slots (spec/exposureFloor.md:9) */
+/** Story: Reserve exposure for eligible candidates with little history / Retrieval starts with a fixed allocation of slots (spec/exposureFloor.md) */
 //@ pure
 export function allocate(f: FloorAllocation, slotLimit: number): FloorAllocation {
   //@ ensures (inv(f) && canAllocate(f, slotLimit)) ==> alwaysAllocationWithinLimit(\result)
@@ -41,13 +41,13 @@ export function allocate(f: FloorAllocation, slotLimit: number): FloorAllocation
   return { ...f, slotLimit: slotLimit, phase: slotLimit === 0 ? "Full" : "Open" };
 }
 
-/** Story: Reserve exposure for eligible candidates with little history / A slot goes to an eligible candidate outside the prior results (spec/exposureFloor.md:35) */
+/** Story: Reserve exposure for eligible candidates with little history / A slot goes to an eligible candidate outside the prior results (spec/exposureFloor.md) */
 //@ pure
 export function canReserveSlot(f: FloorAllocation, alreadyIncluded: boolean, priority: boolean, similarityEligible: boolean): boolean {
   return f.phase === "Open" && !alreadyIncluded && priority && similarityEligible;
 }
 
-/** Story: Reserve exposure for eligible candidates with little history / A slot goes to an eligible candidate outside the prior results (spec/exposureFloor.md:35) */
+/** Story: Reserve exposure for eligible candidates with little history / A slot goes to an eligible candidate outside the prior results (spec/exposureFloor.md) */
 //@ pure
 export function reserveSlot(f: FloorAllocation, alreadyIncluded: boolean, priority: boolean, similarityEligible: boolean): FloorAllocation {
   //@ ensures (inv(f) && canReserveSlot(f, alreadyIncluded, priority, similarityEligible)) ==> alwaysAllocationWithinLimit(\result)
@@ -57,19 +57,19 @@ export function reserveSlot(f: FloorAllocation, alreadyIncluded: boolean, priori
   return { ...f, reserved: local_0, phase: local_0 === f.slotLimit ? "Full" : "Open" };
 }
 
-/** Story: Reserve exposure for eligible candidates with little history / A slot goes to an eligible candidate outside the prior results (spec/exposureFloor.md:35) */
+/** Story: Reserve exposure for eligible candidates with little history / A slot goes to an eligible candidate outside the prior results (spec/exposureFloor.md) */
 //@ pure
 export function stepEachReservationUsesOneSlot(before: FloorAllocation, via: string, after: FloorAllocation): boolean {
   return via === "reserveSlot" ? after.reserved === exact_exposureFloor(before.reserved + 1) : after.reserved === before.reserved;
 }
 
-/** Story: Reserve exposure for eligible candidates with little history / A slot goes to an eligible candidate outside the prior results (spec/exposureFloor.md:35) */
+/** Story: Reserve exposure for eligible candidates with little history / A slot goes to an eligible candidate outside the prior results (spec/exposureFloor.md) */
 //@ pure
 export function stepFullStaysFull(before: FloorAllocation, after: FloorAllocation): boolean {
   return !(before.phase === "Full") || (after.phase === "Full" && after.reserved === before.reserved);
 }
 
-/** Story: Reserve exposure for eligible candidates with little history / A slot goes to an eligible candidate outside the prior results (spec/exposureFloor.md:35) */
+/** Story: Reserve exposure for eligible candidates with little history / A slot goes to an eligible candidate outside the prior results (spec/exposureFloor.md) */
 //@ pure
 export function sometimesFillsSlots(f: FloorAllocation): boolean {
   return f.phase === "Full" && f.reserved > 0;

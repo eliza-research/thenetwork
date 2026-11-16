@@ -1,11 +1,11 @@
 // GENERATED from spec/accountPrivacy.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md:9) */
+/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
 export type PrivacyPhase = "AwaitingOperation" | "AwaitingLeaveConsent" | "AwaitingAppForget" | "AwaitingAccountAge" | "AwaitingAccountCleanup" | "AwaitingAccountErasure" | "AwaitingAppExport" | "AwaitingConsentExport" | "CompletePrivacyRequest";
-/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md:9) */
+/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
 export type PrivacyOperation = "LeaveApp" | "DeleteAccount" | "ExportApp";
-/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md:9) */
+/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
 export interface PrivacyRequest { phase: PrivacyPhase; operation: PrivacyOperation; optedOut: boolean; ageChecked: boolean; cleanupDone: boolean; includeMembership: boolean; membershipBound: boolean }
 
 /** One variant per transition in the spec. */
@@ -19,7 +19,7 @@ export type Event =
   | { type: "checkAppExport"; membershipBound: boolean }
   | { type: "recordConsentExport" };
 
-/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md:9) */
+/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
 export const initial: PrivacyRequest = { phase: "AwaitingOperation", operation: "LeaveApp", optedOut: false, ageChecked: false, cleanupDone: false, includeMembership: false, membershipBound: false };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -28,25 +28,25 @@ export function inv(current: PrivacyRequest): boolean {
   return alwaysLeaveRecordsConsent(current) && alwaysErasureRequiresCleanup(current) && alwaysExportNeedsMembership(current);
 }
 
-/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md:9) */
+/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
 //@ pure
 export function hasScopedMembership(hasPerson: boolean, hasMembership: boolean, removed: boolean): boolean {
   return hasPerson && hasMembership && !removed;
 }
 
-/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md:9) */
+/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
 //@ pure
 export function canBeginPrivacyRequest(privacy: PrivacyRequest): boolean {
   return privacy.phase === "AwaitingOperation";
 }
 
-/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md:9) */
+/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
 //@ pure
 export function canRecordLeaveConsent(privacy: PrivacyRequest): boolean {
   return privacy.phase === "AwaitingLeaveConsent" && privacy.operation === "LeaveApp";
 }
 
-/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md:9) */
+/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
 //@ pure
 export function recordLeaveConsent(privacy: PrivacyRequest, membershipBound: boolean): PrivacyRequest {
   //@ ensures (inv(privacy) && canRecordLeaveConsent(privacy)) ==> alwaysLeaveRecordsConsent(\result)
@@ -55,13 +55,13 @@ export function recordLeaveConsent(privacy: PrivacyRequest, membershipBound: boo
   return { ...privacy, optedOut: true, membershipBound: membershipBound, phase: membershipBound ? "AwaitingAppForget" : "CompletePrivacyRequest" };
 }
 
-/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md:9) */
+/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
 //@ pure
 export function canRecordAppForget(privacy: PrivacyRequest): boolean {
   return privacy.phase === "AwaitingAppForget" && privacy.operation === "LeaveApp" && privacy.optedOut && privacy.membershipBound;
 }
 
-/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md:9) */
+/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
 //@ pure
 export function recordAppForget(privacy: PrivacyRequest): PrivacyRequest {
   //@ ensures (inv(privacy) && canRecordAppForget(privacy)) ==> alwaysLeaveRecordsConsent(\result)
@@ -70,7 +70,7 @@ export function recordAppForget(privacy: PrivacyRequest): PrivacyRequest {
   return { ...privacy, phase: "CompletePrivacyRequest" };
 }
 
-/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md:9) */
+/** Story: Leave one app and keep my other memberships / A leave records app consent before cleanup (spec/accountPrivacy.md) */
 //@ pure
 export function beginPrivacyRequest(privacy: PrivacyRequest, operation: PrivacyOperation): PrivacyRequest {
   //@ ensures (inv(privacy) && canBeginPrivacyRequest(privacy)) ==> alwaysLeaveRecordsConsent(\result)
@@ -79,19 +79,19 @@ export function beginPrivacyRequest(privacy: PrivacyRequest, operation: PrivacyO
   return { ...initial, operation: operation, phase: operation === "LeaveApp" ? "AwaitingLeaveConsent" : (operation === "DeleteAccount" ? "AwaitingAccountAge" : "AwaitingAppExport") };
 }
 
-/** Story: Erase my account / Preserve the age floor before full-account cleanup (spec/accountPrivacy.md:49) */
+/** Story: Erase my account / Preserve the age floor before full-account cleanup (spec/accountPrivacy.md) */
 //@ pure
 export function hasAgeToPreserve(hasPerson: boolean, hasLowestAge: boolean): boolean {
   return hasPerson && hasLowestAge;
 }
 
-/** Story: Erase my account / Preserve the age floor before full-account cleanup (spec/accountPrivacy.md:49) */
+/** Story: Erase my account / Preserve the age floor before full-account cleanup (spec/accountPrivacy.md) */
 //@ pure
 export function canRecordAgeCheck(privacy: PrivacyRequest): boolean {
   return privacy.phase === "AwaitingAccountAge" && privacy.operation === "DeleteAccount";
 }
 
-/** Story: Erase my account / Preserve the age floor before full-account cleanup (spec/accountPrivacy.md:49) */
+/** Story: Erase my account / Preserve the age floor before full-account cleanup (spec/accountPrivacy.md) */
 //@ pure
 export function recordAgeCheck(privacy: PrivacyRequest): PrivacyRequest {
   //@ ensures (inv(privacy) && canRecordAgeCheck(privacy)) ==> alwaysLeaveRecordsConsent(\result)
@@ -100,13 +100,13 @@ export function recordAgeCheck(privacy: PrivacyRequest): PrivacyRequest {
   return { ...privacy, phase: "AwaitingAccountCleanup", ageChecked: true };
 }
 
-/** Story: Erase my account / Preserve the age floor before full-account cleanup (spec/accountPrivacy.md:49) */
+/** Story: Erase my account / Preserve the age floor before full-account cleanup (spec/accountPrivacy.md) */
 //@ pure
 export function canRecordAccountCleanup(privacy: PrivacyRequest): boolean {
   return privacy.phase === "AwaitingAccountCleanup" && privacy.operation === "DeleteAccount" && privacy.ageChecked;
 }
 
-/** Story: Erase my account / Preserve the age floor before full-account cleanup (spec/accountPrivacy.md:49) */
+/** Story: Erase my account / Preserve the age floor before full-account cleanup (spec/accountPrivacy.md) */
 //@ pure
 export function recordAccountCleanup(privacy: PrivacyRequest): PrivacyRequest {
   //@ ensures (inv(privacy) && canRecordAccountCleanup(privacy)) ==> alwaysLeaveRecordsConsent(\result)
@@ -115,13 +115,13 @@ export function recordAccountCleanup(privacy: PrivacyRequest): PrivacyRequest {
   return { ...privacy, phase: "AwaitingAccountErasure", cleanupDone: true };
 }
 
-/** Story: Erase my account / Preserve the age floor before full-account cleanup (spec/accountPrivacy.md:49) */
+/** Story: Erase my account / Preserve the age floor before full-account cleanup (spec/accountPrivacy.md) */
 //@ pure
 export function canRecordAccountErasure(privacy: PrivacyRequest): boolean {
   return privacy.phase === "AwaitingAccountErasure" && privacy.operation === "DeleteAccount" && privacy.ageChecked && privacy.cleanupDone;
 }
 
-/** Story: Erase my account / Preserve the age floor before full-account cleanup (spec/accountPrivacy.md:49) */
+/** Story: Erase my account / Preserve the age floor before full-account cleanup (spec/accountPrivacy.md) */
 //@ pure
 export function recordAccountErasure(privacy: PrivacyRequest): PrivacyRequest {
   //@ ensures (inv(privacy) && canRecordAccountErasure(privacy)) ==> alwaysLeaveRecordsConsent(\result)
@@ -130,13 +130,13 @@ export function recordAccountErasure(privacy: PrivacyRequest): PrivacyRequest {
   return { ...privacy, phase: "CompletePrivacyRequest" };
 }
 
-/** Story: Read my own app data / A removed or absent membership has no exportable profile (spec/accountPrivacy.md:77) */
+/** Story: Read my own app data / A removed or absent membership has no exportable profile (spec/accountPrivacy.md) */
 //@ pure
 export function canCheckAppExport(privacy: PrivacyRequest): boolean {
   return privacy.phase === "AwaitingAppExport" && privacy.operation === "ExportApp";
 }
 
-/** Story: Read my own app data / A removed or absent membership has no exportable profile (spec/accountPrivacy.md:77) */
+/** Story: Read my own app data / A removed or absent membership has no exportable profile (spec/accountPrivacy.md) */
 //@ pure
 export function checkAppExport(privacy: PrivacyRequest, membershipBound: boolean): PrivacyRequest {
   //@ ensures (inv(privacy) && canCheckAppExport(privacy)) ==> alwaysLeaveRecordsConsent(\result)
@@ -145,13 +145,13 @@ export function checkAppExport(privacy: PrivacyRequest, membershipBound: boolean
   return { ...privacy, phase: "AwaitingConsentExport", membershipBound: membershipBound, includeMembership: membershipBound };
 }
 
-/** Story: Read my own app data / A removed or absent membership has no exportable profile (spec/accountPrivacy.md:77) */
+/** Story: Read my own app data / A removed or absent membership has no exportable profile (spec/accountPrivacy.md) */
 //@ pure
 export function canRecordConsentExport(privacy: PrivacyRequest): boolean {
   return privacy.phase === "AwaitingConsentExport" && privacy.operation === "ExportApp";
 }
 
-/** Story: Read my own app data / A removed or absent membership has no exportable profile (spec/accountPrivacy.md:77) */
+/** Story: Read my own app data / A removed or absent membership has no exportable profile (spec/accountPrivacy.md) */
 //@ pure
 export function recordConsentExport(privacy: PrivacyRequest): PrivacyRequest {
   //@ ensures (inv(privacy) && canRecordConsentExport(privacy)) ==> alwaysLeaveRecordsConsent(\result)
@@ -160,44 +160,44 @@ export function recordConsentExport(privacy: PrivacyRequest): PrivacyRequest {
   return { ...privacy, phase: "CompletePrivacyRequest" };
 }
 
-/** Story: Read my own app data / The service completes each operation in its own scope (spec/accountPrivacy.md:93) */
+/** Story: Read my own app data / The service completes each operation in its own scope (spec/accountPrivacy.md) */
 //@ pure
 export function alwaysLeaveRecordsConsent(privacy: PrivacyRequest): boolean {
   return !(privacy.operation === "LeaveApp" && (privacy.phase === "AwaitingAppForget" || privacy.phase === "CompletePrivacyRequest")) || privacy.optedOut;
 }
 
-/** Story: Read my own app data / The service completes each operation in its own scope (spec/accountPrivacy.md:93) */
+/** Story: Read my own app data / The service completes each operation in its own scope (spec/accountPrivacy.md) */
 //@ pure
 export function alwaysErasureRequiresCleanup(privacy: PrivacyRequest): boolean {
   return !(privacy.operation === "DeleteAccount" && (privacy.phase === "AwaitingAccountErasure" || privacy.phase === "CompletePrivacyRequest")) || (privacy.ageChecked && privacy.cleanupDone);
 }
 
-/** Story: Read my own app data / The service completes each operation in its own scope (spec/accountPrivacy.md:93) */
+/** Story: Read my own app data / The service completes each operation in its own scope (spec/accountPrivacy.md) */
 //@ pure
 export function alwaysExportNeedsMembership(privacy: PrivacyRequest): boolean {
   return !(privacy.operation === "ExportApp" && privacy.includeMembership) || privacy.membershipBound;
 }
 
-/** Story: Read my own app data / The service completes each operation in its own scope (spec/accountPrivacy.md:93) */
+/** Story: Read my own app data / The service completes each operation in its own scope (spec/accountPrivacy.md) */
 //@ pure
 export function lawRemovedMembershipIsExcluded(hasPerson: boolean, hasMembership: boolean): boolean {
   //@ ensures \result === true
   return !hasScopedMembership(hasPerson, hasMembership, true);
 }
 
-/** Story: Read my own app data / The service completes each operation in its own scope (spec/accountPrivacy.md:93) */
+/** Story: Read my own app data / The service completes each operation in its own scope (spec/accountPrivacy.md) */
 //@ pure
 export function sometimesLeavesApp(privacy: PrivacyRequest): boolean {
   return privacy.operation === "LeaveApp" && privacy.phase === "CompletePrivacyRequest" && privacy.membershipBound;
 }
 
-/** Story: Read my own app data / The service completes each operation in its own scope (spec/accountPrivacy.md:93) */
+/** Story: Read my own app data / The service completes each operation in its own scope (spec/accountPrivacy.md) */
 //@ pure
 export function sometimesErasesAccount(privacy: PrivacyRequest): boolean {
   return privacy.operation === "DeleteAccount" && privacy.phase === "CompletePrivacyRequest";
 }
 
-/** Story: Read my own app data / The service completes each operation in its own scope (spec/accountPrivacy.md:93) */
+/** Story: Read my own app data / The service completes each operation in its own scope (spec/accountPrivacy.md) */
 //@ pure
 export function sometimesExportsMembership(privacy: PrivacyRequest): boolean {
   return privacy.operation === "ExportApp" && privacy.phase === "CompletePrivacyRequest" && privacy.includeMembership;

@@ -9,6 +9,7 @@ export type ApiError =
   | "rate_limited"
   | "invalid_code"
   | "invalid_phone"
+  | "invalid_invitation"
   | "invalid"
   | "account_changed"
   | "turnstile"
@@ -25,6 +26,7 @@ export const platformErrors: Readonly<Record<string, ApiError>> = {
   rate_limited: "rate_limited",
   invalid_code: "invalid_code",
   invalid_phone: "invalid_phone",
+  invalid_invitation: "invalid_invitation",
   invalid: "invalid",
   account_changed: "account_changed",
   turnstile: "turnstile",
@@ -54,6 +56,7 @@ export const apiMessages: Readonly<Record<ApiError, string>> = {
   api_unreachable: "We can't reach our server right now. Nothing was sent. Please try again in a minute.",
   server: "Something went wrong on our side. Please try again in a minute.",
   invalid_phone: "Enter a 10-digit US mobile number.",
+  invalid_invitation: "That invitation is unavailable.",
   turnstile: "We could not check that you are a person. Please try again.",
   review: "We need to check this number before it can be used here. Please try again later, or email us for help.",
   rate_limited: "Too many tries for now. Please wait an hour, then try again.",

@@ -2,31 +2,31 @@
 //@ backend dafny
 import { type JoinMode as brandIdentity_JoinMode, type AccentTokens as brandIdentity_AccentTokens, type Accent as brandIdentity_Accent, type Surface as brandIdentity_Surface, type AppKey as brandIdentity_AppKey, type SharedPart as brandIdentity_SharedPart, type LogoMark as brandIdentity_LogoMark, type Brand as brandIdentity_Brand, supportEmail as brandIdentity_supportEmail, joinModes as brandIdentity_joinModes, accents as brandIdentity_accents, logoMarks as brandIdentity_logoMarks, ntwrkBrand as brandIdentity_ntwrkBrand, slopBrand as brandIdentity_slopBrand, peonBrand as brandIdentity_peonBrand, friendsBrand as brandIdentity_friendsBrand, accentTokens as brandIdentity_accentTokens, mayName as brandIdentity_mayName, siteUsesPart as brandIdentity_siteUsesPart, appKeys as brandIdentity_appKeys, brandFor as brandIdentity_brandFor, lawAppSiteNeverNamesTheNetwork as brandIdentity_lawAppSiteNeverNamesTheNetwork, lawAppSiteNamesNoOtherApp as brandIdentity_lawAppSiteNamesNoOtherApp, lawHubLandingNamesNoApp as brandIdentity_lawHubLandingNamesNoApp, lawSitesShareParts as brandIdentity_lawSitesShareParts, lawBrandNamesItsApp as brandIdentity_lawBrandNamesItsApp, lawOnlyTheNetworkIsInviteOnly as brandIdentity_lawOnlyTheNetworkIsInviteOnly, lawAccentInkDiffersFromAccent as brandIdentity_lawAccentInkDiffersFromAccent, lawBrandsAreDistinct as brandIdentity_lawBrandsAreDistinct } from "./brandIdentity.ts";
 
-/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md:9) */
+/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md) */
 export type SkillKind = "DirectHttpsSkill" | "BrowserConnectorSkill";
-/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md:9) */
+/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md) */
 export type AgeBand = "AgeNotStated" | "Under13" | "Teen" | "Adult";
-/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md:9) */
+/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md) */
 export type Transport = "TransportUndecided" | "InAgentCode" | "ConnectorHandoff" | "MessagesHandoff" | "NoTransport";
-/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md:9) */
+/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md) */
 export type SignupPhase = "CheckingCapability" | "Unsupported" | "ReadingApp" | "WrongApp" | "Drafting" | "BelowJoinAge" | "AwaitingApproval" | "Declined" | "CheckingSession" | "CheckingAuthMode" | "SignInUnavailable" | "AwaitingNumber" | "CodeNotSent" | "SecurityCheckBlocked" | "AwaitingCode" | "CodeRejected" | "ReadingAccount" | "ReadyToJoin" | "NeedsInvite" | "InvitationUnavailable" | "OnReview" | "JoinFailed" | "ExistingMember" | "ReadingBack" | "Saved" | "SavedDiffers" | "SaveUnconfirmed" | "HandedOff" | "ReadyToSubmit" | "ConfirmingProfile" | "ProfileNotSent" | "MessagesStopped" | "HandedToMessages";
-/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md:9) */
+/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md) */
 export interface AgentSignup { phase: SignupPhase; transport: Transport; age: AgeBand; inviteOnly: boolean; useInvitation: boolean; approved: boolean; minorNotified: boolean; codeStarts: number; codeChecks: number; joins: number; submits: number }
-/** Story: Join an app without leaving my agent / Nothing leaves the conversation without explicit approval of the exact profile and text consent (spec/agentSignup.md:126) */
+/** Story: Join an app without leaving my agent / Nothing leaves the conversation without explicit approval of the exact profile and text consent (spec/agentSignup.md) */
 export type Approval = "ApproveExact" | "AskChanges" | "DeclineSignup";
-/** Story: Join an app without leaving my agent / The agent requests the code at most once per attempt (spec/agentSignup.md:179) */
+/** Story: Join an app without leaving my agent / The agent requests the code at most once per attempt (spec/agentSignup.md) */
 export type CodeStart = "CodeSent" | "CodeRefused" | "SecurityCheckRequired";
-/** Story: Join an app without leaving my agent / The account's state decides whether the agent may join (spec/agentSignup.md:215) */
+/** Story: Join an app without leaving my agent / The account's state decides whether the agent may join (spec/agentSignup.md) */
 export type AccountFact = "OtherAppAccount" | "MemberAccount" | "JoinableAccount" | "InviteRequired" | "HeldForReview";
-/** Story: Join an app without leaving my agent / The account's state decides whether the agent may join (spec/agentSignup.md:215) */
+/** Story: Join an app without leaving my agent / The account's state decides whether the agent may join (spec/agentSignup.md) */
 export interface InvitationEvidence { forwarded: boolean; sameApp: boolean; approved: boolean }
-/** Story: Join an app without leaving my agent / The agent joins once, with the approved profile and the current consent (spec/agentSignup.md:256) */
+/** Story: Join an app without leaving my agent / The agent joins once, with the approved profile and the current consent (spec/agentSignup.md) */
 export type JoinResult = "JoinCreated" | "JoinBelowAge" | "JoinNeedsInvite" | "JoinInvalidInvitation" | "JoinHeld" | "JoinNotSaved";
-/** Story: Join an app without leaving my agent / In the connector transport, the person confirms the phone on the app's page and the agent sends the profile once (spec/agentSignup.md:296) */
+/** Story: Join an app without leaving my agent / In the connector transport, the person confirms the phone on the app's page and the agent sends the profile once (spec/agentSignup.md) */
 export type SiteStatus = "SiteNotJoined" | "SiteInvited" | "SiteOnboarding" | "SiteActive" | "SiteStopped" | "SiteOnHold";
-/** Story: Join an app without leaving my agent / The agent asks for the number and the code only in the in-agent transport after approval (spec/agentSignup.md:332) */
+/** Story: Join an app without leaving my agent / The agent asks for the number and the code only in the in-agent transport after approval (spec/agentSignup.md) */
 export type AgentAsk = "AskNothing" | "AskProfileFacts" | "AskApproval" | "AskNumber" | "AskCode" | "AskToFinishOnSite" | "AskToSendText";
-/** Story: Join an app without leaving my agent / The agent reports the true result, and only a confirmed save is reported as saved (spec/agentSignup.md:353) */
+/** Story: Join an app without leaving my agent / The agent reports the true result, and only a confirmed save is reported as saved (spec/agentSignup.md) */
 export type SignupReport = "ReportWorking" | "ReportSaved" | "ReportSaveDiffers" | "ReportSaveUnconfirmed" | "ReportAlreadyMember" | "ReportUnderAge" | "ReportInviteNeeded" | "ReportInviteUnavailable" | "ReportOnHold" | "ReportStopped" | "ReportUnsupported" | "ReportCodeProblem" | "ReportNotSaved" | "ReportDeclined" | "ReportOtherApp" | "ReportSendTheText";
 
 /** One variant per transition in the spec. */
@@ -47,7 +47,7 @@ export type Event =
   | { type: "submitProfile"; accepted: boolean }
   | { type: "confirmProfile"; stillLive: boolean };
 
-/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md:9) */
+/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md) */
 export const initial: AgentSignup = { phase: "CheckingCapability", transport: "TransportUndecided", age: "AgeNotStated", inviteOnly: false, useInvitation: false, approved: false, minorNotified: false, codeStarts: 0, codeChecks: 0, joins: 0, submits: 0 };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -56,44 +56,44 @@ export function inv(current: AgentSignup): boolean {
   return alwaysTransportFixedAfterChoice(current) && alwaysNoCredentialsWithoutTransport(current) && alwaysAppFactsOnlyInAgent(current) && alwaysUnderThirteenStops(current) && alwaysMinorToldMatchingIsAdult(current) && alwaysApprovedProfileHasJoinAge(current) && alwaysNoApprovalBeforeDraftApproved(current) && alwaysNothingSentBeforeApproval(current) && alwaysTextHandoffIsApproved(current) && alwaysCodePathIsApprovedInAgent(current) && alwaysOneCodePerAttempt(current) && alwaysInviteGateOnlyForInviteApps(current) && alwaysJoinAndSubmitAtMostOnce(current) && alwaysConnectorPathIsApproved(current) && alwaysCredentialsAskedOnlyAfterApproval(current) && alwaysSavedNeedsConfirmedSave(current);
 }
 
-/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md:9) */
+/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md) */
 //@ pure
 export function transportFor(skillKind: SkillKind, httpsSession: boolean, connectorTools: boolean): Transport {
   return skillKind === "DirectHttpsSkill" ? (httpsSession ? "InAgentCode" : "NoTransport") : (connectorTools ? "ConnectorHandoff" : "MessagesHandoff");
 }
 
-/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md:9) */
+/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md) */
 //@ pure
 export function skillKindFor(app: brandIdentity_AppKey): SkillKind {
   return app === "Peon" ? "BrowserConnectorSkill" : "DirectHttpsSkill";
 }
 
-/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md:9) */
+/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md) */
 //@ pure
 export function canChooseTransport(s: AgentSignup): boolean {
   return s.phase === "CheckingCapability";
 }
 
-/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md:9) */
+/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md) */
 //@ pure
 export function alwaysTransportFixedAfterChoice(s: AgentSignup): boolean {
   return (s.phase === "CheckingCapability") === (s.transport === "TransportUndecided") && (s.phase === "Unsupported") === (s.transport === "NoTransport");
 }
 
-/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md:9) */
+/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md) */
 //@ pure
 export function alwaysNoCredentialsWithoutTransport(s: AgentSignup): boolean {
   return !(s.transport === "NoTransport" || s.transport === "TransportUndecided") || (s.codeStarts === 0 && s.codeChecks === 0 && s.joins === 0 && s.submits === 0);
 }
 
-/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md:9) */
+/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md) */
 //@ pure
 export function lawOnlyPeonSkillUsesTheConnector(app: brandIdentity_AppKey): boolean {
   //@ ensures \result === true
   return (skillKindFor(app) === "BrowserConnectorSkill") === (app === "Peon");
 }
 
-/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md:9) */
+/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md) */
 //@ pure
 export function chooseTransport(s: AgentSignup, skillKind: SkillKind, httpsSession: boolean, connectorTools: boolean): AgentSignup {
   //@ ensures (inv(s) && canChooseTransport(s)) ==> alwaysTransportFixedAfterChoice(\result)
@@ -119,7 +119,7 @@ export function chooseTransport(s: AgentSignup, skillKind: SkillKind, httpsSessi
   return { ...s, transport: local_0, phase: local_0 === "NoTransport" ? "Unsupported" : (local_0 === "InAgentCode" ? "ReadingApp" : "Drafting") };
 }
 
-/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md:9) */
+/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md) */
 //@ pure
 export function lawDirectSkillNeverFallsBack(httpsSession: boolean, connectorTools: boolean): boolean {
   //@ ensures \result === true
@@ -127,7 +127,7 @@ export function lawDirectSkillNeverFallsBack(httpsSession: boolean, connectorToo
   return local_1 === "InAgentCode" || local_1 === "NoTransport";
 }
 
-/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md:9) */
+/** Story: Join an app without leaving my agent / The skill's transport decides how the phone is confirmed, and a missing capability stops the flow before credentials (spec/agentSignup.md) */
 //@ pure
 export function lawConnectorSkillNeverUsesCodeInAgent(httpsSession: boolean, connectorTools: boolean): boolean {
   //@ ensures \result === true
@@ -135,19 +135,19 @@ export function lawConnectorSkillNeverUsesCodeInAgent(httpsSession: boolean, con
   return local_2 === "ConnectorHandoff" || local_2 === "MessagesHandoff";
 }
 
-/** Story: Join an app without leaving my agent / In the in-agent transport, the agent reads the app's own facts before it drafts and stops when they name another app (spec/agentSignup.md:80) */
+/** Story: Join an app without leaving my agent / In the in-agent transport, the agent reads the app's own facts before it drafts and stops when they name another app (spec/agentSignup.md) */
 //@ pure
 export function canReadAppFacts(s: AgentSignup): boolean {
   return s.phase === "ReadingApp" && s.transport === "InAgentCode";
 }
 
-/** Story: Join an app without leaving my agent / In the in-agent transport, the agent reads the app's own facts before it drafts and stops when they name another app (spec/agentSignup.md:80) */
+/** Story: Join an app without leaving my agent / In the in-agent transport, the agent reads the app's own facts before it drafts and stops when they name another app (spec/agentSignup.md) */
 //@ pure
 export function alwaysAppFactsOnlyInAgent(s: AgentSignup): boolean {
   return !(s.phase === "ReadingApp" || s.inviteOnly) || s.transport === "InAgentCode";
 }
 
-/** Story: Join an app without leaving my agent / In the in-agent transport, the agent reads the app's own facts before it drafts and stops when they name another app (spec/agentSignup.md:80) */
+/** Story: Join an app without leaving my agent / In the in-agent transport, the agent reads the app's own facts before it drafts and stops when they name another app (spec/agentSignup.md) */
 //@ pure
 export function readAppFacts(s: AgentSignup, appMatches: boolean, inviteMode: boolean): AgentSignup {
   //@ ensures (inv(s) && canReadAppFacts(s)) ==> alwaysTransportFixedAfterChoice(\result)
@@ -172,37 +172,37 @@ export function readAppFacts(s: AgentSignup, appMatches: boolean, inviteMode: bo
   return { ...s, inviteOnly: inviteMode, phase: appMatches ? "Drafting" : "WrongApp" };
 }
 
-/** Story: Join an app without leaving my agent / A stated age under 13 stops the flow, and a minor is told that matching is for adults (spec/agentSignup.md:94) */
+/** Story: Join an app without leaving my agent / A stated age under 13 stops the flow, and a minor is told that matching is for adults (spec/agentSignup.md) */
 //@ pure
 export function lowerBand(a: AgeBand, b: AgeBand): AgeBand {
   return a === "AgeNotStated" ? b : (b === "AgeNotStated" ? a : (a === "Under13" || b === "Under13" ? "Under13" : (a === "Teen" || b === "Teen" ? "Teen" : "Adult")));
 }
 
-/** Story: Join an app without leaving my agent / A stated age under 13 stops the flow, and a minor is told that matching is for adults (spec/agentSignup.md:94) */
+/** Story: Join an app without leaving my agent / A stated age under 13 stops the flow, and a minor is told that matching is for adults (spec/agentSignup.md) */
 //@ pure
 export function canDraftProfile(s: AgentSignup, statedAge: AgeBand): boolean {
   return s.phase === "Drafting" && statedAge !== "AgeNotStated";
 }
 
-/** Story: Join an app without leaving my agent / A stated age under 13 stops the flow, and a minor is told that matching is for adults (spec/agentSignup.md:94) */
+/** Story: Join an app without leaving my agent / A stated age under 13 stops the flow, and a minor is told that matching is for adults (spec/agentSignup.md) */
 //@ pure
 export function alwaysUnderThirteenStops(s: AgentSignup): boolean {
   return !(s.age === "Under13") || s.phase === "BelowJoinAge";
 }
 
-/** Story: Join an app without leaving my agent / A stated age under 13 stops the flow, and a minor is told that matching is for adults (spec/agentSignup.md:94) */
+/** Story: Join an app without leaving my agent / A stated age under 13 stops the flow, and a minor is told that matching is for adults (spec/agentSignup.md) */
 //@ pure
 export function alwaysMinorToldMatchingIsAdult(s: AgentSignup): boolean {
   return !(s.age === "Teen") || s.minorNotified;
 }
 
-/** Story: Join an app without leaving my agent / A stated age under 13 stops the flow, and a minor is told that matching is for adults (spec/agentSignup.md:94) */
+/** Story: Join an app without leaving my agent / A stated age under 13 stops the flow, and a minor is told that matching is for adults (spec/agentSignup.md) */
 //@ pure
 export function alwaysApprovedProfileHasJoinAge(s: AgentSignup): boolean {
   return !(s.approved || s.phase === "AwaitingApproval") || (s.age === "Teen" || s.age === "Adult");
 }
 
-/** Story: Join an app without leaving my agent / A stated age under 13 stops the flow, and a minor is told that matching is for adults (spec/agentSignup.md:94) */
+/** Story: Join an app without leaving my agent / A stated age under 13 stops the flow, and a minor is told that matching is for adults (spec/agentSignup.md) */
 //@ pure
 export function draftProfile(s: AgentSignup, statedAge: AgeBand): AgentSignup {
   //@ ensures (inv(s) && canDraftProfile(s, statedAge)) ==> alwaysTransportFixedAfterChoice(\result)
@@ -228,13 +228,13 @@ export function draftProfile(s: AgentSignup, statedAge: AgeBand): AgentSignup {
   return { ...s, age: local_3, minorNotified: local_3 === "Teen", phase: local_3 === "Under13" ? "BelowJoinAge" : "AwaitingApproval" };
 }
 
-/** Story: Join an app without leaving my agent / Nothing leaves the conversation without explicit approval of the exact profile and text consent (spec/agentSignup.md:126) */
+/** Story: Join an app without leaving my agent / Nothing leaves the conversation without explicit approval of the exact profile and text consent (spec/agentSignup.md) */
 //@ pure
 export function canDecideApproval(s: AgentSignup): boolean {
   return s.phase === "AwaitingApproval";
 }
 
-/** Story: Join an app without leaving my agent / Nothing leaves the conversation without explicit approval of the exact profile and text consent (spec/agentSignup.md:126) */
+/** Story: Join an app without leaving my agent / Nothing leaves the conversation without explicit approval of the exact profile and text consent (spec/agentSignup.md) */
 //@ pure
 export function decideApproval(s: AgentSignup, decision: Approval): AgentSignup {
   //@ ensures (inv(s) && canDecideApproval(s)) ==> alwaysTransportFixedAfterChoice(\result)
@@ -259,37 +259,37 @@ export function decideApproval(s: AgentSignup, decision: Approval): AgentSignup 
   return decision === "ApproveExact" ? ({ ...s, approved: true, phase: s.transport === "InAgentCode" ? "CheckingSession" : (s.transport === "ConnectorHandoff" ? "HandedOff" : "HandedToMessages") } as AgentSignup) : (decision === "AskChanges" ? ({ ...s, phase: "Drafting" } as AgentSignup) : ({ ...s, phase: "Declined" } as AgentSignup));
 }
 
-/** Story: Join an app without leaving my agent / Nothing leaves the conversation without explicit approval of the exact profile and text consent (spec/agentSignup.md:126) */
+/** Story: Join an app without leaving my agent / Nothing leaves the conversation without explicit approval of the exact profile and text consent (spec/agentSignup.md) */
 //@ pure
 export function alwaysNoApprovalBeforeDraftApproved(s: AgentSignup): boolean {
   return !(s.phase === "CheckingCapability" || s.phase === "Unsupported" || s.phase === "ReadingApp" || s.phase === "Drafting" || s.phase === "AwaitingApproval" || s.phase === "Declined") || !s.approved;
 }
 
-/** Story: Join an app without leaving my agent / Nothing leaves the conversation without explicit approval of the exact profile and text consent (spec/agentSignup.md:126) */
+/** Story: Join an app without leaving my agent / Nothing leaves the conversation without explicit approval of the exact profile and text consent (spec/agentSignup.md) */
 //@ pure
 export function alwaysNothingSentBeforeApproval(s: AgentSignup): boolean {
   return !(!s.approved) || (s.codeStarts === 0 && s.codeChecks === 0 && s.joins === 0 && s.submits === 0);
 }
 
-/** Story: Join an app without leaving my agent / Nothing leaves the conversation without explicit approval of the exact profile and text consent (spec/agentSignup.md:126) */
+/** Story: Join an app without leaving my agent / Nothing leaves the conversation without explicit approval of the exact profile and text consent (spec/agentSignup.md) */
 //@ pure
 export function alwaysTextHandoffIsApproved(s: AgentSignup): boolean {
   return !(s.phase === "HandedToMessages") || (s.approved && s.transport === "MessagesHandoff");
 }
 
-/** Story: Join an app without leaving my agent / In the in-agent transport, a live session is reused and only the code sign-in mode continues (spec/agentSignup.md:155) */
+/** Story: Join an app without leaving my agent / In the in-agent transport, a live session is reused and only the code sign-in mode continues (spec/agentSignup.md) */
 //@ pure
 export function inCodePath(phase: SignupPhase): boolean {
   return phase === "CheckingSession" || phase === "CheckingAuthMode" || phase === "AwaitingNumber" || phase === "AwaitingCode" || phase === "CodeRejected" || phase === "CodeNotSent" || phase === "ReadingAccount" || phase === "ReadyToJoin" || phase === "ReadingBack";
 }
 
-/** Story: Join an app without leaving my agent / In the in-agent transport, a live session is reused and only the code sign-in mode continues (spec/agentSignup.md:155) */
+/** Story: Join an app without leaving my agent / In the in-agent transport, a live session is reused and only the code sign-in mode continues (spec/agentSignup.md) */
 //@ pure
 export function canCheckSession(s: AgentSignup): boolean {
   return s.phase === "CheckingSession" && s.transport === "InAgentCode";
 }
 
-/** Story: Join an app without leaving my agent / In the in-agent transport, a live session is reused and only the code sign-in mode continues (spec/agentSignup.md:155) */
+/** Story: Join an app without leaving my agent / In the in-agent transport, a live session is reused and only the code sign-in mode continues (spec/agentSignup.md) */
 //@ pure
 export function checkSession(s: AgentSignup, sessionLive: boolean): AgentSignup {
   //@ ensures (inv(s) && canCheckSession(s)) ==> alwaysTransportFixedAfterChoice(\result)
@@ -314,13 +314,13 @@ export function checkSession(s: AgentSignup, sessionLive: boolean): AgentSignup 
   return { ...s, phase: sessionLive ? "ReadingAccount" : "CheckingAuthMode" };
 }
 
-/** Story: Join an app without leaving my agent / In the in-agent transport, a live session is reused and only the code sign-in mode continues (spec/agentSignup.md:155) */
+/** Story: Join an app without leaving my agent / In the in-agent transport, a live session is reused and only the code sign-in mode continues (spec/agentSignup.md) */
 //@ pure
 export function canReadAuthMode(s: AgentSignup): boolean {
   return s.phase === "CheckingAuthMode" && s.transport === "InAgentCode";
 }
 
-/** Story: Join an app without leaving my agent / In the in-agent transport, a live session is reused and only the code sign-in mode continues (spec/agentSignup.md:155) */
+/** Story: Join an app without leaving my agent / In the in-agent transport, a live session is reused and only the code sign-in mode continues (spec/agentSignup.md) */
 //@ pure
 export function readAuthMode(s: AgentSignup, codeMode: boolean): AgentSignup {
   //@ ensures (inv(s) && canReadAuthMode(s)) ==> alwaysTransportFixedAfterChoice(\result)
@@ -345,13 +345,13 @@ export function readAuthMode(s: AgentSignup, codeMode: boolean): AgentSignup {
   return { ...s, phase: codeMode ? "AwaitingNumber" : "SignInUnavailable" };
 }
 
-/** Story: Join an app without leaving my agent / In the in-agent transport, a live session is reused and only the code sign-in mode continues (spec/agentSignup.md:155) */
+/** Story: Join an app without leaving my agent / In the in-agent transport, a live session is reused and only the code sign-in mode continues (spec/agentSignup.md) */
 //@ pure
 export function alwaysCodePathIsApprovedInAgent(s: AgentSignup): boolean {
   return !inCodePath(s.phase) || (s.approved && s.transport === "InAgentCode");
 }
 
-/** Story: Join an app without leaving my agent / The agent requests the code at most once per attempt (spec/agentSignup.md:179) */
+/** Story: Join an app without leaving my agent / The agent requests the code at most once per attempt (spec/agentSignup.md) */
 //@ pure
 export function startCode(s: AgentSignup, codeStart: CodeStart): AgentSignup {
   //@ ensures (inv(s) && canStartCode(s)) ==> alwaysTransportFixedAfterChoice(\result)
@@ -376,25 +376,25 @@ export function startCode(s: AgentSignup, codeStart: CodeStart): AgentSignup {
   return { ...s, codeStarts: exact_agentSignup(s.codeStarts + 1), phase: codeStart === "CodeSent" ? "AwaitingCode" : (codeStart === "CodeRefused" ? "CodeNotSent" : "SecurityCheckBlocked") };
 }
 
-/** Story: Join an app without leaving my agent / The agent requests the code at most once per attempt (spec/agentSignup.md:179) */
+/** Story: Join an app without leaving my agent / The agent requests the code at most once per attempt (spec/agentSignup.md) */
 //@ pure
 export function alwaysOneCodePerAttempt(s: AgentSignup): boolean {
   return s.codeStarts >= 0 && s.codeStarts <= 1 && s.codeChecks >= 0 && s.codeChecks <= s.codeStarts;
 }
 
-/** Story: Join an app without leaving my agent / The agent requests the code at most once per attempt (spec/agentSignup.md:179) */
+/** Story: Join an app without leaving my agent / The agent requests the code at most once per attempt (spec/agentSignup.md) */
 //@ pure
 export function canStartCode(s: AgentSignup): boolean {
   return s.phase === "AwaitingNumber" && s.transport === "InAgentCode" && s.approved && s.codeStarts === 0;
 }
 
-/** Story: Join an app without leaving my agent / The agent checks only the code that the person supplies, once, and only the person starts a new attempt (spec/agentSignup.md:197) */
+/** Story: Join an app without leaving my agent / The agent checks only the code that the person supplies, once, and only the person starts a new attempt (spec/agentSignup.md) */
 //@ pure
 export function canCheckCode(s: AgentSignup): boolean {
   return s.phase === "AwaitingCode" && s.transport === "InAgentCode" && s.codeStarts === 1 && s.codeChecks === 0;
 }
 
-/** Story: Join an app without leaving my agent / The agent checks only the code that the person supplies, once, and only the person starts a new attempt (spec/agentSignup.md:197) */
+/** Story: Join an app without leaving my agent / The agent checks only the code that the person supplies, once, and only the person starts a new attempt (spec/agentSignup.md) */
 //@ pure
 export function checkCode(s: AgentSignup, verified: boolean): AgentSignup {
   //@ ensures (inv(s) && canCheckCode(s)) ==> alwaysTransportFixedAfterChoice(\result)
@@ -419,13 +419,13 @@ export function checkCode(s: AgentSignup, verified: boolean): AgentSignup {
   return { ...s, codeChecks: exact_agentSignup(s.codeChecks + 1), phase: verified ? "ReadingAccount" : "CodeRejected" };
 }
 
-/** Story: Join an app without leaving my agent / The agent checks only the code that the person supplies, once, and only the person starts a new attempt (spec/agentSignup.md:197) */
+/** Story: Join an app without leaving my agent / The agent checks only the code that the person supplies, once, and only the person starts a new attempt (spec/agentSignup.md) */
 //@ pure
 export function canRequestNewCode(s: AgentSignup): boolean {
   return (s.phase === "CodeRejected" || s.phase === "CodeNotSent") && s.transport === "InAgentCode";
 }
 
-/** Story: Join an app without leaving my agent / The agent checks only the code that the person supplies, once, and only the person starts a new attempt (spec/agentSignup.md:197) */
+/** Story: Join an app without leaving my agent / The agent checks only the code that the person supplies, once, and only the person starts a new attempt (spec/agentSignup.md) */
 //@ pure
 export function requestNewCode(s: AgentSignup): AgentSignup {
   //@ ensures (inv(s) && canRequestNewCode(s)) ==> alwaysTransportFixedAfterChoice(\result)
@@ -450,25 +450,25 @@ export function requestNewCode(s: AgentSignup): AgentSignup {
   return { ...s, codeStarts: 0, codeChecks: 0, phase: "AwaitingNumber" };
 }
 
-/** Story: Join an app without leaving my agent / The account's state decides whether the agent may join (spec/agentSignup.md:215) */
+/** Story: Join an app without leaving my agent / The account's state decides whether the agent may join (spec/agentSignup.md) */
 //@ pure
 export function approvedAppInvitation(invitation: InvitationEvidence): boolean {
   return invitation.forwarded && invitation.sameApp && invitation.approved;
 }
 
-/** Story: Join an app without leaving my agent / The account's state decides whether the agent may join (spec/agentSignup.md:215) */
+/** Story: Join an app without leaving my agent / The account's state decides whether the agent may join (spec/agentSignup.md) */
 //@ pure
 export function canReadAccount(s: AgentSignup, account: AccountFact): boolean {
   return s.phase === "ReadingAccount" && s.transport === "InAgentCode" && (account !== "InviteRequired" || s.inviteOnly);
 }
 
-/** Story: Join an app without leaving my agent / The account's state decides whether the agent may join (spec/agentSignup.md:215) */
+/** Story: Join an app without leaving my agent / The account's state decides whether the agent may join (spec/agentSignup.md) */
 //@ pure
 export function alwaysInviteGateOnlyForInviteApps(s: AgentSignup): boolean {
   return !(s.phase === "NeedsInvite") || s.inviteOnly;
 }
 
-/** Story: Join an app without leaving my agent / The account's state decides whether the agent may join (spec/agentSignup.md:215) */
+/** Story: Join an app without leaving my agent / The account's state decides whether the agent may join (spec/agentSignup.md) */
 //@ pure
 export function readAccount(s: AgentSignup, account: AccountFact, invitation: InvitationEvidence): AgentSignup {
   //@ ensures (inv(s) && canReadAccount(s, account)) ==> alwaysTransportFixedAfterChoice(\result)
@@ -494,27 +494,27 @@ export function readAccount(s: AgentSignup, account: AccountFact, invitation: In
   return { ...s, useInvitation: local_4 && (account === "JoinableAccount" || account === "InviteRequired"), phase: account === "OtherAppAccount" ? "WrongApp" : (account === "MemberAccount" ? "ExistingMember" : (account === "HeldForReview" ? "OnReview" : (account === "InviteRequired" && !local_4 ? "NeedsInvite" : "ReadyToJoin"))) };
 }
 
-/** Story: Join an app without leaving my agent / The account's state decides whether the agent may join (spec/agentSignup.md:215) */
+/** Story: Join an app without leaving my agent / The account's state decides whether the agent may join (spec/agentSignup.md) */
 //@ pure
 export function lawInviteGateRequiresApprovedSameAppEvidence(s: AgentSignup, invitation: InvitationEvidence): boolean {
   //@ ensures \result === true
   return (readAccount(s, "InviteRequired", invitation).phase === "ReadyToJoin") === approvedAppInvitation(invitation);
 }
 
-/** Story: Join an app without leaving my agent / The account's state decides whether the agent may join (spec/agentSignup.md:215) */
+/** Story: Join an app without leaving my agent / The account's state decides whether the agent may join (spec/agentSignup.md) */
 //@ pure
 export function lawOnlyApprovedSameAppEvidenceUsesInvitation(s: AgentSignup, account: AccountFact, invitation: InvitationEvidence): boolean {
   //@ ensures \result === true
   return !readAccount(s, account, invitation).useInvitation || (approvedAppInvitation(invitation) && (account === "JoinableAccount" || account === "InviteRequired"));
 }
 
-/** Story: Join an app without leaving my agent / The agent joins once, with the approved profile and the current consent (spec/agentSignup.md:256) */
+/** Story: Join an app without leaving my agent / The agent joins once, with the approved profile and the current consent (spec/agentSignup.md) */
 //@ pure
 export function canJoinApp(s: AgentSignup, joinResult: JoinResult, invitationSubmitted: boolean): boolean {
   return s.phase === "ReadyToJoin" && s.transport === "InAgentCode" && s.approved && s.joins === 0 && invitationSubmitted === s.useInvitation && (joinResult !== "JoinNeedsInvite" || s.inviteOnly) && (joinResult !== "JoinInvalidInvitation" || invitationSubmitted);
 }
 
-/** Story: Join an app without leaving my agent / The agent joins once, with the approved profile and the current consent (spec/agentSignup.md:256) */
+/** Story: Join an app without leaving my agent / The agent joins once, with the approved profile and the current consent (spec/agentSignup.md) */
 //@ pure
 export function joinApp(s: AgentSignup, joinResult: JoinResult, invitationSubmitted: boolean): AgentSignup {
   //@ ensures (inv(s) && canJoinApp(s, joinResult, invitationSubmitted)) ==> alwaysTransportFixedAfterChoice(\result)
@@ -539,19 +539,19 @@ export function joinApp(s: AgentSignup, joinResult: JoinResult, invitationSubmit
   return { ...s, joins: exact_agentSignup(s.joins + 1), phase: joinResult === "JoinCreated" ? "ReadingBack" : (joinResult === "JoinBelowAge" ? "BelowJoinAge" : (joinResult === "JoinNeedsInvite" ? "NeedsInvite" : (joinResult === "JoinInvalidInvitation" ? "InvitationUnavailable" : (joinResult === "JoinHeld" ? "OnReview" : "JoinFailed")))) };
 }
 
-/** Story: Join an app without leaving my agent / The agent joins once, with the approved profile and the current consent (spec/agentSignup.md:256) */
+/** Story: Join an app without leaving my agent / The agent joins once, with the approved profile and the current consent (spec/agentSignup.md) */
 //@ pure
 export function alwaysJoinAndSubmitAtMostOnce(s: AgentSignup): boolean {
   return s.joins >= 0 && s.joins <= 1 && s.submits >= 0 && s.submits <= 1 && (!(s.transport === "InAgentCode") || s.submits === 0) && (!(s.transport === "ConnectorHandoff") || (s.codeStarts === 0 && s.codeChecks === 0 && s.joins === 0)) && (!(s.transport === "MessagesHandoff") || (s.codeStarts === 0 && s.codeChecks === 0 && s.joins === 0 && s.submits === 0));
 }
 
-/** Story: Join an app without leaving my agent / In-agent success is reported only after the read-back matches the approved profile (spec/agentSignup.md:284) */
+/** Story: Join an app without leaving my agent / In-agent success is reported only after the read-back matches the approved profile (spec/agentSignup.md) */
 //@ pure
 export function canReadBack(s: AgentSignup): boolean {
   return s.phase === "ReadingBack" && s.transport === "InAgentCode" && s.joins === 1;
 }
 
-/** Story: Join an app without leaving my agent / In-agent success is reported only after the read-back matches the approved profile (spec/agentSignup.md:284) */
+/** Story: Join an app without leaving my agent / In-agent success is reported only after the read-back matches the approved profile (spec/agentSignup.md) */
 //@ pure
 export function readBack(s: AgentSignup, readBackMatches: boolean): AgentSignup {
   //@ ensures (inv(s) && canReadBack(s)) ==> alwaysTransportFixedAfterChoice(\result)
@@ -576,19 +576,19 @@ export function readBack(s: AgentSignup, readBackMatches: boolean): AgentSignup 
   return { ...s, phase: readBackMatches ? "Saved" : "SavedDiffers" };
 }
 
-/** Story: Join an app without leaving my agent / In the connector transport, the person confirms the phone on the app's page and the agent sends the profile once (spec/agentSignup.md:296) */
+/** Story: Join an app without leaving my agent / In the connector transport, the person confirms the phone on the app's page and the agent sends the profile once (spec/agentSignup.md) */
 //@ pure
 export function inConnectorPath(phase: SignupPhase): boolean {
   return phase === "HandedOff" || phase === "ReadyToSubmit" || phase === "ConfirmingProfile";
 }
 
-/** Story: Join an app without leaving my agent / In the connector transport, the person confirms the phone on the app's page and the agent sends the profile once (spec/agentSignup.md:296) */
+/** Story: Join an app without leaving my agent / In the connector transport, the person confirms the phone on the app's page and the agent sends the profile once (spec/agentSignup.md) */
 //@ pure
 export function canCheckSiteStatus(s: AgentSignup): boolean {
   return s.phase === "HandedOff" && s.transport === "ConnectorHandoff";
 }
 
-/** Story: Join an app without leaving my agent / In the connector transport, the person confirms the phone on the app's page and the agent sends the profile once (spec/agentSignup.md:296) */
+/** Story: Join an app without leaving my agent / In the connector transport, the person confirms the phone on the app's page and the agent sends the profile once (spec/agentSignup.md) */
 //@ pure
 export function checkSiteStatus(s: AgentSignup, siteApp: boolean, siteStatus: SiteStatus): AgentSignup {
   //@ ensures (inv(s) && canCheckSiteStatus(s)) ==> alwaysTransportFixedAfterChoice(\result)
@@ -613,13 +613,13 @@ export function checkSiteStatus(s: AgentSignup, siteApp: boolean, siteStatus: Si
   return { ...s, phase: !siteApp ? "WrongApp" : (siteStatus === "SiteOnboarding" || siteStatus === "SiteActive" ? "ReadyToSubmit" : (siteStatus === "SiteStopped" ? "MessagesStopped" : (siteStatus === "SiteOnHold" ? "OnReview" : "HandedOff"))) };
 }
 
-/** Story: Join an app without leaving my agent / In the connector transport, the person confirms the phone on the app's page and the agent sends the profile once (spec/agentSignup.md:296) */
+/** Story: Join an app without leaving my agent / In the connector transport, the person confirms the phone on the app's page and the agent sends the profile once (spec/agentSignup.md) */
 //@ pure
 export function canSubmitProfile(s: AgentSignup): boolean {
   return s.phase === "ReadyToSubmit" && s.transport === "ConnectorHandoff" && s.approved && s.submits === 0;
 }
 
-/** Story: Join an app without leaving my agent / In the connector transport, the person confirms the phone on the app's page and the agent sends the profile once (spec/agentSignup.md:296) */
+/** Story: Join an app without leaving my agent / In the connector transport, the person confirms the phone on the app's page and the agent sends the profile once (spec/agentSignup.md) */
 //@ pure
 export function submitProfile(s: AgentSignup, accepted: boolean): AgentSignup {
   //@ ensures (inv(s) && canSubmitProfile(s)) ==> alwaysTransportFixedAfterChoice(\result)
@@ -644,13 +644,13 @@ export function submitProfile(s: AgentSignup, accepted: boolean): AgentSignup {
   return { ...s, submits: exact_agentSignup(s.submits + 1), phase: accepted ? "ConfirmingProfile" : "ProfileNotSent" };
 }
 
-/** Story: Join an app without leaving my agent / In the connector transport, the person confirms the phone on the app's page and the agent sends the profile once (spec/agentSignup.md:296) */
+/** Story: Join an app without leaving my agent / In the connector transport, the person confirms the phone on the app's page and the agent sends the profile once (spec/agentSignup.md) */
 //@ pure
 export function canConfirmProfile(s: AgentSignup): boolean {
   return s.phase === "ConfirmingProfile" && s.transport === "ConnectorHandoff" && s.submits === 1;
 }
 
-/** Story: Join an app without leaving my agent / In the connector transport, the person confirms the phone on the app's page and the agent sends the profile once (spec/agentSignup.md:296) */
+/** Story: Join an app without leaving my agent / In the connector transport, the person confirms the phone on the app's page and the agent sends the profile once (spec/agentSignup.md) */
 //@ pure
 export function confirmProfile(s: AgentSignup, stillLive: boolean): AgentSignup {
   //@ ensures (inv(s) && canConfirmProfile(s)) ==> alwaysTransportFixedAfterChoice(\result)
@@ -675,225 +675,225 @@ export function confirmProfile(s: AgentSignup, stillLive: boolean): AgentSignup 
   return { ...s, phase: stillLive ? "Saved" : "SaveUnconfirmed" };
 }
 
-/** Story: Join an app without leaving my agent / In the connector transport, the person confirms the phone on the app's page and the agent sends the profile once (spec/agentSignup.md:296) */
+/** Story: Join an app without leaving my agent / In the connector transport, the person confirms the phone on the app's page and the agent sends the profile once (spec/agentSignup.md) */
 //@ pure
 export function alwaysConnectorPathIsApproved(s: AgentSignup): boolean {
   return !inConnectorPath(s.phase) || (s.approved && s.transport === "ConnectorHandoff");
 }
 
-/** Story: Join an app without leaving my agent / The agent asks for the number and the code only in the in-agent transport after approval (spec/agentSignup.md:332) */
+/** Story: Join an app without leaving my agent / The agent asks for the number and the code only in the in-agent transport after approval (spec/agentSignup.md) */
 //@ pure
 export function askFor(phase: SignupPhase): AgentAsk {
   return phase === "Drafting" ? "AskProfileFacts" : (phase === "AwaitingApproval" ? "AskApproval" : (phase === "AwaitingNumber" ? "AskNumber" : (phase === "AwaitingCode" ? "AskCode" : (phase === "HandedOff" ? "AskToFinishOnSite" : (phase === "HandedToMessages" ? "AskToSendText" : "AskNothing")))));
 }
 
-/** Story: Join an app without leaving my agent / The agent asks for the number and the code only in the in-agent transport after approval (spec/agentSignup.md:332) */
+/** Story: Join an app without leaving my agent / The agent asks for the number and the code only in the in-agent transport after approval (spec/agentSignup.md) */
 //@ pure
 export function alwaysCredentialsAskedOnlyAfterApproval(s: AgentSignup): boolean {
   return !(askFor(s.phase) === "AskNumber" || askFor(s.phase) === "AskCode") || (s.approved && s.transport === "InAgentCode");
 }
 
-/** Story: Join an app without leaving my agent / The agent reports the true result, and only a confirmed save is reported as saved (spec/agentSignup.md:353) */
+/** Story: Join an app without leaving my agent / The agent reports the true result, and only a confirmed save is reported as saved (spec/agentSignup.md) */
 //@ pure
 export function reportFor(phase: SignupPhase): SignupReport {
   return phase === "Saved" ? "ReportSaved" : (phase === "SavedDiffers" ? "ReportSaveDiffers" : (phase === "SaveUnconfirmed" ? "ReportSaveUnconfirmed" : (phase === "HandedToMessages" ? "ReportSendTheText" : (phase === "ExistingMember" ? "ReportAlreadyMember" : (phase === "BelowJoinAge" ? "ReportUnderAge" : (phase === "NeedsInvite" ? "ReportInviteNeeded" : (phase === "InvitationUnavailable" ? "ReportInviteUnavailable" : (phase === "OnReview" ? "ReportOnHold" : (phase === "MessagesStopped" ? "ReportStopped" : (phase === "Unsupported" || phase === "SignInUnavailable" || phase === "SecurityCheckBlocked" ? "ReportUnsupported" : (phase === "CodeNotSent" || phase === "CodeRejected" ? "ReportCodeProblem" : (phase === "JoinFailed" || phase === "ProfileNotSent" ? "ReportNotSaved" : (phase === "Declined" ? "ReportDeclined" : (phase === "WrongApp" ? "ReportOtherApp" : "ReportWorking"))))))))))))));
 }
 
-/** Story: Join an app without leaving my agent / The agent reports the true result, and only a confirmed save is reported as saved (spec/agentSignup.md:353) */
+/** Story: Join an app without leaving my agent / The agent reports the true result, and only a confirmed save is reported as saved (spec/agentSignup.md) */
 //@ pure
 export function endReportFor(transport: Transport): SignupReport {
   return transport === "InAgentCode" || transport === "ConnectorHandoff" ? "ReportSaved" : (transport === "MessagesHandoff" ? "ReportSendTheText" : "ReportUnsupported");
 }
 
-/** Story: Join an app without leaving my agent / The agent reports the true result, and only a confirmed save is reported as saved (spec/agentSignup.md:353) */
+/** Story: Join an app without leaving my agent / The agent reports the true result, and only a confirmed save is reported as saved (spec/agentSignup.md) */
 //@ pure
 export function alwaysSavedNeedsConfirmedSave(s: AgentSignup): boolean {
   return !(s.phase === "Saved") || (s.approved && (s.joins === 1 || s.submits === 1));
 }
 
-/** Story: Join an app without leaving my agent / The agent reports the true result, and only a confirmed save is reported as saved (spec/agentSignup.md:353) */
+/** Story: Join an app without leaving my agent / The agent reports the true result, and only a confirmed save is reported as saved (spec/agentSignup.md) */
 //@ pure
 export function stepSavedFollowsConfirmation(before: AgentSignup, via: string, after: AgentSignup): boolean {
   return !(after.phase === "Saved" && before.phase !== "Saved") || (via === "readBack" || via === "confirmProfile");
 }
 
-/** Story: Join an app without leaving my agent / The agent reports the true result, and only a confirmed save is reported as saved (spec/agentSignup.md:353) */
+/** Story: Join an app without leaving my agent / The agent reports the true result, and only a confirmed save is reported as saved (spec/agentSignup.md) */
 //@ pure
 export function retryable(phase: SignupPhase): boolean {
   return phase === "CodeRejected" || phase === "CodeNotSent";
 }
 
-/** Story: Join an app without leaving my agent / The agent reports the true result, and only a confirmed save is reported as saved (spec/agentSignup.md:353) */
+/** Story: Join an app without leaving my agent / The agent reports the true result, and only a confirmed save is reported as saved (spec/agentSignup.md) */
 //@ pure
 export function finished(phase: SignupPhase): boolean {
   return reportFor(phase) !== "ReportWorking";
 }
 
-/** Story: Join an app without leaving my agent / The agent reports the true result, and only a confirmed save is reported as saved (spec/agentSignup.md:353) */
+/** Story: Join an app without leaving my agent / The agent reports the true result, and only a confirmed save is reported as saved (spec/agentSignup.md) */
 //@ pure
 export function lawOnlyConfirmedTransportsEndSaved(transport: Transport): boolean {
   //@ ensures \result === true
   return (endReportFor(transport) === "ReportSaved") === (transport === "InAgentCode" || transport === "ConnectorHandoff");
 }
 
-/** Story: Join an app without leaving my agent / The agent reports the true result, and only a confirmed save is reported as saved (spec/agentSignup.md:353) */
+/** Story: Join an app without leaving my agent / The agent reports the true result, and only a confirmed save is reported as saved (spec/agentSignup.md) */
 //@ pure
 export function lawOnlySavedReportsSuccess(phase: SignupPhase): boolean {
   //@ ensures \result === true
   return (reportFor(phase) === "ReportSaved") === (phase === "Saved");
 }
 
-/** Story: Join an app without leaving my agent / The agent reports the true result, and only a confirmed save is reported as saved (spec/agentSignup.md:353) */
+/** Story: Join an app without leaving my agent / The agent reports the true result, and only a confirmed save is reported as saved (spec/agentSignup.md) */
 //@ pure
 export function stepFinishedStaysFinished(before: AgentSignup, via: string, after: AgentSignup): boolean {
   return !(finished(before.phase) && !retryable(before.phase)) || equal_agentSignup(after, before);
 }
 
-/** Story: Join an app without leaving my agent / The agent reports the true result, and only a confirmed save is reported as saved (spec/agentSignup.md:353) */
+/** Story: Join an app without leaving my agent / The agent reports the true result, and only a confirmed save is reported as saved (spec/agentSignup.md) */
 //@ pure
 export function stepRetryOnlyAfterCodeProblem(before: AgentSignup, via: string, after: AgentSignup): boolean {
   return !(finished(before.phase) && after.phase !== before.phase) || (retryable(before.phase) && via === "requestNewCode");
 }
 
-/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md:409) */
+/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md) */
 //@ pure
 export function sometimesSavedInAgent(s: AgentSignup): boolean {
   return s.phase === "Saved" && s.transport === "InAgentCode";
 }
 
-/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md:409) */
+/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md) */
 //@ pure
 export function sometimesSavedThroughConnector(s: AgentSignup): boolean {
   return s.phase === "Saved" && s.transport === "ConnectorHandoff";
 }
 
-/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md:409) */
+/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md) */
 //@ pure
 export function sometimesSavedDiffers(s: AgentSignup): boolean {
   return s.phase === "SavedDiffers";
 }
 
-/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md:409) */
+/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md) */
 //@ pure
 export function sometimesSaveUnconfirmed(s: AgentSignup): boolean {
   return s.phase === "SaveUnconfirmed";
 }
 
-/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md:409) */
+/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md) */
 //@ pure
 export function sometimesHandedToMessages(s: AgentSignup): boolean {
   return s.phase === "HandedToMessages";
 }
 
-/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md:409) */
+/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md) */
 //@ pure
 export function sometimesSavedWithCode(s: AgentSignup): boolean {
   return s.phase === "Saved" && s.transport === "InAgentCode" && s.codeChecks === 1;
 }
 
-/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md:409) */
+/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md) */
 //@ pure
 export function sometimesSavedWithSession(s: AgentSignup): boolean {
   return s.phase === "Saved" && s.transport === "InAgentCode" && s.codeStarts === 0;
 }
 
-/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md:409) */
+/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md) */
 //@ pure
 export function sometimesExistingMember(s: AgentSignup): boolean {
   return s.phase === "ExistingMember";
 }
 
-/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md:409) */
+/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md) */
 //@ pure
 export function sometimesNeedsInvite(s: AgentSignup): boolean {
   return s.phase === "NeedsInvite";
 }
 
-/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md:409) */
+/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md) */
 //@ pure
 export function sometimesSavedWithForwardedInvite(s: AgentSignup): boolean {
   return s.phase === "Saved" && s.inviteOnly && s.useInvitation;
 }
 
-/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md:409) */
+/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md) */
 //@ pure
 export function sometimesForwardedInviteUnavailable(s: AgentSignup): boolean {
   return s.phase === "InvitationUnavailable";
 }
 
-/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md:409) */
+/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md) */
 //@ pure
 export function sometimesOnReview(s: AgentSignup): boolean {
   return s.phase === "OnReview";
 }
 
-/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md:409) */
+/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md) */
 //@ pure
 export function sometimesBelowJoinAge(s: AgentSignup): boolean {
   return s.phase === "BelowJoinAge";
 }
 
-/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md:409) */
+/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md) */
 //@ pure
 export function sometimesTeenApproved(s: AgentSignup): boolean {
   return s.age === "Teen" && s.approved;
 }
 
-/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md:409) */
+/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md) */
 //@ pure
 export function sometimesUnsupported(s: AgentSignup): boolean {
   return s.phase === "Unsupported";
 }
 
-/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md:409) */
+/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md) */
 //@ pure
 export function sometimesSignInUnavailable(s: AgentSignup): boolean {
   return s.phase === "SignInUnavailable";
 }
 
-/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md:409) */
+/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md) */
 //@ pure
 export function sometimesSecurityCheckBlocked(s: AgentSignup): boolean {
   return s.phase === "SecurityCheckBlocked";
 }
 
-/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md:409) */
+/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md) */
 //@ pure
 export function sometimesCodeRejected(s: AgentSignup): boolean {
   return s.phase === "CodeRejected";
 }
 
-/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md:409) */
+/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md) */
 //@ pure
 export function sometimesCodeNotSent(s: AgentSignup): boolean {
   return s.phase === "CodeNotSent";
 }
 
-/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md:409) */
+/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md) */
 //@ pure
 export function sometimesDeclined(s: AgentSignup): boolean {
   return s.phase === "Declined";
 }
 
-/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md:409) */
+/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md) */
 //@ pure
 export function sometimesWrongApp(s: AgentSignup): boolean {
   return s.phase === "WrongApp";
 }
 
-/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md:409) */
+/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md) */
 //@ pure
 export function sometimesJoinFailed(s: AgentSignup): boolean {
   return s.phase === "JoinFailed";
 }
 
-/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md:409) */
+/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md) */
 //@ pure
 export function sometimesProfileNotSent(s: AgentSignup): boolean {
   return s.phase === "ProfileNotSent";
 }
 
-/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md:409) */
+/** Story: Join an app without leaving my agent / A signup can save a profile, hand it to Messages, or stop at a truthful result (spec/agentSignup.md) */
 //@ pure
 export function sometimesMessagesStopped(s: AgentSignup): boolean {
   return s.phase === "MessagesStopped";

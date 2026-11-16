@@ -1,13 +1,13 @@
 // GENERATED from spec/selectionRun.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Select compatible proposals within the run’s limits / Exposure selection precedes exploration and greedy selection (spec/selectionRun.md:9) */
+/** Story: Select compatible proposals within the run’s limits / Exposure selection precedes exploration and greedy selection (spec/selectionRun.md) */
 export type SelectionPhase = "Exposure" | "Exploration" | "Greedy" | "Complete";
-/** Story: Select compatible proposals within the run’s limits / Exposure selection precedes exploration and greedy selection (spec/selectionRun.md:9) */
+/** Story: Select compatible proposals within the run’s limits / Exposure selection precedes exploration and greedy selection (spec/selectionRun.md) */
 export interface SelectionRun { phase: SelectionPhase; selectedCount: number; selectedKeys: Record<string, boolean>; usedPairs: Record<string, boolean>; byCity: Record<string, number>; proactive: Record<string, number>; contribution: Record<string, number> }
-/** Story: Select compatible proposals within the run’s limits / Each reservation checks the city, pair, and member limits (spec/selectionRun.md:37) */
+/** Story: Select compatible proposals within the run’s limits / Each reservation checks the city, pair, and member limits (spec/selectionRun.md) */
 export interface SelectionMember { id: string; unavailable: boolean; priorProactive: number; proactiveLimit: number; contributor: boolean; priorContribution: number; contributionLimit: number }
-/** Story: Select compatible proposals within the run’s limits / Each reservation checks the city, pair, and member limits (spec/selectionRun.md:37) */
+/** Story: Select compatible proposals within the run’s limits / Each reservation checks the city, pair, and member limits (spec/selectionRun.md) */
 export interface SelectionChoice { candidateKey: string; city: string; cityLimit: number; members: SelectionMember[]; pairKeys: string[] }
 
 /** One variant per transition in the spec. */
@@ -17,7 +17,7 @@ export type Event =
   | { type: "beginGreedy" }
   | { type: "reserveSelection"; choice: SelectionChoice; timeFree: boolean; exploring: boolean };
 
-/** Story: Select compatible proposals within the run’s limits / Exposure selection precedes exploration and greedy selection (spec/selectionRun.md:9) */
+/** Story: Select compatible proposals within the run’s limits / Exposure selection precedes exploration and greedy selection (spec/selectionRun.md) */
 export const initial: SelectionRun = { phase: "Exposure", selectedCount: 0, selectedKeys: ({} as Record<string, boolean>), usedPairs: ({} as Record<string, boolean>), byCity: ({} as Record<string, number>), proactive: ({} as Record<string, number>), contribution: ({} as Record<string, number>) };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -26,13 +26,13 @@ export function inv(current: SelectionRun): boolean {
   return alwaysSelectedCountIsNonnegative(current);
 }
 
-/** Story: Select compatible proposals within the run’s limits / Exposure selection precedes exploration and greedy selection (spec/selectionRun.md:9) */
+/** Story: Select compatible proposals within the run’s limits / Exposure selection precedes exploration and greedy selection (spec/selectionRun.md) */
 //@ pure
 export function canCompleteRun(s: SelectionRun): boolean {
   return s.phase === "Greedy";
 }
 
-/** Story: Select compatible proposals within the run’s limits / Exposure selection precedes exploration and greedy selection (spec/selectionRun.md:9) */
+/** Story: Select compatible proposals within the run’s limits / Exposure selection precedes exploration and greedy selection (spec/selectionRun.md) */
 //@ pure
 export function completeRun(s: SelectionRun): SelectionRun {
   //@ ensures (inv(s) && canCompleteRun(s)) ==> alwaysSelectedCountIsNonnegative(\result)
@@ -41,19 +41,19 @@ export function completeRun(s: SelectionRun): SelectionRun {
   return { ...s, phase: "Complete" };
 }
 
-/** Story: Select compatible proposals within the run’s limits / Exposure selection precedes exploration and greedy selection (spec/selectionRun.md:9) */
+/** Story: Select compatible proposals within the run’s limits / Exposure selection precedes exploration and greedy selection (spec/selectionRun.md) */
 //@ pure
 export function stepCompletedRunStaysClosed(before: SelectionRun, after: SelectionRun): boolean {
   return !(before.phase === "Complete") || after.phase === "Complete";
 }
 
-/** Story: Select compatible proposals within the run’s limits / Exposure selection precedes exploration and greedy selection (spec/selectionRun.md:9) */
+/** Story: Select compatible proposals within the run’s limits / Exposure selection precedes exploration and greedy selection (spec/selectionRun.md) */
 //@ pure
 export function canBeginExploration(s: SelectionRun): boolean {
   return s.phase === "Exposure";
 }
 
-/** Story: Select compatible proposals within the run’s limits / Exposure selection precedes exploration and greedy selection (spec/selectionRun.md:9) */
+/** Story: Select compatible proposals within the run’s limits / Exposure selection precedes exploration and greedy selection (spec/selectionRun.md) */
 //@ pure
 export function beginExploration(s: SelectionRun): SelectionRun {
   //@ ensures (inv(s) && canBeginExploration(s)) ==> alwaysSelectedCountIsNonnegative(\result)
@@ -62,13 +62,13 @@ export function beginExploration(s: SelectionRun): SelectionRun {
   return { ...s, phase: "Exploration" };
 }
 
-/** Story: Select compatible proposals within the run’s limits / Exposure selection precedes exploration and greedy selection (spec/selectionRun.md:9) */
+/** Story: Select compatible proposals within the run’s limits / Exposure selection precedes exploration and greedy selection (spec/selectionRun.md) */
 //@ pure
 export function canBeginGreedy(s: SelectionRun): boolean {
   return s.phase === "Exploration";
 }
 
-/** Story: Select compatible proposals within the run’s limits / Exposure selection precedes exploration and greedy selection (spec/selectionRun.md:9) */
+/** Story: Select compatible proposals within the run’s limits / Exposure selection precedes exploration and greedy selection (spec/selectionRun.md) */
 //@ pure
 export function beginGreedy(s: SelectionRun): SelectionRun {
   //@ ensures (inv(s) && canBeginGreedy(s)) ==> alwaysSelectedCountIsNonnegative(\result)
@@ -77,81 +77,81 @@ export function beginGreedy(s: SelectionRun): SelectionRun {
   return { ...s, phase: "Greedy" };
 }
 
-/** Story: Select compatible proposals within the run’s limits / Each reservation checks the city, pair, and member limits (spec/selectionRun.md:37) */
+/** Story: Select compatible proposals within the run’s limits / Each reservation checks the city, pair, and member limits (spec/selectionRun.md) */
 //@ pure
 export function numberUsed(counts: Record<string, number>, key: string): number {
   return ("$" + key) in counts ? get_selectionRun(counts, "$" + key) : 0;
 }
 
-/** Story: Select compatible proposals within the run’s limits / Each reservation checks the city, pair, and member limits (spec/selectionRun.md:37) */
+/** Story: Select compatible proposals within the run’s limits / Each reservation checks the city, pair, and member limits (spec/selectionRun.md) */
 //@ pure
 export function selectedBefore(s: SelectionRun, candidateKey: string): boolean {
   const local_0 = s.selectedKeys;
   return ("$" + candidateKey) in local_0 ? get_selectionRun(local_0, "$" + candidateKey) : false;
 }
 
-/** Story: Select compatible proposals within the run’s limits / Each reservation checks the city, pair, and member limits (spec/selectionRun.md:37) */
+/** Story: Select compatible proposals within the run’s limits / Each reservation checks the city, pair, and member limits (spec/selectionRun.md) */
 //@ pure
 export function pairAlreadyUsed(s: SelectionRun, pair: string): boolean {
   const local_1 = s.usedPairs;
   return ("$" + pair) in local_1 ? get_selectionRun(local_1, "$" + pair) : false;
 }
 
-/** Story: Select compatible proposals within the run’s limits / Each reservation checks the city, pair, and member limits (spec/selectionRun.md:37) */
+/** Story: Select compatible proposals within the run’s limits / Each reservation checks the city, pair, and member limits (spec/selectionRun.md) */
 //@ pure
 export function proactiveUsed(s: SelectionRun, id: string): number {
   return numberUsed(s.proactive, id);
 }
 
-/** Story: Select compatible proposals within the run’s limits / Each reservation checks the city, pair, and member limits (spec/selectionRun.md:37) */
+/** Story: Select compatible proposals within the run’s limits / Each reservation checks the city, pair, and member limits (spec/selectionRun.md) */
 //@ pure
 export function memberHasRoom(s: SelectionRun, m: SelectionMember): boolean {
   return !m.unavailable && !(exact_selectionRun(exact_selectionRun(m.priorProactive + proactiveUsed(s, m.id)) + 1) > m.proactiveLimit) && (!m.contributor || !(exact_selectionRun(exact_selectionRun(m.priorContribution + numberUsed(s.contribution, m.id)) + 1) > m.contributionLimit));
 }
 
-/** Story: Select compatible proposals within the run’s limits / Each reservation checks the city, pair, and member limits (spec/selectionRun.md:37) */
+/** Story: Select compatible proposals within the run’s limits / Each reservation checks the city, pair, and member limits (spec/selectionRun.md) */
 //@ pure
 export function choiceHasRoom(s: SelectionRun, choice: SelectionChoice): boolean {
   return s.phase !== "Complete" && !selectedBefore(s, choice.candidateKey) && !(numberUsed(s.byCity, choice.city) >= choice.cityLimit) && !choice.members.some((m: SelectionMember) => !memberHasRoom(s, m)) && !choice.pairKeys.some((pair: string) => !(!pairAlreadyUsed(s, pair)));
 }
 
-/** Story: Select compatible proposals within the run’s limits / Each reservation checks the city, pair, and member limits (spec/selectionRun.md:37) */
+/** Story: Select compatible proposals within the run’s limits / Each reservation checks the city, pair, and member limits (spec/selectionRun.md) */
 //@ pure
 export function canReserveSelection(s: SelectionRun, choice: SelectionChoice, timeFree: boolean, exploring: boolean): boolean {
   return timeFree && exploring === (s.phase === "Exploration") && choiceHasRoom(s, choice);
 }
 
-/** Story: Select compatible proposals within the run’s limits / Reserving a proposal consumes its slots together (spec/selectionRun.md:91) */
+/** Story: Select compatible proposals within the run’s limits / Reserving a proposal consumes its slots together (spec/selectionRun.md) */
 //@ pure
 export function addUse(counts: Record<string, number>, key: string): Record<string, number> {
   return ({ ...counts, ["$" + key]: exact_selectionRun(numberUsed(counts, key) + 1) } as Record<string, number>);
 }
 
-/** Story: Select compatible proposals within the run’s limits / Reserving a proposal consumes its slots together (spec/selectionRun.md:91) */
+/** Story: Select compatible proposals within the run’s limits / Reserving a proposal consumes its slots together (spec/selectionRun.md) */
 //@ pure
 export function alwaysSelectedCountIsNonnegative(s: SelectionRun): boolean {
   return s.selectedCount >= 0;
 }
 
-/** Story: Select compatible proposals within the run’s limits / Reserving a proposal consumes its slots together (spec/selectionRun.md:91) */
+/** Story: Select compatible proposals within the run’s limits / Reserving a proposal consumes its slots together (spec/selectionRun.md) */
 //@ pure
 export function stepOnlyReserveIncreasesSelections(before: SelectionRun, via: string, after: SelectionRun): boolean {
   return via === "reserveSelection" ? after.selectedCount === exact_selectionRun(before.selectedCount + 1) : after.selectedCount === before.selectedCount;
 }
 
-/** Story: Select compatible proposals within the run’s limits / Reserving a proposal consumes its slots together (spec/selectionRun.md:91) */
+/** Story: Select compatible proposals within the run’s limits / Reserving a proposal consumes its slots together (spec/selectionRun.md) */
 //@ pure
 export function sometimesSelected(s: SelectionRun): boolean {
   return s.selectedCount > 0;
 }
 
-/** Story: Select compatible proposals within the run’s limits / Reserving a proposal consumes its slots together (spec/selectionRun.md:91) */
+/** Story: Select compatible proposals within the run’s limits / Reserving a proposal consumes its slots together (spec/selectionRun.md) */
 //@ pure
 export function sometimesFinishedWithSelection(s: SelectionRun): boolean {
   return s.phase === "Complete" && s.selectedCount > 0;
 }
 
-/** Story: Select compatible proposals within the run’s limits / Reserving a proposal consumes its slots together (spec/selectionRun.md:91) */
+/** Story: Select compatible proposals within the run’s limits / Reserving a proposal consumes its slots together (spec/selectionRun.md) */
 //@ pure
 export function reserveSelection(s: SelectionRun, choice: SelectionChoice, timeFree: boolean, exploring: boolean): SelectionRun {
   //@ ensures (inv(s) && canReserveSelection(s, choice, timeFree, exploring)) ==> alwaysSelectedCountIsNonnegative(\result)

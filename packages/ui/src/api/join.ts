@@ -12,6 +12,8 @@ export interface SessionAnswer {
   reason: BlockReason;
   /** The app and account whose fields the person reviews; never a credential. */
   signupView?: string;
+  /** The same-origin session is for Peon, which has the browser invitation page. */
+  peon?: true;
 }
 
 /** The answer to a code request. `error` tells a general failure apart. */
@@ -39,6 +41,7 @@ export type CloudAnswer = { ok: true; url: string } | { ok: false; error: ApiErr
 /** The profile that the page sends to join. */
 export interface JoinBody {
   signupView?: string;
+  inviteToken?: string;
   firstName: string;
   age: number;
   consent: { sms: true; wording: string };
@@ -59,14 +62,14 @@ export async function readApp(): Promise<AppAnswer> {
 export async function readSession(): Promise<SessionAnswer> {
   const answer = await call("GET", "/api/me");
   if (!answer.ok) return { result: answer.error === "unauthorized" ? "SignedOut" : "ReadFailed", account: "", reason: "NoBlock" };
-  const { canJoin, phoneMasked, signupView, reason } = answer.data;
+  const { app, canJoin, phoneMasked, signupView, reason } = answer.data;
   const membership = answer.data.membership === null ? null : recordField(answer.data, "membership");
   if (typeof canJoin !== "boolean" || typeof phoneMasked !== "string" || membership === undefined) return { result: "ReadFailed", account: "", reason: "NoBlock" };
   const view = typeof signupView === "string" && signupView !== "" ? signupView : undefined;
   const account = view ?? `phone:${phoneMasked}`;
   const result: SessionResult = canJoin ? "MayJoin" : membership ? "AlreadyIn" : "MayNotJoin";
   const blocked: BlockReason = result !== "MayNotJoin" || typeof reason !== "string" ? "NoBlock" : (serverReasons[reason] ?? "OtherReason");
-  return { result, account, reason: blocked, ...(view ? { signupView: view } : {}) };
+  return { result, account, reason: blocked, ...(view ? { signupView: view } : {}), ...(app === "peon" ? { peon: true } : {}) };
 }
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -105,6 +108,7 @@ const joinRefusals: Readonly<Partial<Record<ApiError, JoinOutcome>>> = {
   review: "JoinReview",
   account_changed: "JoinAccountChanged",
   unauthorized: "JoinUnauthorized",
+  invalid_invitation: "JoinInvalidInvitation",
 };
 
 /** Sends the profile with the text consent. */

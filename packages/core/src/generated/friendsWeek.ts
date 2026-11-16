@@ -1,13 +1,13 @@
 // GENERATED from spec/friendsWeek.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 
-/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md:9) */
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md) */
 export type WeekPhase = "CrewSessions" | "CrewOffers" | "RepeatPlans" | "NewPlans" | "PartnerIntros" | "WeekComplete";
-/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md:9) */
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md) */
 export interface FriendsRun { phase: WeekPhase; spreadNew: boolean; recurring: Record<string, boolean>; newUsed: Record<string, boolean>; newInvited: Record<string, boolean>; partnerCounts: Record<string, number> }
-/** Story: Find time with familiar people or meet someone nearby / Recurring plans reserve places for later passes (spec/friendsWeek.md:44) */
+/** Story: Find time with familiar people or meet someone nearby / Recurring plans reserve places for later passes (spec/friendsWeek.md) */
 export type RecurringKind = "Session" | "Offer" | "Repeat";
-/** Story: Find time with familiar people or meet someone nearby / Activity partner reservations use a separate per-member allowance (spec/friendsWeek.md:93) */
+/** Story: Find time with familiar people or meet someone nearby / Activity partner reservations use a separate per-member allowance (spec/friendsWeek.md) */
 export interface PartnerPair { first: string; second: string }
 
 /** One variant per transition in the spec. */
@@ -21,7 +21,7 @@ export type Event =
   | { type: "reserveNewPlan"; invited: string[]; alternates: string[]; reserveAlternates: boolean }
   | { type: "reservePartner"; pair: PartnerPair; limit: number };
 
-/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md:9) */
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md) */
 export const initial: FriendsRun = { phase: "CrewSessions", spreadNew: false, recurring: ({} as Record<string, boolean>), newUsed: ({} as Record<string, boolean>), newInvited: ({} as Record<string, boolean>), partnerCounts: ({} as Record<string, number>) };
 
 /** Every `always` rule at once. Holds initially and after every transition. */
@@ -30,121 +30,121 @@ export function inv(current: FriendsRun): boolean {
   return true;
 }
 
-/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md:9) */
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md) */
 //@ pure
 export function beginRepeats(s: FriendsRun): FriendsRun {
   //@ ensures (inv(s) && canBeginRepeats(s)) ==> stepCompletedWeekStaysClosed(s, \result)
   return { ...s, phase: "RepeatPlans" };
 }
 
-/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md:9) */
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md) */
 //@ pure
 export function canBeginNewPlans(s: FriendsRun): boolean {
   return s.phase === "RepeatPlans";
 }
 
-/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md:9) */
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md) */
 //@ pure
 export function beginNewPlans(s: FriendsRun, spreadNew: boolean): FriendsRun {
   //@ ensures (inv(s) && canBeginNewPlans(s)) ==> stepCompletedWeekStaysClosed(s, \result)
   return { ...s, phase: "NewPlans", spreadNew: spreadNew };
 }
 
-/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md:9) */
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md) */
 //@ pure
 export function canBeginPartners(s: FriendsRun): boolean {
   return s.phase === "NewPlans";
 }
 
-/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md:9) */
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md) */
 //@ pure
 export function beginPartners(s: FriendsRun): FriendsRun {
   //@ ensures (inv(s) && canBeginPartners(s)) ==> stepCompletedWeekStaysClosed(s, \result)
   return { ...s, phase: "PartnerIntros" };
 }
 
-/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md:9) */
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md) */
 //@ pure
 export function canFinishWeek(s: FriendsRun): boolean {
   return s.phase === "PartnerIntros";
 }
 
-/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md:9) */
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md) */
 //@ pure
 export function finishWeek(s: FriendsRun): FriendsRun {
   //@ ensures (inv(s) && canFinishWeek(s)) ==> stepCompletedWeekStaysClosed(s, \result)
   return { ...s, phase: "WeekComplete" };
 }
 
-/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md:9) */
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md) */
 //@ pure
 export function stepCompletedWeekStaysClosed(before: FriendsRun, after: FriendsRun): boolean {
   return !(before.phase === "WeekComplete") || after.phase === "WeekComplete";
 }
 
-/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md:9) */
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md) */
 //@ pure
 export function canBeginCrewOffers(s: FriendsRun): boolean {
   return s.phase === "CrewSessions";
 }
 
-/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md:9) */
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md) */
 //@ pure
 export function beginCrewOffers(s: FriendsRun): FriendsRun {
   //@ ensures (inv(s) && canBeginCrewOffers(s)) ==> stepCompletedWeekStaysClosed(s, \result)
   return { ...s, phase: "CrewOffers" };
 }
 
-/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md:9) */
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md) */
 //@ pure
 export function canBeginRepeats(s: FriendsRun): boolean {
   return s.phase === "CrewOffers";
 }
 
-/** Story: Find time with familiar people or meet someone nearby / Recurring plans reserve places for later passes (spec/friendsWeek.md:44) */
+/** Story: Find time with familiar people or meet someone nearby / Recurring plans reserve places for later passes (spec/friendsWeek.md) */
 //@ pure
 export function reserveIds(used: Record<string, boolean>, members: string[]): Record<string, boolean> {
   return members.reduce((seen: Record<string, boolean>, memberId: string) => ({ ...seen, ["$" + memberId]: true } as Record<string, boolean>), used);
 }
 
-/** Story: Find time with familiar people or meet someone nearby / Recurring plans reserve places for later passes (spec/friendsWeek.md:44) */
+/** Story: Find time with familiar people or meet someone nearby / Recurring plans reserve places for later passes (spec/friendsWeek.md) */
 //@ pure
 export function recurringAvailable(s: FriendsRun, memberId: string): boolean {
   return !(("$" + memberId) in s.recurring);
 }
 
-/** Story: Find time with familiar people or meet someone nearby / Recurring plans reserve places for later passes (spec/friendsWeek.md:44) */
+/** Story: Find time with familiar people or meet someone nearby / Recurring plans reserve places for later passes (spec/friendsWeek.md) */
 //@ pure
 export function reserveRecurring(s: FriendsRun, kind: RecurringKind, members: string[]): FriendsRun {
   //@ ensures (inv(s) && canReserveRecurring(s, kind, members)) ==> stepCompletedWeekStaysClosed(s, \result)
   return { ...s, recurring: reserveIds(s.recurring, members) };
 }
 
-/** Story: Find time with familiar people or meet someone nearby / Recurring plans reserve places for later passes (spec/friendsWeek.md:44) */
+/** Story: Find time with familiar people or meet someone nearby / Recurring plans reserve places for later passes (spec/friendsWeek.md) */
 //@ pure
 export function canReserveRecurring(s: FriendsRun, kind: RecurringKind, members: string[]): boolean {
   return (s.phase === "CrewSessions" && kind === "Session") || (((s.phase === "CrewOffers" && kind === "Offer") || (s.phase === "RepeatPlans" && kind === "Repeat")) && !members.some((memberId: string) => !recurringAvailable(s, memberId)));
 }
 
-/** Story: Find time with familiar people or meet someone nearby / New plans reserve each invitee once (spec/friendsWeek.md:67) */
+/** Story: Find time with familiar people or meet someone nearby / New plans reserve each invitee once (spec/friendsWeek.md) */
 //@ pure
 export function newPlanUsed(s: FriendsRun, memberId: string): boolean {
   return ("$" + memberId) in s.newUsed;
 }
 
-/** Story: Find time with familiar people or meet someone nearby / New plans reserve each invitee once (spec/friendsWeek.md:67) */
+/** Story: Find time with familiar people or meet someone nearby / New plans reserve each invitee once (spec/friendsWeek.md) */
 //@ pure
 export function newPlanAlternateCanRemain(s: FriendsRun, memberId: string): boolean {
   return !(("$" + memberId) in s.newInvited);
 }
 
-/** Story: Find time with familiar people or meet someone nearby / New plans reserve each invitee once (spec/friendsWeek.md:67) */
+/** Story: Find time with familiar people or meet someone nearby / New plans reserve each invitee once (spec/friendsWeek.md) */
 //@ pure
 export function newPlanAvailable(s: FriendsRun, memberId: string): boolean {
   return !newPlanUsed(s, memberId) && (!s.spreadNew || recurringAvailable(s, memberId));
 }
 
-/** Story: Find time with familiar people or meet someone nearby / New plans reserve each invitee once (spec/friendsWeek.md:67) */
+/** Story: Find time with familiar people or meet someone nearby / New plans reserve each invitee once (spec/friendsWeek.md) */
 //@ pure
 export function reserveNewPlan(s: FriendsRun, invited: string[], alternates: string[], reserveAlternates: boolean): FriendsRun {
   //@ ensures (inv(s) && canReserveNewPlan(s, invited, alternates, reserveAlternates)) ==> stepCompletedWeekStaysClosed(s, \result)
@@ -152,38 +152,38 @@ export function reserveNewPlan(s: FriendsRun, invited: string[], alternates: str
   return { ...s, newInvited: reserveIds(s.newInvited, invited), newUsed: reserveAlternates ? reserveIds(local_0, alternates) : local_0 };
 }
 
-/** Story: Find time with familiar people or meet someone nearby / New plans reserve each invitee once (spec/friendsWeek.md:67) */
+/** Story: Find time with familiar people or meet someone nearby / New plans reserve each invitee once (spec/friendsWeek.md) */
 //@ pure
 export function sometimesPublishesAPlan(s: FriendsRun): boolean {
   return s.phase === "WeekComplete" && !newPlanAlternateCanRemain(s, "one");
 }
 
-/** Story: Find time with familiar people or meet someone nearby / New plans reserve each invitee once (spec/friendsWeek.md:67) */
+/** Story: Find time with familiar people or meet someone nearby / New plans reserve each invitee once (spec/friendsWeek.md) */
 //@ pure
 export function canReserveNewPlan(s: FriendsRun, invited: string[], alternates: string[], reserveAlternates: boolean): boolean {
   return s.phase === "NewPlans" && !invited.some((memberId: string) => !newPlanAvailable(s, memberId)) && (!reserveAlternates || !alternates.some((memberId: string) => !newPlanAvailable(s, memberId)));
 }
 
-/** Story: Find time with familiar people or meet someone nearby / Activity partner reservations use a separate per-member allowance (spec/friendsWeek.md:93) */
+/** Story: Find time with familiar people or meet someone nearby / Activity partner reservations use a separate per-member allowance (spec/friendsWeek.md) */
 //@ pure
 export function partnerCount(s: FriendsRun, memberId: string): number {
   return ("$" + memberId) in s.partnerCounts ? get_friendsWeek(s.partnerCounts, "$" + memberId) : 0;
 }
 
-/** Story: Find time with familiar people or meet someone nearby / Activity partner reservations use a separate per-member allowance (spec/friendsWeek.md:93) */
+/** Story: Find time with familiar people or meet someone nearby / Activity partner reservations use a separate per-member allowance (spec/friendsWeek.md) */
 //@ pure
 export function canReservePartner(s: FriendsRun, pair: PartnerPair, limit: number): boolean {
   return s.phase === "PartnerIntros" && pair.first !== pair.second && partnerCount(s, pair.first) < limit && partnerCount(s, pair.second) < limit;
 }
 
-/** Story: Find time with familiar people or meet someone nearby / Activity partner reservations use a separate per-member allowance (spec/friendsWeek.md:93) */
+/** Story: Find time with familiar people or meet someone nearby / Activity partner reservations use a separate per-member allowance (spec/friendsWeek.md) */
 //@ pure
 export function reservePartner(s: FriendsRun, pair: PartnerPair, limit: number): FriendsRun {
   //@ ensures (inv(s) && canReservePartner(s, pair, limit)) ==> stepCompletedWeekStaysClosed(s, \result)
   return { ...s, partnerCounts: ({ ...({ ...s.partnerCounts, ["$" + pair.first]: exact_friendsWeek(partnerCount(s, pair.first) + 1) } as Record<string, number>), ["$" + pair.second]: exact_friendsWeek(partnerCount(s, pair.second) + 1) } as Record<string, number>) };
 }
 
-/** Story: Find time with familiar people or meet someone nearby / Activity partner reservations use a separate per-member allowance (spec/friendsWeek.md:93) */
+/** Story: Find time with familiar people or meet someone nearby / Activity partner reservations use a separate per-member allowance (spec/friendsWeek.md) */
 //@ pure
 export function sometimesPublishesAPartner(s: FriendsRun): boolean {
   return s.phase === "WeekComplete" && partnerCount(s, "one") > 0;
