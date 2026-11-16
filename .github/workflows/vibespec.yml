@@ -6,6 +6,7 @@ on:
     paths:
       - 'spec/**'
       - 'packages/core/src/generated/**'
+      - 'packages/core/src/vibe/**'
       - 'scripts/spec-snapshots.ts'
       - 'tools/vibestack/**'
       - 'scripts/vibestack.ts'
@@ -16,6 +17,7 @@ on:
     paths:
       - 'spec/**'
       - 'packages/core/src/generated/**'
+      - 'packages/core/src/vibe/**'
       - 'scripts/spec-snapshots.ts'
       - 'tools/vibestack/**'
       - 'scripts/vibestack.ts'
@@ -39,7 +41,7 @@ jobs:
         with:
           node-version-file: .nvmrc
       - run: npm install --global corepack@0.35.0
-      - run: corepack pnpm@10.24.0 --filter vibestack install --prod --frozen-lockfile --ignore-scripts
+      - run: corepack pnpm@10.24.0 --filter vibestack install --frozen-lockfile --ignore-scripts
         working-directory: tools/vibestack
       - if: hashFiles('spec/**/*.md', 'packages/core/src/generated/*.ts') != ''
         run: npm run spec:check-generated

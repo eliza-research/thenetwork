@@ -8,6 +8,7 @@ human review and consent.
 [Product specification](spec/product/README.md) ·
 [User stories](spec/product/stories.md) ·
 [Flow models](spec/models/README.md) ·
+[Stack](#the-stack) ·
 [Quick start](#quick-start) ·
 [Spec reference](SPEC.md) ·
 [Commands](#commands)
@@ -41,6 +42,16 @@ parsing, and the other I/O stay with the package that owns the boundary.
 See the [pinned Vibestack README](tools/vibestack/README.md)
 for the complete standalone guide, including the React and VibeLang stack,
 Studio, examples, template setup and the packaged CLI.
+
+## The stack
+
+| Layer | Source and checks |
+|---|---|
+| Product | Stories and acceptance rules in [the product specification](spec/product/README.md). Product owner sign-off is recorded in `spec/lock.json`. |
+| Decisions | Quint in the [executable specs](SPEC.md#writing-a-spec) generates TypeScript. The checker simulates the model, compares TypeScript traces, and runs Dafny proof obligations. |
+| Effects | The [backend health shell](packages/core/src/vibe/backendHealthShell.vibe) uses the generated Effect adapter with the backend's database and tick readers. `bun run spec:sync` compiles its deployment files with the vendored VibeLang compiler. |
+| Application | Bun serves the backend and console. Each package owns its existing HTTP, storage, and UI integration. The [Network agent guide](AGENTS.md) applies the upstream design guidance to these packages. |
+| Conformance | The spec checker compares the app's observed state and effects with generated rules. The [command table](#commands) lists scoped journeys and the existing application test commands. |
 
 ## Quick start
 
@@ -112,8 +123,8 @@ from The Network root.
 | `pnpm accept` | `bun run accept` | Product owner sign-off after a fresh check. |
 | `pnpm selftest` | `bun run spec:selftest` | Exercise the vendored toolchain against its fixtures. |
 | `pnpm demo` | `bun run spec:demo` | Run the standalone order example. |
-| | `bun run spec:sync` | Generate and publish the production copies. |
-| | `bun run spec:check-generated` | Compare the production copies with fresh generation. |
+| | `bun run spec:sync` | Generate the TypeScript snapshots and compile the serving VibeLang shell. |
+| | `bun run spec:check-generated` | Compare checked-in TypeScript and VibeLang output with fresh generation. |
 | | `bun run spec:conformance <module>` | Run one spec's simulation and compare it with the app through its driver or recorded trace. |
 | | `bun run quint:check` | Exercise the action-based flows in `spec/models/`. |
 | | `bun run typecheck`, `bun run test:integration`, `bun run test:e2e`, `bun run sim` | Check the application and the live-code seams. |

@@ -36,7 +36,9 @@ accepted merges and pays after maintainer review. There is no escrow.
 - `gen/` is disposable output. The production build imports generated
   TypeScript published by `bun run spec:sync` into
   `packages/core/src/generated/`. Commit those copies with their specs.
-  Keep both forms of generated code free of manual edits.
+  The same command compiles the serving health shell under
+  `packages/core/src/vibe/`. Commit its emitted JavaScript and declarations
+  with the shell and spec. Keep generated code free of manual edits.
 - Change the model and implementation together. Compare their states, guards,
   writes, retries, leases, limits, and invariants. State which seams and proof
   obligations were checked, and which remain open.
@@ -183,8 +185,10 @@ Screen and synthesize the designs before implementing.
 The Network uses Bun for its application and tests. Node 26 and pnpm
 bootstrap the vendored Vibestack toolchain. Pure rules, transitions and
 validation types come from Quint. Existing services consume its generated
-TypeScript at their boundaries. Use the existing app framework and component
-system in each package. Read the [Network command map](README.md#commands)
+TypeScript at their boundaries. The public backend health route runs its
+database and tick effects in a compiled VibeLang shell. Use the existing
+application framework and component system in each package. Read
+the [Network command map](README.md#commands)
 when an imported skill refers to the standalone template's pnpm commands,
 VibeLang shell, React design system, or Vitest setup.
 

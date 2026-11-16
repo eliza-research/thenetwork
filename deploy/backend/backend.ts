@@ -2,6 +2,8 @@ import { backendBoot, databaseLogin, declaredEnvironment, minimumSecretLength } 
 import {
   backendAcceptsWork, canStartTimer, initial as lifecycleInitial, shutdownWasClean, step as stepBackendLifecycle,
 } from "../../packages/core/src/generated/backendLifecycle.ts";
+import { checkBackendHealth } from "../../packages/core/src/vibe/backendHealthShell.js";
+import type { HealthStatus } from "../../packages/core/src/generated/backendHealth.ts";
 import { otpConfigProblems } from "../../packages/platform/src/otp-config.ts";
 // The shared backend as one deployable process (docs/deploy.md). It wraps the Network service
 // (packages/network/service) for a host that gives the process one public port (Railway):
@@ -39,6 +41,11 @@ export { PROXY_HEADERS };
 /** The visitor IP the public API reads (ipOf). Present only on a verified request. */
 export const CLIENT_IP = PROXY_HEADERS.ip;
 export const BUILD_HEADER = "x-network-build";
+const HEALTH_FAILURE = {
+  Draining: "draining",
+  DatabaseDown: "database",
+  TickLate: "tick_late",
+} as const satisfies Record<Exclude<HealthStatus, "Ready">, string>;
 const STRIP = ["x-forwarded-host", "x-forwarded-for", "x-forwarded-proto", "x-real-ip", "forwarded", "true-client-ip"];
 /** The Eliza gateway's signed routes (served by the service) and their body cap (the service's MAX_BODY_BYTES). */
 const INTERNAL_PATHS = new Set(["/internal/turn", "/internal/turn-receipt", "/internal/set-state", "/internal/signals", "/internal/updates", "/internal/relay",
@@ -347,10 +354,13 @@ export function createBackend(d: BackendDeps) {
     let res: Response;
     try {
       if (path === "/healthz") {
-        if (!backendAcceptsWork(lifecycle)) res = json(503, { ok: false, status: "draining", build: c.build });
-        else if (!(await d.ping().catch(() => false))) res = json(503, { ok: false, status: "database", build: c.build });
         // A hung tick loop is down for the uptime monitor too (the ops alerts run inside the same process).
-        else res = lateTicks().length ? json(503, { ok: false, status: "tick_late", build: c.build }) : json(200, { ok: true, build: c.build, env: c.env });
+        const status = await checkBackendHealth(backendAcceptsWork(lifecycle), {
+          ping: () => d.ping(),
+          hasLateTick: () => lateTicks().length > 0,
+        });
+        res = status === "Ready" ? json(200, { ok: true, build: c.build, env: c.env })
+          : json(503, { ok: false, status: HEALTH_FAILURE[status], build: c.build });
       } else if (path === "/ops/metrics") {
         // Counts and network ids only. Without OPS_METRICS_TOKEN the route does not exist; a wrong token is 401.
         const token = c.ops.metricsToken;

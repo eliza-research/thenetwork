@@ -15,7 +15,7 @@ COPY packages ./packages
 COPY deploy ./deploy
 # The fitted relay Clef weights (RELAY_CLEF_WEIGHTS_PATH=evals/relay/clef-relay-weights.json); the corpora stay out.
 COPY evals/relay/clef-relay-weights.json ./evals/relay/clef-relay-weights.json
-# The runtime has no npm dependencies of its own: this links the workspaces. No lifecycle scripts run.
+# Link the workspaces and install their pinned runtime dependencies. No lifecycle scripts run.
 RUN bun install --frozen-lockfile --production --ignore-scripts
 # The simulator, the judges, the eval corpora, the synthetic worlds and the Eliza plugin never run here:
 # the backend and the real-only console import none of them (bun run sim, block ops, checks this line).

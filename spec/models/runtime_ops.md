@@ -14,6 +14,10 @@ The [backend lifecycle spec](../backendLifecycle.md) drives worker
 reservations and shutdown decisions. The current backend starts the
 grace wait after listeners stop accepting work.
 
+The [backend health spec](../backendHealth.md) drives the public health
+check from serving admission through the database ping and tick freshness.
+The VibeLang shell runs the effects against the backend's live dependencies.
+
 The [platform retention rules](../platformRetention.md) set the account
 and inbox cutoffs and retain counters needed for STOP hints.
 
