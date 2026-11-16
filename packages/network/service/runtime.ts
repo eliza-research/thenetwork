@@ -76,6 +76,7 @@ export interface Unit {
   privateInviteTurn?: true;
   privateHomeHelpTurn?: true;
   atomicHomeHelpReceipt?: true;
+  atomicInvitationDeliveryReply?: true;
   memberInvitation?: StagedMemberInvitation;
   standingIntent?: StoredStandingIntentChange;
   legacyIntentState?: NetworkState;
@@ -114,6 +115,8 @@ export interface RuntimeHost {
   collectReplies?(tx: SQL, replies: CollectedReply[], reason?: AtomicReplyReason): Promise<void>;
   stageMemberInvitation?(rt: NetworkRuntime, request: MemberInviteRequest): StagedMemberInvitation | undefined;
   saveMemberInvitation?(tx: SQL, rt: NetworkRuntime, staged: StagedMemberInvitation): Promise<void>;
+  admitExpectedInvitation?(tx: SQL, rt: NetworkRuntime, row: {id: string; to: string; text: string}): Promise<boolean>;
+  claimExpectedInvitation?(tx: SQL, rt: NetworkRuntime, row: {id: string; to: string; text: string}): Promise<void>;
   homeHelpNoticeCurrent?(tx: SQL, app: AppInfo, noticeId: string, recipient: MemberId, to: string, body: string): Promise<boolean>;
   homeHelpRecipientStopped?(tx: SQL, app: AppId, memberId: MemberId): Promise<void>;
   /** Proactive sends of this batch the person-level daily cap refuses (ids). Called before delivery. */
@@ -356,6 +359,15 @@ export class NetworkRuntime {
     return !!noticeId && !!row.memberId && !!await this.host.homeHelpNoticeCurrent?.(tx, this.app, noticeId, row.memberId, row.to, row.text);
   }
 
+  async expectedInvitationAdmission(tx: SQL, row: { id: string; to: string; text: string }): Promise<boolean> {
+    return !!await this.host.admitExpectedInvitation?.(tx, this, row);
+  }
+
+  async expectedInvitationClaimed(tx: SQL, row: { id: string; to: string; text: string }): Promise<void> {
+    if (!this.host.claimExpectedInvitation) throw new Error("Expected invitation attempt store is unavailable");
+    await this.host.claimExpectedInvitation(tx, this, row);
+  }
+
   private async invitationNoticeCurrent(tx: SQL, inviter: MemberId, invitees?: readonly MemberId[]): Promise<boolean> {
     if (!invitees?.length) return false;
     const app = this.app.id;
@@ -581,7 +593,7 @@ export class NetworkRuntime {
 
   /** A directly requested result for this signed member. Source links grant only a per-reply contact exception. */
   collectedMemberReply(memberId: MemberId, id: string, body: string,
-    type: "solo_events" | "contribution_history" | "member_invitation" | "member_invitation_vouch" | "bounded_home_help", publicLinks: readonly string[] = []) {
+    type: "solo_events" | "contribution_history" | "member_invitation" | "member_invitation_vouch" | "member_invitation_delivery" | "bounded_home_help", publicLinks: readonly string[] = []) {
     const turn = this.host.inboundTurn?.();
     if (turn?.app !== this.app.id || turn.memberId !== memberId
       || normalizeAddress(this.addressOf(memberId) ?? "") !== normalizeAddress(turn.from)) return;
@@ -657,6 +669,10 @@ export class NetworkRuntime {
     }
     const captured = u.sends.filter(s => u.collected.has(s.id) && (ok(s.memberId) || u.forget.has(s.memberId)));
     let replyReason: AtomicReplyReason | undefined;
+    if (u.atomicInvitationDeliveryReply) {
+      if (!captured.some(send => send.type === "member_invitation_delivery")) throw new Error("Invitation delivery reply was not collected");
+      replyReason = "member_invitation_delivery";
+    }
     if (u.atomicHomeHelpReceipt) {
       if (!captured.some(send => send.type === "bounded_home_help")) throw new Error("Home-help receipt was not collected");
       replyReason = "bounded_home_help";

@@ -46,6 +46,7 @@ import { stopCoversEveryApp } from "../../core/src/generated/sharedLineConsentJo
 import { standingIntentReplayAllowed } from "../../core/src/generated/standingIntentManagement.ts";
 import { homeHelpOfferChangeAllowed } from "../../core/src/generated/boundedHelp.ts";
 import { projectInvitationWelcome, projectRemoteInvitationNotice } from "../../core/src/generated/invitationJoinProjection.ts";
+import { publicSignupUsesBrowser } from "../../core/src/generated/siteEnrollment.ts";
 import { ageAnswer, agesStated } from "../src/classify.ts";
 import { standingIntentCommand } from "../src/standing-intents.ts";
 import { contributionHistoryReply, contributionHistoryRequest } from "./contribution-history.ts";
@@ -69,6 +70,8 @@ import {
 } from "../../core/src/generated/textEnrollment.ts";
 import { Inbox, type CollectedReply, type AtomicReplyReason } from "./inbox.ts";
 import { staffDecideInvitationReview, staffInvitationReviewQueue } from "./invitation-review.ts";
+import { ExpectedMemberInvitations } from "./expected-invitation-store.ts";
+import { memberInviteDeliveryCommand, memberInviteDeliveryPrompt, memberInviteDeliveryReply, type MemberInviteDeliveryCommand } from "./member-invite-delivery-command.ts";
 import { BOUNDED_HOME_HELP_CLARIFICATION, boundedHomeHelpCommand, boundedHomeHelpDraft, type BoundedHomeHelpCommand } from "./bounded-home-help-intake.ts";
 import { boundedHomeHelpSenderCurrent, createBoundedHomeHelpAuthority } from "./bounded-home-help-authority.ts";
 import { handleBoundedHomeHelpStaff, writeBoundedHomeHelpStaffAudit } from "./bounded-home-help-staff.ts";
@@ -151,7 +154,7 @@ export function turnSecretProblem(env: Record<string, string | undefined> = proc
 /** The tables the service needs (pnpm run db:migrate). */
 const REQUIRED_TABLES = [
   ...["members", "channel_identities", "facets", "intents", "presence", "edges", "messages", "events", "matching_runs", "staff_audit", "network_state", "opportunities", "review_items", "requests", "bounded_home_help", "bounded_home_help_consent", "bounded_home_help_venue"].map(t => `network.${t}`),
-  ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "app_lines", "share_grants", "eliza_notices", "member_invitations", "member_invitation_reviews"].map(t => `platform.${t}`),
+  ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "app_lines", "share_grants", "eliza_notices", "member_invitations", "member_invitation_reviews", "expected_member_invitations", "expected_invitation_contacts"].map(t => `platform.${t}`),
 ];
 /** The dev-only key for keyed phone hashes (the platform's own default). Production needs PLATFORM_HASH_KEY. */
 const DEV_HASH_KEY = "dev-only-platform-hash-key";
@@ -343,6 +346,7 @@ export class NetworkService implements RuntimeHost {
   private readonly secret?: string;
   private readonly secrets: Partial<Record<AppId, string>>;
   private readonly hashKey: string;
+  private readonly expectedInvitations: ExpectedMemberInvitations;
   private readonly homeHelpVenueKey: ReturnType<typeof createSecretKey>;
   /** The inbound inbox: one row per provider message, handled once and in order per sender (inbox.ts). */
   readonly inbox: Inbox;
@@ -387,6 +391,7 @@ export class NetworkService implements RuntimeHost {
     const key = this.env.PLATFORM_HASH_KEY ?? (devShortcutsAllowed(this.env) ? DEV_HASH_KEY : undefined);
     if (!key) throw new Error("PLATFORM_HASH_KEY is required in production and outside PLATFORM_ENV=dev");
     this.hashKey = key;
+    this.expectedInvitations = new ExpectedMemberInvitations(key, () => this.clock.now(), app => this.apps[app]);
     this.homeHelpVenueKey = createSecretKey(Buffer.from(hkdfSync("sha256", key, "thenetwork", "private-home-help-venue-v1", 32)));
     try { this.tokens = parseTokenGrants(o.tokens, { explicitApp: isProduction(this.env) }); } catch (e) { throw new Error(String((e as Error).message).replace("OBSERVATORY_TOKENS", "NETWORK_SERVICE_TOKENS")); }
     // Cloud holds the turn secret; it must never also be a staff bearer (PR #4: the agent credential was never the console token).
@@ -559,14 +564,59 @@ export class NetworkService implements RuntimeHost {
     await storeMemberInvitation(tx, rt.app.id, staged.referral, staged.relationship, staged.at, approval ? approval.expiresAt : undefined, staged.evidence);
   }
 
-  private async referralFor(app: AppId, token: string, at: number): Promise<ReferralJoin | undefined> {
+  private async referralFor(app: AppId, token: string, at: number, verifiedPhone: string): Promise<ReferralJoin | undefined> {
     const hash = memberInvitationHash(this.hashKey, app, token);
     const rt = this.runtimeFor(app);
     if (!hash || !rt) return;
     return rt.scoped(async tx => {
       const referral = await findMemberInvitation(tx, app, hash, at);
-      if (referral && await this.invitationOwner(tx, rt.app, referral.inviterMemberId)) return referral;
+      if (!referral || !await this.invitationOwner(tx, rt.app, referral.inviterMemberId)) return;
+      try { await this.expectedInvitationBinding(tx, app, hash, verifiedPhone); }
+      catch (error) { if (error instanceof InvitationUnavailable) return; throw error; }
+      return referral;
     });
+  }
+
+  private async expectedInvitationBinding(tx: SQL, app: AppId, tokenHash: string, to: string): Promise<string | undefined> {
+    const [invite] = await tx<{expected_recipient_hash: string | null}[]>`select expected_recipient_hash
+      from platform.member_invitations where app_id=${app} and token_hash=${tokenHash} for update`;
+    if (!invite) throw new InvitationUnavailable();
+    if (!invite.expected_recipient_hash) return;
+    const accounts = this.accountsFor(tx);
+    if (!await this.expectedInvitations.verifyRecipient(tx, {app, tokenHash, to}) || await accounts.held(to) || await accounts.banned(to)
+      || await accounts.store.isSuppressed(accounts.phoneHash(to)) || resolveConsent(await accounts.store.lastConsent(to, app)) === "opted_out") {
+      throw new InvitationUnavailable();
+    }
+    return invite.expected_recipient_hash;
+  }
+
+  private async eligibleExpectedInviteRecipient(tx: SQL, app: AppId, to: string): Promise<boolean> {
+    const accounts = this.accountsFor(tx);
+    const phone = await accounts.store.findPhone(to);
+    if (normalizePhone(to) !== to || phone?.personId || phone?.hold || await accounts.banned(to)
+      || await accounts.store.isSuppressed(accounts.phoneHash(to)) || resolveConsent(await accounts.store.lastConsent(to, app)) === "opted_out") return false;
+    const age = await accounts.lowestAge(to, undefined);
+    return age === undefined || canJoin(age);
+  }
+
+  private async expectedInvitationText(tx: SQL, app: AppInfo, memberId: MemberId, link: string): Promise<string | undefined> {
+    if (!isMemberInvitationLink(app, link)) return;
+    const [member] = await tx<{name: string}[]>`select name from network.members where app_id=${app.id} and id=${memberId}`;
+    const name = member?.name?.trim().split(/\s+/u)[0];
+    if (!name || !/^[\p{L}][\p{L}\p{M}'’-]{0,39}$/u.test(name)) return;
+    return `${name} invited you to ${app.domain}, an app from The Network that helps people connect. Join if you want.\n${link}\nReply DECLINE INVITE or STOP to opt out.`;
+  }
+
+  async admitExpectedInvitation(tx: SQL, rt: NetworkRuntime, row: {id: string; to: string; text: string}): Promise<boolean> {
+    const pending = await this.expectedInvitations.currentDelivery(tx, {app: rt.app.id, id: row.id, to: row.to, body: row.text});
+    return !!pending && await this.invitationOwner(tx, rt.app, pending.inviterMemberId)
+      && await this.eligibleExpectedInviteRecipient(tx, rt.app.id, row.to);
+  }
+
+  async claimExpectedInvitation(tx: SQL, rt: NetworkRuntime, row: {id: string; to: string; text: string}): Promise<void> {
+    if (!await this.expectedInvitations.markDeliveryAttempt(tx, {app: rt.app.id, id: row.id, to: row.to, body: row.text})) {
+      throw new Error("Expected invitation changed before claim");
+    }
   }
 
   private async photoRelayParties(input: { app: AppId; threadId: string; senderPersonId: string }, transaction?: SQL) {
@@ -697,6 +747,7 @@ export class NetworkService implements RuntimeHost {
     if (this.runtimeFor(rt.app.id) === rt) await rt.scoped(async tx => {
       const now = this.clock.now();
       await purgeExpiredMemberInvitationReviews(tx, rt.app.id, now);
+      await this.expectedInvitations.purgeExpired(tx, rt.app.id);
       await tx`delete from platform.member_invitations
         where app_id=${rt.app.id} and expires_at<=${new Date(now)} and (redeemed_at is null or projected_at is not null)`;
     }).catch(() => this.log(`[purge] invitations failed (${rt.id})`));
@@ -917,7 +968,7 @@ export class NetworkService implements RuntimeHost {
    * first name, age) and what the person gave at join (neighborhood, interests). The phone stays in
    * platform.phone_identities. Written with app.app_id set (migration 0004).
    */
-  async createMember(rt: NetworkRuntime, m: Membership, info: { age: number; firstName: string; homeCity?: string; neighborhood?: string; interests?: string[]; zip?: string }, invitation?: { tx: SQL; referral: ReferralJoin }) {
+  async createMember(rt: NetworkRuntime, m: Membership, info: { age: number; firstName: string; homeCity?: string; neighborhood?: string; interests?: string[]; zip?: string }, invitation?: { tx: SQL; referral: ReferralJoin; verifiedRecipientHash?: string }) {
     const at = this.clock.now();
     const now = new Date(at);
     const homeCity = info.homeCity ?? homeCityOf(m.profile.homeCity) ?? rt.city;
@@ -931,7 +982,7 @@ export class NetworkService implements RuntimeHost {
         on conflict (id) do update set person_id = excluded.person_id, name = excluded.name, home_city = excluded.home_city, home_area = excluded.home_area,
           account_status = 'active', age = excluded.age, joined_at = excluded.joined_at, opted_out = false,
           invited_by = coalesce(excluded.invited_by, network.members.invited_by)`;
-      if (referral) await consumeMemberInvitation(tx, rt.app.id, referral, m.memberId, at);
+      if (referral) await consumeMemberInvitation(tx, rt.app.id, referral, m.memberId, at, invitation?.verifiedRecipientHash);
       if (info.neighborhood || info.homeCity) await tx`insert into network.presence (app_id, member_id, city, type, areas) values (${rt.app.id}, ${m.memberId}, ${homeCity}, 'home', ${tx.array(info.neighborhood ? [info.neighborhood] : [], "TEXT")})`;
       // slop dates by distance from a zip (a coarse cell; agent_private, never shown).
       if (info.zip && rt.app.id === "slop") {
@@ -956,7 +1007,7 @@ export class NetworkService implements RuntimeHost {
   /** The platform hooks: a join creates the network member and sends the welcome; stop, forget and export reach the network. */
   private hooks(): AccountHooks {
     return {
-      findInvitation: (app, token, at) => this.referralFor(app, token, at),
+      findInvitation: (app, token, at, verifiedPhone) => this.referralFor(app, token, at, verifiedPhone),
       onJoin: (ctx: JoinHookContext) => this.joined(ctx),
       commitReferredJoin: ctx => this.commitReferredJoin(ctx),
       onStop: ctx => this.stopped(ctx.app, ctx.personId, ctx.scope),
@@ -999,17 +1050,19 @@ export class NetworkService implements RuntimeHost {
   }
 
   private async commitReferredJoin(ctx: JoinHookContext & { referral: ReferralJoin }): Promise<void> {
-    const rt = this.runtimeForHome(ctx.app.id, ctx.input.homeCity ?? "");
+    const browserHome = publicSignupUsesBrowser(ctx.app.id) ? this.runtimeFor(ctx.app.id)?.city : undefined;
+    const rt = this.runtimeForHome(ctx.app.id, ctx.input.homeCity ?? browserHome ?? "");
     const at = ctx.membership.joinedAt;
     if (!rt || ctx.membership.state !== "active" || at === null) throw new InvitationUnavailable();
     // A verified person can already exist. The active membership, consent and referral are one outcome.
     await rt.scoped(async tx => {
+      const verifiedRecipientHash = await this.expectedInvitationBinding(tx, ctx.app.id, ctx.referral.tokenHash, ctx.e164);
       const accounts = this.accountsFor(tx);
       await accounts.store.unsuppress(accounts.phoneHash(ctx.e164));
       await accounts.store.putMembership(ctx.membership);
       await accounts.store.addConsent({ e164: ctx.e164, app: ctx.app.id, state: "opted_in", source: "web_form", wording: ctx.app.consent.text, wordingVersion: ctx.app.consent.version, at });
       await accounts.store.attachPerson(ctx.e164, ctx.person.id);
-      await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age }, { tx, referral: ctx.referral });
+      await this.createMember(rt, ctx.membership, { ...ctx.input, age: ctx.age }, { tx, referral: ctx.referral, verifiedRecipientHash });
     });
     // The token is consumed and attribution is durable. A failed welcome can retry independently.
     await this.projectInvitationJoin(rt, ctx.membership.memberId).catch(() => this.log(`[invite] joined projection waits for retry (${rt.id})`));
@@ -1351,6 +1404,11 @@ export class NetworkService implements RuntimeHost {
       return this.stop(kw, ev.from, app, rt, scope, rowId, line, ev);
     }
 
+    if (memberInviteDeliveryCommand(ev.text)?.kind === "decline") {
+      if (turn && e164) await rt.scoped(tx => this.expectedInvitations.decline(tx, e164));
+      return "handled";
+    }
+
     // A number not seen for 12 months may have a new owner: on hold for staff review. Nothing is
     // answered or stored until staff decide (STOP above always works; HELP still answers).
     if (e164 && (await this.accounts.seen(e164)) === "held") {
@@ -1520,7 +1578,7 @@ export class NetworkService implements RuntimeHost {
     // Not from the thread: a profile from the member's AI assistant, learned but never an answer (InboundMessage.source).
     const out = await this.memberUnit(rt, memberId, ev, rowId, kw, systemReply, !fromThread);
     // The member wrote in the thread: pending notify deliveries count as acted on (an assistant's submit_profile does not).
-    if ((out === "handled" || out === "member_invitation" || out === "member_invitation_review" || out === "bounded_home_help")
+    if ((out === "handled" || out === "member_invitation" || out === "member_invitation_review" || out === "member_invitation_delivery" || out === "bounded_home_help")
       && fromThread && this.notify && kw !== "stop" && kw !== "stop_all" && !profileReadRequest(ev.text, this.apps)) {
       const personId = await this.personOfMember(rt, memberId);
       if (personId) await this.notify.threadReply(personId, ev.transport === "sms" ? "sms" : "imessage", this.clock.now()).catch(e => this.log(`[notify] thread reply not recorded: ${(e as Error).message}`));
@@ -1538,6 +1596,14 @@ export class NetworkService implements RuntimeHost {
       const channel = ev.transport === "sms" ? "sms" : "imessage";
       const inbound = { id: rowId, member_id: memberId, direction: "inbound", channel, body: ev.text, status: "received", type: null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
       const signedDirect = !keyword && !fromAssistant && this.inboundTurn();
+      const inviteDelivery = !keyword && memberInviteDeliveryCommand(ev.text);
+      if (inviteDelivery) {
+        if (!signedDirect || !rt.signedMemberTurn(memberId, rowId)) return "handled";
+        rt.unit.inbound = inbound;
+        rt.unit.privateInviteTurn = true;
+        rt.unit.memberCommand = tx => this.replyToExpectedInvitation(tx, rt, memberId, signedDirect.from, rowId, inviteDelivery);
+        return "member_invitation_delivery";
+      }
       const homeHelpConsent = signedDirect && boundedHomeHelpConsentCommand(ev.text);
       if (homeHelpConsent && rt.signedMemberTurn(memberId, rowId)) {
         rt.unit.inbound = inbound;
@@ -1660,6 +1726,39 @@ export class NetworkService implements RuntimeHost {
       }
       return keyword || systemReply ? "handled" as const : disposition;
     });
+  }
+
+  private async replyToExpectedInvitation(tx: SQL, rt: NetworkRuntime, memberId: MemberId, sender: string, messageId: string,
+    command: MemberInviteDeliveryCommand): Promise<void> {
+    const app = rt.app.id;
+    if (!await this.invitationOwner(tx, rt.app, memberId, sender)) return;
+    let reply = memberInviteDeliveryReply("invalid");
+    if (command.kind === "stage") {
+      const hash = isMemberInvitationLink(rt.app, command.link) && memberInvitationHash(this.hashKey, app, command.link.slice(-43));
+      const draft = hash && command.e164 !== sender && await this.expectedInvitations.stage(tx, {
+        app, inviterMemberId: memberId, tokenHash: hash, to: command.e164, link: command.link,
+      });
+      reply = draft ? memberInviteDeliveryPrompt(draft.code) : memberInviteDeliveryReply("unavailable");
+    }
+    if (command.kind === "confirm") {
+      const adapter = rt.adapter;
+      // The Cloud delivery owner requires a pre-existing Cloud account for proactive delivery.
+      if (adapter instanceof BlooioAdapter && adapter.name === "blooio" && adapter.live) {
+        let body: string | undefined;
+        await this.expectedInvitations.confirm(tx, {app, inviterMemberId: memberId, code: command.reference}, async (draftTx, pending) => {
+          if (pending.to === sender || !await this.eligibleExpectedInviteRecipient(draftTx, app, pending.to)) return false;
+          body = await this.expectedInvitationText(draftTx, rt.app, memberId, pending.link);
+          return body !== undefined;
+        }, async (draftTx, pending) => {
+          if (!body) throw new Error("Expected invitation copy is unavailable");
+          await adapter.queue.enqueue(draftTx, [{id: pending.id, to: pending.to, kind: "transactional", text: body, city: rt.city}]);
+          return body;
+        });
+      }
+      reply = memberInviteDeliveryReply("queued");
+    }
+    rt.unit.atomicInvitationDeliveryReply = true;
+    rt.collectedMemberReply(memberId, `invite-vouch:${messageId}`, reply, "member_invitation_delivery");
   }
 
   private async replyToInvitationReview(tx: SQL, rt: NetworkRuntime, memberId: MemberId, sender: string, messageId: string, id: string): Promise<void> {
