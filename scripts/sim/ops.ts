@@ -259,6 +259,7 @@ export async function opsBlock(b: Block): Promise<void> {
     let hang = true;
     const svc: ServiceLike = {
       fetch: async () => Response.json({ ok: true }), publicFetch: async () => Response.json({ ok: true }), close: async () => {},
+      inboxTick: async () => {}, purge: async () => {},
       runtimes: new Map([["slop:nyc", { id: "slop:nyc", tick: async () => { if (hang) await new Promise<void>(r => { release = r; }); return true; } }]]),
     };
     let now = T0;
