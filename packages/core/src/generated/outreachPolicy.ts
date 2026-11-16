@@ -10,7 +10,7 @@ export const inviteJoinNoticeLifetimeMs: number = 2592000000;
 /** Story: Keep minors out of introductions and recruiting / Recruiting is an adult-only message at the time it is sent (spec/outreachPolicy.md:19) */
 //@ pure
 export function outreachRequiresAdult(kind: string): boolean {
-  return kind === "probe" || kind === "reveal" || kind === "nudge" || kind === "scheduling" || kind === "reminder" || kind === "feedback" || kind === "relay" || kind === "growth" || kind === "invite_notice";
+  return kind === "probe" || kind === "reveal" || kind === "nudge" || kind === "scheduling" || kind === "reminder" || kind === "feedback" || kind === "relay" || kind === "growth" || kind === "invite_notice" || kind === "home_help_consent";
 }
 
 /** Story: Keep minors out of introductions and recruiting / Recruiting is an adult-only message at the time it is sent (spec/outreachPolicy.md:19) */
@@ -22,14 +22,14 @@ export function lawRecruitingRequiresAdult(kind: string): boolean {
 
 /** Story: Hear when someone I invited joins / An eligible join receipt can ride on a current reply (spec/outreachPolicy.md:36) */
 //@ pure
-export function inviteJoinNoticeCurrent(attributed: boolean, inviteeConsents: boolean, bothEligible: boolean, ageMs: number): boolean {
-  return attributed && inviteeConsents && bothEligible && ageMs >= 0 && ageMs < inviteJoinNoticeLifetimeMs;
+export function inviteJoinNoticeMayRideReply(directMemberTurn: boolean, reply: boolean, carriesMemberText: boolean): boolean {
+  return directMemberTurn && reply && !carriesMemberText;
 }
 
 /** Story: Hear when someone I invited joins / An eligible join receipt can ride on a current reply (spec/outreachPolicy.md:36) */
 //@ pure
-export function inviteJoinNoticeMayRideReply(directMemberTurn: boolean, reply: boolean, carriesMemberText: boolean): boolean {
-  return directMemberTurn && reply && !carriesMemberText;
+export function inviteJoinNoticeCurrent(attributed: boolean, inviteeConsents: boolean, bothEligible: boolean, ageMs: number): boolean {
+  return attributed && inviteeConsents && bothEligible && ageMs >= 0 && ageMs < inviteJoinNoticeLifetimeMs;
 }
 
 /** Story: Hear when someone I invited joins / An eligible join receipt can ride on a current reply (spec/outreachPolicy.md:36) */

@@ -266,10 +266,22 @@ Safety staff on the app use `GET /apps/<app>/safety/home-help` for the queue.
 as the action, with the current revision and the exact helper IDs for nomination
 and approval. Nomination creates a new revision. Approval rereads age, consent,
 holds, blocks, offers, availability and capacity. A singleton also needs recorded
-prior contact at a shared public plan or a confirmed meeting edge. Staff decisions
-and their audits commit in one transaction. The plan holds structured data only.
-Private venue collection, helper contact and address release are separate stages
-of [bounded help](../../../spec/boundedHelp.md).
+prior contact at a shared public plan or a confirmed meeting edge. Approval, the
+exact consent roster and its staff audit commit together. The outbound queue
+sends the requester a coarse plan card, then asks the approved helpers after the
+requester's explicit yes. Each signed response names the plan code and revision
+and requires a send receipt for that member's card.
+
+An existing verified `ntwrk.party` app session can use
+`POST /api/home-help/venue`. Send `action` (`submit`, `reveal` or `revoke`),
+`id` (the plan code) and `revision`. Add `address` for `submit`. Only the
+requester can submit or revoke it. Only current, consenting helpers can retrieve
+it, after everyone on the approved roster agrees. The response is private and
+uncached. Keep the address out of SMS, agent chat and tool logs.
+
+[Review rules](../../../spec/boundedHelp.md) ·
+[Consent rules](../../../spec/homeHelpConsent.md) ·
+[Private address rules](../../../spec/privateHomeHelpVenue.md)
 
 ## Limits
 

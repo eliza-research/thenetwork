@@ -1172,6 +1172,16 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.queueInviteJoin(inv, { inviteeId, at });
   }
 
+  /** Ask for a decision on a reviewed plan. Its record and current approval stay in the service. */
+  askReviewedHomeHelpConsent(input: { recipientId: MemberId; role: "requester" | "helper"; deliveryId: string; body: string }): boolean {
+    const { recipientId, role, deliveryId, body } = input;
+    if (!this.record(recipientId) || this.declinedIds.has(recipientId)) return false;
+    const member = this.member(recipientId);
+    this.dirty = true;
+    return this.send(member, body, { type: "info", proactive: role === "helper", homeHelpConsentFor: role },
+      "home_help_consent", { key: deliveryId, noDefer: true }) === "sent";
+  }
+
   private queueInviteJoin(inv: MemberState, notice: InviteJoinNotice) {
     if (this.inviteJoinText(inv, notice) === undefined) return;
     inv.pendingInviteJoins = [...(inv.pendingInviteJoins ?? []).filter(x => this.now() - x.at < inviteJoinNoticeLifetimeMs && x.inviteeId !== notice.inviteeId), notice];
@@ -4722,13 +4732,14 @@ export class ConsentNetwork implements NetworkUnderTest {
     // Fold a pending acknowledgement in only now, at the real send (never into a deferred body, which
     // would fold it twice), and only its first short sentence ("Got it, thanks."). Never into a relayed
     // text: that body is the other member's words, rendered by the relay policy, and goes as it is.
-    if (m.pendingAck && kind !== "safety" && kind !== "relay" && !/^(thanks|great|no problem|got it)/i.test(body)) {
+    if (m.pendingAck && kind !== "safety" && kind !== "relay" && kind !== "home_help_consent" && !/^(thanks|great|no problem|got it)/i.test(body)) {
       const ack = m.pendingAck.text.split(/(?<=[.!?])\s/)[0]!;
       body = `${ack} ${body}`;
       if (o.fallback !== undefined) o = { ...o, fallback: `${ack} ${o.fallback}` };
     }
     // A note for this member ("That plan didn't come together this time.") rides on their next message.
-    const note = m.note && !o.memberInviteLink && !meta.privateInviteVouch && kind !== "safety" && kind !== "relay" && now - m.note.at < 7 * DAY ? m.note.text : undefined;
+    const note = m.note && !o.memberInviteLink && !meta.privateInviteVouch && kind !== "safety" && kind !== "relay"
+      && kind !== "home_help_consent" && now - m.note.at < 7 * DAY ? m.note.text : undefined;
     if (note) {
       body = `${note} ${body}`;
       if (o.fallback !== undefined) o = { ...o, fallback: `${note} ${o.fallback}` };
@@ -4810,7 +4821,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const idPrefix = invitationJoins.length ? "invite-notice:" : "";
     this.ctx.send(m.id, text, { meta, idempotencyKey: o.key ?? `${idPrefix}${m.id}:${++this.seq}`, reply });
     if (deliveredInviteJoins.length) m.pendingInviteJoins = m.pendingInviteJoins?.filter(notice => !deliveredInviteJoins.includes(notice));
-    m.pendingAck = undefined;
+    if (kind !== "home_help_consent") m.pendingAck = undefined;
     if (note || (m.note && now - m.note.at >= 7 * DAY)) m.note = undefined;
     const storedText = o.memberInviteLink ? text.replace(o.memberInviteLink, "").trimEnd()
       : meta.privateInviteVouch ? "Private invitation reply"
@@ -4870,7 +4881,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    * of the 2 follow-ups to the member's own ask within 48 hours. Safety notices are never budgeted.
    */
   private classifyOutreach(m: MemberState, meta: SimMeta, now: number): "solicited" | "followup" | "unsolicited" {
-    if (meta.type === "system") return "solicited";
+    if (meta.type === "system" || meta.homeHelpConsentFor === "requester") return "solicited";
     const lastIn = Math.max(m.lastInbound, m.joinedAt);
     if (now - lastIn <= REPLY_WINDOW_MS && (m.outbound ?? 0) < REPLY_BURST) return "solicited";
     const x = meta as SimMeta & { plan?: { planId?: string } };

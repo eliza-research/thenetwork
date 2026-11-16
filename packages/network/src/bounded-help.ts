@@ -36,7 +36,7 @@ export interface HomeHelpAuthority {
   /** A human with authority to review this app. */
   reviewerAuthorized(tx: SQL, reviewer: HomeHelpReviewer): Promise<boolean>;
   /** Recheck adults, consent, blocks, holds, availability, task opt-in, capacity and roster format. */
-  rosterEligibility(tx: SQL, plan: { owner: HomeHelpOwner; draft: HomeHelpDraft; helperIds: readonly string[] }): Promise<{
+  rosterEligibility(tx: SQL, plan: { owner: HomeHelpOwner; draft: HomeHelpDraft; helperIds: readonly string[]; ongoingConsent?: boolean }): Promise<{
     everyoneEligible: boolean;
     singletonPreviouslyMet: boolean;
   }>;
@@ -146,8 +146,8 @@ export class BoundedHomeHelp {
       this.now(), draft.expiresAt, draft.startsAt, draft.endsAt, draft.effortMinutes);
   }
 
-  private async rosterAllowed(tx: SQL, plan: HomeHelpReviewPlan, helperIds: readonly string[]): Promise<boolean> {
-    const facts = await this.authority.rosterEligibility(tx, { owner: plan, draft: plan.draft, helperIds });
+  private async rosterAllowed(tx: SQL, plan: HomeHelpReviewPlan, helperIds: readonly string[], ongoingConsent?: boolean): Promise<boolean> {
+    const facts = await this.authority.rosterEligibility(tx, { owner: plan, draft: plan.draft, helperIds, ongoingConsent });
     return homeHelpRosterAllowed(helperIds.length, facts.singletonPreviouslyMet, facts.everyoneEligible);
   }
 
@@ -227,12 +227,12 @@ export class BoundedHomeHelp {
   }
 
   /** Read authority for this revision and roster under the caller's transaction. This does not send. */
-  async currentApproval(tx: SQL, input: PlanVersion & { helperIds: unknown }): Promise<HomeHelpReviewPlan | undefined> {
+  async currentApproval(tx: SQL, input: PlanVersion & { helperIds: unknown; ongoingConsent?: boolean }): Promise<HomeHelpReviewPlan | undefined> {
     const locked = await this.lockRoster(tx, input, input.helperIds);
     if (!locked) return;
     const { prior, helperIds } = locked;
     if (!prior.record.approval || !homeHelpOpen(prior.state, this.now()) || !homeHelpRevisionMatches(prior.state, input.revision, rosterKey(helperIds))) return;
-    const rosterAllowed = await this.rosterAllowed(tx, prior.record, helperIds);
+    const rosterAllowed = await this.rosterAllowed(tx, prior.record, helperIds, input.ongoingConsent);
     if (homeHelpApprovalCurrent(prior.state, this.now(), input.revision, rosterKey(helperIds), rosterAllowed)) return prior.record;
   }
 

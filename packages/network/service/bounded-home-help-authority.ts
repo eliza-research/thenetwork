@@ -78,13 +78,13 @@ function availableForDraft(party: Party, draft: HomeHelpDraft, snapshot: WorldSn
     { start: draft.startsAt, end: draft.endsAt }, now) > 0;
 }
 
-function hasCapacity(party: Party, requester: boolean, now: number): boolean {
+function hasCapacity(party: Party, requester: boolean, now: number, ongoingConsent = false): boolean {
   const { row, member, state } = party;
   const conversation = { outboundSinceInbound: member.outbound ?? 0 };
-  if (!(requester ? canSendLogistics(conversation) : canInterrupt(conversation))) return false;
+  if (!ongoingConsent && !(requester ? canSendLogistics(conversation) : canInterrupt(conversation))) return false;
   if (state.opps.some(o => (o.stage === "review" || o.stage === "probing") && o.participants.includes(row.id)
     && !o.status.some(([id, status]) => id === row.id && ["unavailable", "no", "dropped"].includes(status)))) return false;
-  if (requester) return true;
+  if (requester || ongoingConsent) return true;
   const participation = effectiveParticipation(row, now).state;
   const budget = OUTREACH.budget[participation] ?? OUTREACH.budget.normal!;
   return !member.onlyWhenAsked && member.proactive.filter(at => now - at < budget.days * DAY).length < budget.n;
@@ -131,7 +131,7 @@ export function createBoundedHomeHelpAuthority(deps: BoundedHomeHelpAuthorityDep
   return {
     ownerEligible: async (tx, owner) => !!await currentParties(tx, owner.app, [owner.requesterId], deps.now()),
     reviewerAuthorized: deps.reviewerAuthorized,
-    rosterEligibility: async (tx, { owner, draft, helperIds }) => {
+    rosterEligibility: async (tx, { owner, draft, helperIds, ongoingConsent }) => {
       const ineligible = { everyoneEligible: false, singletonPreviouslyMet: false };
       const ids = [owner.requesterId, ...helperIds];
       if (helperIds.length < 1 || helperIds.length > 3 || new Set(ids).size !== ids.length) return ineligible;
@@ -156,7 +156,7 @@ export function createBoundedHomeHelpAuthority(deps: BoundedHomeHelpAuthorityDep
         const id = party.row.id, requester = id === owner.requesterId;
         const member = world.get(id)?.m;
         if (!member || !Array.isArray(member.prefs.formats) || !member.prefs.formats.includes(format) || !availableForDraft(party, draft, snapshot, now)
-          || !hasCapacity(party, requester, now)
+          || !hasCapacity(party, requester, now, ongoingConsent)
           || memberReason(world, id, { category: "help", role: requester ? "seeker" : "helper", format, timeSensitive: true,
             ...(requester ? { ownIntentCreatedAt: now } : {}) })) return ineligible;
         // A skill or an inferred interest is not an offer to help with moving into or out of a home.

@@ -43,6 +43,10 @@ function authorityStatus(check: AuthorityCheck): CloudStatus {
   return check.phase === "AuthorityUnavailable" ? "unavailable" : "invalid";
 }
 
+export type HomeHelpVenueRequest = { id: string; revision: number } & (
+  { action: "submit"; address: string } | { action: "reveal" | "revoke" }
+);
+
 export interface PublicApiOptions extends AccountHooks {
   store: PeopleStore;
   otp: OtpProvider;
@@ -76,6 +80,8 @@ export interface PublicApiOptions extends AccountHooks {
   photos?: PhotoService;
   /** Voluntary item sharing. Absent until an approved item-review policy is configured. */
   photoRelay?: PhotoRelayService;
+  /** Private home-help address for the current approved revision. Use the verified app session only. */
+  homeHelpVenue?: (app: AppInfo, who: Who, input: HomeHelpVenueRequest) => Promise<{ address?: string } | undefined>;
   /**
    * The member's availability for GET /api/me, read from the member record the Network uses (a pause or
    * busy window set by text or by the agent, and quiet hours). It is not the messaging consent: a STOP
@@ -548,6 +554,32 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         const response = json(200, { ok: true }, { "set-cookie": cookie(appId, "", 0) });
         response.headers.append("set-cookie", identityCookie(appId, "", 0));
         return response;
+      }
+
+      case "POST /api/home-help/venue": {
+        const venue = o.homeHelpVenue;
+        if (!venue) return json(404, { ok: false, error: "not_found" });
+        return withSession(async who => {
+          const { action, id, revision, address } = b;
+          if ((action !== "submit" && action !== "reveal" && action !== "revoke")
+            || typeof id !== "string" || id.length === 0 || id.length > 36
+            || typeof revision !== "number" || !Number.isInteger(revision) || revision < 1 || revision > 2_147_483_647
+            || ("app" in b && b.app !== appId)
+            || Object.keys(b).some(key => key !== "action" && key !== "id" && key !== "revision" && key !== "app" && !(key === "address" && action === "submit"))) {
+            return json(400, { ok: false, error: "invalid" });
+          }
+          let input: HomeHelpVenueRequest;
+          if (action === "submit") {
+            if (typeof address !== "string") return json(400, { ok: false, error: "invalid" });
+            input = { action, id, revision, address };
+          } else input = { action, id, revision };
+          try {
+            const result = await venue(app, who, input);
+            return result ? json(200, { ok: true, ...result }) : json(409, { ok: false, error: "home_help_venue_unavailable" });
+          } catch {
+            return json(503, { ok: false, error: "home_help_venue_unavailable" });
+          }
+        });
       }
 
       case "GET /api/me":

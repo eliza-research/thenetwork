@@ -2,6 +2,7 @@ import { DAY, HOUR } from "@thenetwork/core";
 import { homeHelpDraftAllowed, type HomeHelpAlternative, type HomeHelpTask } from "../../core/src/generated/boundedHelp.ts";
 import { parseHomeHelpDraft, type HomeHelpDraft } from "../src/bounded-help.ts";
 import { NEIGHBORHOOD } from "../src/geo.ts";
+import { homeHelpPlanId } from "./bounded-home-help-consent-command.ts";
 
 type HomeHelpDetails = Omit<HomeHelpDraft, "expiresAt">;
 type HomeHelpVersion = { id: string; revision: number };
@@ -85,11 +86,11 @@ export function boundedHomeHelpCommand(text: string): BoundedHomeHelpCommand | u
     const draft = parseDetails(fields);
     return draft ? { kind: "submit", draft } : { kind: "invalid" };
   }
-  const version = /^(revise|close) home help ([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}) ([1-9]\d{0,9})$/i.exec(head ?? "");
+  const version = /^(revise|close) home help (\S+) ([1-9]\d{0,9})$/i.exec(head ?? "");
   if (!version) return { kind: "invalid" };
   const [, action, rawId, rawRevision] = version;
-  const id = rawId!.toLowerCase(), revision = positiveInteger(rawRevision!);
-  if (revision === undefined) return { kind: "invalid" };
+  const id = homeHelpPlanId(rawId!), revision = positiveInteger(rawRevision!);
+  if (!id || revision === undefined) return { kind: "invalid" };
   if (action!.toLowerCase() === "close") return fields.length ? { kind: "invalid" } : { kind: "close", id, revision };
   const draft = parseDetails(fields);
   return draft ? { kind: "revise", id, revision, draft } : { kind: "invalid" };

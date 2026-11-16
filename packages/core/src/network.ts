@@ -87,6 +87,8 @@ export interface SimMeta {
   approvedInviteLink?: string;
   /** Exact invitees whose verified join notices are present in this outbound message. */
   invitationJoins?: readonly MemberId[];
+  /** The party whose decision is requested on an exact staff-reviewed home-help plan. */
+  homeHelpConsentFor?: "requester" | "helper";
   /** A private invitation question, evidence readback, or review status for the signed requester. */
   privateInviteVouch?: true;
   [k: string]: unknown;

@@ -201,6 +201,7 @@ export class BlooioAdapter implements ChannelAdapter {
       // same order, then the existing admit check revalidates current parties.
       lockAdmission: async (row, tx) => {
         if (row.id.startsWith("relay:") || row.id.startsWith("invite-notice:")) await tx`select id from network.network_state where id=${rt.pg.id} for share`;
+        if (row.id.startsWith("home-help-consent:")) await rt.lockHomeHelpConsentAdmission(tx, row.id, row.memberId);
       },
       // A relayed item: its match and both members are read again inside the admission transaction (runtime.ts).
       admit: async (row, tx) => {
@@ -208,6 +209,8 @@ export class BlooioAdapter implements ChannelAdapter {
         if (row.id.startsWith("relay:")) return rt.relayAdmission(tx, row);
         if (row.id.startsWith("invite-notice:")) return await rt.invitationNoticeAdmission(tx, row.id, row.memberId)
           ? { ok: true } : { ok: false, reason: "invitation_notice_changed" };
+        if (row.id.startsWith("home-help-consent:")) return await rt.homeHelpConsentAdmission(tx, row)
+          ? { ok: true } : { ok: false, reason: "home_help_consent_changed" };
         return { ok: true };
       },
       capTake: row => rt.capTake(row.id, row.memberId as MemberId),

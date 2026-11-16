@@ -791,11 +791,21 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
 
   // spec/boundedHelp.md, "Intake keeps only structured home-help details after considering a service"
   // spec/boundedHelp.md, "Fix the roster before review and recheck it at approval"
-  test("signed home-help intake and staff review bind confirmed offers to one exact roster", async () => {
+  // spec/homeHelpConsent.md, spec/privateHomeHelpVenue.md
+  test("reviewed home help reaches only the exact roster and shares the address privately after unanimous consent", async () => {
     await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
-    const { s } = service(clock, { env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret },
-      networks: [{ id: "ntwrk:nyc" }], network: { matchingEnabled: true }, tokens: "safety@ntwrk:saf-tok,reviewer@ntwrk:rev-tok" });
+    const sent: SendRequest[] = [];
+    let simulatedDelivery = false;
+    const { s, otp } = service(clock, { env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret },
+      networks: [{ id: "ntwrk:nyc" }], network: { matchingEnabled: true }, tokens: "safety@ntwrk:saf-tok,reviewer@ntwrk:rev-tok",
+      adapter: (_net, rt) => new BlooioAdapter({ app: rt.app.id, from: LINE, clock, liveGate: () => simulatedDelivery, log: () => {},
+        provider: { kind: "sim", async send(request) {
+          sent.push(request);
+          return { providerMessageId: `fixture-${sent.length}`, status: "sent", acceptedAt: clock.now() };
+        } },
+      }),
+    });
     await s.start();
     const consent = { sms: true as const, wording: APPS.ntwrk.consent.text };
     async function enroll(firstName: string) {
@@ -823,6 +833,8 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     const [plan] = await sql`select id,revision,phase,task,area,alternative,helper_ids from network.bounded_home_help`;
     expect(plan).toMatchObject({ revision: 1, phase: "AwaitingHelpers", task: "MoveFurniture", area: "Greenpoint", alternative: "ServiceUnavailable", helper_ids: [] });
     expect(JSON.stringify(await sql`select body from network.messages`)).not.toMatch(/move my couch|service unavailable/i);
+    const code = (response.replies.join("\n") as string).match(/hh_[a-p]{32}/)?.[0];
+    if (!code) throw new Error("The receipt did not include the plan code");
 
     const staff = (method: string, token: string, data?: Record<string, unknown>) => s.fetch(new Request(
       `http://127.0.0.1/apps/ntwrk/safety/home-help${method === "POST" ? `/${plan.id as string}` : ""}`,
@@ -845,7 +857,70 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     const approved = await staff("POST", "saf-tok", { action: "approve", revision: 2, helperIds });
     expect(await approved.json()).toMatchObject({ ok: true, result: { phase: "Approved", revision: 2 } });
     expect(await count(sql`select count(*)::int as n from network.messages where opportunity_id is not null`)).toBe(0);
-    const closed = await send(turn(owner.phone, "close-home-help", `CLOSE HOME HELP ${plan.id as string} 2`));
+
+    const rt = s.runtimeFor("ntwrk")!;
+    const cards = () => sent.filter(request => request.text.includes(`YES HOME HELP ${code} 2`));
+    const answer = (person: { phone: string }, messageId: string, choice = "YES", revision = 2) =>
+      send(turn(person.phone, messageId, `${choice} HOME HELP ${code} ${revision}`)).then(r => r.json());
+    await s.afterTick(rt);
+    expect(cards()).toEqual([]);
+    expect((await answer(owner, "owner-before-receipt")).replies.join("\n")).toContain("unavailable");
+    simulatedDelivery = true;
+    await s.afterTick(rt);
+    expect(cards().map(card => card.to)).toEqual([owner.phone]);
+    await send(turn(owner.phone, "bare-home-help-yes", "yes"));
+    expect((await answer(owner, "wrong-home-help-revision", "YES", 1)).replies.join("\n")).toContain("unavailable");
+    await s.afterTick(rt);
+    expect(cards().map(card => card.to)).toEqual([owner.phone]);
+    expect((await answer(owner, "confirmed-owner")).replies.join("\n")).toContain("recorded your yes");
+    clock.advance(2 * HOUR); // both helpers are past the spread of their noon sending slots
+    await s.afterTick(rt);
+    expect(cards().map(card => card.to).sort()).toEqual([owner.phone, first.phone, second.phone].sort());
+    expect(cards().every(card => card.text.includes("Greenpoint") && !/Ari|Ben|Cora/.test(card.text))).toBe(true);
+    expect(await count(sql`select count(*)::int as n from platform.outbound where id like 'home-help-consent:%'
+      and status='sent' and jsonb_array_length(provider_message_ids)=1`)).toBe(3);
+
+    function client(app: AppId, phone?: string) {
+      let cookie = "";
+      const call = async (path: string, body: Record<string, unknown>) => {
+        const res = await s.publicFetch(new Request(`http://localhost:${5101 + APP_IDS.indexOf(app)}${path}`, {
+          method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
+        }));
+        cookie = res.headers.get("set-cookie")?.split(";")[0] ?? cookie;
+        return { status: res.status, body: await res.json(), cache: res.headers.get("cache-control") };
+      };
+      return { call, async login() {
+        clock.advance(31_000);
+        expect((await call("/api/auth/otp/start", { phone })).status).toBe(200);
+        expect((await call("/api/auth/otp/verify", { phone, code: otp.codes.get(phone!) })).status).toBe(200);
+      } };
+    }
+    const ownerSession = client("ntwrk", owner.phone), helperSession = client("ntwrk", first.phone);
+    const outsiderSession = client("ntwrk", newPhone()), otherApp = client(FR, first.phone), signedOut = client("ntwrk");
+    for (const session of [ownerSession, helperSession, outsiderSession, otherApp]) await session.login();
+    const address = "71 Fictional Fixture Lane, Apartment 4";
+    const submit = { action: "submit", id: code, revision: 2, address };
+    const reveal = { action: "reveal", id: code, revision: 2 };
+    const venue = "/api/home-help/venue";
+    expect((await signedOut.call(venue, reveal)).status).toBe(401);
+    expect((await ownerSession.call(venue, submit)).status).toBe(409);
+    expect((await answer(first, "confirmed-helper-one")).replies.join("\n")).toContain("recorded your yes");
+    expect((await ownerSession.call(venue, submit)).status).toBe(409);
+    expect((await answer(second, "confirmed-helper-two")).replies.join("\n")).toContain("recorded your yes");
+    expect((await helperSession.call(venue, submit)).status).toBe(409);
+    expect(await ownerSession.call(venue, submit)).toMatchObject({ status: 200, body: { ok: true }, cache: "no-store" });
+    expect(await helperSession.call(venue, reveal)).toMatchObject({ status: 200, body: { ok: true, address }, cache: "no-store" });
+    expect((await outsiderSession.call(venue, reveal)).status).toBe(409);
+    expect((await otherApp.call(venue, reveal)).status).toBe(409);
+    expect((await helperSession.call(venue, { ...reveal, revision: 1 })).status).toBe(409);
+    expect(sent.every(request => !request.text.includes(address))).toBe(true);
+    expect(JSON.stringify(await sql`select body from network.messages`)).not.toContain(address);
+    expect(await count(sql`select count(*)::int as n from network.bounded_home_help_venue where ciphertext is not null`)).toBe(1);
+    expect((await answer(second, "withdrawn-helper-two", "WITHDRAW")).replies.join("\n")).toContain("withdrawn your consent");
+    expect((await helperSession.call(venue, reveal)).status).toBe(409);
+    expect(await count(sql`select count(*)::int as n from network.bounded_home_help_venue where ciphertext is not null`)).toBe(0);
+
+    const closed = await send(turn(owner.phone, "close-home-help", `CLOSE HOME HELP ${code} 2`));
     expect((await closed.json()).replies.join("\n")).toContain("is closed");
     expect((await sql`select phase from network.bounded_home_help`)[0]!.phase).toBe("Closed");
   }, T);

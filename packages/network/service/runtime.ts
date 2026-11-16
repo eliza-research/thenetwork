@@ -42,6 +42,7 @@ import { BlooioAdapter, DryRunAdapter, WAITING_STATUSES, type ChannelAdapter, ty
 import { normalizeAddress } from "../../blooio/src/phone.ts";
 import type { InboundTurn, CollectedReply, AtomicReplyReason } from "./inbox.ts";
 import { BOUNDED_HOME_HELP_PROMPT } from "./bounded-home-help-intake.ts";
+import { homeHelpNoticeId, lockHomeHelpNoticeRoster } from "./bounded-home-help-delivery.ts";
 import { parseApprovedRelayPhotos, type TurnContext } from "../../core/src/svc/contract.ts";
 import { ADULT_AGE, canBeMatched } from "../../core/src/policy.ts";
 import type { PhotoRelayService } from "../../platform/src/photo-relay.ts";
@@ -113,6 +114,8 @@ export interface RuntimeHost {
   collectReplies?(tx: SQL, replies: CollectedReply[], reason?: AtomicReplyReason): Promise<void>;
   stageMemberInvitation?(rt: NetworkRuntime, request: MemberInviteRequest): StagedMemberInvitation | undefined;
   saveMemberInvitation?(tx: SQL, rt: NetworkRuntime, staged: StagedMemberInvitation): Promise<void>;
+  homeHelpNoticeCurrent?(tx: SQL, app: AppInfo, noticeId: string, recipient: MemberId, to: string, body: string): Promise<boolean>;
+  homeHelpRecipientStopped?(tx: SQL, app: AppId, memberId: MemberId): Promise<void>;
   /** Proactive sends of this batch the person-level daily cap refuses (ids). Called before delivery. */
   capRefused(rt: NetworkRuntime, batch: Outbound[]): Promise<Set<string>>;
   /** Give back the person-cap slots of sends the adapter refused (they never went out). */
@@ -341,6 +344,18 @@ export class NetworkRuntime {
     return this.invitationNoticeCurrent(tx, recipient, row?.invite_join_members as MemberId[] | undefined);
   }
 
+  async lockHomeHelpConsentAdmission(tx: SQL, id: string, recipient?: MemberId | null): Promise<void> {
+    const noticeId = homeHelpNoticeId(id);
+    if (!noticeId || !recipient) return;
+    await tx`select id from network.network_state where id=${this.pg.id} for share`;
+    await lockHomeHelpNoticeRoster(tx, this.app.id, noticeId, recipient);
+  }
+
+  async homeHelpConsentAdmission(tx: SQL, row: { id: string; memberId?: MemberId | null; to: string; text: string }): Promise<boolean> {
+    const noticeId = homeHelpNoticeId(row.id);
+    return !!noticeId && !!row.memberId && !!await this.host.homeHelpNoticeCurrent?.(tx, this.app, noticeId, row.memberId, row.to, row.text);
+  }
+
   private async invitationNoticeCurrent(tx: SQL, inviter: MemberId, invitees?: readonly MemberId[]): Promise<boolean> {
     if (!invitees?.length) return false;
     const app = this.app.id;
@@ -531,7 +546,7 @@ export class NetworkRuntime {
           (this.unit.collectedPublicLinks ??= new Map()).set(id, [pendingInvite.url]);
         }
         if (meta.privateInviteVouch && !causal) throw new Error("Private invitation text requires its signed member reply");
-        const type = meta.approvedInviteLink ? "member_invitation" : meta.privateInviteVouch
+        const type = meta.homeHelpConsentFor ? "home_help_consent" : meta.approvedInviteLink ? "member_invitation" : meta.privateInviteVouch
           ? pendingInvite?.status === "review" ? "member_invitation_review" : "member_invitation_vouch"
           : this.unit.privateHomeHelpTurn && causal ? "bounded_home_help" : meta.type;
         if (causal) this.unit.collected.add(id);
@@ -699,7 +714,10 @@ export class NetworkRuntime {
     for (const r of u.runs) await tx`insert into network.matching_runs ${tx(r)} on conflict (id) do nothing`;
     // Job postings: the intent and its tagged facets on the manager (postings.ts); never for a member this unit forgets.
     for (const p of u.postings) if (ok(p.managerId)) await savePosting(tx, app, p);
-    for (const [id, out] of u.optOut) if (ok(id)) await tx`update network.members set opted_out = ${out} where app_id = ${app} and id = ${id}`;
+    for (const [id, out] of u.optOut) if (ok(id)) {
+      await tx`update network.members set opted_out = ${out} where app_id = ${app} and id = ${id}`;
+      if (out) await this.host.homeHelpRecipientStopped?.(tx, app, id);
+    }
     // The forget path (an under-age decline, leaving the app, deleting everything): keep only the id. Nothing that names the member stays.
     for (const id of u.forget) {
       // Seal old signed replay payloads in the same canonical removal transaction. Keep only dedupe metadata.

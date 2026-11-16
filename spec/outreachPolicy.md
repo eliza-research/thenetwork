@@ -18,12 +18,12 @@ pure val personDailyCap: int = 3
 
 ### Recruiting is an adult-only message at the time it is sent
 
-An introduction, a meeting message, a relay, or a request to invite other people requires an adult recipient. Check the current age when sending, including a message held for a later send window.
+An introduction, a meeting message, a relay, a reviewed home-help consent card, or a request to invite other people requires an adult recipient. Check the current age when sending, including a message held for a later send window.
 
 ```quint
 pure def outreachRequiresAdult(kind: str): bool =
   kind == "probe" or kind == "reveal" or kind == "nudge" or kind == "scheduling" or
-  kind == "reminder" or kind == "feedback" or kind == "relay" or kind == "growth" or kind == "invite_notice"
+  kind == "reminder" or kind == "feedback" or kind == "relay" or kind == "growth" or kind == "invite_notice" or kind == "home_help_consent"
 
 pure def lawRecruitingRequiresAdult(kind: str): bool =
   kind == "growth" implies outreachRequiresAdult(kind)

@@ -4,6 +4,7 @@ import type { StaffRole, StaffUser } from "../../observatory/src/types.ts";
 import type { AppId } from "../../platform/src/apps.ts";
 import { readCapped } from "../../platform/src/body.ts";
 import type { BoundedHomeHelp } from "../src/bounded-help.ts";
+import type { HomeHelpConsentKey } from "../src/bounded-home-help-consent.ts";
 
 const QUEUE_PATH = "/safety/home-help";
 const BODY_LIMIT = 4096;
@@ -31,6 +32,7 @@ export interface BoundedHomeHelpStaffDeps {
   transaction<T>(app: AppId, run: (tx: SQL) => Promise<T>): Promise<T>;
   /** Write through this transaction. A failed audit rolls back any decision. */
   writeAudit(tx: SQL, entry: BoundedHomeHelpStaffAudit): Promise<void>;
+  stageConsent?(tx: SQL, key: HomeHelpConsentKey): Promise<boolean>;
   now(): number;
 }
 
@@ -115,6 +117,9 @@ export async function handleBoundedHomeHelpStaff(
         : decision.action === "nominate"
           ? await deps.store.proposeRoster(tx, { ...key, helperIds: decision.helperIds })
           : await deps.store.approve(tx, { ...key, staffId: reviewer.staffId, helperIds: decision.helperIds });
+      if (changed && decision.action === "approve" && deps.stageConsent && !await deps.stageConsent(tx, key)) {
+        throw new Error("The approved consent roster could not be staged");
+      }
       await deps.writeAudit(tx, {
         ...audit, at: deps.now(), action: "decide_bounded_home_help", targetType: "case", targetId: id,
         ok: !!changed, detail: { decision: action, revision },
