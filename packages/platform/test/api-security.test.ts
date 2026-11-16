@@ -203,66 +203,58 @@ describe("production host map", () => {
   });
 });
 
-test("phone form blocks native GET during mode discovery, then restores OTP/fallback and Cloud handlers", async () => {
-  const { mountAuth } = await import("../../../sites/shared/auth.ts");
-  const { api } = await import("../../../sites/shared/api.ts");
-  const saved = {authMode: api.authMode, otpStart: api.otpStart, cloudAuthStart: api.cloudAuthStart};
-  const documentDescriptor = Object.getOwnPropertyDescriptor(globalThis, "document");
-  const locationDescriptor = Object.getOwnPropertyDescriptor(globalThis, "location");
-  const makeButton = () => ({disabled: false, textContent: "Send code", dataset: {busy: "Sending…"}, type: "submit", className: ""});
-  class Form extends EventTarget {
-    button = makeButton();
-    input = {value: "2125550101", disabled: false, setAttribute() {}, removeAttribute() {}, focus() {}};
-    elements = Object.assign([this.input, this.button], {namedItem: () => this.input});
-    attributes = new Map<string, string>();
-    querySelector(selector: string) { return selector.startsWith("button") ? this.button : null; }
-    setAttribute(name: string, value: string) { this.attributes.set(name, value); }
-    removeAttribute(name: string) { this.attributes.delete(name); }
-    replaceChildren(button: ReturnType<typeof makeButton>) { this.button = button; this.elements = Object.assign([button], {namedItem: () => this.input}); }
-  }
+test("the join flow sends no code and opens no cloud sign-in during mode discovery, then uses text codes on otp or a 404, and the cloud sign-in on cloud", async () => {
+  const machine = await import("../../core/src/generated/browserJoin.ts");
+  const { readAuthLookup, startCloud, startCode } = await import("../../ui/src/api/join.ts");
+  const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const realFetch = globalThis.fetch;
+  const send = (page: import("../../core/src/generated/browserJoin.ts").JoinPage, event: import("../../core/src/generated/browserJoin.ts").Event) => {
+    expect([event.type, machine.enabled(page, event)]).toEqual([event.type, true]);
+    return machine.step(page, event);
+  };
   try {
-    Object.defineProperty(globalThis, "document", {configurable: true, value: {querySelector: () => null, createElement: makeButton}});
-    let destination = "";
-    Object.defineProperty(globalThis, "location", {configurable: true, value: {pathname: "/join", assign: (url: string) => {destination = url;}}});
+    Object.defineProperty(globalThis, "window", { configurable: true, value: { location: { href: "https://peon.biz/join" } } });
     for (const mode of ["otp", "404", "cloud"] as const) {
-      const phone = new Form(), code = new Form();
-      const root = {dataset: {} as Record<string, string>, getAttribute: () => null,
-        querySelector: (selector: string) => selector === 'form[data-form="phone"]' ? phone : selector === 'form[data-form="code"]' ? code : null,
-        querySelectorAll: () => []};
-      let resolveMode!: (value: Awaited<ReturnType<typeof api.authMode>>) => void;
-      let otpCalls = 0, cloudCalls = 0;
-      api.authMode = () => new Promise(resolve => {resolveMode = resolve;});
-      api.otpStart = async e164 => {expect(e164).toBe("+12125550101"); otpCalls++; return {ok: true, data: {ok: true}};};
-      api.cloudAuthStart = async path => {expect(path).toBe("/join"); cloudCalls++; return {ok: true, data: {url: "https://cloud-staging.eliza.app/network/sign-in"}};};
-      mountAuth(root as unknown as HTMLElement, () => {});
-      const earlyEnter = new Event("submit", {cancelable: true});
-      expect(phone.dispatchEvent(earlyEnter)).toBe(false);
-      expect(earlyEnter.defaultPrevented).toBe(true);
-      expect(Array.from(phone.elements).every(control => control.disabled)).toBe(true);
-      expect(phone.attributes.get("aria-busy")).toBe("true");
-      expect(phone.button.textContent).toBe("Loading sign-in…");
-      expect(otpCalls + cloudCalls).toBe(0);
-      resolveMode(mode === "404" ? {ok: false, error: "unknown", status: 404} : {ok: true, data: {mode}});
-      await sleep(0);
-      expect(Array.from(phone.elements).every(control => !control.disabled)).toBe(true);
-      expect(phone.input.disabled).toBe(false);
-      expect(phone.attributes.has("aria-busy")).toBe(false);
-      if (mode !== "cloud") {
-        expect(phone.button.textContent).toBe("Send code");
-        expect(phone.button.dataset.busy).toBe("Sending…");
+      const requests: { path: string; body: unknown }[] = [];
+      globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+        const path = String(input);
+        requests.push({ path, body: init.body ? JSON.parse(String(init.body)) : undefined });
+        if (path === "/api/auth/mode") return mode === "404" ? Response.json({ ok: false, error: "not_found" }, { status: 404 }) : Response.json({ mode });
+        if (path === "/api/auth/otp/start") return Response.json({ ok: true });
+        if (path === "/api/auth/cloud/start") return Response.json({ url: "https://cloud-staging.eliza.app/network/sign-in" });
+        return Response.json({ ok: false, error: "not_found" }, { status: 404 });
+      }) as typeof fetch;
+      let page = send(machine.initial, { type: "openPage", viaAgent: false, fragmentName: false, ageDigitsOnly: false, ageDigitCount: 0, fragmentAge: 0 });
+      page = send(page, { type: "loaded", view: { result: "SignedOut", account: 0, reason: "NoBlock" }, appUnreachable: false, inviteOnly: false });
+      expect(machine.phoneFormWaiting(page)).toBe(true);
+      expect(machine.enabled(page, { type: "submitPhone", phoneValid: true })).toBe(false);
+      expect(machine.enabled(page, { type: "continueWithPhone" })).toBe(false);
+      expect(machine.canReadAuthMode(page)).toBe(true);
+      const lookup = await readAuthLookup();
+      expect(lookup).toBe(mode === "cloud" ? "ModeCloud" : mode === "otp" ? "ModeOtp" : "LookupFailed");
+      expect(requests.map((r) => r.path)).toEqual(["/api/auth/mode"]);
+      page = send(page, { type: "readAuthMode", lookup, checkOn: false });
+      expect(machine.phoneFormWaiting(page)).toBe(false);
+      if (mode === "cloud") {
+        expect([machine.showsCloudButton(page), machine.enabled(page, { type: "submitPhone", phoneValid: true })]).toEqual([true, false]);
+        page = send(page, { type: "continueWithPhone" });
+        expect(machine.canAnswerCloudStart(page)).toBe(true);
+        const answer = await startCloud("/join");
+        expect(answer).toEqual({ ok: true, url: "https://cloud-staging.eliza.app/network/sign-in" });
+        expect(requests.at(-1)).toEqual({ path: "/api/auth/cloud/start", body: { returnPath: "/join" } });
+        expect(send(page, { type: "answerCloudStart", opened: true }).screen).toBe("LeftForCloud");
+      } else {
+        expect([machine.showsNumberForm(page), machine.enabled(page, { type: "continueWithPhone" })]).toEqual([true, false]);
+        page = send(page, { type: "submitPhone", phoneValid: true });
+        expect(machine.canAnswerCodeStart(page)).toBe(true);
+        expect(await startCode("+12125550101")).toEqual({ result: "CodeSent" });
+        expect(requests.at(-1)).toEqual({ path: "/api/auth/otp/start", body: { phone: "+12125550101" } });
+        expect(send(page, { type: "answerCodeStart", started: "CodeSent" }).screen).toBe("Code");
       }
-      const normalSubmit = new Event("submit", {cancelable: true});
-      expect(phone.dispatchEvent(normalSubmit)).toBe(false);
-      expect(normalSubmit.defaultPrevented).toBe(true);
-      await sleep(0);
-      expect(otpCalls).toBe(mode === "cloud" ? 0 : 1);
-      expect(cloudCalls).toBe(mode === "cloud" ? 1 : 0);
-      if (mode === "cloud") expect(destination).toBe("https://cloud-staging.eliza.app/network/sign-in");
-      else expect(root.dataset.current).toBe("code");
+      expect(requests.filter((r) => r.path !== "/api/auth/mode")).toHaveLength(1);
     }
   } finally {
-    Object.assign(api, saved);
-    if (documentDescriptor) Object.defineProperty(globalThis, "document", documentDescriptor); else Reflect.deleteProperty(globalThis, "document");
-    if (locationDescriptor) Object.defineProperty(globalThis, "location", locationDescriptor); else Reflect.deleteProperty(globalThis, "location");
+    globalThis.fetch = realFetch;
+    if (windowDescriptor) Object.defineProperty(globalThis, "window", windowDescriptor); else Reflect.deleteProperty(globalThis, "window");
   }
 });

@@ -1,0 +1,301 @@
+# Connector tools as the agent sees them
+
+Each app site has its own MCP connector. A connection covers that one app (the host). The MCP server owns the tool list, the argument checks, the scope checks, the daily profile limit and the answers. The OAuth pages own sign-in and consent ([connector browser authorization](oauthBrowserAuthorization.md)). The platform owns the membership status, the profile intake and the single update inbox. This spec models which tools the agent can see and call, what each call does for each member status, and what the agent can observe after the call. The tokens, the grant storage and the minor rules of the inbox are in the OAuth and inbox models.
+
+## Story: Use my app's connector from my agent
+
+> As a person who connected my agent to an app, I want the agent to see only the tools that fit my app and my status, so that it can check my status, send my approved profile once and read my own updates without seeing my phone number or code.
+
+### Each surface lists only the apps it may offer, and the OpenAI surface never offers slop.date
+
+There are two surfaces. The full surface, at `https://<site>/mcp`, offers every app. The OpenAI surface, at `https://<site>/mcp/openai`, serves ChatGPT and Codex clients. It hides slop.date: it never lists slop.date as an app choice, and the slop.date site has no OpenAI surface. The OpenAI plugin uses the ntwrk.party endpoint ([agent entry](agentEntry.md)). Every host that a surface serves lists the public tools and the member tools. Only the friends.help and ntwrk.party hosts list the Join draft tool.
+
+```quint
+type AppId = Ntwrk | Slop | Peon | Friends
+type Surface = FullSurface | OpenAiSurface
+type ToolName = AppInfoTool | StartSignupTool | PrepareSignupTool | CheckStatusTool | SubmitProfileTool | GetUpdatesTool
+
+pure def appOffered(surface: Surface, app: AppId): bool = surface == FullSurface or app != Slop
+
+pure def hostServes(surface: Surface, host: AppId): bool = appOffered(surface, host)
+
+pure def toolListed(host: AppId, surface: Surface, tool: ToolName): bool =
+  hostServes(surface, host) and (tool != PrepareSignupTool or host == Friends or host == Ntwrk)
+
+pure def lawOpenAiNeverOffersSlop(tool: ToolName): bool =
+  not(appOffered(OpenAiSurface, Slop)) and not(toolListed(Slop, OpenAiSurface, tool))
+
+pure def lawFullSurfaceOffersEveryApp(app: AppId): bool = appOffered(FullSurface, app)
+
+pure def lawDraftOnlyOnFriendsAndNtwrk(host: AppId, surface: Surface): bool =
+  toolListed(host, surface, PrepareSignupTool) implies (host == Friends or host == Ntwrk)
+```
+
+### Public tools need no sign-in, and member tools need the person's own grant
+
+`app_info` and `start_signup` return public facts only: what the app is, who can join, how to join, the ages and the legal links. They need no sign-in and take no personal details. `check_status` and `get_updates` need the membership read scope. `submit_profile` and `prepare_signup` need the profile write scope. A member tool without the right grant answers that the person must sign in on the app's page and allow access.
+
+```quint
+type Scope = NoScope | MembershipRead | ProfileWrite
+
+pure def scopeFor(tool: ToolName): Scope =
+  if (tool == AppInfoTool or tool == StartSignupTool) NoScope
+  else if (tool == CheckStatusTool or tool == GetUpdatesTool) MembershipRead
+  else ProfileWrite
+
+pure def lawPublicToolsNeedNoSignIn(tool: ToolName): bool =
+  (scopeFor(tool) == NoScope) iff (tool == AppInfoTool or tool == StartSignupTool)
+```
+
+### The member status decides which member tool can act
+
+The agent sees one of six statuses: not joined, invited, onboarding, active, stopped or on hold. Every status can read its status and its updates. Only an onboarding or active member can send a profile. Only a person who is not joined or invited can prepare a Join draft. Each status has one next step that the agent tells the person: join on the site or get an invitation when not joined, accept the invitation, reply to the last text, nothing to do, text START, or email support.
+
+```quint
+type MemberStatus = NotJoined | Invited | Onboarding | Active | Stopped | OnHold
+type NextStep = JoinOnSite | GetInvitation | AcceptInvitation | ReplyToLastText | AlreadySignedUp | TextStart | EmailSupport
+
+pure def liveMember(status: MemberStatus): bool = status == Active or status == Onboarding
+
+pure def toolAllowedFor(tool: ToolName, status: MemberStatus): bool =
+  if (tool == SubmitProfileTool) liveMember(status)
+  else if (tool == PrepareSignupTool) (status == NotJoined or status == Invited)
+  else true
+
+pure def nextStepFor(status: MemberStatus, inviteOnly: bool): NextStep =
+  if (status == NotJoined) (if (inviteOnly) GetInvitation else JoinOnSite)
+  else if (status == Invited) AcceptInvitation
+  else if (status == Onboarding) ReplyToLastText
+  else if (status == Active) AlreadySignedUp
+  else if (status == Stopped) TextStart
+  else EmailSupport
+
+pure def lawSubmitOnlyForLiveMembers(status: MemberStatus): bool =
+  toolAllowedFor(SubmitProfileTool, status) iff (status == Active or status == Onboarding)
+
+pure def lawDraftOnlyBeforeJoining(status: MemberStatus): bool =
+  toolAllowedFor(PrepareSignupTool, status) iff (status == NotJoined or status == Invited)
+
+pure def lawReadToolsServeEveryStatus(status: MemberStatus): bool =
+  toolAllowedFor(AppInfoTool, status) and toolAllowedFor(StartSignupTool, status) and
+  toolAllowedFor(CheckStatusTool, status) and toolAllowedFor(GetUpdatesTool, status)
+```
+
+### A connection binds to one host on one surface, and the person connects it in the browser
+
+The agent first reaches one host on one surface. The host is fixed before any tool can save a draft. A host that the surface does not serve is not available, and the agent can call nothing on it. Only an authorized connection holds the profile write scope. The person authorizes the connection on the app's page, with or without the profile write scope. A public tool works before and after authorization, and it answers that an app is not available when the surface does not offer it. A member tool without a grant, or without the scope that it needs, answers that the person must sign in on the app's page and allow access. After a grant ends, every call with the old token answers the same, until the person connects again.
+
+```quint
+type ConnectionPhase = Unbound | Unavailable | Anonymous | Connected | Revoked
+type ToolResult =
+  NoResult | PublicFacts | AppNotAvailable | SignInNeeded | StatusShown | ProfileAccepted |
+  ProfileNotForStatus | DraftSaved | DraftRefused | UpdatesShown | TooManyToday
+type Connection = {
+  phase: ConnectionPhase,
+  host: AppId,
+  surface: Surface,
+  hasWrite: bool,
+  status: MemberStatus,
+  profileApproved: bool,
+  profileSent: bool,
+  sentToday: int,
+  draftPrepared: bool,
+  tokenUnseen: bool,
+  otherUnseen: bool,
+  lastShown: int,
+  lastResult: ToolResult
+}
+pure val initial: Connection = {
+  phase: Unbound, host: Ntwrk, surface: FullSurface, hasWrite: false, status: NotJoined,
+  profileApproved: false, profileSent: false, sentToday: 0, draftPrepared: false,
+  tokenUnseen: false, otherUnseen: false, lastShown: 0, lastResult: NoResult
+}
+
+pure def bound(c: Connection): bool = c.phase == Anonymous or c.phase == Connected or c.phase == Revoked
+
+pure def canConnect(c: Connection): bool = c.phase == Unbound
+
+pure def connect(c: Connection, host: AppId, surface: Surface): Connection =
+  { ...c, host: host, surface: surface, phase: if (hostServes(surface, host)) Anonymous else Unavailable }
+
+pure def canAuthorize(c: Connection): bool = c.phase == Anonymous or c.phase == Revoked
+
+pure def authorize(c: Connection, withWrite: bool): Connection =
+  { ...c, phase: Connected, hasWrite: withWrite, sentToday: 0, draftPrepared: false, lastResult: NoResult }
+
+pure def canCallPublicTool(c: Connection, tool: ToolName): bool =
+  (c.phase == Anonymous or c.phase == Connected) and scopeFor(tool) == NoScope
+
+pure def callPublicTool(c: Connection, tool: ToolName, app: AppId): Connection =
+  { ...c, lastResult: if (appOffered(c.surface, app)) PublicFacts else AppNotAvailable }
+
+pure def canCallWithoutAccess(c: Connection, tool: ToolName): bool =
+  bound(c) and toolListed(c.host, c.surface, tool) and
+  ((c.phase == Anonymous and scopeFor(tool) != NoScope) or
+   c.phase == Revoked or
+   (c.phase == Connected and scopeFor(tool) == ProfileWrite and not(c.hasWrite)))
+
+pure def callWithoutAccess(c: Connection, tool: ToolName): Connection =
+  { ...c, lastResult: SignInNeeded }
+
+pure def alwaysOpenAiHidesSlop(c: Connection): bool =
+  bound(c) implies hostServes(c.surface, c.host)
+
+pure def alwaysWriteNeedsConnection(c: Connection): bool =
+  c.hasWrite implies c.phase == Connected
+
+pure def alwaysUnboundHasNoDraft(c: Connection): bool =
+  c.phase == Unbound implies not(c.draftPrepared)
+```
+
+### A grant that no longer belongs to the phone's person ends the connection
+
+When the phone's owner changed after the person connected, the next member tool call ends the grant and answers that the person must sign in again. The person can connect again in the browser.
+
+```quint
+pure def canCallAfterOwnerChange(c: Connection): bool = c.phase == Connected
+
+pure def callAfterOwnerChange(c: Connection): Connection =
+  { ...c, phase: Revoked, hasWrite: false, lastResult: SignInNeeded }
+
+pure def memberResult(r: ToolResult): bool =
+  r == StatusShown or r == ProfileAccepted or r == ProfileNotForStatus or r == DraftSaved or
+  r == DraftRefused or r == UpdatesShown or r == TooManyToday
+
+pure def alwaysMemberResultsNeedConnection(c: Connection): bool =
+  memberResult(c.lastResult) implies c.phase == Connected
+```
+
+### Check status shows only the person's own status in this one app
+
+`check_status` answers with the status and its next step for the host app only. Membership changes outside the connection (a join on the site, STOP, a hold) show on the next call.
+
+```quint
+pure val newStatusValues = Set(NotJoined, Invited, Onboarding, Active, Stopped, OnHold)
+
+pure def canCallCheckStatus(c: Connection): bool = c.phase == Connected
+
+pure def callCheckStatus(c: Connection): Connection = { ...c, lastResult: StatusShown }
+
+pure def canChangeMemberStatus(c: Connection, newStatus: MemberStatus): bool =
+  bound(c) and newStatus != c.status
+
+pure def changeMemberStatus(c: Connection, newStatus: MemberStatus): Connection =
+  { ...c, status: newStatus }
+```
+
+### The agent sends an approved profile once, only for a live member, within the daily limit
+
+The agent reads the profile back and the person approves it before the agent calls `submit_profile`. The profile is the person's own words, without a phone number, a code or an email address. For an onboarding or active member, the app takes the profile once; the agent does not send the same approved profile again. For any other status, nothing is sent and the answer gives the status and its next step. A grant can make at most five well-formed profile or draft calls in one day. A refused call counts too. A further call answers that the limit is reached and sends nothing. Each authorization makes a new grant, which starts its own count.
+
+```quint
+pure val profileDailyCap = 5
+pure val weight_callSubmitProfile = 20
+pure val weight_approveProfile = 10
+
+pure def canApproveProfile(c: Connection): bool = not(c.profileApproved) or c.profileSent
+
+pure def approveProfile(c: Connection): Connection = { ...c, profileApproved: true, profileSent: false }
+
+pure def canCallSubmitProfile(c: Connection): bool =
+  c.phase == Connected and c.hasWrite and c.profileApproved and not(c.profileSent)
+
+pure def callSubmitProfile(c: Connection, accepted: bool): Connection =
+  if (c.sentToday >= profileDailyCap) { ...c, lastResult: TooManyToday }
+  else if (liveMember(c.status) and accepted)
+    { ...c, sentToday: c.sentToday + 1, profileSent: true, lastResult: ProfileAccepted }
+  else { ...c, sentToday: c.sentToday + 1, lastResult: ProfileNotForStatus }
+
+pure def canStartNewDay(c: Connection): bool = c.sentToday > 0
+
+pure def startNewDay(c: Connection): Connection = { ...c, sentToday: 0 }
+
+pure def alwaysSentProfileWasApproved(c: Connection): bool = c.profileSent implies c.profileApproved
+
+pure def alwaysDailyProfileCap(c: Connection): bool = c.sentToday >= 0 and c.sentToday <= profileDailyCap
+
+pure def stepSubmitOnlyForLiveMember(before: Connection, via: str, after: Connection): bool =
+  (after.profileSent and not(before.profileSent)) implies
+    (via == "callSubmitProfile" and liveMember(before.status) and before.phase == Connected and
+     before.hasWrite and before.profileApproved)
+
+pure def stepNothingSentAtTheLimit(before: Connection, via: str, after: Connection): bool =
+  (before.sentToday >= profileDailyCap and (via == "callSubmitProfile" or via == "callPrepareSignup")) implies
+    (after.lastResult == TooManyToday and after.profileSent == before.profileSent and
+     after.draftPrepared == before.draftPrepared and after.sentToday == before.sentToday)
+```
+
+### A Join draft holds only an approved first name and home city, once per grant
+
+On friends.help and ntwrk.party, `prepare_signup` saves only the first name and the optional home city that the person approved. It never creates a person, a membership or text consent. It needs a join age that the app allows and a person who is not joined or invited. A grant saves at most one draft. The call counts toward the daily limit. The draft opens on the app's Join page; ntwrk.party and friends.help have no Join page now ([site pages](sitePages.md)), so the person cannot use the draft there yet.
+
+```quint
+pure def canCallPrepareSignup(c: Connection): bool =
+  c.phase == Connected and c.hasWrite and (c.host == Friends or c.host == Ntwrk)
+
+pure def callPrepareSignup(c: Connection, joinAgeAllowed: bool): Connection =
+  if (c.sentToday >= profileDailyCap) { ...c, lastResult: TooManyToday }
+  else if (joinAgeAllowed and toolAllowedFor(PrepareSignupTool, c.status) and not(c.draftPrepared))
+    { ...c, sentToday: c.sentToday + 1, draftPrepared: true, lastResult: DraftSaved }
+  else { ...c, sentToday: c.sentToday + 1, lastResult: DraftRefused }
+
+pure def alwaysDraftOnlyOnFriendsOrNtwrk(c: Connection): bool =
+  c.draftPrepared implies (c.host == Friends or c.host == Ntwrk)
+```
+
+### Reading updates shows the person's own new updates and marks them seen
+
+`get_updates` shows the host app's unseen updates and marks them seen. An update reference from a text, such as T-7F3K9Q, narrows the answer to that update. The reference is not a credential: a reference of another person, or an unknown or expired one, shows nothing and marks nothing, the same as an empty inbox. The agent never asks for a reference.
+
+```quint
+type UpdateRead = { shown: int, tokenLeft: bool, otherLeft: bool }
+
+pure def readUpdates(tokenUnseen: bool, otherUnseen: bool, tokenGiven: bool, tokenOwn: bool): UpdateRead =
+  if (not(tokenGiven))
+    { shown: (if (tokenUnseen) 1 else 0) + (if (otherUnseen) 1 else 0), tokenLeft: false, otherLeft: false }
+  else if (tokenOwn) { shown: if (tokenUnseen) 1 else 0, tokenLeft: false, otherLeft: otherUnseen }
+  else { shown: 0, tokenLeft: tokenUnseen, otherLeft: otherUnseen }
+
+pure def canCallGetUpdates(c: Connection): bool = c.phase == Connected
+
+pure def callGetUpdates(c: Connection, tokenGiven: bool, tokenOwn: bool): Connection =
+  val r = readUpdates(c.tokenUnseen, c.otherUnseen, tokenGiven, tokenOwn)
+  { ...c, tokenUnseen: r.tokenLeft, otherUnseen: r.otherLeft, lastShown: r.shown, lastResult: UpdatesShown }
+
+pure def canReceiveUpdate(c: Connection): bool = bound(c)
+
+pure def receiveUpdate(c: Connection, forReference: bool): Connection =
+  if (forReference) { ...c, tokenUnseen: true } else { ...c, otherUnseen: true }
+
+pure def lawUntokenedReadMarksAllSeen(tokenUnseen: bool, otherUnseen: bool, tokenOwn: bool): bool =
+  val r = readUpdates(tokenUnseen, otherUnseen, false, tokenOwn)
+  not(r.tokenLeft) and not(r.otherLeft)
+
+pure def lawForeignReferenceShowsNothing(tokenUnseen: bool, otherUnseen: bool): bool =
+  val r = readUpdates(tokenUnseen, otherUnseen, true, false)
+  r.shown == 0 and r.tokenLeft == tokenUnseen and r.otherLeft == otherUnseen
+
+pure def alwaysShownCountIsSmall(c: Connection): bool = c.lastShown >= 0 and c.lastShown <= 2
+
+pure def stepReadingNeverAddsUnseen(before: Connection, via: str, after: Connection): bool =
+  via == "callGetUpdates" implies
+    ((after.tokenUnseen implies before.tokenUnseen) and (after.otherUnseen implies before.otherUnseen))
+```
+
+### A connection can reach every tool result
+
+The supported paths include a sent profile, a refused profile, the daily limit, a saved and a refused draft, shown updates, a sign-in request, an unavailable host and an ended grant.
+
+```quint
+pure def sometimesProfileAccepted(c: Connection): bool = c.lastResult == ProfileAccepted
+pure def sometimesProfileNotForStatus(c: Connection): bool = c.lastResult == ProfileNotForStatus
+pure def sometimesTooManyToday(c: Connection): bool = c.lastResult == TooManyToday
+pure def sometimesDraftSaved(c: Connection): bool = c.lastResult == DraftSaved
+pure def sometimesDraftRefused(c: Connection): bool = c.lastResult == DraftRefused
+pure def sometimesTwoUpdatesShown(c: Connection): bool = c.lastResult == UpdatesShown and c.lastShown == 2
+pure def sometimesStatusShown(c: Connection): bool = c.lastResult == StatusShown
+pure def sometimesSignInNeeded(c: Connection): bool = c.lastResult == SignInNeeded
+pure def sometimesAppNotAvailable(c: Connection): bool = c.lastResult == AppNotAvailable
+pure def sometimesHostUnavailable(c: Connection): bool = c.phase == Unavailable
+pure def sometimesRevoked(c: Connection): bool = c.phase == Revoked
+```

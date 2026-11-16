@@ -5,6 +5,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import {expect,test} from "vitest";
 import {Window} from "happy-dom";
 import {createElement,act} from "react";
+import {byRole,installDom} from "./dom.ts";
 
 test("photo review waits for successful image load and acknowledgment, keeps Reject on errors, and clears preview across app changes",async()=>{
   const id="pri_"+"a".repeat(32),requests:{path:string;body?:any}[]=[];
@@ -23,10 +24,9 @@ test("photo review waits for successful image load and acknowledgment, keeps Rej
     if(u.pathname==="/api/held"&&req.method==="POST")return Response.json({ok:true});
     return Response.json({error:"unexpected"},{status:404});
   }});
-  const window=new Window({url:api.url.href}),prior=new Map<string,PropertyDescriptor|undefined>();
-  for(const [name,value]of Object.entries({window,document:window.document,navigator:window.navigator,location:window.location,history:window.history,localStorage:window.localStorage,sessionStorage:window.sessionStorage,HTMLElement:window.HTMLElement,IS_REACT_ACT_ENVIRONMENT:true})){
-    prior.set(name,Object.getOwnPropertyDescriptor(globalThis,name));Object.defineProperty(globalThis,name,{value,writable:true,configurable:true});
-  }
+  const window=new Window({url:api.url.href});
+  const restoreDom=installDom(window,{window,document:window.document,navigator:window.navigator,location:window.location,history:window.history,localStorage:window.localStorage,sessionStorage:window.sessionStorage,IS_REACT_ACT_ENVIRONMENT:true});
+  const acknowledgment=()=>byRole<HTMLButtonElement>(box,"checkbox","I reviewed this selected item under its consent and safety policy.")!;
   window.sessionStorage.setItem("obs.token","fixture-safety-token");
   const nativeFetch=globalThis.fetch;
   globalThis.fetch=((input:any,init?:RequestInit)=>nativeFetch(typeof input==="string"?new URL(input,api.url):input,init)) as typeof fetch;
@@ -46,16 +46,16 @@ test("photo review waits for successful image load and acknowledgment, keeps Rej
     expect(button("Release").disabled).toBe(true);expect(button("Reject").disabled).toBe(false);expect(requests.some(r=>r.body?.decision==="release")).toBe(false);
     fail=false;await act(async()=>{button("Load selected photo").click();});await wait(()=>!!box.querySelector("img"));
     expect(button("Release").disabled).toBe(true);const image=box.querySelector("img")!;
-    await act(async()=>{image.dispatchEvent(new window.Event("load"));});const acknowledged=[...box.querySelectorAll("input")].find(input=>input.type==="checkbox")!;
-    expect(button("Release").disabled).toBe(true);await act(async()=>{acknowledged.click();});expect(button("Release").disabled).toBe(false);
+    await act(async()=>{image.dispatchEvent(new window.Event("load"));});const acknowledged=acknowledgment();expect(acknowledged.getAttribute("aria-checked")).toBe("false");
+    expect(button("Release").disabled).toBe(true);await act(async()=>{acknowledged.click();});expect(acknowledgment().getAttribute("aria-checked")).toBe("true");expect(button("Release").disabled).toBe(false);
     // AuthPrompt can overlay this still-mounted panel. A real credential change must clear private bytes and consent immediately.
     const epoch=store.authEpoch;
     await act(async()=>{store.setToken("replacement-safety-token");await sleep(35);});
     expect(store.authEpoch).toBeGreaterThan(epoch);expect(box.querySelector("img")).toBeNull();expect(button("Release").disabled).toBe(true);
-    await wait(()=>store.me?.id==="replacement");
+    await wait(()=>store.me?.id==="replacement"&&!store.loading);await act(async()=>{await sleep(35);});await wait(()=>button("Load selected photo")?.disabled===false);
     await act(async()=>{button("Load selected photo").click();});await wait(()=>!!box.querySelector("img"));
     await act(async()=>{box.querySelector("img")!.dispatchEvent(new window.Event("load"));});
-    const nextAck=[...box.querySelectorAll("input")].find(input=>input.type==="checkbox")!;
+    const nextAck=acknowledgment();expect(nextAck.getAttribute("aria-checked")).toBe("false");
     await act(async()=>{nextAck.click();});expect(button("Release").disabled).toBe(false);
     await act(async()=>{store.setToken("");await sleep(35);});
     expect(box.querySelector("img")).toBeNull();expect(button("Release").disabled).toBe(true);expect(store.authNeeded).toBe(true);
@@ -64,6 +64,6 @@ test("photo review waits for successful image load and acknowledgment, keeps Rej
     expect(requests.some(r=>r.body?.decision==="release")).toBe(false);
   }finally{
     await act(async()=>{root.unmount();});globalThis.fetch=nativeFetch;await api.stop(true);await window.happyDOM.close();
-    for(const [name,descriptor]of prior){if(descriptor)Object.defineProperty(globalThis,name,descriptor);else delete (globalThis as any)[name];}
+    restoreDom();
   }
 },30_000);

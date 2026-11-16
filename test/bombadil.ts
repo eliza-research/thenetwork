@@ -4,24 +4,23 @@ import { always, eventually } from "@antithesishq/bombadil";
 import { actions, extract, registerCustomAction } from "@antithesishq/bombadil/browser";
 export * from "@antithesishq/bombadil/browser/defaults/properties";
 
-const profileSelector = 'form[data-form="profile"]';
+const profileSelector = '[data-join-step="Profile"] form';
 const signup = extract(({ document, window }) => {
-  const form = document.querySelector<HTMLFormElement>(profileSelector);
-  const step = document.querySelector<HTMLElement>("[data-join] [data-step]:not([hidden])")?.dataset.step ?? "";
+  const panel = document.querySelector<HTMLElement>("[data-join-step]");
+  const step = panel?.dataset.joinStep ?? "";
+  const form = panel?.querySelector<HTMLFormElement>("form");
   const name = form?.querySelector<HTMLInputElement>("input[name=firstName]")?.value.trim() ?? "";
   const age = form?.querySelector<HTMLInputElement>("input[name=age]")?.valueAsNumber ?? NaN;
-  const consent = form?.querySelector<HTMLInputElement>("input[name=consent]")?.checked === true;
-  const error = form?.querySelector("[data-error]")?.textContent ?? "";
-  const busy = form?.querySelector<HTMLButtonElement>("button[type=submit]")?.disabled === true;
+  const error = form?.querySelector('[role="alert"]')?.textContent ?? "";
   return {
     step,
     filled: name !== "" && Number.isInteger(age),
-    ageEligible: age >= 13 && age <= 120,
-    consent,
-    consentAsked: error.includes("Tick the box"),
-    busy,
-    receivedName: document.querySelector('[data-step="done"] [data-slot="firstName"]')?.textContent === name,
-    returnsToAgent: document.querySelector('[data-step="done"] [data-agent-return]') !== null,
+    consent: form?.querySelector('[role="checkbox"]')?.getAttribute("aria-checked") === "true",
+    consentAsked: error.toLowerCase().includes("tick the box"),
+    busy: form?.getAttribute("aria-busy") === "true",
+    savedConsent: panel?.dataset.joinConsent === "granted",
+    receivedName: panel?.querySelector("h1")?.textContent === "You’re in, Ari.",
+    returnsToAgent: panel?.textContent?.includes("Go back to the same chat") === true,
     hasPrivateUrlFields: ["age", "firstName", "phone", "code", "consent"].some(key => new URL(window.location.href).searchParams.has(key)),
   };
 });
@@ -31,31 +30,33 @@ const fillProfile = registerCustomAction<[number]>("fill-profile", async (docume
   const firstName = form?.querySelector<HTMLInputElement>("input[name=firstName]");
   const ageInput = form?.querySelector<HTMLInputElement>("input[name=age]");
   if (!firstName || !ageInput) throw new Error("Expected the profile fields");
-  firstName.value = "Ari";
-  ageInput.value = String(age);
+  const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  if (!setValue) throw new Error("Expected the browser input setter");
+  setValue.call(firstName, "Ari");
+  setValue.call(ageInput, String(age));
   for (const field of [firstName, ageInput]) field.dispatchEvent(new InputEvent("input", { bubbles: true }));
 });
 const submitProfile = registerCustomAction("submit-profile", async (document) => {
   document.querySelector<HTMLFormElement>(profileSelector)?.requestSubmit();
 });
 const chooseConsent = registerCustomAction("choose-text-consent", async (document) => {
-  document.querySelector<HTMLInputElement>(`${profileSelector} input[name=consent]`)?.click();
+  document.querySelector<HTMLButtonElement>(`${profileSelector} [role=checkbox]`)?.click();
 });
 
 export const joinActions = actions(() => {
   const state = signup.current;
-  if (state.step === "profile" && !state.busy) {
+  if (state.step === "Profile" && !state.busy) {
     if (!state.filled) return [fillProfile(13), fillProfile(30)];
     if (!state.consent && state.consentAsked) return [chooseConsent()];
     return [submitProfile()];
   }
   // A reload after signup must read the stored membership through the same site API.
-  return state.step === "done" || state.step === "member" ? ["Reload"] : ["Wait"];
+  return state.step === "Done" || state.step === "Member" ? ["Reload"] : ["Wait"];
 });
 
 export const successNeedsConsent = always(() => {
   const state = signup.current;
-  return state.step !== "done" || (state.filled && state.ageEligible && state.consent && state.receivedName && state.returnsToAgent);
+  return state.step !== "Done" || (state.savedConsent && state.receivedName && state.returnsToAgent);
 });
 export const profileDetailsStayOutOfUrls = always(() => !signup.current.hasPrivateUrlFields);
-export const currentMembershipAppearsAfterReload = eventually(() => signup.current.step === "member");
+export const currentMembershipAppearsAfterReload = eventually(() => signup.current.step === "Member");

@@ -50,7 +50,7 @@ Studio, examples, template setup and the packaged CLI.
 | Product | Stories and acceptance rules in [the product specification](spec/product/README.md). Product owners record approval in `spec/lock.json` with `pnpm run accept`. |
 | Decisions | Quint in the [executable specs](SPEC.md#writing-a-spec) generates TypeScript. The checker simulates the model, compares TypeScript traces, and runs Dafny proof obligations. |
 | Effects | VibeLang shells check [backend health](packages/core/src/vibe/backendHealthShell.vibe), drain [shutdown work](packages/core/src/vibe/backendShutdownShell.vibe), and dispatch [operations alerts](packages/core/src/vibe/opsAlertShell.vibe) and [inbox digests](packages/core/src/vibe/notificationDigestShell.vibe). `pnpm run spec:sync` compiles the shells and their generated Effect adapters. |
-| Application | Node 26 serves the backend and console. Each package owns its existing HTTP, storage, and UI integration. The [Network agent guide](AGENTS.md) applies the upstream design guidance to these packages. |
+| Application | Node 26 serves the backend and console. React 19 renders the public sites, the connector pages and the staff console from one shared design system. The [Network agent guide](AGENTS.md) applies the upstream design guidance to these packages. |
 | Conformance | The spec checker compares the app's observed state and effects with generated rules. The [command table](#commands) lists scoped journeys and the existing application test commands. |
 
 ## Quick start
@@ -176,12 +176,25 @@ pnpm run spec:explore
 
 A failed exploration is kept in `test/__traces__/bombadil` for the next run.
 
+The shared design system uses these commands.
+
+| Command | Purpose |
+|---|---|
+| `pnpm run design:build`, `pnpm run design:check` | Build the CSS from the brand tokens and check token contrast. |
+| `pnpm run ui:gen` | Check the shared component catalog and story outputs. |
+| `pnpm run ui:storybook`, `pnpm run ui:test` | Browse the shared components or exercise the component stories. |
+| `pnpm --filter @thenetwork/ui run test:browser` | Exercise the component stories in Chromium with axe. |
+| `pnpm run lint:ui` | Check design-system usage in the shared UI and the site app. |
+
 ## What's here
 
 | Path | What it is |
 |---|---|
 | `packages/core` | Shared contract: domain types, `Clock`, seeded RNG, the age policy (`policy.ts`), the outbound leak guard (`guard.ts`), the reply and opt-out parsers (`replies.ts`), the run-log schema, and the LLM clients (`llm.ts`) |
 | `packages/engine` | The matching and opportunity engine (PRD 33) with one pack per app: filters, retrieval, generators, scoring, LLM judge passes, group composer, fairness, attention budget ([README](packages/engine/README.md)) |
+| `apps/site` | React source for the brand-specific public sites. |
+| `packages/design-system` | Shared type scales, spacing, themes, and per-brand colors. |
+| `packages/ui` | Shared application, connector, and console components and stories. |
 | `packages/network` | The ConsentNetwork: human review before any member contact, consent-first probes, request fulfilment, safety and trust, the leak guard on every send, Postgres state. `service/` is the production service. `harness/` holds its simulations ([design](docs/network.md)) |
 | `packages/sim` | The simulator: personas with hidden truth, the oracle, persona agents, the per-app worlds (`src/apps`) and the judge ([README](packages/sim/README.md)) |
 | `packages/capital` | The network-capital ledger and its simulation |

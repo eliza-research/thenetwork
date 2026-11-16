@@ -1,61 +1,93 @@
-// Social graph renderer: d3-force layout (clustered by community) drawn on a Canvas2D.
-// Members are nodes; known and learned edges are lines; open opportunities are animated arcs;
-// feed events pulse on the members involved. Pan (drag), zoom (wheel), click to focus, shift-click
-// to pick people for an intro. Filters and focus come from the store (matchMember, matchOpp, focusSet).
 import { forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY, type Simulation, type SimulationLinkDatum, type SimulationNodeDatum } from "d3-force";
+import type { LegendTone } from "@thenetwork/ui";
 import type { ObsMember, ObsOpportunity } from "../src/types.ts";
-import { OPEN, store, type ColorLens } from "./store.ts";
+import { type EDGE_TYPES, OPEN, store, type ColorLens } from "./store.ts";
+import { pickMember } from "./ui.tsx";
 
 interface Node extends SimulationNodeDatum { id: string; community: string; ax: number; ay: number; r: number }
 interface Link extends SimulationLinkDatum<Node> { type: string }
 
-export const EDGE_STYLE: Record<string, { color: string; alpha: number; width: number; dash?: number[] }> = {
-  knows: { color: "#8ea6d6", alpha: 0.09, width: 0.6 },
-  invited_by: { color: "#b39ddb", alpha: 0.14, width: 0.6 },
-  vouched_for: { color: "#d59be8", alpha: 0.14, width: 0.6 },
-  introduced: { color: "#5fb4ff", alpha: 0.55, width: 1 },
-  met: { color: "#3fd6e6", alpha: 0.7, width: 1.2 },
-  enjoyed: { color: "#5cf0a4", alpha: 0.8, width: 1.6 },
-  would_interact_again: { color: "#ffd45c", alpha: 0.95, width: 2 },
-  avoid: { color: "#ff8f66", alpha: 0.7, width: 1.2, dash: [3, 3] },
-  blocked: { color: "#ff5468", alpha: 0.65, width: 1, dash: [2, 2] },
+/** A design-system color role that the canvas and the map draw with: a legend tone or one of the surface roles. */
+export type Ink = LegendTone | "foreground" | "background" | "border";
+/** The CSS variable of each ink, defined by the brand in packages/design-system. */
+const INK_VAR: Record<Ink, string> = {
+  primary: "--primary", ok: "--ok", warn: "--warn", destructive: "--destructive", muted: "--muted-foreground", accent: "--accent-foreground",
+  foreground: "--foreground", background: "--background", border: "--border",
 };
-export const OPP_COLOR: Record<string, string> = {
-  PROPOSED: "#a3a9e6", IN_REVIEW: "#c9a3ff", INVITING: "#ffb85c", PARTIALLY_ACCEPTED: "#58c4ff", MUTUALLY_ACCEPTED: "#2fd9e8", QUORUM_MET: "#2fd9e8", SCHEDULED: "#3dff9a",
-};
-export const STATE_COLOR: Record<string, string> = {
-  open: "#4fd1c5", normal: "#7aa2ff", quiet: "#a08cff", receiving: "#f6ad55", paused: "#7c8799", opted_out: "#ff5468", not_joined: "#3a4356",
-};
-const PULSE_COLOR = { good: "#5cf0a4", bad: "#ff5468", warn: "#ffb85c", info: "#9cc8ff" } as const;
-const ARCHETYPE_COLOR: Record<string, string> = {
-  regular: "#7aa2ff", busy_parent: "#a08cff", newcomer: "#4fd1c5", connector: "#ffd45c", introvert: "#8e9bb5",
-  very_active: "#ff9a6b", never_replies: "#4a5468", traveler: "#d59be8",
-};
+/** The resolved color of each ink, read from the document root at draw time. */
+export type Palette = Record<Ink, string>;
+/** One ink and the opacity to draw it at. Series that share an ink differ by opacity, line width, dash or shape. */
+export interface Paint { ink: Ink; alpha: number }
 
-export function hashHue(s: string): number { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return ((h >>> 0) % 360); }
-export function communityColor(c: string) { return `hsl(${hashHue(c)}, 62%, 66%)`; }
+/** Reads the brand colors from the design-system CSS variables, so the drawing follows the brand and the light or dark theme. */
+export function readPalette(root: Element = document.documentElement): Palette {
+  const style = getComputedStyle(root);
+  return Object.fromEntries(Object.entries(INK_VAR).map(([ink, name]) => [ink, style.getPropertyValue(name).trim()])) as Palette;
+}
 
-export function memberColor(m: ObsMember, lens: ColorLens): string {
-  if (!m.joined && lens === "state") return STATE_COLOR.not_joined!;
+/** How each relationship type is drawn. The ink is also the legend tone of the type. */
+export const EDGE_STYLE: Record<(typeof EDGE_TYPES)[number], { ink: LegendTone; alpha: number; width: number; dash?: number[] }> = {
+  knows: { ink: "muted", alpha: 0.09, width: 0.6 },
+  invited_by: { ink: "accent", alpha: 0.14, width: 0.6, dash: [1, 2] },
+  vouched_for: { ink: "accent", alpha: 0.2, width: 0.6, dash: [4, 2] },
+  introduced: { ink: "primary", alpha: 0.55, width: 1 },
+  met: { ink: "ok", alpha: 0.5, width: 1.2 },
+  enjoyed: { ink: "ok", alpha: 0.75, width: 1.6 },
+  would_interact_again: { ink: "ok", alpha: 0.95, width: 2.2 },
+  avoid: { ink: "warn", alpha: 0.7, width: 1.2, dash: [3, 3] },
+  blocked: { ink: "destructive", alpha: 0.65, width: 1, dash: [2, 2] },
+};
+/** The ink of an open opportunity in each state. The dash pattern also tells review from invitation. */
+export const OPP_INK: Record<string, Ink> = {
+  PROPOSED: "muted", IN_REVIEW: "muted", INVITING: "warn", PARTIALLY_ACCEPTED: "primary", MUTUALLY_ACCEPTED: "ok", QUORUM_MET: "ok", SCHEDULED: "ok",
+};
+/** The ink of an opportunity: shadow runs in the foreground ink, the others by state. */
+export const oppInk = (o: ObsOpportunity): Ink => (o.source === "shadow" ? "foreground" : OPP_INK[o.state] ?? "muted");
+const STATE_PAINT: Record<string, Paint> = {
+  open: { ink: "ok", alpha: 1 }, normal: { ink: "primary", alpha: 1 }, quiet: { ink: "muted", alpha: 1 }, receiving: { ink: "warn", alpha: 1 },
+  paused: { ink: "muted", alpha: 0.5 }, opted_out: { ink: "destructive", alpha: 1 }, not_joined: { ink: "border", alpha: 1 },
+};
+const PULSE_INK = { good: "ok", bad: "destructive", warn: "warn", info: "primary" } as const satisfies Record<string, Ink>;
+const ARCHETYPE_PAINT: Record<string, Paint> = {
+  regular: { ink: "primary", alpha: 1 }, busy_parent: { ink: "primary", alpha: 0.55 }, newcomer: { ink: "ok", alpha: 1 }, connector: { ink: "warn", alpha: 1 },
+  introvert: { ink: "muted", alpha: 1 }, very_active: { ink: "ok", alpha: 0.55 }, never_replies: { ink: "border", alpha: 1 }, traveler: { ink: "muted", alpha: 0.55 },
+};
+/** The paints that communities cycle through: four inks at two opacities. */
+const COMMUNITY_PAINTS: Paint[] = (["primary", "ok", "warn", "muted"] as const).flatMap(ink => [{ ink, alpha: 1 }, { ink, alpha: 0.5 }]);
+
+/** A stable FNV-1a hash of a string. */
+export function hashOf(s: string): number { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+/** The paint of a community: the same community always gets the same paint. */
+export function communityPaint(c: string): Paint { return COMMUNITY_PAINTS[hashOf(c) % COMMUNITY_PAINTS.length]!; }
+
+/** The paint of a member under a color lens. */
+export function memberPaint(m: ObsMember, lens: ColorLens): Paint {
+  if (!m.joined && lens === "state") return STATE_PAINT.not_joined!;
   switch (lens) {
-    case "state": return STATE_COLOR[m.state] ?? "#7aa2ff";
+    case "state": return STATE_PAINT[m.state] ?? { ink: "primary", alpha: 1 };
     case "activity": {
       const a = Math.min(1, (m.counters.meetings * 2 + m.counters.accepted + m.counters.proposals * 0.15) / 8);
-      return `hsl(${220 - a * 175}, ${55 + a * 40}%, ${42 + a * 26}%)`;
+      return { ink: "primary", alpha: 0.25 + a * 0.75 };
     }
     case "truth": {
       const t = store.truth?.[m.id];
-      if (!t) return "#556";
-      if (t.adversarial) return "#ff3b4e";
-      if (t.trueAge < 18) return "#ff5cf0";
-      return ARCHETYPE_COLOR[t.archetype] ?? "#7aa2ff";
+      if (!t) return { ink: "border", alpha: 1 };
+      if (t.adversarial) return { ink: "destructive", alpha: 1 };
+      if (t.trueAge < 18) return { ink: "warn", alpha: 1 };
+      return ARCHETYPE_PAINT[t.archetype] ?? { ink: "primary", alpha: 1 };
     }
-    default: return communityColor(m.community ?? m.city);
+    default: return communityPaint(m.community ?? m.city);
   }
 }
 
-interface Pulse { x: number; y: number; t0: number; color: string; big: boolean }
+interface Pulse { x: number; y: number; t0: number; ink: Ink; big: boolean }
 
+/**
+ * The social graph: a d3-force layout, clustered by community, drawn on a Canvas2D. Members are nodes, known and learned
+ * relationships are lines, open opportunities are animated arcs, and feed events pulse on the members involved. Drag pans,
+ * the wheel zooms, a click focuses and a shift-click picks people for an intro. Filters and focus come from the store.
+ * Colors come from the design-system CSS variables at each frame.
+ */
 export class GraphView {
   private ctx: CanvasRenderingContext2D;
   private sim: Simulation<Node, Link>;
@@ -189,7 +221,7 @@ export class GraphView {
       if (d?.moved) return;
       const id = this.pick(e.offsetX, e.offsetY);
       if (!id) return;
-      if (e.shiftKey || e.metaKey) store.togglePick(id);
+      if (e.shiftKey || e.metaKey) pickMember(id);
       else store.focus({ kind: "member", id });
     });
     c.addEventListener("pointerleave", () => { this.hover = null; this.onHover?.(null, 0, 0); });
@@ -205,11 +237,11 @@ export class GraphView {
 
   private takePulses(now: number) {
     for (const f of store.pulses.splice(0)) {
-      const color = PULSE_COLOR[f.severity ?? "info"];
+      const ink = PULSE_INK[f.severity ?? "info"];
       const big = f.kind === "outcome" || f.kind === "meeting" || f.kind === "game" || f.kind === "block";
       for (const id of (f.members ?? []).slice(0, 6)) {
         const n = this.nodes.get(id);
-        if (n && (f.kind !== "join" || this.pulses.length < 120)) this.pulses.push({ x: n.x!, y: n.y!, t0: now, color, big });
+        if (n && (f.kind !== "join" || this.pulses.length < 120)) this.pulses.push({ x: n.x!, y: n.y!, t0: now, ink, big });
       }
     }
     if (this.pulses.length > 400) this.pulses = this.pulses.slice(-400);
@@ -245,8 +277,7 @@ export class GraphView {
     const focusSet = this.fs ?? new Set<string>();
     const dimmed = focusSet.size > 0;
     const bright = (m: ObsMember) => (!dimmed || focusSet.has(m.id)) && store.matchMemberFilter(m);
-
-    // Edges, batched per type.
+    const ink = readPalette();
     for (const [type, st] of Object.entries(EDGE_STYLE)) {
       if (!ui.edgeTypes[type]) continue;
       ctx.beginPath();
@@ -260,7 +291,7 @@ export class GraphView {
         ctx.moveTo(a.x!, a.y!); ctx.lineTo(b.x!, b.y!); any = true;
       }
       if (!any) continue;
-      ctx.strokeStyle = st.color;
+      ctx.strokeStyle = ink[st.ink];
       ctx.globalAlpha = dimmed ? Math.min(1, st.alpha * 4) : st.alpha;
       ctx.lineWidth = st.width / Math.sqrt(k);
       ctx.setLineDash(st.dash ? st.dash.map(d => d / k) : []);
@@ -269,7 +300,6 @@ export class GraphView {
     ctx.setLineDash([]);
     ctx.globalAlpha = 1;
 
-    // Open opportunities as flowing arcs.
     if (ui.showOpps) {
       const t = now / 1000;
       for (const o of store.opps.values()) {
@@ -277,73 +307,72 @@ export class GraphView {
         if (!shadow && !OPEN.has(o.state)) continue;
         if (!o.participants.every(visible) || !store.matchOpp(o)) continue;
         if (dimmed && !o.participants.some(id => focusSet.has(id)) && selOpp?.id !== o.id) continue;
-        this.drawOpp(ctx, o, t, k, selOpp?.id === o.id);
+        this.drawOpp(ctx, o, t, k, selOpp?.id === o.id, ink[oppInk(o)]);
       }
     }
 
-    // Nodes.
     const busy = store.busy();
     const controlled = new Set(store.game?.controlled ?? []);
     for (const m of store.members.values()) {
       const n = this.nodes.get(m.id);
       if (!n || !this.visible(m.id)) continue;
       const faded = !bright(m);
-      ctx.globalAlpha = faded ? 0.15 : m.joined ? 1 : 0.35;
+      const paint = memberPaint(m, ui.colorBy);
+      ctx.globalAlpha = (faded ? 0.15 : m.joined ? 1 : 0.35) * paint.alpha;
       const r = n.r;
-      ctx.fillStyle = memberColor(m, ui.colorBy);
+      ctx.fillStyle = ink[paint.ink];
       ctx.beginPath();
       if (m.minor) { ctx.moveTo(n.x!, n.y! - r - 1); ctx.lineTo(n.x! + r + 1, n.y!); ctx.lineTo(n.x!, n.y! + r + 1); ctx.lineTo(n.x! - r - 1, n.y!); ctx.closePath(); }
       else ctx.arc(n.x!, n.y!, r, 0, Math.PI * 2);
-      if (m.state === "opted_out") { ctx.strokeStyle = STATE_COLOR.opted_out!; ctx.lineWidth = 1.2 / Math.sqrt(k); ctx.stroke(); }
+      if (m.state === "opted_out") { ctx.strokeStyle = ink.destructive; ctx.lineWidth = 1.2 / Math.sqrt(k); ctx.stroke(); }
       else ctx.fill();
+      ctx.globalAlpha = faded ? 0.15 : 1;
       if (busy.has(m.id) && !faded) {
-        ctx.strokeStyle = "rgba(255,255,255,0.55)"; ctx.lineWidth = 0.8 / Math.sqrt(k);
+        ctx.globalAlpha = 0.55; ctx.strokeStyle = ink.foreground; ctx.lineWidth = 0.8 / Math.sqrt(k);
         ctx.beginPath(); ctx.arc(n.x!, n.y!, r + 2.2, 0, Math.PI * 2); ctx.stroke();
       }
       if (controlled.has(m.id)) {
-        ctx.strokeStyle = "#ffd45c"; ctx.lineWidth = 2 / Math.sqrt(k);
+        ctx.globalAlpha = 1; ctx.strokeStyle = ink.warn; ctx.lineWidth = 2 / Math.sqrt(k);
         ctx.beginPath(); ctx.arc(n.x!, n.y!, r + 4, 0, Math.PI * 2); ctx.stroke();
       }
     }
     ctx.globalAlpha = 1;
 
-    // Pulses.
     const keep: Pulse[] = [];
     for (const p of this.pulses) {
       const age = (now - p.t0) / (p.big ? 1400 : 900);
       if (age >= 1) continue;
       keep.push(p);
-      ctx.strokeStyle = p.color; ctx.globalAlpha = (1 - age) * 0.9; ctx.lineWidth = (p.big ? 2.2 : 1.2) / Math.sqrt(k);
+      ctx.strokeStyle = ink[p.ink]; ctx.globalAlpha = (1 - age) * 0.9; ctx.lineWidth = (p.big ? 2.2 : 1.2) / Math.sqrt(k);
       ctx.beginPath(); ctx.arc(p.x, p.y, 3 + age * (p.big ? 26 : 12), 0, Math.PI * 2); ctx.stroke();
     }
     this.pulses = keep;
     ctx.globalAlpha = 1;
 
-    // Selection, picks and hover labels.
-    const label = (id: string, color: string, ring: number) => {
+    const label = (id: string, ring: Ink, alpha: number, width: number) => {
       const n = this.nodes.get(id), m = store.members.get(id);
       if (!n || !m || !visible(id)) return;
-      ctx.strokeStyle = color; ctx.lineWidth = 2 / k;
-      ctx.beginPath(); ctx.arc(n.x!, n.y!, n.r + ring / k, 0, Math.PI * 2); ctx.stroke();
+      ctx.globalAlpha = alpha; ctx.strokeStyle = ink[ring]; ctx.lineWidth = 2 / k;
+      ctx.beginPath(); ctx.arc(n.x!, n.y!, n.r + width / k, 0, Math.PI * 2); ctx.stroke();
       ctx.font = `600 ${12 / k}px ui-sans-serif, system-ui`;
       ctx.textAlign = "center";
       const text = m.name;
       const tw = ctx.measureText(text).width;
-      ctx.fillStyle = "rgba(8,11,20,0.85)";
+      ctx.globalAlpha = 0.85; ctx.fillStyle = ink.background;
       ctx.fillRect(n.x! - tw / 2 - 4 / k, n.y! - n.r - 22 / k, tw + 8 / k, 16 / k);
-      ctx.fillStyle = "#e9eefc";
+      ctx.globalAlpha = 1; ctx.fillStyle = ink.foreground;
       ctx.fillText(text, n.x!, n.y! - n.r - 10 / k);
     };
-    ui.picks.forEach(id => label(id, "#ffd45c", 5));
-    if (sel) label(sel, "#ffffff", 6);
-    if (this.hover && this.hover !== sel) label(this.hover, "rgba(255,255,255,0.6)", 4);
+    ui.picks.forEach(id => label(id, "warn", 1, 5));
+    if (sel) label(sel, "foreground", 1, 6);
+    if (this.hover && this.hover !== sel) label(this.hover, "foreground", 0.6, 4);
+    ctx.globalAlpha = 1;
   }
 
-  private drawOpp(ctx: CanvasRenderingContext2D, o: ObsOpportunity, t: number, k: number, selected: boolean) {
+  private drawOpp(ctx: CanvasRenderingContext2D, o: ObsOpportunity, t: number, k: number, selected: boolean, color: string) {
     const ps = o.participants.map(id => this.nodes.get(id)!).filter(Boolean);
     if (ps.length < 2) return;
     const shadow = o.source === "shadow";
-    const color = shadow ? "#ffffff" : OPP_COLOR[o.state] ?? "#aaa";
     ctx.strokeStyle = color;
     ctx.globalAlpha = selected ? 1 : shadow ? 0.5 : o.source === "player" ? 0.95 : 0.65;
     ctx.lineWidth = (selected ? 2.6 : o.source === "player" ? 1.8 : 1.1) / Math.sqrt(k);

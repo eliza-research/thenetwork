@@ -12,11 +12,16 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
 COPY packages ./packages
 COPY deploy ./deploy
+COPY tools/vibestack/vibestack/design ./tools/vibestack/vibestack/design
 # The fitted relay Clef weights (RELAY_CLEF_WEIGHTS_PATH=evals/relay/clef-relay-weights.json); the corpora stay out.
 COPY evals/relay/clef-relay-weights.json ./evals/relay/clef-relay-weights.json
 # Link the workspaces and install their pinned runtime dependencies. No lifecycle scripts run.
 RUN npm install --global corepack@0.35.0 \
     && corepack pnpm install --frozen-lockfile --prod --ignore-scripts
+# Build the CSS used in connector responses and in the staff console.
+RUN node packages/design-system/build.ts build \
+    && node --import tsx packages/mcp/src/pages/build-css.ts \
+    && rm -rf tools
 # The simulator, the judges, the eval corpora, the synthetic worlds and the Eliza plugin never run here:
 # the backend and the real-only console import none of them (pnpm run sim, block ops, checks this line).
 RUN rm -rf packages/sim packages/judge packages/evals packages/worlds packages/plugin-network

@@ -20,6 +20,8 @@ These models use mutable variables, actions, nondeterministic environment steps,
 
 The [source coverage ledger](baseline/coverage.md), [drift record](baseline/drift.json), [LemmaScript file list](baseline/LemmaScript-files.txt), and [Dafny proof sources](baseline/proofs/) record the original relationships among models, code, and obligations. The historical proof sources include manually added lemmas and are scoped to the original branch. Vibespec's checks prove its own generated modules and eligible source files.
 
+The frontend and agent flows have no imported model in this directory. Their state machines are top-level Vibespec specs: [landing entry](../landingEntry.md), [site pages](../sitePages.md), [brand identity](../brandIdentity.md), [browser join](../browserJoin.md), [connector authorization pages](../authorizationPages.md), [connected assistants](../connectedAssistants.md), [agent signup](../agentSignup.md), [connector tools](../connectorTools.md), [agent entry](../agentEntry.md), [staff sign-in](../staffSignIn.md), [console navigation](../consoleNavigation.md) and [console workspace](../consoleWorkspace.md). [Stories F37–F51](../product/stories.md#story-f37--know-which-app-i-am-joining) link to them. For the browser join page, which only peon.biz keeps, `browserJoin` is the current model. [join_flow](join_flow.md) records the earlier join page that every site had. The other frontend specs add the view layer to [oauth_mcp](oauth_mcp.md), [console_views](console_views.md) and [staff_console](staff_console.md). Those imported models still hold the server sequences.
+
 ## Model index
 
 The last column identifies a generated production seam for that flow.

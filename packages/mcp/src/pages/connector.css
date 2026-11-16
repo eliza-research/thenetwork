@@ -1,0 +1,8 @@
+@import "../../../design-system/generated/theme.css";
+
+@font-face {
+  font-family: "Host Grotesk";
+  src: url("/fonts/host-grotesk.woff2") format("woff2");
+  font-weight: 300 800;
+  font-display: swap;
+}

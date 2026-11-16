@@ -1,39 +1,30 @@
-// Four apps in one console (platform plan section 5): the app switcher, the health of every app
-// ("All"), and the cross-app person view (cross_app_safety or admin only; each app's panel opens
-// with a typed reason, and the server writes the audit row before it reads).
+// spec/consoleNavigation.md, "The console view follows the page"
+// spec/consoleNavigation.md, "Only a cross-app viewer in real mode opens one person across apps"
 import { useEffect, useState } from "react";
+import {
+  Alert, Button, DataCell, DataTable, Disclosure, EmptyState, FactLine, InspectorSection, Input, Select, SelectItem, Spinner, StatusMark, TableRow,
+  type DataColumn, type StatusTone,
+} from "@thenetwork/ui";
+import { canOpenPerson, type ConsoleView, personLookupShown } from "../../core/src/generated/consoleNavigation.ts";
 import type { AppHealth, PersonAppPanel, PersonSummary } from "../src/types.ts";
 import { store, useStore } from "./store.ts";
-import { ago, Badge, humanize, localDate } from "./ui.tsx";
+import { ago, consoleNav, humanize, localDate } from "./ui.tsx";
 
-/** ntwrk / slop / peon / friends / All. "All" shows only when the person holds roles for more than one app. */
-export function AppSwitcher() {
+/** The page that covers the stage: the health of every app, one person across apps, or no role. */
+export function AppPage({ view }: { view: ConsoleView }) {
   const s = useStore();
-  const apps = s.apps();
-  if (apps.length <= 1 && !s.me?.crossApp) return null;
-  const page = s.page.kind;
-  return (
-    <div className="mode-switch app-switch" role="tablist" aria-label="App">
-      {apps.map(a => (
-        <button key={a.id} role="tab" aria-selected={page === "app" && s.app === a.id} className={page === "app" && s.app === a.id ? "active" : ""} title={a.domain} onClick={() => store.setApp(a.id)}>{a.id}</button>
-      ))}
-      {(apps.length > 1 || s.me?.crossApp) && <button role="tab" aria-selected={page !== "app"} className={page !== "app" ? "active" : ""} onClick={() => store.setApp("all")}>all</button>}
-    </div>
-  );
-}
-
-/** A full-width page over the stage: the health of every app, or one person across apps. */
-export function AppPage() {
-  const s = useStore();
-  if (s.page.kind === "app") return null;
-  return (
-    <div className="app-page">
-      {s.page.kind === "all" ? <AllApps /> : <PersonView id={s.page.id} />}
-    </div>
-  );
+  if (view === "AllAppsView") return <AllApps />;
+  if (view === "PersonView" && s.page.kind === "person") return <PersonView id={s.page.id} />;
+  if (view === "NoRoleView") return <EmptyState title="You have no role for an app." />;
+  return null;
 }
 
 const MATCHING_TEXT: Record<AppHealth["matching"], string> = { on: "on", off: "off", locked: "off until pack" };
+const LEVEL_TONE: Record<string, StatusTone> = { bad: "destructive", warn: "warn", info: "primary", none: "ok" };
+const APP_COLUMNS: DataColumn[] = [
+  { key: "app", label: "App" }, { key: "members", label: "Members", numeric: true }, { key: "backlog", label: "Review backlog", numeric: true },
+  { key: "sla", label: "SLA misses", numeric: true }, { key: "failures", label: "Send failures", numeric: true }, { key: "matching", label: "Matching" },
+];
 
 function AllApps() {
   const s = useStore();
@@ -47,35 +38,37 @@ function AllApps() {
     return () => { live = false; clearInterval(t); };
   }, [s.mode]);
   return (
-    <div className="panel">
+    <div className="mx-auto flex w-full max-w-4xl flex-col gap-4">
       {!!s.apps().length && (
-        <table className="score-table apps-table">
-          <thead><tr><th>App</th><th>Members</th><th>Review backlog</th><th>SLA misses</th><th>Send failures</th><th>Matching</th></tr></thead>
-          <tbody>
-            {(rows ?? []).map(r => (
-              <tr key={r.app} className="click" onClick={() => store.setApp(r.app)} title={r.error ?? `Open ${r.app}`}>
-                <td><span className={`dot level-${r.worst ?? "none"}`} />{r.app}</td>
-                {r.available ? (
-                  <>
-                    <td>{r.members}</td>
-                    <td>{r.reviewBacklog}</td>
-                    <td className={r.slaMisses ? "bad" : ""}>{r.slaMisses} <span className="muted small">/ {r.slaHours} h</span></td>
-                    <td className={r.sendFailures ? "warn-text" : ""}>{r.sendFailures}</td>
-                    <td>{MATCHING_TEXT[r.matching]}</td>
-                  </>
-                ) : <td colSpan={5} className="muted">{r.error ?? "unavailable"}</td>}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <DataTable columns={APP_COLUMNS}>
+          {(rows ?? []).map(r => (
+            <TableRow key={r.app} className="cursor-pointer" title={r.error ?? `Open ${r.app}`} onClick={() => store.setApp(r.app)}>
+              <DataCell>
+                <span className="flex items-center gap-2">
+                  <StatusMark tone={LEVEL_TONE[r.worst ?? "none"] ?? "neutral"} label={r.worst ?? "ok"} />
+                  <Button variant="ghost" size="sm" className="h-auto px-1 font-medium hover:underline" onClick={e => { e.stopPropagation(); store.setApp(r.app); }}>{r.app}</Button>
+                </span>
+              </DataCell>
+              {r.available ? (
+                <>
+                  <DataCell numeric>{r.members}</DataCell>
+                  <DataCell numeric>{r.reviewBacklog}</DataCell>
+                  <DataCell numeric className={r.slaMisses ? "text-destructive" : undefined}>{r.slaMisses} <span className="text-muted-foreground">/ {r.slaHours} h</span></DataCell>
+                  <DataCell numeric className={r.sendFailures ? "text-warn" : undefined}>{r.sendFailures}</DataCell>
+                  <DataCell>{MATCHING_TEXT[r.matching]}</DataCell>
+                </>
+              ) : <DataCell colSpan={5} muted>{r.error ?? "unavailable"}</DataCell>}
+            </TableRow>
+          ))}
+        </DataTable>
       )}
-      {error && <div className="callout bad small" role="alert">{error}</div>}
-      {s.me?.crossApp && <PersonLookup />}
+      {error && <Alert variant="destructive">{error}</Alert>}
+      {personLookupShown(consoleNav(s)) && <PersonLookup />}
     </div>
   );
 }
 
-/** Find a person by a member id in one app, or open a person id. */
+/** Finds a person by a member id in one app, or opens a person id. */
 function PersonLookup() {
   const s = useStore();
   const [app, setApp] = useState(s.app);
@@ -89,19 +82,19 @@ function PersonLookup() {
     if (r.data) store.openPerson(r.data.personId); else setError(r.error);
   };
   return (
-    <form className="person-lookup" onSubmit={e => { e.preventDefault(); find(); }}>
-      <span className="muted">Cross-app view</span>
-      <select className="input" value={app} onChange={e => setApp(e.target.value)} aria-label="App of the member">
-        {(s.me?.appInfo ?? []).map(a => <option key={a.id} value={a.id}>{a.id}</option>)}
-      </select>
-      <input className="input grow" placeholder="Member id or person id" value={member} onChange={e => { setMember(e.target.value); setError(null); }} aria-label="Member id or person id" />
-      <button className="btn" type="submit">Open</button>
-      {error && <span className="bad small" role="alert">{error}</span>}
+    <form className="flex flex-wrap items-center gap-2" onSubmit={e => { e.preventDefault(); find(); }}>
+      <span className="text-sm text-muted-foreground">Cross-app view</span>
+      <Select className="w-32" value={app} onValueChange={setApp} aria-label="App of the member">
+        {(s.me?.appInfo ?? []).map(a => <SelectItem key={a.id} value={a.id}>{a.id}</SelectItem>)}
+      </Select>
+      <Input className="min-w-40 flex-1" placeholder="Member id or person id" value={member} onChange={e => { setMember(e.target.value); setError(null); }} aria-label="Member id or person id" />
+      <Button variant="outline" type="submit">Open</Button>
+      {error && <span role="alert" className="text-sm text-destructive">{error}</span>}
     </form>
   );
 }
 
-/** One person across apps. Each app's panel is closed until a reason is typed (audited first). */
+/** One person across apps. Each app panel stays closed until staff type a reason (the server logs it first). */
 function PersonView({ id }: { id: string }) {
   const [p, setP] = useState<PersonSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -109,37 +102,26 @@ function PersonView({ id }: { id: string }) {
     setP(null); setError(null);
     store.person(id).then(r => { if (r.data) setP(r.data); else setError(r.status === 403 ? "Your role cannot open the cross-app view." : r.error); });
   }, [id]);
+  const blocks = p ? [...p.blocks.made.map(b => `→ ${b.person.slice(0, 8)}${b.originApp === "*" ? "" : ` (${b.originApp})`}`), ...p.blocks.received.map(b => `← ${b.person.slice(0, 8)}${b.originApp === "*" ? "" : ` (${b.originApp})`}`)] : [];
   return (
-    <div className="panel person">
-      <div className="section-head">
-        <h3>Person {id.slice(0, 8)}</h3>
-        <button className="btn" onClick={() => store.setApp("all")}>Close</button>
-      </div>
-      {error && <div className="callout bad small" role="alert">{error}</div>}
-      {!p && !error && <div className="muted">Loading…</div>}
+    <InspectorSection className="mx-auto w-full max-w-4xl" title={`Person ${id.slice(0, 8)}`} action={<Button variant="outline" size="sm" onClick={() => store.setApp("all")}>Close</Button>}>
+      {error && <Alert variant="destructive">{error}</Alert>}
+      {!p && !error && <Spinner label="Loading" />}
       {p && (
         <>
-          <div className="muted small">
-            Lowest age {p.lowestAge ?? "unknown"} · since {localDate(p.createdAt)}{p.deletedAt ? ` · deleted ${localDate(p.deletedAt)}` : ""}
-          </div>
+          <FactLine parts={[`Lowest age ${p.lowestAge ?? "unknown"}`, `since ${localDate(p.createdAt)}`, p.deletedAt ? `deleted ${localDate(p.deletedAt)}` : null]} />
           {p.holds.length > 0 && (
-            <div className="callout bad small">
+            <Alert variant="destructive">
               Hold on every app: {p.holds.map(h => (h.app === "*" ? "account restricted (on an app not shown)" : `${humanize(h.level)} (${h.app})`)).join(", ")}
-            </div>
+            </Alert>
           )}
-          <div className="small">
-            Blocks made {p.blocks.made.length} · received {p.blocks.received.length}
-            {p.blocks.made.concat(p.blocks.received).length > 0 && (
-              <span className="muted"> · {[...p.blocks.made.map(b => `→ ${b.person.slice(0, 8)}${b.originApp === "*" ? "" : ` (${b.originApp})`}`), ...p.blocks.received.map(b => `← ${b.person.slice(0, 8)}${b.originApp === "*" ? "" : ` (${b.originApp})`}`)].join(", ")}</span>
-            )}
-          </div>
+          <FactLine parts={[`Blocks made ${p.blocks.made.length}`, `received ${p.blocks.received.length}`, blocks.length ? blocks.join(", ") : null]} />
           {p.memberships.map(m => <AppPanel key={m.app} personId={p.personId} m={m} />)}
-          {!p.memberships.length && <div className="muted">No memberships shown.</div>}
-          {/* Dating (slop) is never listed: the same closed row for every person, opened only with a reason (PRD 40.3). */}
+          {!p.memberships.length && <p className="text-sm text-muted-foreground">No memberships shown.</p>}
           {(p.privateApps ?? []).map(app => <AppPanel key={app} personId={p.personId} m={{ app, state: "", hold: false }} hidden />)}
         </>
       )}
-    </div>
+    </InspectorSection>
   );
 }
 
@@ -152,43 +134,45 @@ function AppPanel({ personId, m, hidden }: { personId: string; m: PersonSummary[
     const r = await store.openPersonApp(personId, m.app, reason.trim());
     if (r.data) { setPanel(r.data); setError(null); } else setError(r.error);
   };
+  const summary = (
+    <span className="flex flex-wrap items-center gap-2">
+      <span className="font-semibold">{m.app}</span>
+      <span className="font-normal text-muted-foreground">
+        {hidden ? "private app: membership not shown · open with a reason" : `${humanize(m.state)}${m.joinedAt ? ` · joined ${localDate(m.joinedAt)}` : ""}${m.leftAt ? ` · left ${localDate(m.leftAt)}` : ""}`}
+      </span>
+      {m.hold && <StatusMark tone="destructive" label="hold" />}
+      {m.review && <StatusMark tone="warn" label={humanize(m.review)} showLabel />}
+    </span>
+  );
   return (
-    <div className="person-app">
-      <button className="person-app-head" aria-expanded={open} onClick={() => setOpen(v => !v)}>
-        <b>{m.app}</b>
-        {hidden
-          ? <span className="muted">private app: membership not shown · open with a reason</span>
-          : <span className="muted">{humanize(m.state)}{m.joinedAt ? ` · joined ${localDate(m.joinedAt)}` : ""}{m.leftAt ? ` · left ${localDate(m.leftAt)}` : ""}</span>}
-        {m.hold && <Badge tone="bad">hold</Badge>}
-        {m.review && <Badge tone="warn">{humanize(m.review)}</Badge>}
-      </button>
+    <Disclosure className="rounded-lg border border-border bg-card p-3 text-card-foreground" summary={summary} open={open} onOpenChange={setOpen}>
       {open && !panel && (
-        <form className="person-reason" onSubmit={e => { e.preventDefault(); read(); }}>
-          <input className="input grow" autoFocus placeholder="Reason (logged)" value={reason} onChange={e => setReason(e.target.value)} aria-label={`Reason to open ${m.app}`} />
-          <button className="btn" type="submit" disabled={reason.trim().length < 5}>Open</button>
-          {error && <span className="bad small" role="alert">{error}</span>}
+        <form className="flex flex-wrap items-center gap-2" onSubmit={e => { e.preventDefault(); read(); }}>
+          <Input className="min-w-40 flex-1" autoFocus placeholder="Reason (logged)" value={reason} onChange={e => setReason(e.target.value)} aria-label={`Reason to open ${m.app}`} />
+          <Button variant="outline" type="submit" disabled={reason.trim().length < 5}>Open</Button>
+          {error && <span role="alert" className="text-sm text-destructive">{error}</span>}
         </form>
       )}
       {open && panel && (
-        <div className="person-panel small">
-          <div>Member {panel.memberId} · {humanize(panel.state)} · trust {panel.trust}</div>
-          <div className="muted">Messages in {panel.messages.in} · out {panel.messages.out}{panel.messages.last ? ` · last ${ago(panel.messages.last, Date.now())}` : ""} · opportunities {panel.opportunities}</div>
-          {panel.cases.map(c => <div key={c.id}>Case {c.id} · {c.level} · {c.status} · opened {localDate(c.opened)}</div>)}
+        <div className="flex flex-col gap-1">
+          <p>Member {panel.memberId} · {humanize(panel.state)} · trust {panel.trust}</p>
+          <FactLine parts={[`Messages in ${panel.messages.in}`, `out ${panel.messages.out}`, panel.messages.last ? `last ${ago(panel.messages.last, Date.now())}` : null, `opportunities ${panel.opportunities}`]} />
+          {panel.cases.map(c => <p key={c.id}>Case {c.id} · {c.level} · {c.status} · opened {localDate(c.opened)}</p>)}
         </div>
       )}
-    </div>
+    </Disclosure>
   );
 }
 
-/** In a member's panel: open the person across apps (cross_app_safety or admin, real mode). */
+/** In a member panel: opens the person across apps (cross_app_safety or admin, real data). */
 export function CrossAppButton({ memberId }: { memberId: string }) {
   const s = useStore();
   const [error, setError] = useState<string | null>(null);
-  if (!s.me?.crossApp || s.mode !== "real") return null;
+  if (!canOpenPerson(consoleNav(s))) return null;
   return (
     <>
-      <button className="btn" onClick={async () => { const r = await store.findPerson(memberId); if (r.data) store.openPerson(r.data.personId); else setError(r.error); }}>Cross-app view</button>
-      {error && <span className="muted small">{error}</span>}
+      <Button variant="outline" size="sm" onClick={async () => { const r = await store.findPerson(memberId); if (r.data) store.openPerson(r.data.personId); else setError(r.error); }}>Cross-app view</Button>
+      {error && <span className="text-sm text-muted-foreground">{error}</span>}
     </>
   );
 }

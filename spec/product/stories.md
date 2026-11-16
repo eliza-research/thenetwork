@@ -374,6 +374,306 @@ Persist jobs, message IDs, provider outcomes, consent, app scope and erasure evi
 
 Models: [runtime operations](../models/runtime_ops.md), [backup and restore](../models/backup_restore.md), [boot configuration](../models/boot_config.md), [outbound queue](../models/outbound_queue.md).
 
+## Story F37 — Know which app I am joining
+
+> As a person who opens one of the four sites, I want the name, domain, logo, color and headline to show one app, so that I give my number to the app that I chose.
+
+### Each site shows its own brand and names no other app
+
+One brand record per site holds the only data that differs between the sites: the name, domain, app, join keyword, join mode, accent, logo, headline and skill name. A site never tells a person which other apps a number uses.
+
+Acceptance:
+
+- No two sites share a name, a domain, a join keyword, an accent, a logo or a skill.
+- Only ntwrk.party asks for an invitation. slop.date, peon.biz and friends.help are open to each person at or above the join age.
+- slop.date, peon.biz and friends.help never name The Network or another app on a page, in their skill or in their skill catalog. The support address help@ntwrk.party is the one exception.
+- The ntwrk.party landing page, not-found page and own skill name no app. Only its legal pages and its skill catalog list the apps.
+- Each accent has one value for light mode and one for dark mode. The ink on the accent is a different color from the accent.
+
+Spec: [brand identity](../brandIdentity.md).
+
+## Story F38 — Take the signup prompt to my agent
+
+> As a person on a landing page, I want to copy one short prompt or press the logo of my agent, so that my agent opens and signs me up for this app.
+
+### The landing page has one prompt, nine agent tiles and nothing else to read
+
+The page sends the person to their own agent. The agent skill does the signup after the person leaves the page.
+
+Acceptance:
+
+- The prompt is `Read https://<domain>/SKILL.md?version=<version> and follow it.` The slop.date prompt has no version query. A person can select the prompt without the page script.
+- The Copy button shows only when the page script runs. A press shows "Copied". When the clipboard refuses, the page selects the prompt and the button shows "Selected: press copy".
+- The agent row shows logos only, in this order: ChatGPT, Claude, Grok, Muse, Gemini, Perplexity, Cursor, OpenClaw, Hermes. The agent's name is the accessible name and the hover label of its logo.
+- A phone, or a Mac with more than one touch point, does not show Cursor. Without the page script, the Muse tile (copy only) does not show.
+- A press on a tile follows its link, if it has one, and copies the prompt. The status line then says that the agent opens, where to paste the prompt, or "Copy the prompt, then paste it into your agent." when the copy fails. Without the page script the status line stays empty.
+- The page shows, in this order: the brand mark, the headline, the prompt, the Copy button, the agent row, the Messages entry, the status line, and the Privacy and Terms links. It has fewer than 45 words and one heading.
+- The page has no sign-in link, settings link, member dashboard, safety notice, compliance text or explanation block.
+
+Spec: [landing entry](../landingEntry.md).
+
+## Story F39 — Start in Messages instead
+
+> As a person who prefers text messages, I want one button that starts a text to the shared line, so that I can join this app without an agent.
+
+### The Messages entry writes the join message and shows the number when Messages does not open
+
+Acceptance:
+
+- The entry says "Use in iMessage" and is not in the agent row. Its link opens the shared line with the body `join <keyword>`, and the keyword routes the text to this app.
+- On a phone or a Mac, the page copies the join message and waits 1.5 seconds for Messages. When the page stays visible, the status line shows the number and the message. While the page waits, a new press does nothing.
+- On another desktop, the page does not follow the link. The status line at once shows "Message copied. Text it to <number> if iMessage did not open.", or `Text "join <keyword>" to <number>.` when the copy fails.
+- Without the page script, the browser follows the link each time and the status line stays empty.
+
+Spec: [landing entry](../landingEntry.md), "Story: Start in Messages instead".
+
+## Story F40 — Find the legal text and never open a retired page
+
+> As a person who opens a site or follows an old link, I want a small set of pages with the legal links on each, so that I can find the terms from any page and never see an old account page or signup form.
+
+### Each site serves the same small page set and refuses retired paths
+
+Acceptance:
+
+- Each site has a landing page, a privacy page, terms and a not-found page. Only peon.biz has a join page.
+- The footer of each page has two links: Privacy, then Terms. Both pages exist on each site.
+- The terms page has a text messaging section at `#sms`. It describes the program, the opt-in, the message frequency, STOP for every app on the number, `leave` for one app, START, HELP, the costs, and that no number is shared for marketing.
+- On peon.biz, the terms name the join page and a text as the ways to opt in. On the other sites, the terms name the agent skill and a text, and never name or link a join page.
+- A settings path answers 404 with a short text on each site. On a site without a browser join, a GET or HEAD to a join path answers 302 to the landing page, and another method answers 405. Each retired answer carries `no-store` and never reaches the backend.
+- An unknown path shows the not-found page with status 404.
+
+Spec: [site pages](../sitePages.md).
+
+## Story F41 — Let my agent read the signup skill from the site
+
+> As an agent that a person asked for a signup, I want each site to serve its skill and a skill catalog at fixed paths, so that I read the exact instructions for the app that the person chose.
+
+### Each site serves its own skill as plain text that any origin can read
+
+Acceptance:
+
+- `/SKILL.md` and `/.well-known/agent-skills/<skill>/SKILL.md` return the same bytes. A `version` query does not change the bytes.
+- `/.well-known/agent-skills/index.json` lists each skill with its path and a SHA-256 digest of its bytes. An app site lists only its own skill. A request for the skill path of another app shows the not-found page. The ntwrk.party catalog lists and serves the skill of each app.
+- A skill file has the type `text/plain; charset=utf-8`, and the catalog has the type `application/json`. Each origin can read both, and a cache keeps them for 300 seconds.
+- Each site forwards `/api`, `/mcp`, `/oauth/` and `/.well-known/oauth-` paths to the shared backend.
+
+Spec: [site pages](../sitePages.md), "Story: Let my agent read the signup skill from the site".
+
+## Story F42 — Join peon.biz in the browser
+
+> As a person whose agent sent me to the peon.biz join page, I want to confirm my own phone, check my first name and age and agree to the texts, so that I join with the details that I approved and nobody else confirms my phone.
+
+### The page shows the step that the session allows and sends each form once
+
+The server owns the join rules and the code limits ([site enrollment](../siteEnrollment.md), [phone verification limits](../otpLimits.md)). The page has no sign-in link, settings page or member dashboard. It is only for the join.
+
+Acceptance:
+
+- The link `https://peon.biz/join?via=agent#firstName=..&age=..` fills the form. The page keeps at most 50 characters of the name, and keeps the age only when it has one to three digits and is not more than 120. The page removes the fragment from the address before it loads anything.
+- After a loading step, a signed-out person, or a session that the page cannot read, sees the phone step. A person who can join sees the profile step. A member sees the "already in" step. A person who cannot join sees the blocked step with a reason. "Invite only" is the reason for an invite-only app when the server gives none.
+- When the server answers "cloud", the phone step shows one "Continue with your phone" button and no number field. With any other answer, or a failed lookup, the page uses text codes. The security check shows only with text codes and only when the site has a check key.
+- The page refuses a number that is not a 10-digit US mobile number. It sends no number while the security check runs or after it failed. Each server answer uses up the check.
+- The page refuses a code with fewer than 4 or more than 8 digits. A wrong code keeps the code step and shows why.
+- The page sends the profile only with a first name, a whole age from 1 to 120 and the text consent ticked. The server decides the join age. "Under age", "invite only" and "review" show the blocked step with that reason.
+- The approved name and age stay through the first sign-in. The page clears them when it loses or replaces the account that it shows.
+- The done step shows only after a saved profile with consent. When the person came from an agent link, it tells the person to go back to the same chat.
+- A form that waits for an answer refuses a second submit. One request runs at a time.
+
+Spec: [join in the browser](../browserJoin.md).
+
+## Story F43 — Connect my assistant on the app's page
+
+> As a person who connects my assistant to an app, I want one clear page at each step, so that I confirm my own phone, see who asks for access and give access only on purpose.
+
+### The server reply selects one page, and only Allow returns a code
+
+The server flow and the grant are in [connector browser authorization](../oauthBrowserAuthorization.md) and [connector grant issuance](../oauthGrantIssuance.md).
+
+Acceptance:
+
+- The connection link opens the phone page, the consent page for an existing session, the hand-off to Cloud sign-in, or a message: "This link does not work", "Too many tries", "Not available", "Please try again" or "Sign-in unavailable".
+- The phone page shows a security check only when the site has one. It sends a code only when the check is off or solved. It refuses a number that is not a US or Canada number. A field error shows only on the page of its field.
+- The code page shows only after this request sent a code. It shows the last four digits of the number.
+- A consent page shows only after the site knows the person: an existing session, the return from Cloud sign-in or a correct code. It shows the client's name, or "An unnamed assistant", says that the name is the client's own claim, shows the return host and lists every requested scope. No other page names a client.
+- Only "Allow", or "Try again" on the retry consent page, returns a code to the assistant. "Cancel" and "Don't allow" return a refusal.
+- A message page shows no phone field and no code field. Only "Please try again" has a link, and it retries the same request.
+- Each page that the site renders shows the brand mark, which links to the home page, and the Privacy and Terms links.
+
+Spec: [connector authorization pages](../authorizationPages.md).
+
+## Story F44 — See and remove my connected assistants
+
+> As a person who connected an assistant to an app, I want to see each assistant that can use my account in this app and remove its access, so that it cannot act for me any more.
+
+### The list shows live grants for a session, and removal needs a confirmation
+
+The page is at `/oauth/consents` on each app's site. It is not an account portal: no public site links to it, and it has no sign-in form or sign-in link.
+
+Acceptance:
+
+- Without a session, the page shows "Sign in first" and tells the person to connect the app in the agent and confirm the phone there. It offers no control.
+- When the session check is not available, the page shows "Please try again" with one link that loads the page again. "Not allowed" offers no control.
+- Each grant card shows the assistant's name or an unnamed label, says that the name is the assistant's own claim, and shows the approval date, the approved scopes and "Remove access".
+- "Remove access" asks for a confirmation. "Keep access" shows the list with no change.
+- A confirmed removal shows the grants that stay and "Access removed.". A grant that was already gone shows the list with no notice. The empty state shows after the last removal.
+- Each view after the first load shows the brand mark and the Privacy and Terms links.
+
+Spec: [connected assistants page](../connectedAssistants.md).
+
+## Story F45 — Sign up in my agent's conversation
+
+> As a person who asked my agent for a signup, I want the agent to draft my profile, get my approval, confirm my own phone and save the profile, so that I join the app in one conversation and know the true result.
+
+### Nothing leaves the conversation without approval, and only a confirmed save is reported as saved
+
+The agent follows the app's SKILL.md. The site API, the app's page and the MCP server own the facts, the code, the account, the join and the read-back.
+
+Acceptance:
+
+- The ntwrk.party, slop.date and friends.help skills use the in-agent transport: HTTPS to the app's own site, a private cookie session, and the code that the person types into the conversation. The peon.biz skill uses the app's page and connector on a computer, or a prepared text in Messages. The active peon.biz transport needs separate qualification ([product policies](policies.md#age-identity-and-enrollment)).
+- A direct skill never falls back to the connector or to a text. An agent that cannot do HTTPS with a private session says "Signup isn't supported in this agent yet." and asks for no number, code or profile.
+- In the in-agent transport, the agent reads the app facts from the skill's own origin before it drafts. Facts for another app stop the flow.
+- The lowest stated age applies. Under 13, the agent stops before it asks for a number. At 13 to 17, the agent tells the person that matching and introductions are for adults 18 and older.
+- The agent shows a short draft and the current text consent: recurring texts, variable frequency, message and data rates, STOP and HELP, and links to the text terms, the terms and the privacy policy. Only an explicit approval of this profile and this wording continues. A code, a draft or silence is not approval.
+- The agent reuses a live session. It asks for the number only in the code sign-in mode. Another mode ends the flow with no website fallback.
+- The agent requests a code at most once per attempt and never resends one by itself. It sends the person's code once and keeps it out of files and output. It never fakes a security check. Only the person starts a new attempt.
+- An account of another app stops the flow. An existing member is read back, and the agent does not send Join again. An invite-only app without an invitation and an account on hold stop the flow.
+- The agent sends Join once, with the approved fields, the home region, the account marker and the current consent wording and version.
+- The agent reports "saved" only after the read-back matches the approved profile, or after the second status call on the connector shows a live member. It reports a difference as a difference. It reports a prepared text as waiting for the person to send it. It never reports a save as a match.
+
+Open founder decision: [agent signup](../agentSignup.md) lets the agent receive the texted code on the in-agent HTTPS transport for ntwrk.party, slop.date and friends.help, but founder decision 10 says that the agent never sees the code, so the owner must choose one rule.
+
+Spec: [agent signup](../agentSignup.md).
+
+## Story F46 — Use my app's connector from my agent
+
+> As a person who connected my agent to an app, I want the agent to see only the tools that fit my app and my status, so that it can check my status, send my approved profile once and read my own updates without seeing my phone number or code.
+
+### Each tool call answers for one app, one grant and one member status
+
+Acceptance:
+
+- The full surface at `https://<site>/mcp` offers each app. The OpenAI surface at `https://<site>/mcp/openai` never lists slop.date, and the slop.date site has no OpenAI surface.
+- `app_info` and `start_signup` need no sign-in and return public facts only. `check_status` and `get_updates` need the membership read scope. `submit_profile` and `prepare_signup` need the profile write scope. A call without the right grant tells the person to sign in on the app's page and allow access.
+- `check_status` shows one of six statuses (not joined, invited, onboarding, active, stopped, on hold) for the host app only, with one next step.
+- `submit_profile` sends an approved profile once, and only for an onboarding or active member. For another status it sends nothing and gives the next step. A grant can make at most five profile or draft calls in one day, and a refused call counts.
+- `prepare_signup` shows only on friends.help and ntwrk.party. It saves only an approved first name and an optional home city, at most once per grant. It creates no person, membership or text consent. Those sites have no Join page now, so the person cannot use the draft yet.
+- `get_updates` shows the person's unseen updates for the host app and marks them seen. An update reference of another person, or an unknown or expired one, shows nothing and marks nothing.
+- When the phone's owner changed, the next member tool call ends the grant and asks the person to sign in again.
+
+Spec: [connector tools](../connectorTools.md).
+
+## Story F47 — Reach my agent from a plugin, a catalog or an update text
+
+> As a person who found an app or got an update text, I want one prompt or one link to open my own agent with the right app's skill or my update, so that I need no website account.
+
+### Each entry resolves to one app skill or to the updates tool
+
+Acceptance:
+
+- The Claude plugin lists the skills of all four apps and connects each app to `https://<domain>/mcp`. The OpenAI plugin, for ChatGPT and Codex, lists the ntwrk.party, peon.biz and friends.help skills only and connects to `https://ntwrk.party/mcp/openai`. It has no route to slop.date.
+- A site prompt starts signup. A plugin skill or a catalog entry starts signup only when the person asks for it. Otherwise the agent explains the app.
+- An update link opens the agent with `Ask The Network for update T-7F3K9Q`. The agent loads no skill, passes the reference to the updates tool on the person's own connection and never asks for a reference. Without a connection, the agent asks the person to sign in on the app's page and allow access.
+- An update text carries only the reference. When the person uses no assistant that the service can link to (ChatGPT, Claude or Grok), the update goes in the text thread.
+- On iMessage the text links straight to the assistant. On SMS and Telegram it links to one ntwrk.party page with a button for each assistant. Each link fills the prompt and never sends it. The ChatGPT link uses `?prompt=`.
+
+Spec: [agent entry](../agentEntry.md). The landing prompt is in [F38](#story-f38--take-the-signup-prompt-to-my-agent).
+
+## Story F48 — Sign in to the staff console as myself
+
+> As a staff member, I want to sign in with my own identity and a second factor, so that every read and action in the console is mine.
+
+### The server answer decides the sign-in phase, and real data needs single sign-on
+
+Acceptance:
+
+- The console removes a token after `#token=`, or an old `?token=`, from the address bar and the history entry before it asks who the viewer is. It keeps the token for this browser tab only.
+- A token server shows a token form with a password field. Its submit control works only when the field holds text. A Cloudflare Access server shows the single sign-on link, never the token form, and refuses every staff token.
+- A single sign-on identity without a second factor sees the second-factor request. An identity without a staff role sees the no-role panel. A refused Host or Origin shows the refused-site panel with no retry. A server that does not answer shows a retry.
+- A 401 answer or socket code 4401 ends the session and asks again by the same method. Socket code 4403 checks the identity again, and the console shows a page that the remaining roles cover.
+- A console that reads real data outside a local development setup does not start without Cloudflare Access and a known platform environment.
+
+Spec: [staff sign-in](../staffSignIn.md).
+
+## Story F49 — Find my way in the staff console
+
+> As a staff member, I want the console to show only the pages, tabs and filters that my roles and mode cover, so that I never land on an empty or refused view.
+
+### The viewer selects the page, and one subject drives the inspector and the drawer
+
+Acceptance:
+
+- The console shows a loading view until the server names the viewer. A viewer with no role sees the no-role page. A viewer with only the cross-app role sees the all-apps page.
+- The app switcher and its "all" choice show only to a viewer with roles for two or more apps or with the cross-app role. The person page opens only for a cross-app viewer in real mode, and Close returns to the all-apps page.
+- Only a global admin on a server that is not real-only can switch between the simulated world and real data. A mode change shows the overview with no picks.
+- The inspector history keeps at most 20 subjects. Back shows only while the history holds a subject. Escape closes, in this order, an open menu, the search text, the picks and the subject.
+- Search offers members and neighborhoods from two characters and opportunity ids from three. A safety viewer can also search the Network's own messages and system events from two characters, never the words of a member.
+- In the simulated world, a viewer with a simulation role picks two to six members. A member under 18 cannot be picked. A seventh pick drops the oldest.
+- A drawer tab shows only where it applies, and a tab that does not apply falls back to the feed. A click on the open tab collapses the drawer. While the drawer is open, the filter bar dims each filter that the open tab does not use.
+
+Spec: [console navigation](../consoleNavigation.md).
+
+## Story F50 — Do staff work in the console panels
+
+> As a staff member, I want each panel to show its controls only to the roles and modes that can use them, and each decision to need a reason or a confirmation, so that I never press a control that the server must refuse and every decision is deliberate.
+
+### Each panel follows the role, the mode and the server answer
+
+The [safety case spec](../safetyCase.md) owns what a decision does. The server writes an audit row before each staff read and action.
+
+Acceptance:
+
+- Each panel shows a loading, refused, unavailable, failed, empty or full view. A refused panel never shows rows.
+- Held texts, safety cases and reports need the safety role. The matching switch and the lab need the analyst role. The audit log needs the admin role. The bias monitor needs the analyst role and real data. Member requests are open to each staff role.
+- A held text needs a reason of five characters or more. The text of a member under 18, or of unknown age, stays hidden. A held photo is released only after staff load it and confirm the review.
+- A report decision needs a note of five characters or more. Hold, ban and dismiss need the Network service. The row shows the new status only after the server accepts the decision.
+- The request list starts on the open segment. The fulfilled segment shows fulfilled and booked requests.
+- Only an admin who can change the matching switch sees it. The first press asks for a confirmation, which ends after a short time. The second press saves. A refused save keeps the old setting.
+- The propose tray and the world menu show only in the simulated world. A proposal needs two to six adults, a spark left and a game that is not over.
+- A reveal needs real data, the safety role, a reason of five characters or more and a length of 5, 10 or 15 minutes. It shows only after the server grants it, and it ends on request or when its time passes.
+- A new viewer, a mode change or a credential change closes each draft, form and menu.
+
+Spec: [console workspace](../consoleWorkspace.md). The review card is in [staff review](../staffReview.md), and the member detail reads are in [member inspector](../consoleMemberView.md).
+
+## Story F51 — Use one design system for every brand
+
+> As the owner of the four sites, the connector pages and the staff console, I want every screen to use one set of components with brand tokens, so that a fix or a design change reaches every brand at the same time and the brands differ only by colors, logos and text.
+
+### One component set renders four brands in light and dark
+
+The tokens are in `@thenetwork/design-system` (`packages/design-system`). The components are in `@thenetwork/ui` (`packages/ui`).
+
+Acceptance:
+
+- Every web interface uses React components from `@thenetwork/ui`. No component holds a color of its own for one brand.
+- `data-brand` (`network`, `slop`, `friends` or `peon`) on an ancestor sets the brand. A `light` or `dark` class sets the theme, and without a class the theme follows the system.
+- The four sites use the same header mark, headline, prompt field, agent row, Messages entry, status line, footer, legal text and not-found notice. Only peon.biz adds the browser join flow.
+- Each text and fill pair meets WCAG AA in both themes. The edge of a control has a contrast of 3:1 or more. `pnpm run design:check` checks the contrast of the tokens.
+- Each component has a story. Storybook has a theme switch and a brand switch. `pnpm run ui:test` mounts each story and runs its play, and the browser run checks each story with axe.
+- Each view, notice and error that the specs of F38–F50 can reach has a component state.
+
+Spec: [brand identity](../brandIdentity.md), "Story: One component set for every brand". Tokens: the [brand design notes](../../packages/design-system/brands/network/design.md).
+
+## Story F52 — Read and run the console analysis panels
+
+> As a staff member, I want the lab, runs, metrics, feed, pipeline and game panels to show each data state and to offer a control only in the mode and to the role that can use it, so that I read the numbers that need me and never change the world from real data.
+
+### Each analysis panel follows the mode, the role and the data
+
+The [workspace spec](../consoleWorkspace.md) owns the loading, refused and failed rows. The [navigation spec](../consoleNavigation.md) owns which tab shows.
+
+Acceptance:
+
+- A lab run, a world reset, a level choice and a level check exist only in the simulated world. Real data, with or without the Network service, gets no write from these panels.
+- The lab says when it is off on the server. A lab run starts only for an analyst, with one to three arms, one to five seeds and one to sixty days. A refused start keeps the form. A safety count above zero shows as an alarm.
+- The runs tab shows one run, or asks for two runs in compare. Compare shows only with two runs or more. A third pick drops the oldest. The difference loads once two runs are picked, and it hides a measure that is zero in both runs.
+- The metrics tab shows truth numbers only in the simulated world, and the bias monitor and the cost only on real data to an analyst. A bias ratio under 0.8x is an alert. A cost budget is amber from 80 percent and red from 100 percent. A proactive rate above two messages per member a week is a warning. An inviter share of 30 percent or more meets its target.
+- The feed segments group the event kinds. The mine segment shows only in the simulated world. An empty feed says why.
+- The pipeline shows the columns of the state filter. A stub network says that it has no consent data.
+- The game tab shows only in the simulated world. Only an admin resets the world, chooses a level or chooses the reviewer.
+
+Spec: [console analysis panels](../consolePanels.md).
+
 ## Later stories
 
 Original later IDs stay attached to their prerequisites. They do not enter launch scope merely because a shared state machine supports them.

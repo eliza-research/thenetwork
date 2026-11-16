@@ -217,8 +217,8 @@ async function checkBrowser(nightly: boolean): Promise<number> {
     }));
     const fixture = pathToFileURL(join(root, "test/fixtures/browserSignup.ts")).href;
     writeFileSync(join(project, "start-browser.mjs"), `import ${JSON.stringify(fixture)};\n`);
-    // The explorer detects a page at index.html. The fixture builds and serves the real /join.
-    copyFileSync(join(root, "sites/peon.biz/public/join.html"), join(project, "index.html"));
+    // The explorer discovers the site's HTML shell. The fixture builds and serves the Peon join page.
+    copyFileSync(join(root, "apps/site/index.html"), join(project, "index.html"));
     mkdirSync(join(project, "test"));
     copyFileSync(join(root, "test/bombadil.ts"), join(project, "test/bombadil.ts"));
     mkdirSync(join(project, "node_modules/@antithesishq"), { recursive: true });

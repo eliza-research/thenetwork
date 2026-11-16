@@ -284,11 +284,14 @@ async function sitesGates(b: Block) {
       }
     });
 
-    await b.run("platform-5: the legacy phone form renders Turnstile; agent-only sites ship no Join form", () => {
+    await b.run("platform-5: the peon.biz join page carries the Turnstile site key and loads the page script that renders the check; agent-only sites ship no Join form", () => {
       for (const s of SITES) {
         if (s.app === "peon") {
-          const page = readFileSync(join(built[s.domain]!.out, "join.html"), "utf8");
-          expect([s.domain, page.includes('content="0x4AAAAAAAsimauditkey"') && page.includes("data-turnstile")]).toEqual([s.domain, true]);
+          const out = built[s.domain]!.out;
+          const page = readFileSync(join(out, "join.html"), "utf8");
+          const script = page.match(/<script type="module"[^>]* src="\/([^"]+\.js)"/)?.[1];
+          const renders = script !== undefined && readFileSync(join(out, script), "utf8").includes("https://challenges.cloudflare.com");
+          expect([s.domain, page.includes('<meta name="turnstile-sitekey" content="0x4AAAAAAAsimauditkey">') && renders]).toEqual([s.domain, true]);
         } else expect([s.domain, existsSync(join(built[s.domain]!.out, "join.html"))]).toEqual([s.domain, false]);
       }
     });
@@ -307,7 +310,7 @@ async function sitesGates(b: Block) {
         // The same scratch site without the marker builds: the refusal is the marker, nothing else.
         await writePath(join(copy, "public", "terms.html"), page("<p>Terms.</p>"));
         expect((await buildSite({ ...s, src: join(copy, "public") }, join(copy, "dist"), env)).ok).toBe(true);
-        for (const x of SITES) expect([x.domain, DRAFT_MARKERS.some(m => m.test(readFileSync(join(x.src, "terms.html"), "utf8")))]).toEqual([x.domain, false]);
+        for (const x of SITES) expect([x.domain, DRAFT_MARKERS.some(m => m.test(readFileSync(join(built[x.domain]!.out, "terms.html"), "utf8")))]).toEqual([x.domain, false]);
       } finally { rmSync(copy, { recursive: true, force: true }); }
     });
 
@@ -330,7 +333,7 @@ async function sitesGates(b: Block) {
     });
   } finally { rmSync(dir, { recursive: true, force: true }); }
 
-  await b.run("sites-infra-1: every POST from the sites' API client is JSON (settings stop and log out are not refused with 415)", async () => {
+  await b.run("sites-infra-1: every POST from the sites' typed API client is JSON (stop and log out are not refused with 415)", async () => {
     const seen: { method: string; type: string | null; body: unknown }[] = [];
     const real = globalThis.fetch;
     globalThis.fetch = (async (_url: string, init?: RequestInit) => {
@@ -338,9 +341,9 @@ async function sitesGates(b: Block) {
       return Response.json({ ok: true });
     }) as unknown as typeof fetch;
     try {
-      const { api } = await import("../../sites/shared/api.ts");
-      await api.logout();
-      await api.stop();
+      const { call } = await import("../../packages/ui/src/api/client.ts");
+      await call("POST", "/api/auth/logout");
+      await call("POST", "/api/me/stop");
     } finally { globalThis.fetch = real; }
     expect(seen.length).toBe(2);
     for (const s of seen) { expect(s.type).toMatch(/^application\/json/); expect(typeof s.body).toBe("string"); }

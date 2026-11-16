@@ -108,6 +108,15 @@ pnpm run security             # the security subset of the integration suite (11
 pnpm run clef <fit|calibrate|features|audit|synth>   # P2 Clef weight fitting (docs/results/2026-10-09-clef-fitting.md); only `features --live` calls Workers AI
 pnpm run relay-eval [rules|fit] [--live]   # the relay classifier report; only --live calls Workers AI
 
+# Shared design and UI
+pnpm run design:build
+pnpm run design:check
+pnpm run ui:gen
+pnpm run ui:storybook
+pnpm run ui:test
+pnpm --filter @thenetwork/ui run test:browser
+pnpm run lint:ui
+
 # The ConsentNetwork on the NYC world (docs/runbook-simulation.md)
 node --import tsx --env-file-if-exists=.env packages/network/harness/experiment.ts --days 21 --seed 1
 node --import tsx --env-file-if-exists=.env packages/network/harness/scenarios.ts [scenario_id]
@@ -186,11 +195,12 @@ The application, tests, and vendored Vibestack toolchain use Node 26
 and pnpm. Use the Node patch version in `.nvmrc`. Pure rules, transitions and
 validation types come from Quint. Existing services consume its generated
 TypeScript at their boundaries. Backend health, shutdown, and alert
-dispatch use compiled VibeLang shells. Use the existing
-application framework and component system in each package. Read
-the [Network command map](README.md#commands)
-when an imported skill refers to the standalone template's pnpm commands,
-VibeLang shell, React design system, or Vitest setup.
+dispatch use compiled VibeLang shells. The public sites, connector authorization, and staff console use React 19
+and the shared design system. Put brand tokens in `packages/design-system`
+and shared components in `packages/ui`. Each brand sets `data-brand` on
+an ancestor. Use the existing theme classes and token utilities.
+Read the [Network command map](README.md#commands) when an imported skill
+refers to the standalone template commands, VibeLang, or Vitest.
 
 ## Who does what
 
