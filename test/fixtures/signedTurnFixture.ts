@@ -13,7 +13,7 @@ import { APPS } from "../../packages/platform/src/apps.ts";
 export type FixtureApp = "slop" | "friends";
 export type FixtureMember = { phone: string; personId: string };
 type FixtureTurn = Pick<TurnRequest, "app" | "receivedAt"> & { observeDryRunSideEffects?: boolean };
-type FixtureSignup = { firstName?: string; apps?: readonly FixtureApp[]; interests?: string[]; neighborhood?: string };
+type FixtureSignup = { firstName?: string; age?: number; apps?: readonly FixtureApp[]; interests?: string[]; neighborhood?: string };
 
 export type SignedTurnFixture = {
   clock: SimClock;
@@ -90,7 +90,7 @@ export async function withSignedTurnFixture(run: (fixture: SignedTurnFixture) =>
         const cookie = login.headers.get("set-cookie")?.split(";")[0];
         if (!cookie) throw new Error("Phone verification did not establish a session");
         await call(appId, "/api/join", {
-          firstName: signup.firstName ?? "Ari", age: 29, about: about[appId], interests: signup.interests, neighborhood: signup.neighborhood,
+          firstName: signup.firstName ?? "Ari", age: signup.age ?? 29, about: about[appId], interests: signup.interests, neighborhood: signup.neighborhood,
           consent: { sms: true, wording: APPS[appId].consent.text },
         }, cookie);
       }

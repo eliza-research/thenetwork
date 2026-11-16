@@ -102,7 +102,7 @@ Return 1–3 options with a useful reason based on interests, location, availabi
 
 The signed conversation answers a direct request such as “Anything fun this weekend?” from current NYC Parks listings. An event must carry an explicit all-ages label for a minor to receive it. A separate process publishes fresh data. With no eligible listing, the reply says it found none. A recommendation does not create a match or booking.
 
-Models: [solo event recommendations](../soloConcierge.md), [public event supply](../publicEventCatalog.md), [matching engine](../models/matching_engine.md).
+Models: [solo event recommendations](../soloConcierge.md), [signed solo concierge journey](../soloConciergeJourney.md), [public event supply](../publicEventCatalog.md), [matching engine](../models/matching_engine.md).
 
 ## Story F11 — Consider a one-to-one introduction
 

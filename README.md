@@ -147,7 +147,10 @@ from separate yes replies through booking and the gateway receipt. Run it
 with `pnpm run spec:conformance mutualConsentJourney`. The
 [travel presence journey](spec/travelPresenceJourney.md) checks signed
 trip saves, exact expiry in the matching snapshot, and replay after app
-leave. Run it with `pnpm run spec:conformance travelPresenceJourney`. Run
+leave. Run it with `pnpm run spec:conformance travelPresenceJourney`.
+The [solo concierge journey](spec/soloConciergeJourney.md) compares current
+Parks recommendations, age eligibility, and replay after catalog changes.
+Run it with `pnpm run spec:conformance soloConciergeJourney`. Run
 `pnpm run spec:conformance memberRequestJourney` to compare the request
 and review flow through the dry-run ConsentNetwork harness. The checker saves
 a minimal failing trace under `test/counterexamples/` and replays it on
