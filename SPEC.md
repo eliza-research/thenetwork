@@ -1,7 +1,7 @@
 # Spec reference
 
 This is the Vibestack spec-language reference at revision
-[`37c91550`](https://github.com/lalalune/vibestack/blob/37c91550451fa3c9a7b3f487b524757c3031e6e1/SPEC.md).
+[`0c8d4ef2`](https://github.com/lalalune/vibestack/blob/0c8d4ef28b1009be8c431c8fd714be6696fc456e/SPEC.md).
 Use [The Network command map](README.md#commands) when this reference uses
 standalone Vibestack commands. The Network keeps its product requirements in
 [`spec/product/`](spec/product/README.md) and the action-based Quint flow
@@ -508,7 +508,7 @@ change when read again, which must do what the clean event does. `options`
 are `view` (what of the state `observe` shows), `keys` (the entities walks
 interleave), `walks` (at most this many; `0` for a slow driver) and `steps`.
 The walks use the fixed normal or nightly profile
-([budgets](https://github.com/lalalune/vibestack/blob/37c91550451fa3c9a7b3f487b524757c3031e6e1/CONTRIBUTING.md#seeds-and-budgets)).
+([budgets](https://github.com/lalalune/vibestack/blob/0c8d4ef28b1009be8c431c8fd714be6696fc456e/CONTRIBUTING.md#seeds-and-budgets)).
 
 - **A disagreement is saved.** A journey or walk that disagrees is shrunk
   and written to `test/counterexamples/<name>/<hash>.json`, which every
@@ -539,7 +539,7 @@ under `src/`.
   arm64 and on Apple silicon; elsewhere the stage prints a `-` line and CI
   explores the page.
 - **For a fixed time, from no seed.** The fixed profile's seconds, Chrome's
-  start included ([budgets](https://github.com/lalalune/vibestack/blob/37c91550451fa3c9a7b3f487b524757c3031e6e1/CONTRIBUTING.md#seeds-and-budgets)). The
+  start included ([budgets](https://github.com/lalalune/vibestack/blob/0c8d4ef28b1009be8c431c8fd714be6696fc456e/CONTRIBUTING.md#seeds-and-budgets)). The
   actions are random, so two runs explore differently.
 - **`test/bombadil.ts` says what must hold.** It is an ES module Bombadil
   bundles itself. Re-export `@antithesishq/bombadil/browser/defaults` (no
