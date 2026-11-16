@@ -2,12 +2,13 @@
 // Cloudflare Access SSO, per-command and per-route role checks, the reviewer of record, the per-member
 // PII reveal, the audit log (written before data is returned), the production switch
 // (OBSERVATORY_REAL_ONLY) and the simulation lab.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { setTimeout as sleep } from "node:timers/promises";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DAY } from "@thenetwork/core";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { Lab, LAB_LIMITS, labEnv, resultsOf, validateLab } from "../src/lab.ts";
 import { createServer, WS_EXPIRED, WS_FORBIDDEN, type ObservatoryServer } from "../src/server.ts";
 import { AccessVerifier, parseTokenGrants } from "../src/staff.ts";
@@ -326,7 +327,7 @@ describe("simulation lab", () => {
     expect(validateLab({ arms: ["consent"], seeds: [1, 2, 3, 4, 5, 6], days: 3 })).toContain("seeds");
     // A stand-in child: waits, logs a line, then prints indented JSON the way experiment.ts does (no judge fields).
     const script = join(dir, "fake-arm.ts");
-    await writeFile(script, `await Bun.sleep(600); const seed = Number(process.argv[process.argv.indexOf("--seed") + 1]);
+    await writeFile(script, `import { setTimeout } from 'node:timers/promises'; await setTimeout(600); const seed = Number(process.argv[process.argv.indexOf("--seed") + 1]);
       if (seed === 3) { console.error("boom"); process.exit(2); }
       console.log("[llm] a log line before the results");
       console.log(JSON.stringify({ results: [{ arm: "consent", proposalAllYesRate: 0.5, inviteAcceptRate: 0.4, meetingsHeld: seed }] }, null, 2));`);
@@ -339,7 +340,7 @@ describe("simulation lab", () => {
     let done = (await lab.get(run.id))!;
     const observed = done;
     const observedValue = structuredClone(observed);
-    while (done.status === "queued" || done.status === "running") { peak = Math.max(peak, lab.running); await Bun.sleep(25); done = (await lab.get(run.id))!; }
+    while (done.status === "queued" || done.status === "running") { peak = Math.max(peak, lab.running); await sleep(25); done = (await lab.get(run.id))!; }
     expect(observed).toEqual(observedValue);
     expect(peak).toBe(2);
     expect(done.status).toBe("failed"); // seed 3 failed
@@ -358,7 +359,7 @@ describe("simulation lab", () => {
     const { run } = (await res.json()) as { run: LabRun };
     let cur = run;
     for (let i = 0; i < 1200 && (cur.status === "queued" || cur.status === "running"); i++) {
-      await Bun.sleep(250);
+      await sleep(250);
       cur = ((await (await as(TOK.analyst, "/api/lab")).json()) as { runs: LabRun[] }).runs.find(r => r.id === run.id)!;
     }
     expect(cur.error).toBeUndefined();
@@ -381,7 +382,7 @@ function openSocket(url: string, headers: Record<string, string>) {
   const open = new Promise<void>((ok, no) => { ws.onopen = () => ok(); ws.onerror = () => no(new Error("refused")); });
   return { ws, msgs, open, done, closed: () => closed };
 }
-const within = <X>(p: Promise<X>, ms: number) => Promise.race([p, Bun.sleep(ms).then(() => "timeout" as const)]);
+const within = <X>(p: Promise<X>, ms: number) => Promise.race([p, sleep(ms, undefined, { ref: false }).then(() => "timeout" as const)]);
 
 describe("live sockets are authorized again (OBS-04, OBS-05)", () => {
   test("OBS-04: after a switch to real mode an engineer's socket is closed (4403) and gets no member; an admin's stays", async () => {
@@ -395,7 +396,7 @@ describe("live sockets are authorized again (OBS-04, OBS-05)", () => {
       expect(sw.status).toBe(200);
       expect(await within(e.done, 3000)).toBe(WS_FORBIDDEN);
       const n = e.msgs.length;
-      await Bun.sleep(300);
+      await sleep(300);
       expect(e.msgs.length).toBe(n);
       expect(e.msgs.some(m => m.type === "delta" && m.mode === "real")).toBe(false);
       expect(a.closed()).toBeUndefined();
@@ -429,7 +430,7 @@ describe("live sockets are authorized again (OBS-04, OBS-05)", () => {
     try {
       const s = openSocket(`${srv.url.replace("http", "ws")}/ws`, { "cf-access-jwt-assertion": await k.sign({ aud: [AUD], iss: ISS, email: "rev@example.org", iat: now - 30, exp: now + 3600 }) });
       await s.open;
-      await Bun.sleep(300);
+      await sleep(300);
       expect(s.closed()).toBeUndefined();
       await sql`delete from platform.staff_roles where email = 'rev@example.org'`;
       expect(await within(s.done, 5000)).toBe(WS_FORBIDDEN);
@@ -466,7 +467,7 @@ describe("tokens, Access keys and the lab (OBS-11)", () => {
     const env = labEnv({ PATH: "/bin", HOME: "/h", OPENAI_API_KEY: "sk-x", SURPLUS_API_KEY: "y", DATABASE_URL: "postgres://x", OBSERVATORY_TOKENS: "admin:z", LIVE_TESTS: "1", NETWORK_SERVICE_TOKEN: "t" });
     expect(env).toEqual({ PATH: "/bin", HOME: "/h" });
     const script = join(dir, "slow-arm.ts");
-    await writeFile(script, "await Bun.sleep(5000); console.log(JSON.stringify({ results: [] }));");
+    await writeFile(script, "import { setTimeout } from 'node:timers/promises'; await setTimeout(5000); console.log(JSON.stringify({ results: [] }));");
     const lab = new Lab({ dir: join(dir, "lab-cap"), script, concurrency: 1 });
     try {
       for (let i = 0; i < LAB_LIMITS.maxQueued / 5; i++) await lab.start({ arms: ["consent"], seeds: [1, 2, 3, 4, 5], days: 1 }, "tester");
@@ -477,7 +478,7 @@ describe("tokens, Access keys and the lab (OBS-11)", () => {
       lab.dispose();
       // Killed children still finish their final save; keep the owned directory until they do.
       const deadline = Date.now() + 5000;
-      while (lab.running && Date.now() < deadline) await Bun.sleep(10);
+      while (lab.running && Date.now() < deadline) await sleep(10);
       expect(lab.running).toBe(0);
     }
   });

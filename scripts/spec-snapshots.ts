@@ -3,7 +3,7 @@ import {
   copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { assertUnchanged, formalFiles, prepareProject, root, runSpec } from "./vibestack.ts";
 
 const args = process.argv.slice(2);
@@ -12,8 +12,6 @@ if (args.length !== Number(check)) throw new Error("Usage: node scripts/spec-sna
 
 const generatedPath = "packages/core/src/generated";
 const vibePath = "packages/core/src/vibe";
-const healthShell = "backendHealthShell.vibe";
-const healthModule = "backendHealth";
 const vendorModules = join(root, "tools/vibestack/node_modules");
 const compiler = join(vendorModules, "vibelang/bin/vibelang");
 const files = formalFiles();
@@ -21,23 +19,26 @@ const staging = mkdtempSync(join(tmpdir(), "thenetwork-spec-"));
 
 function existingFiles(directory: string): string[] {
   const path = join(root, directory);
-  return existsSync(path) ? readdirSync(path).map(file => `${directory}/${file}`) : [];
+  return existsSync(path)
+    ? readdirSync(path, { withFileTypes: true })
+      .filter(entry => entry.isFile()).map(entry => `${directory}/${entry.name}`)
+    : [];
 }
 
-/** Compile the serving shell and its generated Effect adapter with the vendored compiler. */
-function compileHealthShell(generated: string): Map<string, string> {
-  if (!existsSync(compiler)) throw new Error("VibeLang is missing. Run bun run spec:setup.");
-  const sourcePath = join(root, vibePath, healthShell);
-  const source = readFileSync(sourcePath);
+/** Compile the serving .vibe entry points and the generated Effect adapters they import. */
+function compileVibeShells(generated: string): Map<string, string> {
+  const shells = new Map(existingFiles(vibePath).filter(file => file.endsWith(".vibe"))
+    .map(file => [file, readFileSync(join(root, file))]));
+  if (!shells.size) return new Map();
+  if (!existsSync(compiler)) throw new Error("VibeLang is missing. Run pnpm run spec:setup.");
   const project = join(staging, "vibe");
   const output = join(project, "emit");
   mkdirSync(join(project, "generated"), { recursive: true });
   symlinkSync(vendorModules, join(project, "node_modules"), "junction");
-  for (const suffix of [".ts", ".effect.vibe"]) {
-    const file = healthModule + suffix;
+  for (const file of readdirSync(generated).filter(file => /^[a-z]\w*\.(?:ts|effect\.vibe)$/.test(file))) {
     copyFileSync(join(generated, file), join(project, "generated", file));
   }
-  writeFileSync(join(project, healthShell), source);
+  for (const [file, source] of shells) writeFileSync(join(project, basename(file)), source);
   const config = join(project, "tsconfig.json");
   writeFileSync(config, JSON.stringify({
     compilerOptions: {
@@ -45,21 +46,31 @@ function compileHealthShell(generated: string): Map<string, string> {
       skipLibCheck: true, declaration: true, rootDir: ".", outDir: "emit",
       rewriteRelativeImportExtensions: true, noEmitOnError: true,
     },
-    files: [healthShell],
+    files: [...shells.keys()].map(file => basename(file)),
   }));
   execFileSync(process.execPath, [compiler, "-p", config], { stdio: "inherit" });
-  if (!source.equals(readFileSync(sourcePath))) throw new Error(`${sourcePath} changed during compilation. Run spec:sync again.`);
-
-  const emitted = [
-    "backendHealthShell.js", "backendHealthShell.d.ts",
-    ...readdirSync(join(output, "generated")).map(file => `generated/${file}`),
-  ];
-  for (const file of emitted) {
-    const path = join(output, file);
-    const source = file.startsWith("generated/") ? `spec/${healthModule}.md via Vibestack and VibeLang` : `${vibePath}/${healthShell}`;
-    writeFileSync(path, `// Generated from ${source}. Run bun run spec:sync.\n${readFileSync(path, "utf8")}`);
+  const currentShells = existingFiles(vibePath).filter(file => file.endsWith(".vibe"));
+  if (currentShells.length !== shells.size || currentShells.some(file => !shells.get(file)?.equals(readFileSync(join(root, file))))) {
+    throw new Error("The serving VibeLang sources changed during compilation. Run spec:sync again.");
   }
-  return new Map(emitted.map(file => [`${vibePath}/${file}`, join(output, file)]));
+
+  const emitted = new Map<string, string>();
+  const emit = (file: string, source: string) => {
+    const path = join(output, file);
+    writeFileSync(path, `// Generated from ${source}. Run pnpm run spec:sync.\n${readFileSync(path, "utf8")}`);
+    emitted.set(`${vibePath}/${file}`, path);
+  };
+  const directOutput = readdirSync(output);
+  for (const source of shells.keys()) {
+    const prefix = `${basename(source, ".vibe")}.`;
+    for (const file of directOutput.filter(file => file.startsWith(prefix))) emit(file, source);
+  }
+  if (existsSync(join(output, "generated"))) {
+    for (const file of readdirSync(join(output, "generated"))) {
+      emit(`generated/${file}`, `spec/${file.split(".")[0]}.md via Vibestack and VibeLang`);
+    }
+  }
+  return emitted;
 }
 
 try {
@@ -68,7 +79,7 @@ try {
   const generated = join(staging, "gen");
   const expected = new Map(readdirSync(generated).filter(file => /^[a-z]\w*\.ts$/.test(file))
     .map(file => [`${generatedPath}/${file}`, join(generated, file)]));
-  for (const [file, source] of compileHealthShell(generated)) expected.set(file, source);
+  for (const [file, source] of compileVibeShells(generated)) expected.set(file, source);
   assertUnchanged(files);
 
   const changed = [...expected].filter(([file, source]) => {
@@ -77,12 +88,13 @@ try {
   });
   const stale = [
     ...existingFiles(generatedPath).filter(file => file.endsWith(".ts")),
+    ...existingFiles(vibePath).filter(file => /(?:\.js|\.d\.ts)$/.test(file)),
     ...existingFiles(`${vibePath}/generated`).filter(file => /(?:\.js|\.d\.ts)$/.test(file)),
   ].filter(file => !expected.has(file));
 
   if (check) {
     if (changed.length || stale.length) {
-      console.error(`Generated snapshots are out of date. Run bun run spec:sync.\n${[...changed.map(([file]) => file), ...stale].join("\n")}`);
+      console.error(`Generated snapshots are out of date. Run pnpm run spec:sync.\n${[...changed.map(([file]) => file), ...stale].join("\n")}`);
       process.exitCode = 1;
     } else {
       console.log(`Checked ${expected.size} generated TypeScript and VibeLang artifacts.`);

@@ -9,7 +9,7 @@ import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 //    cap, the leak lists). It sends only when BLOOIO_ALLOW_SEND=1, NTWRK_LIVE_APPROVED=1 and the app's
 //    own <APP>_LIVE_APPROVED=1 (founder approval per app; for ntwrk the last two are the same flag).
 //    Otherwise every message is refused ("refused_not_approved") and the provider is never called.
-import type { SQL } from "bun";
+import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { MemberId } from "@thenetwork/core";
 import { blooioRecipientPolicy, forbiddenProvider } from "../src/network.ts";
 import { OutboundQueue, WAITING, type AppChecks, type MessageKind } from "../../blooio/src/outbound-queue.ts";

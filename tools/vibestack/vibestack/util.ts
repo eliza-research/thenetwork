@@ -459,7 +459,7 @@ function driverImports(root: string): string[] {
 
 /** The package manager a package declares, or whose lock file sits in it or a directory above it, up to the repository or workspace root. */
 function packageManager(root: string): { name: string; lock?: string } {
-  const locks: Record<string, string> = { "pnpm-lock.yaml": "pnpm", "bun.lock": "bun", "bun.lockb": "bun", "yarn.lock": "yarn", "package-lock.json": "npm" };
+  const locks: Record<string, string> = { "pnpm-lock.yaml": "pnpm", "yarn.lock": "yarn", "package-lock.json": "npm" };
   let declared: string | undefined;
   for (let dir = path.resolve(root); ; dir = path.dirname(dir)) {
     const pkg = manifest(dir);

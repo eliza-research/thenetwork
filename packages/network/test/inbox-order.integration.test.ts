@@ -2,9 +2,10 @@
 // (:54339). A STOP must not wait behind an earlier message from the same sender that keeps failing
 // (P3, issue 9): compliance keywords go ahead, and a handled STOP cancels the ordinary rows received
 // before it. Skipped without Postgres.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { setTimeout as sleep } from "node:timers/promises";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { randomUUID } from "node:crypto";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { SimClock } from "@thenetwork/core";
 import { applySchema, devPgUp, DEV_PG_PORT } from "../../observatory/db/dev-pg.ts";
 import { pgAvailable } from "../../observatory/test/pg.ts";
@@ -135,7 +136,7 @@ describe.skipIf(!pgAvailable)("inbox ordering: compliance keywords are never hel
     let release!: () => void;
     const gate = new Promise<void>(r => { release = r; });
     const running = box.signed(turnReq(from, "c1", "tell me more"), "h-c1", async () => { await gate; return handled(); });
-    await Bun.sleep(50);
+    await sleep(50);
     expect(await box.signed(turnReq(from, "c1", "tell me more"), "h-c1", async () => handled())).toEqual({ status: 409, body: { error: "turn_busy", retryable: true } });
     release();
     expect((await running).status).toBe(200);
@@ -148,10 +149,10 @@ describe.skipIf(!pgAvailable)("inbox ordering: compliance keywords are never hel
     let release!: () => void;
     const gate = new Promise<void>(r => { release = r; });
     const slow = box.signed(turnReq(from, "l1", "find me a climbing partner"), "h-l1", async () => { await gate; return handled(); });
-    await Bun.sleep(30);
+    await sleep(30);
     // Three minutes pass on the service clock (past the 2-minute lease) while the worker is alive and renewing.
     clock.advance(3 * 60_000);
-    await Bun.sleep(80);
+    await sleep(80);
     expect(await box.signed(turnReq(from, "l2", "also tennis"), "h-l2", async () => handled())).toEqual({ status: 409, body: { error: "turn_busy", retryable: true } });
     release();
     expect((await slow).status).toBe(200);

@@ -56,7 +56,7 @@ Draft reads/writes and canonical phone-age recording share an independent keyed-
 
 - Outside dev it needs `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` and a database. Without them it stays off (404 `mcp_not_enabled`).
 - When a person leaves an app or deletes everything (the platform's forget path), every OAuth grant of that app is revoked (`revokeAllFor`).
-- The OAuth checks (PKCE S256 only, code reuse revokes, no open redirect, refresh rotation, cross-app isolation) are in `test/oauth.test.ts`, part of the security suite in the integration suite (`bun run test:integration`; `bun run security` for the subset). `test/mcp.test.ts`, `test/pg.test.ts` and `test/updates.test.ts` drive the server over HTTP and on Postgres.
+- The OAuth checks (PKCE S256 only, code reuse revokes, no open redirect, refresh rotation, cross-app isolation) are in `test/oauth.test.ts`, part of the security suite in the integration suite (`pnpm run test:integration`; `pnpm run security` for the subset). `test/mcp.test.ts`, `test/pg.test.ts` and `test/updates.test.ts` drive the server over HTTP and on Postgres.
 
 ## 5. Run and test
 
@@ -128,9 +128,9 @@ accepts real Terms/consent only in the site flow. Never enable the development
 pilot or use fictional OTP on the real deployed service.
 
 ```bash
-bun run security                                               # the pending security suite (MCP OAuth with platform and backend checks)
-PLATFORM_ENV=dev bun run packages/mcp/src/dev-server.ts        # http://127.0.0.1:4849/mcp, memory stores, codes print to the log
-bun run plugins/build.ts --check                               # the plugin skill snapshots equal sites/skills
+pnpm run security                                               # the pending security suite (MCP OAuth with platform and backend checks)
+PLATFORM_ENV=dev node --import tsx --env-file-if-exists=.env packages/mcp/src/dev-server.ts        # http://127.0.0.1:4849/mcp, memory stores, codes print to the log
+node --import tsx --env-file-if-exists=.env plugins/build.ts --check                               # the plugin skill snapshots equal sites/skills
 ```
 
 The dev server binds to 127.0.0.1 only. Use 555-01xx numbers only.

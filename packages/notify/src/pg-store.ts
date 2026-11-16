@@ -1,6 +1,7 @@
-// NotifyStore on Postgres (db/schema.sql), with Bun's SQL client like packages/platform.
+// NotifyStore on Postgres (db/schema.sql), with the Node PostgreSQL client like packages/platform.
 // Item ids are bigserial numbers stored as text ids "inb_<n>" in the API.
-import { SQL } from "bun";
+import { fileAt } from "../../core/src/runtime/files.ts";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import type { DeliveryRecord, NotifyStore } from "./store.ts";
 import type { SurfaceSignal } from "./surface.ts";
 import type { TaskToken } from "./tokens.ts";
@@ -49,7 +50,7 @@ export class PgNotifyStore implements NotifyStore {
 
   /** Apply db/schema.sql (idempotent). */
   async migrate() {
-    await this.sql.unsafe(await Bun.file(new URL("../db/schema.sql", import.meta.url)).text());
+    await this.sql.unsafe(await fileAt(new URL("../db/schema.sql", import.meta.url)).text());
   }
 
   async addItem(input: InboxItemInput, now: number) {

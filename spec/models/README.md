@@ -7,11 +7,11 @@ The 31 modules came from `claude/quint-state-machines` at `30d950e1d6fa027a67b94
 ## Run the models
 
 ```bash
-bun run spec:setup
-bun run quint:check                         # typecheck, replay traces, simulate safety and reachability
-bun run quint:check turn_consent            # one model
-bun run quint:check --tangle-only           # write the model blocks to runs/quint-models/
-bun run quint:check --verify --jobs 2       # include bounded Apalache checks, requires Java 17+
+pnpm run spec:setup
+pnpm run quint:check                         # typecheck, replay traces, simulate safety and reachability
+pnpm run quint:check turn_consent            # one model
+pnpm run quint:check --tangle-only           # write the model blocks to runs/quint-models/
+pnpm run quint:check --verify --jobs 2       # include bounded Apalache checks, requires Java 17+
 ```
 
 A `witness_*` assertion is the negation of an expected reachable state. A witness check passes when the simulator reaches that state and the assertion fails. Random simulation and bounded model checking cover the modeled states within the run bounds.

@@ -113,4 +113,4 @@ MSG
   fi
 fi
 
-exec bunx "wrangler@${WRANGLER_VERSION}" "$@"
+exec pnpm dlx "wrangler@${WRANGLER_VERSION}" "$@"

@@ -5,7 +5,7 @@ import { createInterface } from "node:readline";
 function startWorker(file: string) {
   const root = process.env.THENETWORK_VIBESTACK_REPO;
   if (!root) throw new Error("Run the journey through scripts/vibestack.ts");
-  const child = spawn("bun", ["run", "--no-env-file", join(root, "test/fixtures", file)], {
+  const child = spawn(process.execPath, ["--import", "tsx", join(root, "test/fixtures", file)], {
     cwd: root,
     env: { PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, USER: process.env.USER },
     stdio: ["pipe", "pipe", "pipe"],
@@ -44,7 +44,7 @@ function startWorker(file: string) {
   };
 }
 
-export function bunJourney<Event, State, Output>(file: string) {
+export function nodeJourney<Event, State, Output>(file: string) {
   let worker: ReturnType<typeof startWorker> | undefined;
   return {
     async reset() {

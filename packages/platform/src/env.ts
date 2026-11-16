@@ -14,7 +14,7 @@ const platformEnvNames = {
 
 /**
  * The declared environment: PLATFORM_ENV (production | staging | dev), else NODE_ENV=production, else
- * NODE_ENV=test (bun test) as dev. Anything else is undefined: not declared.
+ * NODE_ENV=test (pnpm exec vitest run) as dev. Anything else is undefined: not declared.
  */
 export function platformEnv(env: Env = process.env): PlatformEnv | undefined {
   return platformEnvNames[declaredEnvironment(env.PLATFORM_ENV ?? "", env.NODE_ENV ?? "")];

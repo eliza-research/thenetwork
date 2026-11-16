@@ -1,20 +1,22 @@
 # Cloudflare backend hosting
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-21-cloudflare-backend.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 The owner requested removal of Railway compute, with PostgreSQL retained on Railway.
 The existing backend image now has a Cloudflare Container wrapper.
 Its default inactive state prevents a second job processor from starting.
 
-Validation used Bun 1.4.2, local PostgreSQL, and the repository's pinned Wrangler 4.136.3.
+Validation used the former runtime 1.4.2, local PostgreSQL, and the repository's pinned Wrangler 4.136.3.
 The Worker uses compatibility date 2026-09-28, supported by that local runtime.
 No live deployment, database change, message send, or routing change occurred.
 
 | Command or check | Result |
 |---|---|
-| `bun run typecheck` | Passed, including a separate Worker configuration |
-| `REQUIRE_PG=1 bun test --conditions eliza-source --timeout 120000 deploy/backend/backend.test.ts deploy/router.test.ts` | 60 passed, 434 assertions |
-| `REQUIRE_PG=1 bun run test:integration` | 678 passed, eight skipped, zero failed |
-| `REQUIRE_PG=1 bun run test:e2e` | 42 passed, three skipped, zero failed |
-| `REQUIRE_PG=1 bun run sim` | 330/330 blocking gates passed; 14 tracked metrics off target |
+| `pnpm run typecheck` | Passed, including a separate Worker configuration |
+| `REQUIRE_PG=1 pnpm exec vitest run --testTimeout 120000 deploy/backend/backend.test.ts deploy/router.test.ts` | 60 passed, 434 assertions |
+| `REQUIRE_PG=1 pnpm run test:integration` | 678 passed, eight skipped, zero failed |
+| `REQUIRE_PG=1 pnpm run test:e2e` | 42 passed, three skipped, zero failed |
+| `REQUIRE_PG=1 pnpm run sim` | 330/330 blocking gates passed; 14 tracked metrics off target |
 | `scripts/wrangler.sh deploy --dry-run --config deploy/cloudflare/wrangler.toml --env staging` | Built the existing backend image and bundled the Worker |
 | Local Workerd, inactive `/healthz` | 503; no runtime credentials installed |
 

@@ -52,7 +52,7 @@ export const joinMessageFor = (s: Pick<Site, "app">) => `join ${keywordFor(s)}`;
 export const messagesHref = (s: Pick<Site, "app">, textLine: string) =>
   `sms:${textLine}?body=${encodeURIComponent(joinMessageFor(s))}`;
 
-const logo = (name: string) => readFileSync(join(import.meta.dir, "shared/logos", `${name}.svg`), "utf8").trim();
+const logo = (name: string) => readFileSync(join(import.meta.dirname, "shared/logos", `${name}.svg`), "utf8").trim();
 const esc = (v: string) => v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 
 /**

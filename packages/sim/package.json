@@ -5,8 +5,8 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "sim": "bun run src/cli.ts",
-    "slop": "bun run src/apps/slop/cli.ts"
+    "sim": "node --import tsx --env-file-if-exists=.env src/cli.ts",
+    "slop": "node --import tsx --env-file-if-exists=.env src/apps/slop/cli.ts"
   },
   "dependencies": {
     "@thenetwork/core": "workspace:*",

@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 // The friends block: friends.help in the NYC friends world (400 personas with 13-17 year olds, age
 // liars, adversaries and canaries; weekly plans, partner intros and crews), the official launch gates
 // (adopted 2026-10-08, all blocking) against random-within-area and the oracle on the same seeds, the
@@ -161,7 +162,7 @@ export async function friendsScheduleGates(b: Block): Promise<void> {
       const valid = open.filter(fitsMorning);
       expect(valid.length).toBeGreaterThan(0);
       expect(open.some(p => !fitsMorning(p))).toBe(true);
-      const retained = valid.filter(p => morning.some(q => q.id === p.id && Bun.deepEquals(q.invited, p.invited)));
+      const retained = valid.filter(p => morning.some(q => q.id === p.id && isDeepStrictEqual(q.invited, p.invited)));
       recurring.push({ seed, closed: morning.filter(p => !fitsMorning(p)).length, valid: valid.length,
         retained: retained.length, sources: [...new Set(open.map(p => p.source))].sort() });
     }
@@ -190,10 +191,10 @@ export async function friendsScheduleGates(b: Block): Promise<void> {
       const active = plan(extra.map(f => ({ ...f, validFrom: s.now })));
       const expired = plan(extra.map(f => ({ ...f, validFrom: s.now - 30 * DAY, validTo: s.now - 1 })));
       expect(base.plans.length).toBeGreaterThan(0);
-      expect(Bun.deepEquals(expired, base)).toBe(true);
+      expect(isDeepStrictEqual(expired, base)).toBe(true);
       // Positive control: the very same availability matters at its inclusive start boundary.
-      expect(Bun.deepEquals(active, base)).toBe(false);
-      const sameFuturePlans = Bun.deepEquals(future, base);
+      expect(isDeepStrictEqual(active, base)).toBe(false);
+      const sameFuturePlans = isDeepStrictEqual(future, base);
       if (!sameFuturePlans) failures.push(seed);
     }
     expect(failures).toEqual([]);
@@ -230,8 +231,8 @@ export async function friendsScheduleGates(b: Block): Promise<void> {
         expect(items.every(item => item.reviewState === "pending")).toBe(true);
         const hosts = Object.entries(proposal.roles).filter(([, role]) => role === "host").map(([id]) => id);
         const contributions = items.filter(item => item.effort === "contribute").map(item => item.memberId);
-        const correct = plan.hostId === expectedHost && Bun.deepEquals(plan.invited, expectedInvited)
-          && Bun.deepEquals(hosts, [expectedHost]) && Bun.deepEquals(contributions, [expectedHost]);
+        const correct = plan.hostId === expectedHost && isDeepStrictEqual(plan.invited, expectedInvited)
+          && isDeepStrictEqual(hosts, [expectedHost]) && isDeepStrictEqual(contributions, [expectedHost]);
         rows.push({ seed, source, change, turn, host: plan.hostId, expectedHost, invited: plan.invited, correct });
       }
     }
@@ -266,7 +267,7 @@ export async function friendsScheduleGates(b: Block): Promise<void> {
       const tuesdayOffered = plan.options.some(s => { const p = localParts(s.start, NYC_TZ); return p.weekday === 1 && p.hour === 19; });
       const fresh = ["recent_observed", "recent_valid", "mixed"].includes(kind);
       const expectedTimes = kind === "mixed" ? [START, old] : [fresh ? START : old];
-      const correct = tuesdayOffered === fresh && ids.every(id => Bun.deepEquals(info.get(id)!.standing.map(s => s.statedAt), expectedTimes));
+      const correct = tuesdayOffered === fresh && ids.every(id => isDeepStrictEqual(info.get(id)!.standing.map(s => s.statedAt), expectedTimes));
       rows.push({ seed, kind, tuesdayOffered, correct });
     }
     expect(rows.filter(x => x.correct).length).toBe(rows.length);

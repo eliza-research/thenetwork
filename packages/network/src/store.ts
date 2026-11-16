@@ -1,11 +1,12 @@
 // Where the ConsentNetwork keeps its state between processes (docs/network.md 11, admin-console gap 1).
 //  - MemoryStore: tests and the simulator.
-//  - PgStore: Postgres (Bun SQL). One JSON document per network in network.network_state, plus
+//  - PgStore: Postgres (PostgreSQL). One JSON document per network in network.network_state, plus
 //    normalized rows the console reads (opportunities, participations, review_items, requests).
 //    Every unit of work (a tick, an inbound message, a staff action) runs under one Postgres advisory
 //    lock and loads the newest state first, so two processes never overwrite each other's saves.
 // The SQL is in packages/network/db/network-state.sql.
-import { SQL } from "bun";
+import { fileAt } from "../../core/src/runtime/files.ts";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { initial as initialUnit, step as stepUnit, tickMayEnter, tickMayTryLock } from "../../core/src/generated/runtimeUnit.ts";
 import type { ConsentNetwork, NetworkState } from "./network.ts";
 import type { RelayRecord } from "../../engine/src/relay.ts";
@@ -146,7 +147,7 @@ export function consoleRows(state: NetworkState, savedAt = state.savedAt, city =
 // ------------------------------------------------------------------ relay rows (migration 0026)
 /** Relay log rows newer than this are written on every save (older ones changed only through held items). */
 const RELAY_ROW_WINDOW_MS = 2 * 86_400_000;
-/** A Postgres text[] literal: Bun.SQL sends a JS array in a bulk insert as a plain comma string. */
+/** A Postgres text[] literal for bulk inserts. */
 const textArray = (xs: readonly string[]) => `{${xs.map(x => `"${String(x).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`).join(",")}}`;
 
 /**
@@ -251,9 +252,9 @@ export class PgStore implements NetworkStore {
 
   /** Apply packages/network/db/network-state.sql (idempotent). */
   async migrate() {
-    // The URL goes to Bun.file as a URL: its .pathname is percent-encoded, which breaks a checkout
-    // under a path with non-ASCII characters.
-    await this.sql.unsafe(await Bun.file(new URL("../db/network-state.sql", import.meta.url)).text());
+    // Read the URL directly to support checkout paths
+    // with non-ASCII characters.
+    await this.sql.unsafe(await fileAt(new URL("../db/network-state.sql", import.meta.url)).text());
   }
 
   async load(): Promise<NetworkState | undefined> {

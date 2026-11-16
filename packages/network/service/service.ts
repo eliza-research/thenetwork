@@ -29,7 +29,7 @@ import { profileSuggestionDisconnectEndpoint, type SuggestionRevokedOwnerResolve
 //  - Sends: each app's adapter (dry-run by default; Blooio needs the per-app live flag too) after a
 //    person-level cap of proactive messages across apps (default 3 a day).
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { isDeepStrictEqual } from "node:util";
 import { DAY, LLMBudget, RealClock, recommenderLLM, type Clock, type City, type MemberId } from "@thenetwork/core";
 import type { ActionResult, NetworkOptions, NetworkState, ReviewDecision, ReviewOptions } from "../src/network.ts";
@@ -126,7 +126,7 @@ export function turnSecretProblem(env: Record<string, string | undefined> = proc
   if (!secret || secret.length < SVC_MIN_SECRET) return `SERVICE_TURN_SECRET must have at least ${SVC_MIN_SECRET} characters when the turn path is on`;
   return undefined;
 }
-/** The tables the service needs (bun run db:migrate). */
+/** The tables the service needs (pnpm run db:migrate). */
 const REQUIRED_TABLES = [
   ...["members", "channel_identities", "facets", "intents", "presence", "edges", "messages", "events", "matching_runs", "staff_audit", "network_state", "opportunities", "review_items", "requests"].map(t => `network.${t}`),
   ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "app_lines", "share_grants", "eliza_notices"].map(t => `platform.${t}`),
@@ -528,7 +528,7 @@ export class NetworkService implements RuntimeHost {
       const [r] = await this.sql`select to_regclass(${t}) is not null as ok`;
       if (!r?.ok) missing.push(t);
     }
-    if (missing.length) throw new Error(`the database is missing ${missing.join(", ")}: run bun run db:migrate (runbook-real 1.1, runbook-platform)`);
+    if (missing.length) throw new Error(`the database is missing ${missing.join(", ")}: run pnpm run db:migrate (runbook-real 1.1, runbook-platform)`);
     // The database and the process must agree on the environment (the 555-01xx guard reads the database's).
     const declared = platformEnv(this.env);
     const [envRow] = await this.sql`select value from platform.settings where key = 'environment'`;
@@ -971,7 +971,7 @@ export class NetworkService implements RuntimeHost {
     });
     return this.api;
   }
-  /** The public API handler for Bun.serve: /api/* or 404. */
+  /** The public API handler for serveHttp: /api/* or 404. */
   publicFetch = async (req: Request, server?: PeerInfo): Promise<Response> => (await this.publicApi.fetch(req, server)) ?? Response.json({ ok: false, error: "not_found" }, { status: 404 });
 
   // ------------------------------------------------------------------ inbound
@@ -1290,7 +1290,8 @@ export class NetworkService implements RuntimeHost {
         try {
           const e164 = normalizePhone(ev.from);
           const own = e164 && await this.accounts.activeMembership(rt.app, { e164, personId: null });
-          const body = n.manageStandingIntents(memberId, manageIntent, !!own && own.membership.memberId === memberId);
+          const body = n.manageStandingIntents(memberId, manageIntent, !!own && own.membership.memberId === memberId,
+            change => { rt.unit.standingIntent = change; });
           if (body) rt.system(memberId, `sys:${rowId}`, body, "reply", "standing_intent");
           return "standing_intents" as const;
         } finally {

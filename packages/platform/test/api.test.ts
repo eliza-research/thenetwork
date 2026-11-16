@@ -1,6 +1,6 @@
 // The public API end to end through createPublicApi().fetch, with a fake OTP provider (nothing is
 // sent) and a test clock. Every case runs on the memory store and on Postgres (PgPeopleStore).
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { APPS, type AppId, type AppInfo } from "../src/apps.ts";
 import { createPublicApi, type PublicApi, type PublicApiOptions } from "../src/api.ts";
 import { detectKeyword, keywordEvent, lastEvents, resolveConsent, stopScope } from "../src/consent.ts";
@@ -84,7 +84,7 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
     const c = make(store), phone = newPhone();
     expect((await call(c, "slop", "GET", "/api/me")).status).toBe(401);
     const cookie = await login(c, "slop", phone);
-    expect(cookie).toStartWith("sid_slop=");
+    expect(cookie).toMatch(/^sid_slop=/);
     const me = await call(c, "slop", "GET", "/api/me", undefined, cookie);
     expect(me.body).toEqual({ app: "slop", phoneMasked: `+1 •••-•••-${phone.slice(-4)}`, membership: null, smsOptedIn: false, canJoin: true });
     const j = await join(c, "slop", cookie, 29);

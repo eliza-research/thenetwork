@@ -17,7 +17,8 @@
 //    read-back (0 wrong gender / seeking after confirmation, BLOCKING), minors flagged 100% and never
 //    matchable (BLOCKING), read-back leaks 0 (BLOCKING).
 // 3. --llm (off by default, needs a provider key): the same corpus and a smaller sim with the LLM
-//    reader filling low-confidence fields. Tracked only. `bun run sim` never sets it.
+//    reader filling low-confidence fields. Tracked only. `pnpm run sim` never sets it.
+import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { defaultLLM, endpointsFor, Rng, HOUR } from "../../packages/core/src/index.ts";
 import {
   applyCorrection, extractSlopProfile, extractSlopProfileLLM, hardComplete, hasField, HARD_FIELDS, llmSlopReader, markAsked, nextQuestion, readBack, readBackFacts,
@@ -27,8 +28,8 @@ import { generateSlopPersonas, type SlopPersona } from "../../packages/sim/src/a
 import { zipInfo } from "../../packages/sim/src/apps/slop/geo.ts";
 import { Block } from "./gate.ts";
 
-const ROOT = `${import.meta.dir}/../../evals/slop-onboarding`;
-const jsonl = async <T>(name: string): Promise<T[]> => (await Bun.file(`${ROOT}/${name}`).text()).trim().split("\n").filter(Boolean).map(l => JSON.parse(l) as T);
+const ROOT = `${import.meta.dirname}/../../evals/slop-onboarding`;
+const jsonl = async <T>(name: string): Promise<T[]> => (await fileAt(`${ROOT}/${name}`).text()).trim().split("\n").filter(Boolean).map(l => JSON.parse(l) as T);
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 

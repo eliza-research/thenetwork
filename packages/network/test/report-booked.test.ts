@@ -2,7 +2,7 @@
 // (a booked plan reached both), so the report holds the subject. The booked date is still called off
 // as a block: the other member hears it is off (never why or who), meeting_cancelled is logged with
 // reason "blocked", and the reporter is not offered another time with the person they reported.
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { copy } from "../src/copy.ts";
 import { relayDispatchCheck } from "../src/index.ts";
 import { Mini } from "./mini.ts";

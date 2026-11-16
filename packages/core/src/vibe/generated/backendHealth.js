@@ -1,4 +1,4 @@
-// Generated from spec/backendHealth.md via Vibestack and VibeLang. Run bun run spec:sync.
+// Generated from spec/backendHealth.md via Vibestack and VibeLang. Run pnpm run spec:sync.
 // GENERATED from spec/backendHealth.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
 /** Story: Tell operators when a backend cannot serve / Admit the check before reading the database (spec/backendHealth.md:9) */

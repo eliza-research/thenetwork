@@ -1,11 +1,12 @@
 // Real signed HTTP on Cloud's wire (RelaySendRequest, x-ntwrk-svc-id "<messageId>:relay") -> POST /internal/relay
 // -> the ConsentNetwork relay desk (engine relay policy, rules only) -> network.messages / network.relay_records;
 // the staff held queue; a restart. Needs the dev Postgres on
-// :54339 (bun run packages/observatory/db/dev-pg.ts up). No live call: the adapter is a dry run and no
+// :54339 (pnpm exec tsx packages/observatory/db/dev-pg.ts up). No live call: the adapter is a dry run and no
 // Cloudflare token is set, so the classifier is rules only.
-import {afterAll,beforeAll,expect,test} from "bun:test";
+import { serveHttp, type HttpServer } from "../../core/src/runtime/http.ts";
+import {afterAll,beforeAll,expect,test} from "vitest";
 import {randomUUID} from "node:crypto";
-import {SQL} from "bun";
+import {SQL} from "../../core/src/runtime/postgres.ts";
 import {SimClock,MINUTE,DAY} from "@thenetwork/core";
 import {applySchema} from "../../observatory/db/dev-pg.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
@@ -20,12 +21,12 @@ const url=`postgres://${process.env.USER??"postgres"}@127.0.0.1:54339/${db}`;
 const secret="synthetic-relay-fixture-secret-20261009",clock=new SimClock(Date.UTC(2026,9,9,16));
 const phones={ari:"+12125550181",bo:"+12125550182"};
 const logs:string[]=[];
-let sql:SQL,service:NetworkService,server:ReturnType<typeof Bun.serve>,ari:string,bo:string;
+let sql:SQL,service:NetworkService,server:HttpServer,ari:string,bo:string;
 const start=async()=>{
   service=new NetworkService({url,clock,photoStorage:null,instance:"relay-integration",tokens:"safety:saf-tok,reviewer:rev-tok",
     env:{PLATFORM_ENV:"dev",CLEF_RATINGS:"off",SERVICE_TURN_SECRET:secret},
     networks:[{id:"friends:nyc",matchingEnabled:false}],network:{seed:1},log:line=>{logs.push(line);},adapter:()=>new DryRunAdapter(()=>{})});
-  await service.start();server=Bun.serve({hostname:"127.0.0.1",port:0,fetch:req=>service.fetch(req)});
+  await service.start();server=await serveHttp({hostname:"127.0.0.1",port:0,fetch:req=>service.fetch(req)});
 };
 const signed=async(path:string,id:string,raw:string)=>fetch(new URL(path,server.url),{method:"POST",body:raw,
   headers:{"content-type":"application/json",...await svcSign(secret,{method:"POST",path,id,body:raw,nowS:Math.floor(clock.now()/1000)})}});
@@ -59,7 +60,7 @@ beforeAll(async()=>{
     net.importState(st);
   });
 },120_000);
-afterAll(async()=>{server?.stop(true);await service?.close();await sql?.close();await admin.unsafe(`drop database if exists ${db} with (force)`);await admin.close();});
+afterAll(async()=>{await server?.stop(true);await service?.close();await sql?.close();await admin.unsafe(`drop database if exists ${db} with (force)`);await admin.close();});
 
 test("a relayed text is signed, size-checked, bound to the open turn, idempotent, and only the engine wording goes out",async()=>{
   expect(logs).toContain("relay classifier: rules only");
@@ -101,7 +102,7 @@ test("a scam is held for staff; staff list it (audited, app-scoped), reject it, 
   expect(JSON.stringify(list)).not.toMatch(/score|rating/i);
   const id=list.items[0].itemId as string;
   expect((await staff(`/staff/relay/${id}/reject?app=friends`,"rev-tok","POST",{})).status).toBe(403);
-  server.stop(true);await service.close();await start();
+  await server.stop(true);await service.close();await start();
   expect((await (await staff("/staff/relay/held?app=friends","saf-tok")).json() as any).items.map((x:any)=>x.itemId)).toEqual([id]);
   // Contract: the console's own client reads this real route (it used to drop every item for want of `id`).
   const console_=new ServiceClient({url:server.url.href,token:"saf-tok",app:"friends"});
@@ -150,10 +151,10 @@ test("a number goes out only after both members asked for the swap",async()=>{
   expect((await sql`select id from network.messages where app_id='friends' and body like ${"%"+phones.ari.slice(2)+"%"}`).length).toBe(0);
   const second=await post(await ask("bo","swap-bo","send Ari my number"));
   expect(await second.json()).toMatchObject({decision:"pass",delivered:false});
-  const shares=await sql`select member_id,body from network.messages where app_id='friends' and id like 'relay:%' and body like '%asked me to send you%' order by member_id`;
-  expect(shares.map((r:any)=>r.member_id).sort()).toEqual([ari,bo].sort());
-  expect(shares.find((r:any)=>r.member_id===bo).body).toContain(phones.ari);
-  expect(shares.find((r:any)=>r.member_id===ari).body).toContain(phones.bo);
+  const shares=await sql<{ member_id: string; body: string }[]>`select member_id,body from network.messages where app_id='friends' and id like 'relay:%' and body like '%asked me to send you%' order by member_id`;
+  expect(shares.map(r=>r.member_id).sort()).toEqual([ari,bo].sort());
+  expect(shares.find(r=>r.member_id===bo)?.body).toContain(phones.ari);
+  expect(shares.find(r=>r.member_id===ari)?.body).toContain(phones.bo);
   expect(JSON.stringify(await sql`select * from network.relay_records where app_id='friends'`)).not.toContain(phones.ari.slice(2));
   // The relay thread (stored state, and the classifier's context) keeps that a number was shared, never the number.
   const [{state}]=await sql`select state from network.network_state where id='friends:nyc'`;

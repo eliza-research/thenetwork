@@ -1,4 +1,4 @@
-// Generated from spec/backendHealth.md via Vibestack and VibeLang. Run bun run spec:sync.
+// Generated from spec/backendHealth.md via Vibestack and VibeLang. Run pnpm run spec:sync.
 import * as M from "./backendHealth.js";
 /** Story: Tell operators when a backend cannot serve / Admit the check before reading the database (spec/backendHealth.md:9) @throws {never} */
 export const initial = M.initial;

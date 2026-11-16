@@ -1,9 +1,11 @@
 // The production service (packages/network/service) against the local dev Postgres, in a database
 // of its own per test process (the packages/observatory/test/pg.ts pattern). Nothing is sent: the
 // default adapter is dry-run, and the Blooio adapter gets a fake provider. Skipped without Postgres.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { setTimeout as sleep } from "node:timers/promises";
+import { findExecutable } from "../../core/src/runtime/process.ts";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { existsSync } from "node:fs";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import type { SendRequest } from "../../blooio/src/types.ts";
@@ -13,7 +15,7 @@ import { NetworkService, WEBHOOK_PATH, type ServiceOptions } from "../service/se
 import { START } from "./mini.ts";
 
 const T = 300_000;
-const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!Bun.which("pg_ctl");
+const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
 const DB = `network_service_test_${process.pid}`;
 const ADMIN_URL = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/postgres`;
 const URL_ = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/${DB}`;
@@ -271,7 +273,7 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     let active = 0, most = 0;
     for (const s of [x, y]) {
       const orig = s.net.tick.bind(s.net);
-      s.net.tick = async now => { active++; most = Math.max(most, active); await Bun.sleep(25); try { await orig(now); } finally { active--; } };
+      s.net.tick = async now => { active++; most = Math.max(most, active); await sleep(25); try { await orig(now); } finally { active--; } };
     }
     const results: boolean[] = [];
     for (let i = 0; i < 4; i++) { clock.advance(MINUTE); results.push(...await Promise.all([x.tick(), y.tick()])); }
@@ -281,7 +283,7 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     // While x holds the lock (an inbound message or staff action), y's tick does nothing and /health names x.
     let release!: () => void;
     const held = x.pg.withLock(() => new Promise<void>(r => (release = r)));
-    await Bun.sleep(50);
+    await sleep(50);
     expect(await y.tick()).toBe(false);
     expect((await y.health()).lockHolder?.application).toBe("network-service:svc-x");
     release(); await held;

@@ -1,3 +1,4 @@
+import { setTimeout as waitForMs } from "node:timers/promises";
 // The remote MCP server and its OAuth 2.1 authorization server, as one fetch handler that the
 // service mounts next to the platform's /api/*. Each site's Worker forwards /mcp, /oauth/* and
 // /.well-known/oauth-* to the shared backend, so every site is its own issuer and resource:
@@ -91,7 +92,7 @@ export const LIMITS = {
 };
 
 export interface McpHandler {
-  /** The answer for an MCP or OAuth path, or undefined for any other path. Pass the Bun server for the socket address. */
+  /** The answer for an MCP or OAuth path, or undefined for any other path. Pass the HTTP server for the socket address. */
   fetch(req: Request, server?: { requestIP(req: Request): { address: string } | null }): Promise<Response | undefined>;
   store: OAuthStore;
   /** Revoke every consent of a phone (one app, or all). Call it when the person leaves an app or deletes everything. */
@@ -512,7 +513,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
 
     if (action.phase === "StartingOtp") {
       const t0 = performance.now();
-      const pad = async () => { const left = (o.minOtpStartMs ?? 700) - (performance.now() - t0); if (left > 0) await Bun.sleep(left); };
+      const pad = async () => { const left = (o.minOtpStartMs ?? 700) - (performance.now() - t0); if (left > 0) await waitForMs(left); };
       if (o.turnstile && !(await o.turnstile.verify(form.get("cf-turnstile-response") ?? undefined, c.ip, c.app.id))) {
         return phonePage(c.app, r.id, client.name, redirectHost, { error: "Please complete the check and try again.", turnstileSiteKey: o.turnstile.siteKey });
       }

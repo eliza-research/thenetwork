@@ -49,20 +49,21 @@ Studio, examples, template setup and the packaged CLI.
 |---|---|
 | Product | Stories and acceptance rules in [the product specification](spec/product/README.md). Product owner sign-off is recorded in `spec/lock.json`. |
 | Decisions | Quint in the [executable specs](SPEC.md#writing-a-spec) generates TypeScript. The checker simulates the model, compares TypeScript traces, and runs Dafny proof obligations. |
-| Effects | The [backend health shell](packages/core/src/vibe/backendHealthShell.vibe) uses the generated Effect adapter with the backend's database and tick readers. `bun run spec:sync` compiles its deployment files with the vendored VibeLang compiler. |
-| Application | Bun serves the backend and console. Each package owns its existing HTTP, storage, and UI integration. The [Network agent guide](AGENTS.md) applies the upstream design guidance to these packages. |
+| Effects | The [backend health shell](packages/core/src/vibe/backendHealthShell.vibe) uses the generated Effect adapter with the backend's database and tick readers. `pnpm run spec:sync` compiles its deployment files with the vendored VibeLang compiler. |
+| Application | Node 26 serves the backend and console. Each package owns its existing HTTP, storage, and UI integration. The [Network agent guide](AGENTS.md) applies the upstream design guidance to these packages. |
 | Conformance | The spec checker compares the app's observed state and effects with generated rules. The [command table](#commands) lists scoped journeys and the existing application test commands. |
 
 ## Quick start
 
-Use Bun 1.4.2 for the application, Node 26 with Corepack and pnpm 10.24.0
-for the Vibestack toolchain, and Dafny 4.11 on PATH for proofs. PostgreSQL 16
-is required for local service and database tests.
+Use Node 26, Corepack 0.35.0, and pnpm 10.24.0 for the application and
+Vibestack. The Node patch version is in `.nvmrc`. Use Dafny 4.11 for proofs
+and PostgreSQL 16 for local service and database tests.
 
 ```bash
-bun install --frozen-lockfile
-bun run spec:setup
-bun run gen
+corepack enable pnpm
+pnpm install --frozen-lockfile
+pnpm run spec:setup
+pnpm run gen
 ```
 
 Use the [platform runbook](docs/runbook-platform.md) to start the four
@@ -75,7 +76,7 @@ and its referenced files directly.
 
 ## Studio
 
-Run `bun run spec:studio` to inspect the executable rules and run their
+Run `pnpm run spec:studio` to inspect the executable rules and run their
 checks. Studio edits land in the projection under `runs/vibestack/`. Apply
 reviewed changes in the repository's `spec/` tree and restart Studio to
 refresh the projection. Standalone Vibestack also runs application build
@@ -92,7 +93,7 @@ describes those controls.
    Put its type definitions, pure guards, transition, or property in the
    rule's `quint` block. Follow the [format reference](SPEC.md#writing-a-spec).
 3. **Sync.** Use the [sync skill](.claude/skills/sync/SKILL.md) and
-   `bun run check`. Run `bun run spec:sync` to publish the resulting
+   `pnpm run check`. Run `pnpm run spec:sync` to publish the resulting
    TypeScript under `packages/core/src/generated/`.
 4. **Wire the decision.** Call the generated function from the app's
    existing HTTP, storage, or service entry point. Exercise the story through
@@ -114,29 +115,29 @@ from The Network root.
 
 | In standalone Vibestack | In The Network | Purpose |
 |---|---|---|
-| `pnpm install` | `bun install --frozen-lockfile`, then `bun run spec:setup` | Install the app and the pinned toolchain. |
-| `pnpm gen` | `bun run gen` | Generate the executable modules into `gen/`. |
-| `pnpm check` | `bun run check` | Run the Vibestack checks on the executable spec inputs. |
-| `pnpm studio` | `bun run spec:studio` | Open the spec editor on the local projection. |
-| `spec watch` | `bun run spec:watch` | Repeat checks when the local projection changes. |
-| `pnpm new <name>` | `bun run new <name>` | Scaffold a child spec. |
-| `pnpm accept` | `bun run accept` | Product owner sign-off after a fresh check. |
-| `pnpm selftest` | `bun run spec:selftest` | Exercise the vendored toolchain against its fixtures. |
-| `pnpm demo` | `bun run spec:demo` | Run the standalone order example. |
-| | `bun run spec:sync` | Generate the TypeScript snapshots and compile the serving VibeLang shell. |
-| | `bun run spec:check-generated` | Compare checked-in TypeScript and VibeLang output with fresh generation. |
-| | `bun run spec:conformance <module>` | Run one spec's simulation and compare it with the app through its driver or recorded trace. |
-| | `bun run quint:check` | Exercise the action-based flows in `spec/models/`. |
-| | `bun run typecheck`, `bun run test:integration`, `bun run test:e2e`, `bun run sim` | Check the application and the live-code seams. |
+| `pnpm install` | `pnpm install --frozen-lockfile`, then `pnpm run spec:setup` | Install the app and the pinned toolchain. |
+| `pnpm gen` | `pnpm run gen` | Generate the executable modules into `gen/`. |
+| `pnpm check` | `pnpm run check` | Run the Vibestack checks on the executable spec inputs. |
+| `pnpm studio` | `pnpm run spec:studio` | Open the spec editor on the local projection. |
+| `spec watch` | `pnpm run spec:watch` | Repeat checks when the local projection changes. |
+| `pnpm new <name>` | `pnpm run new <name>` | Scaffold a child spec. |
+| `pnpm accept` | `pnpm run accept` | Product owner sign-off after a fresh check. |
+| `pnpm selftest` | `pnpm run spec:selftest` | Exercise the vendored toolchain against its fixtures. |
+| `pnpm demo` | `pnpm run spec:demo` | Run the standalone order example. |
+| | `pnpm run spec:sync` | Generate the TypeScript snapshots and compile the serving VibeLang shell. |
+| | `pnpm run spec:check-generated` | Compare checked-in TypeScript and VibeLang output with fresh generation. |
+| | `pnpm run spec:conformance <module>` | Run one spec's simulation and compare it with the app through its driver or recorded trace. |
+| | `pnpm run quint:check` | Exercise the action-based flows in `spec/models/`. |
+| | `pnpm run typecheck`, `pnpm run test:integration`, `pnpm run test:e2e`, `pnpm run sim` | Check the application and the live-code seams. |
 
 The spec checker uses an executable projection of `spec/` and the
 conformance inputs under `test/`. The
 [shared-line consent journey](spec/sharedLineConsentJourney.md) and the
 [saved profile journey](spec/savedProfileJourney.md) run against the
 signed turn endpoint and isolated local Postgres databases on port 54339.
-Run either with `bun run spec:conformance sharedLineConsentJourney` or
-`bun run spec:conformance savedProfileJourney`. Run
-`bun run spec:conformance memberRequestJourney` to compare the request
+Run either with `pnpm run spec:conformance sharedLineConsentJourney` or
+`pnpm run spec:conformance savedProfileJourney`. Run
+`pnpm run spec:conformance memberRequestJourney` to compare the request
 and review flow through the dry-run ConsentNetwork harness. The checker saves
 a minimal failing trace under `test/counterexamples/` and replays it on
 later runs. Product prose, historical sources, and action-based flow
@@ -162,7 +163,7 @@ and the [Network test policy](docs/tests-policy.md).
 | `sites/` | The four app sites and their `SKILL.md` files ([README](sites/README.md)) |
 | `plugins/` | The Claude and OpenAI agent plugins, generated from `sites/` ([README](plugins/README.md)) |
 | `deploy/` | The backend image, the Pages router, the backup job and the post-deploy check ([docs/deploy.md](docs/deploy.md)) |
-| `evals/` | Hand-written corpora, scored by `bun run sim` |
+| `evals/` | Hand-written corpora, scored by `pnpm run sim` |
 | `scripts/` | `sim.ts` (the validation command), `relay-eval.ts`, `clef-fit.ts`, the dev servers and the synthetic-data scripts |
 | `data/synthetic/v1` | 500 synthetic members with hidden truth ([README](data/synthetic/README.md)) |
 
@@ -172,11 +173,11 @@ Copy `.env.example` to `.env` for local work. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for variables and real-agent evidence.
 
 ```bash
-bun run packages/observatory/db/dev-pg.ts up
-bun run typecheck
-bun run sim
-bun run test:integration
-bun run test:e2e
+node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts up
+pnpm run typecheck
+pnpm run sim
+pnpm run test:integration
+pnpm run test:e2e
 ```
 
 The simulator runs offline by default. The integration and e2e suites

@@ -27,7 +27,7 @@ A handled turn with no replies (a quiet acknowledgement, an under-13 decline) ta
 
 Agent signals never act on their own. `opt_out` and `safety_concern` are stored as proposed private facets, logged as an alert line, and listed for reviewer or safety staff at `GET /signals`. STOP and "leave <app>" in the member's own words stay the only automatic consent changes.
 
-**Contract.** `packages/core/src/svc/contract.ts` and `svc-auth.ts` are byte-identical to elizaos/eliza `plugins/plugin-network/src/backend/{contract,svc-auth}.ts` on `develop` (upstream #34657 and #34661). There is no contract version constant: `packages/core/test/contract-mirror.test.ts` pins the SHA-256 of both files, the same pins as upstream's `contract-mirror.test.ts`, and `bun run check:mirror` compares the files with upstream through `gh` (read-only, never in a test suite). A wire change lands upstream first, then both files are copied here unchanged and the pins are updated.
+**Contract.** `packages/core/src/svc/contract.ts` and `svc-auth.ts` are byte-identical to elizaos/eliza `plugins/plugin-network/src/backend/{contract,svc-auth}.ts` on `develop` (upstream #34657 and #34661). There is no contract version constant: `packages/core/test/contract-mirror.test.ts` pins the SHA-256 of both files, the same pins as upstream's `contract-mirror.test.ts`, and `pnpm run check:mirror` compares the files with upstream through `gh` (read-only, never in a test suite). A wire change lands upstream first, then both files are copied here unchanged and the pins are updated.
 
 Two paths the service uses are not in the mirror:
 - `DELIVER_RECEIPT_PATH = "/api/internal/network/deliver/receipt"` is a local constant in `cloud-channel.ts`. Eliza Cloud serves it (develop: `packages/cloud/api/internal/network/deliver/receipt/route.ts`, the deliver handler in reconcile-only mode): the same signed body and id as the deliver, and it never sends. The service calls it only to learn whether an unknown acceptance was accepted; it never retries an unknown acceptance with a new id. **Proposal for upstream:** add `DELIVER_RECEIPT_PATH` to `contract.ts`, so both sides name it from the contract.
@@ -88,7 +88,7 @@ Real-model qualification with fictional adults on a throwaway local Postgres dat
 
 ```bash
 NETWORK_ENGINE_JUDGE=1 NETWORK_ENGINE_JUDGE_BUDGET_USD=0.25 NETWORK_ENGINE_JUDGE_MAX_REQUESTS=12 \
-  bun test --conditions eliza-source --timeout 300000 \
+  pnpm exec vitest run --testTimeout 300000 \
   packages/network/test/slop-date-path.integration.test.ts --test-name-pattern 'join, onboard'
 ```
 
@@ -98,14 +98,14 @@ This uses the configured provider and sends no member texts. It does not prove a
 
 ```bash
 # Once: one tick, then exit.
-PLATFORM_ENV=dev NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/<db> bun run packages/network/service/main.ts --once --dry-run
+PLATFORM_ENV=dev NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/<db> node --import tsx --env-file-if-exists=.env packages/network/service/main.ts --once --dry-run
 
 # As a service: each network ticks every minute on its own; staff and webhooks on 127.0.0.1:4848, the public API on 127.0.0.1:8790.
 PLATFORM_ENV=dev NETWORK_DATABASE_URL=... NETWORK_SERVICE_TOKENS="admin:<t>,reviewer:<t>,safety:<t>,analyst:<t>" \
-  BLOOIO_WEBHOOK_SECRET=whsec_... bun run packages/network/service/main.ts
+  BLOOIO_WEBHOOK_SECRET=whsec_... node --import tsx --env-file-if-exists=.env packages/network/service/main.ts
 ```
 
-The database must have the `network` and `platform` schemas (`bun run db:migrate`; runbook-real 1.1). The service checks the tables at start and does not migrate. It reads the networks and the app policy (`platform.networks`, `platform.apps`) at start.
+The database must have the `network` and `platform` schemas (`pnpm run db:migrate`; runbook-real 1.1). The service checks the tables at start and does not migrate. It reads the networks and the app policy (`platform.networks`, `platform.apps`) at start.
 
 | Variable | Default | What it does |
 |---|---|---|
@@ -237,7 +237,7 @@ Two parts of the product talk to members. They have different jobs.
 | | This service (`packages/network/service`) | `packages/plugin-network` (the Eliza agent side) |
 |---|---|---|
 | What it is | The Network: matching, review, consent, probes, booked plans, reminders, feedback, safety, outreach limits | An Eliza plugin: the member-context provider, the `SET_STATE` action, the network-signals evaluator and their routing |
-| Who runs it | A Bun process on its own (Railway worker, runbook-real 7.2) | Eliza Cloud, on each agent turn, with Cloud's stores and turn authority |
+| Who runs it | A Node 26 process (Railway worker, runbook-real 7.2) | Eliza Cloud, on each agent turn, with Cloud's stores and turn authority |
 | State | `network.network_state` and the console tables, under the advisory lock | The `NetworkStore` that Cloud injects (availability state, member context) |
 | Messages | Every Network message (probes, booked plans, reminders) goes through its send path, the leak guard and the adapter | Agent replies in a conversation the member started |
 | Review | Every opportunity waits for a person here | Never composes an opportunity |

@@ -4,9 +4,10 @@
 //    every row reaches the provider once, with its own key "tn:<id>".
 //  - A worker that stopped mid-send: recover() hands the row back and it goes again with the same key.
 //  - The leak guard reads the new text together with the recent thread to the same address (core-14).
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { setTimeout as sleep } from "node:timers/promises";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { randomUUID } from "node:crypto";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { SimClock } from "../../core/src/clock.ts";
 import { applySchema, devPgUp, DEV_PG_PORT } from "../../observatory/db/dev-pg.ts";
 import { pgAvailable } from "../../observatory/test/pg.ts";
@@ -30,7 +31,7 @@ function recorder() {
     kind: "sim",
     async send(req) {
       calls.push(req);
-      await Bun.sleep(5);
+      await sleep(5);
       return { providerMessageId: `sim:${req.idempotencyKey}`, chatId: req.to, status: "sent", transport: "sim" };
     },
   };

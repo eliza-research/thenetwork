@@ -1,9 +1,9 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S node --import=tsx
 // Builds the SKILL.md snapshots in the two plugins from the one source, sites/skills/<name>/SKILL.md.
 // Never edit a snapshot by hand: change the source, then run this. ChatGPT and Codex import the
 // skills when the plugin is submitted and do not fetch them again, so a change needs a new plugin version.
-//   bun run plugins/build.ts           write plugins/openai/skills and plugins/claude/skills
-//   bun run plugins/build.ts --check   exit 1 if a snapshot differs from a fresh build (tests run this)
+//   node --import tsx --env-file-if-exists=.env plugins/build.ts           write plugins/openai/skills and plugins/claude/skills
+//   node --import tsx --env-file-if-exists=.env plugins/build.ts --check   exit 1 if a snapshot differs from a fresh build (tests run this)
 //
 // The OpenAI plugin leaves out slop.date: OpenAI requires plugins that suit people aged 13-17
 // (developers.openai.com/plugins/plugin-guidelines). Its copy of the hub skill is cut down to the
@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
 import { DEFAULT_BACKEND_ORIGIN, DEFAULT_TEXT_LINE } from "../sites/skills.config.ts";
 import { RESPONSE_STYLE } from "../sites/skill-responses.ts";
 
-const ROOT = import.meta.dir;
+const ROOT = import.meta.dirname;
 const SOURCE = join(ROOT, "..", "sites", "skills");
 
 export const SITE: Record<string, string> = { "ntwrk-party": "ntwrk.party", "slop-date": "slop.date", "peon-biz": "peon.biz", "friends-help": "friends.help" };
@@ -98,6 +98,6 @@ if (import.meta.main) {
     const want = new Set(PLUGINS[plugin as keyof typeof PLUGINS].skills as readonly string[]);
     for (const d of existsSync(dir) ? readdirSync(dir) : []) if (!want.has(d)) stale.push(`${plugin}/skills/${d} (not in the plugin; delete it)`);
   }
-  if (stale.length) { console.error(`stale snapshots (run bun run plugins/build.ts):\n  ${stale.join("\n  ")}`); process.exit(1); }
+  if (stale.length) { console.error(`stale snapshots (run node --import tsx --env-file-if-exists=.env plugins/build.ts):\n  ${stale.join("\n  ")}`); process.exit(1); }
   if (check) console.log("plugin skill snapshots are up to date");
 }

@@ -39,8 +39,8 @@ Ages on the pages equal the platform registry (`packages/platform/src/apps.ts` `
   `{{MCP_URL}}`, `{{TEXT_LINE}}`, `{{MESSAGES_HREF}}` and `{{TURNSTILE_SITE_KEY}}` in pages and skills, and fails on a leftover `{{`.
 - `shared/`: the only JavaScript. `join.ts`, `auth.ts`, `turnstile.ts` and `demo.ts`
   find elements by `data-*` attributes, so each site writes its own markup and copy.
-- `sites.ts`: the site list and the build (Bun's HTML bundler, then `static/`, `_headers` and the
-  skill files into `dist/`).
+- `sites.ts` uses Vite to build the HTML entries and esbuild to bundle the Pages Worker. It adds
+  `static/`, `_headers`, and the skill files to `dist/`.
 - `PRODUCT.md`: who the sites are for and the design principles.
 
 The landing pages are agent-first (founder decision 10) and hold four things: the name, one line
@@ -60,11 +60,11 @@ The pages work without JavaScript (links open the agent; the prompt stays select
 ## Commands
 
 ```bash
-bun run sites:dev                 # all four sites; backend paths proxied to PLATFORM_API_ORIGIN (default http://127.0.0.1:8790)
-bun run sites:dev slop            # one site
-bun run sites/sites.ts            # build every site into sites/<domain>/dist
-DEPLOY_TARGET=production TURNSTILE_SITE_KEY=... bun run sites/sites.ts   # production build: refuses draft legal text
-bunx tsc --noEmit -p sites/tsconfig.json   # typecheck (the root tsconfig does not include sites/)
+pnpm run sites:dev                 # all four sites; backend paths proxied to PLATFORM_API_ORIGIN (default http://127.0.0.1:8790)
+pnpm run sites:dev slop            # one site
+node --import tsx --env-file-if-exists=.env sites/sites.ts            # build every site into sites/<domain>/dist
+DEPLOY_TARGET=production TURNSTILE_SITE_KEY=... node --import tsx --env-file-if-exists=.env sites/sites.ts   # production build: refuses draft legal text
+pnpm exec tsc --noEmit -p sites/tsconfig.json   # typecheck (the root tsconfig does not include sites/)
 ```
 
 The dev proxy forwards the same paths as the production router (`/api/*`, `/mcp`, `/oauth/*`,

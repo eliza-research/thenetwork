@@ -7,10 +7,12 @@
 //  - a person-to-person block made on one app keeps the two people apart on the other app (the
 //    control run without the block pairs them).
 // Postgres in a database of its own per test process. Nothing is sent (dry-run adapters).
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { setTimeout as sleep } from "node:timers/promises";
+import { findExecutable } from "../../core/src/runtime/process.ts";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
@@ -21,7 +23,7 @@ import { loadSnapshot } from "../service/snapshot.ts";
 import { Mini, START } from "./mini.ts";
 
 const T = 600_000;
-const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!Bun.which("pg_ctl");
+const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
 const DB = `network_crossapp_test_${process.pid}`;
 const ADMIN_URL = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/postgres`;
 const URL_ = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/${DB}`;
@@ -93,7 +95,7 @@ async function say(svc: NetworkService, clock: SimClock, app: AppId, key: string
 /** Close every service this file opened, each bounded: a close that waits on a stuck query fails the hook in 30 s, not 120 s. */
 async function closeAll() {
   for (const s of open.splice(0)) {
-    await Promise.race([s.close(), Bun.sleep(30_000).then(() => { throw new Error("NetworkService.close() did not finish in 30 s (a query or lock wait is stuck)"); })]);
+    await Promise.race([s.close(), sleep(30_000, undefined, { ref: false }).then(() => { throw new Error("NetworkService.close() did not finish in 30 s (a query or lock wait is stuck)"); })]);
   }
 }
 const staff = (svc: NetworkService, method: string, path: string, body?: unknown) =>

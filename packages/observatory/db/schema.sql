@@ -2,7 +2,7 @@
 -- 32.19, 33). Production (Eliza Cloud, Railway Postgres) does not have it yet; this file is the
 -- contract the observatory's real-world mode reads. Field names mirror packages/core/src/types.ts.
 -- Idempotent: safe to run on an existing database.
--- This file is migration 0001 (db/migrate.ts; bun run db:migrate). It runs again when it changes, so it
+-- This file is migration 0001 (db/migrate.ts; pnpm run db:migrate). It runs again when it changes, so it
 -- may only create what is missing. Put every other change (new columns on app tables, keys, policies)
 -- in a new numbered file in db/migrations/.
 

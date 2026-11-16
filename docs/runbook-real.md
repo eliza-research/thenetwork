@@ -14,7 +14,7 @@ Every command below was run on 2026-10-07 against the local development database
 
 ## 1. The `network` and `platform` schemas
 
-Five migrations define them. `bun run db:migrate` applies them in this order:
+Five migrations define them. `pnpm run db:migrate` applies them in this order:
 
 | Migration | File | What it holds |
 |---|---|---|
@@ -42,8 +42,8 @@ The two baseline files:
 ### 1.1 Apply it
 
 ```bash
-bun run db:migrate                                                   # the local dev database (starts the dev cluster)
-bun run db:migrate -- --url postgres://$USER@localhost:54339/<db>    # another local database
+pnpm run db:migrate                                                   # the local dev database (starts the dev cluster)
+pnpm run db:migrate -- --url postgres://$USER@localhost:54339/<db>    # another local database
 ```
 
 The runner (`packages/observatory/db/migrate.ts`) keeps a ledger in `public.__migrations` with a checksum per migration. It runs every pending migration in one transaction, under the advisory lock `hashtext('thenetwork-migrate')`. A numbered migration runs once. A baseline (0001, 0002) runs again only when its text changes; both only create what is missing. The runner refuses a host that is not local.
@@ -69,7 +69,7 @@ Write every change as a new numbered file in `packages/observatory/db/migrations
 
 | Environment | How to change the schema |
 |---|---|
-| Local dev | Add the migration. Run `bun run db:migrate`. To start again, `bun run packages/observatory/db/dev-pg.ts reset`, then seed again (section 3). |
+| Local dev | Add the migration. Run `pnpm run db:migrate`. To start again, `node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts reset`, then seed again (section 3). |
 | Tests | Each Postgres test creates its own database and runs the migrations (or the baseline files) on it, then drops it. Update `packages/platform/test/db.test.ts`, which lists the expected migrations (it fails today: it stops at 0004). |
 | Staging, production | **[FOUNDER]** Run `migrate.ts` as a superuser or a `BYPASSRLS` role (forced row-level security applies to the table owner). The runner refuses non-local hosts today; a deploy needs a reviewed way to run it against Railway. |
 
@@ -118,22 +118,22 @@ Checked on a scratch local database: that login can read `network.members`, gets
 The local cluster runs on port **54339**. Do not use port 54329; another tool uses it.
 
 ```bash
-bun run packages/observatory/db/dev-pg.ts up      # first time: initdb; then start and run the migrations on the `network` database
-bun run packages/observatory/db/dev-pg.ts url     # prints postgres://$USER@localhost:54339/network
-bun run packages/observatory/db/dev-pg.ts reset   # drop and recreate the network and platform schemas
-bun run packages/observatory/db/dev-pg.ts down    # stop
+node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts up      # first time: initdb; then start and run the migrations on the `network` database
+node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts url     # prints postgres://$USER@localhost:54339/network
+node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts reset   # drop and recreate the network and platform schemas
+node --import tsx --env-file-if-exists=.env packages/observatory/db/dev-pg.ts down    # stop
 ```
 
 - Data lives in `runs/pg` (`OBSERVATORY_PG_DIR` changes it; `OBSERVATORY_PG_PORT` changes the port).
-- Code that only starts the cluster (`devPgUp()`, for example tests and `platform:dev`) no longer migrates the shared `network` database. Only `dev-pg.ts up`, `reset`, `seed.ts` and `bun run db:migrate` change it. For the platform, use a database of your own ([runbook-platform.md](runbook-platform.md)).
+- Code that only starts the cluster (`devPgUp()`, for example tests and `platform:dev`) no longer migrates the shared `network` database. Only `dev-pg.ts up`, `reset`, `seed.ts` and `pnpm run db:migrate` change it. For the platform, use a database of your own ([runbook-platform.md](runbook-platform.md)).
 - It needs Postgres 16-18 (`brew install postgresql@16`). The pgvector extension is available in that install, but the schema does not use it yet.
 
 Load data:
 
 ```bash
-bun run packages/observatory/db/seed.ts --from-dataset                 # the 500 synthetic members (public files only)
-bun run packages/observatory/db/seed.ts --from-sim --days 14 --seed 1  # a whole simulated run: messages, opportunities, review items, outcomes
-bun run observatory:db                                                  # dev-pg up + seed --from-sim --days 14
+node --import tsx --env-file-if-exists=.env packages/observatory/db/seed.ts --from-dataset                 # the 500 synthetic members (public files only)
+node --import tsx --env-file-if-exists=.env packages/observatory/db/seed.ts --from-sim --days 14 --seed 1  # a whole simulated run: messages, opportunities, review items, outcomes
+pnpm run observatory:db                                                  # dev-pg up + seed --from-sim --days 14
 ```
 
 **Caution:** `seed.ts` writes to the database. It refuses a host that is not local. Do not pass `--allow-remote` unless a human asks for it.
@@ -141,7 +141,7 @@ bun run observatory:db                                                  # dev-pg
 ## 4. Real-world mode in the Observatory
 
 ```bash
-NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/network bun run observatory --mode real
+NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/network pnpm run observatory --mode real
 ```
 
 The page shows "LOCAL DATABASE · read-only · PII scrubbed". There are no game controls. An admin can switch to game mode from the top bar, unless the server is real-only (4.3).
@@ -212,12 +212,12 @@ Set `OBSERVATORY_REAL_ONLY=1` on every staging and production server.
 
 - The server starts in real mode and refuses game mode (`real_only`), the game commands and the lab. It lists no levels.
 - The UI hides the mode switch, the game controls and the Lab tab.
-- The server never loads game mode or the scenario list: both are imported only when game mode is asked for. The deployed image has no simulator package at all (`deploy/backend/Dockerfile`; `bun run sim`, block `ops`, checks it).
+- The server never loads game mode or the scenario list: both are imported only when game mode is asked for. The deployed image has no simulator package at all (`deploy/backend/Dockerfile`; `pnpm run sim`, block `ops`, checks it).
 - Under `PLATFORM_ENV=staging` or `production`, a real-only server refuses to start without Cloudflare Access sign-in ([deploy.md](deploy.md) 2.6). The token example below is for a local database only.
 
 ```bash
 OBSERVATORY_REAL_ONLY=1 OBSERVATORY_TOKENS="admin:<t>,reviewer:<t>,safety:<t>,analyst:<t>" \
-  NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/network bun run observatory --port 4795
+  NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/network pnpm run observatory --port 4795
 ```
 
 Checked on 2026-10-07 against the local database: the server printed "(mode: real, real only)"; `POST /api/mode` to game returned `real_only`; `GET /api/lab` returned `enabled: false`; an analyst got 403 on a member.
@@ -265,7 +265,7 @@ Today shadow proposals are not sent to a review queue. To label them, a reviewer
 
 `packages/network/src/store.ts`:
 
-- `new PgStore(url, "ntwrk:nyc")` connects with Bun SQL (the default id is `ntwrk:nyc`; a legacy id `"nyc"` belongs to ntwrk). `await store.migrate()` applies `network-state.sql`. Each save sets `app.app_id` for its transaction.
+- `new PgStore(url, "ntwrk:nyc")` connects with the Postgres client (the default id is `ntwrk:nyc`; a legacy id `"nyc"` belongs to ntwrk). `await store.migrate()` applies `network-state.sql`. Each save sets `app.app_id` for its transaction.
 - `await runTick(net, store, now)` takes `pg_try_advisory_lock(hashtext('network-tick-ntwrk:nyc'))` on one connection (one lock per network id). If another process holds it, the call returns false and does nothing. Otherwise it loads the newest `network.network_state` (on every call), runs `tick(now)`, saves, and releases the lock in `finally`.
 - `await runStored(net, store, fn)` takes the same lock with `pg_advisory_lock`: it waits instead of skipping. Then it loads, runs `fn(net)` and saves. Use it for every inbound message (`n => n.onInbound(msg)`) and every staff action.
 - `save()` writes the JSON and upserts `network.opportunities`, `network.participations`, `network.review_items` and `network.requests` in one transaction. It rewrites the participations of each opportunity (a re-roll changes them) and deletes rows the state no longer holds (an under-13 decline).
@@ -273,13 +273,13 @@ Today shadow proposals are not sent to a review queue. To label them, a reviewer
 
 **Caution:** do not call `onInbound()`, `tick()` or a staff action on the Network directly in production. Use `runTick()` or `runStored()`. A change made outside them is not saved, and the next stored unit of work loads over it.
 
-Tested (until 2026-10-08, when the unit tests were deleted; git history at 16cde70): `packages/network/test/store.test.ts` ran save, load, row counts, row deletion, participations after a re-roll and after an under-13 decline, the lock (a second holder gets nothing), `runTick`, and two Networks on one store (a STOP survives the other's tick) against a per-process database on the :54339 cluster. Run it with `cd packages/network && bun test test/store.test.ts --timeout 300000` (it needs the local Postgres install).
+Tested (until 2026-10-08, when the unit tests were deleted; git history at 16cde70): `packages/network/test/store.test.ts` ran save, load, row counts, row deletion, participations after a re-roll and after an under-13 decline, the lock (a second holder gets nothing), `runTick`, and two Networks on one store (a STOP survives the other's tick) against a per-process database on the :54339 cluster. The original command is preserved in that revision.
 
 ### 6.3 How a reviewer works in production
 
 **A reviewer acts on real members through the service's staff API** (6.5), from the Observatory's real mode (4.4) or directly. Nothing is deployed. A reviewer can do these things:
 
-1. Train in game mode: `bun run observatory --review human`. Use the Review tab (Approve, Edit, Re-roll, Reject; keys in [observatory.md](observatory.md) section 7).
+1. Train in game mode: `pnpm run observatory --review human`. Use the Review tab (Approve, Edit, Re-roll, Reject; keys in [observatory.md](observatory.md) section 7).
 2. Watch real data in real mode: the review items, their decisions, edits, re-rolls, time spent and invalidations.
 3. Decide in real mode with `NETWORK_SERVICE_URL` set (4.4), or directly: `GET /review`, then `POST /review/:oppId` with a reviewer token (6.5).
 
@@ -311,11 +311,11 @@ Until these exist, do not connect the ConsentNetwork to a real channel.
 
 ```bash
 # One tick of every network against a scratch database (migrated as in 1.1), then exit.
-PLATFORM_ENV=dev NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/<your db> bun run packages/network/service/main.ts --once --dry-run
+PLATFORM_ENV=dev NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/<your db> node --import tsx --env-file-if-exists=.env packages/network/service/main.ts --once --dry-run
 
 # The service: each network ticks every minute; webhooks and the staff API on 127.0.0.1:4848; the public API on 127.0.0.1:8790.
 PLATFORM_ENV=dev NETWORK_DATABASE_URL=... NETWORK_SERVICE_TOKENS="admin:<t>,reviewer:<t>,reviewer@slop:<t>,safety:<t>,analyst:<t>" BLOOIO_WEBHOOK_SECRET=whsec_... \
-  bun run packages/network/service/main.ts
+  node --import tsx --env-file-if-exists=.env packages/network/service/main.ts
 curl -H "Authorization: Bearer <reviewer token>" http://127.0.0.1:4848/review                       # The Network
 curl -H "Authorization: Bearer <reviewer@slop token>" 'http://127.0.0.1:4848/review?app=slop'      # or /apps/slop/review
 curl -X POST -H "Authorization: Bearer <reviewer token>" -d '{"decision":"approve","secondsSpent":40}' http://127.0.0.1:4848/review/<oppId>
@@ -387,7 +387,7 @@ Decision first **[FOUNDER]**: PRD 31 says the Network is built inside Eliza Clou
 |---|---|---|---|
 | 1 | Persist all ConsentNetwork state in the `network` schema; make the tick resumable | `packages/network`, schema | Built: `PgStore`, `runTick()` (6.2) |
 | 2 | A production entry point for the matcher: `runTick()` on a schedule, and `runStored()` for inbound messages and staff actions | `packages/network` | Built: `packages/network/service/main.ts` (6.5). Not deployed. |
-| 3 | A migration runner and a ledger (section 1.2). The service checks the tables at start and does not migrate. | schema | Built: `bun run db:migrate` (local hosts only). A reviewed way to run it against staging and production is missing. |
+| 3 | A migration runner and a ledger (section 1.2). The service checks the tables at start and does not migrate. | schema | Built: `pnpm run db:migrate` (local hosts only). A reviewed way to run it against staging and production is missing. |
 | 4 | The Network admin API for review decisions, the matching switch and safety actions, with staff auth and an audit row (section 6.4) | `packages/network/service` | Built (6.5), with the Observatory's role tokens and `network.staff_audit`. The Observatory's real mode calls it (4.4). |
 | 5 | Leak check on the Blooio send path. The queue runs the leak guard; pass `forbiddenProvider(net, memberOf)` from `@thenetwork/network` as its `forbiddenProvider` and `blooioRecipientPolicy(net, memberOf)` as its `recipientPolicy` ([network.md](network.md) 6.5). | `packages/blooio`, the entry point | Wired in the service's `BlooioAdapter` (6.5). Tested with a fake provider only. |
 | 6 | A server flag that turns off game mode in the Observatory | `packages/observatory` | Built: `OBSERVATORY_REAL_ONLY=1` (4.3) |
@@ -415,8 +415,8 @@ Decision first **[FOUNDER]**: PRD 31 says the Network is built inside Eliza Clou
 6. Turn on daily backups: the Railway volume backups and the R2 dump ([deploy.md](deploy.md) section 8). **[FOUNDER]** Run the restore drill (section 8 below) before launch (PRD 28.5 gate: "backup restore tested").
 7. Add a read replica if the plan allows it. Point the Observatory at the replica (PRD 31.4: analytics never read the primary at peak).
 8. **Matcher worker service (`network-matcher`).**
-   - Build from this repository with Bun.
-   - Start command: `bun run packages/network/service/main.ts` (6.5), with `NETWORK_SERVICE_HOST=0.0.0.0` only behind the access proxy.
+   - Build from this repository with Node 26 and pnpm.
+   - Start command: `node --import tsx --env-file-if-exists=.env packages/network/service/main.ts` (6.5), with `NETWORK_SERVICE_HOST=0.0.0.0` only behind the access proxy.
    - Each tick, for each network: `runTick(net, new PgStore(DATABASE_URL, "<app>:<city>"), now)`. It takes `pg_try_advisory_lock(hashtext('network-tick-<app>:<city>'))`. If the lock is held, the tick is skipped. Each inbound message and staff action: `runStored(net, store, fn)`, which waits for the same lock. Every call loads the newest stored state before it runs and saves after, so two instances run one unit of work at a time and never overwrite each other's saves.
    - The service ticks every minute (fixed in `main.ts`). The engine runs once a day inside the tick (09:00 New York). Initial invites and asks go in each member's send window (12:00 New York plus up to 2 hours of spread, open for 6 hours, or a time learned from their replies), so the one-minute tick keeps sends close to the slot ([network.md](network.md) 6.4).
    - Run one replica first. A second replica is safe (the lock), but each replica has its own in-memory Blooio queue.
@@ -426,7 +426,7 @@ Decision first **[FOUNDER]**: PRD 31 says the Network is built inside Eliza Clou
    - Review mode stays `"human"` (the default). Never set `"auto"` outside the simulator.
    - `/health` reports the last tick, the lock holder, the backlog and the refusals, for the heartbeat alert (PRD 35.2). It needs a staff token.
 9. **Observatory service.**
-   - Start command: `bun run packages/observatory/src/server.ts --mode real`, with `OBSERVATORY_REAL_ONLY=1` (4.3).
+   - Start command: `node --import tsx --env-file-if-exists=.env packages/observatory/src/server.ts --mode real`, with `OBSERVATORY_REAL_ONLY=1` (4.3).
    - Variables: `NETWORK_DATABASE_URL` (a read login on the replica), `OBSERVATORY_DATABASE_URL_<APP>` (each app's read login) and `OBSERVATORY_PLATFORM_DATABASE_URL` (the cross-app login), `NETWORK_SERVICE_URL` (the matcher service's private address) and `NETWORK_SERVICE_TOKEN` (4.4) **[CREDENTIALS]**, `OBSERVATORY_TOKENS` with one token per role **[CREDENTIALS]**, `OBSERVATORY_AUDIT_DATABASE_URL` (the `observatory_audit_writer` login on the primary, section 2) **[CREDENTIALS]**, `OBSERVATORY_HOST=0.0.0.0` (the container must listen on all interfaces; it is safe only behind Access, step 7.3.3), `OBSERVATORY_ALLOWED_ORIGINS=https://observatory.ntwrk.party`, `OBSERVATORY_ENV_LABEL=STAGING` in staging, `NODE_ENV=production`.
    - Never set `OBSERVATORY_REVEAL_PII`. For named staff, set `OBSERVATORY_TRUST_CF_ACCESS=1` with `OBSERVATORY_CF_ACCESS_TEAM` and `OBSERVATORY_CF_ACCESS_AUD` (4.1): a request without a valid Access token is refused.
    - Do not give the service a public Railway domain. Reach it only through Cloudflare (7.3).
@@ -454,7 +454,7 @@ Use `scripts/wrangler.sh` for every Wrangler command. It runs as the ntwrk.party
    - `observatory.ntwrk.party`: a proxied CNAME to the Observatory service's Railway target (Railway custom domain). Proxied, so Access applies.
    - `api.ntwrk.party`: a Worker custom domain or route, through `scripts/wrangler.sh` (the guard refuses it without `NTWRK_ALLOW_DEPLOY=1`).
    - Do not touch `mcp.ntwrk.party`. Connectors are not in the MVP (PRD 28.4).
-5. **The app sites.** **[FOUNDER]** Each site (`sites/<domain>`) is a Cloudflare Pages project (founder decision 8: `ntwrk-party`, `slop-date`, `peon-biz`, `friends-help`). Check a build with `bun run sites/sites.ts` (it writes `sites/<domain>/dist` with `_worker.js` and `_routes.json`). slop.date deploys first; all four are deployed this round by the coordinator ([deploy.md](deploy.md) section 3). `/api/*` on each site reaches the shared API through the signed router.
+5. **The app sites.** **[FOUNDER]** Each site (`sites/<domain>`) is a Cloudflare Pages project (founder decision 8: `ntwrk-party`, `slop-date`, `peon-biz`, `friends-help`). Check a build with `node --import tsx --env-file-if-exists=.env sites/sites.ts` (it writes `sites/<domain>/dist` with `_worker.js` and `_routes.json`). slop.date deploys first; all four are deployed this round by the coordinator ([deploy.md](deploy.md) section 3). `/api/*` on each site reaches the shared API through the signed router.
 
 ### 7.4 Go-live checks
 
@@ -503,7 +503,7 @@ Do this once before the first real member joins, then on the first working day o
    ```bash
    RESTORE_DATABASE_URL=<the owner URL, from Railway> BACKUP_R2_ACCOUNT_ID=... BACKUP_R2_BUCKET=ntwrk-backups \
    BACKUP_R2_ACCESS_KEY_ID=... BACKUP_R2_SECRET_ACCESS_KEY=... BACKUP_PREFIX=postgres/production BACKUP_ENCRYPTION_KEY=... \
-     bun run deploy/backup/restore.ts --r2 latest --db restore_drill_$(date -u +%Y%m%d)
+     node --import tsx --env-file-if-exists=.env deploy/backup/restore.ts --r2 latest --db restore_drill_$(date -u +%Y%m%d)
    ```
 
    The drill restores with `--no-owner --no-privileges` and never runs `roles.sql`, so it cannot change a role or a grant of the production server. Do not add `--roles` or `--keep-privileges` for a drill.
@@ -514,7 +514,7 @@ Do this once before the first real member joins, then on the first working day o
 6. Drop the scratch database: `drop database restore_drill_<date>;`. Delete any downloaded file.
 7. Fail: open an incident. Until a drill passes, a new member wave waits **[FOUNDER]**.
 
-`bun run sim` (block `ops`) runs the same backup and restore against a seeded database on the dev Postgres (`:54339`) as a tracked gate, so a change that breaks the scripts shows up before a drill.
+`pnpm run sim` (block `ops`) runs the same backup and restore against a seeded database on the dev Postgres (`:54339`) as a tracked gate, so a change that breaks the scripts shows up before a drill.
 
 ### 8.3 Restore for real (data loss or corruption) **[FOUNDER]**
 

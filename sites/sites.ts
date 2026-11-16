@@ -3,6 +3,9 @@
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
+import { build as buildWorker, formatMessages } from "esbuild";
+import { build as buildPages } from "vite";
+import { parse as parseYaml } from "yaml";
 import { mcpUrlFor, skillsConfig } from "./skills.config.ts";
 import { RESPONSE_STYLE } from "./skill-responses.ts";
 import { agentRow, messagesHref, joinMessageFor, promptFor } from "./agents.ts";
@@ -25,7 +28,7 @@ export interface Site {
   skill: string;
 }
 
-const here = import.meta.dir;
+const here = import.meta.dirname;
 export const SKILLS_DIR = join(here, "skills");
 
 /** The only third-party origin a page may load: Cloudflare Turnstile on the phone step. */
@@ -88,8 +91,8 @@ export function skillText(name: string, env: Record<string, string | undefined> 
 /** The frontmatter description of a SKILL.md (one line, no YAML block scalars in our files). */
 export function skillDescription(text: string): string {
   const fm = text.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
-  const parsed = Bun.YAML.parse(fm) as { description?: unknown };
-  return typeof parsed.description === "string" ? parsed.description : "";
+  const parsed = parseYaml(fm) as { description?: unknown } | null;
+  return typeof parsed?.description === "string" ? parsed.description : "";
 }
 
 /** Files that may hold placeholders. Bundled JS and CSS never do (minified JS can contain "{{" legitimately). */
@@ -166,60 +169,63 @@ export const routesFile = (): string => JSON.stringify({ version: 1, include: RU
 export const DRAFT_MARKERS = [/\bDraft\b/, /Not yet in effect/i];
 
 /**
- * Builds one site: Bun's HTML bundler for the pages, then the files Cloudflare serves as they are:
+ * Builds one site with Vite for the pages, then adds the files Cloudflare serves as they are:
  * sites/<domain>/static/ (robots.txt, _redirects, .well-known/...), _headers and the skill files.
  * Placeholders are filled in every text file, and a leftover "{{" fails the build.
  */
 export async function buildSite(s: Site, outdir: string, env: Record<string, string | undefined> = process.env): Promise<{ ok: boolean; logs: string[] }> {
   rmSync(outdir, { recursive: true, force: true });
-  const res = await Bun.build({
-    entrypoints: pages(s),
-    outdir,
-    root: s.src,
-    minify: true,
-    publicPath: "/",
-    target: "browser",
-  });
-  const logs = res.logs.map((l) => String(l));
-  if (!res.success) return { ok: false, logs };
+  const logs: string[] = [];
   try {
-    // Bun emits an empty module for a page with no script of its own. Drop it and its <script> tag.
-    const empty = readdirSync(outdir).filter((f) => f.endsWith(".js") && statSync(join(outdir, f)).size === 0);
-    for (const f of empty) rmSync(join(outdir, f));
-    if (empty.length) {
-      for (const f of readdirSync(outdir).filter((x) => x.endsWith(".html"))) {
-        const html = readFileSync(join(outdir, f), "utf8");
-        const out = empty.reduce((h, js) => h.replace(new RegExp(`<script[^>]*src="/${js.replace(".", "\\.")}"[^>]*></script>`, "g"), ""), html);
-        if (out !== html) writeFileSync(join(outdir, f), out);
-      }
-    }
+    await buildPages({
+      root: s.src,
+      configFile: false,
+      publicDir: false,
+      base: "/",
+      logLevel: "silent",
+      build: {
+        outDir: outdir,
+        assetsInlineLimit: 0,
+        modulePreload: { polyfill: false },
+        minify: true,
+        rolldownOptions: {
+          input: pages(s),
+          onwarn: warning => logs.push(warning.message),
+          output: {
+            entryFileNames: "[name]-[hash].js",
+            chunkFileNames: "[name]-[hash].js",
+            assetFileNames: asset => asset.names.some(name => name.endsWith("host-grotesk.woff2"))
+              ? "fonts/host-grotesk.woff2" : "[name]-[hash][extname]",
+          },
+        },
+      },
+    });
     const staticDir = join(dirname(s.src), "static");
     if (existsSync(staticDir)) cpSync(staticDir, outdir, { recursive: true });
-    // The bundler inlines the landing font as data:, which font-src 'self' refuses: serve the file instead.
-    // Read and write, not cpSync: a copy touches the source, and the dev server watches shared/.
-    mkdirSync(join(outdir, "fonts"), { recursive: true });
-    writeFileSync(join(outdir, "fonts/host-grotesk.woff2"), readFileSync(join(here, "shared/fonts/host-grotesk.woff2")));
-    for (const f of readdirSync(outdir).filter((x) => x.endsWith(".css"))) {
-      const css = readFileSync(join(outdir, f), "utf8");
-      const out = css.replace(/url\(["']?data:font\/woff2;base64,[^)"']+["']?\)/g, 'url("/fonts/host-grotesk.woff2")');
-      if (out !== css) writeFileSync(join(outdir, f), out);
+    const font = join(outdir, "fonts/host-grotesk.woff2");
+    if (!existsSync(font)) {
+      // Keep the shared font available even when a standalone page does not import landing.css.
+      mkdirSync(dirname(font), { recursive: true });
+      writeFileSync(font, readFileSync(join(here, "shared/fonts/host-grotesk.woff2")));
     }
     write(join(outdir, "_headers"), headersFile());
     // Cloudflare Pages advanced mode: _worker.js is the router, and _routes.json runs it only on the
     // backend paths (every other path is a static file, served without the Worker).
     const stagingOrigin = stagingSiteOrigins(env)[s.app];
-    const worker = await Bun.build({
-      entrypoints: [ROUTER], target: "browser", format: "esm", minify: true,
+    const worker = await buildWorker({
+      entryPoints: [ROUTER], bundle: true, platform: "browser", format: "esm", minify: true,
+      outfile: join(outdir, "_worker.js"), write: false, logLevel: "silent",
       define: { __SITE_APP_ID__: JSON.stringify(s.app), __SITE_HOST__: JSON.stringify(stagingOrigin ? new URL(stagingOrigin).host : s.domain), __SITE_BACKEND_ORIGIN__: JSON.stringify(skillsConfig(env).BACKEND_ORIGIN) },
     });
-    if (!worker.success || worker.outputs.length !== 1) return { ok: false, logs: [...logs, ...worker.logs.map(String), "the router bundle (_worker.js) failed"] };
-    write(join(outdir, "_worker.js"), await worker.outputs[0]!.text());
+    logs.push(...await formatMessages(worker.warnings, { kind: "warning" }));
+    if (worker.outputFiles.length !== 1) return { ok: false, logs: [...logs, "the router bundle (_worker.js) failed"] };
+    write(join(outdir, "_worker.js"), worker.outputFiles[0]!.text);
     write(join(outdir, "_routes.json"), routesFile());
     writeSkills(s, outdir, env);
     // The landing page's logo row (agents.ts), before fill() so a staging build rewrites its links too.
     const home = join(outdir, "index.html");
     const skill = skillText(s.skill, env);
-    const version = (Bun.YAML.parse(skill.match(/^---\n([\s\S]*?)\n---/)![1]!) as { metadata: { version: string } }).metadata.version;
+    const version = (parseYaml(skill.match(/^---\n([\s\S]*?)\n---/)![1]!) as { metadata: { version: string } }).metadata.version;
     writeFileSync(home, readFileSync(home, "utf8")
       .replace(/(<code data-prompt>)[\s\S]*?(<\/code>)/, (_all, open, close) => `${open}${promptFor(s, version)}${close}`)
       .replaceAll("{{AGENTS}}", agentRow(s, version)));
@@ -245,7 +251,7 @@ export async function buildSite(s: Site, outdir: string, env: Record<string, str
 }
 
 if (import.meta.main) {
-  // bun run sites/sites.ts [app...]   builds into sites/<domain>/dist
+  // pnpm sites:build [app...] builds into sites/<domain>/dist.
   const wanted = process.argv.slice(2);
   let failed = false;
   for (const s of wanted.length ? wanted.map(site) : SITES) {

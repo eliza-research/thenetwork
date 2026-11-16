@@ -1,5 +1,7 @@
 # friends.help on the shared engine: the NYC world, friendsPack and the simulation (2026-10-08)
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-08-friends-pack.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 friends.help (app id `friends`, renamed from buddies.nyc) is the friendship app on The Network's shared engine, NYC first. This report covers the simulated NYC world (`packages/sim/src/apps/friends/`), the app pack (`packages/engine/src/packs/friends/`), the oracle calibration, the design, the tuning trail, the held-out results, the ablations and the gate table.
 
 - **Branch:** `engine/friends`, worktree the `thenetwork-friends` worktree. Earlier versions were merged to main (`67f9d77`, `4d20c96`); this update is rebased onto `origin/main`. Not pushed.
@@ -7,8 +9,8 @@ friends.help (app id `friends`, renamed from buddies.nyc) is the friendship app 
 - **Core and engine changes:** none outside `packages/engine/src/packs/friends/`. The `AppPack` contract, `conformance.ts`, `plans.ts`, `attention.ts` and the core types are unchanged. The only edit made after the rebase is inside the pack: a `tz` fallback, because core `timezones` is now `Partial<Record<City, string>>`.
 - **Checks:**
   - networkPack goldens are byte-identical (`golden.test.ts`, fast tier).
-  - `bunx tsc --noEmit -p .` is clean.
-  - `bun test --conditions eliza-source ./packages/engine ./packages/sim/src/apps`: 451 pass, 2 skip, 0 fail. This includes `runConformance(friendsPack)` and the friends-specific checks.
+  - `pnpm exec tsc --noEmit -p .` is clean.
+  - `pnpm exec vitest run --conditions eliza-source ./packages/engine ./packages/sim/src/apps`: 451 pass, 2 skip, 0 fail. This includes `runConformance(friendsPack)` and the friends-specific checks.
 
 ## Official gates (adopted 2026-10-08) and the held-out check
 
@@ -21,7 +23,7 @@ Where these live:
 
 Metrics are pooled over seeds (the mean of each metric). The borough gate also shows the worst seed.
 
-Held-out seeds 5-8, 400 personas (`bun run packages/sim/src/apps/friends/cli.ts --seeds 5-8 --weeks 8`, and `--weeks 12`):
+Held-out seeds 5-8, 400 personas (`node --import tsx --env-file-if-exists=.env packages/sim/src/apps/friends/cli.ts --seeds 5-8 --weeks 8`, and `--weeks 12`):
 
 | Official gate | 8 weeks | Pass |
 |---|---|---|
@@ -171,7 +173,7 @@ A proposal naming a claimed minor is dropped and counted.
   - The truth is that estimate × a fixed per-route log-normal error (SD 0.15).
   - NYC has 262 NTAs; this table is a 93-neighborhood subset. `prototypes/poc-travel-time` (summary in [SUMMARY.md](SUMMARY.md)) validated the cell heuristics for walking, cycling and driving, not for transit.
 
-**Calibration** (8 weeks, seeds 1-4; `bun run packages/sim/src/apps/friends/calibrate.ts`):
+**Calibration** (8 weeks, seeds 1-4; `node --import tsx --env-file-if-exists=.env packages/sim/src/apps/friends/calibrate.ts`):
 
 | Measure | random (reshuffled) | friendsPack | oracle | Anchor |
 |---|---:|---:|---:|---|
@@ -255,7 +257,7 @@ Final tuning-seed result (seeds 1-4): V14 36.5% ± 2.3, repeat 35.8% ± 2.3, fri
 
 ### Full held-out comparison
 
-Seeds 5-8, 8 weeks (`bun run packages/sim/src/apps/friends/cli.ts --seeds 5-8 --weeks 8`):
+Seeds 5-8, 8 weeks (`node --import tsx --env-file-if-exists=.env packages/sim/src/apps/friends/cli.ts --seeds 5-8 --weeks 8`):
 
 | Metric | pack | random-within-area | greedy-popular | oracle |
 |---|---:|---:|---:|---:|
@@ -374,12 +376,12 @@ The friends-specific checks:
 
 ```bash
 export OPENAI_API_KEY= SURPLUS_API_KEY= CEREBRAS_API_KEY=
-bun run packages/sim/src/apps/friends/cli.ts --seeds 5-8 --weeks 8 --only pack,random,greedy,oracle   # held-out table
-bun run packages/sim/src/apps/friends/cli.ts --seeds 5-8 --weeks 12                                   # 12 weeks
-bun run packages/sim/src/apps/friends/cli.ts --seeds 1-8 --only pack,pack-no-crews,pack-no-repeat,pack-no-universal,pack-planner-only,pack-no-zones,pack-no-minmax,pack-no-partner,pack-spread,pack-fairness,pack-options3
-bun run packages/sim/src/apps/friends/cli.ts --seeds 5-8 --n 1200 --only pack,random,oracle          # density
-bun run packages/sim/src/apps/friends/calibrate.ts --seeds 1-4
-bun test --conditions eliza-source ./packages/sim/src/apps ./packages/engine
+node --import tsx --env-file-if-exists=.env packages/sim/src/apps/friends/cli.ts --seeds 5-8 --weeks 8 --only pack,random,greedy,oracle   # held-out table
+node --import tsx --env-file-if-exists=.env packages/sim/src/apps/friends/cli.ts --seeds 5-8 --weeks 12                                   # 12 weeks
+node --import tsx --env-file-if-exists=.env packages/sim/src/apps/friends/cli.ts --seeds 1-8 --only pack,pack-no-crews,pack-no-repeat,pack-no-universal,pack-planner-only,pack-no-zones,pack-no-minmax,pack-no-partner,pack-spread,pack-fairness,pack-options3
+node --import tsx --env-file-if-exists=.env packages/sim/src/apps/friends/cli.ts --seeds 5-8 --n 1200 --only pack,random,oracle          # density
+node --import tsx --env-file-if-exists=.env packages/sim/src/apps/friends/calibrate.ts --seeds 1-4
+pnpm exec vitest run --conditions eliza-source ./packages/sim/src/apps ./packages/engine
 ```
 
 Runtime: one pack run (400 personas, 8 weeks) takes about 3.5 s.

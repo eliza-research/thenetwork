@@ -77,7 +77,7 @@ Imported from `quint/candidate_pool.qnt` at `30d950e`. See [model index](README.
 //                            friends group bound of 3 (rules.ts group_size). This can be intended.
 //
 // RUN (from the repository root; quint 0.33.1)
-//   bun run quint:check quint/candidate_pool.qnt
+//   pnpm run quint:check quint/candidate_pool.qnt
 module candidate_pool {
 
   // ------------------------------------------------------------------ constants

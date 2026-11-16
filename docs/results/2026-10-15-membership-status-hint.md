@@ -1,5 +1,7 @@
 # Confirm membership without promising delivery
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-15-membership-status-hint.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 Attribution: Automated. Codex made this fix under the user's project approval.
 Base: `4ecfd9aa76efbde011da01826669661bbcd02e1a`.
 Scope: PRD 28.3 agent-first onboarding and the existing `check_status` contract.
@@ -49,12 +51,12 @@ This is a server response regression, not a mocked model response or a genuine s
 | Whitespace | Pass |
 
 ```sh
-bun test --conditions eliza-source packages/mcp/test/mcp.test.ts --test-name-pattern 'active membership status stays read-only'
-bun test --conditions eliza-source packages/mcp/test/mcp.test.ts packages/mcp/test/oauth.test.ts packages/mcp/test/updates.test.ts
-bun run typecheck
+pnpm exec vitest run --conditions eliza-source packages/mcp/test/mcp.test.ts --test-name-pattern 'active membership status stays read-only'
+pnpm exec vitest run --conditions eliza-source packages/mcp/test/mcp.test.ts packages/mcp/test/oauth.test.ts packages/mcp/test/updates.test.ts
+pnpm run typecheck
 ```
 
-Local Bun: 1.3.14. Normal CI uses Bun 1.4.2 and remains a separate gate.
+Local the former runtime: 1.3.14. Normal CI uses the former runtime 1.4.2 and remains a separate gate.
 No dependency was installed or added.
 Real LLM, browser video and agent-client testing: not applicable to this deterministic HTTP response change; no model calls or cost.
 Full simulations, Postgres integration and full e2e were not rerun locally.

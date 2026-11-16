@@ -25,7 +25,7 @@ This package holds what the apps share: people, verified phones, memberships per
 
 ## Database
 
-The schema is in `packages/observatory/db/migrations/` (0003 platform, 0004 app ids and row-level security on the network tables, 0005 the console per app). Apply it with `bun run db:migrate` (`-- --url <local url>` for another database). Tests make a database of their own on the dev cluster (port 54339). The roles and the order are in [docs/runbook-real.md](../../docs/runbook-real.md) sections 1 and 2.
+The schema is in `packages/observatory/db/migrations/` (0003 platform, 0004 app ids and row-level security on the network tables, 0005 the console per app). Apply it with `pnpm run db:migrate` (`-- --url <local url>` for another database). Tests make a database of their own on the dev cluster (port 54339). The roles and the order are in [docs/runbook-real.md](../../docs/runbook-real.md) sections 1 and 2.
 
 Leaving an app, deleting everything and the join rollback call `notify.forget_data` (packages/notify/db/retention.sql, migration 9003) in the same transaction. Every database a `PgPeopleStore` uses must run the full migrate list, Notify included (9002 and 9003); on a database without them, leave and join rollback fail.
 
@@ -37,7 +37,7 @@ Omitted home keeps the legacy runtime default.
 
 ## Public API
 
-`createPublicApi({ store, otp, turnstile, hostMap, onJoin, onStop, onForget, onExport, ... })` returns a fetch handler. It answers `undefined` for paths outside `/api`, so any `Bun.serve` can mount it. The Network service mounts it on `PLATFORM_API_PORT` (8790) and supplies the hooks.
+`createPublicApi({ store, otp, turnstile, hostMap, onJoin, onStop, onForget, onExport, ... })` returns a fetch handler. It answers `undefined` for paths outside `/api`, so the Node HTTP adapter can mount it. The Network service mounts it on `PLATFORM_API_PORT` (8790) and supplies the hooks.
 
 | Route | Answer |
 |---|---|
@@ -71,7 +71,7 @@ The app comes from the host a site router signed (`src/proxy.ts`, `PLATFORM_PROX
 | `CLEF_RATINGS` | The slop.date photo rater. Unset or `on`: on (founder, 2026-10-09). `off`: off; any other value also leaves it off. Off: photos still work, nothing is rated. |
 | `CLOUDFLARE_AI_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLEF_MODEL` | Workers AI for the rater. Without the token and the account id nothing is rated (status `off_env`). |
 | `CLEF_WEIGHTS_PATH` | Unset: the engine's placeholder Clef weights (status `on_placeholder`, logged at start with the weights version) until fitted weights pass the P2 decision rule. Set: a fitted weights file with a version and a provenance record, or it is refused (`refused_weights`, ratings off). |
-| `PLATFORM_ENV` | `production`, `staging` or `dev`. Detection fails closed: an environment that is not declared dev gets no dev shortcut. `bun test` (`NODE_ENV=test`) counts as dev. Outside dev, `assertBootConfig` refuses to start without Twilio, Turnstile, the three secrets, a database and review mode human. |
+| `PLATFORM_ENV` | `production`, `staging` or `dev`. Detection fails closed: an environment that is not declared dev gets no dev shortcut. `pnpm exec vitest run` (`NODE_ENV=test`) counts as dev. Outside dev, `assertBootConfig` refuses to start without Twilio, Turnstile, the three secrets, a database and review mode human. |
 
 ## Rules the code keeps
 
@@ -88,7 +88,7 @@ The app comes from the host a site router signed (`src/proxy.ts`, `PLATFORM_PROX
 
 ## Validation
 
-The platform's unit tests were deleted on 2026-10-08 (founder decision: simulations only). Integration tests on Postgres are allowed (founder decision 4 of 2026-10-09): `test/photos.test.ts` covers the metadata strip corpus, the photo rules and the rating race. Kept, pending the founder's decision: the security suite (`test/db.test.ts`: composite foreign keys, per-app RLS, platform_service limits, append-only audit; `test/api-security.test.ts`: CSRF, no phone-number enumeration, OTP limits), run with `bun run security` against the dev Postgres and in CI as "security (pending)". The opt-out corpus is scored by `bun run sim` (evals/opt-out.jsonl).
+The platform's unit tests were deleted on 2026-10-08 (founder decision: simulations only). Integration tests on Postgres are allowed (founder decision 4 of 2026-10-09): `test/photos.test.ts` covers the metadata strip corpus, the photo rules and the rating race. Kept, pending the founder's decision: the security suite (`test/db.test.ts`: composite foreign keys, per-app RLS, platform_service limits, append-only audit; `test/api-security.test.ts`: CSRF, no phone-number enumeration, OTP limits), run with `pnpm run security` against the dev Postgres and in CI as "security (pending)". The opt-out corpus is scored by `pnpm run sim` (evals/opt-out.jsonl).
 
 ## Known gaps
 

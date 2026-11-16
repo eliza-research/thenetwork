@@ -2,8 +2,9 @@
 // own database login: a simulated run is written to Postgres, the real service runs on that database,
 // and the Observatory's real mode sends review, safety and matching-switch commands to it and reads the
 // result back. Without the service, real mode stays read-only. Skipped without Postgres.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { SQL } from "bun";
+import { serveHttp, type HttpServer } from "../../core/src/runtime/http.ts";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY, SimClock } from "@thenetwork/core";
 import { NetworkService } from "../../network/service/service.ts";
 import { rowsFromGame, writeRows } from "../db/writer.ts";
@@ -20,7 +21,7 @@ describe.skipIf(!pgAvailable)("real mode: staff actions through the Network serv
   let url: string;
   let svc: NetworkService;
   let clock: SimClock;
-  let http: ReturnType<typeof Bun.serve>;
+  let http: HttpServer;
   let real: RealSource;
   const seen: { path: string; staff: string | null; body: unknown }[] = [];
   beforeAll(async () => {
@@ -37,7 +38,7 @@ describe.skipIf(!pgAvailable)("real mode: staff actions through the Network serv
     await g.dispose();
     // The console's own token: only it may name the reviewer of record (X-Network-Staff-Id).
     svc = new NetworkService({ url, clock, tokens: `admin:${SERVICE_TOKEN}`, consoleToken: SERVICE_TOKEN, log: () => {} });
-    http = Bun.serve({
+    http = await serveHttp({
       port: 0, hostname: "127.0.0.1",
       async fetch(req) {
         seen.push({ path: new URL(req.url).pathname, staff: req.headers.get("x-network-staff-id"), body: req.method === "POST" ? await req.clone().json() : undefined });
@@ -47,7 +48,7 @@ describe.skipIf(!pgAvailable)("real mode: staff actions through the Network serv
     real = new RealSource({ url, pollMs: 3_600_000, pushMs: 3_600_000, service: { url: http.url.href, token: SERVICE_TOKEN } });
     await real.init();
   }, T);
-  afterAll(async () => { await real?.dispose(); http?.stop(true); await svc?.close(); await dropTestDb(); });
+  afterAll(async () => { await real?.dispose(); await http?.stop(true); await svc?.close(); await dropTestDb(); });
 
   test("review: the decision goes to the service with the staff id, is stored by the service, and real mode shows it; a refusal comes back with the Network's reason", async () => {
     const s = real.state();
@@ -113,7 +114,7 @@ describe.skipIf(!pgAvailable)("real mode: staff actions through the Network serv
     expect(at(7)).toContain("warn:service_tick");
     expect(at(20)).toContain("bad:service_tick");
     expect(at(20)).not.toContain("info:service_ok");
-    http.stop(true);
+    await http.stop(true);
     await real.control({ type: "refresh" });
     expect(keys()).toContain("bad:service_down");
     expect(await real.control({ type: "matching", on: true }, "admin@example.org")).toMatchObject({ ok: false, code: "service_unavailable" });

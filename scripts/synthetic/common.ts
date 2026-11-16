@@ -1,5 +1,7 @@
+import { createHash as hashForNode } from "node:crypto";
 // Shared constants and record types for the synthetic member dataset (data/synthetic/).
 // Every record is SYNTHETIC: invented people, invented names, fictional contact details.
+import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { fileURLToPath } from "node:url";
 import type {
   Category, City, NetworkCity, Edge, EdgeType, Facet, FacetKind, Intent, Member, ParticipationState, Presence,
@@ -165,6 +167,6 @@ export const HIDDEN_ONLY_KEYS = [
 ];
 
 export const readJsonl = async <T = any>(path: string): Promise<T[]> =>
-  (await Bun.file(path).text()).split("\n").filter(l => l.trim()).map(l => JSON.parse(l) as T);
+  (await fileAt(path).text()).split("\n").filter(l => l.trim()).map(l => JSON.parse(l) as T);
 
-export const sha256 = (s: string) => new Bun.CryptoHasher("sha256").update(s).digest("hex");
+export const sha256 = (s: string) => hashForNode("sha256").update(s).digest("hex");

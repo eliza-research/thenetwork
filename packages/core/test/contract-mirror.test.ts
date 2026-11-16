@@ -7,11 +7,11 @@
 //   1. A wire change goes upstream first (elizaos/eliza, plugins/plugin-network/src/backend), with the
 //      new hashes in its contract-mirror.test.ts.
 //   2. Copy both upstream files unchanged into packages/core/src/svc/ (do not reformat them).
-//   3. Run `bun run check:mirror` (needs `gh` signed in): it compares these files with elizaos/eliza develop.
+//   3. Run `pnpm check:mirror` (needs `gh` signed in): it compares these files with elizaos/eliza develop.
 //   4. Update the two hashes below to what `shasum -a 256 packages/core/src/svc/{contract,svc-auth}.ts`
 //      prints; they must equal the upstream pins.
 // There is no contract version constant: the hashes are the contract's identity.
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 

@@ -1,10 +1,12 @@
 // HTTP + WebSocket API in both modes: state, details, controls, live deltas, mode switching,
 // that the web app is served, and access control (token, Host and Origin checks: audit P1-1).
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { setTimeout as sleep } from "node:timers/promises";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SQL } from "bun";
+import { fetchWithHost } from "../../core/src/runtime/fetch.ts";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY } from "@thenetwork/core";
 import { rowsFromDataset, writeRows } from "../db/writer.ts";
 import { createServer, type ObservatoryServer } from "../src/server.ts";
@@ -43,13 +45,31 @@ afterAll(async () => { await obs?.stop(); await dropTestDb(); await rm(dir, { re
 
 describe("observatory server", () => {
   test("serves the web app", async () => {
-    const html = await fetch(base + "/").then(r => r.text()); // public: no token
+    const page = await fetch(base + "/"); // public: no token
+    expect(page.status).toBe(200);
+    expect(page.headers.get("content-type")).toContain("text/html");
+    const html = await page.text();
     expect(html).toContain('<div id="root">');
     expect(html).toContain("Network Observatory");
+    expect(html).toContain("script-src 'self'");
+    expect(html).toContain('<meta name="referrer" content="no-referrer"');
+    expect(html).toContain('src="/assets/main.js"');
+    expect(html).toContain('href="/assets/main.css"');
+    expect(html).toContain('href="/assets/styles.css"');
+    for (const [path, contentType, content] of [
+      ["/assets/main.js", "text/javascript", "Observatory token"],
+      ["/assets/main.css", "text/css", ".leaflet-container"],
+      ["/assets/styles.css", "text/css", ".app"],
+    ]) {
+      const response = await fetch(base + path);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain(contentType);
+      expect(await response.text()).toContain(content);
+    }
   });
 
   test("the API needs the token; the page does not", async () => {
-    expect(base).toStartWith("http://127.0.0.1:");
+    expect(base).toMatch(/^http:\/\/127\.0\.0\.1:/);
     // The page URL carries the token in the #fragment: a browser never sends it to a server or in a Referer.
     expect(obs.openUrl).toBe(`${base}/#token=${TOKEN}`);
     expect((await fetch(base + "/")).status).toBe(200);
@@ -77,8 +97,8 @@ describe("observatory server", () => {
     expect((await fetch(base + "/api/state", { headers: { ...AUTH, origin: "http://evil.example" } })).status).toBe(403);
     expect((await fetch(base + "/api/state", { headers: { ...AUTH, origin: base } })).status).toBe(200);
     // A rebinding page reaches the server under its own host name.
-    expect((await fetch(base + "/api/state", { headers: { ...AUTH, host: `evil.example:${obs.server.port}` } })).status).toBe(403);
-    expect((await fetch(base + "/api/state", { headers: { ...AUTH, host: `localhost:${obs.server.port}` } })).status).toBe(200);
+    expect((await fetchWithHost(base + "/api/state", { headers: { ...AUTH, host: `evil.example:${obs.server.port}` } })).status).toBe(403);
+    expect((await fetchWithHost(base + "/api/state", { headers: { ...AUTH, host: `localhost:${obs.server.port}` } })).status).toBe(200);
   });
 
   test("the WebSocket upgrade needs a one-use ticket (or the header) and a same-site Origin", async () => {
@@ -120,7 +140,7 @@ describe("observatory server", () => {
     expect(bad.status).toBe(409);
     expect((await bad.json()).error).toContain("pick 2");
     expect((await post("/api/control", { nope: 1 })).status).toBe(400);
-    await Bun.sleep(400);
+    await sleep(400);
     expect(msgs[0]).toEqual({ type: "hello", mode: "game", app: "ntwrk" });
     const deltas = msgs.filter(m => m.type === "delta");
     expect(deltas.length).toBeGreaterThan(0);

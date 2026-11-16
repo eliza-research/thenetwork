@@ -1,12 +1,13 @@
 // OAuthStore on Postgres (the oauth schema, db/oauth.sql). migrate() applies the schema; it only
 // creates what is missing, so it is safe to run at every start.
+import { fileAt } from "../../core/src/runtime/files.ts";
 import { join } from "node:path";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { signupDraftUnique } from "../../core/src/generated/mcpSignupDraft.ts";
 import type { McpAppId } from "./apps.ts";
 import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, type AuditRow, type AuthCode, type AuthRequest, type Grant, type OAuthClient, type OAuthStore, type Token } from "./store.ts";
 
-export const OAUTH_SQL = join(import.meta.dir, "..", "db", "oauth.sql");
+export const OAUTH_SQL = join(import.meta.dirname, "..", "db", "oauth.sql");
 
 type Row = Record<string, any>;
 const ms = (v: unknown): number | null => (v === null || v === undefined ? null : new Date(v as string | Date).getTime());
@@ -42,7 +43,7 @@ export class PgOAuthStore implements OAuthStore {
     this.owned = typeof db === "string";
     this.sql = typeof db === "string" ? new SQL({ url: db, max: 4 }) : db;
   }
-  async migrate() { await this.sql.unsafe(await Bun.file(OAUTH_SQL).text()); }
+  async migrate() { await this.sql.unsafe(await fileAt(OAUTH_SQL).text()); }
   async close() { if (this.owned) await this.sql.close(); }
 
   async putSignupDraft(d: import("./store.ts").SignupDraft, at: number) {

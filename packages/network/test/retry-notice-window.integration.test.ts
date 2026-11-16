@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { DAY, HOUR, MINUTE } from "@thenetwork/core";
 import { allowedAt } from "../src/outreach.ts";
 import { Mini } from "./mini.ts";

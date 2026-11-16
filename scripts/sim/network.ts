@@ -1,7 +1,10 @@
+import { isDeepStrictEqual } from "node:util";
 // The network block: the consent-first ConsentNetwork in the simulated NYC world (data/synthetic/v1),
 // with the simulated reviewer. Pinned: invariants on seed 3 over 10 days; consent vs push on seeds 1-3
 // over 21 days; every NYC scenario; every sim/scenarios/*.json at pass^3 against the push stub; the
 // attention and plans invariants on the consent arms; and the shared conformance rules for networkPack.
+import { fileAt } from "../../packages/core/src/runtime/files.ts";
+import { spawnProcessSync } from "../../packages/core/src/runtime/process.ts";
 import { readdirSync } from "node:fs";
 import { DAY, HOUR, MINUTE, SimClock, type MemberId, type NetworkContext, type SimMessage } from "../../packages/core/src/index.ts";
 import { resolveConfig } from "../../packages/engine/src/config.ts";
@@ -33,7 +36,7 @@ const MEETINGS_MIN = 140;
 
 async function world(days: number, seed = 3, network: NetworkOptions = { review: "auto" }) {
   const personas = await nycPersonas();
-  const start = (await Bun.file(`${DATA_DIR}/manifest.json`).json()).snapshotNow as number;
+  const start = (await fileAt(`${DATA_DIR}/manifest.json`).json()).snapshotNow as number;
   const net = new ConsentNetwork({ seed, ...network });
   const records: RunRecord[] = [];
   const w = new World({ seed, personas, days, start, writeLog: false, network: net, agent: new PolicyPersonaAgent(start), spawnFriend: friendFactory({ seed }), onRecord: r => records.push(r) });
@@ -84,9 +87,9 @@ export async function inviteRootGate(b: Block): Promise<void> {
 
 export async function scenarioRepetitionGate(b: Block): Promise<void> {
   await b.run("scenario CLI: repetitions must be a positive integer; default and one run execute checks", () => {
-    const root = `${import.meta.dir}/../..`;
-    const run = (k?: string) => Bun.spawnSync([
-      process.execPath, "run", "--conditions", "eliza-source", "packages/sim/src/cli.ts", "--scenario", "packages/sim/scenarios/band-week-apart.json", "--no-log",
+    const root = `${import.meta.dirname}/../..`;
+    const run = (k?: string) => spawnProcessSync([
+      process.execPath, "--import", "tsx", "--conditions", "eliza-source", "packages/sim/src/cli.ts", "--scenario", "packages/sim/scenarios/band-week-apart.json", "--no-log",
       ...(k === undefined ? [] : [`--k=${k}`]),
     ], { cwd: root, stdout: "pipe", stderr: "pipe" });
     for (const k of ["0", "-1", "1.5", "invalid"]) {
@@ -156,7 +159,7 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
       expect(offered.get("active")).not.toEqual(offered.get("none"));
       for (const state of states.slice(1)) {
         const control = state === "future" || state === "expired" ? "none" : "active";
-        if (!Bun.deepEquals(offered.get(state), offered.get(control))) failures.push(`${seed}:${state}`);
+        if (!isDeepStrictEqual(offered.get(state), offered.get(control))) failures.push(`${seed}:${state}`);
       }
     }
     expect(failures).toEqual([]);
@@ -426,7 +429,7 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
   }
 
   // ---- sim/scenarios/*.json against the push stub (pass^3), and a negative control -------------------------
-  const dir = `${import.meta.dir}/../../packages/sim/scenarios`;
+  const dir = `${import.meta.dirname}/../../packages/sim/scenarios`;
   for (const f of readdirSync(dir).filter(x => x.endsWith(".json")).sort()) {
     const s = await loadScenario(`${dir}/${f}`);
     const r = await runScenarioPassK(s, o.quick ? 1 : 3, { network: sc => new StubNetwork({ seed: s.seed, ...sc.stub }) });
@@ -547,7 +550,7 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
       const allowedPrior = allowedAt === undefined ? undefined : availabilityProb({ memberId: member.id, tz: NY }, { start: allowedAt, end: allowedAt + 2 * HOUR }, clock.now());
       results.push({ seed, body, tags: saved?.tags ?? [], expected, hasStanding: saved !== undefined, hasAvailability: reloaded.availability !== undefined, ...(p === undefined ? {} : { p, prior }), ...(allowedP === undefined ? {} : { allowedP, allowedPrior }) });
     }
-    const mismatches = results.filter(r => !Bun.deepEquals(r.tags, r.expected));
+    const mismatches = results.filter(r => !isDeepStrictEqual(r.tags, r.expected));
     expect(mismatches.map(({ seed, body, tags }) => [seed, body, tags]).slice(0, 8)).toEqual([]);
     for (const r of results) {
       if (r.p !== undefined && r.expected.length) expect(r.p).toBeLessThan(r.prior!);

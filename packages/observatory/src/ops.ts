@@ -3,7 +3,7 @@
 // login), read-only. Row-level security shows each app's read role its own rows and the shared ones
 // (the line). The budgets are the backend's COST_BUDGET_DAILY_USD[_<APP>]: set the same values on the
 // console service. Real mode only: game mode has no costs.
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { budgetLines, costBudgetsFromEnv, dayOf, type BudgetLine, type CostApp } from "../../network/service/cost.ts";
 import { appUrlEnv, type AppId } from "./apps.ts";
 

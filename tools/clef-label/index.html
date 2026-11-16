@@ -97,7 +97,7 @@
 //   {"a": <left photo id>, "b": <right photo id>, "winner": "a"|"b", "dim": "overall"|"face"|"body",
 //    "rater": <id>, "t": <ISO time>, "ms": <decision time>, "shared": bool, "repeat": bool, "seed": n}
 //   {"flag": <photo id>, "reason": "...", "rater": <id>, "t": ...}
-// Photo id = the path inside the chosen folder (the same ids `bun run clef features` writes).
+// Photo id = the path inside the chosen folder (the same ids `pnpm run clef features` writes).
 const $ = id => document.getElementById(id);
 const IMG = /\.(jpe?g|png|webp)$/i;
 let files = new Map(), ids = [], labels = [], plan = null, rater = "", seed = 1, dimMode = "overall";

@@ -2,9 +2,10 @@
 // (elizaOS/eliza spike/network-plugin, packages/cloud/services/gateway-webhook/__tests__/network-takeover.test.ts),
 // driven against the real service over HTTP with signed requests and a real Postgres (dev-pg, :54339).
 // Sends are dry-run; a fake Cloud deliver endpoint records anything that would leave, and must stay empty.
-import {afterAll, beforeAll, expect, test} from "bun:test";
+import { serveHttp, type HttpServer } from "../../core/src/runtime/http.ts";
+import {afterAll, beforeAll, expect, test} from "vitest";
 import {randomUUID} from "node:crypto";
-import {SQL} from "bun";
+import {SQL} from "../../core/src/runtime/postgres.ts";
 import {SimClock, MINUTE} from "@thenetwork/core";
 import {applySchema} from "../../observatory/db/dev-pg.ts";
 import {APPS} from "../../platform/src/apps.ts";
@@ -20,7 +21,7 @@ const url = `postgres://${process.env.USER ?? "postgres"}@127.0.0.1:54339/${db}`
 const secret = "synthetic-eliza-takeover-test-secret-20261009";
 const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
 const ONBOARDING = ["I enjoy hiking and cooking", "Saturday afternoons work for me", "Small groups are good"];
-let sql: SQL, service: NetworkService, server: ReturnType<typeof Bun.serve>, cloud: ReturnType<typeof Bun.serve>;
+let sql: SQL, service: NetworkService, server: HttpServer, cloud: HttpServer;
 let escaped = 0;
 const cloudCalls: string[] = [];
 let seq = 0;
@@ -31,16 +32,16 @@ beforeAll(async () => {
   console.info(`[owned-db] ${db}`);
   await applySchema(url, {lockTimeout: "5s"});
   sql = new SQL({url, max: 2});
-  cloud = Bun.serve({hostname: "127.0.0.1", port: 0, fetch: req => { cloudCalls.push(new URL(req.url).pathname); return Response.json({ok: false, error: "rejected", retryable: false}); }});
+  cloud = await serveHttp({hostname: "127.0.0.1", port: 0, fetch: req => { cloudCalls.push(new URL(req.url).pathname); return Response.json({ok: false, error: "rejected", retryable: false}); }});
   service = new NetworkService({url, clock, photoStorage: null, instance: "eliza-takeover-integration", env: env(),
     networks: [{id: "ntwrk:nyc", matchingEnabled: false}, {id: "slop:nyc", matchingEnabled: false}, {id: "friends:nyc", matchingEnabled: false}],
     network: {seed: 1}, notify: false, log: () => {},
     adapter: () => { const a = new DryRunAdapter(() => {}); a.direct = async () => { escaped++; return "dry_run"; }; a.deliver = async rows => { escaped += rows.length; return rows.map(r => ({id: r.id, status: "dry_run"})); }; return a; },
   });
   await service.start();
-  server = Bun.serve({hostname: "127.0.0.1", port: 0, fetch: req => service.fetch(req)});
+  server = await serveHttp({hostname: "127.0.0.1", port: 0, fetch: req => service.fetch(req)});
 }, 120_000);
-afterAll(async () => { server?.stop(true); cloud?.stop(true); await service?.close(); await sql?.close(); await admin.close(); });
+afterAll(async () => { await server?.stop(true); await cloud?.stop(true); await service?.close(); await sql?.close(); await admin.close(); });
 
 const turn = (from: string, text: string, o: {app?: TurnRequest["app"]; receivedAt?: number; id?: string} = {}): TurnRequest =>
   ({messageId: o.id ?? `SMtk${++seq}`, channel: "blooio", from, to: null, text, transport: "imessage", receivedAt: o.receivedAt ?? clock.now(), ...(o.app ? {app: o.app} : {})});

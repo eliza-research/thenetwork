@@ -3,7 +3,7 @@
 // production service (service.ts) and the Observatory's shadow engine runs (observatory
 // src/sources/real.ts) use this one builder, so both see the same members. It never reads
 // network.channel_identities (phones and emails).
-import type { SQL } from "bun";
+import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY, type Edge, type EdgeType, type Facet, type Intent, type Member, type Presence, type Proposal, type ParticipationState, type WorldSnapshot } from "@thenetwork/core";
 
 import { participationOverride, validWindow, windowIsActive } from "../../core/src/generated/participationWindow.ts";

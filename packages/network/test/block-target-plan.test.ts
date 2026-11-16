@@ -1,6 +1,6 @@
 // "Who do you mean?" in a group plan names only people the member was booked with: an invitee who
 // was only probed (no names) is no counterpart, and a member who only got the probe is shown no names.
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { DAY } from "@thenetwork/core";
 import { Mini } from "./mini.ts";
 

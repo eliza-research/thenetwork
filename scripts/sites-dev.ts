@@ -1,7 +1,8 @@
+import { serveHttp } from "../packages/core/src/runtime/http.ts";
 // Local dev server for the four app sites (sites/*).
-//   bun run sites:dev                 all four: ntwrk 5101, slop 5102, peon 5103, friends 5104
-//   bun run sites:dev slop peon       only some
-// Each site is built with Bun's HTML bundler into sites/<domain>/dist and rebuilt on change.
+//   pnpm run sites:dev                 all four: ntwrk 5101, slop 5102, peon 5103, friends 5104
+//   pnpm run sites:dev slop peon       only some
+// Each site is built with Vite's HTML build into sites/<domain>/dist and rebuilt on change.
 // The backend paths of the production router (deploy/router.ts: /api/*, /mcp, /oauth/*,
 // /.well-known/oauth-*) are proxied to PLATFORM_API_ORIGIN (default http://127.0.0.1:8790), the
 // shared backend. With PLATFORM_PROXY_SECRET set (scripts/platform-dev.ts sets it) those paths run
@@ -9,6 +10,7 @@
 // the backend sees exactly the signed headers it sees in production. Without a secret (sites:dev alone,
 // against the legacy service on :8790) it sends X-Forwarded-Host: <site domain> instead. When the API is down, those paths answer 502 {ok:false, error:"api_unreachable"} and the
 // pages show an inline error. Nothing here sends a text message or calls a paid service.
+import { fileAt } from "../packages/core/src/runtime/files.ts";
 import { existsSync, statSync, watch } from "node:fs";
 import { join, normalize, sep } from "node:path";
 import { handle as routerHandle, isBackendPath, isProxyHeader, retiredSitePage } from "../deploy/router.ts";
@@ -87,9 +89,9 @@ function file(outdir: string, pathname: string): { path: string; status: number 
   return existsSync(nf) ? { path: nf, status: 404 } : null;
 }
 
-export function serveSite(s: Site, opts: DevOptions) {
+export async function serveSite(s: Site, opts: DevOptions) {
   const secret = opts.proxySecret ?? process.env.PLATFORM_PROXY_SECRET ?? undefined;
-  return Bun.serve({
+  return await serveHttp({
     port: opts.port,
     hostname: "127.0.0.1",
     async fetch(req) {
@@ -107,7 +109,7 @@ export function serveSite(s: Site, opts: DevOptions) {
       if (!f) return new Response("Not found", { status: 404 });
       const headers: Record<string, string> = { "cache-control": "no-store", ...SECURITY_HEADERS };
       if (f.path.endsWith(".md")) headers["content-type"] = "text/plain; charset=utf-8";
-      return new Response(Bun.file(f.path), { status: f.status, headers });
+      return new Response(await fileAt(f.path).blob(), { status: f.status, headers });
     },
   });
 }
@@ -122,11 +124,11 @@ if (import.meta.main) {
   const apiOrigin = (process.env.PLATFORM_API_ORIGIN ?? "http://127.0.0.1:8790").replace(/\/+$/, "");
   const wanted = process.argv.slice(2);
   const chosen = wanted.length ? wanted.map(findSite) : SITES;
-  const sitesDir = join(import.meta.dir, "../sites");
+  const sitesDir = join(import.meta.dirname, "../sites");
   for (const s of chosen) {
     const outdir = join(sitesDir, s.domain, "dist");
     await rebuild(s, outdir);
-    serveSite(s, { port: s.port, apiOrigin, outdir });
+    await serveSite(s, { port: s.port, apiOrigin, outdir });
     console.log(`[sites] ${s.domain.padEnd(12)} http://127.0.0.1:${s.port}  (api -> ${apiOrigin})`);
   }
   // Rebuild on change. A change in sites/shared rebuilds every site.

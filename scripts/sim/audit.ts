@@ -1,3 +1,4 @@
+import { setTimeout as waitForMs } from "node:timers/promises";
 // The audit block: regression gates for the P0 and P1 findings of the 2026-10-08 audit
 // (docs/audit/2026-10-08-weaknesses.md) in network, platform, sites and deploy whose fix had no gate
 // after the 2026-10-08 cleanup deleted the unit tests. The status of every finding, and which gate or
@@ -12,6 +13,8 @@
 // re-check (it needs a real-mode source), and the NetworkService under a login that is only
 // network_service (as production runs it), restarted. Blocking when the dev Postgres runs, tracked as
 // skipped when it does not. Fakes only: a fake Blooio, phones +1 212 555 01xx.
+import { fileAt, writePath } from "../../packages/core/src/runtime/files.ts";
+import { spawnProcessSync } from "../../packages/core/src/runtime/process.ts";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -31,7 +34,7 @@ type Msg = Extract<RunRecord, { type: "message" }>;
 type Log = Extract<RunRecord, { type: "network_log" }>;
 const logs = (r: RunRecord[], kind: string) => r.filter((x): x is Log => x.type === "network_log" && x.kind === kind);
 const outbound = (r: RunRecord[]) => r.filter((x): x is Msg => x.type === "message" && x.msg.direction === "outbound" && !x.msg.system);
-const REPO = join(import.meta.dir, "../..");
+const REPO = join(import.meta.dirname, "../..");
 
 export async function auditBlock(b: Block): Promise<void> {
   await networkGates(b);
@@ -47,7 +50,7 @@ export async function auditBlock(b: Block): Promise<void> {
 async function networkGates(b: Block) {
   const seed = 3, days = 9;
   const personas = await nycPersonas();
-  const start = (await Bun.file(`${DATA_DIR}/manifest.json`).json()).snapshotNow as number;
+  const start = (await fileAt(`${DATA_DIR}/manifest.json`).json()).snapshotNow as number;
   const net = new ConsentNetwork({ seed, review: "auto" });
   const R: RunRecord[] = [];
   const w = new World({ seed, personas, days, start, writeLog: false, network: net, agent: new PolicyPersonaAgent(start), spawnFriend: friendFactory({ seed }), onRecord: r => R.push(r) });
@@ -275,13 +278,13 @@ async function sitesGates(b: Block) {
       try {
         // A scratch site (no scripts) whose terms say "Draft. Not yet in effect."; the real files are not touched.
         const page = (body: string) => `<!doctype html><html><head><meta charset="utf-8"><title>t</title></head><body>${body}</body></html>`;
-        await Bun.write(join(copy, "public", "index.html"), page("<p>slop.date</p>"));
-        await Bun.write(join(copy, "public", "terms.html"), page("<p>Draft. Not yet in effect.</p>"));
+        await writePath(join(copy, "public", "index.html"), page("<p>slop.date</p>"));
+        await writePath(join(copy, "public", "terms.html"), page("<p>Draft. Not yet in effect.</p>"));
         const draft = await buildSite({ ...s, src: join(copy, "public") }, join(copy, "dist"), env);
         expect(draft.ok).toBe(false);
         expect(draft.logs.join("\n")).toMatch(/draft legal text/);
         // The same scratch site without the marker builds: the refusal is the marker, nothing else.
-        await Bun.write(join(copy, "public", "terms.html"), page("<p>Terms.</p>"));
+        await writePath(join(copy, "public", "terms.html"), page("<p>Terms.</p>"));
         expect((await buildSite({ ...s, src: join(copy, "public") }, join(copy, "dist"), env)).ok).toBe(true);
         for (const x of SITES) expect([x.domain, DRAFT_MARKERS.some(m => m.test(readFileSync(join(x.src, "terms.html"), "utf8")))]).toEqual([x.domain, false]);
       } finally { rmSync(copy, { recursive: true, force: true }); }
@@ -337,7 +340,7 @@ async function deployGuard(b: Block) {
     const env = { ...process.env, CLOUDFLARE_ACCOUNT_ID: "audit-sim-no-account", NTWRK_ALLOW_DEPLOY: "" };
     const ran: string[] = [];
     for (const args of refuse) {
-      const p = Bun.spawnSync(["bash", join(REPO, "scripts/wrangler.sh"), ...args], { env, stdout: "pipe", stderr: "pipe" });
+      const p = spawnProcessSync(["bash", join(REPO, "scripts/wrangler.sh"), ...args], { env, stdout: "pipe", stderr: "pipe" });
       if (p.exitCode !== 3 || !/refusing to run/.test(p.stderr.toString())) ran.push(`${args.join(" ")} -> exit ${p.exitCode}`);
     }
     expect(ran).toEqual([]);
@@ -370,7 +373,7 @@ async function consoleSockets(b: Block) {
       };
       const engineer = await open(E), reviewer = await open(R);
       await srv.setMode("real");
-      expect(await Promise.race([engineer.closed, Bun.sleep(5000).then(() => -1)])).toBe(WS_FORBIDDEN);
+      expect(await Promise.race([engineer.closed, waitForMs(5000).then(() => -1)])).toBe(WS_FORBIDDEN);
       expect(reviewer.ws.readyState).toBe(WebSocket.OPEN);
       // A new engineer socket in real mode is refused at the upgrade.
       const t = await fetch(`${srv.url}/api/ws-ticket?app=ntwrk`, { method: "POST", headers: { authorization: `Bearer ${E}` } });
@@ -390,7 +393,7 @@ async function serviceLogin(b: Block) {
   if (!pgAvailable) { b.track("network-service-M1: skipped (no Postgres on this machine)", false); return; }
   const pg = await import("../../packages/platform/test/pg.ts");
   const { DEV_PG_PORT } = await import("../../packages/observatory/db/dev-pg.ts");
-  const { SQL } = await import("bun");
+  const { SQL } = await import("../../packages/core/src/runtime/postgres.ts");
   const { MINUTE, SimClock } = await import("../../packages/core/src/index.ts");
   const H = await import("./pipeline/harness.ts");
   let url: string;

@@ -2,7 +2,7 @@ import { PROFILE_REVIEW_WITHDRAWAL_PROOF_PATH, parseProfileReviewWithdrawalReque
 import { PROFILE_REVIEW_DISCONNECT_PROOF_PATH, parseProfileReviewDisconnectRequest, parseProfileReviewDisconnectProof } from "../../core/src/svc/profile-review-disconnect.ts";
 import type { SuggestionRevokedOwnerResolver } from "./profile-suggestion-disconnect-endpoint.ts";
 import { randomUUID } from "node:crypto";
-import type { SQL } from "bun";
+import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { parseProfileReviewOwnerRequest } from "../../core/src/svc/profile-review-owner.ts";
 import { PROFILE_REVIEW_SOURCE_PATH, parseProfileReviewSourceRequest, parseProfileReviewSourceProof } from "../../core/src/svc/profile-review-source.ts";
 import { cloudProfileReviewOwner, type CloudProfileReviewOwnerOptions } from "./cloud-profile-review-owner.ts";

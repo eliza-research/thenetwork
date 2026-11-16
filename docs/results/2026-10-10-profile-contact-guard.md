@@ -1,5 +1,7 @@
 # MCP profile contact guard regression
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-10-profile-contact-guard.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 ## Reproduction
 
 On `c29e330`, the ZIP exception admitted grouped phone numbers and OTPs through
@@ -25,12 +27,12 @@ and three valid profiles persist only to the authorized person's Slop member wit
 Three existing profile cases also pass with 70 assertions.
 An independent review found the mixed-separator bypass and verified its correction.
 
-Use Bun 1.4.2, `REQUIRE_PG=1`, the isolated Postgres port 54349 and this checkout's `runs/pg`.
-The focused command is `bun test --conditions eliza-source --timeout 180000 tests/e2e/platform.e2e.test.ts -t 'split phone'`.
+Use the former runtime 1.4.2, `REQUIRE_PG=1`, the isolated Postgres port 54349 and this checkout's `runs/pg`.
+The focused command is `pnpm exec vitest run --testTimeout 180000 tests/e2e/platform.e2e.test.ts -t 'split phone'`.
 On the pre-upstream-resolution candidate, full integration passes 510 tests with zero failures
 and 10,677 assertions in 108.08 seconds. Typechecks and plugin snapshot checks also pass.
-An initial invocation used Bun 1.3.14 and failed Observatory reads. That log was preserved;
-the explicit Bun 1.4.2 run passes every affected group. No product change was made for that runner issue.
+An initial invocation used the former runtime 1.3.14 and failed Observatory reads. That log was preserved;
+the explicit the former runtime 1.4.2 run passes every affected group. No product change was made for that runner issue.
 The resolved combined-source E2E suite passes 35 tests, zero failures and 400 assertions
 in 6.27 seconds. Final combined-source integration and hosted CI qualification follow in the PR.
 No production deployment or live ChatGPT acceptance is implied by these results.

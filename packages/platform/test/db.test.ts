@@ -1,8 +1,9 @@
 // The migrations and the database guards: the runner, the platform schema, composite keys across
 // apps, row-level security per app, the synthetic-phone guard, and the upgrade of a database that
 // has only the old schema files (as every dev database has today).
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { SQL } from "bun";
+import { fileAt } from "../../core/src/runtime/files.ts";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { migrate, migrations } from "../../observatory/db/migrate.ts";
 import { dropDb, emptyDb, migratedDb, pgAvailable } from "./pg.ts";
 
@@ -41,8 +42,8 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
     const url = await emptyDb("upgrade"); urls.push(url);
     const sql = new SQL({ url, max: 1 });
     try {
-      await sql.unsafe(await Bun.file(new URL("../../observatory/db/schema.sql", import.meta.url)).text());
-      await sql.unsafe(await Bun.file(new URL("../../network/db/network-state.sql", import.meta.url)).text());
+      await sql.unsafe(await fileAt(new URL("../../observatory/db/schema.sql", import.meta.url)).text());
+      await sql.unsafe(await fileAt(new URL("../../network/db/network-state.sql", import.meta.url)).text());
       await sql`insert into network.members (id, name, home_city, age, joined_at) values ('a', 'A', 'nyc', 34, now()), ('b', 'B', 'nyc', null, now())`;
       // A legacy member texts from a phone; another from an Apple ID (not a phone: left as it is).
       await sql`insert into network.channel_identities (member_id, channel, address, is_primary) values ('a', 'imessage', '+12125550177', true), ('b', 'imessage', 'b@example.com', true)`;
@@ -68,7 +69,7 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
     // Apply 0001-0006 by hand, as a dev database had them before 0007.
     const sql = new SQL({ url, max: 1 });
     try {
-      for (const m of all.slice(0, upTo)) await sql.unsafe(await Bun.file(m.file).text());
+      for (const m of all.slice(0, upTo)) await sql.unsafe(await fileAt(m.file).text());
       await sql`create table if not exists public.__migrations (id text primary key, checksum text not null, repeatable boolean not null default false, applied_at timestamptz not null default now())`;
       for (const m of all.slice(0, upTo)) await sql`insert into public.__migrations (id, checksum, repeatable) values (${m.id}, 'old', ${m.repeatable})`;
       const [p] = await sql`insert into platform.people (id) values (gen_random_uuid()) returning id`;

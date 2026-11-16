@@ -1,4 +1,4 @@
-// Generated from packages/core/src/vibe/backendHealthShell.vibe. Run bun run spec:sync.
+// Generated from packages/core/src/vibe/backendHealthShell.vibe. Run pnpm run spec:sync.
 import type { HealthStatus } from "./generated/backendHealth.effect.js";
 interface HealthEffects {
     /** @throws {never} */

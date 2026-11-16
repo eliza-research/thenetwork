@@ -1,5 +1,7 @@
 # Historical PRD source
 
+The runtime commands below use the current project entrypoints. The [pre-migration revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/spec/product/source/prd.md) keeps the original wording.
+
 The [product spec](../README.md) and its [stories](../stories.md) and [pilot plan](../pilot.md) carry the operative requirements. This source preserves the earlier decisions, research and requirements by original section number. Some sections reflect earlier policy and delivery plans.
 
 Exported from [The Network PRD in Google Docs](https://docs.google.com/document/d/1lLQAZNAMSC_yHCkUBVbp1CCwvyR17PuvV7TnpfuY8Xc/edit) on 2026-11-12. The export's three images are local attachments here.
@@ -1196,8 +1198,8 @@ A purely technical founding plan is insufficient. The product is a social system
 | Where the conversation runs | Decided (2026-10-09): Eliza is The Network's shared agent. The conversation runs in Eliza Cloud through @elizaos/plugin-network; the Network backend provides matching, review, platform and relay APIs (32.3). | Before the onboarding work (37.1, item 4). |
 | Join mode for peon.biz and friends.help on production | Decided (2026-10-09): slop.date, peon.biz and friends.help are open to people aged 13 or more. ntwrk.party remains invite-only on the web. Matching remains adults-only (40.2). | Before their sites take joins. |
 | Ban evasion | Open: build a same-face check, or drop that gate and rely on bans by phone and person (40.5). | Before the pilot. |
-| Keep the security suite? | Decided: keep the security suite as part of bun run test:integration and the blocking CI integration job (34.2). | Before the backend deploy. |
-| Clef weight fitting | Decided: appearance ratings feed slop matching from launch and are never shared. Placeholder weights ship until consented adult labels and the P2 decision rule qualify fitted weights. The fitter is available through bun run clef; real calibration remains open. | Fitted weights require P2 qualification; placeholder ratings are on. |
+| Keep the security suite? | Decided: keep the security suite as part of pnpm run test:integration and the blocking CI integration job (34.2). | Before the backend deploy. |
+| Clef weight fitting | Decided: appearance ratings feed slop matching from launch and are never shared. Placeholder weights ship until consented adult labels and the P2 decision rule qualify fitted weights. The fitter is available through pnpm run clef; real calibration remains open. | Fitted weights require P2 qualification; placeholder ratings are on. |
 | Other platform questions | A legal entity per app, a second line, recycled numbers, storing a refused age, hash-key rotation, review deadlines per app and more: docs/mvp-gaps.md, section 5\. | Before or during the pilot. |
 
 # **28\. MVP definition: what ships first and what does not**
@@ -1238,7 +1240,7 @@ Status (2026-10-08): the first pilot is slop.date in New York City, on the share
 | Events | Monthly all-member gathering per city: invitations, RSVPs, reminders, seating/grouping suggestions, follow-ups. | 32.16 |
 | Member web | "What the Network knows about me" review and edit, states and preferences, connected sources, invites, history, export and delete. | 32.17 |
 | Admin and analytics | The admin console, first built as the Observatory (packages/observatory). It has: review queue with SLA; member 360; member-perspective timeline (messages plus system decisions); social-graph explorer; opportunity pipeline; matching-run inspector with shadow runs; safety console; requests and demand; growth; metrics and health alerts; audit log; simulation lab. Staff sign in with SSO and a second factor and have roles. Views are PII-scrubbed by default, and every reveal and staff read is logged. The console reads a read-only replica; staff actions go through the Network admin API. | 35 |
-| Testing | Simulations, integration tests and end-to-end tests: bun run sim checks blocking and tracked gates and pack conformance; bun run test:integration checks real Postgres and HTTP flows and includes the security suite; bun run test:e2e checks full service flows. Unit and smoke tests are not kept. Shadow mode checks real data (34). | 34 |
+| Testing | Simulations, integration tests and end-to-end tests: pnpm run sim checks blocking and tracked gates and pack conformance; pnpm run test:integration checks real Postgres and HTTP flows and includes the security suite; pnpm run test:e2e checks full service flows. Unit and smoke tests are not kept. Shadow mode checks real data (34). | 34 |
 | Network capital (internal) | Private ledger built from events the MVP already records (vouches, attendance, feedback, confirmed help, organizing). Drives agent effort tiers, vouch capacity, and organizing reach; private "what you've built" view. Never visible to others, never used in anyone else's ranking, no cash value. | 39.2 |
 | App memberships and keyword routing | One person per verified phone with a membership per app (ntwrk, slop, friends, peon). One Blooio iMessage line for every app; the first message is routed by keyword; with no keyword the person joins The Network and the agent enrolls them in the apps they want. Members 13+ may join every app; matching is 18+. Cross-app privacy and blocks across apps. | 40.3 |
 | App packs | One engine with a pack per app (ontology, filters, scoring, consent, geo, oracle, sims). Core invariants no pack can loosen; networkPack byte-identical to today; shared conformance suite. | 40.4 |
@@ -1276,7 +1278,7 @@ Status (2026-10-08): the first pilot is slop.date in New York City, on the share
 
 ## **28.5 MVP launch gates (go/no-go)**
 
-* bun run sim passes every blocking gate on the pinned seeds (152 on 2026-10-08), with no privacy-canary leaks and no invariant violations. Tracked gates are printed and reviewed; any waiver is written by the founder (34.1, 40.8).
+* pnpm run sim passes every blocking gate on the pinned seeds (152 on 2026-10-08), with no privacy-canary leaks and no invariant violations. Tracked gates are printed and reviewed; any waiver is written by the founder (34.1, 40.8).
 * Every proactive proposal and every member-initiated request goes through the review queue before the first member contact, the anonymous probe included. Every outbound message goes through the leak check. Code enforces both, and a simulator invariant checks that no probe goes out without a prior approval. A proposal that misses its review SLA expires.
 * STOP/HELP, block, and report work on the live line, with one system owning STOP/HELP on the shared line; the safety escalation runbook is rehearsed.
 * Messaging: Blooio deliverability measured on test phones (daily cap per line, attachments, no account flag; prototype P3, 37.2) and the opt-in wording recorded. 10DLC registration is in the deferred backlog (40.7), not a gate.
@@ -1541,7 +1543,7 @@ Soulmates is an elizaOS WhatsApp dating matchmaker ("Ori") with a separate batch
 
 # **31\. MVP system architecture**
 
-Status (2026-10-08): superseded for the pilot where it differs. As built, one Bun service (deploy/backend/server.ts, wrapping packages/network/service) runs on Railway at api.ntwrk.party with Railway Postgres. It serves the platform API, the signed Blooio webhook for the one shared line, keyword routing, the MCP server for agent-first onboarding, and a private staff API for review, safety and the matching switch. The engine runs inside the service's one-minute tick. The four sites are Cloudflare Pages projects whose router forwards /api, /mcp and the OAuth paths to the backend. The admin console is the Observatory on Railway behind Cloudflare Access. Eliza Cloud, the Eliza shared agent and the Twilio SMS path are not on the live path; whether the conversation moves to the Eliza agent is an open founder decision (27). The principles below still hold.
+Status (2026-10-08): superseded for the pilot where it differs. As built, one backend service (deploy/backend/server.ts, wrapping packages/network/service) runs on Railway at api.ntwrk.party with Railway Postgres. It serves the platform API, the signed Blooio webhook for the one shared line, keyword routing, the MCP server for agent-first onboarding, and a private staff API for review, safety and the matching switch. The engine runs inside the service's one-minute tick. The four sites are Cloudflare Pages projects whose router forwards /api, /mcp and the OAuth paths to the backend. The admin console is the Observatory on Railway behind Cloudflare Access. Eliza Cloud, the Eliza shared agent and the Twilio SMS path are not on the live path; whether the conversation moves to the Eliza agent is an open founder decision (27). The principles below still hold.
 
 ## **31.1 Architectural principles**
 
@@ -1559,7 +1561,7 @@ Status (2026-10-08): superseded for the pilot where it differs. As built, one Bu
 | Channels | Blooio (iMessage/SMS), Twilio (SMS, voice), web chat; later Telegram, WhatsApp, Signal, MCP connector | Provider webhooks into Eliza Cloud gateway-webhook (Railway) and the Cloud API Worker |
 | Conversation | Eliza shared agent \+ Network character \+ Network plugin (actions, providers, evaluators) | Cloud API Worker (per-turn runtime), SharedRuntimeConversation Durable Object |
 | Network API | Typed domain services: members, profile, intents, presence, opportunities, consent, relay, scheduling, feedback, invitations, safety, events | Cloud API Worker routes (/api/network/\*) using Hyperdrive to Postgres |
-| Async engine | Matcher (retrieval, scoring, composition, load balancing), enrichment jobs, world-ingestion jobs | network-matcher service (Railway, Bun) with Postgres advisory lock |
+| Async engine | Matcher (retrieval, scoring, composition, load balancing), enrichment jobs, world-ingestion jobs | network-matcher service (Railway) with Postgres advisory lock |
 | Orchestration | Job table with due times and leases; opportunity state machine; outreach scheduler; reminder and check-in plans; timeouts | Cron fan-out every minute in the Worker plus the matcher service for heavy jobs |
 | Outbound | Outreach controller (budget, quiet hours, preferences), message composer (LLM from brief), leak checker, channel send with idempotency and receipts | Cloud API Worker and gateway |
 | Data | Postgres network schema (pgvector, H3 geo cells), event log, read replica or warehouse for analytics, R2 for exports and simulation artifacts | Railway Postgres; R2 |
@@ -1577,7 +1579,7 @@ Status (2026-10-08): superseded for the pilot where it differs. As built, one Bu
 
 ## **31.4 Data flow and storage boundaries**
 
-* Network tables live in a dedicated network schema in the Eliza Cloud Postgres (separate migrations, separate roles), keeping Network data isolated from generic Eliza tables and easy to export or move. Schema changes are numbered SQL migrations with a ledger table and an advisory lock (bun run db:migrate). A migration runs once. Production migrations run as a role that row-level security does not filter.
+* Network tables live in a dedicated network schema in the Eliza Cloud Postgres (separate migrations, separate roles), keeping Network data isolated from generic Eliza tables and easy to export or move. Schema changes are numbered SQL migrations with a ledger table and an advisory lock (pnpm run db:migrate). A migration runs once. Production migrations run as a role that row-level security does not filter.
 * The shared agent's conversation history remains in the Durable Object and its Postgres mirror; the Network keeps its own message log for relay threads and outreach (needed for admin views, feedback, and safety evidence).
 * Embeddings live next to facets and intents (pgvector HNSW). Geography uses H3 cells at several resolutions plus lat/lng; travel times come from the maps service with caching.
 * Analytics reads from a replica or a nightly export (Postgres to Parquet in R2, queried with DuckDB or a hosted warehouse), never from the primary during peak.
@@ -1816,9 +1818,9 @@ If no proposal for a member's intent clears the bar for a set period (default 10
 
 Status (founder decisions, October 2026): validation uses simulations, integration tests and end-to-end tests. Integration tests use real Postgres, real HTTP servers and several packages or the full service. End-to-end tests exercise the platform through HTTP. The security suite is part of the integration suite and its blocking CI job. Unit and smoke tests are not kept; docs/tests-policy.md defines the classification. Simulated worlds check bad introductions, timing, leaks and failed groups. Shadow mode on real data (34.6) checks the engine before members see it. Sections 34.3-34.5 describe the simulator.
 
-## **34.1 bun run sim**
+## **34.1 pnpm run sim**
 
-bun run sim (scripts/sim.ts) runs the simulation gates. It clears provider keys, except for the explicit \--llm onboarding arm, and exits 1 on any blocking gate failure. Tracked gates are printed and do not fail the run. The safety, ops, pipeline and audit blocks use local Postgres; CI sets REQUIRE\_PG=1 and fails on a database skip. Flags include \--only \<block\>, \--quick, \--json \<file\>, and \--with-capital. Also run bun run test:integration and bun run test:e2e.
+pnpm run sim (scripts/sim.ts) runs the simulation gates. It clears provider keys, except for the explicit \--llm onboarding arm, and exits 1 on any blocking gate failure. Tracked gates are printed and do not fail the run. The safety, ops, pipeline and audit blocks use local Postgres; CI sets REQUIRE\_PG=1 and fails on a database skip. Flags include \--only \<block\>, \--quick, \--json \<file\>, and \--with-capital. Also run pnpm run test:integration and pnpm run test:e2e.
 
 | Block | Pinned run | Blocking gates | Tracked (never fail) |
 | :---- | :---- | :---- | :---- |
@@ -1833,7 +1835,7 @@ On 2026-10-08 the full run passed 152 of 152 blocking gates, with 7 tracked gate
 ## **34.2 Evals, the security suite and what is still missing**
 
 * Corpora are evals: the replies, opt-out and leak-guard rows that used to be unit tests live in evals/ and run as the evals block.
-* The security suite is kept. bun run security runs the subset listed in docs/tests-policy.md. The same files run in bun run test:integration and its blocking CI job, with real Postgres. This closes the security-suite decision in Section 27\.
+* The security suite is kept. pnpm run security runs the subset listed in docs/tests-policy.md. The same files run in pnpm run test:integration and its blocking CI job, with real Postgres. This closes the security-suite decision in Section 27\.
 * Still missing before the slop.date pilot (docs/mvp-gaps.md section 4): a world that runs the real message pipeline end to end (signed Blooio webhook in, the Blooio adapter out with a fake provider, the persisted queue, Postgres, the simulated clock) for 30 simulated days; LLM persona agents sending free text through the platform, where a no read as a yes must be 0; adversarial scenarios against the live agent (scammer in relay, harasser after the reveal, age liar, catfish, prompt injection for a number or a rating, ban evader, bot farm) with 0 rating or contact leaks and scammer reach at most 1; the real photo rater interface with a fake Workers AI; and a two-app persona through the real routing.
 * The live pilot gates and rollback triggers are in 37.3.
 
@@ -1865,7 +1867,7 @@ A simulated city of persona agents that use The Network exactly as real members 
 
 * Deterministic rules first (length, one question at a time, no contact details, opt-out language present, no banned phrases).
 * LLM judges with written rubrics for tone, clarity, explanation quality, appropriateness of timing, and privacy; judges use a different model family than the agent (during prototyping: OpenAI gpt-6-luna for judges; Cerebras qwen-3.8-27b for the engine, agent, and simulated personas); judge agreement is spot-checked by humans weekly.
-* Reports in JSONL and an admin dashboard; CI runs bun run sim on every push; \--quick is the fast subset and \--nightly adds the capital block.
+* Reports in JSONL and an admin dashboard; CI runs pnpm run sim on every push; \--quick is the fast subset and \--nightly adds the capital block.
 
 ## **34.6 Shadow mode and pilot evaluation**
 
@@ -1906,7 +1908,7 @@ The team must be able to see everything happening in the Network, from any membe
 
 ## **35.3 Implementation notes**
 
-* The first implementation is the Observatory (packages/observatory): a Bun server with a React UI, one view model for simulated worlds and the real database, and a Canvas force graph. For production it runs behind SSO, reads a read replica through the read-only login network\_observatory, and sends staff actions to /api/network/admin routes with role checks. Moving it into the eliza.app admin area is decided after the pilot.
+* The first implementation is the Observatory (packages/observatory): a server with a React UI, one view model for simulated worlds and the real database, and a Canvas force graph. For production it runs behind SSO, reads a read replica through the read-only login network\_observatory, and sends staff actions to /api/network/admin routes with role checks. Moving it into the eliza.app admin area is decided after the pilot.
 * Analytics queries run against a read replica or the nightly Parquet export, not the primary.
 * The perspective timeline is assembled from the event log, outbound and inbound message logs, agent trajectories, and matching-run logs, keyed by member and time.
 
@@ -1987,7 +1989,7 @@ Indicative sequence assuming a small team (2-3 engineers, 1 product/community le
 | Phase 4\. peon.biz pack and sim (local) | peonPack: org and job entities with capacity, two-way retrieval, candidate-first consent, unranked slates, sealed protected attributes, proxy scrubbing; hiring personas and oracle. | Engine and packs | Conformance including protected-attribute invariance; peon.biz sim gates (40.8); runs locally only. |
 | Phase 5\. Attention, plans and capital across apps | Person-level cap across apps; attention budget, plan allowance and crews per pack; network capital per app or shared (to decide). | Engine and packs, with platform | No send over any per-app or person-level cap in a multi-app sim; the network capital fairness gate (39.2) holds per app. |
 
-Phases 0-4 are built and pass their sim gates in bun run sim (since the cleanup, run fingerprints replace the golden files). slop.date goes live after the critical path in 37.1, two weeks of shadow and the founder's approval of live sends. The peon.biz and friends.help sites are on Pages; their matching and sends go live only by a later founder decision (28.4).
+Phases 0-4 are built and pass their sim gates in pnpm run sim (since the cleanup, run fingerprints replace the golden files). slop.date goes live after the critical path in 37.1, two weeks of shadow and the founder's approval of live sends. The peon.biz and friends.help sites are on Pages; their matching and sends go live only by a later founder decision (28.4).
 
 ## **37.1 Critical path to the slop.date pilot (2026-10-08)**
 
@@ -2030,7 +2032,7 @@ Build each small, learn from it, then commit.
 
 ## **37.3 Pilot validation gates**
 
-Blocking before any live send: every blocking gate in bun run sim passes (34.1); the slop adversary-contact, age-liar-contact and harm-event safety cuts must be fixed; P3 is measured; the agreed STOP/HELP path is qualified; two weeks of shadow with every proposal reviewed and a precision baseline; at least 40 committed NYC adults; a backup restore tested; cost alerts and safety on-call live (28.5). The founder waived dates per member-month, smallest-group ratio, second dates, reveal back-outs and probe text length for the shadow pilot only, with weekly review. No waiver permits live sends.
+Blocking before any live send: every blocking gate in pnpm run sim passes (34.1); the slop adversary-contact, age-liar-contact and harm-event safety cuts must be fixed; P3 is measured; the agreed STOP/HELP path is qualified; two weeks of shadow with every proposal reviewed and a precision baseline; at least 40 committed NYC adults; a backup restore tested; cost alerts and safety on-call live (28.5). The founder waived dates per member-month, smallest-group ratio, second dates, reveal back-outs and probe text length for the shadow pilot only, with weekly review. No waiver permits live sends.
 
 Weekly during the pilot (40.5, 28.2):
 
@@ -2116,7 +2118,7 @@ This section records the decisions made while resolving the October 4-5, 2026 re
 | Exchange through the agent (2026-10-08) | After a match, messages, numbers and photos pass only through the agent ("send them my number"), with consent per item. Each side learns only what the agent tells them: the other's first name and what they chose to share. | 40.5 |
 | slop.date verification (2026-10-08) | No ID or liveness check for now; phone login is the identity check. Harassment and lying are caught through post-date feedback, then report, then hold or ban by phone and person. "Not single" is not a harm. | 27, 28.4, 40.5 |
 | Multi-app platform (2026-10-08) | Approved by the founder. Four apps on one backend: the platform schema, phone login, memberships per app, one service for every network, the four sites and the admin app switcher. Sites on Pages; backend not yet deployed. | 40 |
-| Simulations, integration and e2e (October 2026\) | Validation uses bun run sim, bun run test:integration and bun run test:e2e. Corpora are evals. Integration tests use real Postgres and HTTP and include the security suite. Unit and smoke tests are not kept. | 28.3, 28.5, 34 |
+| Simulations, integration and e2e (October 2026\) | Validation uses pnpm run sim, pnpm run test:integration and pnpm run test:e2e. Corpora are evals. Integration tests use real Postgres and HTTP and include the security suite. Unit and smoke tests are not kept. | 28.3, 28.5, 34 |
 | Agent-first onboarding (2026-10-08) | Sites hand the person a prompt for their own AI, which reads SKILL.md and submits the profile through MCP. MCP onboarding is MVP; the wider connector surface comes later. | 28.3, 28.4 |
 | Hosting (2026-10-08) | All four sites on Cloudflare Pages; the shared backend on Railway (api.ntwrk.party), not inside Eliza Cloud. peon.biz and friends.help matching and sends stay local. | 22, 31, 40.1, 40.6 |
 | Repository (2026-10-08) | github.com/eliza-research/thenetwork, public. The cleanup deleted the prototypes and tests and promoted packages/blooio. | 36.10 |
@@ -2433,7 +2435,7 @@ Founder decision (2026-10-08): compliance is not a launch blocker for now. The s
 
 Each pack ships a simulated world (personas with hidden truth, an oracle the engine cannot see, adversaries, scenarios) and blocking gates over several seeds, in memory or in a Postgres schema per world, never in production.
 
-* **slop.date. Hidden desirability hierarchy, taste, true versus stated intent, flakiness, body types and a catfish share; the oracle adds large pair-specific chemistry noise. Adversaries: romance scammer, catfish, age liar, harasser, ban evader, bot farm. Blocking gates in bun run sim (pinned seeds 13-16, 4 weeks, no photo in the probe and the rater on): 0 declared-minor contacts, 0 stated-filter violations, scammer median reach at most 1, 0 private-field, rating or cross-app leaks, the second-date and fairness gates that pass on the pinned seeds, and slop conformance. Tracked (failing today; each is fixed or waived in writing): dates per member-month at least 0.9x random, age-liar contact cut at least 90%, adversary-contact cut at least 90%, smallest gender or orientation group at least 0.7x, harm-event cut at least 90%. Mutual yes per probe and the probes-received Gini are live pilot gates (37.3); same-face ban evasion is a founder decision (27). Then shadow mode with human review of every intro.**
+* **slop.date. Hidden desirability hierarchy, taste, true versus stated intent, flakiness, body types and a catfish share; the oracle adds large pair-specific chemistry noise. Adversaries: romance scammer, catfish, age liar, harasser, ban evader, bot farm. Blocking gates in pnpm run sim (pinned seeds 13-16, 4 weeks, no photo in the probe and the rater on): 0 declared-minor contacts, 0 stated-filter violations, scammer median reach at most 1, 0 private-field, rating or cross-app leaks, the second-date and fairness gates that pass on the pinned seeds, and slop conformance. Tracked (failing today; each is fixed or waived in writing): dates per member-month at least 0.9x random, age-liar contact cut at least 90%, adversary-contact cut at least 90%, smallest gender or orientation group at least 0.7x, harm-event cut at least 90%. Mutual yes per probe and the probes-received Gini are live pilot gates (37.3); same-face ban evasion is a founder decision (27). Then shadow mode with human review of every intro.**
 * **friends.help.** Friendships form when a pair's hours together cross thresholds. Gates: repeat rate at least 30% of groups within 30 days; more friendships than a one-off-dinner baseline; no trip over tolerance; 0 affinity or age violations; V14 at least 85%.
 * **peon.biz.** Latent skills, over-claiming, fake jobs; protected attributes exist only in the simulator. Gates: impact ratios at least 0.8 at every automated stage; 0 protected or proxy mentions in judge reasoning; 0 jobs without pay ranges; 0 unverified employers reaching candidates; 100% of discriminatory requests refused.
 * **Across apps.** cross\_app\_leak \= 0 with two-app personas, and networkPack golden replays byte-identical.

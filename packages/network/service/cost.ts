@@ -22,7 +22,7 @@
 // NETWORK_ENGINE_JUDGE=1 creates a per-app recommenderLLM with llmHooks(app, "engine_judge").
 // The member conversation remains in Eliza; the service-side onboarding reader stays rules-only.
 import { randomUUID } from "node:crypto";
-import type { SQL } from "bun";
+import type { SQL } from "../../core/src/runtime/postgres.ts";
 import {
   costAccrualDaysPerMonth, costAmountWithFloor, costBudgetIsEnabled, costMicrosPerUsd, costOverrideValid,
   dailyCostIncludesLine, defaultBlooioLines, defaultClefPhotoMicros, defaultSmsMicros, defaultTwilioVerifyMicros,

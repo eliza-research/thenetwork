@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 // The slop-live arm (run inside the slop block): slop.date as it will run live. The production
 // ConsentNetwork with the slop wiring (packages/network/service/packs.ts appWiring("slop"): makeSlopPack
 // with no ID check, the slop engine config, the slop hooks: the engine's onboarding loop, the probe
@@ -216,7 +217,7 @@ export async function slopLiveArm(b: Block, o: { quick: boolean }): Promise<void
       const yes = w.log("probe_answer").filter(x => x.detail.oppId === opp && x.detail.yes === true);
       rows.push({ seed, start, kind: c.kind, slots: plan!.slots, expected: c.slots,
         offered: offered.map(p => p.label), booked: booked ? { weekday: booked.weekday, hour: booked.hour } : null,
-        correct: Bun.deepEquals(plan!.slots, c.slots) && offered.length > 0 && (c.activity !== "hike" || offered.every(daytime))
+        correct: isDeepStrictEqual(plan!.slots, c.slots) && offered.length > 0 && (c.activity !== "hike" || offered.every(daytime))
           && (c.decline ? !meeting : !!booked && (c.activity === "hike" ? daytime(booked) : booked.hour === 19)),
         meetings: w.meetings.length, yes: yes.length, probes: probes.length });
       expect(w.meetings.length).toBe(c.decline ? 0 : 1);

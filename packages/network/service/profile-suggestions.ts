@@ -1,6 +1,6 @@
 import { parseNetworkCollectionCommand, networkCollectionDeadline, NETWORK_COLLECTION_MAX_WINDOW_MS } from "../../core/src/svc/learning-collection-command.ts";
 import { createHash, randomUUID } from "node:crypto";
-import type { SQL } from "bun";
+import type { SQL } from "../../core/src/runtime/postgres.ts";
 import {
   collectionPreviewUnchanged, collectionRevisionIsOriginal, initial as initialSource, ownerCleanupUsesReceipt,
   step as stepSource, suggestionCleanupAction,

@@ -1,3 +1,4 @@
+import { setTimeout as waitForMs } from "node:timers/promises";
 // The public API that the four sites call at same-origin /api/* (platform plan 3.3, option A).
 // Responses never name or reveal another app, and /api/auth/otp/start answers the same body, after
 // at least the same time, whether or not the phone is known.
@@ -9,9 +10,9 @@
 //  - Anything else: the Host header picks the app (production names only outside dev) and the socket
 //    address is the client. A header a client sets never picks the app or the rate-limit bucket.
 //
-// Mount it in any Bun.serve fetch:
+// Mount it in any serveHttp fetch:
 //   const api = createPublicApi({ store, otp, turnstile });
-//   Bun.serve({ fetch: async (req, server) => (await api.fetch(req, server)) ?? new Response("not found", { status: 404 }) });
+//   serveHttp({ fetch: async (req, server) => (await api.fetch(req, server)) ?? new Response("not found", { status: 404 }) });
 import { NETWORK_SITES, NETWORK_FRESH_PERSON_SITES, type CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
 import { initial as enrollmentInitial, step as stepEnrollment } from "../../core/src/generated/siteEnrollment.ts";
 import {
@@ -95,7 +96,7 @@ export interface PublicApiOptions extends AccountHooks {
 import type { MemberParticipation } from "./public-types.ts";
 export type { MemberParticipation } from "./public-types.ts";
 
-/** What Bun.serve passes as the second fetch argument: the socket address of the request. */
+/** What serveHttp passes as the second fetch argument: the socket address of the request. */
 export interface PeerInfo { requestIP(req: Request): { address: string } | null }
 
 export interface PublicApi {
@@ -105,7 +106,7 @@ export interface PublicApi {
   cloudAuthorityRequired(app: AppId): boolean;
   cloudGrantAuthority(app: AppId, req: Request, resource: string): Promise<CloudGrantAuthority | "unavailable" | undefined>;
   validateCloudGrant(grant: { app: AppId; resource: string; phoneKey: string; personId: string | null; cloudAuthority?: CloudGrantAuthority | null }): Promise<"valid" | "invalid" | "unavailable">;
-  /** The answer for an /api/* request, or undefined for any other path. Pass the Bun server for the socket address. */
+  /** The answer for an /api/* request, or undefined for any other path. Pass the HTTP server for the socket address. */
   fetch(req: Request, server?: PeerInfo): Promise<Response | undefined>;
   accounts: Accounts;
   otp: OtpService;
@@ -217,7 +218,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
 
   const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
     new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", ...headers } });
-  const pad = async (t0: number, min: number) => { const left = min - (performance.now() - t0); if (left > 0) await Bun.sleep(left); };
+  const pad = async (t0: number, min: number) => { const left = min - (performance.now() - t0); if (left > 0) await waitForMs(left); };
 
   /** The JSON object body, "too_large" over 16 KB, or undefined when it is not a JSON object. */
   async function body(req: Request): Promise<Record<string, unknown> | "too_large" | undefined> {

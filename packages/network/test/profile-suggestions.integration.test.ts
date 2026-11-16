@@ -1,8 +1,9 @@
+import { serveHttp } from "../../core/src/runtime/http.ts";
 import { buildWorld, resolveConfig, localEmbed } from "@thenetwork/engine";
 import { parseNetworkCollectionCommand, hashNetworkCollectionSelection, type NetworkCollectionSelection } from "../../core/src/svc/learning-collection-command.ts";
 import { COLLECTION_COMMAND_VECTORS } from "./fixtures/learning-collection-command-vectors.ts";
-import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
-import { SQL } from "bun";
+import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { applySchema, devPgUp, DEV_PG_PORT } from "../../observatory/db/dev-pg.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
@@ -290,8 +291,8 @@ async function reviewHttp(resolveIdentity?: SuggestionIdentityResolver, authoriz
     PLATFORM_HASH_KEY: "synthetic-review-factory-test-hash-key", ...(routePolicy ? { NETWORK_ROUTE_AUTHORITY_POLICY: JSON.stringify(routePolicy) } : {}), ...bootstrapEnv },
     networks: [{ id: "ntwrk:nyc" }], log: () => {}, profileSuggestionIdentity: resolveIdentity,
     profileSuggestionAuthorization: bootstrapEnv ? undefined : authorizeSource ?? (async () => active) });
-  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: service.fetch });
-  return { clock, service, async stop() { server.stop(true); await service.close(); },
+  const server = await serveHttp({ hostname: "127.0.0.1", port: 0, fetch: service.fetch });
+  return { clock, service, async stop() { await server.stop(true); await service.close(); },
     async context(input: LearningConsentContextRequest, changes?: { unsigned?: boolean; extra?: Record<string, unknown>; path?: string }) {
       const body = JSON.stringify({ ...input, ...changes?.extra });
       const path = changes?.path ?? LEARNING_CONSENT_CONTEXT_PATH;
@@ -420,7 +421,7 @@ async function ownerProofFixture() {
   let sourceCalls = 0;
   let sourceAllowed: (request: ProfileReviewSourceRequest) => boolean = () => false;
   let alterSource: (proof: Record<string, unknown>) => void = () => {};
-  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {
+  const server = await serveHttp({ hostname: "127.0.0.1", port: 0, async fetch(req) {
     calls++;
     const path = new URL(req.url).pathname;
     if (path === PROFILE_REVIEW_SOURCE_PATH) {
@@ -456,7 +457,7 @@ async function ownerProofFixture() {
   return { context, identity, policy, options, async read(c = context) { return sql.begin(tx => resolve(c, tx)); },
     get calls() { return calls; }, setAlter(fn: typeof alter) { alter = fn; }, setSigned(value: boolean) { signed = value; },
     get sourceCalls() { return sourceCalls; }, setSourceAllowed(fn: typeof sourceAllowed) { sourceAllowed = fn; }, setSourceAlter(fn: typeof alterSource) { alterSource = fn; },
-    setStatus(value: number) { responseStatus = value; }, stop() { server.stop(true); } };
+    setStatus(value: number) { responseStatus = value; }, stop() { return server.stop(true); } };
 }
 
 test("owner consumer verifies the actual stored signed turn and signed nonce-bound Cloud proof without caching", async () => {
@@ -473,7 +474,7 @@ test("owner consumer verifies the actual stored signed turn and signed nonce-bou
     await sql`update platform.inbound set request_hash=null where id='msg:blooio:owner-proof'`;
     expect(await f.read()).toBeNull();
     expect(f.calls).toBe(2);
-  } finally { f.stop(); }
+  } finally { await f.stop(); }
 });
 
 test("owner consumer rejects wrong selectors, stale/future proofs, unsigned replies, redirects and excess data", async () => {
@@ -494,7 +495,7 @@ test("owner consumer rejects wrong selectors, stale/future proofs, unsigned repl
     f.setStatus(200);
     f.setAlter(p => { p.excess = "x".repeat(17 * 1024); });
     expect(await f.read()).toBeNull();
-  } finally { f.stop(); }
+  } finally { await f.stop(); }
 });
 
 test("owner consumer refuses expired routes and stale or future stored turns before any remote lookup", async () => {
@@ -508,7 +509,7 @@ test("owner consumer refuses expired routes and stale or future stored turns bef
     f.policy.admitUntil = now;
     expect(await f.read()).toBeNull();
     expect(f.calls).toBe(0);
-  } finally { f.stop(); }
+  } finally { await f.stop(); }
 });
 
 test("valid Cloud proof cannot cross a batch owner or substitute for explicit Network source consent", async () => {
@@ -529,7 +530,7 @@ test("valid Cloud proof cannot cross a batch owner or substitute for explicit Ne
     const ownBatch = (await privateStore.propose(same, input(), now))!;
     expect(await sourceDenied.decide(same, { batchId: ownBatch.id, revision: 1, decisions: [{ suggestionId: ownBatch.suggestions[0]!.id, action: "accept" }] }, now)).toEqual({ kind: "denied" });
     expect(await facets()).toHaveLength(0);
-  } finally { f.stop(); }
+  } finally { await f.stop(); }
 });
 
 test("owner lookup has a whole-request deadline with one attempt and refuses insecure origin configuration", async () => {
@@ -538,14 +539,14 @@ test("owner lookup has a whole-request deadline with one attempt and refuses ins
     expect(() => cloudProfileReviewOwner({ ...f.options, development: false })).toThrow();
     expect(() => cloudProfileReviewOwner({ ...f.options, origin: "https://example.test/other" })).toThrow();
     let attempts = 0;
-    const resolve = cloudProfileReviewOwner({ ...f.options, fetch: Object.assign(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+    const resolve = cloudProfileReviewOwner({ ...f.options, fetch: async () => {
       attempts++; return await new Promise<Response>(() => {});
-    }, { preconnect() {} }) });
+    } });
     const started = performance.now();
     expect(await sql.begin(tx => resolve(f.context, tx))).toBeNull();
     expect(performance.now() - started).toBeLessThan(4000);
     expect(attempts).toBe(1);
-  } finally { f.stop(); }
+  } finally { await f.stop(); }
 });
 
 test("HTTP cannot save after proof or batch expiry during asynchronous source authorization", async () => {
@@ -608,7 +609,7 @@ test("review bootstrap defaults off and requires an explicit isolated route, ori
     expect(typeof configured.profileSuggestionIdentity).toBe("function");
     expect(typeof configured.profileSuggestionAuthorization).toBe("function");
     expect(f.calls).toBe(0);
-  } finally { f.stop(); }
+  } finally { await f.stop(); }
 });
 
 test("the normal service constructor registers the opted-in factory and still defaults missing consent to denied", async () => {
@@ -616,10 +617,10 @@ test("the normal service constructor registers the opted-in factory and still de
   const p = await scopedPending(f);
   const originalFetch = globalThis.fetch;
   // Only this synthetic origin is redirected in this test process. Signature bytes and both real HTTP handlers are unchanged.
-  globalThis.fetch = Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     return originalFetch(url.origin === "https://review-bootstrap.invalid" ? new URL(url.pathname, f.options.origin) : input, init);
-  }, { preconnect: originalFetch.preconnect });
+  };
   const http = await reviewHttp(undefined, undefined, f.policy, { NETWORK_PROFILE_REVIEW_ENABLED: "1", NETWORK_CLOUD_DELIVERY_ORIGIN: "https://review-bootstrap.invalid" });
   try {
     const args = { text: p.text, networkAuthority: f.policy.authority };
@@ -631,7 +632,7 @@ test("the normal service constructor registers the opted-in factory and still de
     const before = f.calls;
     expect(await http.service.profileSuggestions.propose(p.who, input([{ ...candidate(), connectionId: p.consent.connectionId }]), now)).toBeNull();
     expect(f.calls).toBe(before);
-  } finally { globalThis.fetch = originalFetch; await http.stop(); f.stop(); }
+  } finally { globalThis.fetch = originalFetch; await http.stop(); await f.stop(); }
 });
 
 test("source authorization requires this exact transaction's canonical owner and exact requested consent scope", async () => {
@@ -650,7 +651,7 @@ test("source authorization requires this exact transaction's canonical owner and
       expect(await callbacks.profileSuggestionAuthorization(p.who, p.consent, tx)).toBe(true);
     });
     await sql.begin(async tx => { expect(await callbacks.profileSuggestionAuthorization(p.who, p.consent, tx)).toBe(false); });
-  } finally { f.stop(); }
+  } finally { await f.stop(); }
 });
 
 test("absent learning permission denies saving but keeps private preview, rejection and deletion usable", async () => {
@@ -673,7 +674,7 @@ test("absent learning permission denies saving but keeps private preview, reject
     expect(f.sourceCalls).toBe(1);
     expect(await facets()).toHaveLength(0);
     expect(await sql`select id from platform.profile_suggestion_batches`).toHaveLength(0);
-  } finally { await http.stop(); f.stop(); }
+  } finally { await http.stop(); await f.stop(); }
 });
 
 test("only a fresh matching five-second learning proof permits saving; wrong proof fields and old purpose deny", async () => {
@@ -694,7 +695,7 @@ test("only a fresh matching five-second learning proof permits saving; wrong pro
     f.setSourceAlter(() => {});
     expect((await http.post("decide", "owner-proof", p.batch.id, args)).body.kind).toBe("saved");
     expect(await facets()).toEqual([expect.objectContaining({ source: "gmail", inferred: true, confirmedByMember: true, scope: "agent_private" })]);
-  } finally { await http.stop(); f.stop(); }
+  } finally { await http.stop(); await f.stop(); }
 });
 
 test("source proof expiry after authorization rolls saving back while revocation cleanup stays independent", async () => {
@@ -716,7 +717,7 @@ test("source proof expiry after authorization rolls saving back while revocation
     // A connector-owned revoke/delete does not need a new collection grant or a source proof.
     await new ProfileSuggestions(sql, async () => false).disconnect(p.who, p.consent.connectionId);
     expect((await sql`select value,status from platform.profile_suggestions where batch_id=${p.batch.id}`)[0]).toMatchObject({ value: null, status: "withdrawn" });
-  } finally { await http.stop(); f.stop(); }
+  } finally { await http.stop(); await f.stop(); }
 });
 
 test("collection commits one private pending batch and one content-free receipt under concurrent replay", async () => {
@@ -840,7 +841,7 @@ test("internal collect joins canonical signed owner/source proofs to one pending
     expect((await http.post("collect", "http-collect", batchId, args)).status).toBe(403);
     expect(await sql`select id from platform.profile_suggestion_batches`).toHaveLength(0);
     expect(await facets()).toHaveLength(0);
-  } finally { await http.stop(); f.stop(); }
+  } finally { await http.stop(); await f.stop(); }
 });
 
 test("collect wire rejects raw source payloads, foreign identities, fake commands and malformed scope before import", async () => {
@@ -860,7 +861,7 @@ test("collect wire rejects raw source payloads, foreign identities, fake command
     expect((await http.post("collect", "wire-collect", batchId, args)).status).toBe(403);
     expect(f.sourceCalls).toBe(0);
     expect(await sql`select id from platform.profile_suggestion_batches`).toHaveLength(0);
-  } finally { await http.stop(); f.stop(); }
+  } finally { await http.stop(); await f.stop(); }
 });
 
 async function contextFixture() {
@@ -872,7 +873,7 @@ async function contextFixture() {
     review: { version: 1, channel: 'blooio', messageId: 'consent-identity', app: 'ntwrk', memberId: 'owned-member', batchId,
       action: 'collect', commandSha256: digest(`collect ${batchId}`), networkAuthority: f.policy.authority, requestNonce: randomUUID() } };
   const http = await reviewHttp(undefined, undefined, f.policy);
-  return { f, http, input, async stop() { await http.stop(); f.stop(); } };
+  return { f, http, input, async stop() { await http.stop(); await f.stop(); } };
 }
 
 test("membership context derives and signs only the current Network person without consent or Cloud identity inputs", async () => {
@@ -999,7 +1000,7 @@ test("scoped collection endpoint enforces shared grammar and exact original scop
     await sql`update platform.inbound set arrived_at=${new Date(now - 60_000)} where id='msg:blooio:scope-mismatch'`;
     expect((await http.post("collect", "scope-mismatch", batchId, { text, proposal: { ...proposal, expiresAt: now + 86_400_000 }, networkAuthority: f.policy.authority })).status).toBe(403);
     expect(await sql`select id from platform.profile_suggestion_batches where id=${batchId}`).toHaveLength(0);
-  } finally { await http.stop(); f.stop(); }
+  } finally { await http.stop(); await f.stop(); }
 });
 
 test("consent context binds exact eight-key selection hash to stored scoped command and original fixed deadline", async () => {
@@ -1054,7 +1055,7 @@ test("claimed collection store and Cloud owner independently refuse help, scope 
     expect(await guarded.propose(owner, { ...proposal, expiresAt: now + 86_400_000 }, now, claim)).toBeNull();
     expect(sourceCalls).toBe(0);
     expect(await sql`select id from platform.profile_suggestion_batches`).toHaveLength(0);
-  } finally { f.stop(); }
+  } finally { await f.stop(); }
 });
 
 

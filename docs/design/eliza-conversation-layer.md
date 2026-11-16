@@ -6,7 +6,7 @@ Status: **agreed 2026-10-08** by the engine and platform owners. Owner of the El
 
 | Part | Owner | State |
 |---|---|---|
-| Wire contract and shared signing (`@elizaos/plugin-network/contract`, `/svc-auth`, `/client`; mirrored in `packages/core/src/svc/`) | Eliza side | **Done** (import-free; plugin moved upstream 2026-10-09). The mirror is byte-identical to elizaos/eliza `develop`; both repos pin the two files' SHA-256 in a `contract-mirror.test.ts` (here `packages/core/test/`), and `bun run check:mirror` compares them through `gh`. No contract version constant. |
+| Wire contract and shared signing (`@elizaos/plugin-network/contract`, `/svc-auth`, `/client`; mirrored in `packages/core/src/svc/`) | Eliza side | **Done** (import-free; plugin moved upstream 2026-10-09). The mirror is byte-identical to elizaos/eliza `develop`; both repos pin the two files' SHA-256 in a `contract-mirror.test.ts` (here `packages/core/test/`), and `pnpm run check:mirror` compares them through `gh`. No contract version constant. |
 | Gateway takeover: service turn first, handled replies, consent mirror, open-turn context | Eliza side | **Done**, behind `NETWORK_TAKEOVER=1` (eliza `spike/network-plugin` d8d186d) |
 | Cloud route and runtime: service-backed Network store for open turns | Eliza side | **Done** |
 | Service `POST /internal/turn` (collecting adapter around `inbound`) | Platform | Pending |
@@ -69,4 +69,4 @@ Network service ──proactive sends──> Eliza gateway /internal/deliver ─
 
 - **Integration:** run `/internal/turn` against a real Postgres service, and the Workerd shared-runtime harness with plugin-network pointed at a local service.
 - **e2e:** a scripted conversation through the Eliza gateway → agent → service → deliver path. It covers join, looking-for, slop onboarding to the read-back, STOP, and START.
-- **Live:** the luna eval on open turns, and `bun run sim` gates.
+- **Live:** the luna eval on open turns, and `pnpm run sim` gates.

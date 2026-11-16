@@ -1,4 +1,4 @@
-// Generated from packages/core/src/vibe/backendHealthShell.vibe. Run bun run spec:sync.
+// Generated from packages/core/src/vibe/backendHealthShell.vibe. Run pnpm run spec:sync.
 import { promise, runPromise } from "effect/Effect";
 import { $schemaErrorMatcher, TaggedError } from "vibelang-runtime/internal";
 import * as Effect from "effect/Effect";

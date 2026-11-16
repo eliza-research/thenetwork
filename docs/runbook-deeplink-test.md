@@ -4,7 +4,7 @@ Purpose: confirm every link we plan to text before notifications or the paste-pr
 
 ## Setup
 
-1. Generate the test page: `bun run packages/notify/scripts/link-test-page.ts deeplink-test.html +1<network line>`.
+1. Generate the test page: `node --import tsx --env-file-if-exists=.env packages/notify/scripts/link-test-page.ts deeplink-test.html +1<network line>`.
 2. Put the page on a phone. Text it to yourself from the Network line or AirDrop it. Opening it from Messages is the realistic case.
 3. Each phone needs the ChatGPT, Claude and Grok apps, signed in. Repeat once with an app uninstalled to see the web fallback.
 

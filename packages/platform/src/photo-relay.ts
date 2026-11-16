@@ -1,7 +1,7 @@
 // Voluntary selected-item sharing. Appearance scores and gallery/staff links never enter this path.
 // No production policy is supplied by default: uploading privately does not authorize item review.
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import type { SQL } from "bun";
+import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { canClaimAction, permitsIntentBinding, photoDeliveryStillLive, photoFetchAllowed, providerFetchTtlMs, step as stepPhotoDelivery, type PhotoDelivery } from "../../core/src/generated/photoRelayItem.ts";
 import {
   canCheckParties, canCheckPhoto, canRecordSelection, canResolveNotice, initial as selectionInitial,

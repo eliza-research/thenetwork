@@ -5,9 +5,10 @@
 // people are kept apart afterwards. A profile from Rae's own AI assistant (MCP submit_profile) that
 // reads like an answer is learned but never taken as one: no yes to the probe, no cancel, no report. Postgres in a database of its own per test process; dry-run sends
 // (the text is read back from network.messages); fictional numbers (+1 212 555 01xx).
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { findExecutable } from "../../core/src/runtime/process.ts";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { existsSync } from "node:fs";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
@@ -17,7 +18,7 @@ import { loadSnapshot } from "../service/snapshot.ts";
 import { START } from "./mini.ts";
 
 const T = 300_000;
-const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!Bun.which("pg_ctl");
+const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
 const USER = process.env.USER ?? "postgres";
 const DB = `network_slop_date_test_${process.pid}`;
 const ADMIN_URL = `postgres://${USER}@localhost:${DEV_PG_PORT}/postgres`;
@@ -117,7 +118,7 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
       { e164: SAM, name: "Sam, 31", about: "I'm a man into women. Williamsburg, I climb and go to shows", seeking: "I'm a man looking for women, 25 to 35, within 5 miles of 11211", goal: "A relationship, no smokers" },
     ];
     for (const p of people) {
-      expect(await text(s, clock, p.e164, "slop")).toBeString();
+      expect(await text(s, clock, p.e164, "slop")).toEqual(expect.any(String));
       await text(s, clock, p.e164, p.name);
       await text(s, clock, p.e164, p.about);
       await text(s, clock, p.e164, p.seeking);
@@ -125,8 +126,8 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
       await text(s, clock, p.e164, "Weekend evenings work best");
     }
     const rae = (await memberId(RAE))!, sam = (await memberId(SAM))!;
-    expect(rae).toBeString();
-    expect(sam).toBeString();
+    expect(rae).toEqual(expect.any(String));
+    expect(sam).toEqual(expect.any(String));
     for (const id of [rae, sam]) debug(`${id}: ${(await inbox(id)).map(m => m.body).join(" | ")}`);
 
     // ---- Matching on; the engine proposes; nobody hears of it before a person approves.
@@ -254,7 +255,7 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     const JO = "+12125550163";
     for (const body of ["slop", "Jo, 30", "I'm a woman, I'm bi. I live in Bushwick and love dancing", "not sure honestly", "idk, whatever works"]) await text(s, clock, JO, body);
     const jo = (await memberId(JO))!;
-    expect(jo).toBeString();
+    expect(jo).toEqual(expect.any(String));
     await text(s, clock, JO, "25 to 35, within 5 miles of 11237");
     const all = (await inbox(jo)).map(m => m.body);
     debug(all.join(" | "));

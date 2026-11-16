@@ -1,10 +1,11 @@
 // Tangled standalone Quint state machines keep the safety, reachability and trace checks from the
 // source branch. See spec/models/README.md for the Markdown source and command options.
+import { spawnProcess } from "../packages/core/src/runtime/process.ts";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { basename, join } from "node:path";
 
-const ROOT = join(import.meta.dir, "..");
+const ROOT = join(import.meta.dirname, "..");
 const MODEL_DIR = "spec/models";
 const OUTPUT_DIR = "runs/quint-models";
 const QUINT = join(ROOT, "tools/vibestack/node_modules/.bin/quint");
@@ -54,7 +55,7 @@ function pool(jobs: number) {
 }
 
 async function quint(args: string[]): Promise<{ code: number; out: string }> {
-  const p = Bun.spawn([QUINT, ...args], { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
+  const p = spawnProcess([QUINT, ...args], { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
   const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
   return { code: await p.exited, out: out + err };
 }
@@ -145,7 +146,7 @@ if (import.meta.main) {
     process.exit(0);
   }
   if (!existsSync(QUINT)) {
-    console.error("Quint is missing. Run bun run spec:setup.");
+    console.error("Quint is missing. Run pnpm run spec:setup.");
     process.exit(1);
   }
   const typecheckOnly = argv.includes("--typecheck-only");

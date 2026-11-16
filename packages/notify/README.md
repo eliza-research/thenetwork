@@ -11,7 +11,7 @@ The single inbox and the notification scheduler from `docs/research/2026-10-08-e
 | Module | What it does |
 |---|---|
 | `store.ts` | The `NotifyStore` interface (inbox, deliveries, task tokens, surface signals) and `MemoryNotifyStore` |
-| `pg-store.ts` | `PgNotifyStore` on Postgres with Bun's SQL client, schema in `db/schema.sql`. Import it directly: it is not exported from `index.ts`, so the connector's Workers build never pulls in `bun` |
+| `pg-store.ts` | `PgNotifyStore` on Postgres with the shared Postgres client, schema in `db/schema.sql`. Import it directly: it is not exported from `index.ts`, so the connector's Workers build stays independent of the Node Postgres client |
 | `scheduler.ts` | `Notifier`: due rules (requested at once, urgent after 5 min, normal after 4 h), quiet hours, a weekly cap of 2, a re-check before enqueue, `stillNeeded`, `readUpdates`, `redeemSubjects`, `shownSubjects`, `threadReply` and `sweep` (unanswered links become "ignored") |
 | `surface.ts` | `resolveDelivery`: explicit choice, then score, then thread. Links unused twice fall back to the thread |
 | `links.ts` | Fill-only assistant links (`chatgpt.com/?prompt=`, `claude.ai/new?q=`, `grok.com/?q=`), the `ntwrk.party/t/<token>` button page, and URL checks |
@@ -44,4 +44,4 @@ The single inbox and the notification scheduler from `docs/research/2026-10-08-e
 
 ## Device test
 
-Run `bun run scripts/link-test-page.ts` and follow `docs/runbook-deeplink-test.md`.
+Run `node --import tsx --env-file-if-exists=.env scripts/link-test-page.ts` and follow `docs/runbook-deeplink-test.md`.

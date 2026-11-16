@@ -6,7 +6,8 @@
 //  - The oracle's verdict (hidden truth) stays off opportunities until they are resolved.
 //  - Commands for the other mode, prototype keys as command types, client fields in audit rows,
 //    reveals per mode and their revocation, and refused reveals in the audit log.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { setTimeout as sleep } from "node:timers/promises";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { appendFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -77,7 +78,7 @@ describe("per-role shaping (OBS-06)", () => {
     const a = socket(TOK.analyst), b = socket(TOK.admin);
     await Promise.all([a.open, b.open]);
     expect((await post(TOK.admin, "/api/control", { type: "step", ms: DAY })).status).toBe(200);
-    await Bun.sleep(400);
+    await sleep(400);
     const am = a.deltas.flatMap(d => d.members ?? []), bm = b.deltas.flatMap(d => d.members ?? []);
     expect(bm.length).toBeGreaterThan(0);
     expect(am.length).toBe(bm.length);

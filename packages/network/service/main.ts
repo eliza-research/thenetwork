@@ -1,6 +1,6 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S node --import=tsx
 // The Network service for every app (README.md in this folder).
-//   bun run packages/network/service/main.ts [--once] [--dry-run] [--port N] [--host H] [--api-port N]
+//   node --import tsx --env-file-if-exists=.env packages/network/service/main.ts [--once] [--dry-run] [--port N] [--host H] [--api-port N]
 //
 // It runs one network per row of platform.networks ('<app>:<city>'). Without --once: each network
 // ticks every minute on its own (a second instance skips a network while its lock is held), the
@@ -32,7 +32,7 @@ async function main() {
   const once = process.argv.includes("--once");
   const dryRun = process.argv.includes("--dry-run") || !!networkRoutePolicy(process.env);
   const url = process.env.NETWORK_DATABASE_URL ?? process.env.DATABASE_URL;
-  if (!url) throw new Error("set NETWORK_DATABASE_URL (or DATABASE_URL) to the Postgres with the network and platform schemas (bun run db:migrate)");
+  if (!url) throw new Error("set NETWORK_DATABASE_URL (or DATABASE_URL) to the Postgres with the network and platform schemas (pnpm run db:migrate)");
   const clock = new RealClock();
   const blooio = !dryRun && process.env.NETWORK_CHANNEL === "blooio";
   const cloud = !dryRun && process.env.NETWORK_CHANNEL === "eliza_cloud";
@@ -72,7 +72,7 @@ async function main() {
   const port = Number(arg("--port") ?? process.env.NETWORK_SERVICE_PORT ?? 4848);
   const apiPort = Number(arg("--api-port") ?? process.env.PLATFORM_API_PORT ?? 8790);
   if (!local) console.warn(`binding ${host}: use this only behind an access proxy (runbook-real 7)`);
-  const servers = serveService(svc, { host, port, apiPort });
+  const servers = await serveService(svc, { host, port, apiPort });
   const ticks = startTicks(svc);
   await ticks.first;
   const stop = async () => { await ticks.stop(); servers.stop(); await svc.close(); process.exit(0); };

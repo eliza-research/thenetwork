@@ -1,6 +1,6 @@
 // Without an invite link (the service sets no NetworkContext.invite), an unmet request offers no
 // invite and does not wait for a friend's name: a one-word reply afterwards is not read as one.
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { DAY } from "@thenetwork/core";
 import { Mini } from "./mini.ts";
 

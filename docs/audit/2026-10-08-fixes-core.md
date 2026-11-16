@@ -1,5 +1,7 @@
 # Audit fixes: core, engine, judge, evals, sim, capital, plugins (2026-10-08)
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/audit/2026-10-08-fixes-core.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 This file records what this session did with each finding of the 2026-10-08 adversarial audit in the packages it owns. The findings and evidence are in `docs/audit/2026-10-08-weaknesses.md` (other worktree). Each row is keyed by finding id.
 
 - **Branch:** `fix/audit` (from `origin/main` 70c988b). Not pushed, not merged.
@@ -337,8 +339,8 @@ Every networkPack golden change is an intentional behavior change, re-baselined 
 
 Run with API keys unset and no LIVE_TESTS.
 
-- `bunx tsc --noEmit -p .`: clean.
-- `bun test --conditions eliza-source ./packages ./prototypes`: 1827 pass, 10 skip, 5 fail. The fails are the same as on `origin/main`:
+- `pnpm exec tsc --noEmit -p .`: clean.
+- `pnpm exec vitest run --conditions eliza-source ./packages ./prototypes`: 1827 pass, 10 skip, 5 fail. The fails are the same as on `origin/main`:
   - packages/network "meetings happen at real public NYC venues" (baseline).
   - packages/network "consent-first beats push" (baseline; accept-rate gate, see network item 8).
   - packages/plugin-network: 3 files cannot load `@elizaos/*` because the `eliza` submodule is not initialized. The plugin changes were checked in a scratch harness with a symlinked eliza install: 53 pass, 0 fail.

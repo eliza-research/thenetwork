@@ -4,12 +4,14 @@
 // snapshot as the dump, so a restore can be checked table by table).
 // Before upload, db.dump and roles.sql are encrypted (AES-256-GCM, BACKUP_ENCRYPTION_KEY) into
 // db.dump.enc and roles.sql.enc; the manifest holds counts and names only and stays plain.
+import { findExecutable, spawnProcess } from "../../packages/core/src/runtime/process.ts";
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync } from "node:fs";
 import { open, rm, stat } from "node:fs/promises";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { S3Client, SQL } from "bun";
+import { ObjectStore } from "../../packages/core/src/runtime/object-store.ts";
+import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 
 /** Schemas whose tables the manifest counts (everything the migrations create). */
 export const SCHEMAS = ["network", "platform", "notify", "oauth", "public"];
@@ -33,14 +35,14 @@ export interface Manifest {
 export function pgBin(name: "pg_dump" | "pg_dumpall" | "pg_restore" | "psql"): string {
   const dirs = [process.env.PG_BIN_DIR, "/opt/homebrew/opt/postgresql@16/bin", "/opt/homebrew/opt/postgresql@17/bin", "/opt/homebrew/opt/postgresql@18/bin"].filter(Boolean) as string[];
   for (const d of dirs) if (existsSync(`${d}/${name}`)) return `${d}/${name}`;
-  const w = Bun.which(name);
+  const w = findExecutable(name);
   if (!w) throw new Error(`${name} not found: install the Postgres client (deploy/backup/Dockerfile has it), or set PG_BIN_DIR`);
   return w;
 }
 
 /** Run a program; throw with its last stderr lines when it fails. Connection URLs go in the environment or as arguments, never in a log line. */
 export async function run(cmd: string[], o: { env?: Record<string, string>; stdin?: Blob } = {}): Promise<string> {
-  const p = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe", stdin: o.stdin ?? "ignore", env: { ...process.env, ...o.env } as Record<string, string> });
+  const p = spawnProcess(cmd, { stdout: "pipe", stderr: "pipe", stdin: o.stdin ?? "ignore", env: { ...process.env, ...o.env } as Record<string, string> });
   const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
   if (code !== 0) throw new Error(`${cmd[0]!.split("/").pop()} exited ${code}: ${redactUrls(err).trim().split("\n").slice(-3).join(" | ")}`);
   return out;
@@ -74,12 +76,12 @@ export function compareCounts(want: Record<string, number>, got: Record<string, 
  * BACKUP_R2_ACCESS_KEY_ID, BACKUP_R2_SECRET_ACCESS_KEY. A token for this bucket only (Object Read and
  * Write), never the photo bucket's.
  */
-export function backupBucketFromEnv(env: Record<string, string | undefined> = process.env): S3Client {
+export function backupBucketFromEnv(env: Record<string, string | undefined> = process.env): ObjectStore {
   const endpoint = env.BACKUP_R2_ENDPOINT ?? (env.BACKUP_R2_ACCOUNT_ID ? `https://${env.BACKUP_R2_ACCOUNT_ID}.r2.cloudflarestorage.com` : undefined);
   const { BACKUP_R2_BUCKET: bucket, BACKUP_R2_ACCESS_KEY_ID: accessKeyId, BACKUP_R2_SECRET_ACCESS_KEY: secretAccessKey } = env;
   if (!endpoint || !bucket || !accessKeyId || !secretAccessKey) throw new Error("the backup bucket needs BACKUP_R2_ENDPOINT (or BACKUP_R2_ACCOUNT_ID), BACKUP_R2_BUCKET, BACKUP_R2_ACCESS_KEY_ID and BACKUP_R2_SECRET_ACCESS_KEY");
   if (env.R2_BUCKET && env.R2_BUCKET === bucket) throw new Error("BACKUP_R2_BUCKET must not be the photo bucket (R2_BUCKET)");
-  return new S3Client({ endpoint, bucket, accessKeyId, secretAccessKey, region: "auto" });
+  return new ObjectStore({ endpoint, bucket, accessKeyId, secretAccessKey, region: "auto" });
 }
 
 /** A database name a restore may create: lower case, letters, digits and underscores, at most 63 characters. */

@@ -19,12 +19,12 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { allowedByRole, globalGrants, mayOpenCrossApp, scopedGrants } from "../../core/src/generated/staffPermissions.ts";
 import { APP_IDS, isAppId, type AppId } from "./apps.ts";
 import { STAFF_ROLES, type AuditEntry, type Mode, type RoleGrant, type StaffRole, type StaffUser } from "./types.ts";
 
-export const REPO = resolve(import.meta.dir, "../../..");
+export const REPO = resolve(import.meta.dirname, "../../..");
 
 /**
  * "role[@app]": a role for one app or for every app ("@*"; no "@" is "@*", the format before the four

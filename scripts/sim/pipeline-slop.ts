@@ -17,7 +17,7 @@
 // 0 sends after leave except the leave confirmation; a banned member's in-flight relayed text never
 // reaches them; no probe, proposal or participation for a minor; the restart's waiting row goes out
 // once in the morning.
-import { SQL } from "bun";
+import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { DAY, HOUR, MINUTE, SimClock } from "../../packages/core/src/index.ts";
 import { RELAY_PATH, TURN_PATH } from "../../packages/core/src/svc/contract.ts";
 import { svcSign } from "../../packages/core/src/svc/svc-auth.ts";
@@ -80,7 +80,7 @@ interface World {
 
 export async function pipelineSlopBlock(b: Block): Promise<void> {
   if (!H.pgInstalled()) {
-    b.track("pipeline-slop: skipped, no Postgres installed (the dev cluster on :54339 is needed)", false, "install postgresql@16 and run bun run sim --only pipeline-slop");
+    b.track("pipeline-slop: skipped, no Postgres installed (the dev cluster on :54339 is needed)", false, "install postgresql@16 and run pnpm run sim --only pipeline-slop");
     return;
   }
   let url: string;

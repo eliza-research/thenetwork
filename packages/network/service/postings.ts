@@ -15,7 +15,7 @@
 //                    Every write goes through the Network (ConsentNetwork.applyPosting) in a unit of work, so
 //                    the same checks run as for a text (an adult, active, opted-in peon member) and a closed
 //                    posting ends its open seat items at once. Each call writes network.staff_audit.
-import type { SQL } from "bun";
+import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { Facet, Intent, MemberId } from "@thenetwork/core";
 import { postingFacts, postingFromFacts, postingProblem, type JobPosting } from "../src/jobs.ts";
 import type { NetworkRuntime } from "./runtime.ts";

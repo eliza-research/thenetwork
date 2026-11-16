@@ -1,7 +1,10 @@
 // Real service, HTTP and PostgreSQL. Only OTP/provider delivery boundaries are controlled.
-import {afterAll, beforeAll, expect, spyOn, test} from "bun:test";
-import {randomUUID} from "node:crypto";
-import {SQL} from "bun";
+import { fetchWithHost } from "../../core/src/runtime/fetch.ts";
+import { serveHttp, type HttpServer } from "../../core/src/runtime/http.ts";
+import { setTimeout as sleep } from "node:timers/promises";
+import {afterAll, beforeAll, expect, test, vi} from "vitest";
+import {createHash, randomUUID} from "node:crypto";
+import {SQL} from "../../core/src/runtime/postgres.ts";
 import {SimClock, MINUTE, DAY} from "@thenetwork/core";
 import {applySchema, DEV_PG_PORT} from "../../observatory/db/dev-pg.ts";
 import {APPS} from "../../platform/src/apps.ts";
@@ -16,7 +19,7 @@ const admin = new SQL({url:`postgres://${process.env.USER ?? "postgres"}@127.0.0
 const url = `postgres://${process.env.USER ?? "postgres"}@127.0.0.1:${DEV_PG_PORT}/${db}`;
 const secret = "synthetic-shared-agent-test-secret-20261009";
 const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
-let sql: SQL, service: NetworkService, server: ReturnType<typeof Bun.serve>;
+let sql: SQL, service: NetworkService, server: HttpServer;
 let escaped = 0, code = "";
 const start = async (routePolicy?: Record<string, unknown>) => {
   // Only this test's newly created database changes realm markers. The service's
@@ -30,7 +33,7 @@ const start = async (routePolicy?: Record<string, unknown>) => {
     adapter:() => {const a=new DryRunAdapter(()=>{});a.direct=async()=>{escaped++;return "dry_run";};a.deliver=async rows=>{escaped+=rows.length;return rows.map(r=>({id:r.id,status:"dry_run"}));};return a;},log:()=>{},
   });
   await service.start();
-  server=Bun.serve({hostname:"127.0.0.1",port:0,fetch:req=>new URL(req.url).pathname.startsWith("/api/")?service.publicFetch(req):service.fetch(req)});
+  server=await serveHttp({hostname:"127.0.0.1",port:0,fetch:req=>new URL(req.url).pathname.startsWith("/api/")?service.publicFetch(req):service.fetch(req)});
 };
 const turn = (id:string, from:string, text:string, app?:TurnRequest["app"]):TurnRequest => ({messageId:id,from,text,channel:"blooio",to:null,transport:"imessage",receivedAt:clock.now(),...(app?{app}:{})});
 const post = async (input:TurnRequest, signedPath=TURN_PATH) => {
@@ -42,7 +45,7 @@ const receipt = async (input:TurnReceiptRequest) => {
   return fetch(new URL(TURN_RECEIPT_PATH,server.url),{method:"POST",headers:{"content-type":"application/json",...await svcSign(secret,{method:"POST",path:TURN_RECEIPT_PATH,id:`${input.messageId}:receipt`,body,nowS:Math.floor(clock.now()/1000)})},body});
 };
 beforeAll(async()=>{await admin.unsafe(`create database ${db}`);console.info(`[owned-db] ${db}`);await applySchema(url,{lockTimeout:"5s"});sql=new SQL({url,max:2});await start();},120_000);
-afterAll(async()=>{server?.stop(true);await service?.close();await sql?.close();await admin.close();}); // Keep this owned database for the source receipt.
+afterAll(async()=>{await server?.stop(true);await service?.close();await sql?.close();await admin.close();}); // Keep this owned database for the source receipt.
 
 test("signed turns collect direct replies, replay immutable JSON and isolate concurrent users/channels",async()=>{
   const input=turn("help-one","+12125550111","HELP");
@@ -62,7 +65,7 @@ test("signed turns collect direct replies, replay immutable JSON and isolate con
 
 test("canonical membership STOP is collected atomically and cannot drain to a provider on restart",async()=>{
   const phone="+12125550121";
-  const call=async(path:string,body:unknown,cookie?:string)=>fetch(new URL(path,server.url),{method:"POST",headers:{host:"localhost:5102","content-type":"application/json",...(cookie?{cookie}:{})},body:JSON.stringify(body)});
+  const call=async(path:string,body:unknown,cookie?:string)=>fetchWithHost(new URL(path,server.url),{method:"POST",headers:{host:"localhost:5102","content-type":"application/json",...(cookie?{cookie}:{})},body:JSON.stringify(body)});
   expect((await call("/api/auth/otp/start",{phone})).status).toBe(200);
   const login=await call("/api/auth/otp/verify",{phone,code});expect(login.status).toBe(200);
   const cookie=login.headers.get("set-cookie")!.split(";")[0]!;
@@ -88,7 +91,7 @@ test("canonical membership STOP is collected atomically and cannot drain to a pr
   expect(await (await receipt(accepted)).json()).toEqual({ok:true,replayed:true});
   expect((await receipt({...accepted,providerMessageIds:["altered-receipt"]})).status).toBe(409);
   expect(escaped).toBe(before);
-  server.stop(true);await service.close();await start();expect(await (await post(input)).json()).toEqual(body);expect(escaped).toBe(before);
+  await server.stop(true);await service.close();await start();expect(await (await post(input)).json()).toEqual(body);expect(escaped).toBe(before);
   // The canonical public leave path seals prior personal reply payloads, while STOP remains in force.
   expect((await call("/api/me/delete",{scope:"app"},cookie)).status).toBe(200);
   expect((await post(input)).status).toBe(409);
@@ -97,7 +100,7 @@ test("canonical membership STOP is collected atomically and cannot drain to a pr
   const [retained]=await sql`select response,replies,app_id from platform.inbound where id='msg:blooio:other-app-help'`;
   expect(retained.app_id).toBe("friends");expect(retained.response.outcome).toBe("handled");expect(retained.replies.length).toBe(1);
   expect(await service.accounts.optedIn("slop",phone)).toBe(false);
-  server.stop(true);await service.close();await start();expect((await post(input)).status).toBe(409);expect(escaped).toBe(before);
+  await server.stop(true);await service.close();await start();expect((await post(input)).status).toBe(409);expect(escaped).toBe(before);
 },60_000);
 
 test("a normal signed join reaches open context, and STOP revokes replay without rerunning the turn",async()=>{
@@ -186,7 +189,7 @@ test("accepted handled replies repair the single Notify projection after faults,
   expect((await receipt(restartAck)).status).toBe(200);
   expect((await sql`select notification_recorded_at from network.messages where id='scheduling:handled-notify-restart'`)[0].notification_recorded_at).toBeNull();
   service.inbound=originalInbound;
-  server.stop(true);await service.close();await start();
+  await server.stop(true);await service.close();await start();
   expect((await sql`select delivery_id from notify.deliveries where delivery_id='net:scheduling:handled-notify-restart'`).length).toBe(1);
   expect((await sql`select notification_recorded_at from network.messages where id='scheduling:handled-notify-restart'`)[0].notification_recorded_at).not.toBeNull();
   const person=await service.accounts.personFor(phone);expect(person).toBeDefined();
@@ -229,7 +232,7 @@ test("full canonical deletion scrubs signed context, replies and receipts withou
   const control=turn("delete-other-person",otherPhone,"Tell me something about the weather","friends");
   const kept=await post(control);expect(kept.status).toBe(200);const keptBody=await kept.json();
   expect((await sql`select receipt from platform.inbound where id='msg:blooio:delete-help'`)[0].receipt).not.toBeNull();
-  const call=async(path:string,body:unknown,cookie?:string)=>fetch(new URL(path,server.url),{method:"POST",headers:{host:"localhost:5104","content-type":"application/json",...(cookie?{cookie}:{})},body:JSON.stringify(body)});
+  const call=async(path:string,body:unknown,cookie?:string)=>fetchWithHost(new URL(path,server.url),{method:"POST",headers:{host:"localhost:5104","content-type":"application/json",...(cookie?{cookie}:{})},body:JSON.stringify(body)});
   expect((await call("/api/auth/otp/start",{phone})).status).toBe(200);
   const login=await call("/api/auth/otp/verify",{phone,code});expect(login.status).toBe(200);
   const cookie=login.headers.get("set-cookie")!.split(";")[0]!;
@@ -245,7 +248,7 @@ test("full canonical deletion scrubs signed context, replies and receipts withou
   expect((await sql`select person_id from platform.phone_identities where e164=${otherPhone}`).length).toBe(1);
   expect(await (await post(control)).json()).toEqual(keptBody);
   expect(escaped).toBe(before);
-  server.stop(true);await service.close();await start();
+  await server.stop(true);await service.close();await start();
   expect((await post(open)).status).toBe(409);expect((await receipt(ack)).status).toBe(409);
   expect(await (await post(control)).json()).toEqual(keptBody);expect(escaped).toBe(before);
 },60_000);
@@ -260,7 +263,7 @@ test("the Cloud turn secret is never also a staff bearer token", () => {
 
 
 test("isolated route authority fences cross-realm writes and only drains exact durable turns", async () => {
-  server.stop(true); await service.close();
+  await server.stop(true); await service.close();
   const authority = {version:1 as const,routeId:"owned-route",generation:"generation-1",audience:"network-owned-qa",realmId:"owned-qa"};
   const begin = clock.now(), policy = {authority,admitUntil:begin+10*MINUTE,drainUntil:begin+20*MINUTE};
   await start(policy);
@@ -274,7 +277,7 @@ test("isolated route authority fences cross-realm writes and only drains exact d
   const accepted = await post(input); expect(accepted.status).toBe(200); const response = await accepted.json() as any;
   const [stored] = await sql`select network_authority,request_hash from platform.inbound where id='msg:blooio:isolated-help'`;
   expect(stored.network_authority).toEqual(authority);
-  expect(stored.request_hash).toBe(new Bun.CryptoHasher("sha256").update(JSON.stringify(input)).digest("hex"));
+  expect(stored.request_hash).toBe(createHash("sha256").update(JSON.stringify(input)).digest("hex"));
   // Use a distinct fixture name: the separate sharedContext duplicate-first-name
   // defect is tracked explicitly and must not obscure route-authority assertions.
   const phone = "+12125550993";
@@ -311,7 +314,7 @@ test("isolated route authority fences cross-realm writes and only drains exact d
   expect(JSON.stringify(gatewayAck)).not.toBe(JSON.stringify(ack));
   expect(await (await receipt(gatewayAck)).json()).toEqual({ok:true,replayed:true});
   expect((await sql`select receipt_hash,receipt from platform.inbound where id='msg:blooio:isolated-help'`)[0]).toEqual(savedReceipt);
-  expect(savedReceipt.receipt_hash).toBe(new Bun.CryptoHasher("sha256").update(JSON.stringify(ack)).digest("hex"));
+  expect(savedReceipt.receipt_hash).toBe(createHash("sha256").update(JSON.stringify(ack)).digest("hex"));
   for (const changed of [
     {...gatewayAck,providerMessageIds:["different-provider-receipt"]},
     {...gatewayAck,historyRecorded:true},
@@ -330,7 +333,7 @@ test("isolated route authority fences cross-realm writes and only drains exact d
   expect((await post(input)).status).toBe(403);
   expect((await receipt(ack)).status).toBe(403);
   expect((await updates(action)).status).toBe(403);
-  server.stop(true); await service.close(); await start();
+  await server.stop(true); await service.close(); await start();
   expect((await post(input)).status).toBe(403);
   expect((await post(turn("legacy-after-isolation", "+12125550992", "HELP"))).status).toBe(200);
 }, 60_000);
@@ -355,7 +358,7 @@ test("route policy boot validation rejects malformed or non-staging authority", 
 
 // A real row lock holds both signed requests across the server's drain deadline.
 test("isolated actions and receipts recheck the drain window after database lock waits", async () => {
-  server.stop(true); await service.close();
+  await server.stop(true); await service.close();
   const authority = {version:1 as const,routeId:"locked-route",generation:"g1",audience:"locked-qa",realmId:"locked-qa"};
   const begin = clock.now(), policy={authority,admitUntil:begin+10*MINUTE,drainUntil:begin+20*MINUTE}; await start(policy);
   const help = {...turn("locked-help", "+12125550994", "HELP"),networkAuthority:authority};
@@ -387,7 +390,7 @@ test("isolated actions and receipts recheck the drain window after database lock
     const deadline=Date.now()+5000; let waiters=0;
     while(Date.now()<deadline){
       const[row]=await admin`select count(*)::int as count from pg_stat_activity where datname=${db} and wait_event_type='Lock' and lower(query) like '%platform.inbound%'`;
-      waiters=row.count;if(waiters>=2)break;await Bun.sleep(10);
+      waiters=row.count;if(waiters>=2)break;await sleep(10);
     }
     expect(waiters).toBeGreaterThanOrEqual(2);
     clock.advance(policy.drainUntil-clock.now()); release(); await transaction;
@@ -404,7 +407,7 @@ test("isolated actions and receipts recheck the drain window after database lock
     expect(memberAfter).toEqual(memberBefore);
     // Expired exact replays remain denied; an accepted receipt is not an extension of the window.
     expect((await receipt(ack)).status).toBe(403);
-  } finally {release();await transaction;await locker.close();server.stop(true);await service.close();await start();}
+  } finally {release();await transaction;await locker.close();await server.stop(true);await service.close();await start();}
 },60_000);
 
 
@@ -448,7 +451,7 @@ test("members sharing a first name receive their own context without another per
 // This regression must fail on the old UPDATES path: markSeen committed before
 // the later route check rejected completion, silently consuming the unread item.
 test("expired isolated updates roll back unread and surface changes after a notify row wait", async () => {
-  server.stop(true); await service.close();
+  await server.stop(true); await service.close();
   const authority={version:1 as const,routeId:"updates-route",generation:"g1",audience:"updates-qa",realmId:"updates-qa"};
   const policy={authority,admitUntil:clock.now()+10*MINUTE,drainUntil:clock.now()+20*MINUTE};await start(policy);
   const phone="+12125550781";let step=0;
@@ -471,18 +474,18 @@ test("expired isolated updates roll back unread and surface changes after a noti
     const body=JSON.stringify({channel:open.channel,messageId:open.messageId,app:opened.app,memberId:opened.memberId,networkAuthority:authority});
     pending=fetch(new URL("/internal/updates",server.url),{method:"POST",headers:{"content-type":"application/json",...await svcSign(secret,{method:"POST",path:"/internal/updates",id:`${open.messageId}:updates`,body,nowS:Math.floor(clock.now()/1000)})},body});
     const deadline=Date.now()+5000;let waiters=0;
-    while(Date.now()<deadline){const[row]=await admin`select count(*)::int as count from pg_stat_activity where datname=${db}and wait_event_type='Lock'and lower(query)like'%notify.inbox_items%'`;waiters=row.count;if(waiters)break;await Bun.sleep(10);}
+    while(Date.now()<deadline){const[row]=await admin`select count(*)::int as count from pg_stat_activity where datname=${db}and wait_event_type='Lock'and lower(query)like'%notify.inbox_items%'`;waiters=row.count;if(waiters)break;await sleep(10);}
     expect(waiters).toBeGreaterThan(0);clock.advance(policy.drainUntil-clock.now());release();await held;
     expect((await pending).status).toBe(403);
     const[after]=await sql`select seen_at,seen_on from notify.inbox_items where id=${item.id}`;
     expect(after).toEqual({seen_at:null,seen_on:null});
     expect(await sql`select surface,active,last_used_at,acted,ignored,ignored_streak from notify.surface_signals where person_id=${person!.id}order by surface`).toEqual(surfaceBefore);
-  }finally{release();await held;if(pending)await pending.catch(()=>undefined);await locker.close();server.stop(true);await service.close();await start();}
+  }finally{release();await held;if(pending)await pending.catch(()=>undefined);await locker.close();await server.stop(true);await service.close();await start();}
 },60_000);
 
 // Real service + real owned fixture PostgreSQL: provider receipts remain controlled.
 test("explicit saved-profile reads select the app without consuming onboarding or changing profiles", async () => {
-  server.stop(true);
+  await server.stop(true);
   await service.close();
   await start();
   const phone = "+12125550991";
@@ -512,8 +515,8 @@ test("explicit saved-profile reads select the app without consuming onboarding o
   expect((await post(turn("profile-prime-slop", phone, "Slop"))).status).toBe(200);
   const pending = async () => {
     const rows =
-      await sql`select id,state from network.network_state where id in ('friends:nyc','slop:nyc') order by id`;
-    return rows.map((row: { id: string; state: string | { asks: unknown; members: unknown[] } }) => {
+      await sql<{ id: string; state: string | { asks: unknown; members: unknown[] } }[]>`select id,state from network.network_state where id in ('friends:nyc','slop:nyc') order by id`;
+    return rows.map(row => {
       const state = typeof row.state === "string" ? JSON.parse(row.state) : row.state;
       return {
         id: row.id,
@@ -548,7 +551,7 @@ test("explicit saved-profile reads select the app without consuming onboarding o
       expect((await post(turn("profile-select-friends", phone, "Friends"))).status).toBe(200);
     }
     const before = await pending();
-    const spies = [...service.runtimes.values()].map((rt) => spyOn(rt.net, "onInbound"));
+    const spies = [...service.runtimes.values()].map((rt) => vi.spyOn(rt.net, "onInbound"));
     const input = turn(`profile-read-${index}`, phone, text);
     try {
       const response = await post(input);
@@ -619,7 +622,7 @@ test("explicit saved-profile reads select the app without consuming onboarding o
     await sql`select (select count(*) from platform.people) people,(select count(*) from platform.memberships) memberships,(select count(*) from platform.consent_events) consents,(select count(*) from platform.pending_texts) pending`;
   expect(countsAfter).toEqual(countsBefore);
   // An edit is ordinary inbound, never swallowed as a saved-profile read.
-  const editSpies = [...service.runtimes.values()].map((rt) => spyOn(rt.net, "onInbound"));
+  const editSpies = [...service.runtimes.values()].map((rt) => vi.spyOn(rt.net, "onInbound"));
   try {
     const edited = await post(
       turn("profile-edit-intent", phone, "Change my Friends profile to say I like kayaking", "friends"),

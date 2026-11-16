@@ -1,6 +1,6 @@
 // Actual MCP + public API HTTP flow and qualified Cloud producer; fictional existing account only.
 // No OTP path, direct session creation, user account, provider network or live key.
-import {test,expect} from 'bun:test';
+import {test,expect} from 'vitest';
 import {createPublicApi} from '../../platform/src/api.ts';
 import {MemoryPeopleStore} from '../../platform/src/store.ts';
 import {APPS} from '../../platform/src/apps.ts';

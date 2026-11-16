@@ -1,8 +1,8 @@
 // The sites' API client (sites/shared/api.ts) against the real platform API (createPublicApi) in the
 // same process: every call the pages make, with the same headers and bodies a browser sends. A fake
 // OTP provider keeps the code in memory (nothing is sent). Audit SITE-01, SITE-02 and SITE-22.
-//   bun test sites
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+//   pnpm exec vitest run sites
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { APPS, type AppId } from "../../packages/platform/src/apps.ts";
@@ -119,7 +119,7 @@ describe("the client against createPublicApi", () => {
 
 describe("error parity (audit sites-infra-17)", () => {
   test("every error code the platform API can send has a message on the sites", () => {
-    const src = ["api.ts", "accounts.ts"].map((f) => readFileSync(join(import.meta.dir, "../../packages/platform/src", f), "utf8")).join("\n");
+    const src = ["api.ts", "accounts.ts"].map((f) => readFileSync(join(import.meta.dirname, "../../packages/platform/src", f), "utf8")).join("\n");
     const codes = new Set([...src.matchAll(/error: "([a-z_]+)"/g)].map((m) => m[1]!));
     expect(codes.size).toBeGreaterThan(5);
     for (const c of codes) {

@@ -86,13 +86,19 @@ export function sometimesClosesAnIntent(s: IntentManagement): boolean {
   return s.phase === "CloseSelected";
 }
 
-/** Story: See and manage the things the Network is looking for / A pause or close stops only the work linked to that intent (spec/standingIntentManagement.md:58) */
+/** Story: See and manage the things the Network is looking for / Commit a stored intent change with its acknowledgment (spec/standingIntentManagement.md:58) */
+//@ pure
+export function writesStandingIntentRow(s: IntentManagement, stored: boolean): boolean {
+  return stored && (s.phase === "PauseSelected" || s.phase === "CloseSelected");
+}
+
+/** Story: See and manage the things the Network is looking for / A pause or close stops only the work linked to that intent (spec/standingIntentManagement.md:67) */
 //@ pure
 export function retireIntentOpportunity(directAnchor: boolean, beforeBooking: boolean): boolean {
   return directAnchor && beforeBooking;
 }
 
-/** Story: See and manage the things the Network is looking for / A pause or close stops only the work linked to that intent (spec/standingIntentManagement.md:58) */
+/** Story: See and manage the things the Network is looking for / A pause or close stops only the work linked to that intent (spec/standingIntentManagement.md:67) */
 //@ pure
 export function retireIntentSearch(recognizedDesire: boolean, stillLive: boolean): boolean {
   return recognizedDesire && !stillLive;

@@ -1,5 +1,7 @@
+import { fetchWithHost } from "../../packages/core/src/runtime/fetch.ts";
+import { serveHttp, type HttpServer } from "../../packages/core/src/runtime/http.ts";
 import { randomUUID } from "node:crypto";
-import { SQL } from "bun";
+import { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import { HOUR, SimClock } from "../../packages/core/src/index.ts";
 import { TURN_PATH, type TurnRequest, type TurnResponse } from "../../packages/core/src/svc/contract.ts";
 import { svcSign } from "../../packages/core/src/svc/svc-auth.ts";
@@ -31,7 +33,7 @@ export async function withSignedTurnFixture(run: (fixture: SignedTurnFixture) =>
   const admin = new SQL({ url: `${address}/postgres`, max: 1 });
   let created = false;
   let service: NetworkService | undefined;
-  let server: ReturnType<typeof Bun.serve> | undefined;
+  let server: HttpServer | undefined;
   try {
     await admin.unsafe(`create database ${database}`);
     created = true;
@@ -54,14 +56,14 @@ export async function withSignedTurnFixture(run: (fixture: SignedTurnFixture) =>
     });
     const app = service;
     await app.start();
-    const http = Bun.serve({
+    const http = await serveHttp({
       hostname: "127.0.0.1", port: 0,
       fetch: request => new URL(request.url).pathname.startsWith("/api/") ? app.publicFetch(request) : app.fetch(request),
     });
     server = http;
 
     async function call(appId: FixtureApp, path: string, body: object, cookie?: string) {
-      const response = await fetch(new URL(path, http.url), {
+      const response = await fetchWithHost(new URL(path, http.url), {
         method: "POST", signal: AbortSignal.timeout(10_000),
         headers: { host: hosts[appId], "content-type": "application/json", ...(cookie ? { cookie } : {}) },
         body: JSON.stringify(body),
@@ -115,7 +117,7 @@ export async function withSignedTurnFixture(run: (fixture: SignedTurnFixture) =>
 
     await run({ service: app, createMember, sendTurn });
   } finally {
-    server?.stop(true);
+    await server?.stop(true);
     try {
       await service?.close();
       if (created) await admin.unsafe(`drop database ${database}`);

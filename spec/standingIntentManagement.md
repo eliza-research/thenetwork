@@ -55,6 +55,15 @@ pure def sometimesPausesAnIntent(s: IntentManagement): bool = s.phase == PauseSe
 pure def sometimesClosesAnIntent(s: IntentManagement): bool = s.phase == CloseSelected
 ```
 
+### Commit a stored intent change with its acknowledgment
+
+A selected stored intent writes to the same member's row in the current app in the transaction that saves the control and acknowledgment. If its stored status changes or the row leaves that scope before the write, the whole transaction fails. A learned intent keeps its control in member state. Controls saved before row updates began still apply.
+
+```quint
+pure def writesStandingIntentRow(s: IntentManagement, stored: bool): bool =
+  stored and (s.phase == PauseSelected or s.phase == CloseSelected)
+```
+
 ### A pause or close stops only the work linked to that intent
 
 Retire a directly anchored opportunity if it is still in review or probing. Stop searches for the same named desire when it has no other live record. Preserve transport send holds and outstanding replies. A scheduled or completed meeting stays in its own consent and cancellation flow.

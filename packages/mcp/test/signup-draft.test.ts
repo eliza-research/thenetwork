@@ -1,5 +1,5 @@
 // Normal OAuth and phone-session HTTP flow. Only OTP delivery is controlled; no real person/provider.
-import {expect, test} from "bun:test";
+import {expect, test} from "vitest";
 import {createPublicApi, APPS} from "@thenetwork/platform";
 import {MemoryOAuthStore} from "../src/store.ts";
 import {call, connect, PHONE_A, PHONE_B, setup} from "./harness.ts";

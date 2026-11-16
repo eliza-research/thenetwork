@@ -3,11 +3,12 @@
 // the app's join age in its simulated world, per-app review reasons and SLA, real mode kept to one
 // app (an app_id filter, and the app's read login under row-level security), and the cross-app
 // person view (cross_app_safety@* or admin@* only; the audit row is written before any read).
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { serveHttp } from "../../core/src/runtime/http.ts";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY, HOUR } from "@thenetwork/core";
 import { rowsFromGame, writeRows } from "../db/writer.ts";
 import { slaHours, toNetworkReason } from "../src/apps.ts";
@@ -183,7 +184,7 @@ describe("the console for four apps (game mode)", () => {
 describe("reviewer of record: the console sends the signed-in person to the service", () => {
   test("X-Network-Staff-Id carries the staff id, ?app= and X-Network-App the app, and the token is the console's own", async () => {
     const seen: { auth: string | null; staff: string | null; app: string | null; q: string | null; path: string }[] = [];
-    const svc = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(req) {
+    const svc = await serveHttp({ port: 0, hostname: "127.0.0.1", fetch(req) {
       const u = new URL(req.url);
       seen.push({ auth: req.headers.get("authorization"), staff: req.headers.get("x-network-staff-id"), app: req.headers.get("x-network-app"), q: u.searchParams.get("app"), path: u.pathname });
       return Response.json({ ok: true });
@@ -196,7 +197,7 @@ describe("reviewer of record: the console sends the signed-in person to the serv
         { auth: "Bearer console-token", staff: "rev@example.org", app: "slop", q: "slop", path: "/review/o1" },
         { auth: "Bearer console-token", staff: "admin@example.org", app: "slop", q: "slop", path: "/matching" },
       ]);
-    } finally { svc.stop(true); }
+    } finally { await svc.stop(true); }
   });
 });
 

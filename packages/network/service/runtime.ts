@@ -19,7 +19,7 @@
 //    SECURITY DEFINER function that returns ids only.
 import { DAY } from "@thenetwork/core";
 import { randomUUID } from "node:crypto";
-import type { SQL } from "bun";
+import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { City, Clock, MemberId, WorldSnapshot } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import type { NetworkContext, SimMessage } from "@thenetwork/core";
@@ -28,7 +28,7 @@ import {
   contextFacetEligible, contextFacetLimit, contextFacetSizeLimit, contextMode, contextSinglePlayer,
   initial as initialContext, step as stepContext, type ContextMode,
 } from "../../core/src/generated/sharedContext.ts";
-import { ConsentNetwork, presentInNyc, relayDispatchCheck, type NetworkOptions, type NetworkState } from "../src/network.ts";
+import { ConsentNetwork, presentInNyc, relayDispatchCheck, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
 import type { RelayCanonical } from "../src/relay.ts";
 import { loadRelayRows, PgStore, runStored, runTick, type NetworkStore } from "../src/store.ts";
 import { capitalWiring, type CapitalEvent } from "../src/capital.ts";
@@ -51,6 +51,7 @@ import { eventOf, membersOf, type EventRow } from "../../observatory/src/events.
 import { NOT_SENT, type RecipientCheck } from "../../blooio/src/outbound-queue.ts";
 import { summarizeRun } from "../../observatory/src/engineCapture.ts";
 import type { JobPosting } from "../src/jobs.ts";
+import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
 import { savePosting } from "./postings.ts";
 
 type Row = Record<string, unknown>;
@@ -58,6 +59,7 @@ type Row = Record<string, unknown>;
 /** What one unit of work produced. Written in the save transaction, then delivered. */
 export interface Unit {
   inbound?: Row;
+  standingIntent?: StoredStandingIntentChange;
   sends: Outbound[];
   events: EventRow[];
   blocks: [MemberId, MemberId][];
@@ -466,10 +468,20 @@ export class NetworkRuntime {
         order by person.id for update of person`;
       for (const row of rows as Row[]) personIds.set(row.member_id as string, row.id as string);
     }
-    const named = new Set<string>([...u.sends.map(s => s.memberId), ...(u.inbound ? [u.inbound.member_id as string] : []), ...u.blocks.flat(), ...u.optOut.keys(), ...u.postings.map(p => p.managerId)]);
+    const named = new Set<string>([...u.sends.map(s => s.memberId), ...(u.inbound ? [u.inbound.member_id as string] : []),
+      ...(u.standingIntent ? [u.standingIntent.memberId] : []), ...u.blocks.flat(), ...u.optOut.keys(), ...u.postings.map(p => p.managerId)]);
     const known = new Set<string>();
     if (named.size) for (const r of await tx`select id from network.members where app_id = ${app} and id in ${tx([...named])}`) known.add(r.id);
     const ok = (id: string) => known.has(id) && !u.forget.has(id);
+    if (u.standingIntent) {
+      const change = u.standingIntent;
+      if (!ok(change.memberId)) throw new Error("Standing intent owner is unavailable");
+      const rows = await tx`update network.intents set status = ${change.status}
+        where app_id = ${app} and id = ${change.id} and member_id = ${change.memberId}
+          and status = ${change.previousStatus} and coalesce(details, '') not like ${`${JOB_INTENT}%`}
+        returning id`;
+      if (rows.length !== 1) throw new Error("Selected standing intent changed before commit");
+    }
     if (u.inbound && ok(u.inbound.member_id as string)) await tx`insert into network.messages ${tx({ ...u.inbound, app_id: app })} on conflict (id) do nothing`;
     const turn = this.host.inboundTurn?.();
     const queue = this.adapter instanceof BlooioAdapter ? this.adapter.queue : undefined;

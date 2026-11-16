@@ -1,9 +1,9 @@
 // Integration: the Notifier wired to the Postgres outbound queue (packages/blooio outbound-queue.ts,
 // platform.outbound) on a recording "sim" provider, on a database of its own on the local dev cluster
 // (:54339). Skipped without Postgres.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { randomUUID } from "node:crypto";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { SimClock } from "../../core/src/clock.ts";
 import { applySchema, devPgUp, DEV_PG_PORT } from "../../observatory/db/dev-pg.ts";
 import { pgAvailable } from "../../observatory/test/pg.ts";

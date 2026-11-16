@@ -3,11 +3,11 @@
 A single static page, `index.html`, that shows two photos side by side and records which one the rater
 finds more attractive (overall, face or body) as JSONL. It reads photos from a folder you choose on your
 own computer and never makes a network request: its Content-Security-Policy is `default-src 'none'` with
-`connect-src 'none'`, so the browser itself blocks any upload. `bun run sim` checks this policy and that
+`connect-src 'none'`, so the browser itself blocks any upload. `pnpm run sim` checks this policy and that
 the page contains no network call. Labels are kept in the browser's local storage while you work, and
 **Save labels file** writes them to a local file.
 
-The fitter is `bun run clef fit`. The method, the label budget and the full operator runbook are in
+The fitter is `pnpm run clef fit`. The method, the label budget and the full operator runbook are in
 `docs/results/2026-10-09-clef-fitting.md`.
 
 ## Consent and handling rules
@@ -27,7 +27,7 @@ These rules are not optional. The operator (the founder or a named delegate) own
 3. **Labels and photos stay local.** No cloud drive, email, chat or shared link. Photos reach a rater on
    an encrypted drive or a local transfer and come back the same way; so do the labels files. The only
    photo bytes that ever leave the operator's machine are those sent to Cloudflare Workers AI by
-   `bun run clef features --live`, which covers manifest-listed adults only.
+   `pnpm run clef features --live`, which covers manifest-listed adults only.
 4. **Raters** are the founding team and paid raters who signed the rater agreement (confidentiality,
    adults only, no copies). A rater id is a pseudonym, never a name or an email.
 5. **Never shared.** No rating, rank or photo is discussed outside a labelling session. Fit reports and

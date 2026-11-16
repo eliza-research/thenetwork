@@ -1,3 +1,4 @@
+import { setTimeout as waitForMs } from "node:timers/promises";
 // Private member photos (slop.date only; founder decision 2026-10-08: photos and any rating from
 // them are for adults only (founder decision 9: the stated age, no ID check), never for members aged
 // 13-17, and scores are agent_private and never shown to anyone).
@@ -31,10 +32,12 @@
 //  - Delete: the member deletes one photo (the rating is dropped, then made again from what is left);
 //    leaving the app or deleting everything deletes them all; a person whose lowest age drops under 18
 //    loses them all (deleteFor), and their rating with them.
+import { fileAt } from "../../core/src/runtime/files.ts";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { S3Client, type SQL } from "bun";
+import { ObjectStore } from "../../core/src/runtime/object-store.ts";
+import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { ratingMaxBytes, ratingMaxPhotos, uploadMaxBytes, uploadMaxPerPerson, photoSlotsFull } from "../../core/src/generated/photoPolicy.ts";
 import {
   canCheckReturnedScore, canCheckWrittenScore, canRecordScoreRemoval, canRecordScoreWrite, canReceiveScore, canSupplyPhotos,
@@ -80,7 +83,7 @@ export async function photoRaterFromEnv(
   let w: ClefWeights = DEFAULT_CLEF_WEIGHTS;
   if (env.CLEF_WEIGHTS_PATH) {
     try {
-      const raw = JSON.parse(await (o.readFile ?? (p => Bun.file(p).text()))(env.CLEF_WEIGHTS_PATH)) as ClefWeights & { provenance?: unknown };
+      const raw = JSON.parse(await (o.readFile ?? (p => fileAt(p).text()))(env.CLEF_WEIGHTS_PATH)) as ClefWeights & { provenance?: unknown };
       if (typeof raw.version !== "string" || !raw.version.trim()) return { status: "refused_weights", detail: "the weights file has no version" };
       const prov = raw.provenance as { fitter?: unknown; fittedAt?: unknown } | undefined;
       if (raw.placeholder !== false || !prov || typeof prov !== "object" || typeof prov.fitter !== "string" || typeof prov.fittedAt !== "string")
@@ -148,7 +151,7 @@ export const retryParts = (r: AppearanceRater) => retried.get(r);
  * through `sleep`, so a simulation never waits). A refusal (null) is an answer, never retried.
  */
 export function withRetry(r: AppearanceRater, o: RetryOptions = {}): AppearanceRater {
-  const attempts = Math.max(1, o.attempts ?? 3), base = o.baseMs ?? 500, sleep = o.sleep ?? (ms => Bun.sleep(ms));
+  const attempts = Math.max(1, o.attempts ?? 3), base = o.baseMs ?? 500, sleep = o.sleep ?? (ms => waitForMs(ms));
   const wrapped: AppearanceRater = {
     id: r.id,
     async rate(subject, photos) {
@@ -342,12 +345,12 @@ export class LocalDiskPhotoStorage implements PhotoStorage {
   async delete(key: string) { await rm(this.path(key), { force: true }); }
 }
 
-/** Cloudflare R2 (S3-compatible) through Bun's S3 client. The bucket must be private (no public access, no r2.dev URL). Not exercised in tests. */
+/** Cloudflare R2 (S3-compatible) through the Node S3 client. The bucket must be private (no public access, no r2.dev URL). Not exercised in tests. */
 export class R2PhotoStorage implements PhotoStorage {
   readonly kind = "r2" as const;
-  private readonly s3: S3Client;
+  private readonly s3: ObjectStore;
   constructor(o: { endpoint: string; bucket: string; accessKeyId: string; secretAccessKey: string }) {
-    this.s3 = new S3Client({ endpoint: o.endpoint, bucket: o.bucket, accessKeyId: o.accessKeyId, secretAccessKey: o.secretAccessKey, region: "auto" });
+    this.s3 = new ObjectStore({ endpoint: o.endpoint, bucket: o.bucket, accessKeyId: o.accessKeyId, secretAccessKey: o.secretAccessKey, region: "auto" });
   }
   async put(key: string, bytes: Uint8Array, type: PhotoType) { await this.s3.write(`photos/${checkKey(key)}`, bytes, { type }); }
   async get(key: string) {

@@ -5,7 +5,7 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "dev": "bun run src/dev-server.ts"
+    "dev": "node --import tsx --env-file-if-exists=.env src/dev-server.ts"
   },
   "dependencies": {
     "@thenetwork/platform": "workspace:*"

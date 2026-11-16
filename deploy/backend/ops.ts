@@ -16,7 +16,7 @@
 //
 // The webhook body is JSON: { text, source, env, build, alerts: [{ key, level, count, text, state }] }.
 // `text` alone is what a Slack incoming webhook shows; ALERT_WEBHOOK_FORMAT=slack sends only { text }.
-import type { SQL } from "bun";
+import type { SQL } from "../../packages/core/src/runtime/postgres.ts";
 import {
   batchWasAccepted, batchWasAttempted, batchWasHeld, cachedOpsMetricsFresh, chooseFiringPlan, chooseMissingPlan,
   initial as initialAlertDispatch, opsRoundDue, roundReport, step as stepAlertDispatch,

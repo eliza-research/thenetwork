@@ -38,7 +38,7 @@ import {
 import { initial as initialReceipt, step as stepReceipt, type FailureKind, type ReceiptPhase } from "../../core/src/generated/outboundReceipt.ts";
 import { receiptAccepted, receiptFinal, receiptMessageStatus } from "../../core/src/generated/turnReceipt.ts";
 import { parseApprovedRelayPhotos, type ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
-import type { SQL } from "bun";
+import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY, HOUR, MINUTE } from "../../core/src/clock.ts";
 import { LeakGuard } from "../../core/src/guard.ts";
 import { normalizeAddress } from "./phone.ts";

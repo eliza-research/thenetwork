@@ -551,7 +551,7 @@ module runtime_ops {
     s.pr.phase == "running",
     s' = { ...s, pr: { ...s.pr, phase: "stopping", sigtermAt: s.now, graceAt: s.now } },
   }
-  /** Bun 1.4.2: server.stop(false) resolves only when the in-flight requests end (checked by a local run). */
+  /** A graceful listener stop waits for its in-flight requests to end. */
   action serversStopped: bool = all {
     s.pr.phase == "stopping", s.pr.stuck != "http",
     s' = { ...s, pr: { ...s.pr, phase: "waiting" } },
@@ -797,7 +797,7 @@ module runtime_ops {
    * README rollback: an inactive Worker stops the container (worker.ts:56-58 comment: SIGTERM). SD-159; a
    * rollback without BACKEND_RUNTIME_CONFIG also leaves it running (worker.ts:55, cfNoConfigTest).
    * NOT IN `safety`: SD-159 is open, skipped because the fix needs a test in workerd (Durable Objects and
-   * Containers), and no Workers runtime is in the repository; a Bun stub would be mock-only proof. cfNoBuildIdTest replays it.
+   * Containers), and no Workers runtime is in the repository; a local runtime stub would give only mock evidence. cfNoBuildIdTest replays it.
    */
   val inactiveStops = (not(s.cf.enabled) and s.cf.cronSinceInactive) implies not(s.cf.containerRunning)
 

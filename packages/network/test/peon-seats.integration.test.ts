@@ -3,9 +3,9 @@
 // hook (packs.ts) -> the engine with peonPack. A posting is a seat with capacity = openings; a seat
 // that is full or closed gets no new match; a minor's posting gets no seat; a minor is never matched.
 // Synthetic data only, in a database of its own. Nothing is sent.
-import {afterAll,beforeAll,expect,test} from "bun:test";
+import {afterAll,beforeAll,expect,test} from "vitest";
 import {randomUUID} from "node:crypto";
-import {SQL} from "bun";
+import {SQL} from "../../core/src/runtime/postgres.ts";
 import {DAY} from "@thenetwork/core";
 import {peonPack,PEON_ENGINE_CONFIG,runEngine,type EngineInput} from "@thenetwork/engine";
 import {applySchema} from "../../observatory/db/dev-pg.ts";

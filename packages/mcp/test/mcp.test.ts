@@ -1,6 +1,6 @@
 // MCP over Streamable HTTP: 2026-07-28 (per-request _meta and headers) and the legacy initialize
 // handshake, the OpenAI surface that hides slop, and tool inputs that never take a phone or a code.
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { addMember, call, connect, MODERN, origin, PHONE_A, PHONE_B, register, rpc, setup } from "./harness.ts";
 
 const NTWRK = `${origin("ntwrk.party")}/mcp`;

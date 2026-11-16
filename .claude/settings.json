@@ -20,7 +20,7 @@
     "ask": [
       "Bash(pnpm accept:*)",
       "Bash(pnpm exec spec accept:*)",
-      "Bash(bun run accept:*)",
+      "Bash(pnpm run accept:*)",
       "Bash(npm run accept:*)"
     ]
   }

@@ -1,5 +1,7 @@
 # Service matching judge qualification
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-14-service-matching-judge.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 This fixes the missing LLM connection in the service matching path (PRD 28.3, 33.6).
 Baseline: main `aea941fff26ccc9a37791e381267660b2728f5a3`.
 Attribution: Automated. Codex performed the implementation and tests under Nubs' approval.
@@ -16,11 +18,11 @@ Two fictional adults use signed webhook requests. The clock is simulated. Delive
 The script acts as the reviewer and as each fictional member. This is not real-person consent.
 No member text, OTP, photo, or provider delivery was sent.
 
-Command, Bun 1.4.2, seed 1:
+Command, the former runtime 1.4.2, seed 1:
 
 ```bash
 NETWORK_ENGINE_JUDGE=1 NETWORK_ENGINE_JUDGE_BUDGET_USD=0.25 NETWORK_ENGINE_JUDGE_MAX_REQUESTS=12 \
-  bun test --conditions eliza-source --timeout 300000 \
+  pnpm exec vitest run --testTimeout 300000 \
   packages/network/test/slop-date-path.integration.test.ts --test-name-pattern 'join, onboard'
 ```
 
@@ -62,5 +64,5 @@ Judge failures or budget exhaustion can leave heuristic candidates eligible unde
 Inspect `matchingJudge` coverage before calling a run AI-qualified. Friends has no judge pack and makes no judge calls.
 The service still matches NYC candidates only. Bay Area profile intake does not prove Bay Area matching.
 
-Full offline validation: `bun run sim` passed 326/326 blocking gates in 1014.2 seconds. Fourteen tracked targets remain off target.
-`bun run typecheck` passed. These results do not establish pilot matching quality.
+Full offline validation: `pnpm run sim` passed 326/326 blocking gates in 1014.2 seconds. Fourteen tracked targets remain off target.
+`pnpm run typecheck` passed. These results do not establish pilot matching quality.

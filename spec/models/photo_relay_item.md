@@ -37,7 +37,7 @@ Production uses [selected-photo consent and review](../photoRelayReview.md) for 
 //   15 minutes and 60 seconds; only the order of the values matters).
 //
 // RUN (quint 0.33.1)
-//   bun run quint:check quint/photo_relay_item.qnt
+//   pnpm run quint:check quint/photo_relay_item.qnt
 //
 // OUTSIDE THE MODEL
 //   The photo bytes, the HMAC signature (an oracle: only the issued exp verifies), SQL and the row

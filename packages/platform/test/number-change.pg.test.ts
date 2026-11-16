@@ -5,8 +5,8 @@
 // never moves; the consent history, the age floor and the OAuth-style keyed hash move with the person;
 // the old number's sessions end; messages waiting for the old number are ended unsent; the change row
 // keeps only keyed hashes (the audit record).
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { SQL } from "bun";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { APPS } from "../src/apps.ts";
 import { createPublicApi } from "../src/api.ts";
 import { PgPeopleStore } from "../src/pg-store.ts";

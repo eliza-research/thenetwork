@@ -61,7 +61,7 @@ import { reviewLate } from "../../core/src/generated/reviewDeadline.ts";
 import { cachedStandingIntentsCurrent, learnedIntentDays, learnedIntentMayProject, standingIntentBlocksLearnedCopy } from "../../core/src/generated/standingIntent.ts";
 import {
   effectiveStandingControl, initial as initialIntentManagement, intentManagementAllowed,
-  retireIntentOpportunity, retireIntentSearch, step as stepIntentManagement, type IntentControl,
+  retireIntentOpportunity, retireIntentSearch, step as stepIntentManagement, writesStandingIntentRow, type IntentControl,
 } from "../../core/src/generated/standingIntentManagement.ts";
 import { standingIntentDeadline, standingIntentLive, standingIntentPhaseAt } from "../../core/src/standing-intent.ts";
 import {
@@ -131,6 +131,12 @@ function crewOfferState(offer: CrewOffer): CrewOfferState {
 }
 /** What a reviewer or staff action did: ok, or the reason it was refused or invalidated. */
 export type ActionResult = { ok: true } | { ok: false; reason: string };
+export interface StoredStandingIntentChange {
+  id: string;
+  memberId: MemberId;
+  previousStatus: Intent["status"];
+  status: "paused" | "closed";
+}
 export interface ReviewOptions {
   reason?: string; note?: string; reviewer?: string;
   /** Seconds the reviewer spent on the item (a training label; PRD 32.8). */
@@ -1710,7 +1716,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   /** Called inside the verified member turn, with both the state write and its reply collected in that unit. */
-  manageStandingIntents(memberId: MemberId, command: StandingIntentCommand, canonicalMembership: boolean): string | undefined {
+  manageStandingIntents(memberId: MemberId, command: StandingIntentCommand, canonicalMembership: boolean,
+    queueStoredChange?: (change: StoredStandingIntentChange) => void): string | undefined {
     const m = this.members.get(memberId);
     const scope = stepIntentManagement(initialIntentManagement, {
       type: "authorizeIntentCommand", command: command.kind,
@@ -1744,7 +1751,13 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!selected || (decision.phase !== "PauseSelected" && decision.phase !== "CloseSelected")) return "That intent is already inactive. No change made.";
     const member = m ?? this.member(memberId);
     const close = decision.phase === "CloseSelected";
-    member.intentControls = { ...member.intentControls, [selected.key]: close ? "CloseControl" : "PauseControl" };
+    const control = close ? "CloseControl" : "PauseControl";
+    if (queueStoredChange && writesStandingIntentRow(decision, selected.key.startsWith("stored:"))) {
+      const raw = this.ctx.snapshot().intents.find(i => i.memberId === memberId && i.id === selected.intent.id);
+      if (!raw) throw new Error("Selected standing intent left its snapshot");
+      queueStoredChange({ id: raw.id, memberId, previousStatus: raw.status, status: INTENT_CONTROL_STATUS[control] });
+    }
+    member.intentControls = { ...member.intentControls, [selected.key]: control };
     this.dirty = true;
     for (const opp of this.opps.values()) if (retireIntentOpportunity(
       opp.anchor?.type === "intent" && opp.anchor.id === selected.intent.id && opp.participants.includes(memberId),

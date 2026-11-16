@@ -1,21 +1,23 @@
+import { serveHttp } from "../../packages/core/src/runtime/http.ts";
 // Loopback-only design studio. Sample states never call the member API.
+import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { SITES, buildSite } from '../../sites/sites.ts';
 import { phonePage, codePage, consentsPage } from '../../packages/mcp/src/pages.ts';
 import { defaultApps } from '../../packages/mcp/src/apps.ts';
-const root = join(import.meta.dir, '../..');
+const root = join(import.meta.dirname, '../..');
 let revision = 0;
 const port = 5190;
 const origin = `http://127.0.0.1:${port}`;
 const pattern = /<(h[1-3]|p|a|button|label|summary|dt)(\s[^<>]*?)?>([^<>]+)<\/\1>/g;
 const escape = (s: string) => s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
 for (const site of SITES) await buildSite(site, join(root,'sites',site.domain,'dist'));
-Bun.serve({ hostname:'127.0.0.1',port,async fetch(req) {
+await serveHttp({ hostname:'127.0.0.1',port,async fetch(req) {
  const u = new URL(req.url);
  if (req.headers.get('host') !== `127.0.0.1:${port}`) return new Response('Invalid host',{status:403});
- if (u.pathname === '/') return new Response(Bun.file(join(import.meta.dir,'index.html')));
- if (u.pathname === '/asset/fonts/host-grotesk.woff2') return new Response(Bun.file(join(root,'sites/shared/fonts/host-grotesk.woff2')));
+ if (u.pathname === '/') return new Response(await fileAt(join(import.meta.dirname,'index.html')).blob());
+ if (u.pathname === '/asset/fonts/host-grotesk.woff2') return new Response(await fileAt(join(root,'sites/shared/fonts/host-grotesk.woff2')).blob());
  if (u.pathname === '/theme') {
   const cssFile=join(root,'sites/shared/member.css');
   if(req.method==='GET') return Response.json({css:readFileSync(cssFile,'utf8')});
@@ -91,7 +93,7 @@ Bun.serve({ hostname:'127.0.0.1',port,async fetch(req) {
  if(u.pathname.startsWith('/asset/')) {
   const name=u.pathname.split('/').pop()!;
   const assets:Record<string,string>={'styles.css':join(site.src,'styles.css'),'member.css':join(root,'sites/shared/member.css'),'host-grotesk.woff2':join(root,'sites/shared/fonts/host-grotesk.woff2')};
-  if(assets[name])return new Response(Bun.file(assets[name]));
+  if(assets[name])return new Response(await fileAt(assets[name]).blob());
  }
  return new Response('Not found',{status:404});
 }});

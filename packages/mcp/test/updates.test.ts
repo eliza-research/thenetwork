@@ -1,6 +1,6 @@
 // get_updates (the person's own inbox in one app) and the assistant connect/disconnect signals
 // (packages/notify; entry-flows doc 5). The platform hooks are stubs that record their calls.
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { assistantOf } from "../src/handler.ts";
 import type { AssistantKind, PublicUpdate } from "../src/hooks.ts";
 import { addMember, call, connect, origin, PHONE_A, PHONE_B, rpc, setup } from "./harness.ts";

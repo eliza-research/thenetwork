@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { DAY } from "@thenetwork/core";
 import { World } from "../../engine/src/world.ts";
 import { resolveConfig } from "../../engine/src/config.ts";

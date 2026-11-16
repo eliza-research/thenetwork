@@ -23,7 +23,8 @@
 //
 // The HTTP layer is the shared one in packs/slop/clef.ts (`clefRun`). Recorded answers (`answers`)
 // let the sim and the eval CLI score the Clef arm offline from a cache (evals/relay/clef-answers.jsonl);
-// `bun run sim` never calls Clef.
+// `pnpm run sim` never calls Clef.
+import { fileAt } from "../../core/src/runtime/files.ts";
 import { sha256, stableStringify } from "./hash.ts";
 import { maskPii } from "../../core/src/pii.ts";
 import { CLEF_PRICE_PER_M_INPUT, ClefError, clefFeatureNames, clefFeatureRow, clefRun, type ClefCallOptions, type ClefModel, type ClefQuestion, type ClefResult } from "./packs/slop/clef.ts";
@@ -127,7 +128,7 @@ export interface RelayClefWeights {
 /**
  * Hand-set placeholder weights (version relay-clef-0, mode "both"): each head reads its own questions
  * plus its direct question, minus the "ordinary" answer. Replace with fitted weights
- * (`bun run relay-eval fit --live`, relayClefFit.ts), which compares direct, bank and both on the
+ * (`pnpm run relay-eval fit --live`, relayClefFit.ts), which compares direct, bank and both on the
  * tuning sets and keeps the best. minor_signal has no labelled corpus rows, so it stays hand-set.
  */
 export const DEFAULT_RELAY_CLEF_WEIGHTS: RelayClefWeights = {
@@ -194,7 +195,7 @@ export function validateRelayClefWeights(w: RelayClefWeights): RelayClefWeights 
   return w;
 }
 export async function loadRelayClefWeights(path: string): Promise<RelayClefWeights> {
-  return validateRelayClefWeights(JSON.parse(await Bun.file(path).text()) as RelayClefWeights);
+  return validateRelayClefWeights(JSON.parse(await fileAt(path).text()) as RelayClefWeights);
 }
 
 // ----------------------------------------------------------------------------------- cache, cost

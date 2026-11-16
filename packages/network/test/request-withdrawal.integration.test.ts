@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { DAY } from "@thenetwork/core";
 import { Mini } from "./mini.ts";
 

@@ -62,7 +62,7 @@ The store tests check that a Network restarted from JSON gives the same messages
 `packages/network/service/` runs one Network for each row of `platform.networks` (`ntwrk:nyc`, `slop:nyc`, `peon:nyc`, `friends:nyc`) against Postgres. Details and the boundary with `packages/plugin-network` are in its [README](../packages/network/service/README.md). How to run it, its variables, the live-send flags and the staff API: [runbook-real.md](runbook-real.md) section 6.5. The four apps in local dev: [runbook-platform.md](runbook-platform.md). It is not deployed.
 
 ```bash
-NETWORK_DATABASE_URL=... bun run packages/network/service/main.ts [--once] [--dry-run]
+NETWORK_DATABASE_URL=... node --import tsx --env-file-if-exists=.env packages/network/service/main.ts [--once] [--dry-run]
 ```
 
 | Part | What it does |
@@ -131,7 +131,7 @@ A no from the manager closes the item (an alternate candidate never stands in fo
 
 **Close and fill.** At every tick, `checkSeats` ends a seat's items in review or in probes when the posting is closed or gone, or when intros that both sides accepted take all its openings. A candidate who already said yes gets "That job is no longer open...". Intros that are already done stay.
 
-**Validation.** `bun run sim --only peon-seats` (blocking: intake, routing, double opt-in, exclusions, restart, close; review "human", approved by the gate). `packages/network/test/peon-postings.integration.test.ts` (text intake, the yes, restart, the staff API, on Postgres). `packages/network/test/peon-seats.integration.test.ts` (seats and capacity from rows).
+**Validation.** `pnpm run sim --only peon-seats` (blocking: intake, routing, double opt-in, exclusions, restart, close; review "human", approved by the gate). `packages/network/test/peon-postings.integration.test.ts` (text intake, the yes, restart, the staff API, on Postgres). `packages/network/test/peon-seats.integration.test.ts` (seats and capacity from rows).
 
 **Not built.** The service does not register `jobPostingRoutes` yet (one line in `service.ts`). There is no web intake page. Interview, offer and hire stages after the intro are not tracked. The pack's own stages go further (PRD 40.6).
 

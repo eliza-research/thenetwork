@@ -571,7 +571,7 @@ module observatory_sync {
   }
 
   /**
-   * The default step for `bun run quint:check`. It allows the same events as `tick`, but it picks the
+   * The default step for `pnpm run quint:check`. It allows the same events as `tick`, but it picks the
    * sync-only and reveal-only steps more often, so random runs reach the longer delta and reveal orders.
    * revealTick is listed three times on purpose: the simulator picks each listed action with the same
    * chance, and witness_oldReread needs a long reveal order.

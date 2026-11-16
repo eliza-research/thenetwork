@@ -1,5 +1,5 @@
 // Real PostgreSQL + signed site router + platform account/session owners; Cloud HTTP authority is a controlled fixture.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { APPS, type AppId } from "../src/apps.ts";
 import { createPublicApi, parseCookies } from "../src/api.ts";
 import { PgPeopleStore } from "../src/pg-store.ts";

@@ -32,7 +32,7 @@ const BIAS_METRICS = [["proposals", "Proposals"], ["dates", "Dates"], ["secondDa
 export function BiasMonitor() {
   const s = useStore();
   const r = useFetch<{ ok: boolean; reports?: BiasReportView[]; error?: string }>(() => store.bias(), `${s.mode}`, 60_000);
-  if (!r.data?.reports) return <Err status={r.status} error={r.status === 404 ? "The bias monitor runs on real data only (bun run sim measures it in simulation)." : r.error ?? r.data?.error} />;
+  if (!r.data?.reports) return <Err status={r.status} error={r.status === 404 ? "The bias monitor runs on real data only (pnpm run sim measures it in simulation)." : r.error ?? r.data?.error} />;
   const last = r.data.reports[0];
   if (!last) return <div className="muted small">No report yet: the Network service writes one a week for each network that takes photos.</div>;
   const groups = Object.entries(last.report.groups);

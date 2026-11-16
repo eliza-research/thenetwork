@@ -1,7 +1,9 @@
 // Real service/runtime, queue, Notify and PostgreSQL. Cloud HTTP is the controlled transport boundary.
-import {afterAll,beforeAll,expect,test} from "bun:test";
+import { serveHttp, type HttpServer } from "../../core/src/runtime/http.ts";
+import { setTimeout as sleep } from "node:timers/promises";
+import {afterAll,beforeAll,expect,test} from "vitest";
 import {randomUUID} from "node:crypto";
-import {SQL} from "bun";
+import {SQL} from "../../core/src/runtime/postgres.ts";
 import {SimClock,MINUTE} from "@thenetwork/core";
 import {applySchema} from "../../observatory/db/dev-pg.ts";
 import {APPS} from "../../platform/src/apps.ts";
@@ -14,7 +16,7 @@ const db=`network_cloud_outbound_${randomUUID().replaceAll("-","")}`;
 const admin=new SQL({url:`postgres://${process.env.USER??"postgres"}@127.0.0.1:54339/postgres`,max:1});
 const url=`postgres://${process.env.USER??"postgres"}@127.0.0.1:54339/${db}`;
 const clock=new SimClock(Date.UTC(2026,9,9,16)),secret="synthetic-cloud-outbound-signing-secret-20261009",phone="+12125550171",phone2="+12125550175";
-let sql:SQL,service:NetworkService,cloud:ReturnType<typeof Bun.serve>;
+let sql:SQL,service:NetworkService,cloud:HttpServer;
 let dispatches=0,lookups=0,known=false,acceptedAt=clock.now(),holdReceipt=false,releaseReceipt:()=>void,enteredReceipt:()=>void;
 let waiting:Promise<void>,entered:Promise<void>;
 const start=async()=>{
@@ -25,7 +27,7 @@ const start=async()=>{
 };
 beforeAll(async()=>{
   await admin.unsafe(`create database ${db}`);console.info(`[owned-db] ${db}`);await applySchema(url,{lockTimeout:"5s"});sql=new SQL({url,max:2});
-  cloud=Bun.serve({hostname:"127.0.0.1",port:0,fetch:async req=>{
+  cloud=await serveHttp({hostname:"127.0.0.1",port:0,fetch:async req=>{
     const path=new URL(req.url).pathname,raw=await req.text();
     const auth=await svcVerify(secret,{method:req.method,path,headers:req.headers,body:raw,nowS:Math.floor(clock.now()/1000)});
     if (!auth.ok) return Response.json({ok:false,error:"invalid"},{status:401});
@@ -37,7 +39,7 @@ beforeAll(async()=>{
   }});
   await start();
 },120_000);
-afterAll(async()=>{await service?.close();cloud?.stop(true);await sql?.close();await admin.close();}); // Preserve only this owned database.
+afterAll(async()=>{await service?.close();await cloud?.stop(true);await sql?.close();await admin.close();}); // Preserve only this owned database.
 
 test("unknown acceptance recovers by receipt only, repairs Notify exactly once, and cannot resurrect after canonical leave",async()=>{
   // Accounts is the canonical verified-profile owner; the fixture supplies only the prior phone proof.
@@ -124,7 +126,7 @@ test("canonical leave winning after the final async gate prevents dispatch admis
     for(let i=0;i<200;i++) {
       const [row]=await sql`select body,to_address from platform.outbound where id='leave-before-admission'`;
       if(row.body===null && row.to_address===null){erased=true;break;}
-      await Bun.sleep(5);
+      await sleep(5);
     }
     expect(erased).toBe(true);
     release();await sending;await leaving;

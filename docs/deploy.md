@@ -75,11 +75,11 @@ How a site request reaches the backend:
 
 **The image** (`deploy/backend/Dockerfile`):
 
-- Base: `oven/bun:1.4.2-slim`, pinned by its index digest. The repo tests with Bun 1.4.2.
-- `bun install --frozen-lockfile --production --ignore-scripts`. The runtime has no npm dependencies of its own; this only links the workspaces.
-- Runs as the image's `bun` user (uid 1000), never root.
-- `CMD ["bun", "run", "deploy/backend/server.ts"]` in exec form, so Bun is PID 1 and gets SIGTERM itself.
-- `Dockerfile.dockerignore` sits next to the Dockerfile. BuildKit reads it, so the build context holds only `package.json`, `bun.lock`, `tsconfig.json`, `packages/`, `prototypes/` and `deploy/`, and never `.env`. **Verify:** on the first Railway build, check that the build log shows a context of a few MB, not the whole repo. If Railway ignores the file, add the same rules to a root `.dockerignore`.
+- Base: `node:26.13.0-bookworm-slim`, pinned by its index digest and aligned with `.nvmrc`.
+- `corepack pnpm install --frozen-lockfile --prod --ignore-scripts` installs the locked production dependencies and links the workspaces.
+- Runs as the image's `node` user (uid 1000).
+- `CMD ["node", "--import", "tsx", "deploy/backend/server.ts"]` runs in exec form and receives SIGTERM directly.
+- `Dockerfile.dockerignore` sits next to the Dockerfile. BuildKit reads it, so the build context holds only `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `tsconfig.json`, `packages/`, `deploy/` and the fitted Clef relay weights, and never `.env`. **Verify:** on the first Railway build, check that the build log shows a context of a few MB, not the whole repo. If Railway ignores the file, add the same rules to a root `.dockerignore`.
 
 **What `server.ts` does at boot:**
 
@@ -141,7 +141,7 @@ Set these in **Variables**. Mark each **secret** row as a sealed variable. Never
 | `PHOTO_VIEW_BASE_URL` | no | `https://slop.date` | Staff photo links (5 minutes, signed) go through the backend there. |
 | `CLEF_RATINGS` | no | `on` (default, founder 2026-10-09). `off` turns ratings off; any other value also leaves them off. | The slop.date photo rater (Clef). Off: photos work, unrated. `server.ts` logs `photo rater` with its status and weights version at start. |
 | `CLEF_WEIGHTS_PATH` | no | Unset: the placeholder Clef weights (status `on_placeholder`) until fitted weights pass the rule in docs/results/2026-10-09-clef-fitting.md. Set: a fitted weights file with a version and provenance; a placeholder or a file without provenance is refused (ratings stay off). | |
-| `CLOUDFLARE_AI_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | **yes** (token) | A Workers AI token and the account id. Without them nothing is rated (`off_env`). | Never set in CI or `bun run sim`. Each rater try is a `photo_rating` row in the cost ledger (7.3). |
+| `CLOUDFLARE_AI_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | **yes** (token) | A Workers AI token and the account id. Without them nothing is rated (`off_env`). | Never set in CI or `pnpm run sim`. Each rater try is a `photo_rating` row in the cost ledger (7.3). |
 | `CLEF_MODEL` | no | `clef` | `clef-flash` is cheaper. A refused weights file logs `photo rater` with `status: refused_weights`. |
 | `SURPLUS_API_KEY` | **yes** | Only when an LLM path is turned on | gpt-6-luna through core's `chatJson`. Without it, LLM paths fail closed. |
 | `NETWORK_CHANNEL`, `BLOOIO_API_KEY`, `BLOOIO_FROM`, `BLOOIO_ALLOW_SEND`, `NTWRK_LIVE_APPROVED`, `<APP>_LIVE_APPROVED` | key: **yes** | **leave all unset** | Live sends. **[FOUNDER]** only. Section 6. |
@@ -181,12 +181,12 @@ Every Pages project calls `https://api.ntwrk.party` like any other client. Only 
 
 ### 2.6 Observatory console (staff, behind Cloudflare Access)
 
-The console is the same image with another start command (`deploy/backend/observatory.railway.toml`). It runs in real mode only (`OBSERVATORY_REAL_ONLY=1`): no game mode, no lab, and no simulator code. The image removes `packages/sim`, `judge`, `evals`, `worlds` and `plugin-network`, and the console imports game mode only on demand (`bun run sim` block `ops` checks both). Staff sign in through Cloudflare Access only. The console reads each app through that app's own read login. It changes nothing in the database: review, safety actions and the matching switch go to the backend's staff API over the private network.
+The console is the same image with another start command (`deploy/backend/observatory.railway.toml`). It runs in real mode only (`OBSERVATORY_REAL_ONLY=1`): no game mode, no lab, and no simulator code. The image removes `packages/sim`, `judge`, `evals`, `worlds` and `plugin-network`, and the console imports game mode only on demand (`pnpm run sim` block `ops` checks both). Staff sign in through Cloudflare Access only. The console reads each app through that app's own read login. It changes nothing in the database: review, safety actions and the matching switch go to the backend's staff API over the private network.
 
 **Caution:** under `PLATFORM_ENV=production` or `staging`, the console refuses to start without Access (`OBSERVATORY_TRUST_CF_ACCESS=1` with the team and the audience). Without Access it would make an admin token and write it into the Railway log. The guard fails closed: a console that holds real data (`OBSERVATORY_REAL_ONLY=1`, or any database URL whose host is not this machine) refuses to start when `PLATFORM_ENV` is not set or is not `dev`, `staging` or `production`. Staff tokens are allowed only with `PLATFORM_ENV=dev` and local databases; a remote database needs Access under `dev` too.
 
 1. **New → GitHub Repo →** the same repository. Name the service `observatory`.
-2. Set Config-as-code to `/deploy/backend/observatory.railway.toml`. It starts `bun run packages/observatory/src/server.ts --mode real` and checks `/healthz` (no auth, no data).
+2. Set Config-as-code to `/deploy/backend/observatory.railway.toml`. It starts `node --import tsx --env-file-if-exists=.env packages/observatory/src/server.ts --mode real` and checks `/healthz` (no auth, no data).
 3. Create the read logins once, as the owner (Railway's database console), after the first migration. Use a new random password (24+ characters) for each:
 
    ```sql
@@ -258,7 +258,7 @@ docker build -f deploy/backend/Dockerfile -t network-backend .
 # podman: podman build --format docker -f deploy/backend/Dockerfile --ignorefile deploy/backend/Dockerfile.dockerignore -t network-backend .
 
 createdb -h localhost -p 54339 backend_smoke            # a database of your own on the dev cluster
-bun run db:migrate -- --url postgres://$USER@localhost:54339/backend_smoke
+pnpm run db:migrate -- --url postgres://$USER@localhost:54339/backend_smoke
 psql -h localhost -p 54339 backend_smoke -c "create role backend_smoke_svc login nosuperuser nobypassrls; grant network_service to backend_smoke_svc; grant connect on database backend_smoke to backend_smoke_svc"
 S=$(openssl rand -hex 24)
 docker run -d --name backend-smoke -p 127.0.0.1:18791:8790 \
@@ -282,14 +282,14 @@ Notes for this smoke:
 - To call `/api/app` as each site, sign the headers the way the Worker does: `signProxyHeaders(secret, { method: "GET", path: "/api/app", host: "slop.date", ip: "203.0.113.5" })` from `packages/platform/src/proxy.ts`, then fetch with them.
 - `deploy/backend/backend.test.ts` does all of this against a real boot of `server.ts`.
 
-Without a container runtime, run `bun run start:backend` with the same variables (`localhost` for the host). Locally, without `PLATFORM_ENV=staging`, it binds `127.0.0.1` only.
+Without a container runtime, run `pnpm run start:backend` with the same variables (`localhost` for the host). Locally, without `PLATFORM_ENV=staging`, it binds `127.0.0.1` only.
 
 ## 3. Cloudflare Pages: the sites
 
 Each site is one Pages project (founder decision 8):
 
 - `sites/<domain>/wrangler.toml`: `name = "<project>"`, `pages_build_output_dir = "./dist"`, and `[vars]` `APP_ID`, `SITE_HOST`, `BACKEND_ORIGIN = "https://api.ntwrk.party"`. No `account_id`, no routes: the account comes from `CLOUDFLARE_ACCOUNT_ID`.
-- `bun run sites/sites.ts <app>` writes `sites/<domain>/dist`: the pages, `_headers`, the skill files, `_worker.js` (the router, `deploy/router.ts`, bundled through `deploy/pages-worker.ts`: the default export only, as workerd requires, with the site's `APP_ID`, `SITE_HOST` and `BACKEND_ORIGIN` built in; a project variable still wins) and `_routes.json` (the Worker runs on `/api`, `/api/*`, `/mcp`, `/mcp/*`, `/oauth/*`, `/.well-known/oauth-*` only; every other path is a static file).
+- `node --import tsx --env-file-if-exists=.env sites/sites.ts <app>` writes `sites/<domain>/dist`: the pages, `_headers`, the skill files, `_worker.js` (the router, `deploy/router.ts`, bundled through `deploy/pages-worker.ts`: the default export only, as workerd requires, with the site's `APP_ID`, `SITE_HOST` and `BACKEND_ORIGIN` built in; a project variable still wins) and `_routes.json` (the Worker runs on `/api`, `/api/*`, `/mcp`, `/mcp/*`, `/oauth/*`, `/.well-known/oauth-*` only; every other path is a static file).
 - The router answers 413 for a body over 9 MB and 503 `proxy_not_configured` without `PLATFORM_PROXY_SECRET`. It never forwards unsigned.
 
 | Site | Pages project | Served on | Its own domain |
@@ -302,7 +302,7 @@ Each site is one Pages project (founder decision 8):
 ### 3.1 By hand (founder approval only)
 
 ```bash
-bun run sites/sites.ts slop                                   # dist with _worker.js and _routes.json
+node --import tsx --env-file-if-exists=.env sites/sites.ts slop                                   # dist with _worker.js and _routes.json
 # check it locally first (nothing is uploaded): scripts/wrangler.sh pages dev --port 8811 --binding PLATFORM_PROXY_SECRET=<test value> --binding BACKEND_ORIGIN=http://127.0.0.1:8790 (run in sites/slop.date)
 # once per project: the same value as the backend
 NTWRK_ALLOW_DEPLOY=1 scripts/wrangler.sh pages secret put PLATFORM_PROXY_SECRET --project-name slop-date
@@ -322,7 +322,7 @@ Pages → the project → **Deployments** → an earlier production deployment �
 
 ```bash
 for S in https://ntwrk-party.pages.dev https://slop-date.pages.dev https://peon-biz.pages.dev https://friends-help.pages.dev; do
-  bun run deploy/smoke.ts $S <app> --api                    # 13 checks, the same as CI
+  node --import tsx --env-file-if-exists=.env deploy/smoke.ts $S <app> --api                    # 13 checks, the same as CI
   curl -s $S/api/app; echo                                  # this site's app only
   curl -s -H 'x-network-proxy-host: ntwrk.party' $S/api/app; echo   # still this site's app (client copy removed)
 done
@@ -483,7 +483,7 @@ Two backups, so that one failure does not lose the data:
 ### 8.1 The backup job
 
 - **R2 bucket:** create `ntwrk-backups` in the ntwrk.party Cloudflare account. It must be private: no public access, no r2.dev URL, no custom domain. Add a lifecycle rule that deletes objects after 35 days. Make an R2 API token with **Object Read & Write** on this bucket only. Never use the photo bucket or its token.
-- **Service:** in Railway, **New → GitHub Repo →** this repository, named `backup`. Set Config-as-code to `/deploy/backup/railway.toml`. It builds `deploy/backup/Dockerfile` (Postgres client tools and Bun) and runs `bun run deploy/backup/backup.ts` every day at 07:15 UTC (cron service).
+- **Service:** in Railway, **New → GitHub Repo →** this repository, named `backup`. Set Config-as-code to `/deploy/backup/railway.toml`. It builds `deploy/backup/Dockerfile` (Postgres client tools and Node 26) and runs `node --import tsx --env-file-if-exists=.env deploy/backup/backup.ts` every day at 07:15 UTC (cron service).
 - **Postgres version:** the image's `PG_MAJOR` build argument (default 16) must be the Railway server's major version or newer (`select version();`). `pg_dump` refuses a newer server.
 - **Variables:**
 
@@ -516,9 +516,9 @@ A restore never changes a role or a privilege on the source server:
 ```bash
 # RESTORE_DATABASE_URL: an owner login on the target server (any database; usually the maintenance one).
 RESTORE_DATABASE_URL=... BACKUP_R2_ACCOUNT_ID=... BACKUP_R2_BUCKET=ntwrk-backups BACKUP_R2_ACCESS_KEY_ID=... BACKUP_R2_SECRET_ACCESS_KEY=... \
-  bun run deploy/backup/restore.ts --r2 latest --db restore_drill_20261008
+  node --import tsx --env-file-if-exists=.env deploy/backup/restore.ts --r2 latest --db restore_drill_20261008
 # or a backup on disk: --from <dir with manifest.json>
 ```
 
-Exit 0 and `"msg":"restore checked","mismatches":0`: every table has the row count of the backup. The drill procedure, and how to switch the service to a restored database, are in runbook-real.md section 8. `bun run sim` (block `ops`, tracked) runs the same backup and restore on the dev Postgres each time.
+Exit 0 and `"msg":"restore checked","mismatches":0`: every table has the row count of the backup. The drill procedure, and how to switch the service to a restored database, are in runbook-real.md section 8. `pnpm run sim` (block `ops`, tracked) runs the same backup and restore on the dev Postgres each time.
 

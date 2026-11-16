@@ -1,5 +1,5 @@
 // OAuth 2.1 against the handler with the real platform OTP and a fake provider (no texts are sent).
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import type { PeopleStore } from "@thenetwork/platform";
 import { signProxyHeaders } from "@thenetwork/platform/src/proxy.ts";
 import { redirectUriAllowed } from "../src/handler.ts";

@@ -9,12 +9,12 @@ Two plugin packages. Both point at the MCP server in [packages/mcp](../packages/
 
 slop.date is not in the OpenAI plugin. OpenAI requires plugins that suit people aged 13-17. slop.date keeps its own SKILL.md on its site and in the Claude plugin.
 
-**Caution: do not edit a SKILL.md in this folder.** Change `sites/skills/<name>/SKILL.md`. Then run `bun run plugins/build.ts`. The test `packages/mcp/test/plugins.test.ts` fails when a snapshot differs from a fresh build, or when "slop" or "dating" is in `openai/`.
+**Caution: do not edit a SKILL.md in this folder.** Change `sites/skills/<name>/SKILL.md`. Then run `node --import tsx --env-file-if-exists=.env plugins/build.ts`. The test `packages/mcp/test/plugins.test.ts` fails when a snapshot differs from a fresh build, or when "slop" or "dating" is in `openai/`.
 
 Checks:
 
 ```bash
-bun run plugins/build.ts --check
+node --import tsx --env-file-if-exists=.env plugins/build.ts --check
 claude plugin validate --strict plugins/claude
 claude plugin validate --strict plugins
 ```

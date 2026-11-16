@@ -1,4 +1,4 @@
-// Generated from spec/backendHealth.md via Vibestack and VibeLang. Run bun run spec:sync.
+// Generated from spec/backendHealth.md via Vibestack and VibeLang. Run pnpm run spec:sync.
 import { Context, Effect, Layer, Stream } from "effect";
 export type * from "./backendHealth.ts";
 import { initial, inv, canCheckAdmission, checkAdmission, stepReportIsFinal, canCheckTicks, checkTicks, sometimesReportsReady, sometimesReportsDraining, sometimesReportsDatabaseDown, sometimesReportsLateTick, canCheckDatabase, checkDatabase, enabled, step, parseEvent, parseState } from "./backendHealth.effect.vibe.pure.js";

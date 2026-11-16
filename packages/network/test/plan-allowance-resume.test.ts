@@ -3,7 +3,7 @@
 // pause, as it does for intros (heardFrom). The plan lane's two-unanswered check is
 // attention.composeMessage over the plan-only ledger; it must see the member's last inbound message
 // (Conversation.lastInboundAt), or the allowance stops for good once two invites went unanswered.
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { DAY } from "@thenetwork/core";
 import { Mini } from "./mini.ts";
 

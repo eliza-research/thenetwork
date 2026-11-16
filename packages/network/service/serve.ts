@@ -1,3 +1,4 @@
+import { serveHttp } from "../../core/src/runtime/http.ts";
 // The service's two HTTP servers, its tick loop, and the MCP server mounted on it. Shared by main.ts,
 // the shared backend (deploy/backend/server.ts) and scripts/platform-dev.ts (local dev).
 import { createMcpHandler, devHostMap, defaultApps, defaultHostMap, isMcpAppId, type McpApp, type McpAppId, type McpHandler, MemoryOAuthStore, PgOAuthStore, platformHooks } from "../../mcp/src/index.ts";
@@ -107,13 +108,13 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
 const TICK_MS = 60_000;
 
 /** The staff and webhook server (default 127.0.0.1:4848) and the public API the sites call (default 127.0.0.1:8790). */
-export function serveService(svc: NetworkService, o: { host: string; port: number; apiPort: number; log?: (s: string) => void }) {
+export async function serveService(svc: NetworkService, o: { host: string; port: number; apiPort: number; log?: (s: string) => void }) {
   const log = o.log ?? console.log;
   // Bodies are checked before they are read (audit network-service-17): webhooks 256 KB, the public API 16 KB.
-  const server = Bun.serve({ hostname: o.host, port: o.port, fetch: svc.fetch, maxRequestBodySize: 256 * 1024 });
+  const server = await serveHttp({ hostname: o.host, port: o.port, fetch: svc.fetch, maxRequestBodySize: 256 * 1024 });
   log(`listening on http://${o.host}:${server.port} (POST /webhooks/blooio[/:app], GET /health, GET /review, POST /review/:oppId, POST /safety/lift, POST /safety/close, POST /matching; ?app= or /apps/:app/...)`);
   // The server is passed on: the client IP for the rate limits is the socket address unless a trusted proxy header is configured.
-  const api = Bun.serve({ hostname: o.host, port: o.apiPort, fetch: (req, server) => svc.publicFetch(req, server), maxRequestBodySize: 16 * 1024 });
+  const api = await serveHttp({ hostname: o.host, port: o.apiPort, fetch: (req, server) => svc.publicFetch(req, server), maxRequestBodySize: 16 * 1024 });
   log(`public API on http://${o.host}:${api.port}/api/* (the app comes from the Host header)`);
   return { server, api, stop: () => { server.stop(); api.stop(); } };
 }

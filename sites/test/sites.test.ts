@@ -2,12 +2,15 @@
 // support links, the consent wording (equal to the platform's canonical text), the 10DLC sentence, the
 // age rules (equal to the platform registry), STOP copy, the umbrella links, the files Cloudflare serves
 // as they are (_headers, SKILL.md, robots.txt, .well-known), same-origin scripts, and the dev proxy.
-//   bun test sites
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+//   pnpm exec vitest run --project integration sites/test
+import { serveHttp, type HttpServer } from "../../packages/core/src/runtime/http.ts";
+import { fileAt } from "../../packages/core/src/runtime/files.ts";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, normalize } from "node:path";
 import { createHash } from "node:crypto";
+import { parse as parseYaml } from "yaml";
 import { verifyProxyHeaders } from "../../packages/platform/src/proxy.ts";
 import { APPS, keywordApp } from "../../packages/platform/src/apps.ts";
 import { AGENTS, keywordFor, joinMessageFor, promptFor } from "../agents.ts";
@@ -17,7 +20,7 @@ import { SITES, buildSite, walk, skillDescription, type Site } from "../sites.ts
 import { serveSite } from "../../scripts/sites-dev.ts";
 import { toE164 } from "../shared/api.ts";
 
-const REPO = join(import.meta.dir, "../..");
+const REPO = join(import.meta.dirname, "../..");
 
 const TENDLC = "Mobile numbers and opt-in data are not shared with third parties or affiliates for marketing.";
 const tmp = mkdtempSync(join(tmpdir(), "sites-test-"));
@@ -212,7 +215,7 @@ test("staging builds keep the served entry, skills and signed router on configur
   const origins = { ntwrk: "https://hub-stage.example.test", slop: "https://slop-stage.example.test", peon: "https://peon-stage.example.test", friends: "https://friends-stage.example.test" };
   const secret = "owned-stage-proxy-contract-secret";
   const received: { host: string; path: string }[] = [];
-  const backend = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {
+  const backend = await serveHttp({ hostname: "127.0.0.1", port: 0, async fetch(req) {
     const signed = await verifyProxyHeaders(req, secret, Math.floor(Date.now() / 1000));
     expect(signed?.host).toBe("slop-stage.example.test");
     received.push({ host: signed!.host, path: new URL(req.url).pathname });
@@ -221,13 +224,13 @@ test("staging builds keep the served entry, skills and signed router on configur
   const env = { PLATFORM_ENV: "staging", STAGING_SITE_ORIGINS: JSON.stringify(origins), BACKEND_ORIGIN: `http://127.0.0.1:${backend.port}` };
   const slop = SITES.find(s => s.app === "slop")!, hub = SITES.find(s => s.app === "ntwrk")!;
   const directory = join(tmp, "staging-slop"), hubDirectory = join(tmp, "staging-hub");
-  let server: ReturnType<typeof Bun.serve> | undefined;
+  let server: HttpServer | undefined;
   try {
     expect((await buildSite(slop, directory, env)).ok).toBe(true);
     expect((await buildSite(hub, hubDirectory, env)).ok).toBe(true);
     const home = readFileSync(join(directory, "index.html"), "utf8");
     const builtSkill = readFileSync(join(directory, "SKILL.md"), "utf8");
-    const version = (Bun.YAML.parse(builtSkill.split("---")[1]!) as { metadata: { version: string } }).metadata.version;
+    const version = (parseYaml(builtSkill.split("---")[1]!) as { metadata: { version: string } }).metadata.version;
     const prompt = `Read ${origins.slop}/SKILL.md and follow it.`;
     expect(home).toContain(`<code data-prompt>${prompt}</code>`);
     expect(home).toContain(`https://chatgpt.com/?q=${encodeURIComponent(prompt)}`);
@@ -239,11 +242,11 @@ test("staging builds keep the served entry, skills and signed router on configur
     expect(home).toContain("slop.date"); // Branding stays canonical.
     expect(home).not.toContain("https://slop.date");
     const worker = (await import(join(directory, "_worker.js"))).default;
-    server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(req) {
+    server = await serveHttp({ hostname: "127.0.0.1", port: 0, fetch(req) {
       const local = new URL(req.url);
       return worker.fetch(new Request(`${origins.slop}${local.pathname}${local.search}`, req), {
         PLATFORM_PROXY_SECRET: secret,
-        ASSETS: { fetch: (r: Request) => new Response(Bun.file(join(directory, new URL(r.url).pathname.slice(1) || "index.html"))) },
+        ASSETS: { fetch: async (r: Request) => new Response(await fileAt(join(directory, new URL(r.url).pathname.slice(1) || "index.html")).blob()) },
       });
     } });
     const base = `http://127.0.0.1:${server.port}`;
@@ -269,13 +272,13 @@ test("staging builds keep the served entry, skills and signed router on configur
     for (const origin of Object.values(origins)) {
       expect((await buildSite(slop, join(tmp, "staging-backend-loop"), { ...env, BACKEND_ORIGIN: origin })).ok).toBe(false);
     }
-  } finally { server?.stop(true); backend.stop(true); }
+  } finally { await server?.stop(true); await backend.stop(true); }
 });
 
 test("landing pages keep agent onboarding and an accessible phone sign-in link", () => {
   for (const s of SITES) {
     const home = read(s, "index.html");
-    const version = (Bun.YAML.parse(read(s, "SKILL.md").split("---")[1]!) as { metadata: { version: string } }).metadata.version;
+    const version = (parseYaml(read(s, "SKILL.md").split("---")[1]!) as { metadata: { version: string } }).metadata.version;
     const skillUrl = `https://${s.domain}/SKILL.md${s.app === "slop" ? "" : `?version=${encodeURIComponent(version)}`}`;
     const prompt = `Read ${skillUrl} and follow it.`;
     const q = encodeURIComponent(prompt);
@@ -412,7 +415,7 @@ test("toE164 accepts US numbers only", () => {
 test("retired Settings URLs refuse an old static account page over HTTP", async () => {
   const dir = mkdtempSync(join(tmpdir(), "retired-settings-"));
   writeFileSync(join(dir, "settings.html"), '<html><main data-settings>Old account page</main></html>');
-  const server = serveSite(SITES[0]!, { port: 0, apiOrigin: "http://127.0.0.1:9", outdir: dir });
+  const server = await serveSite(SITES[0]!, { port: 0, apiOrigin: "http://127.0.0.1:9", outdir: dir });
   try {
     for (const path of ["/settings", "/settings/", "/settings.html", "/settings?source=old-link"]) {
       for (const method of ["GET", "HEAD"]) {
@@ -423,7 +426,7 @@ test("retired Settings URLs refuse an old static account page over HTTP", async 
       }
     }
   } finally {
-    server.stop(true);
+    await server.stop(true);
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -432,23 +435,26 @@ describe("dev server", () => {
   const slop = SITES.find((s) => s.app === "slop")!;
   let seen: { host: string | null; cookie: string | null; ip?: string | null } = { host: null, cookie: null };
   let last: Request | undefined;
-  const api = Bun.serve({
-    port: 0,
-    hostname: "127.0.0.1",
-    fetch(req) {
-      seen = { host: req.headers.get("x-forwarded-host"), cookie: req.headers.get("cookie"), ip: req.headers.get("x-forwarded-for") ?? req.headers.get("cf-connecting-ip") ?? req.headers.get("x-real-ip") };
-      last = req;
-      return Response.json({ ok: true }, { headers: { "set-cookie": "sid=abc; HttpOnly; Secure; SameSite=Lax; Domain=slop.date; Path=/" } });
-    },
+  let api: HttpServer, up: HttpServer, down: HttpServer, signed: HttpServer;
+  beforeAll(async () => {
+    api = await serveHttp({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        seen = { host: req.headers.get("x-forwarded-host"), cookie: req.headers.get("cookie"), ip: req.headers.get("x-forwarded-for") ?? req.headers.get("cf-connecting-ip") ?? req.headers.get("x-real-ip") };
+        last = req;
+        return Response.json({ ok: true }, { headers: { "set-cookie": "sid=abc; HttpOnly; Secure; SameSite=Lax; Domain=slop.date; Path=/" } });
+      },
+    });
+    up = await serveSite(slop, { port: 0, apiOrigin: `http://127.0.0.1:${api.port}`, outdir: out(slop) });
+    down = await serveSite(slop, { port: 0, apiOrigin: "http://127.0.0.1:9", outdir: out(slop) });
+    signed = await serveSite(slop, { port: 0, apiOrigin: `http://127.0.0.1:${api.port}`, outdir: out(slop), proxySecret: "dev-secret" });
   });
-  const up = serveSite(slop, { port: 0, apiOrigin: `http://127.0.0.1:${api.port}`, outdir: out(slop) });
-  const down = serveSite(slop, { port: 0, apiOrigin: "http://127.0.0.1:9", outdir: out(slop) });
-  const signed = serveSite(slop, { port: 0, apiOrigin: `http://127.0.0.1:${api.port}`, outdir: out(slop), proxySecret: "dev-secret" });
-  afterAll(() => {
-    api.stop(true);
-    up.stop(true);
-    down.stop(true);
-    signed.stop(true);
+  afterAll(async () => {
+    await api?.stop(true);
+    await up?.stop(true);
+    await down?.stop(true);
+    await signed?.stop(true);
   });
 
   test("forwards the same backend paths as the production router, and strips spoofed proxy headers", async () => {
@@ -543,7 +549,7 @@ test("retired Join URLs return to the agent landing and never expose a cached fo
   writeFileSync(join(dir, "join.html"), '<html><form data-retired-signup>Old form</form></html>');
   try {
     for (const app of ["friends", "slop", "ntwrk"]) {
-      const server = serveSite(SITES.find(s => s.app === app)!, {port:0, apiOrigin:"http://127.0.0.1:9", outdir:dir});
+      const server = await serveSite(SITES.find(s => s.app === app)!, {port:0, apiOrigin:"http://127.0.0.1:9", outdir:dir});
       try {
         for (const path of ["/join", "/join/", "/join.html", "/join?via=agent"]) {
           const response = await fetch(`http://127.0.0.1:${server.port}${path}`, {redirect:"manual"});
@@ -551,7 +557,7 @@ test("retired Join URLs return to the agent landing and never expose a cached fo
           expect(response.headers.get("cache-control")).toBe("no-store");
           expect(await response.text()).not.toContain("data-retired-signup");
         }
-      } finally {server.stop(true);}
+      } finally {await server.stop(true);}
     }
   } finally {rmSync(dir,{recursive:true,force:true});}
 });

@@ -11,7 +11,7 @@
     "./service/snapshot": "./service/snapshot.ts"
   },
   "scripts": {
-    "service": "bun run service/main.ts"
+    "service": "node --import tsx --env-file-if-exists=.env service/main.ts"
   },
   "dependencies": {
     "@thenetwork/core": "workspace:*",

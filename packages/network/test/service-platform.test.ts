@@ -3,10 +3,12 @@
 // STOP versus leave, the lowest age across apps, restarts, the row-level security role, the consent
 // ledger on every send, and the production boot checks. Postgres in a database of its own per test
 // process. Nothing is sent: dry-run adapters, or Blooio with a fake provider; OTP codes come from a fake.
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { setTimeout as sleep } from "node:timers/promises";
+import { findExecutable, spawnProcess } from "../../core/src/runtime/process.ts";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import type { SendRequest } from "../../blooio/src/types.ts";
@@ -22,8 +24,8 @@ import { queueSink } from "../../notify/src/wiring.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
 
 const T = 300_000;
-const REPO = resolve(import.meta.dir, "../../..");
-const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!Bun.which("pg_ctl");
+const REPO = resolve(import.meta.dirname, "../../..");
+const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
 const USER = process.env.USER ?? "postgres";
 const DB = `network_service_platform_test_${process.pid}`;
 const ROLE = `svc_rls_test_${process.pid}`;
@@ -589,7 +591,7 @@ describe.skipIf(!pgAvailable)("the service as the platform's channel (Postgres)"
     expect(await count(sql`select count(*)::int as n from network.staff_audit`)).toBe(before);
     const saved = async () => (await one(sql`select saved_at from network.network_state where id = 'ntwrk:nyc'`)).saved_at.getTime();
     const t0 = await saved();
-    await Bun.sleep(20);
+    await sleep(20);
     expect((await call("GET", "/review")).status).toBe(200);
     expect(await saved()).toBe(t0);
   }, T);
@@ -627,7 +629,7 @@ describe.skipIf(!pgAvailable)("the service as the platform's channel (Postgres)"
 describe("PLAT-06 the production boot check", () => {
   test("main.ts exits non-zero and names what is missing; dev providers never start in production", async () => {
     const run = async (env: Record<string, string>) => {
-      const p = Bun.spawn(["bun", "run", "packages/network/service/main.ts", "--once", "--dry-run"], {
+      const p = spawnProcess([process.execPath, "--import", "tsx", "packages/network/service/main.ts", "--once", "--dry-run"], {
         cwd: REPO, env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", ...env }, stdout: "pipe", stderr: "pipe",
       });
       const code = await p.exited;

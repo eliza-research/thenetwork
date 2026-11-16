@@ -5,8 +5,8 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "start": "bun run src/server.ts",
-    "dev": "bun --hot run src/server.ts"
+    "start": "node --import tsx --env-file-if-exists=.env src/server.ts",
+    "dev": "node --watch --import tsx --env-file-if-exists=.env src/server.ts"
   },
   "dependencies": {
     "@thenetwork/core": "workspace:*",
@@ -14,6 +14,7 @@
     "@thenetwork/network": "workspace:*",
     "@thenetwork/sim": "workspace:*",
     "d3-force": "^3.0.0",
+    "esbuild": "0.28.2",
     "leaflet": "^1.9.4",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"

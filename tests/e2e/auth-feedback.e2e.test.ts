@@ -1,10 +1,10 @@
 // Browser integration of the real phone form, Turnstile adapter and public API.
 // Only the SDK callbacks are controlled. This does not solve or bypass a challenge.
 // Set PLAYWRIGHT_MODULE to an existing Playwright installation to run this case.
-import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { serveHttp } from "../../packages/core/src/runtime/http.ts";
+import { expect, test } from "vitest";
 import { join } from "node:path";
+import { build } from "esbuild";
 import { createPublicApi } from "../../packages/platform/src/api.ts";
 import { MemoryPeopleStore } from "../../packages/platform/src/store.ts";
 
@@ -12,10 +12,14 @@ const browserTest = process.env.PLAYWRIGHT_MODULE ? test : test.skip;
 
 browserTest("failed security checks give recovery feedback and a later SDK success clears only that feedback", async () => {
   const { chromium } = await import(process.env.PLAYWRIGHT_MODULE!);
-  const out = mkdtempSync(join(tmpdir(), "auth-feedback-build-"));
-  const bundle = await Bun.build({ entrypoints: [join(import.meta.dir, "../../sites/shared/auth.ts")], target: "browser", outdir: out });
-  expect(bundle.success).toBe(true);
-  const script = await bundle.outputs[0]!.text();
+  const bundle = await build({
+    entryPoints: [join(import.meta.dirname, "../../sites/shared/auth.ts")],
+    bundle: true,
+    write: false,
+    platform: "browser",
+    format: "esm",
+  });
+  const script = bundle.outputFiles[0]!.text;
   let otpSends = 0;
   let otpRequests = 0;
   const platform = createPublicApi({
@@ -23,7 +27,7 @@ browserTest("failed security checks give recovery feedback and a later SDK succe
     otp: { name: "unused-browser-test", async send() { otpSends++; return { code: "246810" }; } },
     log: () => {},
   });
-  const server = Bun.serve({
+  const server = await serveHttp({
     hostname: "127.0.0.1", port: 0,
     async fetch(req) {
       const path = new URL(req.url).pathname;
@@ -86,7 +90,6 @@ browserTest("failed security checks give recovery feedback and a later SDK succe
   } finally {
     await context.close();
     await browser.close();
-    server.stop(true);
-    rmSync(out, { recursive: true, force: true });
+    await server.stop(true);
   }
 }, 30_000);

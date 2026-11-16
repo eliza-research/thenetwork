@@ -1,4 +1,4 @@
-// Generated from spec/backendHealth.md via Vibestack and VibeLang. Run bun run spec:sync.
+// Generated from spec/backendHealth.md via Vibestack and VibeLang. Run pnpm run spec:sync.
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";

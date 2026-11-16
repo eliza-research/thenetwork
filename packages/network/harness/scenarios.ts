@@ -4,7 +4,8 @@
 // reports, age signals, an under-13 join, a stated minor), member requests and plans, growth
 // (invites, newcomers, a bad invitee), and logistics (travel). Every run uses the simulated
 // reviewer (review "auto"): each opportunity is queued and approved before anyone is contacted.
-//   bun run packages/network/harness/scenarios.ts [scenario_id]
+//   node --import tsx --env-file-if-exists=.env --conditions=eliza-source packages/network/harness/scenarios.ts [scenario_id]
+import { fileAt } from "../../core/src/runtime/files.ts";
 import { DAY, HOUR, UNDER_MIN_AGE_DECLINE, type MemberId } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import { PolicyPersonaAgent, World, desireById, type Persona, type PersonaContext, type WorldAction } from "@thenetwork/sim";
@@ -377,7 +378,7 @@ function x(o: Persona, pool: string) { return o.hidden.desires.find(d => desireB
 export async function runScenario(s: NetScenario, opts: { seed?: number } = {}): Promise<{ scenario: NetScenario; checks: Check[]; pass: boolean; ctx: ScenarioCtx }> {
   const seed = opts.seed ?? 7;
   const personas = await nycPersonas();
-  const start = (await Bun.file(`${DATA_DIR}/manifest.json`).json()).snapshotNow as number;
+  const start = (await fileAt(`${DATA_DIR}/manifest.json`).json()).snapshotNow as number;
   const { ids, actions, badInvitees, joinText } = s.setup(personas, start);
   const net = new ConsentNetwork({ seed, review: "auto" });
   const records: RunRecord[] = [];

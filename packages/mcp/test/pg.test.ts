@@ -1,7 +1,9 @@
 // OAuth on Postgres: a unique database on the dev cluster or an explicitly owned
 // loopback fixture, dropped afterwards. The refresh regression uses real HTTP.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { SQL } from "bun";
+import { fetchWithHost } from "../../core/src/runtime/fetch.ts";
+import { serveHttp } from "../../core/src/runtime/http.ts";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { randomUUID } from "node:crypto";
 import { APPS, createPublicApi, PgPeopleStore } from "@thenetwork/platform";
 import { migrate } from "../../observatory/db/migrate.ts";
@@ -191,12 +193,12 @@ describe.skipIf(!EXPLICIT_PG && !pgAvailable)("PgOAuthStore", () => {
       const platform = platformHooks({ store: env.people, otp: env.otp, accounts: env.accounts, sessions: env.sessions, app: id => APPS[id], cookieName: id => `sid_${id}` });
       let handler = env.handler;
       let restarted: PgOAuthStore | undefined;
-      const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) { return (await handler.fetch(req)) ?? new Response("not found", { status: 404 }); } });
+      const server = await serveHttp({ hostname: "127.0.0.1", port: 0, async fetch(req) { return (await handler.fetch(req)) ?? new Response("not found", { status: 404 }); } });
       env.fetch = async req => {
         const original = new URL(req.url);
         const headers = new Headers(req.headers);
         headers.set("host", original.host);
-        return fetch(new URL(original.pathname + original.search, server.url), { method: req.method, headers, redirect: "manual", ...(req.method === "GET" || req.method === "HEAD" ? {} : { body: await req.arrayBuffer() }) });
+        return fetchWithHost(new URL(original.pathname + original.search, server.url), { method: req.method, headers, redirect: "manual", ...(req.method === "GET" || req.method === "HEAD" ? {} : { body: await req.arrayBuffer() }) });
       };
       try {
         const redirectUri = "https://chatgpt.com/connector_platform/oauth_redirect";
@@ -256,7 +258,7 @@ describe.skipIf(!EXPLICIT_PG && !pgAvailable)("PgOAuthStore", () => {
             drop function if exists oauth.test_refresh_fault();
             drop table if exists oauth.test_refresh_fault;`);
         } finally {
-          server.stop(true);
+          await server.stop(true);
           await restarted?.close();
         }
       }

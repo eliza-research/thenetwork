@@ -1,11 +1,13 @@
 // State persistence (docs/network.md 11, admin-console gap 1): exportState / importState, the
 // stores (MemoryStore, PgStore) and runTick. The proof: a Network that restarts from its stored
 // state does exactly what an uninterrupted one does.
-import { afterAll, describe, expect, test } from "bun:test";
+import { fileAt } from "../../core/src/runtime/files.ts";
+import { findExecutable } from "../../core/src/runtime/process.ts";
+import { afterAll, describe, expect, test } from "vitest";
 import { DAY, HOUR, MINUTE } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import { computeMetrics, PolicyPersonaAgent, World, type InboundMessage, type NetworkContext, type NetworkUnderTest } from "@thenetwork/sim";
-import { SQL } from "bun";
+import { SQL } from "../../core/src/runtime/postgres.ts";
 import { existsSync } from "node:fs";
 import { DATA_DIR } from "../../../scripts/synthetic/common.ts";
 import { DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
@@ -107,7 +109,7 @@ class Restartable implements NetworkUnderTest {
 async function nycWorld(days: number, restartAtDay?: number) {
   const seed = 3, opts: NetworkOptions = { seed, review: "auto" };
   const personas = await nycPersonas();
-  const start = (await Bun.file(`${DATA_DIR}/manifest.json`).json()).snapshotNow as number;
+  const start = (await fileAt(`${DATA_DIR}/manifest.json`).json()).snapshotNow as number;
   const net = new Restartable(new ConsentNetwork(opts), opts);
   const records: RunRecord[] = [];
   const w = new World({ seed, personas, days, start, writeLog: false, network: net, agent: new PolicyPersonaAgent(start), spawnFriend: friendFactory({ seed }), onRecord: r => records.push(r) });
@@ -196,7 +198,7 @@ describe("runTick and the tick lock", () => {
 
 // ------------------------------------------------------------------ Postgres (local dev cluster)
 // A database of its own per test process (the packages/observatory/test/pg.ts pattern). Skipped when Postgres is absent.
-const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!Bun.which("pg_ctl");
+const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!findExecutable("pg_ctl");
 const DB = `network_store_test_${process.pid}`;
 const ADMIN_URL = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/postgres`;
 const TEST_URL = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/${DB}`;
@@ -215,7 +217,7 @@ describe.skipIf(!pgAvailable)("PgStore", () => {
     await admin(`create database ${DB}`);
     // The observatory schema first, then the Network's migration (twice: it is idempotent).
     const setup = new SQL({ url: TEST_URL, max: 1 });
-    await setup.unsafe(await Bun.file(new URL("../../observatory/db/schema.sql", import.meta.url)).text());
+    await setup.unsafe(await fileAt(new URL("../../observatory/db/schema.sql", import.meta.url)).text());
     await setup.close();
     const a = new PgStore(TEST_URL), b = new PgStore(TEST_URL);
     stores.push(a, b);

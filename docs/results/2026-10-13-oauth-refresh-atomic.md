@@ -1,17 +1,19 @@
 # OAuth refresh issuance: PostgreSQL failure recovery
 
+Historical record. The [original revision](https://github.com/eliza-research/thenetwork/blob/1e2caa5028ade43ec7cb6a90de16466584f7ead0/docs/results/2026-10-13-oauth-refresh-atomic.md) retains the commands and toolchain used for the observations. Updated command spellings here describe the current project where the same entrypoints exist.
+
 Date: 2026-10-13. Automated Codex/agent work under Nubs's standing project approval.
 
 A failed replacement-token or audit insert consumed the original refresh token before returning HTTP 500. Retrying that original token then triggered the existing replay policy, which revokes the grant. The repair commits refresh consumption, both replacement tokens and the success audit in one PostgreSQL transaction. A failed write now leaves the original state intact for retry. Replay revocation remains unchanged.
 
 ## Method
 
-The same three integration cases run through an actual loopback Bun HTTP server and `PgOAuthStore`, with PostgreSQL triggers failing the access-token insert, refresh-token insert or success-audit insert. Each case reconstructs the handler/store against the same database, expires the access token using the fixture clock, checks durable rollback, retries the original refresh token and checks replay revocation of the newest tokens.
+The same three integration cases run through an actual loopback the former runtime HTTP server and `PgOAuthStore`, with PostgreSQL triggers failing the access-token insert, refresh-token insert or success-audit insert. Each case reconstructs the handler/store against the same database, expires the access token using the fixture clock, checks durable rollback, retries the original refresh token and checks replay revocation of the newest tokens.
 
 Platform identity and OTP use the existing fictional harness. This is real HTTP/Postgres protocol qualification, not a personal-account, provider, full-platform restart or deployed signup test. No live member data, SMS, model calls or provider credentials are used.
 
-- Runtime: Bun 1.4.2, normal CI's pinned PostgreSQL 16 service (`ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d`).
-- Command before and after: `bun run test:integration` (`bun test --conditions eliza-source --timeout 120000 ./deploy ./packages ./sites`).
+- Runtime: the former runtime 1.4.2, normal CI's pinned PostgreSQL 16 service (`ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d`).
+- Command before and after: `pnpm run test:integration` (`pnpm exec vitest run --testTimeout 120000 ./deploy ./packages ./sites`).
 - Sample: three deterministic fault cases. Seeds, LLM provider/model, request settings and model cost: N/A; this path makes no model requests.
 - Fixture databases: random owned `mcp_test_*` databases on the CI loopback PostgreSQL service. No production database is contacted.
 
