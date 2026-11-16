@@ -36,6 +36,7 @@ import {
   recipientPolicy, replyPolicy, textPolicy,
 } from "../../core/src/generated/outboundAdmission.ts";
 import { initial as initialReceipt, step as stepReceipt, type FailureKind, type ReceiptPhase } from "../../core/src/generated/outboundReceipt.ts";
+import { receiptAccepted, receiptFinal, receiptMessageStatus } from "../../core/src/generated/turnReceipt.ts";
 import { parseApprovedRelayPhotos, type ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import type { SQL } from "bun";
 import { DAY, HOUR, MINUTE } from "../../core/src/clock.ts";
@@ -745,10 +746,10 @@ export class OutboundQueue {
   /** Cloud's turn receipt for collected replies: accepted ones enter the thread history (sent_at); the others end. */
   async collectedReceipt(tx: SQL, ids: string[], outcome: "accepted" | "unknown" | "rejected", at: number): Promise<void> {
     if (!ids.length) return;
-    const status = outcome === "accepted" ? "sent" : outcome === "unknown" ? "send_unknown" : "refused_gateway";
+    const status = receiptMessageStatus(outcome);
     await tx`update platform.outbound set status = ${status}, updated_at = ${new Date(this.now)},
-      sent_at = case when ${outcome === "accepted"} then coalesce(sent_at, ${new Date(at)}) else sent_at end,
-      ended_at = case when ${outcome === "unknown"} then null else coalesce(ended_at, ${new Date(this.now)}) end
+      sent_at = case when ${receiptAccepted(outcome)} then coalesce(sent_at, ${new Date(at)}) else sent_at end,
+      ended_at = case when ${receiptFinal(outcome)} then coalesce(ended_at, ${new Date(this.now)}) else null end
       where app_id = ${this.app} and id = any(${tx.array(ids, "TEXT")}) and status in ('collected', 'send_unknown')`;
   }
 

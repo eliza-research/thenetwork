@@ -44,13 +44,16 @@ import { profileReviewFromEnv } from "./profile-review-factory.ts";
 import { profileReadRequest, savedProfileText } from "./profile-read.ts";
 import { step as stepProfileRead } from "../../core/src/generated/savedProfileRead.ts";
 import {
+  initial as initialTurnReceipt, noHistoryAllowed, receiptAccepted, receiptFinal, receiptMessageStatus, step as stepTurnReceipt,
+} from "../../core/src/generated/turnReceipt.ts";
+import {
   checkExplicitRoute, checkFallbackRoute, initial as textJoinInitial, initialRoute, namedOtherApp,
   networkEnrollmentAllowed, noticeAllowed, otherAppAllowed, otherAppEnrollment, pendingMatchesApp, shouldReadLookingFor,
   shouldReadPendingAnswer, step as stepTextJoin,
 } from "../../core/src/generated/textEnrollment.ts";
 import { Inbox, type CollectedReply } from "./inbox.ts";
 import { networkRoutePolicy, routeEnvelopeAllowed, sameNetworkAuthority, type NetworkRoutePolicy } from "./route-authority.ts";
-import { TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH, RELAY_PHOTO_RESOLVE_PATH, parseApprovedRelayPhotos, type SetStateRequest, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
+import { TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH, RELAY_PHOTO_RESOLVE_PATH, parseApprovedRelayPhotos, type SetStateRequest, type TurnReceiptRequest, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
 import { SVC_MIN_SECRET, svcVerify } from "../../core/src/svc/svc-auth.ts";
 import { readCapped } from "../../platform/src/body.ts";
 import { ADULT_AGE, canJoin } from "../../core/src/policy.ts";
@@ -2050,43 +2053,57 @@ export class NetworkService implements RuntimeHost {
         || !Array.isArray(b.replyIds) || !b.replyIds.every(x => typeof x === "string")
         || !Array.isArray(b.providerMessageIds) || !b.providerMessageIds.every(x => typeof x === "string" && x.trim())
         || typeof b.historyRecorded !== "boolean" || !["accepted", "unknown", "rejected"].includes(b.outcome as string)) return json({error: "invalid_request"}, 400);
+      const delivery = b.outcome as TurnReceiptRequest["outcome"];
+      const replyIds = b.replyIds as string[];
       const result = await this.sql.begin(async tx => {
         const [claim] = await tx`select status,response,receipt_hash,receipt,replies,network_authority from platform.inbound where id=${id} for update`;
-        if (!claim || claim.status !== "done" || claim.response?.outcome !== "handled") return json({error: "turn_unavailable", retryable: false}, 409);
-        if (this.routePolicy && !routeEnvelopeAllowed(this.routePolicy, claim.network_authority, this.clock.now()))
+        // spec/turnReceipt.md, "A receipt belongs to a completed handled turn under current authority"
+        const turn = stepTurnReceipt(initialTurnReceipt, { type: "checkTurn", handled: claim?.status === "done" && claim.response?.outcome === "handled" });
+        if (turn.phase !== "CheckingAuthority" || !claim) return json({error: "turn_unavailable", retryable: false}, 409);
+        const authorized = stepTurnReceipt(turn, { type: "checkAuthority",
+          validAuthority: !this.routePolicy || routeEnvelopeAllowed(this.routePolicy, claim.network_authority, this.clock.now()),
+        });
+        if (authorized.phase !== "CheckingPrevious")
           return json({error:"route_authority_invalid",retryable:false},403);
         // Cloud and Gateway independently acknowledge the same acceptance. JSON
         // object key order may differ; the authenticated receipt values may not.
-        if (claim.receipt_hash === digest || (claim.receipt_hash && isDeepStrictEqual(claim.receipt, b))) return json({ok: true, replayed: true});
-        if (claim.receipt_hash && !(claim.receipt?.outcome === "unknown" && ["accepted", "rejected"].includes(b.outcome as string))) return json({error: "receipt_conflict", retryable: false}, 409);
+        const previous = stepTurnReceipt(authorized, {
+          type: "readPrevious",
+          identical: claim.receipt_hash === digest || (!!claim.receipt_hash && isDeepStrictEqual(claim.receipt, b)),
+          alreadyStored: !!claim.receipt_hash, previouslyUnknown: claim.receipt?.outcome === "unknown", finalDelivery: receiptFinal(delivery),
+        });
+        if (previous.phase === "Replayed") return json({ok: true, replayed: true});
+        if (previous.phase !== "CheckingScope") return json({error: "receipt_conflict", retryable: false}, 409);
+        // spec/turnReceipt.md, "A receipt names exactly the replies the turn collected"
         const collected = claim.replies as CollectedReply[];
-        // A handled turn with no reply (a quiet acknowledgement, an under-13 decline) takes an empty receipt and is done.
-        if (!collected.length) {
-          if ((b.replyIds as string[]).length || (b.providerMessageIds as string[]).length || b.historyRecorded) return json({error: "receipt_scope_invalid", retryable: false}, 409);
-          await tx`update platform.inbound set receipt_hash=${digest},receipt=${b}::jsonb where id=${id}`;
-          return json({ok: true, replayed: false});
+        const providerIds = (b.providerMessageIds as string[]).length > 0, history = b.historyRecorded === true;
+        const scoped = stepTurnReceipt(previous, {
+          type: "checkScope", collectedReplies: collected.length > 0, providerIds, history,
+          orderedIdsMatch: JSON.stringify(collected.map(r => r.id)) === JSON.stringify(replyIds),
+        });
+        if (scoped.phase === "ScopeInvalid") return json({error: "receipt_scope_invalid", retryable: false}, 409);
+        const authorizedDelivery = scoped.phase === "CheckingDelivery" ? stepTurnReceipt(scoped, {
+          type: "checkDelivery", accepted: receiptAccepted(delivery), providerIds, history,
+          accountFree: noHistoryAllowed(claim.response.accountEligible === false, claim.response.replyKind === "compliance",
+            claim.response.reason === "onboarding_asked" && claim.response.replyKind === "reply" && claim.response.memberId === null && isAppId(claim.response.app)),
+        }) : scoped;
+        if (authorizedDelivery.phase !== "AwaitingEmptyWrite" && authorizedDelivery.phase !== "AwaitingReplyWrite") {
+          return json({error: "invalid_receipt", retryable: false}, 400);
         }
-        if (JSON.stringify(collected.map(r => r.id)) !== JSON.stringify(b.replyIds)) return json({error: "receipt_scope_invalid", retryable: false}, 409);
-        // No-history acceptance belongs only to a persisted policy reply or
-        // canonical join prompt; a normal member reply still needs its history.
-        const accountFree = claim.response.accountEligible === false &&
-          (claim.response.replyKind === "compliance" ||
-            (claim.response.reason === "onboarding_asked" && claim.response.replyKind === "reply" &&
-              claim.response.memberId === null && isAppId(claim.response.app)));
-        if ((b.outcome === "accepted" && (!(b.providerMessageIds as string[]).length || (!b.historyRecorded && !accountFree)))
-          || (b.outcome !== "accepted" && b.historyRecorded)) return json({error: "invalid_receipt", retryable: false}, 400);
-        const status = b.outcome === "accepted" ? "sent" : b.outcome === "unknown" ? "send_unknown" : "refused_gateway";
-        if (isAppId(claim.response.app)) {
+        // spec/turnReceipt.md, "Update the turn and the reply history together"
+        if (authorizedDelivery.phase === "AwaitingReplyWrite" && isAppId(claim.response.app)) {
+          const status = receiptMessageStatus(delivery);
           await tx`select set_config('app.app_id', ${claim.response.app}, true)`;
-          await tx`update network.messages set status=${status} where app_id=${claim.response.app} and inbound_id=${id} and id in ${tx(b.replyIds as string[])} and status in ('collected','send_unknown')`;
+          await tx`update network.messages set status=${status} where app_id=${claim.response.app} and inbound_id=${id} and id in ${tx(replyIds)} and status in ('collected','send_unknown')`;
           // The same replies in the line's thread history (the leak guard's core-14 check reads accepted ones).
           const lrt = claim.response.memberId ? await this.runtimeOfMember(claim.response.app, claim.response.memberId) : this.runtimeFor(claim.response.app);
-          if (lrt?.adapter instanceof BlooioAdapter) await lrt.adapter.queue.collectedReceipt(tx, b.replyIds as string[], b.outcome as "accepted" | "unknown" | "rejected", this.clock.now());
+          if (lrt?.adapter instanceof BlooioAdapter) await lrt.adapter.queue.collectedReceipt(tx, replyIds, delivery, this.clock.now());
         }
         await tx`update platform.inbound set receipt_hash=${digest},receipt=${b}::jsonb where id=${id}`;
-        return json({ok: true, replayed: false});
+        const stored = stepTurnReceipt(authorizedDelivery, { type: "recordReceipt" });
+        return json({ok: stored.phase === "Stored", replayed: false});
       });
-      if (result.status===200 && b.outcome==="accepted") {
+      if (result.status===200 && receiptAccepted(delivery)) {
         const [claim]=await this.sql`select response from platform.inbound where id=${id}`;
         if (isAppId(claim?.response?.app)) await (claim.response.memberId ? await this.runtimeOfMember(claim.response.app, claim.response.memberId) : this.runtimeFor(claim.response.app))?.projectNotifications();
       }
