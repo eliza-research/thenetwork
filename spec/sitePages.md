@@ -130,14 +130,16 @@ type OptInWay = OptInOnJoinPage | OptInInAgent | OptInByText
 pure def optInWays(app: AppKey): List[OptInWay] =
   if (keepsBrowserJoin(app)) List(OptInOnJoinPage, OptInByText) else List(OptInInAgent, OptInByText)
 
+pure def hasOptInWay(app: AppKey, way: OptInWay): bool = optInWays(app).includes(way)
+
 pure def mayLinkTo(app: AppKey, path: PathKind): bool =
   val route = routeFor(app, path, GetMethod)
   not(isRetiredRoute(route)) and route != ServeNotFound and route != ForwardToBackend
 
 pure def lawTermsNameOnlyAServedJoinPage(app: AppKey, way: OptInWay): bool =
-  (way == OptInOnJoinPage and optInWays(app).includes(way)) implies mayLinkTo(app, JoinPath)
+  (way == OptInOnJoinPage and hasOptInWay(app, way)) implies mayLinkTo(app, JoinPath)
 
-pure def lawTermsAlwaysOfferText(app: AppKey): bool = optInWays(app).includes(OptInByText)
+pure def lawTermsAlwaysOfferText(app: AppKey): bool = hasOptInWay(app, OptInByText)
 ```
 
 ### An unknown path shows the not-found page and every served page exists
