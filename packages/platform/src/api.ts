@@ -15,6 +15,7 @@ import { setTimeout as waitForMs } from "node:timers/promises";
 //   serveHttp({ fetch: async (req, server) => (await api.fetch(req, server)) ?? new Response("not found", { status: 404 }) });
 import { NETWORK_SITES, NETWORK_FRESH_PERSON_SITES, type CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
 import { initial as enrollmentInitial, step as stepEnrollment } from "../../core/src/generated/siteEnrollment.ts";
+import { calendarInvitePath } from "../../core/src/generated/calendarInvite.ts";
 import { cloudIssuedAtWithinSkew, cloudSessionStartedAt, liveBeforeDeadline } from "../../core/src/generated/cloudSignIn.ts";
 import { completeCloudSignIn } from "../../core/src/vibe/cloudSignInShell.js";
 import {
@@ -82,6 +83,7 @@ export interface PublicApiOptions extends AccountHooks {
   photoRelay?: PhotoRelayService;
   /** Private home-help address for the current approved revision. Use the verified app session only. */
   homeHelpVenue?: (app: AppInfo, who: Who, input: HomeHelpVenueRequest) => Promise<{ address?: string } | undefined>;
+  calendarInvite?: (app: AppInfo, code: string) => Promise<Response>;
   /**
    * The member's availability for GET /api/me, read from the member record the Network uses (a pause or
    * busy window set by text or by the agent, and quiet hours). It is not the messaging consent: a STOP
@@ -372,6 +374,9 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
     };
     const post = req.method === "POST";
     if (!post && req.method !== "GET") return json(405, { ok: false, error: "method" });
+    if (!post && url.pathname === calendarInvitePath && o.calendarInvite) {
+      return o.calendarInvite(app, url.searchParams.get("code") ?? "");
+    }
     const photoPath = url.pathname.replace(/\/+$/, "");
     if (o.photoRelay && photoPath.startsWith("/api/relay-photos/")) {
       if (post) {

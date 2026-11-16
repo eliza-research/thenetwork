@@ -27,6 +27,8 @@ import { matchingDisabledByRegistry, startupPlan, tickRepairsProjection, tickRun
 import { legacyIntentReconciliationDue } from "../../core/src/generated/standingIntentManagement.ts";
 import { cofounderDeliveryAllowed, cofounderDeliveryIdPrefix, cofounderIntentEligible, cofounderPairCurrent } from "../../core/src/generated/cofounderDispatch.ts";
 import { cofounderIntentObjective } from "../../core/src/generated/cofounderIntent.ts";
+import { lateArrivalNotice } from "../../core/src/generated/groupLateArrival.ts";
+import { parseLateArrivalDeliveryId } from "../src/group-late-arrival.ts";
 import { standingIntentLive } from "../../core/src/standing-intent.ts";
 import { standingEvidenceKey } from "@thenetwork/engine/src/match/standing.ts";
 import { inviteJoinNoticeLifetimeMs } from "../../core/src/generated/outreachPolicy.ts";
@@ -34,7 +36,7 @@ import {
   contextFacetEligible, contextFacetLimit, contextFacetSizeLimit, contextMode, contextSinglePlayer,
   initial as initialContext, step as stepContext, type ContextMode,
 } from "../../core/src/generated/sharedContext.ts";
-import { ConsentNetwork, presentInNyc, relayDispatchCheck, storedInviteNoticePartyCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
+import { ConsentNetwork, presentInNyc, relayDispatchCheck, storedGroupLateArrivalCurrent, storedInviteNoticePartyCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
 import type { AppliedProfileFactEdit } from "./profile-fact-edits.ts";
 import type { RelayCanonical } from "../src/relay.ts";
 import { loadRelayRows, PgStore, runStored, runTick, type NetworkStore } from "../src/store.ts";
@@ -73,7 +75,7 @@ export type StagedMemberInvitation =
   | { status: "issued"; referral: ReferralJoin; url: string; relationship: InviteRelationship;
       evidence: MemberInviteEvidence; at: number; reviewId?: string };
 
-const privateMemberMessage = (type?: string) => type === "bounded_home_help" || type === "profile_fact_edit" || type?.startsWith("member_invitation") === true;
+const privateMemberMessage = (type?: string) => type === "bounded_home_help" || type === "profile_fact_edit" || type === "calendar_invite" || type?.startsWith("member_invitation") === true;
 
 /** What one unit of work produced. Written in the save transaction, then delivered. */
 export interface Unit {
@@ -84,6 +86,7 @@ export interface Unit {
   atomicCofounderReply?: true;
   atomicProfileFactReply?: true;
   atomicParticipationReply?: true;
+  atomicCalendarReply?: true;
   atomicInvitationDeliveryReply?: true;
   memberInvitation?: StagedMemberInvitation;
   standingIntent?: StoredStandingIntentChange;
@@ -218,6 +221,7 @@ export class NetworkRuntime {
       // peon (#9): a posting the manager confirmed (or staff saved) is written with the unit (writeUnit).
       onPosting: p => { this.unit.postings.push(p); },
       memberInviteTurnAllowed: (memberId, messageId) => this.signedMemberTurn(memberId, messageId),
+      lateArrivalTurnAllowed: (memberId, messageId) => this.signedMemberTurn(memberId, messageId),
       onPrivateInviteTurn: (memberId, messageId) => {
         if (this.signedMemberTurn(memberId, messageId)) this.unit.privateInviteTurn = true;
       },
@@ -291,6 +295,26 @@ export class NetworkRuntime {
       out.set(id, { adult, optedOut: !r || r.opted_out === true || !bound, held: !r || r.account_status !== "active" });
     }
     return out;
+  }
+
+  /** Recheck a booked group logistics notice after asynchronous queue gates. */
+  async groupLateArrivalAdmission(tx: SQL, row: { id: string; app: string; kind: string; text: string; memberId?: MemberId | null; oppId?: string }): Promise<RecipientCheck> {
+    const refused: RecipientCheck = { ok: false, reason: "group_late_arrival_changed" };
+    const delivery = parseLateArrivalDeliveryId(row.id);
+    const app = this.app.id;
+    if (!delivery || row.app !== app || delivery.app !== app || row.kind !== "transactional" || row.text !== lateArrivalNotice
+      || row.memberId !== delivery.to || row.oppId !== delivery.oppId) return refused;
+    const [saved] = await tx<{ state: NetworkState }[]>`select state from network.network_state where id=${this.pg.id} and app_id=${app} for share`;
+    if (!saved || !storedGroupLateArrivalCurrent(saved.state, delivery, this.clock.now())) return refused;
+    const [message] = await tx`select id from network.messages where app_id=${app} and id=${row.id}
+      and direction='outbound' and type='relay' and member_id=${delivery.to} and opportunity_id=${delivery.oppId} and body=${lateArrivalNotice}`;
+    if (!message || await this.canonicalPairBlocked(tx, delivery.from, delivery.to)) return refused;
+    const parties = await this.relayParties([delivery.from, delivery.to], tx);
+    if (![delivery.from, delivery.to].every(id => {
+      const party = parties.get(id);
+      return party?.adult && !party.optedOut && !party.held;
+    })) return refused;
+    return storedGroupLateArrivalCurrent(saved.state, delivery, this.clock.now()) ? { ok: true } : refused;
   }
 
   /** Admit the exact reviewed introduction against current database state on the actual send. */
@@ -673,7 +697,7 @@ export class NetworkRuntime {
 
   /** A directly requested result for this signed member. Source links grant only a per-reply contact exception. */
   collectedMemberReply(memberId: MemberId, id: string, body: string,
-    type: "solo_events" | "contribution_history" | "member_invitation" | "member_invitation_vouch" | "member_invitation_delivery" | "bounded_home_help" | "profile_fact_edit" | "cofounder_intent" | "participation_controls", publicLinks: readonly string[] = []) {
+    type: "solo_events" | "contribution_history" | "member_invitation" | "member_invitation_vouch" | "member_invitation_delivery" | "bounded_home_help" | "profile_fact_edit" | "cofounder_intent" | "participation_controls" | "calendar_invite", publicLinks: readonly string[] = []) {
     const turn = this.host.inboundTurn?.();
     if (turn?.app !== this.app.id || turn.memberId !== memberId
       || normalizeAddress(this.addressOf(memberId) ?? "") !== normalizeAddress(turn.from)) return;
@@ -761,7 +785,8 @@ export class NetworkRuntime {
     if (u.inbound && ok(u.inbound.member_id as string)) {
       const privateFields = u.privateHomeHelpTurn ? { body: "Private home-help request.", type: "bounded_home_help" }
         : u.privateInviteTurn ? { body: "Private invitation request.", type: "member_invitation_vouch" }
-          : u.atomicProfileFactReply ? { body: "Private profile fact request.", type: "profile_fact_edit" } : {};
+          : u.atomicProfileFactReply ? { body: "Private profile fact request.", type: "profile_fact_edit" }
+            : u.atomicCalendarReply ? { body: "Private calendar invite request.", type: "calendar_invite" } : {};
       await tx`insert into network.messages ${tx({ ...u.inbound, ...privateFields, app_id: app })} on conflict (id) do nothing`;
     }
     const turn = this.host.inboundTurn?.();
@@ -808,6 +833,10 @@ export class NetworkRuntime {
       if (!captured.some(send => send.type === "participation_controls")) throw new Error("Participation settings reply was not collected");
       replyReason = "participation_controls";
     }
+    if (u.atomicCalendarReply) {
+      if (!captured.some(send => send.type === "calendar_invite")) throw new Error("Calendar invite reply was not collected");
+      replyReason = "calendar_invite";
+    }
     if (u.atomicCofounderReply) {
       if (!captured.some(send => send.type === "cofounder_intent")) throw new Error("Cofounder intent reply was not collected");
       replyReason = "cofounder_intent";
@@ -828,6 +857,7 @@ export class NetworkRuntime {
     const out = u.sends.filter(s => ok(s.memberId)).map(s => ({
       id: s.id, app_id: app, member_id: s.memberId, direction: "outbound", channel: "imessage",
       body: s.type === "bounded_home_help" ? "Private home-help reply." : s.type === "profile_fact_edit" ? "Private profile fact reply."
+        : s.type === "calendar_invite" ? "Private calendar invite reply."
         : privateMemberMessage(s.type) ? "Private invitation reply." : s.body,
       status: u.collected.has(s.id) ? "collected" : this.adapter.storedStatus,
       inbound_id: u.collected.has(s.id) ? turn!.id : null,

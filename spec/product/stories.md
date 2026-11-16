@@ -210,7 +210,7 @@ Models: [relay](../models/relay.md), [photo relay item](../models/photo_relay_it
 
 Use stated availability or authorized calendar free/busy, travel constraints and a public venue. Offer 2–3 viable times when a slot is unsettled. If consenting probe answers select a shared slot, the reveal can carry the booked plan. A changed time requires renewed consent. A cancellation notifies participants with minimal detail. The agent suggests booking links and gives requested calendar invites. It holds no money.
 
-Models: [opportunity](../models/opportunity.md), [plan run](../models/plan_run.md).
+Models: [requested calendar invite](../calendarInvite.md), [opportunity](../models/opportunity.md), [plan run](../models/plan_run.md).
 
 ## Story F18 — Keep a meeting on track
 

@@ -80,6 +80,7 @@ import { staffDecideInvitationReview, staffInvitationReviewQueue } from "./invit
 import { auditSeedInvitationBatch, seedInvitationBatch } from "./seed-invitation-route.ts";
 import { ExpectedMemberInvitations } from "./expected-invitation-store.ts";
 import { memberInviteDeliveryCommand, memberInviteDeliveryPrompt, memberInviteDeliveryReply, type MemberInviteDeliveryCommand } from "./member-invite-delivery-command.ts";
+import { calendarInviteRequest, calendarReplyCurrent, issueCalendarInvite, requestedCalendarFile } from "./calendar-invite.ts";
 import { BOUNDED_HOME_HELP_CLARIFICATION, boundedHomeHelpCommand, boundedHomeHelpDraft, type BoundedHomeHelpCommand } from "./bounded-home-help-intake.ts";
 import { boundedHomeHelpSenderCurrent, createBoundedHomeHelpAuthority } from "./bounded-home-help-authority.ts";
 import { handleBoundedHomeHelpStaff, writeBoundedHomeHelpStaffAudit } from "./bounded-home-help-staff.ts";
@@ -96,7 +97,7 @@ import { readCapped } from "../../platform/src/body.ts";
 import { ADULT_AGE, canBeMatched, canJoin } from "../../core/src/policy.ts";
 import { CostLedger, costRatesFromEnv, PgCostSink } from "./cost.ts";
 import { BlooioAdapter, type ChannelAdapter, type DirectKind, type Outbound } from "./channel.ts";
-import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, type AppId, type AppInfo } from "../../platform/src/apps.ts";
+import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, stagingSiteOrigins, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { Accounts, homeCityOf, joinProfileText, type AccountHooks, type EnrollmentReferral, type HomeInput, type JoinHookContext, type MemberHookContext, type Who } from "../../platform/src/accounts.ts";
 import {
   consumeMemberInvitation, findApprovedMemberInvitationReview, findMemberInvitation, holdMemberInvitation, InvitationUnavailable,
@@ -167,7 +168,7 @@ export function turnSecretProblem(env: Record<string, string | undefined> = proc
 /** The tables the service needs (pnpm run db:migrate). */
 const REQUIRED_TABLES = [
   ...["members", "channel_identities", "facets", "intents", "presence", "edges", "messages", "events", "matching_runs", "staff_audit", "network_state", "opportunities", "review_items", "requests", "bounded_home_help", "bounded_home_help_consent", "bounded_home_help_venue"].map(t => `network.${t}`),
-  ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "app_lines", "share_grants", "eliza_notices", "member_invitations", "member_invitation_reviews", "expected_member_invitations", "expected_invitation_contacts", "seed_invitation_batches", "seed_invitations", "seed_invitation_attributions", "profile_fact_edit_drafts"].map(t => `platform.${t}`),
+  ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "app_lines", "share_grants", "eliza_notices", "member_invitations", "member_invitation_reviews", "expected_member_invitations", "expected_invitation_contacts", "seed_invitation_batches", "seed_invitations", "seed_invitation_attributions", "profile_fact_edit_drafts", "calendar_invites"].map(t => `platform.${t}`),
 ];
 /** The dev-only key for keyed phone hashes (the platform's own default). Production needs PLATFORM_HASH_KEY. */
 const DEV_HASH_KEY = "dev-only-platform-hash-key";
@@ -778,6 +779,7 @@ export class NetworkService implements RuntimeHost {
       await this.expectedInvitations.purgeExpired(tx, rt.app.id);
       await this.seedInvitations.purgeExpired(tx, rt.app.id);
       await this.profileFactEdits.purgeExpired(tx, rt.app.id);
+      await tx`delete from platform.calendar_invites where app_id=${rt.app.id} and expires_at<=${new Date(now)}`;
       await tx`delete from platform.member_invitations
         where app_id=${rt.app.id} and expires_at<=${new Date(now)} and (redeemed_at is null or projected_at is not null)`;
     }).catch(() => this.log(`[purge] invitations failed (${rt.id})`));
@@ -1382,6 +1384,8 @@ export class NetworkService implements RuntimeHost {
       home: ctx => this.memberHome(ctx),
       onHome: (ctx, input) => this.correctHome(ctx, input),
       homeHelpVenue: (app, who, input) => this.privateHomeHelpVenue(app, who, input),
+      calendarInvite: async (app, code) => (await this.runtimeFor(app.id)?.scoped(tx => requestedCalendarFile(tx, this.accountsFor(tx), app, code, () => this.clock.now())))
+        ?? Response.json({ ok: false, error: "not_found" }, { status: 404, headers: { "cache-control": "no-store" } }),
       // Each code Twilio Verify sends is a cost row (cost.ts).
       otp: this.cost.meterOtp(this.apiOptions?.otp ?? otpProviderFromEnv(this.env)),
     });
@@ -1489,13 +1493,14 @@ export class NetworkService implements RuntimeHost {
     const factCommand = !kw && memberFactCommand(ev.text);
     const intentCommand = !kw ? standingIntentCommand(ev.text) : undefined;
     const controls = !kw && participationCommand(ev.text);
+    const calendar = !kw && calendarInviteRequest(ev.text);
     const travel = !kw && this.inboundTurn() ? travelPresenceCommand(ev.text) : undefined;
     const soloEvents = !kw && this.inboundTurn() ? soloConciergeRequest(ev.text) : undefined;
     const contributionPage = !kw && this.inboundTurn() ? contributionHistoryRequest(ev.text) : undefined;
     const e164 = normalizePhone(ev.from);
     const banned = !!e164 && await this.accounts.banned(e164);
     // Legacy webhooks own transport engagement. A signed turn admits its canonical member after policy processing.
-    if (!banned && !this.inboundTurn() && !intentCommand && !factCommand && !controls) await this.lineAdapter()?.engaged?.(ev.from);
+    if (!banned && !this.inboundTurn() && !intentCommand && !factCommand && !controls && !calendar) await this.lineAdapter()?.engaged?.(ev.from);
     const route = await this.route(ev, o.app);
     const app = this.apps[route.app];
     const joinedMember = (await this.memberApps(ev.from)).find(m => m.app === route.app);
@@ -1586,8 +1591,8 @@ export class NetworkService implements RuntimeHost {
     if (banned) return "held";
 
     // An account command never joins an app or opts the sender in.
-    if (!memberId && (profileRead || intentCommand || controls || travel || soloEvents || contributionPage !== undefined)) {
-      return controls ? "participation_controls" : travel ? "travel_presence" : soloEvents ? "solo_events" : contributionPage !== undefined ? "contribution_history" : "handled";
+    if (!memberId && (profileRead || intentCommand || controls || calendar || travel || soloEvents || contributionPage !== undefined)) {
+      return controls ? "participation_controls" : calendar ? "calendar_invite" : travel ? "travel_presence" : soloEvents ? "solo_events" : contributionPage !== undefined ? "contribution_history" : "handled";
     }
 
     if (memberId) {
@@ -1605,13 +1610,13 @@ export class NetworkService implements RuntimeHost {
       const reply = kw === "help" ? app.brand.help : undefined;
       if (!kw && e164 && /^\s*share\W*$/i.test(ev.text) && (await this.pendingOf(e164, "share", app.id))) return this.share(rt, app, memberId, e164, ev, rowId);
       // The answer to The Network's "what are you looking for?": enroll in the apps they named.
-      if (!intentCommand && !controls && !travel && !soloEvents && contributionPage === undefined && shouldReadLookingFor(!!kw, !!profileRead, app.id === "ntwrk") && e164 && (await this.pendingOf(e164, "looking_for"))) {
+      if (!intentCommand && !controls && !calendar && !travel && !soloEvents && contributionPage === undefined && shouldReadLookingFor(!!kw, !!profileRead, app.id === "ntwrk") && e164 && (await this.pendingOf(e164, "looking_for"))) {
         const wants = lookingFor(ev.text).filter(a => namedOtherApp(a, a !== "ntwrk" && !!this.runtimeFor(a)));
         if (wants.length) return this.enroll(rt, memberId, e164, wants, ev, rowId);
       }
       // After STOP the member's texts still reach the Network (a report is never dropped), but its replies are
       // refused: the person gets one hint instead (founder decision 2026-10-11, #22).
-      if (!kw && e164 && !controls && contributionPage === undefined) await this.stopHint(rt, app, e164, ev, rowId);
+      if (!kw && e164 && !controls && !calendar && contributionPage === undefined) await this.stopHint(rt, app, e164, ev, rowId);
       const out = await this.memberMessage(rt, memberId, ev, rowId, kw, reply);
       if (e164) await this.statedAge(app, rt, memberId, e164);
       return out;
@@ -1732,6 +1737,20 @@ export class NetworkService implements RuntimeHost {
       const channel = ev.transport === "sms" ? "sms" : "imessage";
       const inbound = { id: rowId, member_id: memberId, direction: "inbound", channel, body: ev.text, status: "received", type: null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
       const signedDirect = !keyword && !fromAssistant && this.inboundTurn();
+      const calendar = !keyword && calendarInviteRequest(ev.text);
+      if (calendar) {
+        if (!signedDirect || !rt.signedMemberTurn(memberId, rowId)) return "calendar_invite";
+        rt.unit.memberCommand = async tx => {
+          const owner = { app: rt.app, memberId, e164: signedDirect.from };
+          const origin = stagingSiteOrigins(this.env)[rt.app.id] ?? `https://${rt.app.domain}`;
+          const reply = await issueCalendarInvite(tx, this.accountsFor(tx), owner, rt.pg.id, calendar, origin, this.clock.now());
+          if (!reply) return;
+          rt.unit.inbound = inbound;
+          rt.unit.atomicCalendarReply = true;
+          rt.collectedMemberReply(memberId, `sys:${rowId}`, reply.body, "calendar_invite", reply.link ? [reply.link] : []);
+        };
+        return "calendar_invite";
+      }
       const controls = !keyword && participationCommand(ev.text);
       if (controls) {
         if (!signedDirect || !rt.signedMemberTurn(memberId, rowId)) return "participation_controls";
@@ -2946,7 +2965,7 @@ export class NetworkService implements RuntimeHost {
       const rt = turn.app ? (turn.memberId ? await this.runtimeOfMember(turn.app, turn.memberId) : this.runtimeFor(turn.app)) : undefined;
       const binding = rt && turn.memberId ? await this.accounts.activeMembership(rt.app, {e164: input.from, personId: person?.id ?? null}) : undefined;
       // Own-profile commands preserve send holds. The binding includes the known join-age check.
-      if (outcome !== "standing_intents" && outcome !== "travel_presence" && outcome !== "solo_events" && outcome !== "contribution_history" && outcome !== "profile_fact_edit" && outcome !== "participation_controls" && accountEligible && binding && binding.membership.memberId === turn.memberId) {
+      if (outcome !== "standing_intents" && outcome !== "travel_presence" && outcome !== "solo_events" && outcome !== "contribution_history" && outcome !== "profile_fact_edit" && outcome !== "participation_controls" && outcome !== "calendar_invite" && accountEligible && binding && binding.membership.memberId === turn.memberId) {
         await this.lineAdapter()?.engaged?.(input.from);
       }
       if (outcome === "open" && !collected.length && turn.app && turn.memberId) {
@@ -2967,6 +2986,13 @@ export class NetworkService implements RuntimeHost {
     }
     if (result.status===200 && result.body && typeof result.body==="object" && "outcome" in result.body && result.body.outcome==="handled") {
       const handled=result.body as Extract<TurnResponse,{outcome:"handled"}>;
+      if (handled.reason === "calendar_invite" && handled.replies.length) {
+        const memberId = handled.memberId;
+        const rt = handled.app && memberId ? await this.runtimeOfMember(handled.app, memberId) : undefined;
+        const allowed = rt && memberId && handled.replies.length === 1 && calendarInviteRequest(input.text)
+          && await rt.scoped(tx => calendarReplyCurrent(tx, this.accountsFor(tx), { app: rt.app, memberId, e164: input.from }, handled.replies[0]!, () => this.clock.now()));
+        if (!allowed) return json({ error: "turn_calendar_invite_changed", retryable: false }, 409);
+      }
       if (handled.reason === "standing_intents" && handled.replies.length) {
         const rt = handled.app && handled.memberId ? await this.runtimeOfMember(handled.app, handled.memberId) : undefined;
         const e164 = normalizePhone(input.from);
