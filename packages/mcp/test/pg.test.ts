@@ -85,18 +85,19 @@ describe.skipIf(!EXPLICIT_PG && !pgAvailable)("PgOAuthStore", () => {
       const second = { ...pending, id: `approval_${randomUUID()}` };
       const secondId = `grant_${randomUUID()}`;
       await store.putAuthRequest(second);
-      const acquired = Promise.withResolvers<void>();
-      const release = Promise.withResolvers<void>();
+      let markAcquired!: () => void, releaseLock!: () => void;
+      const acquired = new Promise<void>(resolve => { markAcquired = resolve; });
+      const released = new Promise<void>(resolve => { releaseLock = resolve; });
       const issuing = store.commitConsentGrant(second.id, at, async () => {
-        acquired.resolve();
-        await release.promise;
+        markAcquired();
+        await released;
         return true;
       }, {
         grant: { ...writes.grant, id: secondId },
         code: { ...writes.code, grantId: secondId, hash: sha256hex(secondId) },
         audit: [{ ...writes.audit[0], grantId: secondId }, { ...writes.audit[1], grantId: secondId }],
       });
-      await Promise.race([acquired.promise, issuing]);
+      await Promise.race([acquired, issuing]);
       const erasing = other.forgetPhone(writes.grant.phoneKey, PHONE_A, app);
       try {
         await vi.waitFor(async () => {
@@ -107,7 +108,7 @@ describe.skipIf(!EXPLICIT_PG && !pgAvailable)("PgOAuthStore", () => {
           expect(row?.blocked).toBe(true);
         });
       } finally {
-        release.resolve();
+        releaseLock();
         await Promise.all([issuing, erasing]);
       }
       expect(await issuing).toBe(true);
