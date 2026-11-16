@@ -17,6 +17,8 @@ The MCP server (`packages/mcp/src/tools.ts` and `packages/mcp/src/handler.ts`) c
 
 There are two surfaces. The full surface, at `https://<site>/mcp`, offers every app. The OpenAI surface, at `https://<site>/mcp/openai`, serves ChatGPT and Codex clients. It hides slop.date: it never lists slop.date as an app choice, and the slop.date site has no OpenAI surface. The OpenAI plugin uses the ntwrk.party endpoint ([agent entry](agentEntry.md)). Every host that a surface serves lists the public tools and the member tools. Only the friends.help and ntwrk.party hosts list the Join draft tool.
 
+The app registry can disable an otherwise available OpenAI host. Check this setting on every request bound to the OpenAI surface, including when that surface is served at `/mcp`. The full surface applies the ordinary host rule.
+
 ```quint
 type AppId = Ntwrk | Slop | Peon | Friends
 type Surface = FullSurface | OpenAiSurface
@@ -25,6 +27,12 @@ type ToolName = AppInfoTool | StartSignupTool | PrepareSignupTool | CheckStatusT
 pure def appOffered(surface: Surface, app: AppId): bool = surface == FullSurface or app != Slop
 
 pure def hostServes(surface: Surface, host: AppId): bool = appOffered(surface, host)
+
+pure def configuredHostServes(surface: Surface, host: AppId, openAiEnabled: bool): bool =
+  hostServes(surface, host) and (surface != OpenAiSurface or openAiEnabled)
+
+pure def lawConfiguredOptOutBlocksOpenAiHost(host: AppId): bool =
+  not(configuredHostServes(OpenAiSurface, host, false))
 
 pure def toolListed(host: AppId, surface: Surface, tool: ToolName): bool =
   hostServes(surface, host) and (tool != PrepareSignupTool or host == Friends or host == Ntwrk)

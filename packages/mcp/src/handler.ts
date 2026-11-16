@@ -25,7 +25,7 @@ import {
   type TokenAuthority, type TokenFlow, type TokenReason, canReadAuthority, canReadCodeBinding, canReadRefreshBinding,
   canRecordRotation, canRecordTokens, codeCanBeConsumed, initial as tokenInitial, step as stepToken, tokenRevocation,
 } from "../../core/src/generated/oauthTokenLifecycle.ts";
-import { hostServes, profileDailyCap, profileLimitReached } from "../../core/src/generated/connectorTools.ts";
+import { configuredHostServes, profileDailyCap, profileLimitReached } from "../../core/src/generated/connectorTools.ts";
 import { connectorApp, connectorSurface, defaultApps, defaultHostMap, type McpApp, type McpAppId, type Surface } from "./apps.ts";
 import type { AssistantKind, PlatformHooks } from "./hooks.ts";
 import { codePage, consentPage, consentsPage, messagePage, phonePage } from "./pages.ts";
@@ -1025,8 +1025,10 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
 
     const result = (r: Record<string, unknown>) => out(200, { jsonrpc: "2.0", id, result: modern ? { resultType: "complete", ...r, _meta: { ...(r._meta as object | undefined), "io.modelcontextprotocol/serverInfo": SERVER_INFO } } : r });
     const host = c.app;
-    // spec/connectorTools.md, "A connection binds to one host on one surface": a host that the surface does not serve is not available.
-    if (!hostServes(connectorSurface[surface], connectorApp[host.id])) return out(404, rpcError(id, -32601, "Not available"));
+    // spec/connectorTools.md, "A connection binds to one host on one surface"
+    if (!configuredHostServes(connectorSurface[surface], connectorApp[host.id], host.openai)) {
+      return out(404, rpcError(id, -32601, "Not available"));
+    }
 
     switch (msg.method) {
       case "initialize": {
