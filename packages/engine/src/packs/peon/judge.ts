@@ -45,6 +45,7 @@ export function peonJudgeContext(w: World, c: Candidate): { context: object; ref
 
 export const peonJudge: JudgePack = {
   rubric: { compact: { version: PEON_JUDGE_VERSION, system: PEON_JUDGE_SYSTEM }, matchable: { version: PEON_JUDGE_VERSION, system: PEON_JUDGE_SYSTEM } },
+  reviewCandidate: c => c.lane !== "Cofounder",
   buildContext: (w, c) => peonJudgeContext(w, c),
   hardGate: (w, c) => peonHardGate(w, c),
 };

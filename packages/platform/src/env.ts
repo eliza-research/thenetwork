@@ -1,5 +1,5 @@
 import { declaredEnvironment, devShortcuts, minimumSecretLength, networkBoot, productionDeclared, type Environment } from "../../core/src/generated/bootPolicy.ts";
-import { agentSignupProblems, otpConfigProblems } from "./otp-config.ts";
+import { otpConfigProblems } from "./otp-config.ts";
 // Environment flags shared by the platform code. Detection fails closed: the dev shortcuts (the
 // console OTP provider, the Turnstile bypass, the public dev hash key, a trusted X-Forwarded-Host,
 // cookies without Secure) run only in an environment that is declared dev. An environment that is
@@ -40,8 +40,6 @@ export const MIN_SECRET_LENGTH = minimumSecretLength;
  * What a production (or staging) process is missing, as one line per problem; empty when it may
  * start. Production needs real providers and every secret:
  *  - explicit OTP_PROVIDER=twilio with Verify credentials, or blooio with its key and exact sender;
- *  - the agent signup settings (otp-config.ts agentSignupProblems): PLATFORM_PHONE_OTP_ONLY_APPS lists
- *    every agent skill app, OTP_PROVIDER=blooio, and no Cloud sign-in;
  *  - TURNSTILE_SECRET_KEY;
  *  - PLATFORM_PROXY_SECRET (the site routers sign the client IP and host with it), PLATFORM_HASH_KEY
  *    and PLATFORM_SESSION_SECRET, each at least 32 characters;
@@ -61,7 +59,7 @@ export function bootConfigProblems(env: Env = process.env): string[] {
   if (policy.environmentMissing) return [`PLATFORM_ENV must be one of ${PLATFORM_ENVS.join(", ")}`];
   if (policy.devConflict) return ["NODE_ENV=production with PLATFORM_ENV=dev"];
   if (!policy.checkDeployed) return [];
-  const out = [...otpConfigProblems(env), ...agentSignupProblems(env)];
+  const out = otpConfigProblems(env);
   if (policy.turnstileMissing) out.push("TURNSTILE_SECRET_KEY");
   const shortSecrets = {
     PLATFORM_PROXY_SECRET: policy.proxyShort, PLATFORM_HASH_KEY: policy.hashShort, PLATFORM_SESSION_SECRET: policy.sessionShort,

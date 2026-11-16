@@ -11,4 +11,5 @@ export {
   type MatchEdge, type RankedProfile, type SearchResult,
 } from "./search.ts";
 export { buildCircles, type Circle } from "./circles.ts";
-export { MatchRun } from "./run.ts";
+export { existingFriendPlanPairValues, MatchRun } from "./run.ts";
+export { standingEvidenceKey, standingKey } from "./standing.ts";

@@ -5,22 +5,56 @@ import { type PairSide as pairValue_PairSide, type PairRules as pairValue_PairRu
 
 /** Story: Estimate standing from facts, never from popularity / Standing adds reviewed facts in full and unreviewed facts at half (spec/memberStanding.md) */
 export interface StandingEvidence { points: number; reviewed: boolean }
+/** Story: Move standing slowly / The first observation initializes standing and a due observation advances it once (spec/memberStanding.md) */
+export interface StandingObservation { standing: number; updatedAt: number }
 
-/** Story: Estimate standing from facts, never from popularity / A private photo rating maps onto the standing scale for dating (spec/memberStanding.md) */
-export const standingRatingScale: number = 1000;
+/** Story: Estimate standing from facts, never from popularity / Ordinary standing evidence uses the member's current matching scope (spec/memberStanding.md) */
+export const standingFacetProvenances: string[] = ["said", "vouched", "connected_source", "inferred"];
 /** Story: Estimate standing from facts, never from popularity / Standing adds reviewed facts in full and unreviewed facts at half (spec/memberStanding.md) */
 export const standingUnreviewedPercent: number = 50;
+/** Story: Estimate standing from facts, never from popularity / A private photo rating maps onto the standing scale for dating (spec/memberStanding.md) */
+export const standingRatingScale: number = 1000;
 /** Story: Treat a new member with wide uncertainty / A member with no reviewed facts gets the widest uncertainty (spec/memberStanding.md) */
 export const standingUncertaintyFloor: number = 3;
 /** Story: Treat a new member with wide uncertainty / A member with no reviewed facts gets the widest uncertainty (spec/memberStanding.md) */
 export const standingUncertaintyStep: number = 2;
 /** Story: Move standing slowly / Standing moves toward its target by at most five points a week (spec/memberStanding.md) */
 export const standingWeeklyStep: number = 5;
+/** Story: Move standing slowly / The first observation initializes standing and a due observation advances it once (spec/memberStanding.md) */
+export const standingObservationWeekMs: number = 604800000;
+/** Story: Estimate standing from facts, never from popularity / Ordinary standing evidence uses the member's current matching scope (spec/memberStanding.md) */
+export const standingFacetScopes: string[] = ["agent_private", "opportunity_specific", "matchable", "shareable"];
 
 /** Story: Estimate standing from facts, never from popularity / Standing exists only for an adult who consented to the lane (spec/memberStanding.md) */
 //@ pure
 export function standingReadable(adult: boolean, consented: boolean): boolean {
   return adult && consented;
+}
+
+/** Story: Estimate standing from facts, never from popularity / Standing history requires current account and lane authority (spec/memberStanding.md) */
+//@ pure
+export function standingMayRetain(adult: boolean, activeAccount: boolean, lanePermitted: boolean): boolean {
+  return standingReadable(adult, lanePermitted) && activeAccount;
+}
+
+/** Story: Estimate standing from facts, never from popularity / Standing history requires current account and lane authority (spec/memberStanding.md) */
+//@ pure
+export function lawStandingRetentionRequiresAuthority(adult: boolean, activeAccount: boolean, lanePermitted: boolean): boolean {
+  //@ ensures \result === true
+  return !(!adult || !activeAccount || !lanePermitted) || !standingMayRetain(adult, activeAccount, lanePermitted);
+}
+
+/** Story: Estimate standing from facts, never from popularity / Ordinary standing evidence uses the member's current matching scope (spec/memberStanding.md) */
+//@ pure
+export function standingFacetReadable(scope: string, provenance: string, confirmed: boolean, sensitive: boolean, inferred: boolean): boolean {
+  return (scope === "matchable" || scope === "shareable") && !sensitive && !inferred && (provenance === "said" || provenance === "vouched" || (provenance === "connected_source" && confirmed));
+}
+
+/** Story: Estimate standing from facts, never from popularity / Ordinary standing evidence uses the member's current matching scope (spec/memberStanding.md) */
+//@ pure
+export function lawStandingFacetNeedsMatchingPermission(scope: string, provenance: string, confirmed: boolean, sensitive: boolean, inferred: boolean): boolean {
+  //@ ensures \result === true
+  return !standingFacetReadable(scope, provenance, confirmed, sensitive, inferred) || ((scope === "matchable" || scope === "shareable") && !sensitive && !inferred && (provenance !== "connected_source" || confirmed));
 }
 
 /** Story: Estimate standing from facts, never from popularity / Standing adds reviewed facts in full and unreviewed facts at half (spec/memberStanding.md) */
@@ -111,10 +145,77 @@ export function lawStandingStepConverges(standing: number, target: number): bool
   return !(standing >= 0 && standing <= matchLane_standingCeiling && target >= 0 && target <= matchLane_standingCeiling && exact_memberStanding(target - standing) <= standingWeeklyStep && exact_memberStanding(standing - target) <= standingWeeklyStep) || nextStanding(standing, target) === target;
 }
 
+/** Story: Move standing slowly / The first observation initializes standing and a due observation advances it once (spec/memberStanding.md) */
+//@ pure
+export function observeStanding(value: number, observedAt: number, target: number, now: number, initialized: boolean): StandingObservation {
+  return !initialized || observedAt < 0 ? (now < 0 ? ({ standing: standingClamp(value), updatedAt: -1 } as StandingObservation) : ({ standing: standingClamp(target), updatedAt: now } as StandingObservation)) : (now >= observedAt && exact_memberStanding(now - observedAt) >= standingObservationWeekMs ? ({ standing: nextStanding(value, target), updatedAt: now } as StandingObservation) : ({ standing: standingClamp(value), updatedAt: observedAt } as StandingObservation));
+}
+
+/** Story: Move standing slowly / The first observation initializes standing and a due observation advances it once (spec/memberStanding.md) */
+//@ pure
+export function lawFirstStandingObservationUsesTarget(value: number, observedAt: number, target: number, now: number, initialized: boolean): boolean {
+  //@ ensures \result === true
+  return !((!initialized || observedAt < 0) && now >= 0) || equal_memberStanding(observeStanding(value, observedAt, target, now, initialized), ({ standing: standingClamp(target), updatedAt: now } as StandingObservation));
+}
+
+/** Story: Move standing slowly / The first observation initializes standing and a due observation advances it once (spec/memberStanding.md) */
+//@ pure
+export function lawStandingInvalidClockCannotInitialize(value: number, observedAt: number, target: number, now: number, initialized: boolean): boolean {
+  //@ ensures \result === true
+  return !((!initialized || observedAt < 0) && now < 0) || observeStanding(value, observedAt, target, now, initialized).updatedAt === -1;
+}
+
+/** Story: Move standing slowly / The first observation initializes standing and a due observation advances it once (spec/memberStanding.md) */
+//@ pure
+export function lawStandingObservationHoldsUntilDue(value: number, observedAt: number, target: number, now: number): boolean {
+  //@ ensures \result === true
+  return !(observedAt >= 0 && (now < observedAt || exact_memberStanding(now - observedAt) < standingObservationWeekMs)) || equal_memberStanding(observeStanding(value, observedAt, target, now, true), ({ standing: standingClamp(value), updatedAt: observedAt } as StandingObservation));
+}
+
+/** Story: Move standing slowly / The first observation initializes standing and a due observation advances it once (spec/memberStanding.md) */
+//@ pure
+export function lawStandingObservationNeverMovesTimeBackward(value: number, observedAt: number, target: number, now: number): boolean {
+  //@ ensures \result === true
+  return !(observedAt >= 0) || observeStanding(value, observedAt, target, now, true).updatedAt >= observedAt;
+}
+
+/** Story: Move standing slowly / The first observation initializes standing and a due observation advances it once (spec/memberStanding.md) */
+//@ pure
+export function lawStandingObservationInRange(value: number, observedAt: number, target: number, now: number, initialized: boolean): boolean {
+  //@ ensures \result === true
+  const local_10: StandingObservation = observeStanding(value, observedAt, target, now, initialized);
+  return 0 <= local_10.standing && local_10.standing <= matchLane_standingCeiling && local_10.updatedAt >= -1;
+}
+
+/** Story: Move standing slowly / The first observation initializes standing and a due observation advances it once (spec/memberStanding.md) */
+//@ pure
+export function lawStandingDueObservationStepsOnce(value: number, observedAt: number, target: number, now: number): boolean {
+  //@ ensures \result === true
+  const local_11: StandingObservation = observeStanding(value, observedAt, target, now, true);
+  const local_12 = standingClamp(value);
+  return !(observedAt >= 0 && now >= observedAt && exact_memberStanding(now - observedAt) >= standingObservationWeekMs) || (local_11.updatedAt === now && local_11.standing === nextStanding(value, target) && exact_memberStanding(local_11.standing - local_12) <= standingWeeklyStep && exact_memberStanding(local_12 - local_11.standing) <= standingWeeklyStep);
+}
+
+/** Story: Move standing slowly / The first observation initializes standing and a due observation advances it once (spec/memberStanding.md) */
+//@ pure
+export function lawStandingObservationCannotAdvanceTwiceAtSameTime(value: number, observedAt: number, target: number, now: number, initialized: boolean): boolean {
+  //@ ensures \result === true
+  const local_13: StandingObservation = observeStanding(value, observedAt, target, now, initialized);
+  return !(local_13.updatedAt >= 0) || equal_memberStanding(observeStanding(local_13.standing, local_13.updatedAt, target, now, true), local_13);
+}
+
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
 export function exact_memberStanding(n: number): number {
   if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
   return n;
+}
+
+/** Equality by structure, as Quint and the proof compare records, lists, maps and variants (none holds a set). */
+export function equal_memberStanding(a: unknown, b: unknown): boolean {
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return a === b;
+  const keys = Object.keys(a);
+  return Array.isArray(a) === Array.isArray(b) && keys.length === Object.keys(b).length
+    && keys.every((k) => Object.hasOwn(b, k) && equal_memberStanding((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
 }
 
 /** Whole-number division as Quint does it: towards zero. */

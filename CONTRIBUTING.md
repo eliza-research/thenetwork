@@ -35,7 +35,7 @@ needs approval. Link the specific story or rule when you propose a change.
   maintainer approval and an update to the product specification.
 - Add or update the story and its rules in `spec/<name>.md`. Put the Quint
   for a rule immediately below its prose. Follow the
-  [sync skill](.claude/skills/sync/SKILL.md) and the
+  [sync skill](.agents/skills/sync/SKILL.md) and the
   [spec reference](SPEC.md#writing-a-spec).
 - Use the generated TypeScript for the decision in the owning package.
   Run `pnpm run spec:sync` to publish the generated modules. Commit the
@@ -137,7 +137,7 @@ Put your values in `.env` only. `.env` is in `.gitignore`. [.env.example](.env.e
 
 - **Live sends.** `BLOOIO_ALLOW_SEND`, `NTWRK_LIVE_APPROVED`, `<APP>_LIVE_APPROVED` (for example `SLOP_LIVE_APPROVED`) and `NETWORK_CHANNEL`. Without them every send is dry-run. Real texts go to real people. Only the founder approves live sends.
 - **Deploys.** `NTWRK_ALLOW_DEPLOY`. `scripts/wrangler.sh` refuses a deploy without it. Only the founder approves deploys.
-- **Production secrets and operations.** `BLOOIO_API_KEY`, `BLOOIO_WEBHOOK_SECRET`, `TWILIO_*`, `TURNSTILE_*`, `PLATFORM_HASH_KEY`, `LEAK_LABEL_KEY`, `PLATFORM_PROXY_SECRET`, `PLATFORM_SESSION_SECRET`, `SERVICE_TURN_SECRET`, `BACKEND_PUBLIC_ORIGIN`, `MIGRATION_DATABASE_URL`, `R2_*`, `ALERT_*`, `OPS_*`, `COST_*`, `BACKUP_*`, `OBSERVATORY_CF_ACCESS_*` and the other names in [docs/deploy.md](docs/deploy.md) sections 2.3, 7 and 8. The dev scripts make safe local values where they need one.
+- **Production secrets and operations.** `BLOOIO_API_KEY`, `BLOOIO_WEBHOOK_SECRET`, `TWILIO_*`, `TURNSTILE_*`, `PLATFORM_HASH_KEY`, `LEAK_LABEL_KEY`, `PLATFORM_PROXY_SECRET`, `PLATFORM_SESSION_SECRET`, `SERVICE_TURN_SECRET`, `MIGRATION_DATABASE_URL`, `R2_*`, `ALERT_*`, `OPS_*`, `COST_*`, `BACKUP_*`, `OBSERVATORY_CF_ACCESS_*` and the other names in [docs/deploy.md](docs/deploy.md) sections 2.3, 7 and 8. The dev scripts make safe local values where they need one.
 
 ## 6. The validation layer
 

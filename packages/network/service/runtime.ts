@@ -25,17 +25,22 @@ import type { RunRecord } from "@thenetwork/core";
 import type { NetworkContext, SimMessage } from "@thenetwork/core";
 import { matchingDisabledByRegistry, startupPlan, tickRepairsProjection, tickRunsFollowup } from "../../core/src/generated/runtimeUnit.ts";
 import { legacyIntentReconciliationDue } from "../../core/src/generated/standingIntentManagement.ts";
+import { cofounderDeliveryAllowed, cofounderDeliveryIdPrefix, cofounderIntentEligible, cofounderPairCurrent } from "../../core/src/generated/cofounderDispatch.ts";
+import { cofounderIntentObjective } from "../../core/src/generated/cofounderIntent.ts";
+import { standingIntentLive } from "../../core/src/standing-intent.ts";
+import { standingEvidenceKey } from "@thenetwork/engine/src/match/standing.ts";
 import { inviteJoinNoticeLifetimeMs } from "../../core/src/generated/outreachPolicy.ts";
 import {
   contextFacetEligible, contextFacetLimit, contextFacetSizeLimit, contextMode, contextSinglePlayer,
   initial as initialContext, step as stepContext, type ContextMode,
 } from "../../core/src/generated/sharedContext.ts";
 import { ConsentNetwork, presentInNyc, relayDispatchCheck, storedInviteNoticePartyCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
+import type { AppliedProfileFactEdit } from "./profile-fact-edits.ts";
 import type { RelayCanonical } from "../src/relay.ts";
 import { loadRelayRows, PgStore, runStored, runTick, type NetworkStore } from "../src/store.ts";
 import { capitalWiring, type CapitalEvent } from "../src/capital.ts";
 import type { AppId, AppInfo } from "../../platform/src/apps.ts";
-import { effectiveParticipation, loadSnapshot } from "./snapshot.ts";
+import { effectiveParticipation, intentOf, loadSnapshot } from "./snapshot.ts";
 import { reconcileLegacyIntentRows } from "./standing-intent-reconciliation.ts";
 import { appWiring, type AppWiring } from "./packs.ts";
 import { BlooioAdapter, DryRunAdapter, WAITING_STATUSES, type ChannelAdapter, type Delivery, type Outbound } from "./channel.ts";
@@ -68,7 +73,7 @@ export type StagedMemberInvitation =
   | { status: "issued"; referral: ReferralJoin; url: string; relationship: InviteRelationship;
       evidence: MemberInviteEvidence; at: number; reviewId?: string };
 
-const privateMemberMessage = (type?: string) => type === "bounded_home_help" || type?.startsWith("member_invitation") === true;
+const privateMemberMessage = (type?: string) => type === "bounded_home_help" || type === "profile_fact_edit" || type?.startsWith("member_invitation") === true;
 
 /** What one unit of work produced. Written in the save transaction, then delivered. */
 export interface Unit {
@@ -76,6 +81,8 @@ export interface Unit {
   privateInviteTurn?: true;
   privateHomeHelpTurn?: true;
   atomicHomeHelpReceipt?: true;
+  atomicCofounderReply?: true;
+  atomicProfileFactReply?: true;
   atomicInvitationDeliveryReply?: true;
   memberInvitation?: StagedMemberInvitation;
   standingIntent?: StoredStandingIntentChange;
@@ -284,6 +291,43 @@ export class NetworkRuntime {
     return out;
   }
 
+  /** Admit the exact reviewed introduction against current database state on the actual send. */
+  async cofounderAdmission(tx: SQL, row: { id: string; memberId?: MemberId | null; oppId?: string }): Promise<RecipientCheck> {
+    const refused: RecipientCheck = { ok: false, reason: "cofounder_intent_changed" };
+    if (!row.memberId || !row.oppId) return refused;
+    const [saved] = await tx<{ state: NetworkState }[]>`select state from network.network_state where id=${this.pg.id} for share`;
+    const opp = saved?.state.opps.find(o => o.id === row.oppId);
+    if (!opp || opp.lane !== "Cofounder" || opp.participants.length !== 2 || !opp.participants.includes(row.memberId)) return refused;
+    const revealing = row.id.startsWith(`${cofounderDeliveryIdPrefix}reveal:`);
+    if (!revealing && !row.id.startsWith(`${cofounderDeliveryIdPrefix}probe:`)) return refused;
+    if (revealing ? opp.stage !== "scheduled" : opp.stage !== "probing") return refused;
+    const [first, second] = opp.participants as [MemberId, MemberId];
+    const ids = [opp.cofounderIntents?.[first], opp.cofounderIntents?.[second]];
+    if (!ids[0] || !ids[1] || ids[0] === ids[1]) return refused;
+    const app = this.app.id, now = this.clock.now();
+    const rows = await tx`select * from network.intents where app_id=${app} and id in ${tx(ids)} order by id for share`;
+    const intents = rows.map(intentOf);
+    const current = (memberId: MemberId) => {
+      const exact = intents.find(i => i.memberId === memberId && i.id === opp.cofounderIntents?.[memberId]);
+      return !!exact && exact.objective === cofounderIntentObjective
+        && cofounderIntentEligible(exact.app ?? "", app, exact.category, exact.details ?? "", standingIntentLive(exact, now));
+    };
+    if (!current(first) || !current(second) || await this.canonicalPairBlocked(tx, first, second)) return refused;
+    const members = await tx`select id, prefs, participation_state, participation_window, opted_out from network.members
+      where app_id=${app} and id in ${tx(opp.participants)} order by id for share`;
+    const parties = await this.relayParties(opp.participants, tx);
+    const eligible = members.length === 2 && members.every(member => {
+      const party = parties.get(member.id);
+      const trust = saved!.state.trust?.find(record => record.id === member.id)?.level ?? "ok";
+      return party?.adult === true && !party.held && !party.optedOut && trust === "ok" && storedInviteNoticePartyCurrent(saved!.state, member.id)
+        && member.prefs?.categoriesOptIn?.includes("professional") && member.prefs?.formats?.includes("one_to_one")
+        && !member.prefs?.onlyWhenAsked && effectiveParticipation(member as Parameters<typeof effectiveParticipation>[0], now).state !== "paused";
+    });
+    const active = cofounderPairCurrent(first !== second, true, true, eligible);
+    const bothAccepted = opp.participants.every(id => opp.status.some(([key, status]) => key === id && status === "yes") && opp.contacted.includes(id));
+    return cofounderDeliveryAllowed(active, opp.review?.decision === "approve", revealing, bothAccepted) ? { ok: true } : refused;
+  }
+
   /**
    * Final dispatch admission of a relayed row, inside the outbound queue's admission transaction after
    * every asynchronous gate (outbound ids "relay:<item>", and "relay:<item>:ask" for the swap question).
@@ -329,20 +373,24 @@ export class NetworkRuntime {
 
   private async relayPairAdmission(tx: SQL, state: NetworkState, from: MemberId, to: MemberId, matchId: string): Promise<RecipientCheck> {
     const no = (reason: string): RecipientCheck => ({ ok: false, reason });
-    const app = this.app.id;
     const why = relayDispatchCheck(state, { matchId, from, to, now: this.clock.now() });
     if (why) return no(why);
-    const [blocked] = await tx`select 1 as b from network.edges where app_id=${app} and type='blocked'
-      and ((from_id=${from} and to_id=${to}) or (from_id=${to} and to_id=${from}))
-      union all select 1 from platform.person_blocks pb join network.members f on f.app_id=${app} and f.id=${from} join network.members t on t.app_id=${app} and t.id=${to}
-      where (pb.from_person=f.person_id and pb.to_person=t.person_id) or (pb.from_person=t.person_id and pb.to_person=f.person_id) limit 1`;
-    if (blocked) return no("party:blocked");
+    if (await this.canonicalPairBlocked(tx, from, to)) return no("party:blocked");
     for (const [, c] of await this.relayParties([from, to], tx)) {
       if (!c.adult) return no("party:age");
       if (c.optedOut) return no("party:opted_out");
       if (c.held) return no("party:held");
     }
     return { ok: true };
+  }
+
+  private async canonicalPairBlocked(tx: SQL, from: MemberId, to: MemberId): Promise<boolean> {
+    const app = this.app.id;
+    const [blocked] = await tx`select 1 as b from network.edges where app_id=${app} and type='blocked'
+      and ((from_id=${from} and to_id=${to}) or (from_id=${to} and to_id=${from}))
+      union all select 1 from platform.person_blocks pb join network.members f on f.app_id=${app} and f.id=${from} join network.members t on t.app_id=${app} and t.id=${to}
+      where (pb.from_person=f.person_id and pb.to_person=t.person_id) or (pb.from_person=t.person_id and pb.to_person=f.person_id) limit 1`;
+    return !!blocked;
   }
 
   async invitationNoticeAdmission(tx: SQL, id: string, recipient?: MemberId | null): Promise<boolean> {
@@ -550,9 +598,13 @@ export class NetworkRuntime {
         const approvedPhotos = meta.approvedPhotos === undefined ? undefined : parseApprovedRelayPhotos(meta.approvedPhotos);
         if (meta.approvedPhotos !== undefined && !approvedPhotos) throw new Error("Invalid deferred approved photo payload");
         const baseId = o?.idempotencyKey ?? `${memberId}:${t}:${this.nonce}${++this.seq}`;
-        const id = meta.privateInviteVouch && !meta.approvedInviteLink ? `invite-vouch:${baseId}` : baseId;
+        const oppId = meta.proposalId ?? meta.probe?.key;
+        const cofounderContact = !!oppId && this.net.opps.get(oppId)?.lane === "Cofounder"
+          && (meta.type === "probe" || meta.type === "scheduling" || meta.type === "proposal");
+        const id = cofounderContact ? `${cofounderDeliveryIdPrefix}${meta.type === "proposal" ? "reveal" : "probe"}:${baseId}`
+          : meta.privateInviteVouch && !meta.approvedInviteLink ? `invite-vouch:${baseId}` : baseId;
         const turn = this.host.inboundTurn?.();
-        const causal = turn?.app === this.app.id && turn.memberId === memberId && o?.reply === true
+        const causal = !cofounderContact && turn?.app === this.app.id && turn.memberId === memberId && o?.reply === true
           && normalizeAddress(this.memberToAddr.get(memberId) ?? "") === normalizeAddress(turn.from);
         const pendingInvite = this.unit.memberInvitation;
         if (meta.approvedInviteLink) {
@@ -573,7 +625,7 @@ export class NetworkRuntime {
           kind: o?.reply && (causal || this.replyingTo === memberId) ? "reply" : meta.proactive ? "proactive" : "transactional",
           // A probe names its opportunity only in meta.probe (anonymous to the member); the row links it either way.
           ...(approvedPhotos ? { approvedPhotos } : {}), ...(meta.invitationJoins ? { invitationJoins: meta.invitationJoins } : {}),
-          type, oppId: meta.proposalId ?? meta.probe?.key, proactive: !!meta.proactive, system: false, ts: t,
+          type, oppId, proactive: !!meta.proactive, system: false, ts: t,
         });
         return { id, ts: t, direction: "outbound", channel: "imessage", from: "network", to: memberId, memberId, body, status: causal ? "collected" : "delivered", meta } satisfies SimMessage;
       },
@@ -597,7 +649,7 @@ export class NetworkRuntime {
 
   /** A directly requested result for this signed member. Source links grant only a per-reply contact exception. */
   collectedMemberReply(memberId: MemberId, id: string, body: string,
-    type: "solo_events" | "contribution_history" | "member_invitation" | "member_invitation_vouch" | "member_invitation_delivery" | "bounded_home_help", publicLinks: readonly string[] = []) {
+    type: "solo_events" | "contribution_history" | "member_invitation" | "member_invitation_vouch" | "member_invitation_delivery" | "bounded_home_help" | "profile_fact_edit" | "cofounder_intent", publicLinks: readonly string[] = []) {
     const turn = this.host.inboundTurn?.();
     if (turn?.app !== this.app.id || turn.memberId !== memberId
       || normalizeAddress(this.addressOf(memberId) ?? "") !== normalizeAddress(turn.from)) return;
@@ -608,6 +660,48 @@ export class NetworkRuntime {
     }
     this.system(memberId, id, body, "reply", type);
     if (publicLinks.length) (this.unit.collectedPublicLinks ??= new Map()).set(id, publicLinks);
+  }
+
+  /** Remove old copies that could otherwise restore a saved facet in the next matching run. */
+  async clearProfileFactProjections(tx: SQL, memberId: MemberId, { fact, change, previousTags }: AppliedProfileFactEdit) {
+    const app = this.app.id;
+    if (fact.signupInterest && change.kind !== "scope") {
+      const [membership] = await tx<{ interests: unknown }[]>`select profile->'interests' as interests from platform.memberships
+        where app_id=${app} and member_id=${memberId} for update`;
+      if (Array.isArray(membership?.interests) && membership.interests.includes(fact.value)) {
+        const interests = membership.interests.flatMap(interest => interest !== fact.value ? [interest]
+          : change.kind === "correct" ? [change.value] : []);
+        await tx`update platform.memberships set profile=profile || ${{ interests: [...new Set(interests)] }}::jsonb
+          where app_id=${app} and member_id=${memberId}`;
+      }
+    }
+    const clearsLearned = previousTags.length > 0 && (fact.kind === "interest" || fact.kind === "skill");
+    const clearsStanding = change.kind !== "scope" || change.scope === "agent_private";
+    if (!clearsLearned && !clearsStanding) return;
+    // PgStore has serialized this unit's state. The city lock stays held through the update.
+    const [row] = await tx<{ state: NetworkState }[]>`select state from network.network_state where id=${this.id} for update`;
+    if (!row) return;
+    const state = row.state;
+    let changed = false;
+    if (clearsLearned) {
+      const member = state.members.find(candidate => candidate.id === memberId);
+      const field = fact.kind === "interest" ? "interests" : "skills";
+      if (member) {
+        const remaining = member.learned[field].filter(tag => !previousTags.includes(tag));
+        changed = remaining.length !== member.learned[field].length;
+        member.learned[field] = remaining;
+      }
+    }
+    if (clearsStanding && state.memberStanding?.length) {
+      const remaining = state.memberStanding.filter(entry => entry.memberId !== memberId
+        || !entry.evidenceIds.includes(standingEvidenceKey(app, memberId, entry.lane, entry.side, fact.id)));
+      if (remaining.length !== state.memberStanding.length) {
+        if (remaining.length) state.memberStanding = remaining;
+        else delete state.memberStanding;
+        changed = true;
+      }
+    }
+    if (changed) await tx`update network.network_state set state=${state}::jsonb where id=${this.id}`;
   }
 
   /** Everything the unit produced, inside the save transaction (app.app_id is set). Rows that name a member not in this app's network.members are skipped. */
@@ -642,7 +736,8 @@ export class NetworkRuntime {
     }
     if (u.inbound && ok(u.inbound.member_id as string)) {
       const privateFields = u.privateHomeHelpTurn ? { body: "Private home-help request.", type: "bounded_home_help" }
-        : u.privateInviteTurn ? { body: "Private invitation request.", type: "member_invitation_vouch" } : {};
+        : u.privateInviteTurn ? { body: "Private invitation request.", type: "member_invitation_vouch" }
+          : u.atomicProfileFactReply ? { body: "Private profile fact request.", type: "profile_fact_edit" } : {};
       await tx`insert into network.messages ${tx({ ...u.inbound, ...privateFields, app_id: app })} on conflict (id) do nothing`;
     }
     const turn = this.host.inboundTurn?.();
@@ -681,6 +776,14 @@ export class NetworkRuntime {
       if (!captured.some(send => send.type === "bounded_home_help")) throw new Error("Home-help receipt was not collected");
       replyReason = "bounded_home_help";
     }
+    if (u.atomicProfileFactReply) {
+      if (!captured.some(send => send.type === "profile_fact_edit")) throw new Error("Profile fact reply was not collected");
+      replyReason = "profile_fact_edit";
+    }
+    if (u.atomicCofounderReply) {
+      if (!captured.some(send => send.type === "cofounder_intent")) throw new Error("Cofounder intent reply was not collected");
+      replyReason = "cofounder_intent";
+    }
     if (u.memberInvitation) {
       const staged = u.memberInvitation;
       replyReason = staged.status === "issued" ? "member_invitation" : "member_invitation_review";
@@ -696,7 +799,8 @@ export class NetworkRuntime {
     }
     const out = u.sends.filter(s => ok(s.memberId)).map(s => ({
       id: s.id, app_id: app, member_id: s.memberId, direction: "outbound", channel: "imessage",
-      body: s.type === "bounded_home_help" ? "Private home-help reply." : privateMemberMessage(s.type) ? "Private invitation reply." : s.body,
+      body: s.type === "bounded_home_help" ? "Private home-help reply." : s.type === "profile_fact_edit" ? "Private profile fact reply."
+        : privateMemberMessage(s.type) ? "Private invitation reply." : s.body,
       status: u.collected.has(s.id) ? "collected" : this.adapter.storedStatus,
       inbound_id: u.collected.has(s.id) ? turn!.id : null,
       invite_join_members: s.invitationJoins ? tx.array([...s.invitationJoins], "TEXT") : null,

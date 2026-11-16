@@ -1,6 +1,6 @@
 # Private member standing
 
-This library estimates a member's private standing in one [relationship lane](matchLane.md) and the uncertainty of that estimate. The engine uses both numbers only in the parity check of a pair, as the [matching engine model](models/matching_engine.md) and the [candidate pool model](models/candidate_pool.md) describe. The pack shell supplies the evidence points for each lane, the count of reviewed facts, the private Clef rating for the Date lane, the adult and consent facts, and the stored standing of last week. The shell keeps the stored standing, its weekly update time, and the evidence records. It writes a new value once a week per lane membership.
+This library estimates a member's private standing in one [relationship lane](matchLane.md) and the uncertainty of that estimate. The matching engine uses both numbers for pair parity, as the [matching engine model](models/matching_engine.md) and the [candidate pool model](models/candidate_pool.md) describe. The shell supplies the current evidence or private rating, the adult and consent facts, and the last authorized observation in the same app and lane. The current evidence determines uncertainty on every matching run. Only standing and its observation time carry forward.
 
 Standing is private. It is never shown to any member, and it never appears in an explanation, a member-facing message, relay text, or an export to a member. The leak guard checks every member-facing text. For the Date lane, the standing comes from the private photo rating of [Story F31](product/stories.md#story-f31--add-my-adult-dating-photos-privately) and the [photo rating attempt](photoRating.md). For the Hire lane of [Story F33](product/stories.md#story-f33--choose-a-hiring-introduction), the evidence is role level and track record only. Protected traits and their proxies are never evidence. The [weekly bias report](weeklyBias.md) watches outcomes by rating group.
 
@@ -18,6 +18,37 @@ A minor has no standing in any lane, so no parity check can use one. A member wh
 import matchLane as Lane from "./matchLane"
 
 pure def standingReadable(adult: bool, consented: bool): bool = adult and consented
+```
+
+### Standing history requires current account and lane authority
+
+The shell keeps history only for an adult with an active account and current permission in that app and lane. It removes history when that authority ends. Before using the history in a match, the shell checks that the evidence behind it still permits matching. A correction, removal, or scope reduction that withdraws that evidence invalidates the old estimate before matching, even within the weekly interval. With current authority and fresh evidence, the shell can start a new observation.
+
+```quint
+pure def standingMayRetain(adult: bool, activeAccount: bool, lanePermitted: bool): bool =
+  standingReadable(adult, lanePermitted) and activeAccount
+
+pure def lawStandingRetentionRequiresAuthority(adult: bool, activeAccount: bool, lanePermitted: bool): bool =
+  (not(adult) or not(activeAccount) or not(lanePermitted)) implies
+    not(standingMayRetain(adult, activeAccount, lanePermitted))
+```
+
+### Ordinary standing evidence uses the member's current matching scope
+
+The Network reads fresh, explicitly lane-tagged ordinary facts from the current app. The member can permit matching with matchable or shareable scope. A connected source needs confirmation by the member. Sensitive or inferred facts have no standing effect. Scope and corrections take effect in the next matching snapshot. The computed standing stays private.
+
+```quint
+pure def standingFacetReadable(scope: str, provenance: str, confirmed: bool, sensitive: bool, inferred: bool): bool =
+  (scope == "matchable" or scope == "shareable") and not(sensitive) and not(inferred) and
+  (provenance == "said" or provenance == "vouched" or (provenance == "connected_source" and confirmed))
+
+pure val standingFacetScopes = Set("agent_private", "opportunity_specific", "matchable", "shareable")
+pure val standingFacetProvenances = Set("said", "vouched", "connected_source", "inferred")
+
+pure def lawStandingFacetNeedsMatchingPermission(scope: str, provenance: str, confirmed: bool, sensitive: bool, inferred: bool): bool =
+  standingFacetReadable(scope, provenance, confirmed, sensitive, inferred) implies
+    ((scope == "matchable" or scope == "shareable") and not(sensitive) and not(inferred) and
+      (provenance != "connected_source" or confirmed))
 ```
 
 ### Standing adds reviewed facts in full and unreviewed facts at half
@@ -110,7 +141,7 @@ pure def lawUncertaintyShrinks(reviewedCount: int): bool =
 
 ### Standing moves toward its target by at most five points a week
 
-The shell computes the target from the evidence or the rating, then calls this once a week for each lane membership. The stored standing and the target are clamped to the standing range first. The first estimate of a new member is the target itself, and the widest uncertainty covers its error.
+The shell computes the target from the current evidence or rating. A started estimate moves toward the target by at most five points on a due observation. The calculation clamps the starting value and target to the standing range.
 
 ```quint
 pure val standingWeeklyStep: int = 5
@@ -139,4 +170,57 @@ pure def lawStandingStepConverges(standing: int, target: int): bool =
   (standing >= 0 and standing <= Lane::standingCeiling and target >= 0 and target <= Lane::standingCeiling and
     target - standing <= standingWeeklyStep and standing - target <= standingWeeklyStep)
     implies nextStanding(standing, target) == target
+```
+
+### The first observation initializes standing and a due observation advances it once
+
+The shell passes integer Unix milliseconds and indicates whether it has a saved observation. A non-negative clock initializes absent history to the clamped target. A negative saved timestamp counts as absent history. A negative clock cannot start history and returns the unsaved timestamp `-1`. With valid history, a clock that is earlier than the saved timestamp or less than seven days later keeps the saved value and time. At seven days or more, one step applies and the observation time becomes the current time, even when the target is already reached. Skipped weeks do not accumulate steps.
+
+```quint
+type StandingObservation = { standing: int, updatedAt: int }
+
+pure val standingObservationWeekMs: int = 604800000
+
+pure def observeStanding(value: int, observedAt: int, target: int, now: int, initialized: bool): StandingObservation =
+  if (not(initialized) or observedAt < 0)
+    if (now < 0) { standing: standingClamp(value), updatedAt: -1 }
+    else { standing: standingClamp(target), updatedAt: now }
+  else if (now >= observedAt and now - observedAt >= standingObservationWeekMs)
+    { standing: nextStanding(value, target), updatedAt: now }
+  else { standing: standingClamp(value), updatedAt: observedAt }
+
+pure val valueValues = standingValues
+pure val observedAtValues = Set(-1, 0, 1, 604800000, 1710000000000)
+pure val nowValues = Set(-1, 0, 1, 604799999, 604800000, 604800001, 1209600000, 1710000000000)
+
+pure def lawStandingObservationInRange(value: int, observedAt: int, target: int, now: int, initialized: bool): bool =
+  val observed = observeStanding(value, observedAt, target, now, initialized)
+  0 <= observed.standing and observed.standing <= Lane::standingCeiling and observed.updatedAt >= -1
+
+pure def lawFirstStandingObservationUsesTarget(value: int, observedAt: int, target: int, now: int, initialized: bool): bool =
+  ((not(initialized) or observedAt < 0) and now >= 0) implies
+    observeStanding(value, observedAt, target, now, initialized) == { standing: standingClamp(target), updatedAt: now }
+
+pure def lawStandingInvalidClockCannotInitialize(value: int, observedAt: int, target: int, now: int, initialized: bool): bool =
+  ((not(initialized) or observedAt < 0) and now < 0) implies
+    observeStanding(value, observedAt, target, now, initialized).updatedAt == -1
+
+pure def lawStandingObservationHoldsUntilDue(value: int, observedAt: int, target: int, now: int): bool =
+  (observedAt >= 0 and (now < observedAt or now - observedAt < standingObservationWeekMs)) implies
+    observeStanding(value, observedAt, target, now, true) == { standing: standingClamp(value), updatedAt: observedAt }
+
+pure def lawStandingDueObservationStepsOnce(value: int, observedAt: int, target: int, now: int): bool =
+  val observed = observeStanding(value, observedAt, target, now, true)
+  val prior = standingClamp(value)
+  (observedAt >= 0 and now >= observedAt and now - observedAt >= standingObservationWeekMs) implies
+    (observed.updatedAt == now and observed.standing == nextStanding(value, target) and
+      observed.standing - prior <= standingWeeklyStep and prior - observed.standing <= standingWeeklyStep)
+
+pure def lawStandingObservationNeverMovesTimeBackward(value: int, observedAt: int, target: int, now: int): bool =
+  observedAt >= 0 implies observeStanding(value, observedAt, target, now, true).updatedAt >= observedAt
+
+pure def lawStandingObservationCannotAdvanceTwiceAtSameTime(value: int, observedAt: int, target: int, now: int, initialized: bool): bool =
+  val observed = observeStanding(value, observedAt, target, now, initialized)
+  observed.updatedAt >= 0 implies
+    observeStanding(observed.standing, observed.updatedAt, target, now, true) == observed
 ```

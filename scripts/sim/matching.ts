@@ -10,19 +10,17 @@
 import { hash32, Rng, type MemberId } from "../../packages/core/src/index.ts";
 import { searchTouchesPerCheck } from "../../packages/core/src/generated/candidateSearch.ts";
 import { laneLimits, laneOffered, laneOffset, type MatchLane } from "../../packages/core/src/generated/matchLane.ts";
-import { parityAllowed, standingGap } from "../../packages/core/src/generated/pairValue.ts";
+import { pairValueScale, parityAllowed, standingGap } from "../../packages/core/src/generated/pairValue.ts";
 import { resolveConfig, type EngineConfigInput } from "../../packages/engine/src/config.ts";
 import { localEmbed } from "../../packages/engine/src/embed.ts";
 import { canonicalInput, runEngine } from "../../packages/engine/src/engine.ts";
-import { bruteForceCandidates, pairSideOf, partnerBlock, type MatchProfile } from "../../packages/engine/src/match/mod.ts";
+import { bruteForceCandidates, pairSideOf, partnerBlock, type MatchProfile, type SearchResult } from "../../packages/engine/src/match/mod.ts";
 import { vectorsOf } from "../../packages/engine/src/match/pair.ts";
 import type { AppPack } from "../../packages/engine/src/pack.ts";
-import { friendsPack } from "../../packages/engine/src/packs/friends/index.ts";
 import { networkPack } from "../../packages/engine/src/packs/network/index.ts";
-import { peonPack } from "../../packages/engine/src/packs/peon/index.ts";
-import { slopPack } from "../../packages/engine/src/packs/slop/index.ts";
 import type { EngineInput } from "../../packages/engine/src/types.ts";
 import { World } from "../../packages/engine/src/world.ts";
+import { appWiring } from "../../packages/network/service/packs.ts";
 import {
   adjustedRandIndex, groupPurity, levelStanding, matchedStandingCorrelation, pairPrecision, PLANTED_LANES, plantedEngineInput, plantedLabels,
   plantedPairTruth, randomGroups, type PlantedTruth,
@@ -43,25 +41,30 @@ export const MATCHING_PINNED: Plan = {
 };
 const MATCHING_QUICK: Plan = { seeds: [1, 2, 3], exactN: [100, 200], engineN: 200, costN: [1_000, 10_000], everyLaneUpTo: 1_000, costSeed: 1 };
 
-const PACKS: readonly AppPack[] = [networkPack, slopPack, peonPack, friendsPack];
+const PACKS: readonly AppPack[] = (["ntwrk", "slop", "peon", "friends"] as const).map(app => appWiring(app).pack ?? networkPack);
+const shippedConfig = (pack: AppPack, seed: number): EngineConfigInput => ({ ...appWiring(pack.id).engine, seed });
 const PRIMARY_LANE: Readonly<Record<string, MatchLane>> = { ntwrk: "Intro", slop: "Date", peon: "Hire", friends: "Friend" };
 const lanesOf = (pack: AppPack): MatchLane[] => PLANTED_LANES.filter(lane => laneOffered(pack.id, lane));
 /** The slop block's low-tier exposure rule: no quintile under 0.85x the overall rate (packEval.ts gates3). */
 const LOW_QUINTILE_RATIO = 0.85;
 // No exploration slice and no exposure-floor pass, so blockingPairs measures the greedy phase alone.
-const greedyConfig = (seed: number): EngineConfigInput => ({ seed, exploration: { rate: 0 }, selection: { exposureFloorShare: 0 } });
+const greedyConfig = (pack: AppPack, seed: number): EngineConfigInput => {
+  const config = shippedConfig(pack, seed);
+  return { ...config, exploration: { ...config.exploration, rate: 0 }, selection: { ...config.selection, exposureFloorShare: 0 } };
+};
 // The match core reads no embedding; a flat one keeps a 100,000-member World cheap to build.
 const flatEmbed = (): number[] => [1];
 
 type Pair = readonly [MemberId, MemberId];
 interface Faults { count: number; first?: string }
-interface CostRow { profiles: number; exact: number; checks: number; bound: number; touches: number; touchBound: number; tally: number; ms: number }
+interface CostRow { profiles: number; exact: number; checks: number; touches: number; ms: number }
 interface LaneStats {
   readonly lane: MatchLane;
-  searches: number; exact: number; runs: number; laneProfiles: number; noKept: number; otherLane: number;
+  searches: number; exact: number; certificates: number; runs: number; laneProfiles: number; noKept: number; otherLane: number;
   pairs: number; groups: number; circles: number; blockingPairs: number;
   readonly empty: Faults; readonly minors: Faults; readonly mismatch: Faults; readonly missed: Faults;
   readonly parity: Faults; readonly reciprocity: Faults; readonly unprofiled: Faults; readonly groupFaults: Faults;
+  readonly searchCost: Faults;
   readonly logged: { members: number; exact: number };
   readonly rho: number[]; readonly rhoRandom: number[]; readonly worse: number[]; readonly worseRandom: number[];
   readonly ari: number[]; readonly ariRandom: number[]; readonly purity: number[]; readonly purityRandom: number[];
@@ -72,9 +75,10 @@ interface LaneStats {
 
 const noFaults = (): Faults => ({ count: 0 });
 const laneStats = (lane: MatchLane): LaneStats => ({
-  lane, searches: 0, exact: 0, runs: 0, laneProfiles: 0, noKept: 0, otherLane: 0, pairs: 0, groups: 0, circles: 0, blockingPairs: 0,
+  lane, searches: 0, exact: 0, certificates: 0, runs: 0, laneProfiles: 0, noKept: 0, otherLane: 0, pairs: 0, groups: 0, circles: 0, blockingPairs: 0,
   empty: noFaults(), minors: noFaults(), mismatch: noFaults(), missed: noFaults(),
   parity: noFaults(), reciprocity: noFaults(), unprofiled: noFaults(), groupFaults: noFaults(),
+  searchCost: noFaults(),
   logged: { members: 0, exact: 0 },
   rho: [], rhoRandom: [], worse: [], worseRandom: [], ari: [], ariRandom: [], purity: [], purityRandom: [], precision: [], precisionRandom: [],
   low: { members: 0, proposed: 0 }, all: { members: 0, proposed: 0 }, cost: new Map(),
@@ -83,22 +87,50 @@ const fault = (f: Faults, what: string): void => { f.count++; f.first ??= what; 
 
 const ids = (rows: readonly { readonly profile: MatchProfile; readonly value: number }[]) => rows.map(r => `${r.profile.id}:${r.value}`).join(",");
 
+function checkSearchCost(s: LaneStats, p: MatchProfile, result: SearchResult, at: string): void {
+  const budget = laneLimits(p.lane).searchBudget;
+  const touchLimit = searchTouchesPerCheck * budget;
+  const { checks, touches, exact } = result;
+  if (!Number.isSafeInteger(checks) || checks < 0 || checks > budget) fault(s.searchCost, `${at} ${p.id}: ${checks} pair checks outside 0..${budget}`);
+  if (!Number.isSafeInteger(touches) || touches < checks || touches > touchLimit) fault(s.searchCost, `${at} ${p.id}: ${touches} touches outside ${checks}..${touchLimit}`);
+  if (!exact && checks < budget && touches < touchLimit) fault(s.searchCost, `${at} ${p.id}: search closed before either budget was exhausted`);
+}
+
+// A Budgeted search with a full kept list has worst-kept value at most unseenBound, or it would
+// close Exact. Every checked and dropped pair is at or below that value. A non-full list drops
+// no feasible pair, so the certificate can be checked against every omitted partner.
+function checkCertificate(w: World, s: LaneStats, p: MatchProfile, result: SearchResult, at: string): void {
+  s.certificates++;
+  const { unseenBound } = result;
+  if (!Number.isSafeInteger(unseenBound) || unseenBound < 0 || unseenBound > pairValueScale) {
+    fault(s.missed, `${at} ${p.id}: budgeted unseen bound ${unseenBound} is outside 0..${pairValueScale}`);
+    return;
+  }
+  const kept = new Set(result.kept.map(candidate => candidate.profile.id));
+  for (const other of partnerBlock(w.match.index, p)?.profiles ?? []) {
+    if (kept.has(other.id)) continue;
+    const value = w.match.value(p, other);
+    if (value <= unseenBound) continue;
+    fault(s.missed, `${at} ${p.id}: missed ${other.id} (${value}) above the unseen bound ${unseenBound}`);
+    break;
+  }
+}
+
 // spec/candidateSearch.md, "Story: Keep the best candidates within a fixed number of pair checks":
 // an exact search keeps exactly the brute-force top list; a budgeted one misses nothing above its bound.
 function exactness(w: World, s: LaneStats, at: string): void {
   for (const p of w.match.profiles) {
     const result = w.match.candidates(p);
-    const brute = bruteForceCandidates(w, w.match.index, p);
+    checkSearchCost(s, p, result, at);
     s.searches++;
     if (result.exact) {
+      const brute = bruteForceCandidates(w, w.match.index, p);
       s.exact++;
       const same = result.kept.length === brute.length
         && result.kept.every((k, i) => k.profile.id === brute[i]!.profile.id && k.value === brute[i]!.value);
       if (!same) fault(s.mismatch, `${at} ${p.id}: kept [${ids(result.kept)}], brute force [${ids(brute)}]`);
     } else {
-      const kept = new Set(result.kept.map(k => k.profile.id));
-      const missed = brute.find(c => !kept.has(c.profile.id) && c.value > result.unseenBound);
-      if (missed) fault(s.missed, `${at} ${p.id}: missed ${missed.profile.id} (${missed.value}) above the unseen bound ${result.unseenBound}`);
+      checkCertificate(w, s, p, result, at);
     }
   }
 }
@@ -143,8 +175,8 @@ const mean = (xs: readonly number[]): number => {
 
 async function engineGates(pack: AppPack, seed: number, input: EngineInput, truth: PlantedTruth, w: World, s: LaneStats): Promise<void> {
   const lane = s.lane, at = `seed ${seed}`;
-  const shipped = await runEngine(input, { seed }, { pack });
-  const greedy = await runEngine(input, greedyConfig(seed), { pack });
+  const shipped = await runEngine(input, shippedConfig(pack, seed), { pack });
+  const greedy = await runEngine(input, greedyConfig(pack, seed), { pack });
   s.runs++;
   s.blockingPairs += greedy.runLog.blockingPairs;
   const logged = shipped.runLog.search;
@@ -170,7 +202,7 @@ async function engineGates(pack: AppPack, seed: number, input: EngineInput, trut
     const group = p.participants.flatMap(id => {
       const entity = p.entities?.[id];
       const q = entity ? w.match.profile(entity) : w.match.profileIn(id, proposalLane);
-      return q?.lane === proposalLane ? [q] : [];
+      return q?.lane === proposalLane && q.memberId === id ? [q] : [];
     });
     if (group.length !== p.participants.length) { fault(s.unprofiled, `${at}: proposal ${p.id} (${p.generator}) has a participant without a ${proposalLane} profile`); continue; }
     // A member also holds the pack's other lanes (an ntwrk founder raising money is an Intro peer
@@ -186,6 +218,7 @@ async function engineGates(pack: AppPack, seed: number, input: EngineInput, trut
       continue;
     }
     const [a, b] = group as [MatchProfile, MatchProfile];
+    if (w.match.value(a, b) < 0) { fault(s.reciprocity, `${at}: ${p.id} (${p.generator}) has no eligible ${proposalLane} pair`); continue; }
     if (graded) { s.pairs++; pairs.push([a.memberId, b.memberId]); }
     const { parityBand, utilityFloor } = laneLimits(proposalLane).rules;
     // spec/pairValue.md, "A pair is refused when the gap is wider than the band and both uncertainties"
@@ -239,16 +272,31 @@ async function engineGates(pack: AppPack, seed: number, input: EngineInput, trut
 
 function costRun(pack: AppPack, n: number, seed: number, s: LaneStats): void {
   const { input } = plantedEngineInput({ seed: `matching-${seed}`, n, lane: s.lane, app: pack.id });
-  const w = new World(input, resolveConfig({ seed }), flatEmbed, pack);
+  const w = new World(input, resolveConfig(shippedConfig(pack, seed)), flatEmbed, pack);
   const profiles = w.match.profiles;
   const t = performance.now();
-  let exact = 0, checks = 0, bound = 0, touches = 0, touchBound = 0;
-  for (const p of profiles) {
-    const result = w.match.candidates(p);
-    exact += result.exact ? 1 : 0; checks += result.checks; touches += result.touches;
-    bound += laneLimits(p.lane).searchBudget; touchBound += searchTouchesPerCheck * laneLimits(p.lane).searchBudget;
+  const results = profiles.map(p => w.match.candidates(p));
+  const ms = Math.round(performance.now() - t);
+  const at = `N ${n} seed ${seed}`;
+  let exact = 0, checks = 0, touches = 0, sampled = 0;
+  for (const [i, profile] of profiles.entries()) {
+    const result = results[i]!;
+    checkSearchCost(s, profile, result, at);
+    exact += result.exact ? 1 : 0;
+    checks += result.checks;
+    touches += result.touches;
+    // Keep the cost run subquadratic while exercising real budgeted results in large worlds.
+    if (!result.exact && sampled < 3) {
+      checkCertificate(w, s, profile, result, at);
+      sampled++;
+    }
   }
-  s.cost.set(n, { profiles: profiles.length, exact, checks, bound, touches, touchBound, tally: w.match.tally().checks, ms: Math.round(performance.now() - t) });
+  if (!profiles.length) fault(s.searchCost, `${at}: no ${s.lane} world profiles`);
+  const tally = w.match.tally();
+  if (tally.checks !== checks || tally.touches !== touches) {
+    fault(s.searchCost, `${at}: tally ${tally.checks} checks / ${tally.touches} touches differs from ${checks} / ${touches}`);
+  }
+  s.cost.set(n, { profiles: profiles.length, exact, checks, touches, ms });
 }
 
 const pct = (x: number, n: number): string => (n ? `${((100 * x) / n).toFixed(1)}%` : "-");
@@ -263,6 +311,7 @@ function printTable(pack: AppPack, lanes: readonly LaneStats[], plan: Plan): voi
     [`profiles per run (N ${plan.engineN})`, s => fixed(s.laneProfiles / Math.max(1, s.runs), 1)],
     ["exact searches", s => pct(s.exact, s.searches)],
     ["exact != brute force", s => String(s.mismatch.count)],
+    ["budgeted certificates checked", s => String(s.certificates)],
     ["budgeted, missed > bound", s => String(s.missed.count)],
     ["no kept candidate", s => pct(s.noKept, s.laneProfiles)],
     ["runLog.search exact", s => pct(s.logged.exact, s.logged.members)],
@@ -310,18 +359,12 @@ function packGates(b: Block, pack: AppPack, lanes: readonly LaneStats[], plan: P
     `${perLane(s => `${fixed(s.laneProfiles / Math.max(1, s.runs), 1)} profiles/run, ${s.pairs + s.groups} proposals`)}; ${show(setup)}`);
 
   const exact = merged(s => s.mismatch, s => s.missed);
-  b.gate(`${id}: exact searches equal brute force, budgeted ones miss nothing above their bound (N ${plan.exactN.join("/")}, ${runs})`, exact.count === 0,
-    `exact share ${perLane(s => pct(s.exact, s.searches))}; ${show(exact)}`);
+  b.gate(`${id}: exact searches equal brute force and checked budgeted certificates bound every omitted candidate`, exact.count === 0,
+    `exact share ${perLane(s => pct(s.exact, s.searches))}; certificates ${perLane(s => String(s.certificates))}; ${show(exact)}`);
 
-  const cost: Faults = { count: 0 };
-  for (const s of lanes) for (const [n, c] of s.cost) {
-    if (c.profiles === 0) fault(cost, `${s.lane} N ${n}: no profiles`);
-    else if (c.checks > c.bound) fault(cost, `${s.lane} N ${n}: ${c.checks} checks > ${c.bound}`);
-    else if (c.touches > c.touchBound) fault(cost, `${s.lane} N ${n}: ${c.touches} touches > ${c.touchBound}`);
-    else if (c.tally !== c.checks) fault(cost, `${s.lane} N ${n}: tally ${c.tally} != ${c.checks} checks`);
-  }
-  b.gate(`${id}: pair checks <= profiles x searchBudget, posting touches <= profiles x ${searchTouchesPerCheck} x searchBudget (N ${plan.costN.join("/")})`, cost.count === 0,
-    `${perLane(s => [...s.cost].map(([n, c]) => `N ${n} ${fixed(c.checks / Math.max(1, c.profiles), 1)} checks, ${fixed(c.touches / Math.max(1, c.profiles), 1)} touches/profile ${c.ms}ms`).join(", "))}; ${show(cost)}`);
+  const cost = merged(s => s.searchCost);
+  b.gate(`${id}: each search stays within searchBudget checks and ${searchTouchesPerCheck} × searchBudget touches (N ${plan.costN.join("/")})`, cost.count === 0,
+    `${perLane(s => [...s.cost].map(([n, c]) => `N ${n} ${fixed(c.checks / Math.max(1, c.profiles), 1)} checks, ${fixed(c.touches / Math.max(1, c.profiles), 1)} touches per profile, ${c.ms}ms`).join(", "))}; ${show(cost)}`);
 
   const parity = merged(s => s.parity);
   b.gate(`${id}: no proposed pair has a standing gap beyond band + both uncertainties (${runs})`, parity.count === 0,
@@ -373,7 +416,7 @@ export async function matchingBlock(b: Block, o: { quick: boolean }): Promise<vo
   for (const n of plan.exactN) for (const seed of plan.seeds) for (const { pack, lanes } of stats) for (const s of lanes) {
     const { input, truth } = plantedEngineInput({ seed: `matching-${seed}`, n, lane: s.lane, app: pack.id });
     // runEngine canonicalizes its input the same way, so this World holds the run's profiles.
-    const w = new World(canonicalInput(input), resolveConfig({ seed }), localEmbed, pack);
+    const w = new World(canonicalInput(input), resolveConfig(shippedConfig(pack, seed)), localEmbed, pack);
     exactness(w, s, `N ${n} seed ${seed}`);
     if (n === plan.engineN) await engineGates(pack, seed, input, truth, w, s);
   }

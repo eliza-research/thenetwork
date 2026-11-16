@@ -17,7 +17,7 @@ This report records the state of `origin/vibestack` at `06d46097` before the mat
 
 - `eliza-research/thenetwork` has no `develop` branch. `origin/vibestack` contains all of `origin/main` (86 commits ahead, 0 behind).
 - `tools/vibestack`, `.claude/skills`, and the body of `SPEC.md` equal the upstream `develop` tip. The only differences are eight files of the local Node 26 overlay.
-- `vibestack-frontend` is 1 commit ahead and 77 commits behind. It still uses Bun. 45 files changed on both sides.
+- At the time of this audit, `vibestack-frontend` was 1 commit ahead and 77 commits behind, with 45 files changed on both sides.
 
 ## Matching: what the founder goal needs and what the code does
 

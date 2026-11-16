@@ -66,7 +66,7 @@ export interface InboundTurn {
   onFail?: Array<() => Promise<unknown>>;
 }
 export interface CollectedReply {id: string; body: string; kind: "reply" | "compliance"}
-export type AtomicReplyReason = "member_invitation" | "member_invitation_review" | "member_invitation_delivery" | "bounded_home_help";
+export type AtomicReplyReason = "member_invitation" | "member_invitation_review" | "member_invitation_delivery" | "bounded_home_help" | "profile_fact_edit" | "cofounder_intent";
 
 interface WebhookEnvelope {
   ev: InboundMessage;

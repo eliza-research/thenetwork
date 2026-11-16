@@ -742,6 +742,14 @@ export function answerJoin(page: JoinPage, joinAnswer: JoinOutcome): JoinPage {
   return joinAnswer === "JoinedOk" ? ({ ...local_5, screen: "Done", notice: "NoNotice" } as JoinPage) : (local_6 !== "NoBlock" ? ({ ...local_5, screen: "Blocked", reason: local_6 } as JoinPage) : (joinAnswer === "JoinAccountChanged" ? ({ ...local_5, screen: "Checking", account: 0, formHasValues: false, consented: false, notice: "AccountChanged", formError: "NoError" } as JoinPage) : (joinAnswer === "JoinUnauthorized" ? ({ ...local_5, screen: "Phone", account: 0, formHasValues: false, consented: false, notice: "SessionEnded", formError: "NoError" } as JoinPage) : ({ ...local_5, formError: "RequestFailed" } as JoinPage))));
 }
 
+/** Story: Confirm my details and join / The server answer decides between done, blocked and a new sign-in (spec/browserJoin.md) */
+//@ pure
+export function lawFailedSaveKeepsOwnedProfile(page: JoinPage): boolean {
+  //@ ensures \result === true
+  const local_7: JoinPage = answerJoin(page, "JoinFailed");
+  return !(page.screen === "Profile" && canAnswerJoin(page)) || (canSubmitProfile(local_7) && local_7.account === page.account && local_7.formHasValues === page.formHasValues && local_7.consented === page.consented);
+}
+
 /** Story: Confirm my details and join / A Peon invitation stays in memory until the verified account agrees to join (spec/browserJoin.md) */
 //@ pure
 export function browserInvitationMayBind(peonApp: boolean, verifiedView: boolean): boolean {
@@ -826,6 +834,13 @@ export function stepOneRequestAtATime(before: JoinPage, after: JoinPage): boolea
 //@ pure
 export function alwaysRequestBelongsToItsStep(page: JoinPage): boolean {
   return (!(page.pending === "StartingCode") || (page.screen === "Phone" && page.auth === "OtpMode")) && (!(page.pending === "OpeningCloud") || (page.screen === "Phone" && page.auth === "CloudMode")) && (!(page.pending === "VerifyingCode" || page.pending === "ResendingCode") || (page.screen === "Code" && page.auth === "OtpMode")) && (!(page.pending === "SavingProfile") || (page.screen === "Profile" && page.consented));
+}
+
+/** Story: Send each form only once / A form that waits for an answer refuses a second submit (spec/browserJoin.md) */
+//@ pure
+export function lawSavingProfilePreventsEditsAndSubmissions(page: JoinPage): boolean {
+  //@ ensures \result === true
+  return !(page.pending === "SavingProfile") || (!canEditProfile(page) && !canSubmitProfile(page));
 }
 
 /** Story: Reach every outcome / A person can join, find they are in, be blocked, leave for cloud sign-in or see each error (spec/browserJoin.md) */

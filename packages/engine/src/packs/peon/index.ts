@@ -6,8 +6,8 @@
 //
 //   entities   candidates (members) and job seats (one member per open job, capacity = openings; schema.ts)
 //              (the service builds seats from job postings and keeps their capacity: seats.ts)
-//   matching   lane Hire (seat Offering, candidate Seeking) on the generic match core: skill-level
-//              tags, private role-level standing, directed pay value (match.ts)
+//   matching   Hire (seat Offering, candidate Seeking) and Cofounder (two Peers with current
+//              explicit goals) use the generic match core (match.ts, cofounder.ts)
 //   search     the bounded search both ways (generators.ts)
 //   selection  the pack refusal: a slate cap per job, the lane's weekly capacity per candidate (selection.ts)
 //   filters    pay range, verified employer, scam cue, location / remote, work authorization,
@@ -25,7 +25,7 @@ import { T } from "./schema.ts";
 import { peonAllows, SLATE } from "./selection.ts";
 
 /** The pack version carries the slate tuning (selection.ts SLATE), so a tuning change changes it. */
-export const PEON_PACK_VERSION = `peon-pack-0.3.0+slate.${Object.values(SLATE).join(".")}`;
+export const PEON_PACK_VERSION = `peon-pack-0.4.0+slate.${Object.values(SLATE).join(".")}`;
 
 /**
  * Engine config for peon runs (pass it as `cfgIn`; the shared EngineConfig shape is unchanged).

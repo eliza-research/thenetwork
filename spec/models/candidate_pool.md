@@ -55,6 +55,12 @@ Imported from `quint/candidate_pool.qnt` at `30d950e` and rewritten for the matc
 //     again (repeats), 4 new plans (one table per circle), 5 activity partners (the Friend lane's edges).
 //     Crew sessions and offers pass the pair gate (plans.ts crewSessionPlan, requiredPairValues), and a
 //     repeat needs a pair value for each pair of its invitees (packs/friends/generators.ts familiarCircle).
+//   - Alternates (group.ts composeGroup, filters.ts keptAlternates, packs/friends/planner.ts
+//     compatibleAlternates for repeats and new plans): in order, an alternate stays only with a pair
+//     value with every primary member and every alternate kept before it, so any table seated from
+//     them values every pair (spec/planFormation.md "Alternates must fit the entire offered group",
+//     spec/groupFormation.md). The model abstracts the order: the alternates are any set whose pairs
+//     all have a value.
 //
 // ABSTRACTIONS (quint/README.md rule 7)
 //   - Values are small integers. Directed utilities (UTIL) are 0..3, standing (ST) 0..3, uncertainty
@@ -79,19 +85,6 @@ Imported from `quint/candidate_pool.qnt` at `30d950e` and rewritten for the matc
 //     the facts of that moment.
 //
 // VALUES THAT ARE NOT IN `safety` (each one is a defect or a documented design choice; each has a run test)
-//   noAltPairBlockedEngine   group.ts composeGroup and filters.ts keptAlternates check each alternate
-//                            against the primary group only, not against the other alternates. The
-//                            ConsentNetwork repairs it (distinctAlternates), so `blockedApart` holds for the
-//                            submitted group.
-//   noRepeatBlocked          packs/friends/planner.ts pass 3: the repeat alternates (o.attended) have no
-//                            pair check, and finish() moves an alternate into `invited` when an invitee is
-//                            dropped for transit.
-//   newPlanSeatsApart        packs/friends/planner.ts circleAlternates checks an alternate against each
-//                            invitee with pairReason only (no pair value) and never against the other
-//                            alternates; finish() fills dropped seats from the alternates. Two alternates
-//                            who blocked each other can both be seated (a defect of this branch: the
-//                            replaced table builder checked the whole table).
-//   newPlanSeatsValued       the same path seats an alternate without a pair value with an invitee.
 //   oneCrewPerWeek           spec/friendsWeek.md: crew sessions keep members of several crews (by design).
 //   sessionSizeOk            planner.ts pass 1: a crew session needs only 2 eligible members, below the
 //                            friends group bound of 3. This can be intended.
@@ -543,6 +536,7 @@ module candidate_pool {
     spreadOk(primary, lane),
     alts.intersect(primary) == Set(),
     alts.forall(y => primary.forall(x => edgeValue(x, y, lane) >= 0 and city.get(x) == city.get(y))),
+    allValued(alts, lane),
     kept.subseteq(alts), kept.forall(m => not(minor.get(m))), crossOk(blocked, primary, kept), pairwiseOk(blocked, kept),
     circled' = circled.union(primary.map(m => (m, lane))),
     cands' = cands.put(cands.keys().size() + 1, {
@@ -697,13 +691,15 @@ module candidate_pool {
   }
 
   // Pass 3: pos = positive, eligible, not reserved; at least 2; ids = up to MAX_G of them; familiarCircle
-  // needs a pair value for every pair of ids; alternates = attended - ids, eligible, not reserved (none for
-  // a pair, up to 2 for a group), with no pair check; finish() drops `dropped` for transit and fills the
-  // seats from the alternates; the reservation holds invited and the remaining alternates.
+  // needs a pair value for every pair of ids; alternates = attended - ids, eligible, not reserved, with a
+  // Friend pair value with every invitee and every other alternate (compatibleAlternates; none for a pair,
+  // up to 2 for a group; the order is abstracted); finish() drops `dropped` for transit and fills the
+  // seats from the compatible alternates; the reservation holds invited and the remaining alternates.
   action repeatPlan(o: Outcome, ids: Set[str], alts: Set[str], dropped: Set[str], fill: Set[str]): bool = {
     val pos = o.positive.filter(m => planEligible(m) and not(wk.taken.contains(m)))
     val partner = ids.size() == 2
-    val altPool = o.attended.exclude(ids).filter(m => planEligible(m) and not(wk.taken.contains(m)))
+    val altPool = o.attended.exclude(ids).filter(m => planEligible(m) and not(wk.taken.contains(m))
+      and ids.forall(p => pairValue(m, p, "Friend") >= 0))
     val invited = ids.exclude(dropped).union(fill)
     val altsLeft = alts.exclude(fill)
     val quorum = if (partner) 2 else 3
@@ -712,7 +708,7 @@ module candidate_pool {
       pos.size() >= 2,
       ids.subseteq(pos), ids.size() == (if (pos.size() < MAX_G) pos.size() else MAX_G),
       allValued(ids, "Friend"),
-      alts.subseteq(altPool), alts.size() == (if (partner) 0 else (if (altPool.size() < 2) altPool.size() else 2)),
+      alts.subseteq(altPool), alts.size() <= (if (partner) 0 else 2), allValued(alts, "Friend"),
       dropped.subseteq(ids), fill.subseteq(alts),
       fill.size() == (if (partner) 0 else (if (dropped.size() < alts.size()) dropped.size() else alts.size())),
       invited.size() >= quorum,
@@ -730,8 +726,8 @@ module candidate_pool {
   }
 
   // Pass 4: one table per circle of the members the week can seat (seats.match.circles("Friend"): every
-  // pair at the circle pair floor, the spread, circleCoherent); circleAlternates: open members with
-  // pairReason clear against each invitee (no pair value, no check between alternates); finish() drops
+  // pair at the circle pair floor, the spread, circleCoherent); circleAlternates: open members with a
+  // Friend pair value with every invitee and every other alternate (compatibleAlternates); finish() drops
   // `dropped` for transit and fills seats from the alternates; reserveNewPlan holds invited and
   // alternates (openTable).
   def newOpen(m: str): bool = planEligible(m) and not(wk.used.contains(m))
@@ -747,7 +743,7 @@ module candidate_pool {
       wk.phase == "new",
       primary.forall(m => newOpen(m)), planCircleOk(primary),
       alts.intersect(primary) == Set(), alts.forall(m => newOpen(m)),
-      alts.forall(x => primary.forall(p => not(isBlocked(blocked, x, p)))),
+      alts.forall(x => primary.forall(p => pairValue(x, p, "Friend") >= 0)), allValued(alts, "Friend"),
       dropped.subseteq(primary), fill.subseteq(alts),
       fill.size() == (if (dropped.size() < alts.size()) dropped.size() else alts.size()),
       invited.size() >= MIN_G,
@@ -926,10 +922,11 @@ module candidate_pool {
   val noMinorEnters = not(h.candMinor or h.groupMinor or h.sessionMinor or h.offerMinor or h.repeatMinor
                           or h.planMinor or h.partnerMinor)
   // AGENTS.md "blocks win": a blocked pair is never put together by the engine or submitted together
-  // (pairReason, the pair gate, crewSessionPlan, distinctAlternates). The engine-level and planner gaps are
-  // the values below `safety`.
+  // (pairReason, the pair gate, crewSessionPlan, the alternates of composeGroup, keptAlternates and
+  // compatibleAlternates, distinctAlternates). The design choices of the planner are the values below `safety`.
   val blockedApart = not(h.candBlocked or h.candViaUnsafe or h.groupBlocked or h.groupAltBlockedWithPrimary
-                         or h.submittedBlocked or h.sessionBlocked or h.offerBlocked)
+                         or h.altPairBlockedEngine or h.submittedBlocked or h.sessionBlocked or h.offerBlocked
+                         or h.repeatBlocked or h.planSeatedBlocked)
   // spec/pairValue.md lawNoOneSidedPair, lawParityHolds, lawBalancedExchange: every pair of a screened
   // multi-person candidate, of a crew session or offer, of a repeat's invitees and of an activity partner
   // has a pair value, so both utilities reach the floor, the gap is in the band, and the exchange is balanced.
@@ -937,7 +934,7 @@ module candidate_pool {
   val parityHolds = not(h.candParity)
   val balancedExchange = not(h.candUnbalanced)
   val everyPairValued = not(h.candNoLane or h.candNoValue or h.altNoValue or h.sessionNoValue or h.offerNoValue
-                            or h.repeatInviteesNoValue or h.partnerNoValue)
+                            or h.repeatInviteesNoValue or h.planSeatedNoValue or h.partnerNoValue)
   // spec/matchLane.md laneOffered: a pack never matches in a lane it does not offer (friends.help: Friend only).
   val laneOfferedOnly = not(h.candLaneNotOffered)
   // scoring.ts pairTerms: fit is the lowest pair value of the candidate.
@@ -976,11 +973,7 @@ module candidate_pool {
     packRefusalHonored, roomRespected, greedyValuesNeverRise, refusedMemberStaysFull, noBlockingPairInGreedy,
   }
 
-  // Defects and design choices (not in safety; see the header). Each is reached by a run test below.
-  val noAltPairBlockedEngine = not(h.altPairBlockedEngine)
-  val noRepeatBlocked = not(h.repeatBlocked)
-  val newPlanSeatsApart = not(h.planSeatedBlocked)
-  val newPlanSeatsValued = not(h.planSeatedNoValue)
+  // Design choices (not in safety; see the header). Each is reached by a run test below.
   val oneCrewPerWeek = not(h.crewTwice)
   val sessionSizeOk = not(h.sessionUnderMin)
 
@@ -1083,8 +1076,8 @@ module candidate_pool {
     .then(setHold("b", true))
     .then(beginRun).then(screen(Set("a", "c"), "Friend", Set(), true, "b", 0, false)).fail()
 
-  // The circle {a, b, c} from the searches of a, b, d and e; the alternates d and e blocked each other:
-  // the engine keeps both (group.ts), distinctAlternates keeps one. The circle is used once per run.
+  // The circle {a, b, c} from the searches of a, b, d and e; the alternates d and e blocked each other,
+  // so the engine keeps only one of them (group.ts composeGroup). The circle is used once per run.
   run circleAltTest = initWith("search", "network")
     .then(blockPair("d", "e"))
     .then(beginRun)
@@ -1096,9 +1089,23 @@ module candidate_pool {
     .then(closeSearch(2, false, false))
     .then(beginSearch("e", "Friend")).then(checkCandidate("a")).then(checkCandidate("b")).then(checkCandidate("c")).then(checkCandidate("d"))
     .then(closeSearch(2, false, false))
-    .then(composeGroup("Friend", Set("a", "b", "c"), Set("d", "e"), Set("d")))
-    .expect(safety and not(noAltPairBlockedEngine) and n.groupCands == 1)
+    .then(composeGroup("Friend", Set("a", "b", "c"), Set("d"), Set("d")))
+    .expect(safety and n.groupCands == 1)
     .then(composeGroup("Friend", Set("a", "b", "c"), Set(), Set())).fail()
+
+  // The same circle cannot keep both alternates d and e, who blocked each other.
+  run circleAltPairTest = initWith("search", "network")
+    .then(blockPair("d", "e"))
+    .then(beginRun)
+    .then(beginSearch("a", "Friend")).then(checkCandidate("b")).then(checkCandidate("c")).then(checkCandidate("d")).then(checkCandidate("e"))
+    .then(closeSearch(1, true, false))
+    .then(beginSearch("b", "Friend")).then(checkCandidate("a")).then(checkCandidate("c")).then(checkCandidate("d")).then(checkCandidate("e"))
+    .then(closeSearch(2, false, false))
+    .then(beginSearch("d", "Friend")).then(checkCandidate("a")).then(checkCandidate("b")).then(checkCandidate("c")).then(checkCandidate("e"))
+    .then(closeSearch(2, false, false))
+    .then(beginSearch("e", "Friend")).then(checkCandidate("a")).then(checkCandidate("b")).then(checkCandidate("c")).then(checkCandidate("d"))
+    .then(closeSearch(2, false, false))
+    .then(composeGroup("Friend", Set("a", "b", "c"), Set("d", "e"), Set("d"))).fail()
 
   // The greedy walk: (a, b) 3 and (a, c) 2 fill a; (a, d) 2 is refused with a; (b, e) is a pack
   // refusal; (d, e) 2 is reserved.
@@ -1137,9 +1144,21 @@ module candidate_pool {
     .then(crewOffer({ id: "o2", act: "dinner", attended: Set("b", "c", "e", "f"), positive: Set("b", "c", "f") }, Set("b", "c", "f"), false))
     .fail()
 
-  // Repeat of o2: a, b and e would do it again, d attended and did not; d blocked e after it. d is an
-  // alternate with no pair check, and finish() seats d next to e when b is dropped.
+  // Repeat of o2: a, b and e would do it again. d blocked e after the previous plan, so the new
+  // table keeps the three compatible attendees without an alternate.
   run repeatBlockTest = initWith("plan", "friends")
+    .then(meetup("o2", "dinner", Set("a", "b", "d", "e"), Set("a", "b", "e")))
+    .then(blockPair("d", "e"))
+    .then(startWeek)
+    .then(crewSession({ act: "run", members: Set("a", "b", "c") }, Set(), true))
+    .then(nextPhase)
+    .then(nextPhase)
+    .then(repeatPlan({ id: "o2", act: "dinner", attended: Set("a", "b", "d", "e"), positive: Set("a", "b", "e") },
+                     Set("a", "b", "e"), Set(), Set(), Set()))
+    .expect(safety and n.repeats == 1)
+
+  // The same repeat cannot keep d as an alternate and seat d next to e when b is dropped for transit.
+  run repeatAltBlockedTest = initWith("plan", "friends")
     .then(meetup("o2", "dinner", Set("a", "b", "d", "e"), Set("a", "b", "e")))
     .then(blockPair("d", "e"))
     .then(startWeek)
@@ -1147,7 +1166,7 @@ module candidate_pool {
     .then(nextPhase).then(nextPhase)
     .then(repeatPlan({ id: "o2", act: "dinner", attended: Set("a", "b", "d", "e"), positive: Set("a", "b", "e") },
                      Set("a", "b", "e"), Set("d"), Set("b"), Set("d")))
-    .expect(safety and not(noRepeatBlocked))
+    .fail()
 
   // Two live crews for a: the run session of week 1 is refused, so a gets the dinner crew offer; in week
   // 2 a has two crew sessions (spec/friendsWeek.md keeps members of several crews).
@@ -1171,20 +1190,19 @@ module candidate_pool {
     .then(crewOffer({ id: "o1", act: "dinner", attended: Set("a", "b", "e", "f"), positive: Set("a", "e", "f") }, Set("a", "e", "f"), false))
     .fail()
 
-  // A new table {a, b, c} with alternates d and e, who blocked each other. a and b are dropped for
-  // transit, and finish() seats both alternates: the table holds a blocked pair (planner.ts circleAlternates).
+  // A new table {a, b, c} cannot keep the alternates d and e, who blocked each other: when a and b are
+  // dropped for transit, finish() would seat both (planner.ts circleAlternates, compatibleAlternates).
   run newPlanAltsTest = initWith("plan", "friends")
     .then(blockPair("d", "e"))
     .then(startWeek).then(nextPhase).then(nextPhase).then(nextPhase)
     .then(newPlan(Set("a", "b", "c"), Set("d", "e"), Set("a", "b"), Set("d", "e")))
-    .expect(safety and not(newPlanSeatsApart))
+    .fail()
 
-  // Without a block: the seated alternates d and e have no pair value (one-sided); circleAlternates
-  // checks pairReason only.
+  // Without a block, d and e have no pair value (one-sided), so they cannot both be alternates.
   run newPlanValueTest = initWith("plan", "friends")
     .then(startWeek).then(nextPhase).then(nextPhase).then(nextPhase)
     .then(newPlan(Set("a", "b", "c"), Set("d", "e"), Set("a", "b"), Set("d", "e")))
-    .expect(safety and newPlanSeatsApart and not(newPlanSeatsValued))
+    .fail()
 
   // A new table of three, then the same members cannot get a second table this week.
   run newPlanTest = initWith("plan", "friends")

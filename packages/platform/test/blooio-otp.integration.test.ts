@@ -57,50 +57,12 @@ describe.skipIf(!pgAvailable)("Blooio OTP via local HTTP and Postgres", () => {
     expect(() => new BlooioOtpProvider({ ...ENV, OTP_PROVIDER: "twilio" })).toThrow("OTP_PROVIDER=blooio");
     for (const env of [{ ...ENV, BLOOIO_API_KEY: "" }, { ...ENV, BLOOIO_FROM: "" }, { ...ENV, BLOOIO_FROM_NUMBER: "+12125550101" }]) expect(() => new BlooioOtpProvider(env)).toThrow();
     const base = { PLATFORM_ENV: "staging", DATABASE_URL: "postgres://svc@db.invalid/test", MIGRATION_DATABASE_URL: "postgres://owner@db.invalid/test", PLATFORM_HASH_KEY: KEY, PLATFORM_SESSION_SECRET: KEY, PLATFORM_PROXY_SECRET: KEY, LEAK_LABEL_KEY: KEY, TURNSTILE_SECRET_KEY: "synthetic" };
-    const agentSignup = { PLATFORM_PHONE_OTP_ONLY_APPS: "ntwrk,slop,friends" };
-    expect(bootConfigProblems({ ...base, ...ENV, ...agentSignup })).toEqual([]);
-    expect(loadConfig({ ...base, ...ENV, ...agentSignup }).env).toBe("staging");
-    expect(() => loadConfig({ ...base, ...ENV, ...agentSignup, BLOOIO_FROM: "" })).toThrow("BLOOIO_FROM");
+    expect(bootConfigProblems({ ...base, ...ENV })).toEqual([]);
+    expect(loadConfig({ ...base, ...ENV }).env).toBe("staging");
+    expect(() => loadConfig({ ...base, ...ENV, BLOOIO_FROM: "" })).toThrow("BLOOIO_FROM");
     const twilio = { OTP_PROVIDER: "twilio", TWILIO_ACCOUNT_SID: "synthetic", TWILIO_AUTH_TOKEN: "synthetic", TWILIO_VERIFY_SERVICE_SID: "synthetic" };
+    expect(bootConfigProblems({ ...base, ...twilio })).toEqual([]);
     expect(otpProviderFromEnv(twilio).name).toBe("twilio_verify");
-  });
-
-  // spec/bootPolicy.md, "A deployed service lets each agent signup skill finish"
-  test("the documented deployed configuration lets each agent skill start a phone code over HTTP; Peon keeps Turnstile", async () => {
-    mode = "queued";
-    const base = { PLATFORM_ENV: "production", DATABASE_URL: "postgres://svc@db.invalid/test", MIGRATION_DATABASE_URL: "postgres://owner@db.invalid/test", PLATFORM_HASH_KEY: KEY, PLATFORM_SESSION_SECRET: KEY, PLATFORM_PROXY_SECRET: KEY, LEAK_LABEL_KEY: KEY, TURNSTILE_SECRET_KEY: "synthetic" };
-    // docs/deploy.md and .env.example: OTP_PROVIDER=blooio and PLATFORM_PHONE_OTP_ONLY_APPS=ntwrk,slop,friends.
-    const documented = { ...base, ...ENV, PLATFORM_PHONE_OTP_ONLY_APPS: "ntwrk,slop,friends" };
-    expect(bootConfigProblems(documented)).toEqual([]);
-    expect(loadConfig(documented).env).toBe("production");
-    // The configuration documented before (Twilio codes, Turnstile on every app) cannot finish agent signup: it refuses to start.
-    const twilio = { OTP_PROVIDER: "twilio", TWILIO_ACCOUNT_SID: "synthetic", TWILIO_AUTH_TOKEN: "synthetic", TWILIO_VERIFY_SERVICE_SID: "synthetic" };
-    for (const env of [{ ...base, ...twilio }, { ...base, ...ENV }, { ...documented, PLATFORM_PHONE_OTP_ONLY_APPS: "ntwrk,slop" }]) {
-      expect(() => loadConfig(env)).toThrow("PLATFORM_PHONE_OTP_ONLY_APPS");
-    }
-    const api = createPublicApi({
-      store, otp: provider(), env: { PLATFORM_ENV: documented.PLATFORM_ENV, PLATFORM_PHONE_OTP_ONLY_APPS: documented.PLATFORM_PHONE_OTP_ONLY_APPS },
-      hashKey: KEY, sessionSecret: KEY, turnstile: { verify: async () => false }, now: () => now, ipOf: () => "203.0.113.232", minStartMs: 0, minVerifyMs: 0, log: l => logs.push(l),
-    });
-    const http = await serveHttp({ hostname: "127.0.0.1", port: 0, fetch: async req => (await api.fetch(new Request(`https://${req.headers.get("host")}${new URL(req.url).pathname}`, req))) ?? new Response(null, { status: 404 }) });
-    try {
-      // What the skill sends: only the phone, no Turnstile token.
-      const start = (host: string, p: string) => fetchWithHost(`http://127.0.0.1:${http.port}/api/auth/otp/start`, { method: "POST", headers: { host, "content-type": "application/json", "user-agent": "ChatGPT" }, body: JSON.stringify({ phone: p }) });
-      for (const [host, app] of [["ntwrk.party", "ntwrk"], ["slop.date", "slop"], ["friends.help", "friends"]] as const) {
-        const p = phone();
-        const r = await start(host, p);
-        expect(r.status, `${host} ${await r.clone().text()}`).toBe(200);
-        expect(requests.at(-1)!.to).toBe(p);
-        expect(await store.latestChallenge(app, p)).toMatchObject({ provider: "blooio", attempts: 0 });
-      }
-      // The browser path keeps its bot protection.
-      const before = requests.length, p = phone();
-      const peon = await start("peon.biz", p);
-      expect(peon.status).toBe(400);
-      expect(await peon.json()).toMatchObject({ error: "turnstile" });
-      expect(requests.length).toBe(before);
-      expect(await store.latestChallenge("peon", p)).toBeUndefined();
-    } finally { await http.stop(true); }
   });
 
   test("queued code is hashed, app-bound, one-use and never placed in ordinary API responses or logs", async () => {

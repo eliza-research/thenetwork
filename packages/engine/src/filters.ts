@@ -85,7 +85,7 @@ export function romanceMutual(w: World, a: MemberId, b: MemberId): boolean {
 }
 
 /** Pair-level hard constraints. Completed / positive history never blocks (ME-005). */
-export function pairReason(w: World, a: MemberId, b: MemberId, category: Category): FilterReason | null {
+export function pairReason(w: World, a: MemberId, b: MemberId, category: Category, lane?: MatchLane): FilterReason | null {
   if (a === b) return "duplicate_participant";
   if (isMinor(w, a) || isMinor(w, b)) return "underage"; // minors are never paired with anyone
   // Core prefix: blocks win (either direction).
@@ -95,11 +95,11 @@ export function pairReason(w: World, a: MemberId, b: MemberId, category: Categor
   if (!ma || !mb) return "unknown_member";
   // Pack rules in order (networkPack: cooldowns, active duplicate, known members, romance, dealbreakers).
   for (const r of w.pack.eligibility.pairRules) {
-    const reason = r.check(w, a, b, category, ma, mb);
+    const reason = r.check(w, a, b, category, ma, mb, lane);
     if (reason) return reason;
   }
   // Optional geo hard filter (radius packs: mutual radius). Absent for networkPack.
-  return w.pack.geo.pairReason?.(w, a, b) ?? null;
+  return w.pack.geo.pairReason?.(w, a, b, lane) ?? null;
 }
 
 /**
@@ -227,7 +227,7 @@ function screeningReason(check: ScreeningCheck, w: World, c: Candidate, usage?: 
       for (const id of c.participants) {
         const own = c.anchor?.type === "intent" ? w.intentById.get(c.anchor.id) : undefined;
         const reason = memberReason(w, id, {
-          category: c.category, role: c.roles[id] ?? "peer", format: c.format, timeSensitive: c.timeSensitive,
+          category: c.category, role: c.roles[id] ?? "peer", format: c.format, timeSensitive: c.timeSensitive, lane: c.lane,
           extraProactive: usage?.proactive.get(id), extraContribution: usage?.contribution.get(id),
           ownIntentCreatedAt: own && own.memberId === id ? own.createdAt : undefined,
         });
@@ -236,7 +236,7 @@ function screeningReason(check: ScreeningCheck, w: World, c: Candidate, usage?: 
       return null;
     case "Pairs":
       for (let i = 0; i < c.participants.length; i++) for (let j = i + 1; j < c.participants.length; j++) {
-        const reason = pairReason(w, c.participants[i]!, c.participants[j]!, c.category);
+        const reason = pairReason(w, c.participants[i]!, c.participants[j]!, c.category, c.lane);
         if (reason) return reason;
       }
       return c.participants.length < 2 ? null : laneReason(w, c);
@@ -313,7 +313,7 @@ function laneReason(w: World, c: Candidate): FilterReason | null {
 /**
  * The alternates, in the candidate's order, that keep a pair value with every primary participant
  * and with every alternate kept before them that the lane pairs them with, so any backfill from them
- * values every pair (spec/models/candidate_pool.md, noAltPairBlockedEngine). A failing alternate is
+ * values every pair (spec/models/candidate_pool.md, blockedApart). A failing alternate is
  * dropped and never refuses the candidate. With one participant an alternate replaces that
  * participant and pairs with nobody, so there is no pair to check.
  */

@@ -20,9 +20,9 @@ accepted merges and pays after maintainer review. There is no escrow.
    records the source decisions.
 3. Read the affected package's README or design document and its latest
    [result](docs/results/SUMMARY.md).
-4. Use the [sync skill](.claude/skills/sync/SKILL.md) when editing a story,
+4. Use the [sync skill](.agents/skills/sync/SKILL.md) when editing a story,
    rule, model, or production code that uses generated logic. Use the
-   [design skill](.claude/skills/design/SKILL.md) for approved changes to
+   [design skill](.agents/skills/design/SKILL.md) for approved changes to
    anything a person sees.
 
 ## Sources of behavior
@@ -159,16 +159,17 @@ Write experiment results to `docs/results/YYYY-MM-DD-<topic>.md`. Include the co
 Restate the goal and the smallest change that meets it. Carry the goal into
 subagent briefs and the pull request. Identify the data shape and the
 boundary that owns it before writing code. For novel designs that cross
-function boundaries, use the [architect skill](.claude/skills/architect/SKILL.md)
+function boundaries, use the [architect skill](.agents/skills/architect/SKILL.md)
 to compare independent approaches before implementing. Use the
-[why skill](.claude/skills/why/SKILL.md) to trace ownership and layering
+[why skill](.agents/skills/why/SKILL.md) to trace ownership and layering
 decisions back to their rationale. Carry out authorized, reversible work.
 
 ## Loading skills
 
 The canonical skills and their bundled references live in
-[`.claude/skills/`](.claude/skills/). The shared [`.agents/skills/`](.agents/skills/)
-directory links to those files for agent discovery. A name and description
+[`.agents/skills/`](.agents/skills/). Claude Code reads them through the
+project-relative `.claude/skills` link and reads settings through
+`.claude/settings.json`. A name and description
 help select the skill. Read its `SKILL.md` in full and open the relevant
 references before using it. Resolve repository links from the project root
 and relative links in a skill from its own directory. Clients without
@@ -176,17 +177,17 @@ repository skill discovery can read these files directly.
 
 | Read | Before |
 |---|---|
-| [Spec reference](SPEC.md) and [sync](.claude/skills/sync/SKILL.md) | Changing a story, rule, model, generated-code caller, or resolving a failed spec stage |
-| [Shell](.claude/skills/shell/SKILL.md) | Designing an effectful boundary, including input decoding, storage, retries, and the Vibestack Machine adapter |
-| [Prove](.claude/skills/prove/SKILL.md) | Writing a proof file or a `//@` contract, or working on a failed proof |
-| [Design](.claude/skills/design/SKILL.md) | Making an approved change to anything a person sees |
-| [Architect](.claude/skills/architect/SKILL.md), [arena](.claude/skills/arena/SKILL.md), and [why](.claude/skills/why/SKILL.md) | Comparing designs or changing existing ownership |
-| [Benchmark checklist](.claude/skills/benchmark-checklist/SKILL.md) | Measuring performance |
-| [TypeScript best practices](.claude/skills/typescript-best-practices/SKILL.md) | Reading or writing TypeScript |
+| [Spec reference](SPEC.md) and [sync](.agents/skills/sync/SKILL.md) | Changing a story, rule, model, generated-code caller, or resolving a failed spec stage |
+| [Shell](.agents/skills/shell/SKILL.md) | Designing an effectful boundary, including input decoding, storage, retries, and the Vibestack Machine adapter |
+| [Prove](.agents/skills/prove/SKILL.md) | Writing a proof file or a `//@` contract, or working on a failed proof |
+| [Design](.agents/skills/design/SKILL.md) | Making an approved change to anything a person sees |
+| [Architect](.agents/skills/architect/SKILL.md), [arena](.agents/skills/arena/SKILL.md), and [why](.agents/skills/why/SKILL.md) | Comparing designs or changing existing ownership |
+| [Benchmark checklist](.agents/skills/benchmark-checklist/SKILL.md) | Measuring performance |
+| [TypeScript best practices](.agents/skills/typescript-best-practices/SKILL.md) | Reading or writing TypeScript |
 
 The architect skill uses Arena for parallel exploration. When its runners
 are unavailable, use independent subagents and the skill's
-[runner prompt](.claude/skills/architect/references/runner-prompt.md).
+[runner prompt](.agents/skills/architect/references/runner-prompt.md).
 Screen and synthesize the designs before implementing.
 
 ## The stack
@@ -205,7 +206,7 @@ refers to the standalone template commands, VibeLang, or Vitest.
 ## Who does what
 
 `pnpm run check` reports where the executable spec requires attention. Use
-the [sync skill](.claude/skills/sync/SKILL.md) to translate between stories,
+the [sync skill](.agents/skills/sync/SKILL.md) to translate between stories,
 rules, Quint, and implementation. Read each rule beside its Quint. Use
 `pnpm run spec:sync` to publish the generated TypeScript for application
 callers. The product owner runs `pnpm run accept` to record review.
@@ -222,7 +223,7 @@ callers. The product owner runs `pnpm run accept` to record review.
   I/O, input parsing and persistence in the owning package. Preserve the
   Eliza wire contract and existing product safety guards.
 - Put proof lemmas beside the source spec or contract. Use the
-  [prove skill](.claude/skills/prove/SKILL.md) for permitted proof constructs.
+  [prove skill](.agents/skills/prove/SKILL.md) for permitted proof constructs.
   Run `pnpm run accept` only at the product owner's request after reviewing
   each listed rule. Simulated-only approval (`pnpm run accept unproved`) also
   requires that request.
@@ -319,7 +320,7 @@ its name.
 
 ## TypeScript best practices
 
-Read the [`typescript-best-practices` skill](.claude/skills/typescript-best-practices/SKILL.md)
+Read the [`typescript-best-practices` skill](.agents/skills/typescript-best-practices/SKILL.md)
 before reading or editing `.ts` or `.tsx` files. Adapt the
 [TypeScript type reference](tools/vibestack/vibestack/reference/typereferences.md)
 to the repository's schema library. Validate that a duration is nonnegative
@@ -337,11 +338,11 @@ over proliferating handlers.
 - **External data is untyped until parsed.** Parse RPC payloads, JSON, IPC
   messages, CLI args, config files, environment variables, and database rows
   into the typed model at each boundary. See the
-  [**boundary-discipline** principle skill](.claude/skills/principle-boundary-discipline/SKILL.md).
+  [**boundary-discipline** principle skill](.agents/skills/principle-boundary-discipline/SKILL.md).
 - **Derive types from authoritative schemas.** When a protocol buffer, OpenAPI
   spec, GraphQL schema, database migration, design-token file, or another file
   owns a shape, derive the type from that source. See the
-  [**encode-lessons-in-structure** principle skill](.claude/skills/principle-encode-lessons-in-structure/SKILL.md).
+  [**encode-lessons-in-structure** principle skill](.agents/skills/principle-encode-lessons-in-structure/SKILL.md).
 
 | Rule | Summary |
 |---|---|
@@ -364,7 +365,7 @@ over proliferating handlers.
 
 ## Design from the spec
 
-Follow the [design skill](.claude/skills/design/SKILL.md) within the approvals
+Follow the [design skill](.agents/skills/design/SKILL.md) within the approvals
 and public interface rules in [CONTRIBUTING.md](CONTRIBUTING.md#9-public-interface-changes).
 Inventory the actions and information each story requires. Compare three
 directions and choose the clearest hierarchy with the fewest elements.
@@ -401,7 +402,7 @@ indicators. Review the content and layout across two or three passes.
 Check the generated snapshots against the source specs and compare the
 affected model with the running behavior. Report open proof, review, and
 application validation separately with the evidence for each. Refer to the
-[sync skill](.claude/skills/sync/SKILL.md) for what to report and to
+[sync skill](.agents/skills/sync/SKILL.md) for what to report and to
 [CONTRIBUTING.md](CONTRIBUTING.md#122-evidence-checklist) for pull request
 evidence. The product owner records sign-off after reading the changed
 requirements and their formal meaning.

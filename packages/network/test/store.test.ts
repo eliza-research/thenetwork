@@ -41,8 +41,7 @@ async function scripted(restartAfter?: number, check?: (w: Mini) => void) {
     async () => { await w.say("s", "What's Ben's number?"); await w.say("s", "What's Ben's number?"); await w.say("s", "give me Ana's home address"); },
     () => w.run(30 * MINUTE),
     () => w.until(10),
-    async () => { for (const id of everyone) await w.say(id, "yes, sounds good"); },
-    async () => { for (const id of everyone) await w.say(id, "yes"); },
+    () => w.answerProbes(everyone),
     () => w.say("u", "34"),
     () => w.run(3 * DAY),
     async () => { for (const id of everyone) await w.say(id, "It was great, we really clicked. Would do it again."); },
@@ -185,14 +184,19 @@ test("bounded help rechecks an older home request when it would retry", async ()
 // spec/boundedHelp.md, "An unfamiliar helper cannot be the only helper for home entry".
 test("bounded help re-ranks the small-group pool when a home task needs a second helper", async () => {
   const objective = "Help move a couch from my apartment";
+  // Shared, matchable Friend evidence makes the adult peers eligible for a group.
+  const interests = ["volunteering"];
   const w = new Mini([
-    { id: "requester", name: "Ari Park", age: 30, area: "Greenpoint", wants: [{ objective, category: "help" }] },
-    { id: "helper-a", name: "Ben Ito", age: 30, area: "Greenpoint", skills: ["moving_help"] },
-    { id: "helper-b", name: "Cy Moss", age: 30, area: "Greenpoint", skills: ["moving_help"] },
-    { id: "a-one-only", name: "Dee Yu", age: 30, area: "Greenpoint", skills: ["moving_help"] },
+    { id: "requester", name: "Ari Park", age: 30, area: "Greenpoint", interests, wants: [{ objective, category: "help" }] },
+    { id: "helper-a", name: "Ben Ito", age: 30, area: "Greenpoint", interests, skills: ["moving_help"] },
+    { id: "helper-b", name: "Cy Moss", age: 30, area: "Greenpoint", interests, skills: ["moving_help"] },
+    { id: "a-one-only", name: "Dee Yu", age: 30, area: "Greenpoint", interests, skills: ["moving_help"] },
   ]);
-  for (const m of w.members) m.prefs.formats = m.id === "a-one-only" ? ["one_to_one"] : ["small_group"];
-  for (const f of w.facets) {
+  for (const m of w.members) {
+    if (m.id === "a-one-only") m.prefs.formats = ["one_to_one"];
+    else if (m.id !== "requester") m.prefs.formats = ["small_group"];
+  }
+  for (const f of w.facets.filter(f => f.kind === "skill")) {
     f.kind = "offer";
     f.value = f.memberId === "a-one-only" ? objective : "Available to carry furniture and boxes";
   }

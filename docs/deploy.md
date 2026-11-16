@@ -28,7 +28,7 @@ The backend process has two listeners:
 
 | Listener | Bind | Paths |
 |---|---|---|
-| Public, `PORT` (8790) | `0.0.0.0` when `PLATFORM_ENV` is `staging` or `production`; `127.0.0.1` otherwise | `/api/*` (the platform public API; only `GET /api/relay-photos/deliver/pri_<id>`, which carries its own signature, needs no site edge), `/webhooks/blooio[/<app>]` (Blooio, signature checked), `/internal/turn`, `/internal/turn-receipt`, `/internal/set-state`, `/internal/signals`, `/internal/updates`, `/internal/relay`, `/internal/relay-photo/resolve` (the Eliza gateway's signed calls, `SERVICE_TURN_SECRET`; a body over 256 KiB is refused), `/mcp`, `/oauth/*`, `/.well-known/oauth-*` (the MCP server, packages/mcp, mounted by `server.ts`; 404 `mcp_not_enabled` when `TURNSTILE_SITE_KEY` is not set), `/healthz` |
+| Public, `PORT` (8790) | `0.0.0.0` when `PLATFORM_ENV` is `staging` or `production`; `127.0.0.1` otherwise | `/api/*` (the platform public API), `/webhooks/blooio[/<app>]` (Blooio, signature checked), `/internal/turn`, `/internal/turn-receipt`, `/internal/set-state`, `/internal/signals`, `/internal/updates`, `/internal/relay` (the Eliza gateway's signed calls, `SERVICE_TURN_SECRET`; a body over 256 KiB is refused), `/mcp`, `/oauth/*`, `/.well-known/oauth-*` (the MCP server, packages/mcp, mounted by `server.ts`; 404 `mcp_not_enabled` when `TURNSTILE_SITE_KEY` is not set), `/healthz` |
 | Staff, `STAFF_PORT` (4848) | `::` when deployed (Railway's private network may be IPv6 only); `127.0.0.1` otherwise | The staff API: `/health`, `/review`, `/safety/*`, `/matching`, `/holds`, `/invite`, `/apps/<app>/...`. Never on the public port. |
 
 How a site request reaches the backend:
@@ -118,16 +118,13 @@ Set these in **Variables**. Mark each **secret** row as a sealed variable. Never
 | `PLATFORM_HASH_KEY` | **yes** | 32+ random bytes, for example `openssl rand -base64 48` | Keys the phone and IP hashes. **Never rotate it after launch**: suppression and rate-limit rows are keyed by it. |
 | `LEAK_LABEL_KEY` | **yes** | 32+ random bytes, for example `openssl rand -base64 48` | Keys the leak guard's log labels (core-6), so a stored label cannot be matched against guessed values. `loadConfig` refuses to start staging or production without it. Dev and the simulations stay unkeyed. |
 | `PLATFORM_PROXY_SECRET` | **yes** | 32+ random characters | The same value goes into each site Worker (section 3). |
-| `BACKEND_PUBLIC_ORIGIN` | **yes** | `https://api.ntwrk.party` | This backend's own public https origin (no path). The selected-photo links (`/api/relay-photos/deliver/pri_<id>`, signed and short-lived) point here. Without it `/internal/relay-photo/resolve` answers `photo_unavailable`, and a deployed backend logs a boot warning. |
 | `TURNSTILE_SECRET_KEY` | **yes** | From Cloudflare Turnstile | One widget per site domain, or one widget listing all four |
 | `TURNSTILE_SITE_KEY` | no (public) | The same Turnstile widget | The MCP sign-in page (`/oauth/authorize` on each site) shows the widget. Without it the MCP server stays off (404 `mcp_not_enabled`). The `oauth` schema is a migration (`9001_oauth_schema`, packages/mcp/db/oauth.sql); the service login only reads and writes it. The widget's hostnames: each domain, its `www` name and its `<project>.pages.dev`. |
 | `MCP_CUSTOM_CHATGPT_SLOP` | no | unset or `off` | Default off. `on` requires founder approval for the private real-account pilot at `https://slop.date/mcp`. Keep the public OpenAI plugin exclusion. |
 | `MCP_CUSTOM_CHATGPT_SLOP_PERSON_IDS` | **yes** (private account list) | unset while off | With the approved pilot on, list existing adult person IDs, separated by commas. Never log or publish them. An empty list or literal `*` entry fails startup. Entries match exact person IDs. Normal staging/production authentication checks still apply. |
 | `MCP_PRIVATE_OPENAI_APPS` | no | unset | Development-only fictional pilot. Never set it in staging or production, or combine it with the real-account pilot. |
-| `OTP_PROVIDER` | no | `blooio` | Required when deployed. `blooio` uses the existing `BLOOIO_API_KEY` and the exact `BLOOIO_FROM`; no automatic fallback. The agent signup skills need `blooio` (next row), so the boot check refuses `twilio` in staging and production while the service signs people in with phone codes. Moving production codes from Twilio to Blooio needs the founder's written approval (it puts `BLOOIO_API_KEY` on the service). |
-| `PLATFORM_PHONE_OTP_ONLY_APPS` | no | `ntwrk,slop,friends` | The apps whose agent signup skill (`sites/skills/*/SKILL.md`) asks for a phone code over direct HTTPS. An agent cannot pass Turnstile, so these apps take a phone code without the browser challenge. The proof is the code on the person's own phone. It needs `OTP_PROVIDER=blooio`. Peon keeps its browser Join form and Turnstile, so it is never in this list. The boot check (`spec/bootPolicy.md`, "A deployed service lets each agent signup skill finish") refuses to start staging or production unless the list names every agent skill app (not checked when `NETWORK_CLOUD_AUTH_ENABLED=true`). |
-| `NETWORK_CLOUD_AUTH_ENABLED` | no | **unset** | With `true`, `/api/auth/mode` answers `cloud`: people sign in with Eliza Cloud, not phone codes (`spec/cloudSignIn.md`), and the agent signup skills stop at that step. The boot check does not refuse it; the two rows above then do not apply. Turn it on only with the founder's written approval. |
-| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SERVICE_SID` | **yes** (all three) | unset | Only with `OTP_PROVIDER=twilio`, which the boot check refuses in staging and production unless `NETWORK_CLOUD_AUTH_ENABLED=true`. Codes only. |
+| `OTP_PROVIDER` | no | `twilio` | Required when deployed. Reviewed alternative: explicit `blooio` with existing `BLOOIO_API_KEY` and exact `BLOOIO_FROM`; no automatic fallback. |
+| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SERVICE_SID` | **yes** (all three) | Twilio Verify | Codes only. These send verification codes, not network messages. |
 | `NETWORK_SERVICE_TOKENS` | **yes** | `admin@*:<t>,reviewer@slop:<t>,...` | Staff tokens. Without them every staff route answers 401. |
 | `NETWORK_SERVICE_CONSOLE_TOKEN` | **yes** | One of the tokens above | Only if the observatory console runs |
 | `BLOOIO_WEBHOOK_SECRET` | **yes** | From Blooio | Without it `/webhooks/blooio` answers 503 |
@@ -270,8 +267,8 @@ docker run -d --name backend-smoke -p 127.0.0.1:18791:8790 \
   -e MIGRATION_DATABASE_URL=postgres://$USER@host.docker.internal:54339/backend_smoke \
   -e NETWORK_DATABASE_URL=postgres://backend_smoke_svc@host.docker.internal:54339/backend_smoke \
   -e PLATFORM_HASH_KEY=$S -e LEAK_LABEL_KEY=$S -e PLATFORM_PROXY_SECRET=$S \
-  -e TURNSTILE_SECRET_KEY=fake -e OTP_PROVIDER=blooio -e PLATFORM_PHONE_OTP_ONLY_APPS=ntwrk,slop,friends \
-  -e BLOOIO_API_KEY=fake -e BLOOIO_FROM=+12125550142 \
+  -e TURNSTILE_SECRET_KEY=fake -e OTP_PROVIDER=twilio \
+  -e TWILIO_ACCOUNT_SID=ACfake -e TWILIO_AUTH_TOKEN=fake -e TWILIO_VERIFY_SERVICE_SID=VAfake \
   -e BUILD_ID=local-smoke network-backend
 curl -s localhost:18791/healthz          # {"ok":true,"build":"local-smoke","env":"staging"}
 curl -s localhost:18791/api/app -H 'host: slop.date'   # 421 edge_required: only a signed router request names a site
@@ -405,8 +402,7 @@ Do every item on each deploy to production until the founder turns sends on in w
 - [ ] The Postgres backup ran at least once: the Railway volume backup, and the `backup` cron service's last run logged `"msg":"backup uploaded"`. The last restore drill (runbook-real.md section 8) passed within 30 days.
 - [ ] The uptime monitor on `/healthz` and the heartbeat are green (7.1). A test alert reached the on-call channel (7.2).
 - [ ] `curl -s -o /dev/null -w '%{http_code}' https://api.ntwrk.party/ops/metrics` gives 401 (404 if `OPS_METRICS_TOKEN` is unset).
-- [ ] Only verification codes can be sent. The service has `BLOOIO_API_KEY` for `OTP_PROVIDER=blooio` codes, and `NETWORK_CHANNEL`, `BLOOIO_ALLOW_SEND` and every live flag stay unset, so network messages stay dry-run.
-- [ ] `PLATFORM_PHONE_OTP_ONLY_APPS=ntwrk,slop,friends`. An agent can finish signup: `GET https://slop.date/api/auth/mode` gives `{"mode":"otp"}`, and `POST /api/auth/otp/start` with only `phone` gives 200, not 400 `turnstile`.
+- [ ] Twilio Verify is the only provider that can send anything (codes only). Blooio has no key on the service.
 
 Turning sends on is a separate, written founder decision (runbook-real.md). It is not part of a deploy.
 

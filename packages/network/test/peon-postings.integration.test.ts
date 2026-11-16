@@ -123,7 +123,9 @@ describe.skipIf(!pgAvailable)("peon postings: text intake, restart, staff API (N
     const verifyPath = `/employers/${encodeURIComponent(rowan)}/verify`;
     expect((await callAs(undefined, "POST", verifyPath, { company: "Acme", note: "called the office" })).status).toBe(401);
     expect((await callAs("rev-tok", "POST", verifyPath, { company: "Acme", note: "called the office" })).status).toBe(403);
-    expect((await callAs("rev-tok", "GET", `/postings?managerId=${encodeURIComponent(rowan)}`)).status).toBe(200);
+    const listPath = `/postings?managerId=${encodeURIComponent(rowan)}`;
+    expect((await callAs(undefined, "GET", listPath)).status).toBe(401);
+    expect(await callAs("rev-tok", "GET", listPath)).toMatchObject({ status: 200, body: { ok: true } });
     // ---- Verify the employer, refuse a minor's posting, close the posting.
     expect((await call("POST", verifyPath, { company: "Acme", note: "called the office" })).body.ok).toBe(true);
     const audited = await sql`select ok, detail->>'phase' as phase from network.staff_audit where app_id = 'peon' and action = 'verify_employer' and target_id = ${rowan} order by id`;
@@ -134,7 +136,7 @@ describe.skipIf(!pgAvailable)("peon postings: text intake, restart, staff API (N
     expect(listed.body.postings).toHaveLength(1);
     expect(listed.body.postings[0]).toMatchObject({ id: p.id, title: "senior data analyst", openings: 2, payMin: 90.5, payMax: 120.75, mode: "hybrid", sponsors: false, status: "active" });
     const closed = await call("POST", `/postings/${encodeURIComponent(p.id)}/close`, { reason: "filled" });
-    expect(closed.body).toMatchObject({ ok: true, posting: { id: p.id, status: "closed" } });
+    expect(closed).toMatchObject({ status: 200, body: { ok: true, posting: { id: p.id, status: "closed" } } });
     expect((await postings(rowan))[0].status).toBe("closed");
     snap = await loadSnapshot(sql, clock.now(), { app: "peon", city: "nyc" });
     expect(snap.facets.find(f => f.id === `${seat}:openings`)?.tags).toEqual(["peon:openings:0"]);

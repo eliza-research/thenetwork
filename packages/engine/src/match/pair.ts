@@ -67,7 +67,7 @@ export function eligiblePair(w: World, a: MatchProfile, b: MatchProfile): string
   if (a.memberId === b.memberId) return "duplicate_participant";
   if (a.lane !== b.lane || !laneSidesCompatible(a.lane, a.side, b.side)) return "lane_mismatch";
   if (a.market !== b.market) return "market_mismatch";
-  return pairReason(w, a.memberId, b.memberId, laneCategory(a.lane));
+  return pairReason(w, a.memberId, b.memberId, laneCategory(a.lane), a.lane);
 }
 
 export function vectorsOf(w: World): PackVectors {

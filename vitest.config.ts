@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 const sourceConditions = ["eliza-source", "node", "module", "development|production"];
 
@@ -24,6 +24,7 @@ export default defineConfig({
         test: {
           name: "integration",
           include: ["{deploy,packages,sites}/**/*.test.{ts,tsx}"],
+          exclude: [...configDefaults.exclude, "packages/ui/generated/stories/**"],
           testTimeout: 120_000,
           hookTimeout: 120_000,
         },

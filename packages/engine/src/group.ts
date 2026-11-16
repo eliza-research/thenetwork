@@ -178,8 +178,8 @@ export function composeGroup(w: World, opts: ComposeOptions): ComposedGroup | nu
         })
         .sort((x, y) => y.low - x.low || y.fit - x.fit || compareText(x.id, y.id));
       // In that order, an alternate is kept only with a pair value (the one pair gate) with every
-      // alternate kept before it, so any backfill values every pair (spec/models/candidate_pool.md,
-      // noAltPairBlockedEngine).
+      // alternate kept before it, so any backfill values every pair (spec/groupFormation.md;
+      // spec/models/candidate_pool.md blockedApart).
       const wanted = Math.max(0, Math.trunc(opts.alternates));
       const kept: MemberId[] = [];
       for (const alt of alternates) {

@@ -22,7 +22,8 @@ function addMember(input: EngineInput, id: MemberId, o: { seeks: string; offers:
     input.facets.push({ id: `${id}-f${input.facets.length}`, memberId: id, kind, value, tags, scope: "shareable", confidence: 1, provenance: "said", ...extra });
   add("desire", [o.seeks], `Wants help with ${o.seeks}`);
   add("skill", [o.offers], `Knows ${o.offers}`);
-  add("fact", [`evidence:${o.evidence}`], "Verified track record", { scope: "agent_private", provenance: "connected_source" });
+  add("fact", ["lane:Intro", `evidence:${o.evidence}`], "Verified track record",
+    { scope: "matchable", provenance: "connected_source", confirmedByMember: true });
   input.intents.push({ id: `${id}-intent`, memberId: id, category: "professional", objective: "Professional introduction", status: "active", createdAt: NOW - DAY, horizonDays: 30 });
 }
 

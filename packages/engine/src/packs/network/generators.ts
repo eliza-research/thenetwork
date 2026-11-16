@@ -20,7 +20,7 @@ import { compareText, laneCategory, type MatchProfile } from "../../match/profil
 import type { Anchor, Candidate, Format, NetworkEvent, Role } from "../../types.ts";
 import { intentText, pairKey, type World } from "../../world.ts";
 import { CATEGORY_LABEL } from "./copy.ts";
-import { intentWant, MATCH_LANES, memberTags, wantHas } from "./vectors.ts";
+import { intentWant, MATCH_LANES, memberTags, networkCofounderIntentOf, wantHas } from "./vectors.ts";
 
 function roleOf(p: MatchProfile): Role {
   switch (p.side) {
@@ -67,7 +67,10 @@ function circleOf(ctx: GenCtx, lane: MatchLane, profiles: readonly MatchProfile[
 
 // ---------------------------------------------------------------------------------------
 // Pairs anchored to a live intent (shared by intent_to_capability and warm_path).
-interface AnchoredPair { readonly profile: MatchProfile; readonly partner: MatchProfile; readonly value: number; readonly intent: Intent; readonly offer?: Facet }
+interface AnchoredPair {
+  readonly profile: MatchProfile; readonly partner: MatchProfile; readonly value: number;
+  readonly intent: Intent; readonly offer?: Facet; readonly cofounderIntents?: Candidate["cofounderIntents"];
+}
 interface AnchoredRun { readonly pairs: readonly AnchoredPair[]; readonly unmatched: readonly string[] }
 const anchoredRuns = new WeakMap<World, AnchoredRun>();
 
@@ -85,13 +88,30 @@ function anchoredPairs(ctx: GenCtx): AnchoredRun {
   const pairs: AnchoredPair[] = [];
   const paired = new Set<string>();
   const perIntent = new Map<string, number>();
+  const requestedIntents = w.input.standingIntentSearch && new Set(w.input.standingIntentSearch);
   const fallbackLast = [...w.match.profiles].sort((x, y) => Number(x.lane === "Intro") - Number(y.lane === "Intro"));
   for (const profile of fallbackLast) {
-    const intents = (w.get(profile.memberId)?.intents ?? []).filter(i => i.category !== "help" && wantHas(intentWant(w, i), profile));
+    const cofounder = profile.lane === "Cofounder";
+    const signed = cofounder ? networkCofounderIntentOf(w, profile.memberId) : undefined;
+    const intents = cofounder ? (signed ? [signed] : []) : (w.get(profile.memberId)?.intents ?? [])
+      .filter(i => i.category !== "help" && wantHas(intentWant(w, i), profile));
+    if (cofounder && (!signed || (requestedIntents && !requestedIntents.has(signed.id)))) continue;
     if (!intents.length) continue;
     for (const { profile: partner, value } of searchFor(ctx, profile).kept) {
       const key = pairKey(profile.memberId, partner.memberId);
       if (paired.has(key)) continue;
+      if (signed) {
+        const peer = networkCofounderIntentOf(w, partner.memberId);
+        if (!peer) continue;
+        const used = perIntent.get(signed.id) ?? 0;
+        const peerUsed = perIntent.get(peer.id) ?? 0;
+        if (used >= w.cfg.maxPerIntent || peerUsed >= w.cfg.maxPerIntent) continue;
+        perIntent.set(signed.id, used + 1);
+        perIntent.set(peer.id, peerUsed + 1);
+        paired.add(key);
+        pairs.push({ profile, partner, value, intent: signed, cofounderIntents: { [profile.memberId]: signed.id, [partner.memberId]: peer.id } });
+        continue;
+      }
       const offers = memberTags(w, partner.memberId).offers;
       const covered = (i: Intent) => coverage(intentWant(w, i).seeks, offers);
       const intent = intents.reduce((best, i) => (covered(i) > covered(best) ? i : best));
@@ -103,22 +123,23 @@ function anchoredPairs(ctx: GenCtx): AnchoredRun {
     }
   }
   const unmatched = w.ids.flatMap(id => (w.get(id)?.intents ?? [])
-    .filter(i => i.category !== "help" && intentWant(w, i).roles.length > 0 && !perIntent.has(i.id)).map(i => i.id));
+    .filter(i => i.category !== "help" && intentWant(w, i).roles.some(role => role.lane !== "Cofounder") && !perIntent.has(i.id)).map(i => i.id));
   const run = { pairs, unmatched };
   anchoredRuns.set(w, run);
   return run;
 }
 
 function anchoredCandidate(w: World, pair: AnchoredPair, rest: Pick<MatchedFields, "kind" | "generator" | "channels" | "via" | "warm">, prefix: string): Candidate {
-  const { profile, partner, value, intent, offer } = pair;
+  const { profile, partner, value, intent, offer, cofounderIntents } = pair;
   const a = profile.memberId, b = partner.memberId;
   const category = laneCategory(profile.lane);
   return pairCandidate(w, profile, partner, value, {
     ...rest, category, roles: { [a]: roleOf(profile), [b]: roleOf(partner) }, format: "one_to_one",
-    objective: `${prefix}: ${label(offer) ?? CATEGORY_LABEL[category]}`,
+    objective: cofounderIntents ? "Meet a potential cofounder" : `${prefix}: ${label(offer) ?? CATEGORY_LABEL[category]}`,
     anchor: { type: "intent", id: intent.id }, preferredCity: w.get(a)?.m.homeCity,
     evidence: { [a]: [], [b]: offer ? [offer.id] : [] },
-    riskText: `${intentText(intent)} ${offer?.value ?? ""}`,
+    riskText: cofounderIntents ? "potential cofounder introduction" : `${intentText(intent)} ${offer?.value ?? ""}`,
+    ...(cofounderIntents ? { cofounderIntents } : {}),
   });
 }
 
@@ -190,6 +211,7 @@ function warmTie(w: World, a: MemberId, b: MemberId): { via: MemberId; strength:
 export function warmPath(ctx: GenCtx): Candidate[] {
   const { w } = ctx;
   return anchoredPairs(ctx).pairs.flatMap(pair => {
+    if (pair.profile.lane === "Cofounder") return [];
     const tie = warmTie(w, pair.profile.memberId, pair.partner.memberId);
     return tie ? [anchoredCandidate(w, pair, {
       kind: "member_intro", generator: "warm_path", channels: new Set(["match", "graph"]), via: tie.via, warm: warmPathValue(tie.strength),
@@ -216,7 +238,7 @@ export function helpRequest(ctx: GenCtx): Candidate[] {
     for (const intent of ma.intents) {
       if (intent.category !== "help") continue;
       const want = intentWant(w, intent);
-      const asker = w.match.profilesOf(a).find(p => wantHas(want, p));
+      const asker = w.match.profilesOf(a).find(p => p.lane !== "Cofounder" && wantHas(want, p));
       if (!asker) { ctx.unmatchedIntents.add(intent.id); continue; }
       const text = intentText(intent);
       const home = isHomeEntry(w.cfg, text);
@@ -301,7 +323,8 @@ export function groupComposer(ctx: GenCtx): Candidate[] {
     for (const circle of w.match.circles(lane)) {
       const profiles = circle.members.flatMap(id => { const p = w.match.profile(id); return p ? [p] : []; });
       const ids = profiles.map(p => p.memberId);
-      const market = profiles[0]?.market;
+      const first = profiles[0];
+      const market = first && w.get(first.memberId)?.m.homeCity;
       const theme = sharedTheme(w, ids);
       out.push(circleCandidate(w, circle, lane, {
         kind: "group", generator: "group_composer", category,
@@ -323,7 +346,7 @@ export function groupComposer(ctx: GenCtx): Candidate[] {
 function bestLanePair(ctx: GenCtx, a: MemberId, b: MemberId): { a: MatchProfile; b: MatchProfile; value: number } | undefined {
   let best: { a: MatchProfile; b: MatchProfile; value: number } | undefined;
   for (const pa of ctx.w.match.profilesOf(a)) for (const pb of ctx.w.match.profilesOf(b)) {
-    if (pa.lane !== pb.lane) continue;
+    if (pa.lane === "Cofounder" || pa.lane !== pb.lane) continue;
     const value = searchedValue(ctx, pa, pb);
     if (value >= 0 && (!best || value > best.value)) best = { a: pa, b: pb, value };
   }
@@ -401,7 +424,8 @@ export function newcomerWelcome(ctx: GenCtx): Candidate[] {
   const out: Candidate[] = [];
   const category = laneCategory(WELCOME_LANE);
   for (const n of w.ids) {
-    if (!w.get(n)?.newcomer) continue;
+    const newcomer = w.get(n);
+    if (!newcomer?.newcomer) continue;
     if (memberReason(w, n, { category, role: "newcomer", format: "small_group", timeSensitive: false })) continue;
     const profile = w.match.profilesOf(n).find(p => p.lane === WELCOME_LANE);
     if (!profile) continue;
@@ -423,7 +447,7 @@ export function newcomerWelcome(ctx: GenCtx): Candidate[] {
     const roles: Record<MemberId, Role> = Object.fromEntries(group.map(p => [p.memberId, p === profile ? "newcomer" : p === host ? "host" : "guest"]));
     out.push(circleCandidate(w, circle, WELCOME_LANE, {
       kind: "newcomer_welcome", generator: "newcomer_welcome", category, roles, format: "small_group",
-      objective: "First-week welcome coffee", anchor: { type: "member", id: n }, preferredCity: profile.market,
+      objective: "First-week welcome coffee", anchor: { type: "member", id: n }, preferredCity: newcomer.m.homeCity,
       channels: new Set(["newcomer", "match", "group"]), evidence: Object.fromEntries(group.map(p => [p.memberId, []])),
       riskText: "welcome coffee", confidenceHint: 0.85,
     }));

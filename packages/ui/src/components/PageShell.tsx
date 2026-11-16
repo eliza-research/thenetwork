@@ -13,7 +13,7 @@ export type PageShellProps = ComponentProps<"div"> & {
 
 /**
  * The frame of a secondary site page: the skip link, the header mark that links to the landing page, the main content and the footer with the privacy policy and the terms.
- * @model spec/sitePages.md
+ * Its rules come from `spec/sitePages.md`, a spec of decisions with no state of its own.
  */
 export function PageShell({ brand, className, children, ...props }: PageShellProps) {
   return (

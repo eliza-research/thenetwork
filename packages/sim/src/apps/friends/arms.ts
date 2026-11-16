@@ -1,4 +1,4 @@
-// The arms compared in docs/results/2026-10-08-friends-pack.md: the pack, the baselines and the ablations.
+// Current Friends pack, baselines, and ablations for options the planner still exposes.
 import { BASELINES } from "./baselines.ts";
 import { friendsPackMatcher } from "./packMatcher.ts";
 import type { FriendsMatcher, FriendsWorld } from "./world.ts";

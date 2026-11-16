@@ -13,7 +13,7 @@ export type LegalDocumentProps = ProseProps & {
 
 /**
  * A privacy policy or the terms of one site: the title, the effective date, the opening paragraph and the sections. The text messaging section of the terms comes from `SmsTerms`.
- * @model spec/sitePages.md
+ * Its rules come from `spec/sitePages.md`, a spec of decisions with no state of its own.
  */
 export function LegalDocument({ app, text, ...props }: LegalDocumentProps) {
   return (

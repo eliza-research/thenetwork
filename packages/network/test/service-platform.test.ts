@@ -639,8 +639,8 @@ describe("PLAT-06 the production boot check", () => {
     };
     const missing = await run({ PLATFORM_ENV: "production", OTP_PROVIDER: "dev", DATABASE_URL: "postgres://x@db.invalid/none" });
     expect(missing.code).not.toBe(0);
-    // spec/bootPolicy.md, "A deployed service lets each agent signup skill finish": main.ts names the agent signup settings too.
-    for (const word of ["refusing to start", "OTP_PROVIDER=twilio", "TURNSTILE_SECRET_KEY", "PLATFORM_PROXY_SECRET", "PLATFORM_SESSION_SECRET", "PLATFORM_PHONE_OTP_ONLY_APPS"]) expect(missing.err).toContain(word);
+    // The network boot policy requires a real provider. Blooio's app allow-list is optional.
+    for (const word of ["refusing to start", "OTP_PROVIDER=twilio or blooio", "TURNSTILE_SECRET_KEY", "PLATFORM_PROXY_SECRET", "PLATFORM_HASH_KEY", "PLATFORM_SESSION_SECRET"]) expect(missing.err).toContain(word);
     const undeclared = await run({ DATABASE_URL: "postgres://x@db.invalid/none" });
     expect(undeclared.code).not.toBe(0);
     expect(undeclared.err).toContain("PLATFORM_ENV");

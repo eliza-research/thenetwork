@@ -23,6 +23,7 @@
 // constructor), never inside it: EngineConfig / AttentionConfig / PlansConfig keep their shapes and
 // hashes. Run logs get no new fields for networkPack. Rule and generator order is the contract.
 import type { AppId, Category, City, Facet, Intent, MemberId, OpportunityKind } from "@thenetwork/core";
+import type { MatchLane } from "../../core/src/generated/matchLane.ts";
 import type { ActivityType } from "./packs/network/activities.ts";
 import type { AttentionConfig, EngineConfig } from "./config.ts";
 import type { GenCtx } from "./genkit.ts";
@@ -122,11 +123,15 @@ export interface Ontology {
 /** What a member-level rule sees (filters.ts MemberCheck). */
 export interface MemberCheck {
   category: Category; role: Role; format: Format; timeSensitive: boolean;
+  lane?: MatchLane;
   extraProactive?: number; extraContribution?: number; ownIntentCreatedAt?: number;
 }
 /** A rule returns a funnel reason (string) or null. Rules are pure and only ever REMOVE. */
 export interface MemberRule { id: string; check(w: World, id: MemberId, mi: MemberIndex, c: MemberCheck): string | null }
-export interface PairRule { id: string; check(w: World, a: MemberId, b: MemberId, lane: Category, ma: MemberIndex, mb: MemberIndex): string | null }
+export interface PairRule {
+  id: string;
+  check(w: World, a: MemberId, b: MemberId, category: Category, ma: MemberIndex, mb: MemberIndex, lane?: MatchLane): string | null;
+}
 export interface CandidateRule { id: string; check(w: World, c: Candidate): string | null }
 
 export interface EligibilityPolicy {
@@ -170,7 +175,7 @@ export interface GeoModel {
    * Optional pair-level geo hard filter, checked after the pack's pair rules (radius model: mutual
    * radius, d <= min(rA, rB)). Must be symmetric. networkPack: absent (city overlap only).
    */
-  pairReason?(w: World, a: MemberId, b: MemberId): string | null;
+  pairReason?(w: World, a: MemberId, b: MemberId, lane?: MatchLane): string | null;
 }
 
 // ---------------------------------------------------------------------------------------- generators
@@ -251,6 +256,8 @@ export interface JudgePack {
   rubric: { compact: JudgePassSpec; matchable: JudgePassSpec };
   /** Pass 3 (deep review). */
   deep?: JudgePassSpec;
+  /** Whether this pack has a model rubric for the candidate's lane. */
+  reviewCandidate?(c: Candidate): boolean;
   /** Pseudonymous, scrubbed context for a pass (must never carry agent_private facets or sealed attributes to member-facing fields). */
   buildContext(w: World, c: Candidate, visibility: JudgeVisibility): { context: object; refs: Record<string, MemberId> };
   /** Pack part of the post-model gate, after the core gate (minors, unknown, holds, blocks). */

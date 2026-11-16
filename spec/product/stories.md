@@ -54,7 +54,9 @@ Models: [join flow](../models/join_flow.md), [profile learning](../models/profil
 
 Return the person's own app profile, with source and scope as applicable. Ask for explicit approval to correct, remove or change how a fact may be used. Remove its derived data where required and apply the change at the next relevant engine read. A saved-profile readback must not advance onboarding or claim a pending draft was saved.
 
-Models: [generated saved-profile read](../savedProfileRead.md), [profile isolation and app leave](../savedProfileJourney.md), [profile read flow](../models/profile_read.md), [profile learning](../models/profile_learning.md).
+In the signed text conversation, `SHOW MY FACTS` shows saved facts for the current app. The member can use a fact reference to request a correction, removal, or scope change. The member confirms the exact edit using a short-lived code. A stale fact or a different app or member cannot use that code.
+
+Models: [generated saved-profile read](../savedProfileRead.md), [profile fact review and edits](../profileFactEdit.md), [profile isolation and app leave](../savedProfileJourney.md), [profile read flow](../models/profile_read.md), [profile learning](../models/profile_learning.md).
 
 ## Story F6 — Answer a useful follow-up
 
@@ -94,7 +96,7 @@ Models: [agent loop](../models/chatjson_loop.md), [member request admission](../
 
 Record the objective, essential constraints, source and time horizon. List, pause or close it on request. Re-evaluate when relevant evidence or supply changes. Expire or reconfirm at 60 days. A later suggestion still needs current eligibility and consent.
 
-Models: [profile learning](../models/profile_learning.md), [standing intent freshness](../standingIntent.md), [standing intent management](../standingIntentManagement.md), [public event supply](../publicEventCatalog.md), [request retry and withdrawal](../memberRequest.md), [matching engine](../models/matching_engine.md).
+Models: [profile learning](../models/profile_learning.md), [standing intent freshness](../standingIntent.md), [standing intent management](../standingIntentManagement.md), [cofounder standing intent](../cofounderIntent.md), [public event supply](../publicEventCatalog.md), [request retry and withdrawal](../memberRequest.md), [matching engine](../models/matching_engine.md).
 
 ## Story F10 — Get concierge value
 
@@ -122,7 +124,7 @@ Models: [opportunity](../models/opportunity.md), [matching engine](../models/mat
 
 Propose a pair only when its lane gives it a pair value: both members reach the lane's utility floor, their private standing gap after the lane's offset stays inside the lane's band plus both uncertainties, and a lane that requires balance has a balanced exchange.
 
-Models: [reciprocal pair value](../pairValue.md), [relationship lanes](../matchLane.md), [matching engine](../models/matching_engine.md).
+Models: [reciprocal pair value](../pairValue.md), [relationship lanes](../matchLane.md), [exact cofounder consent](../cofounderDispatch.md), [Peon cofounder matching](../peonCofounder.md), [matching engine](../models/matching_engine.md).
 
 ### Standing stays private and earned
 
@@ -132,7 +134,7 @@ Models: [private member standing](../memberStanding.md), [matching engine](../mo
 
 ### Candidate search is bounded and exact when it says so
 
-Check at most the lane's search budget of pairs for each member, and when the search closes as exact, keep the same best candidates that a full scan of the eligible members would keep.
+Use the lane's limits on pair checks and index entries visited for each search. When the search closes as exact, keep the same best candidates that a full scan of the eligible members would keep.
 
 Models: [bounded candidate search](../candidateSearch.md), [candidate pool](../models/candidate_pool.md).
 
@@ -252,7 +254,7 @@ Models: [empty intent follow-up](../emptyIntentFollowup.md), [matching engine](.
 
 ### An empty or budgeted search is a recorded reason
 
-When a member's candidate search keeps no candidate, or stops at its check budget before it is exact, record that result and its bound on missed value in the matching run log (staff only, never in member-facing text), and never fill the gap with a pair that has no pair value.
+When a member's candidate search keeps no candidate or reaches either search limit before it is exact, record the result and its bound on missed value in the staff-only matching run log. Only pairs with a value can fill a candidate slot.
 
 Models: [bounded candidate search](../candidateSearch.md), [empty intent follow-up](../emptyIntentFollowup.md), [matching engine](../models/matching_engine.md).
 

@@ -99,7 +99,8 @@ export function slopVectors(o: SlopPackOptions): PackVectors {
       const p = profilesOf(w).get(entity.memberId);
       const rating = p?.appearance;
       if (p && rating && rating.confidence >= o.appearance.minConfidence && standingReadable(p.adult, p.optedIn)) {
-        return { standing: standingFromRating(ratingPermille(rating.overall)), uncertainty: standingUncertainty(rating.photos ?? 1) };
+        return { standing: standingFromRating(ratingPermille(rating.overall)), uncertainty: standingUncertainty(rating.photos ?? 1),
+          evidenceIds: p.appearanceEvidenceIds };
       }
       return { standing: standingFromRating(standingRatingScale / 2), uncertainty: standingUncertainty(0) };
     },

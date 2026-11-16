@@ -4,7 +4,7 @@ import type {
   Category, City, MemberId, OpenOpportunity, OpportunityKind, Proposal, ScoreComponents, WorldSnapshot,
 } from "@thenetwork/core";
 
-import type { MatchLane } from "../../core/src/generated/matchLane.ts";
+import type { LaneSide, MatchLane } from "../../core/src/generated/matchLane.ts";
 import type { EntityId } from "./match/profile.ts";
 
 export type { NetworkEvent } from "@thenetwork/core";
@@ -53,9 +53,21 @@ export interface ReliabilityEvidence { noShows: number; completedSinceLastNoShow
 /** A core Proposal, with the roles an engine proposal carries (EngineProposal.roles) when it has them. */
 export type RecentProposal = Proposal & { roles?: Record<MemberId, Role> };
 
+/** Private app-scoped state for one lane membership. Each evidence id is an opaque source digest. */
+export interface MemberStandingRow {
+  readonly memberId: MemberId;
+  readonly lane: MatchLane;
+  readonly side: LaneSide;
+  readonly value: number;
+  readonly observedAt: number;
+  readonly evidenceIds: readonly string[];
+}
+
 /** What the engine reads: the core snapshot plus optional extension fields. */
 export interface EngineInput extends WorldSnapshot {
   recentProposals: RecentProposal[];
+  /** Private prior observations. Pass an empty array to initialize standing for the first time. */
+  memberStanding?: readonly MemberStandingRow[];
   /** An evidence-triggered run considers only these live standing intents and their events. */
   standingIntentSearch?: string[];
   safetyHolds?: SafetyHold[];
@@ -118,6 +130,8 @@ export interface Candidate {
   lane?: MatchLane;
   /** The matched entity of a participant when it is not the member itself (a peon job seat). */
   entities?: Record<MemberId, EntityId>;
+  /** Exact current intent that authorizes each peer's participation in the Cofounder lane. */
+  cofounderIntents?: Readonly<Record<MemberId, string>>;
 }
 export interface GroupStats { avgPairwise: number; minBest: number; roleCoverage: number; warmTies: number; clusterDiversity: number; overlapHours: number }
 
@@ -133,6 +147,8 @@ export interface JudgeVerdict {
 
 export interface EngineProposal extends Proposal {
   category: Category; roles: Record<MemberId, Role>; expiresAt: number; anchor?: Anchor; via?: MemberId;
+  /** Matching lane, selected entities and the exact consent references of a Cofounder pair. */
+  lane?: MatchLane; entities?: Candidate["entities"]; cofounderIntents?: Candidate["cofounderIntents"];
   safetyClass: SafetyClass; threshold: number; channels: string[]; judged: boolean;
   /** Off-policy logging: selector rank and probability this proposal was selected (1 for greedy picks). */
   selectorRank: number; selectionProbability: number;
@@ -141,9 +157,6 @@ export interface EngineProposal extends Proposal {
    * Additive (attention budget, D13): the send-time layer orders items by E x sqrt(P_acc).
    */
   acceptance?: Record<MemberId, number>;
-  /** The candidate's relationship lane and matched entities (Candidate.lane, Candidate.entities). */
-  lane?: MatchLane;
-  entities?: Record<MemberId, EntityId>;
 }
 
 export interface FairnessMetrics {
@@ -204,8 +217,8 @@ export interface MatchingRunLog {
   /** Bounded candidate search totals (match/search.ts); absent when no search ran. */
   search?: SearchTally;
 }
-/** Searches run, pair checks, posting entries touched, exact and budgeted results, and the largest unseen bound of a budgeted result (-1 if none). */
-export interface SearchTally { members: number; checks: number; touches: number; exact: number; budgeted: number; largestUnseenBound: number }
+/** Search costs and outcomes. The largest unseen bound is -1 when every result is exact. */
+export interface SearchTally { members: number; checks: number; touches: number; exact: number; budgeted: number; empty: number; largestUnseenBound: number }
 
 // ------------------------------------------------------------------------------------------------
 // Attention budget data model (docs/design/2026-10-07-experience-design.md 1.2; engine-local first,

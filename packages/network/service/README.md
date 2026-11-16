@@ -162,8 +162,8 @@ Send `Authorization: Bearer <token>`. Tokens are per app: `reviewer@slop:<t>` is
 | Route | Role | Body |
 |---|---|---|
 | `GET /health` | any role for the app | Last tick, lock holder, backlog (review, overdue, deferred, waiting sends), refusals; with several networks, a `networks` summary |
-| `GET /review` | reviewer, safety | The review queue, oldest first |
-| `POST /review/:oppId` | reviewer | `{ decision: "approve" \| "reject" \| "edit" \| "reroll", reason?, note?, secondsSpent?, explanations?, objective?, swapOut? }`. The reviewer of record is the token's staff id, never a field in the body. |
+| `GET /review` | reviewer, safety | The review queue, oldest first, with the current `revision` for each item |
+| `POST /review/:oppId` | reviewer | `{ decision: "approve" \| "reject" \| "edit" \| "reroll", revision, reason?, note?, secondsSpent?, explanations?, objective?, swapOut? }`. Send the revision the reviewer saw. A changed revision returns `review_stale`. The token identifies the reviewer. |
 | `POST /safety/lift` | safety | `{ memberId, note? }` |
 | `POST /safety/close` | safety | `{ caseId, note? }` |
 | `GET /signals` | reviewer, safety | Agent `opt_out` and `safety_concern` signals waiting for a person: `{ id, memberId, kind, evidence, at }`, newest first |
@@ -290,6 +290,12 @@ leak check. A sent invitation names the inviter and gives the recipient
 receipt lookup. Once queued, the link requires verification of the exact
 recipient phone, along with the existing age and consent checks. [Expected
 invitation rules](../../../spec/expectedMemberInvitation.md)
+
+## Review saved profile facts
+
+In a signed member conversation, send `SHOW MY FACTS` or `WHAT DO YOU KNOW ABOUT ME?` to list the current app's saved facts with their source and privacy scope. Follow the page prompt to see more. `SHOW MY <APP> PROFILE` still reads back the saved signup profile.
+
+Use a reference from the list with `CORRECT FACT <ref> TO <text>`, `REMOVE FACT <ref>`, or `SET FACT SCOPE <ref> TO <scope>`. The service sends an exact edit code that lasts 15 minutes. Reply with `CONFIRM FACT EDIT <code>` to apply it or `CANCEL FACT EDIT <code>` to discard it.
 
 ## Private home-help review
 

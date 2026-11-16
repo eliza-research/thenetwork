@@ -6,8 +6,7 @@ import { serveHttp } from "../../packages/core/src/runtime/http.ts";
 // 1. Checks the environment (backend.ts loadConfig; a deployed environment without its secrets stops here).
 // 2. Applies pending migrations under the advisory lock (packages/observatory/db/migrate.ts). MIGRATE_ON_BOOT=0 skips.
 // 3. Starts every network in platform.networks, the public port (PORT) and the private staff port (STAFF_PORT).
-// 4. Each minute: redrives waiting inbound messages, ticks every network, runs retention, then the notifications.
-//    SIGTERM or SIGINT: finish the work in flight, release the locks, exit.
+// 4. Ticks every network each minute. SIGTERM or SIGINT: finish the work in flight, release the locks, exit.
 // Sends are dry-run unless NETWORK_CHANNEL=blooio, BLOOIO_ALLOW_SEND=1 and NTWRK_LIVE_APPROVED=1, and each
 // app other than ntwrk also has its own <APP>_LIVE_APPROVED=1 (founder approval).
 import { SQL } from "../../packages/core/src/runtime/postgres.ts";
@@ -75,9 +74,6 @@ async function main() {
   if (raterEnv.status === "refused_weights") log.error("photo rater", raterLog); else log.info("photo rater", raterLog);
   const svc = await NetworkService.fromDatabase({
     photoRater,
-    // The selected-photo capability links point at this backend's public port (backend.ts forwards
-    // /internal/relay-photo/resolve and the provider's GET /api/relay-photos/deliver/*).
-    ...(c.photoDeliveryOrigin ? { photoDeliveryOrigin: c.photoDeliveryOrigin } : {}),
     url: c.databaseUrl, clock, instance: process.env.NETWORK_SERVICE_INSTANCE ?? process.env.RAILWAY_REPLICA_ID ?? `${process.pid}`,
     tokens: process.env.NETWORK_SERVICE_TOKENS, consoleToken: process.env.NETWORK_SERVICE_CONSOLE_TOKEN,
     webhookSecret: process.env.BLOOIO_WEBHOOK_SECRET, webhookSecrets: webhookSecretsFromEnv(),

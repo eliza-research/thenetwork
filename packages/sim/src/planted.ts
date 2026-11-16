@@ -29,6 +29,7 @@ import { appearanceFacet } from "@thenetwork/engine/src/packs/slop/appearance.ts
 import { SLOTS as DATE_SLOTS } from "@thenetwork/engine/src/packs/slop/profile.ts";
 import { ZIPS } from "@thenetwork/engine/src/packs/slop/zips.ts";
 import type { EngineInput } from "@thenetwork/engine/src/types.ts";
+import { cofounderIntentDetails, cofounderIntentObjective } from "../../core/src/generated/cofounderIntent.ts";
 import { laneLimits, laneOffered, laneShape } from "../../core/src/generated/matchLane.ts";
 import { FIRST_NAMES } from "./taxonomy.ts";
 
@@ -343,8 +344,11 @@ export function plantedEngineInput(o: PlantedWorldOptions): { input: EngineInput
     const area = mark.circle >= 0 && r.bool(0.7) ? circleArea[mark.circle]! : r.pick(areas);
     const joinedAt = now - (newcomer ? r.int(0, 13) : r.int(14, 400)) * DAY;
     const romance = lane === "Date" && adult;
+    // Some cohorts are actively seeking an introduction this week. Keep the other cohorts on normal participation.
+    const activeSearch = adult && mark.circle >= 0 && hash32("planted-open", o.seed, mark.circle) % 3 === 0
+      && (lane === "Cofounder" || lane === "Invest");
     members.push({
-      id, name: `${r.pick(FIRST_NAMES)} ${i}`, homeCity: MARKET, state: "normal",
+      id, name: `${r.pick(FIRST_NAMES)} ${i}`, homeCity: MARKET, state: activeSearch ? "open" : "normal",
       prefs: {
         categoriesOptIn: lane === "Date" && !adult ? [] : [laneCategory(lane)], quietHours: [22, 8], romanceOptIn: romance,
         formats: ["one_to_one", "small_group"], maxTravelMinutes: 45, onlyWhenAsked: false,
@@ -364,7 +368,7 @@ export function plantedEngineInput(o: PlantedWorldOptions): { input: EngineInput
     const trait = (size: number, k = 0) => (mark.circle >= 0 && r.bool(purity) ? mark.circle + k : r.int(0, size - 1)) % size;
     const objective = write({ lane, now, add, s: seatedMember, gender, trait });
     presence.push({ memberId: id, city: MARKET, type: "home", areas: [area] });
-    if (objective) intents.push({ id: `${id}-i`, memberId: id, ...objective, horizonDays: 60, status: "active", createdAt: Math.max(joinedAt, now - r.int(0, 20) * DAY) });
+    if (objective) intents.push({ id: `${id}-i`, memberId: id, app, ...objective, horizonDays: 60, status: "active", createdAt: Math.max(joinedAt, now - r.int(0, 20) * DAY) });
     ordinalOf.set(id, i);
     truthMembers.push(truth);
   }
@@ -383,8 +387,10 @@ interface WriteCtx {
 }
 
 /**
- * ntwrk: interests, offers and seeks, the lane goal (`lane:<Lane>`, `side:<Side>`) and agent_private
- * evidence facts whose points sum to the observed standing (packs/network/vectors.ts standing).
+ * ntwrk: interests, offers and seeks, the lane goal (`lane:<Lane>`, `side:<Side>`) and matchable
+ * evidence facts whose points sum to the observed standing (packs/network/vectors.ts standing;
+ * spec/memberStanding.md `standingFacetReadable`). A Cofounder goal carries the member's own
+ * confirmation (spec/cofounderIntent.md `cofounderIntentDetails`).
  */
 function writeNtwrk({ lane, add, s }: WriteCtx): Objective | undefined {
   add("interest", `into ${s.truth.topics.join(", ")}`, s.truth.topics, "shareable");
@@ -394,8 +400,8 @@ function writeNtwrk({ lane, add, s }: WriteCtx): Objective | undefined {
   const objective = NTWRK_OBJECTIVE[lane][m.side];
   add("goal", objective, [`lane:${lane}`, `side:${m.side}`], "matchable");
   for (const e of evidenceItems(m.observed, m.reviewed))
-    add("fact", "track record", [`lane:${lane}`, `evidence:${e.points}`, e.reviewed ? "reviewed" : "unreviewed"], "agent_private", e.reviewed ? "vouched" : "said");
-  return { objective, category: laneCategory(lane) };
+    add("fact", "track record", [`lane:${lane}`, `evidence:${e.points}`, e.reviewed ? "reviewed" : "unreviewed"], "matchable", e.reviewed ? "vouched" : "said");
+  return { objective, category: laneCategory(lane), ...(lane === "Cofounder" ? { details: cofounderIntentDetails } : {}) };
 }
 
 /**
@@ -446,7 +452,8 @@ function writeFriends({ add, s, trait }: WriteCtx): Objective | undefined {
  * role family, level, pay range, hybrid site and must-have skills at the level; a Seeking member is
  * a candidate with the family, level and skills (reviewed by a connected source unless a newcomer),
  * a pay floor, hybrid commute areas and work authorization. A Cofounder member is a candidate who
- * says they want a cofounder.
+ * confirms they want a cofounder and states plain interests, skills and wants: the Cofounder lane
+ * reads only those, never the peon: job tags (packs/peon/cofounder.ts peonCofounderTags).
  */
 function writePeon({ lane, add, s }: WriteCtx): Objective | undefined {
   const m = s.m!, level = plantedLevel(m.observed), family = s.truth.topics[0]!;
@@ -463,7 +470,14 @@ function writePeon({ lane, add, s }: WriteCtx): Objective | undefined {
   add("fact", "candidate", [`${PEON.entity}candidate`, `${PEON.family}${family}`, `${PEON.floor}${base + s.r.int(-5, 15)}`, `${PEON.mode}hybrid`, ...commute, `${PEON.auth}yes`], "matchable");
   add("fact", "level", [`${PEON.seniority}${level}`], "matchable", proof);
   for (const k of s.offers) add("skill", k.skill, [`${PEON.skill}${k.skill}:${k.level}`], "shareable", proof);
-  return { objective: lane === "Cofounder" ? "find a cofounder" : "find a new job", category: "professional", details: SEARCH_INTENT };
+  if (lane === "Cofounder") {
+    add("interest", `into ${s.truth.topics.join(", ")}`, s.truth.topics, "shareable");
+    for (const k of s.offers) add("offer", `can help with ${k.skill}`, [k.skill], "shareable");
+    for (const k of s.seeks) add("desire", `looking for help with ${k.skill}`, [k.skill], "matchable");
+  }
+  return lane === "Cofounder"
+    ? { objective: cofounderIntentObjective, category: "professional", details: cofounderIntentDetails }
+    : { objective: "find a new job", category: "professional", details: SEARCH_INTENT };
 }
 
 const WRITERS: Record<AppId, (c: WriteCtx) => Objective | undefined> = { ntwrk: writeNtwrk, slop: writeSlop, friends: writeFriends, peon: writePeon };

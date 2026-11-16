@@ -1,9 +1,10 @@
-// The arms compared in docs/results/2026-10-08-peon-pack.md: baselines, the pack, and ablations.
-// An ablation changes ONE thing about the pack (a pack slot or the harness setting).
+// The Peon baselines and ablations in docs/results/2026-10-08-peon-pack.md.
+// Each ablation changes one pack slot or harness setting.
+import { laneLimits } from "@thenetwork/core/src/generated/matchLane.ts";
 import type { AppPack } from "@thenetwork/engine/src/pack.ts";
 import { peonPack } from "@thenetwork/engine/src/packs/peon/index.ts";
+import { sides } from "@thenetwork/engine/src/packs/peon/profile.ts";
 import { SAFETY, T } from "@thenetwork/engine/src/packs/peon/schema.ts";
-import { laneLimits } from "../../../../core/src/generated/matchLane.ts";
 import { greedyPopular, keywordMatcher, keywordMatcherN, oracleMatcher, packMatcher } from "./baselines.ts";
 import type { PeonSnapshot } from "./snapshot.ts";
 import { CAND_CAP, type Intro, type PeonMatcher, type PeonWorld } from "./world.ts";
@@ -33,7 +34,10 @@ export const ARMS: Record<string, Arm> = {
   // ---- ablations -------------------------------------------------------------------------------
   "no-congestion": {
     name: "pack: no congestion control", about: "no job slate cap (the Hire lane's candidate cap kept)",
-    matcher: packMatcher({ name: "pack-no-congestion", pack: withPack({ selection: { ...peonPack.selection, adjust: (_w, c, v, times) => (c.participants.some(id => times(id) >= laneLimits("Hire").weeklyCapacity && id.startsWith("c-")) ? -Infinity : v) } }) }),
+    matcher: packMatcher({ name: "pack-no-congestion", pack: withPack({ selection: { ...peonPack.selection, adjust: (w, candidate, value, times) => {
+      const match = sides(w, candidate.participants);
+      return match && times(match.cand.id) < laneLimits("Hire").weeklyCapacity ? value : -Infinity;
+    } } }) }),
   },
   "one-way": {
     name: "pack: one-way retrieval", about: "candidate -> jobs only",

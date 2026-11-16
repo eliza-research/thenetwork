@@ -6,6 +6,7 @@ import type { MatchProfile } from "../../match/profile.ts";
 import type { GeneratorSpec } from "../../pack.ts";
 import type { Candidate } from "../../types.ts";
 import type { World } from "../../world.ts";
+import { peonCofounderGenerator } from "./cofounder.ts";
 import { sides } from "./profile.ts";
 
 function hireIntro(w: World, generator: string, own: MatchProfile, other: MatchProfile, value: number): Candidate[] {
@@ -38,4 +39,5 @@ function fromSearch(name: string, side: MatchProfile["side"]): GeneratorSpec {
 export const PEON_GENERATORS: readonly GeneratorSpec[] = [
   fromSearch("candidate_to_jobs", "Seeking"),
   fromSearch("job_to_candidates", "Offering"),
+  peonCofounderGenerator,
 ];

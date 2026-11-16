@@ -18,7 +18,7 @@ export type Event =
   | { type: "closeExact"; unseenBound: number }
   | { type: "closeBudgeted"; unseenBound: number; walkSpent: boolean };
 
-/** Story: Search only where a pair can have a value / The tag postings of the member hold every partner with a value (spec/candidateSearch.md) */
+/** Story: Search only where a pair can have a value / The posting walk covers or bounds every partner in the window (spec/candidateSearch.md) */
 export const searchTouchesPerCheck: number = 8;
 /** Story: Keep the best candidates within a fixed number of pair checks / A search starts once with a positive limit and a budget no smaller than the limit (spec/candidateSearch.md) */
 export const initial: CandidateSearch = { phase: "Idle", limit: 0, budget: 0, checks: 0, kept: ([] as RankedCandidate[]), bestDropped: pairValue_noPairValue, bestDroppedOrdinal: 0, unseenBound: pairValue_noPairValue };

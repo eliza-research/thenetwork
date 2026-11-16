@@ -8,6 +8,8 @@ import { HOUR } from "@thenetwork/core";
 import type { CandidateRule, GeoModel, MemberRule, PairRule } from "../../pack.ts";
 import { pairKey, type World } from "../../world.ts";
 import type { Interval } from "../../interval.ts";
+import type { Candidate } from "../../types.ts";
+import { peonCofounderIntentOf, peonCofounderPair } from "./cofounder.ts";
 import { candidateOf, historyOf, jobOf, profileOf, sides, type CandidateProfile, type JobProfile } from "./profile.ts";
 
 /** A peon pair: a candidate and a job seat. */
@@ -17,18 +19,21 @@ const peonPair = (w: World, ids: readonly MemberId[]) => !!sides(w, ids);
 export const MAX_ACTIVE_INTROS = 5;
 
 export const PEON_MEMBER_RULES: readonly MemberRule[] = [
-  { id: "peon_not_onboarded", check: (w, id) => (profileOf(w, id) ? null : "peon_not_onboarded") },
+  { id: "peon_not_onboarded", check: (w, id, _member, context) => {
+    if (context.lane === "Cofounder") return peonCofounderIntentOf(w, id) ? null : "cofounder_intent_required";
+    return profileOf(w, id) ? null : "peon_not_onboarded";
+  } },
   // Job seats.
   { id: "job_closed", check: (w, id) => { const j = jobOf(w, id); return j && !j.open ? "job_closed" : null; } },
   { id: "employer_unverified", check: (w, id) => { const j = jobOf(w, id); return j && !j.verified ? "employer_unverified" : null; } },
   { id: "no_pay_range", check: (w, id) => { const j = jobOf(w, id); return j && j.payMax === undefined ? "no_pay_range" : null; } },
   { id: "employer_scam_signal", check: (w, id) => { const j = jobOf(w, id); return j && j.scamCue ? "employer_scam_signal" : null; } },
   // Candidates.
-  { id: "not_searching", check: (w, id) => { const c = candidateOf(w, id); return c && !c.searching ? "not_searching" : null; } },
+  { id: "not_searching", check: (w, id, _member, context) => { const c = candidateOf(w, id); return context.lane !== "Cofounder" && c && !c.searching ? "not_searching" : null; } },
   { id: "identity_signal", check: (w, id) => { const c = candidateOf(w, id); return c && c.fakeCue ? "identity_signal" : null; } },
   {
     id: "interruption_budget", check: (w, id, mi, c) => {
-      if (!candidateOf(w, id)) return null; // job seats get a weekly slate, not interruptions (caps in selection.ts)
+      if (c.lane !== "Cofounder" && !candidateOf(w, id)) return null; // job seats use slate capacity
       const budget = w.cfg.budgets[mi.m.state];
       return mi.recentProactive + (c.extraProactive ?? 0) >= budget.limit ? "interruption_budget" : null;
     },
@@ -51,7 +56,10 @@ export function locationOk(c: CandidateProfile, j: JobProfile): boolean {
 }
 
 export const PEON_PAIR_RULES: readonly PairRule[] = [
-  { id: "not_peon_pair", check: (w, a, b) => (peonPair(w, [a, b]) ? null : "not_peon_pair") },
+  { id: "not_peon_pair", check: (w, a, b, _category, _first, _second, lane) => {
+    if (lane === "Cofounder") return peonCofounderPair(w, a, b) ? null : "cofounder_pair_not_eligible";
+    return peonPair(w, [a, b]) ? null : "not_peon_pair";
+  } },
   {
     // Never re-introduce the same candidate and job (any earlier outcome), and never while one is in flight.
     id: "already_introduced", check: (w, a, b) => (w.pairInteractions.has(pairKey(a, b)) || w.activePairs.has(pairKey(a, b)) || w.recentPairs.has(pairKey(a, b)) ? "already_introduced" : null),
@@ -65,19 +73,30 @@ export const PEON_PAIR_RULES: readonly PairRule[] = [
   { id: "credential_required", check: (w, a, b) => { const s = sides(w, [a, b]); return s?.job.credRequired && !s.cand.creds.has(s.job.credRequired) ? "credential_required" : null; } },
 ];
 
-/** Configuration rules: an intro is one candidate and one job seat in the Hire lane, and no `via`. */
-function shapeOk(w: World, c: { participants: MemberId[]; lane?: string; via?: MemberId }): boolean {
-  return !c.via && c.lane === "Hire" && !!sides(w, c.participants);
+/** A Cofounder proposal carries exact consent for its two peers. Hire always needs one seat and one candidate. */
+function cofounderShapeOk(w: World, c: Candidate): boolean {
+  const [a, b] = c.participants;
+  return c.kind === "intro" && c.category === "professional" && c.format === "one_to_one"
+    && c.participants.length === 2 && !!a && !!b && !c.via && c.alternates.length === 0
+    && c.roles[a] === "peer" && c.roles[b] === "peer" && peonCofounderPair(w, a, b)
+    && Object.keys(c.cofounderIntents ?? {}).length === 2
+    && c.cofounderIntents?.[a] === peonCofounderIntentOf(w, a)?.id
+    && c.cofounderIntents?.[b] === peonCofounderIntentOf(w, b)?.id;
 }
 export const PEON_CANDIDATE_PRE_RULES: readonly CandidateRule[] = [
-  { id: "intro_shape", check: (w, c) => (shapeOk(w, c) ? null : "intro_shape") },
+  { id: "intro_shape", check: (w, c) => (c.lane === "Cofounder" ? cofounderShapeOk(w, c)
+    : !c.via && c.lane === "Hire" && !!sides(w, c.participants)) ? null : "intro_shape" },
 ];
 export const PEON_CANDIDATE_POST_RULES: readonly CandidateRule[] = [];
 
 /** Post-judge gate, pack part (the core gate already checked minors, holds and blocks). */
 export function peonHardGate(w: World, c: { participants: MemberId[]; lane?: string; via?: MemberId }): string | null {
+  if (c.lane === "Cofounder") {
+    const [a, b] = c.participants;
+    return c.participants.length === 2 && a && b && !c.via && peonCofounderPair(w, a, b) ? null : "intro_shape";
+  }
   const s = sides(w, c.participants);
-  if (!s || !shapeOk(w, c)) return "intro_shape";
+  if (!s || c.lane !== "Hire" || c.via) return "intro_shape";
   if (!s.job.verified) return "employer_unverified";
   if (!s.job.open) return "job_closed";
   if (s.job.payMax === undefined) return "no_pay_range";
@@ -117,7 +136,8 @@ export const peonGeo: GeoModel = {
     return { city, intervals: [[start, end]], hours: (end - start) / HOUR };
   },
   sharesArea: () => false,
-  pairReason(w, a, b) {
+  pairReason(w, a, b, lane) {
+    if (lane === "Cofounder") return null; // the Cofounder pair rule already required one home market
     const s = sides(w, [a, b]);
     if (!s) return null;
     return locationOk(s.cand, s.job) ? null : "location_incompatible";

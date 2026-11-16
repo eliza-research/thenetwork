@@ -6,7 +6,7 @@ import {
   type CandidateSearch, type Event as SearchEvent, type RankedCandidate,
 } from "../../../core/src/generated/candidateSearch.ts";
 import { lanePairValue, laneLimits, laneOffset, laneWeights, standingUncertaintyCeiling } from "../../../core/src/generated/matchLane.ts";
-import { coverageValue, directedUtility, pairValueScale } from "../../../core/src/generated/pairValue.ts";
+import { coverageValue, directedUtility, noPairValue, pairValueScale } from "../../../core/src/generated/pairValue.ts";
 import type { SearchTally } from "../types.ts";
 import { pairKey, type World } from "../world.ts";
 import { partnerBlock, type CandidateBlock, type CandidateIndex, type Postings } from "./index.ts";
@@ -33,11 +33,6 @@ function resultOf(block: CandidateBlock | undefined, search: CandidateSearch, to
     return profile ? [{ profile, value: c.value }] : [];
   });
   return { kept, checks: search.checks, touches, exact: search.phase === "Exact", unseenBound: search.unseenBound };
-}
-
-function close(search: CandidateSearch, unseenBound: number, walkSpent: boolean): CandidateSearch {
-  const exact: SearchEvent = { type: "closeExact", unseenBound };
-  return enabled(search, exact) ? step(search, exact) : step(search, { type: "closeBudgeted", unseenBound, walkSpent });
 }
 
 /** First index whose value is >= `x` in an ascending list read through `at`. */
@@ -72,19 +67,23 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
   const limits = laneLimits(profile.lane), { rules } = limits;
   let search = step(initial, { type: "beginSearch", limit: limits.searchLimit, budget: limits.searchBudget });
   const block = partnerBlock(index, profile);
-  if (!block) return resultOf(block, close(search, -1, false), 0);
-  const vectors = vectorsOf(w);
-  const traitCosts = vectors.traits?.costs ?? [];
-  const hasPackValue = vectors.packValue !== undefined;
-  const weights = laneWeights(profile.lane);
+  const empty: SearchEvent = { type: "closeExact", unseenBound: noPairValue };
+  if (!block) return resultOf(block, step(search, empty), 0);
 
   // spec/candidateSearch.md, "The standing window contains every partner that the parity rule allows"
   const offset = laneOffset(profile.lane, profile.side), band = rules.parityBand;
   const standingAt = (i: number) => block.profiles[i].standing;
   const from = lowerBound(block.profiles.length, standingAt, searchWindowLow(profile.standing, offset, band, profile.uncertainty, standingUncertaintyCeiling));
   const to = lowerBound(block.profiles.length, standingAt, searchWindowHigh(profile.standing, offset, band, profile.uncertainty, standingUncertaintyCeiling) + 1);
+  if (from === to) return resultOf(block, step(search, empty), 0);
 
-  // spec/candidateSearch.md, "The tag postings of the member hold every partner with a value":
+  const vectors = vectorsOf(w);
+  const traitCosts = vectors.traits?.costs ?? [];
+  const hasTraits = traitCosts.length > 0;
+  const hasPackValue = vectors.packValue !== undefined;
+  const weights = laneWeights(profile.lane);
+
+  // spec/candidateSearch.md, "The posting walk covers or bounds every partner in the window":
   // a's interests in the partners' interests, a's seeks in their offers, a's offers in their seeks,
   // walked rarest first. `open` counts the tags of each group whose window range is not fully walked:
   // a candidate that was not touched can have a hit only in those.
@@ -101,13 +100,13 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
   // an untouched b has at most open[g] hits in group g; a's terms are the coverage of those hits, b's
   // terms are full when b can have a hit and 0 when it cannot; closeness and pack at full value.
   const untouchedBound = (): number => {
-    if (windowWalked) return -1;
+    if (windowWalked) return noPairValue;
     const complement = coverageValue(open.complement, profile.seeks.length);
     const returned = open.returned > 0 ? pairValueScale : 0;
-    const mine = directedUtility(weightedTerms(weights, traitCosts.length > 0, hasPackValue, {
+    const mine = directedUtility(weightedTerms(weights, hasTraits, hasPackValue, {
       complement, affinity: coverageValue(open.affinity, profile.interests.length), closeness: pairValueScale, pack: pairValueScale,
     }));
-    const theirs = directedUtility(weightedTerms(weights, traitCosts.length > 0, hasPackValue, {
+    const theirs = directedUtility(weightedTerms(weights, hasTraits, hasPackValue, {
       complement: returned, affinity: open.affinity > 0 ? pairValueScale : 0, closeness: pairValueScale, pack: pairValueScale,
     }));
     return unseenValueBound(mine, theirs, complement, returned, rules);
@@ -138,16 +137,16 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
     return true;
   };
 
-  // The threshold walk: check the best touched candidate while no untouched one can beat it, else
-  // walk the next posting range. A lane without lawNoSharedTagStaysBelowFloor (Date) keeps an
-  // untouched bound of 0 or more after every range, so it walks the window itself last.
+  // Check the best touched candidate while no untouched one can beat its bound. If the pack's
+  // enabled terms still allow an untagged pair after all postings, walk the standing window too.
   for (;;) {
     const untouched = untouchedBound();
     const top = pending.peek();
-    const unseen = Math.max(top?.bound ?? -1, untouched);
+    const topBound = top?.bound ?? noPairValue;
+    const unseen = Math.max(topBound, untouched);
     const stop: SearchEvent = { type: "closeExact", unseenBound: unseen };
     if (enabled(search, stop)) return resultOf(block, step(search, stop), touches);
-    if (untouched > (top?.bound ?? -1) && !walkSpent) {
+    if (untouched > topBound && !walkSpent) {
       const range = walk[walked];
       if (range) {
         if (visit(range.start, range.end, i => range.posting[i])) { open[range.group]--; walked++; } else walkSpent = true;
@@ -155,7 +154,9 @@ export function searchCandidates(w: World, index: CandidateIndex, profile: Match
       else walkSpent = true;
       continue;
     }
-    if (!top || search.checks >= limits.searchBudget) return resultOf(block, close(search, unseen, walkSpent), touches);
+    if (!top || search.checks >= limits.searchBudget) {
+      return resultOf(block, step(search, { type: "closeBudgeted", unseenBound: unseen, walkSpent }), touches);
+    }
     pending.pop();
     search = step(search, { type: "checkCandidate", value: pairValueOf(w, profile, top.other), ordinal: top.other.ordinal });
   }
@@ -206,7 +207,7 @@ export function bruteForceCandidates(w: World, index: CandidateIndex, profile: M
     .slice(0, laneLimits(profile.lane).searchLimit);
 }
 
-export const emptySearchTally: SearchTally = { members: 0, checks: 0, touches: 0, exact: 0, budgeted: 0, largestUnseenBound: -1 };
+export const emptySearchTally: SearchTally = { members: 0, checks: 0, touches: 0, exact: 0, budgeted: 0, empty: 0, largestUnseenBound: -1 };
 
 export function tallySearch(tally: SearchTally, result: SearchResult): SearchTally {
   return {
@@ -215,6 +216,7 @@ export function tallySearch(tally: SearchTally, result: SearchResult): SearchTal
     touches: tally.touches + result.touches,
     exact: tally.exact + (result.exact ? 1 : 0),
     budgeted: tally.budgeted + (result.exact ? 0 : 1),
+    empty: tally.empty + (result.kept.length === 0 ? 1 : 0),
     largestUnseenBound: result.exact ? tally.largestUnseenBound : Math.max(tally.largestUnseenBound, result.unseenBound),
   };
 }

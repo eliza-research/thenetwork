@@ -16,7 +16,7 @@ import { NEIGHBORHOODS } from "./geo.ts";
 
 export type Abuse = "sales_spam" | "scam_money" | "contact_extraction" | "prompt_injection" | "harassment" | "mass_recruit";
 export type InboundKind =
-  | "people_request" | "plans_request" | "invite_friend" | "cancel" | "block" | "report" | "feedback_like" | "ack" | "other";
+  | "people_request" | "plans_request" | "cofounder_goal" | "invite_friend" | "cancel" | "block" | "report" | "feedback_like" | "ack" | "other";
 
 export interface Classified {
   kind: InboundKind;
@@ -39,6 +39,8 @@ export interface Classified {
   desireId?: string; category?: Category; tags: string[];
   /** The member asks the Network to find people now, rather than stating a profile preference. */
   directPeopleAsk?: boolean;
+  /** The whole message is the speaker's own affirmative cofounder goal. */
+  cofounderAffirmed?: boolean;
   /** Wants the member said they do NOT want ("I don't want to meet other founders"). */
   notWanted?: string[];
   /** For invites: the friend's first name. */
@@ -51,6 +53,11 @@ export interface Classified {
 
 /** Lower case, NFKC, straight quotes. */
 export const normText = (s: string) => s.normalize("NFKC").toLowerCase().replace(/[‘’ʼ`´]/g, "'").replace(/[“”]/g, "\"");
+
+const COFOUNDER_WORD = /\bco[- ]?founders?\b/;
+const COFOUNDER_OBJECT = "a co[- ]?founder(?: for my (?:startup|company|business|project))?";
+const COFOUNDER_STATEMENT = new RegExp(`^(?:i (?:want|need)(?: to find)?|i(?:'d| would) (?:like|love)(?: to find)?|i(?:'m| am) (?:looking|searching) for) ${COFOUNDER_OBJECT}[.!]?$`);
+const COFOUNDER_ASK = new RegExp(`^(?:(?:can|could|would) you )?(?:please )?(?:find me|help me find) ${COFOUNDER_OBJECT}[.?!]?$`);
 
 const RX = {
   link: /(https?:\/\/|www\.|bit\.ly|\b[a-z0-9-]+\.(co|com|io|ly|biz|net)\b)/i,
@@ -158,6 +165,11 @@ export function classify(body: string): Classified {
 
   if (abuse.length && !desire) return out;
   if (RX.plans.test(t) && !x.negatedAsk) return { ...out, kind: "plans_request", category: out.category ?? "events" };
+  if (COFOUNDER_WORD.test(low)) {
+    // A whole-message grammar excludes quoted, negated, hypothetical and third-person claims.
+    // Unclear mentions stay out of the generic people-request path.
+    return { ...out, kind: "cofounder_goal", cofounderAffirmed: COFOUNDER_STATEMENT.test(low) || COFOUNDER_ASK.test(low) };
+  }
   const directPeopleAsk = !x.negatedAsk && sents.some(s => RX.directPeopleAsk.test(normText(s.text)));
   if (desire || directPeopleAsk || (RX.peopleAsk.test(t) && !x.negatedAsk)) {
     return { ...out, kind: "people_request", category: out.category ?? "social", directPeopleAsk };

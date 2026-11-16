@@ -5,9 +5,12 @@ import {
   laneOffered, laneShape, laneSidesCompatible, standingCeiling, standingUncertaintyCeiling,
   type LaneSide, type MatchLane,
 } from "../../../core/src/generated/matchLane.ts";
+import { planProfileCapacityAllows } from "../../../core/src/generated/planDecision.ts";
 import { tokenize } from "../embed.ts";
 import { sendTimeReason } from "../filters.ts";
+import type { MemberStandingRow } from "../types.ts";
 import { intentText, type MemberIndex, type World } from "../world.ts";
+import { standingObservations } from "./standing.ts";
 
 export type EntityId = string & { readonly __brand: "EntityId" };
 export const isEntityId = (value: string): value is EntityId => value.length > 0;
@@ -21,7 +24,7 @@ export interface Membership {
   readonly lane: MatchLane;
   readonly side: LaneSide;
   readonly market: City;
-  /** Introductions this entity can still take this week; 0 or less gives no profile. */
+  /** Introductions this entity can still take this week; discovery requires a positive value. */
   readonly capacity: number;
 }
 export interface MatchEntity extends Membership { readonly memberId: MemberId }
@@ -31,7 +34,12 @@ export interface EntityTags {
   readonly interests: readonly string[];
 }
 /** Whole numbers from the generated memberStanding helpers; the engine clamps them to their ranges. */
-export interface EntityStanding { readonly standing: number; readonly uncertainty: number }
+export interface EntityStanding {
+  readonly standing: number;
+  readonly uncertainty: number;
+  /** Exact source identities used for the estimate. Kept out of public match profiles and logs. */
+  readonly evidenceIds?: readonly string[];
+}
 /** Scalar attributes compared by closeness: `of` returns one whole number per entry of `costs`. */
 export interface PackTraits {
   readonly costs: readonly number[];
@@ -129,9 +137,10 @@ interface Draft {
  * unknown age, under the pack or config age floor, safety hold, paused, not opted in to the lane's
  * category) gets none, and the pack is not asked about a member who fails the core checks.
  */
-export function buildProfiles(w: World): readonly MatchProfile[] {
+export function buildProfiles(w: World, standingUpdates?: MemberStandingRow[], mode: "discovery" | "existingFriendPlan" = "discovery"): readonly MatchProfile[] {
   const vectors = w.pack.vectors;
   if (!vectors) return [];
+  const existingFriendPlan = mode === "existingFriendPlan";
   const traitCount = vectors.traits?.costs.length ?? 0;
   const drafts: Draft[] = [];
   const seen = new Set<string>();
@@ -139,13 +148,14 @@ export function buildProfiles(w: World): readonly MatchProfile[] {
     if (sendTimeReason(w, memberId) !== null) continue;
     for (const membership of vectors.memberships(w, memberId)) {
       const { id, lane, side, market } = membership;
+      if (existingFriendPlan && lane !== "Friend") continue;
       if (!isEntityId(id)) throw new Error(`empty entity id for member ${memberId}`);
       if (seen.has(id)) throw new Error(`duplicate entity id ${id}`);
       seen.add(id);
       if (!laneOffered(w.pack.id, lane) || !laneSidesCompatible(lane, side, partnerSide(lane, side))) continue;
       if (sendTimeReason(w, memberId, [], undefined, laneCategory(lane)) !== null) continue;
       const capacity = wholeNumber(membership.capacity, "capacity");
-      if (capacity <= 0) continue;
+      if (!planProfileCapacityAllows(capacity, existingFriendPlan)) continue;
       const entity: MatchEntity = { ...membership, memberId };
       const raw = vectors.tags(w, entity);
       const rated = vectors.standing(w, entity);
@@ -157,19 +167,21 @@ export function buildProfiles(w: World): readonly MatchProfile[] {
         standing: {
           standing: clamp(wholeNumber(rated.standing, "standing"), standingCeiling),
           uncertainty: clamp(wholeNumber(rated.uncertainty, "uncertainty"), standingUncertaintyCeiling),
+          evidenceIds: rated.evidenceIds,
         },
       });
     }
   }
   const interner = internTags(drafts.flatMap(d => [...d.tags.offers, ...d.tags.seeks, ...d.tags.interests]));
   drafts.sort((x, y) => compareText(x.key, y.key) || compareText(x.id, y.id));
+  const observe = standingObservations(w, standingUpdates);
   let ordinal = 0;
   return drafts.map((d, i) => {
     ordinal = i > 0 && drafts[i - 1].key === d.key ? ordinal + 1 : 0;
     return {
       id: d.id, memberId: d.entity.memberId, ordinal,
       lane: d.entity.lane, side: d.entity.side, market: d.entity.market,
-      standing: d.standing.standing, uncertainty: d.standing.uncertainty, capacity: d.capacity,
+      standing: observe(d.entity, d.standing.standing, d.standing.evidenceIds), uncertainty: d.standing.uncertainty, capacity: d.capacity,
       offers: interner.tagSet(d.tags.offers), seeks: interner.tagSet(d.tags.seeks), interests: interner.tagSet(d.tags.interests),
       traits: d.traits,
     };

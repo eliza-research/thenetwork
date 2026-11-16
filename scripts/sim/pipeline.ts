@@ -155,7 +155,7 @@ async function script(w: World) {
   w.notes.reviewItem = !!item;
   w.notes.reviewedBeforeContact = item ? (await w.sql`select count(*)::int as n from network.messages where opportunity_id = ${item.oppId}`)[0].n : -1;
   if (item) {
-    w.notes.approve = (await (await H.staff(w.svc, H.REVIEWER, "POST", `/apps/friends/review/${item.oppId}`, { decision: "approve", secondsSpent: 30 })).json()).ok;
+    w.notes.approve = (await (await H.staff(w.svc, H.REVIEWER, "POST", `/apps/friends/review/${item.oppId}`, { decision: "approve", secondsSpent: 30, revision: item.revision })).json()).ok;
     await H.run(w.svc, clock, fake, 30 * MINUTE);
     await say(w, P.ana, "Either works");
     await H.run(w.svc, clock, fake, 30 * MINUTE);

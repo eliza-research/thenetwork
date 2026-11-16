@@ -183,19 +183,20 @@ describe("the console for four apps (game mode)", () => {
 });
 
 describe("reviewer of record: the console sends the signed-in person to the service", () => {
-  test("X-Network-Staff-Id carries the staff id, ?app= and X-Network-App the app, and the token is the console's own", async () => {
-    const seen: { auth: string | null; staff: string | null; app: string | null; q: string | null; path: string }[] = [];
-    const svc = await serveHttp({ port: 0, hostname: "127.0.0.1", fetch(req) {
+  test("the console sends the staff id, app, own token, and displayed review revision", async () => {
+    const seen: { auth: string | null; staff: string | null; app: string | null; q: string | null; path: string; revision?: number }[] = [];
+    const svc = await serveHttp({ port: 0, hostname: "127.0.0.1", async fetch(req) {
       const u = new URL(req.url);
-      seen.push({ auth: req.headers.get("authorization"), staff: req.headers.get("x-network-staff-id"), app: req.headers.get("x-network-app"), q: u.searchParams.get("app"), path: u.pathname });
+      const revision = u.pathname.startsWith("/review/") ? (await req.json() as { revision?: number }).revision : undefined;
+      seen.push({ auth: req.headers.get("authorization"), staff: req.headers.get("x-network-staff-id"), app: req.headers.get("x-network-app"), q: u.searchParams.get("app"), path: u.pathname, ...(revision !== undefined ? { revision } : {}) });
       return Response.json({ ok: true });
     } });
     try {
       const c = new ServiceClient({ url: svc.url.href, token: "console-token", app: "slop" });
-      expect(await c.review("rev@example.org", { type: "review", oppId: "o1", decision: "approve" })).toEqual({ ok: true });
+      expect(await c.review("rev@example.org", { type: "review", oppId: "o1", decision: "approve", revision: 1 })).toEqual({ ok: true });
       expect(await c.matching("admin@example.org", false)).toEqual({ ok: true });
       expect(seen).toEqual([
-        { auth: "Bearer console-token", staff: "rev@example.org", app: "slop", q: "slop", path: "/review/o1" },
+        { auth: "Bearer console-token", staff: "rev@example.org", app: "slop", q: "slop", path: "/review/o1", revision: 1 },
         { auth: "Bearer console-token", staff: "admin@example.org", app: "slop", q: "slop", path: "/matching" },
       ]);
     } finally { await svc.stop(true); }

@@ -19,6 +19,7 @@ export interface SkillClaim { level: number; evidence: Evidence; facetId: string
 export interface CandidateProfile {
   kind: "candidate"; id: MemberId;
   families: string[]; seniority?: number;
+  seniorityFacetId?: string;
   /** The facet of a trusted source (connected source or vouch) that gave the level; none when only the candidate stated it. */
   seniorityReviewedIn?: string;
   skills: Map<string, SkillClaim>;
@@ -34,7 +35,7 @@ export interface CandidateProfile {
 export interface JobProfile {
   kind: "job"; id: MemberId; intentId?: string; title: string;
   company?: string; companyName?: string; verified: boolean;
-  family?: string; seniority?: number;
+  family?: string; seniority?: number; seniorityFacetId?: string;
   payMin?: number; payMax?: number; payFacetId?: string;
   mode?: PeonMode; market?: City; area?: string;
   must: { skill: string; min: number }[]; nice: string[];
@@ -124,7 +125,11 @@ function build(w: World): Cache {
       const demonstrated = new Map<string, { level: number; facetId: string }>();
       for (const f of fs) for (const t of tags(f)) {
         if (t.startsWith(T.family)) { const v = t.slice(T.family.length); if (!p.families.includes(v)) p.families.push(v); }
-        else if (t.startsWith(T.seniority)) { p.seniority = Number(t.slice(T.seniority.length)); p.seniorityReviewedIn = trustedSource(f) ? f.id : undefined; }
+        else if (t.startsWith(T.seniority)) {
+          p.seniority = Number(t.slice(T.seniority.length));
+          p.seniorityFacetId = f.id;
+          p.seniorityReviewedIn = trustedSource(f) ? f.id : undefined;
+        }
         else if (t.startsWith(T.skill)) {
           const [skill, lvl] = rest(t, T.skill);
           const evidence: Evidence = trustedSource(f) ? "demonstrated" : "claimed";
@@ -165,7 +170,10 @@ function build(w: World): Cache {
           if (t.startsWith(T.company)) { p.company = t.slice(T.company.length); p.companyName = f.value.replace(/^Company:\s*/i, ""); }
           else if (t === T.verified) p.verified = true;
           else if (t.startsWith(T.family)) p.family = t.slice(T.family.length);
-          else if (t.startsWith(T.seniority)) p.seniority = Number(t.slice(T.seniority.length));
+          else if (t.startsWith(T.seniority)) {
+            p.seniority = Number(t.slice(T.seniority.length));
+            p.seniorityFacetId = f.id;
+          }
           else if (t.startsWith(T.pay)) {
             const [lo, hi] = t.slice(T.pay.length).split("-").map(Number);
             if (Number.isFinite(lo) && Number.isFinite(hi) && hi! >= lo! && lo! > 0) { p.payMin = lo; p.payMax = hi; p.payFacetId = f.id; }

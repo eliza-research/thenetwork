@@ -13,7 +13,7 @@ export type SmsTermsProps = ComponentProps<"section"> & {
 
 /**
  * The text messaging section of the terms. It shows the items in the order of the spec, and it names only the opt-in ways that the site offers, so the terms never name a join page that the site does not serve. A link to `#sms` opens it.
- * @model spec/sitePages.md
+ * Its rules come from `spec/sitePages.md`, a spec of decisions with no state of its own.
  */
 export function SmsTerms({ app, text, ...props }: SmsTermsProps) {
   return (

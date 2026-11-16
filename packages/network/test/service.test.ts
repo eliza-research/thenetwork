@@ -196,7 +196,7 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     expect((await sql`select decision from network.review_items where opportunity_id = ${oppId}`)[0].decision).toBeNull();
 
     // An unknown decision is refused; approve works; the reviewer of record is the staff id.
-    expect((await staff(b, "rev-tok", "POST", `/review/${oppId}`, { decision: "maybe" })).status).toBe(400);
+    expect((await staff(b, "rev-tok", "POST", `/review/${oppId}`, { decision: "maybe", revision: item.revision })).status).toBe(400);
     clock.set(START + 90 * MINUTE); // 14:30 New York: every member's send window is open
     const ok = await staff(b, "rev-tok", "POST", `/review/${oppId}`, { decision: "approve", secondsSpent: 40, reviewer: "someone-else", revision: item.revision });
     expect(await ok.json()).toEqual({ ok: true });
