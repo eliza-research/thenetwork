@@ -50,3 +50,12 @@ pure def lawExpiredRescheduleCannotCommit(ownAnswer: bool, exactRecipientOffer: 
     repeated: bool, accepted: bool, yesAfter: int, rosterSize: int): bool =
   rescheduleVote(ownAnswer, false, exactRecipientOffer, repeated, accepted, yesAfter, rosterSize) != CommitNewTime
 ```
+
+### The original booking notice belongs to the original confirmed seat
+
+A queued or replayed original booking notice needs a current scheduled booking and the recipient's confirmed seat. A revised time has its own notice. A closed booking or seat cannot send its original details again.
+
+```quint
+pure def originalBookingNoticeCurrent(scheduled: bool, confirmedSeat: bool, originalRevision: bool): bool =
+  scheduled and confirmedSeat and originalRevision
+```

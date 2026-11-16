@@ -48,6 +48,12 @@ export function lawExpiredRescheduleCannotCommit(ownAnswer: boolean, exactRecipi
   return rescheduleVote(ownAnswer, false, exactRecipientOffer, repeated, accepted, yesAfter, rosterSize) !== "CommitNewTime";
 }
 
+/** Story: Change the time only when everyone agrees / The original booking notice belongs to the original confirmed seat (spec/meetingReschedule.md) */
+//@ pure
+export function originalBookingNoticeCurrent(scheduled: boolean, confirmedSeat: boolean, originalRevision: boolean): boolean {
+  return scheduled && confirmedSeat && originalRevision;
+}
+
 /** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
 export function exact_meetingReschedule(n: number): number {
   if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);

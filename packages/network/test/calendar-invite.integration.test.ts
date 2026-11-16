@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
+import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
@@ -52,14 +52,22 @@ test.skipIf(!pgAvailable)("a signed calendar request downloads the current booki
     const ids = members.map(member => member.id);
     await world.onboard(...ids);
     const id = world.propose(ids);
-    await world.answerProbes(ids);
-    const booked = world.net.exportState().opps.find(opp => opp.id === id && opp.stage === "scheduled")!;
-    expect(booked.bookedTold).toEqual(expect.arrayContaining(ids));
+    expect(await world.runUntil(() => world.probed(ids[0]!), 2 * DAY)).toBe(true);
+    await world.say(ids[0]!, "yes");
+    expect(await world.runUntil(() => world.probed(ids[1]!), DAY)).toBe(true);
     clock.set(world.clock.now());
+    const awaiting = world.net.exportState();
+    await rt.unitOfWork(n => n.importState({ ...n.exportState(), members: awaiting.members, opps: awaiting.opps }));
+    const confirm = turn("calendar-booking", "yes", phones[1]);
+    const bookingReply = await (await send(confirm)).json();
+    expect(bookingReply.replies.join(" ")).toContain("You're both in");
+    expect(await (await send(confirm)).json()).toEqual(bookingReply);
+    const bookedState = (await rt.pg.load())!;
+    const booked = bookedState.opps.find(opp => opp.id === id && opp.stage === "scheduled")!;
+    expect(booked.bookedTold).toEqual(expect.arrayContaining(ids));
     const save = (opportunity: typeof booked) => rt.unitOfWork(n => {
       n.importState({ ...n.exportState(), opps: [opportunity] });
     });
-    await save(booked);
 
     const requested = turn("calendar-issue");
     const original = await send(requested);
@@ -83,9 +91,10 @@ test.skipIf(!pgAvailable)("a signed calendar request downloads the current booki
     expect((await download(link + "x")).status).toBe(404);
 
     // A changed start invalidates the old file and its signed reply. A newly requested file uses the new start.
-    await save({ ...booked, meetingAt: booked.meetingAt! + HOUR });
+    await save({ ...booked, meetingAt: booked.meetingAt! + HOUR, scheduleRevision: 1 });
     expect((await download(link)).status).toBe(404);
     expect((await send(requested)).status).toBe(409);
+    expect((await send(confirm)).status).toBe(409);
     const timed = await (await send(turn("calendar-expires"))).json();
     const timedLink = timed.replies[0].split("\n")[1];
     clock.advance(15 * MINUTE);
@@ -95,7 +104,7 @@ test.skipIf(!pgAvailable)("a signed calendar request downloads the current booki
     const originalAt = Date.UTC(2026, 10, 21, 17);
     const proposedAt = Date.UTC(2026, 10, 22, 18);
     const venue = PLAN_VENUES.find(candidate => candidate.id === "mccarren-park")!;
-    await rt.unitOfWork(n => n.importState({ ...n.exportState(), members: world.net.exportState().members,
+    await rt.unitOfWork(n => n.importState({ ...n.exportState(), members: bookedState.members,
       opps: [{ ...booked, meetingAt: originalAt, venue: venue.name, venueArea: venue.area }] }));
     const propose = turn("calendar-reschedule", `RESCHEDULE ${localBookingStart(originalAt)} TO ${localBookingStart(proposedAt)}`);
     const offered = await (await send(propose)).json();
@@ -112,6 +121,7 @@ test.skipIf(!pgAvailable)("a signed calendar request downloads the current booki
     await send(turn("calendar-stop", "STOP"));
     expect((await download(latestLink)).status).toBe(404);
     expect((await send(stopped)).status).toBe(409);
+    expect((await send(confirm)).status).toBe(409);
   } finally {
     await service.close();
     await sql.close();

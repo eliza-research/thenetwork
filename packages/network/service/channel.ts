@@ -20,6 +20,7 @@ import { APPS } from "../../platform/src/apps.ts";
 import { isMemberInvitationLink } from "../src/invitation.ts";
 import { EXPECTED_INVITATION_PREFIX } from "./expected-invitation-store.ts";
 import { cofounderDeliveryIdPrefix } from "../../core/src/generated/cofounderDispatch.ts";
+import { originalBookingNoticeCurrent } from "../../core/src/generated/meetingReschedule.ts";
 import { lateArrivalDeliveryPrefix } from "../../core/src/generated/groupLateArrival.ts";
 import { parseLateArrivalDeliveryId } from "../src/group-late-arrival.ts";
 import { bookedCancellationAllowed, bookedCancellationPrefix, closedOpportunityRowStale, queuedProbePolicy } from "../../core/src/generated/outboundAdmission.ts";
@@ -42,13 +43,18 @@ async function rescheduleAdmission(tx: SQL, row: QueueRow, runtimeId: string, no
     ? { ok: true } : refused;
 }
 
-export async function originalBookingSuperseded(tx: SQL, app: string, runtimeId: string, ids: string[]): Promise<boolean> {
+export async function originalBookingNoticeStale(tx: SQL, app: string, runtimeId: string, ids: string[]): Promise<boolean> {
   if (!ids.length) return false;
-  const [superseded] = await tx`select 1 from network.messages msg
-    join network.network_state saved on saved.app_id=msg.app_id and saved.id=${runtimeId}
-    join lateral jsonb_to_recordset(saved.state->'opps') as booking(id text,"scheduleRevision" int) on booking.id=msg.opportunity_id
-    where msg.app_id=${app} and msg.id in ${tx(ids)} and msg.type='proposal' and booking."scheduleRevision">0 limit 1`;
-  return !!superseded;
+  const rows = await tx<{ scheduled: boolean; confirmed: boolean | null; revision: number | null }[]>`select
+    (booking.id is not null and opp.state='SCHEDULED') as scheduled,
+    (seat.role='participant' and seat.status='confirmed') as confirmed,booking."scheduleRevision" as revision
+    from network.messages msg
+    left join network.opportunities opp on opp.app_id=msg.app_id and opp.id=msg.opportunity_id
+    left join network.participations seat on seat.app_id=msg.app_id and seat.opportunity_id=msg.opportunity_id and seat.member_id=msg.member_id
+    left join network.network_state saved on saved.app_id=msg.app_id and saved.id=${runtimeId}
+    left join lateral jsonb_to_recordset(saved.state->'opps') as booking(id text,"scheduleRevision" int) on booking.id=msg.opportunity_id
+    where msg.app_id=${app} and msg.id in ${tx(ids)} and msg.type='proposal' and msg.opportunity_id is not null`;
+  return rows.some(row => !originalBookingNoticeCurrent(row.scheduled === true, row.confirmed === true, (row.revision ?? 0) === 0));
 }
 
 function terminalNotice(row: QueueRow): TerminalNotice | undefined {
@@ -320,7 +326,7 @@ export class BlooioAdapter implements ChannelAdapter {
       // A relayed item: its match and both members are read again inside the admission transaction (runtime.ts).
       admit: async (row, tx) => {
         if (row.approvedPhotos?.length && this.name !== "eliza_cloud") return { ok: false, reason: "approved_photos_require_cloud" };
-        if (row.oppId && await originalBookingSuperseded(tx, row.app, rt.pg.id, [row.id])) return { ok: false, reason: "booking_time_changed" };
+        if (row.oppId && await originalBookingNoticeStale(tx, row.app, rt.pg.id, [row.id])) return { ok: false, reason: "booking_changed" };
         if (row.id.startsWith(RESCHEDULE_QUEUE_PREFIX)) return rescheduleAdmission(tx, row, rt.pg.id, this.o.clock.now());
         if (row.id.startsWith("relay:")) return rt.relayAdmission(tx, row);
         if (row.id.startsWith(lateArrivalDeliveryPrefix)) return rt.groupLateArrivalAdmission(tx, row);
