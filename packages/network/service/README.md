@@ -287,6 +287,12 @@ receipt lookup. Once queued, the link requires verification of the exact
 recipient phone, along with the existing age and consent checks. [Expected
 invitation rules](../../../spec/expectedMemberInvitation.md)
 
+## Review saved profile facts
+
+In a signed member conversation, send `SHOW MY FACTS` or `WHAT DO YOU KNOW ABOUT ME?` to list the current app's saved facts with their source and privacy scope. Follow the page prompt to see more. `SHOW MY <APP> PROFILE` still reads back the saved signup profile.
+
+Use a reference from the list with `CORRECT FACT <ref> TO <text>`, `REMOVE FACT <ref>`, or `SET FACT SCOPE <ref> TO <scope>`. The service sends an exact edit code that lasts 15 minutes. Reply with `CONFIRM FACT EDIT <code>` to apply it or `CANCEL FACT EDIT <code>` to discard it.
+
 ## Private home-help review
 
 An eligible adult who asks for home entry receives a private intake prompt. The

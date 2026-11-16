@@ -61,6 +61,10 @@ import { ProfileSuggestions, type SuggestionAuthorization } from "./profile-sugg
 import { profileReviewFromEnv } from "./profile-review-factory.ts";
 import { profileReadRequest, savedProfileText } from "./profile-read.ts";
 import { step as stepProfileRead } from "../../core/src/generated/savedProfileRead.ts";
+import { profileFactEditMayRead, profileFactEditMayReplay } from "../../core/src/generated/profileFactEdit.ts";
+import { memberCommandOwner } from "./member-command.ts";
+import { MEMBER_FACT_PAGE_SIZE, memberFactCommand, memberFactEditPrompt, memberFactListText, memberFactReply, type MemberFactCommand } from "./member-fact-command.ts";
+import { ProfileFactEdits } from "./profile-fact-edits.ts";
 import { receiptAccepted } from "../../core/src/generated/turnReceipt.ts";
 import { recordSignedTurnReceipt } from "../../core/src/vibe/turnReceiptShell.js";
 import {
@@ -156,7 +160,7 @@ export function turnSecretProblem(env: Record<string, string | undefined> = proc
 /** The tables the service needs (pnpm run db:migrate). */
 const REQUIRED_TABLES = [
   ...["members", "channel_identities", "facets", "intents", "presence", "edges", "messages", "events", "matching_runs", "staff_audit", "network_state", "opportunities", "review_items", "requests", "bounded_home_help", "bounded_home_help_consent", "bounded_home_help_venue"].map(t => `network.${t}`),
-  ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "app_lines", "share_grants", "eliza_notices", "member_invitations", "member_invitation_reviews", "expected_member_invitations", "expected_invitation_contacts", "seed_invitation_batches", "seed_invitations", "seed_invitation_attributions"].map(t => `platform.${t}`),
+  ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "app_lines", "share_grants", "eliza_notices", "member_invitations", "member_invitation_reviews", "expected_member_invitations", "expected_invitation_contacts", "seed_invitation_batches", "seed_invitations", "seed_invitation_attributions", "profile_fact_edit_drafts"].map(t => `platform.${t}`),
 ];
 /** The dev-only key for keyed phone hashes (the platform's own default). Production needs PLATFORM_HASH_KEY. */
 const DEV_HASH_KEY = "dev-only-platform-hash-key";
@@ -350,6 +354,7 @@ export class NetworkService implements RuntimeHost {
   private readonly hashKey: string;
   private readonly expectedInvitations: ExpectedMemberInvitations;
   private readonly seedInvitations: SeedInvitations;
+  private readonly profileFactEdits: ProfileFactEdits;
   private readonly homeHelpVenueKey: ReturnType<typeof createSecretKey>;
   /** The inbound inbox: one row per provider message, handled once and in order per sender (inbox.ts). */
   readonly inbox: Inbox;
@@ -396,6 +401,7 @@ export class NetworkService implements RuntimeHost {
     this.hashKey = key;
     this.expectedInvitations = new ExpectedMemberInvitations(key, () => this.clock.now(), app => this.apps[app]);
     this.seedInvitations = new SeedInvitations(key, () => this.clock.now());
+    this.profileFactEdits = new ProfileFactEdits(key, () => this.clock.now());
     this.homeHelpVenueKey = createSecretKey(Buffer.from(hkdfSync("sha256", key, "thenetwork", "private-home-help-venue-v1", 32)));
     try { this.tokens = parseTokenGrants(o.tokens, { explicitApp: isProduction(this.env) }); } catch (e) { throw new Error(String((e as Error).message).replace("OBSERVATORY_TOKENS", "NETWORK_SERVICE_TOKENS")); }
     // Cloud holds the turn secret; it must never also be a staff bearer (PR #4: the agent credential was never the console token).
@@ -763,6 +769,7 @@ export class NetworkService implements RuntimeHost {
       await purgeExpiredMemberInvitationReviews(tx, rt.app.id, now);
       await this.expectedInvitations.purgeExpired(tx, rt.app.id);
       await this.seedInvitations.purgeExpired(tx, rt.app.id);
+      await this.profileFactEdits.purgeExpired(tx, rt.app.id);
       await tx`delete from platform.member_invitations
         where app_id=${rt.app.id} and expires_at<=${new Date(now)} and (redeemed_at is null or projected_at is not null)`;
     }).catch(() => this.log(`[purge] invitations failed (${rt.id})`));
@@ -1417,12 +1424,13 @@ export class NetworkService implements RuntimeHost {
     }
     if (ev.isGroup) return "ignored_group";
     const kw = platformKeyword(ev.text);
+    const factCommand = !kw && memberFactCommand(ev.text);
     const intentCommand = !kw ? standingIntentCommand(ev.text) : undefined;
     const travel = !kw && this.inboundTurn() ? travelPresenceCommand(ev.text) : undefined;
     const soloEvents = !kw && this.inboundTurn() ? soloConciergeRequest(ev.text) : undefined;
     const contributionPage = !kw && this.inboundTurn() ? contributionHistoryRequest(ev.text) : undefined;
     // Legacy webhooks own transport engagement. A signed turn admits its canonical member after policy processing.
-    if (!this.inboundTurn() && !intentCommand) await this.lineAdapter()?.engaged?.(ev.from);
+    if (!this.inboundTurn() && !intentCommand && !factCommand) await this.lineAdapter()?.engaged?.(ev.from);
     const route = await this.route(ev, o.app);
     const app = this.apps[route.app];
     const joinedMember = (await this.memberApps(ev.from)).find(m => m.app === route.app);
@@ -1467,6 +1475,11 @@ export class NetworkService implements RuntimeHost {
       this.log(`[inbound] a number on hold for review (${rt.id}): not handled`);
       if (kw === "help") await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`, "compliance");
       return "held";
+    }
+
+    if (factCommand) {
+      if (!memberId || !turn || ev.mediaUrls?.length) return "profile_fact_edit";
+      return this.memberUnit(rt, memberId, ev, rowId, undefined);
     }
 
     // Photos by text (photoIntake.ts): the answer to the photo consent ask, then any attachment. A photo
@@ -1648,6 +1661,20 @@ export class NetworkService implements RuntimeHost {
       const channel = ev.transport === "sms" ? "sms" : "imessage";
       const inbound = { id: rowId, member_id: memberId, direction: "inbound", channel, body: ev.text, status: "received", type: null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
       const signedDirect = !keyword && !fromAssistant && this.inboundTurn();
+      const factCommand = !keyword && memberFactCommand(ev.text);
+      if (factCommand) {
+        if (!signedDirect || !rt.signedMemberTurn(memberId, rowId)) return "profile_fact_edit";
+        rt.unit.memberCommand = async tx => {
+          const owner = { app: rt.app, memberId, e164: signedDirect.from };
+          const binding = await memberCommandOwner(tx, this.accountsFor(tx), owner);
+          if (!profileFactEditMayRead(true, !!binding?.member, signedDirect.app === rt.app.id) || !binding?.member) return;
+          const reply = await this.replyToProfileFactEdit(tx, rt, memberId, rowId, factCommand);
+          rt.unit.inbound = inbound;
+          rt.unit.atomicProfileFactReply = true;
+          rt.collectedMemberReply(memberId, reply.id, reply.body, "profile_fact_edit");
+        };
+        return "profile_fact_edit";
+      }
       const inviteDelivery = !keyword && memberInviteDeliveryCommand(ev.text);
       if (inviteDelivery) {
         if (!signedDirect || !rt.signedMemberTurn(memberId, rowId)) return "handled";
@@ -1777,6 +1804,60 @@ export class NetworkService implements RuntimeHost {
         return rt.unit.memberInvitation.status === "issued" ? "member_invitation" : "member_invitation_review";
       }
       return keyword || systemReply ? "handled" as const : disposition;
+    });
+  }
+
+  private async profileFactPage(tx: SQL, owner: { app: AppId; memberId: MemberId }, page: number): Promise<string> {
+    const result = await this.profileFactEdits.list(tx, owner, (page - 1) * MEMBER_FACT_PAGE_SIZE);
+    return memberFactListText({ page, ...result });
+  }
+
+  private async replyToProfileFactEdit(tx: SQL, rt: NetworkRuntime, memberId: MemberId, rowId: string, command: MemberFactCommand) {
+    const owner = { app: rt.app.id, memberId };
+    const unavailable = memberFactReply("unavailable");
+    if (command.kind === "list") return { id: `fact-list:${rowId}`, body: await this.profileFactPage(tx, owner, command.page) };
+    if (command.kind === "confirm" || command.kind === "cancel") {
+      const id = `fact-edit:${rowId}`;
+      if (command.kind === "cancel") {
+        const cancelled = await this.profileFactEdits.cancel(tx, owner, command.draft);
+        return { id, body: cancelled ? memberFactReply("cancelled") : unavailable };
+      }
+      const result = await this.profileFactEdits.confirm(tx, owner, command.draft);
+      if (!result) return { id, body: unavailable };
+      await rt.clearProfileFactProjections(tx, memberId, result);
+      await tx`update platform.inbound set response=null,replies='[]'::jsonb,receipt=null,receipt_hash=null
+        where app_id=${owner.app} and member_id=${memberId} and status='done' and response->>'reason'='profile_fact_edit'
+          and replies->0->>'id' like 'fact-list:%'`;
+      return { id, body: memberFactReply("saved") };
+    }
+    if (command.kind === "invalid") return { id: `fact-edit:${rowId}`, body: memberFactReply("invalid") };
+    const { ref, ...change } = command;
+    const draft = await this.profileFactEdits.stage(tx, owner, { reference: ref, change });
+    if (!draft) return { id: `fact-edit:${rowId}`, body: unavailable };
+    return { id: `fact-draft:${rowId}`, body: memberFactEditPrompt({ draft: draft.code, fact: draft.fact, change: draft.change }) };
+  }
+
+  private async profileFactReplyCurrent(input: TurnRequest, reply: Extract<TurnResponse, { outcome: "handled" }>): Promise<boolean> {
+    const { app, memberId } = reply;
+    const rt = app && memberId ? await this.runtimeOfMember(app, memberId) : undefined;
+    const command = memberFactCommand(input.text);
+    if (!rt || !memberId || !command || reply.replies.length !== 1 || reply.replyIds?.length !== 1) return false;
+    return rt.scoped(async tx => {
+      const owner = { app: rt.app.id, memberId };
+      const binding = await memberCommandOwner(tx, this.accountsFor(tx), { app: rt.app, memberId, e164: input.from });
+      if (!binding?.member) return false;
+      const id = reply.replyIds![0]!;
+      const body = reply.replies[0]!;
+      let current = false;
+      if (command.kind === "list") {
+        current = id.startsWith("fact-list:") && body === await this.profileFactPage(tx, owner, command.page);
+      } else if (id.startsWith("fact-draft:")) {
+        const code = /\nReply CONFIRM FACT EDIT (pfc_[a-p]{32})\b/.exec(body)?.[1];
+        current = !!code && await this.profileFactEdits.stageIsCurrent(tx, owner, code);
+      } else {
+        current = id.startsWith("fact-edit:");
+      }
+      return profileFactEditMayReplay(true, true, current);
     });
   }
 
@@ -2745,7 +2826,7 @@ export class NetworkService implements RuntimeHost {
       const rt = turn.app ? (turn.memberId ? await this.runtimeOfMember(turn.app, turn.memberId) : this.runtimeFor(turn.app)) : undefined;
       const binding = rt && turn.memberId ? await this.accounts.activeMembership(rt.app, {e164: input.from, personId: person?.id ?? null}) : undefined;
       // Own-profile commands preserve send holds. The binding includes the known join-age check.
-      if (outcome !== "standing_intents" && outcome !== "travel_presence" && outcome !== "solo_events" && outcome !== "contribution_history" && accountEligible && binding && binding.membership.memberId === turn.memberId) {
+      if (outcome !== "standing_intents" && outcome !== "travel_presence" && outcome !== "solo_events" && outcome !== "contribution_history" && outcome !== "profile_fact_edit" && accountEligible && binding && binding.membership.memberId === turn.memberId) {
         await this.lineAdapter()?.engaged?.(input.from);
       }
       if (outcome === "open" && !collected.length && turn.app && turn.memberId) {
@@ -2800,6 +2881,9 @@ export class NetworkService implements RuntimeHost {
         if (!contributionHistoryReplayAllowed(live !== undefined, handled.replies.length === 1 && handled.replies[0] === live)) {
           return json({error: "turn_contribution_history_changed", retryable: false}, 409);
         }
+      }
+      if (handled.reason === "profile_fact_edit" && handled.replies.length && !await this.profileFactReplyCurrent(input, handled)) {
+        return json({error: "turn_profile_fact_changed", retryable: false}, 409);
       }
       if (handled.reason === "member_invitation" && handled.replies.length) {
         const memberId = handled.memberId;

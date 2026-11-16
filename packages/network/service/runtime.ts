@@ -31,6 +31,7 @@ import {
   initial as initialContext, step as stepContext, type ContextMode,
 } from "../../core/src/generated/sharedContext.ts";
 import { ConsentNetwork, presentInNyc, relayDispatchCheck, storedInviteNoticePartyCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
+import type { AppliedProfileFactEdit } from "./profile-fact-edits.ts";
 import type { RelayCanonical } from "../src/relay.ts";
 import { loadRelayRows, PgStore, runStored, runTick, type NetworkStore } from "../src/store.ts";
 import { capitalWiring, type CapitalEvent } from "../src/capital.ts";
@@ -68,7 +69,7 @@ export type StagedMemberInvitation =
   | { status: "issued"; referral: ReferralJoin; url: string; relationship: InviteRelationship;
       evidence: MemberInviteEvidence; at: number; reviewId?: string };
 
-const privateMemberMessage = (type?: string) => type === "bounded_home_help" || type?.startsWith("member_invitation") === true;
+const privateMemberMessage = (type?: string) => type === "bounded_home_help" || type === "profile_fact_edit" || type?.startsWith("member_invitation") === true;
 
 /** What one unit of work produced. Written in the save transaction, then delivered. */
 export interface Unit {
@@ -76,6 +77,7 @@ export interface Unit {
   privateInviteTurn?: true;
   privateHomeHelpTurn?: true;
   atomicHomeHelpReceipt?: true;
+  atomicProfileFactReply?: true;
   atomicInvitationDeliveryReply?: true;
   memberInvitation?: StagedMemberInvitation;
   standingIntent?: StoredStandingIntentChange;
@@ -593,7 +595,7 @@ export class NetworkRuntime {
 
   /** A directly requested result for this signed member. Source links grant only a per-reply contact exception. */
   collectedMemberReply(memberId: MemberId, id: string, body: string,
-    type: "solo_events" | "contribution_history" | "member_invitation" | "member_invitation_vouch" | "member_invitation_delivery" | "bounded_home_help", publicLinks: readonly string[] = []) {
+    type: "solo_events" | "contribution_history" | "member_invitation" | "member_invitation_vouch" | "member_invitation_delivery" | "bounded_home_help" | "profile_fact_edit", publicLinks: readonly string[] = []) {
     const turn = this.host.inboundTurn?.();
     if (turn?.app !== this.app.id || turn.memberId !== memberId
       || normalizeAddress(this.addressOf(memberId) ?? "") !== normalizeAddress(turn.from)) return;
@@ -604,6 +606,32 @@ export class NetworkRuntime {
     }
     this.system(memberId, id, body, "reply", type);
     if (publicLinks.length) (this.unit.collectedPublicLinks ??= new Map()).set(id, publicLinks);
+  }
+
+  /** Remove old copies that could otherwise restore a saved facet in the next matching run. */
+  async clearProfileFactProjections(tx: SQL, memberId: MemberId, { fact, change, previousTags }: AppliedProfileFactEdit) {
+    const app = this.app.id;
+    if (fact.signupInterest && change.kind !== "scope") {
+      const [membership] = await tx<{ interests: unknown }[]>`select profile->'interests' as interests from platform.memberships
+        where app_id=${app} and member_id=${memberId} for update`;
+      if (Array.isArray(membership?.interests) && membership.interests.includes(fact.value)) {
+        const interests = membership.interests.flatMap(interest => interest !== fact.value ? [interest]
+          : change.kind === "correct" ? [change.value] : []);
+        await tx`update platform.memberships set profile=profile || ${{ interests: [...new Set(interests)] }}::jsonb
+          where app_id=${app} and member_id=${memberId}`;
+      }
+    }
+    if (previousTags.length === 0 || (fact.kind !== "interest" && fact.kind !== "skill")) return;
+    // PgStore has serialized this unit's state. The city lock stays held through the update.
+    const [row] = await tx<{ state: NetworkState }[]>`select state from network.network_state where id=${this.id} for update`;
+    const member = row?.state.members.find(candidate => candidate.id === memberId);
+    if (!member) return;
+    const field = fact.kind === "interest" ? "interests" : "skills";
+    const remaining = member.learned[field].filter(tag => !previousTags.includes(tag));
+    if (remaining.length !== member.learned[field].length) {
+      member.learned[field] = remaining;
+      await tx`update network.network_state set state=${row!.state}::jsonb where id=${this.id}`;
+    }
   }
 
   /** Everything the unit produced, inside the save transaction (app.app_id is set). Rows that name a member not in this app's network.members are skipped. */
@@ -638,7 +666,8 @@ export class NetworkRuntime {
     }
     if (u.inbound && ok(u.inbound.member_id as string)) {
       const privateFields = u.privateHomeHelpTurn ? { body: "Private home-help request.", type: "bounded_home_help" }
-        : u.privateInviteTurn ? { body: "Private invitation request.", type: "member_invitation_vouch" } : {};
+        : u.privateInviteTurn ? { body: "Private invitation request.", type: "member_invitation_vouch" }
+          : u.atomicProfileFactReply ? { body: "Private profile fact request.", type: "profile_fact_edit" } : {};
       await tx`insert into network.messages ${tx({ ...u.inbound, ...privateFields, app_id: app })} on conflict (id) do nothing`;
     }
     const turn = this.host.inboundTurn?.();
@@ -677,6 +706,10 @@ export class NetworkRuntime {
       if (!captured.some(send => send.type === "bounded_home_help")) throw new Error("Home-help receipt was not collected");
       replyReason = "bounded_home_help";
     }
+    if (u.atomicProfileFactReply) {
+      if (!captured.some(send => send.type === "profile_fact_edit")) throw new Error("Profile fact reply was not collected");
+      replyReason = "profile_fact_edit";
+    }
     if (u.memberInvitation) {
       const staged = u.memberInvitation;
       replyReason = staged.status === "issued" ? "member_invitation" : "member_invitation_review";
@@ -692,7 +725,8 @@ export class NetworkRuntime {
     }
     const out = u.sends.filter(s => ok(s.memberId)).map(s => ({
       id: s.id, app_id: app, member_id: s.memberId, direction: "outbound", channel: "imessage",
-      body: s.type === "bounded_home_help" ? "Private home-help reply." : privateMemberMessage(s.type) ? "Private invitation reply." : s.body,
+      body: s.type === "bounded_home_help" ? "Private home-help reply." : s.type === "profile_fact_edit" ? "Private profile fact reply."
+        : privateMemberMessage(s.type) ? "Private invitation reply." : s.body,
       status: u.collected.has(s.id) ? "collected" : this.adapter.storedStatus,
       inbound_id: u.collected.has(s.id) ? turn!.id : null,
       invite_join_members: s.invitationJoins ? tx.array([...s.invitationJoins], "TEXT") : null,

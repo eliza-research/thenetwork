@@ -54,7 +54,9 @@ Models: [join flow](../models/join_flow.md), [profile learning](../models/profil
 
 Return the person's own app profile, with source and scope as applicable. Ask for explicit approval to correct, remove or change how a fact may be used. Remove its derived data where required and apply the change at the next relevant engine read. A saved-profile readback must not advance onboarding or claim a pending draft was saved.
 
-Models: [generated saved-profile read](../savedProfileRead.md), [profile isolation and app leave](../savedProfileJourney.md), [profile read flow](../models/profile_read.md), [profile learning](../models/profile_learning.md).
+In the signed text conversation, `SHOW MY FACTS` shows saved facts for the current app. The member can use a fact reference to request a correction, removal, or scope change. The member confirms the exact edit using a short-lived code. A stale fact or a different app or member cannot use that code.
+
+Models: [generated saved-profile read](../savedProfileRead.md), [profile fact review and edits](../profileFactEdit.md), [profile isolation and app leave](../savedProfileJourney.md), [profile read flow](../models/profile_read.md), [profile learning](../models/profile_learning.md).
 
 ## Story F6 — Answer a useful follow-up
 

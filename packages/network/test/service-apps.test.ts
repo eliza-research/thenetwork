@@ -624,6 +624,105 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     return { confirmation, response: await result.json() };
   };
 
+  // spec/profileFactEdit.md, "Only a direct request from the current app member can show their saved facts"
+  test("signed own-fact edits confirm one current fact and keep other apps and members unchanged", async () => {
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
+    const { s } = service(clock, { env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret } });
+    await s.start();
+    const ownerPhone = newPhone(), otherPhone = newPhone();
+    const original = "Competitive chess", replacement = "Weekend puzzle hunts";
+
+    async function enroll(app: AppId, e164: string, firstName: string, interest: string) {
+      const invitation = await s.accounts.invite(APPS[app], e164);
+      if (!invitation) throw new Error("Missing fixture staff invitation");
+      const joined = await s.accounts.join(APPS[app], { e164, personId: invitation.personId }, {
+        firstName, age: 30, homeCity: "nyc", interests: [interest], consent: { sms: true, wording: APPS[app].consent.text },
+      });
+      if (!joined.ok) throw new Error(`Fixture signup failed: ${joined.error}`);
+      return joined.membership.memberId;
+    }
+
+    const owner = await enroll("ntwrk", ownerPhone, "Ari", original);
+    const sibling = await enroll("friends", ownerPhone, "Ari", "Birdwatching");
+    const other = await enroll("ntwrk", otherPhone, "Ben", "Street photography");
+    const send = invitationTurn(s, clock);
+    const turn = (messageId: string, text: string, from = ownerPhone, app: AppId = "ntwrk"): TurnRequest =>
+      ({ messageId, text, from, app, to: null, channel: "blooio", transport: "imessage", receivedAt: clock.now() });
+    const command = async (input: TurnRequest) => {
+      const res = await send(input);
+      const body = await res.json();
+      return { status: res.status, text: (body.replies ?? []).join("\n") as string };
+    };
+    const interest = async (app: AppId, member: string) => (await sql`select value,privacy_scope,tags from network.facets
+      where app_id=${app} and member_id=${member} and kind='interest' and status='confirmed'`).map(({ value, privacy_scope, tags }) => ({ value, privacy_scope, tags }));
+    const membershipInterests = async (app: AppId, member: string) =>
+      (await sql`select profile->'interests' as interests from platform.memberships where app_id=${app} and member_id=${member}`)[0]?.interests;
+    const originalInterest = await interest("ntwrk", owner);
+    const siblingInterest = await interest("friends", sibling);
+    const otherInterest = await interest("ntwrk", other);
+
+    const initial = turn("fact-owner-list", "What do you know about me?");
+    const listing = await command(initial);
+    expect(listing.status).toBe(200);
+    expect(listing.text).toMatch(/Interests[\s\S]*Competitive chess[\s\S]*Source: You[\s\S]*Scope: matchable/);
+    expect(listing.text).not.toMatch(/Birdwatching|Street photography/);
+    expect(listing.text).not.toContain(owner);
+    const factCode = (text: string) => text.match(/pfr_[a-p]{32}/)?.[0];
+    const reference = factCode(listing.text);
+    if (!reference) throw new Error("The fact list has no opaque reference");
+    const promptCode = (text: string) => text.match(/CONFIRM FACT EDIT (pfc_[a-p]{32})/)?.[1];
+    const staged = await command(turn("fact-owner-stage", `CORRECT FACT ${reference} TO ${replacement}`));
+    expect(staged.status).toBe(200);
+    expect(staged.text).not.toMatch(/Competitive chess|Weekend puzzle hunts/);
+    const draft = promptCode(staged.text);
+    if (!draft) throw new Error("The fact edit has no confirmation code");
+    const confirm = `CONFIRM FACT EDIT ${draft}`;
+    await command(turn("fact-owner-bare-yes", "yes"));
+    expect((await command(turn("fact-other-member-confirm", confirm, otherPhone))).text).not.toContain("applied");
+    expect((await command(turn("fact-other-app-confirm", confirm, ownerPhone, "friends"))).text).not.toContain("applied");
+    expect(await interest("ntwrk", owner)).toEqual(originalInterest);
+    expect(await membershipInterests("ntwrk", owner)).toEqual([original]);
+
+    const confirmTurn = turn("fact-owner-confirm", confirm);
+    expect(await command(confirmTurn)).toMatchObject({ status: 200, text: expect.stringContaining("applied that edit") });
+    expect(await command(confirmTurn)).toMatchObject({ status: 200, text: expect.stringContaining("applied that edit") });
+    expect(await interest("ntwrk", owner)).toEqual([{ value: replacement, privacy_scope: "matchable", tags: [] }]);
+    expect(await membershipInterests("ntwrk", owner)).toEqual([replacement]);
+    expect((await command(initial)).status).toBe(409);
+    const changed = await command(turn("fact-owner-list-after-edit", "SHOW MY FACTS"));
+    expect(changed.text).toContain(replacement);
+    expect(changed.text).not.toContain(original);
+    expect(JSON.stringify(await sql`select body from network.messages where id='in:blooio:fact-owner-stage'`)).not.toMatch(/pfr_|Weekend puzzle hunts/);
+
+    const editedRef = factCode(changed.text);
+    if (!editedRef) throw new Error("The corrected fact has no reference");
+    const scope = await command(turn("fact-owner-stage-scope", `SET FACT SCOPE ${editedRef} TO agent_private`));
+    const scopeDraft = promptCode(scope.text);
+    if (!scopeDraft) throw new Error("The scope change has no confirmation code");
+    expect((await command(turn("fact-owner-confirm-scope", `CONFIRM FACT EDIT ${scopeDraft}`))).text).toContain("applied that edit");
+    expect(await interest("ntwrk", owner)).toEqual([{ value: replacement, privacy_scope: "agent_private", tags: [] }]);
+    const ownedOnly = await command(turn("fact-owner-private-list", "SHOW MY FACTS"));
+    expect(ownedOnly.text).toMatch(/Weekend puzzle hunts[\s\S]*Scope: agent_private/);
+    const privateRef = factCode(ownedOnly.text);
+    if (!privateRef) throw new Error("The private fact has no reference");
+    const removal = await command(turn("fact-owner-stage-removal", `REMOVE FACT ${privateRef}`));
+    const removalDraft = promptCode(removal.text);
+    if (!removalDraft) throw new Error("The removal has no confirmation code");
+    expect((await command(turn("fact-owner-confirm-removal", `CONFIRM FACT EDIT ${removalDraft}`))).text).toContain("applied that edit");
+    expect(await interest("ntwrk", owner)).toEqual([]);
+    expect(await membershipInterests("ntwrk", owner)).toEqual([]);
+    expect(await interest("friends", sibling)).toEqual(siblingInterest);
+    expect(await interest("ntwrk", other)).toEqual(otherInterest);
+    expect(await membershipInterests("friends", sibling)).toEqual(["Birdwatching"]);
+    expect(await membershipInterests("ntwrk", other)).toEqual(["Street photography"]);
+
+    const otherList = turn("fact-other-current-list", "SHOW MY FACTS", otherPhone);
+    expect((await command(otherList)).text).toContain("Street photography");
+    expect((await command(turn("fact-other-stopped", "STOP", otherPhone))).status).toBe(200);
+    expect(await command(otherList)).toEqual({ status: 409, text: "" });
+  }, T);
+
   // spec/product/stories.md, "Seed invitations use the same acceptance rules"
   test("a scoped staff seed batch is private and only creates membership on its first verified acceptance", async () => {
     await applySchema(URL_, { reset: true, lockTimeout: "5s" });
