@@ -41,6 +41,11 @@ import {
   type OpportunityLifecycle, type OpportunityPhase,
 } from "../../core/src/generated/opportunityLifecycle.ts";
 import { bookedCapacityReached, bookedOccupies } from "../../core/src/generated/peonCapacity.ts";
+import {
+  alternateAllowed, canRecordReply, mayTryAlternate, mayUsePriorIntent, needsOtherTimes,
+  needsProbeSend, probeAvailability, probeExpired, probeExpiryDeadline, probeIsInvite, probeResponseMs, probeTiming,
+  replacementRoute, shouldLookForOtherTimes, step as stepProbe, turnReached, type ParticipantProbe,
+} from "../../core/src/generated/probeDispatch.ts";
 import { reviewLate } from "../../core/src/generated/reviewDeadline.ts";
 import {
   caseCloseResult, holdAuthority, holdLiftResult, holdSubjectKnown, initial as initialCase, minorClearResult, reportAfterDecision,
@@ -368,6 +373,16 @@ function opportunityLifecycle(o: Opp): OpportunityLifecycle {
 }
 
 type PStatus = "queued" | "probing" | "available" | "unavailable" | "yes" | "no" | "dropped";
+
+function participantProbe(status: PStatus | undefined): ParticipantProbe {
+  switch (status) {
+    case "queued": return { phase: "Queued" };
+    case "probing": return { phase: "AwaitingReply" };
+    case "available": return { phase: "Available" };
+    case "unavailable": return { phase: "Unavailable" };
+    default: return { phase: "OutsideProbe" };
+  }
+}
 interface Opp {
   id: string; origin: Origin; kind: Proposal["kind"]; category: Category; objective: string; detail: string;
   participants: MemberId[]; alternates: MemberId[]; primed: Set<MemberId>; requester?: MemberId;
@@ -476,7 +491,7 @@ type Timing = "now" | "slot" | "logistics";
 
 const ZERO: ScoreComponents = { fit: 0, mutualBenefit: 0, warmPath: 0, novelty: 0, timingFit: 0, activationCost: 0, interruptionCost: 0, load: 0, repetition: 0, socialRisk: 0, confidence: 0 };
 /** A probe expires 26 hours after it went out; a probe that cannot go out expires after the partner deadline (engine expiry.partnerProbeDays). */
-const PROBE_TTL = 26 * HOUR, PROBE_WAIT = DEFAULT_ATTENTION.expiry.partnerProbeDays * DAY;
+const PROBE_WAIT = DEFAULT_ATTENTION.expiry.partnerProbeDays * DAY;
 /** The daily engine run happens at the first tick from runHour until this New York hour. */
 const ENGINE_RUN_UNTIL = 20;
 /** The booked plan's opt-out window: silence this long counts as confirmed (attention v1.2). */
@@ -2201,7 +2216,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       id: x.recorded && x.id ? x.id : this.sid(x.id ?? `nw-${this.opts.seed}-${++this.oppSeq}`), origin: x.origin, kind: x.kind, category: x.category, objective: x.objective, detail: x.detail,
       participants: [...x.participants], alternates: this.distinctAlternates(x.participants, x.alternates), primed: new Set(x.primed), requester: x.requester,
       status: new Map(x.participants.map(id => [id, "queued" as PStatus])), explanations: { ...x.explanations },
-      stage: STAGE_BY_PHASE[initialOpportunity.phase], deadline: now + PROBE_TTL, createdAt: now, score: x.score, components: x.components ?? ZERO, generator: x.generator,
+      stage: STAGE_BY_PHASE[initialOpportunity.phase], deadline: now + probeResponseMs, createdAt: now, score: x.score, components: x.components ?? ZERO, generator: x.generator,
       exploration: !!x.exploration, tags: x.tags, replacements: 0, sameDay: !!x.sameDay, contacted: new Set(), reminded: new Set(), feedbackFrom: new Set(), runId: this.currentRunId,
     };
     this.opps.set(o.id, o);
@@ -2234,15 +2249,22 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!o.first || !o.participants.includes(o.first)) o.first = this.firstOf(o);
     // A member who asked for this exact thing is not asked yes or no. A requester still picks the
     // times first (requestTimes), so the other person is offered only times that work for them.
-    for (const p of o.participants) if (o.primed.has(p) && (o.status.get(p) === "queued" || o.status.get(p) === "probing") && !o.contacted.has(p) && !this.asksTimes(o, p)) o.status.set(p, "available");
+    // spec/probeDispatch.md, "The first participant opens the later turns"
+    for (const p of o.participants) {
+      const probe = participantProbe(o.status.get(p));
+      const primed = o.primed.has(p), contacted = o.contacted.has(p);
+      if (!mayUsePriorIntent(probe, primed, contacted)) continue;
+      const next = stepProbe(probe, { type: "usePriorIntent", primed, contacted, needsTimes: this.asksTimes(o, p) });
+      if (next.phase === "Available") o.status.set(p, "available");
+    }
     const firstIn = o.status.get(o.first) === "available";
     for (const p of [...o.participants]) {
       if (o.stage !== "probing") return;
-      const st = o.status.get(p);
-      if (st !== "queued" && st !== "probing") continue;
-      if (p !== o.first && !firstIn) continue;
-      if (st === "queued") { o.status.set(p, "probing"); o.turnAt = { ...o.turnAt, [p]: now }; }
-      if (!o.contacted.has(p)) this.probe(o, p);
+      const current = participantProbe(o.status.get(p)), first = p === o.first;
+      if (!turnReached(current, first, firstIn)) continue;
+      const opened = stepProbe(current, { type: "openTurn", first, firstAvailable: firstIn });
+      if (opened !== current) { o.status.set(p, "probing"); o.turnAt = { ...o.turnAt, [p]: now }; }
+      if (needsProbeSend(opened, o.contacted.has(p))) this.probe(o, p);
     }
     this.maybeReveal(o);
   }
@@ -2255,28 +2277,36 @@ export class ConsentNetwork implements NetworkUnderTest {
   private probe(o: Opp, id: MemberId) {
     const m = this.member(id);
     const now = this.now();
-    if (o.contacted.has(id)) return;
-    o.status.set(id, "probing");
+    const pending = participantProbe(o.status.get(id));
+    if (!needsProbeSend(pending, o.contacted.has(id))) return;
     // A hiring manager asked for candidates (their posting): the review of one is not an initial invite.
-    const invite = o.requester !== id && o.seat?.manager !== id;
+    const invite = probeIsInvite(o.requester === id, o.seat?.manager === id);
     const timing: Timing = invite ? "slot" : "logistics";
     // One open question at a time: a probe waits (up to a day) while the member's answer to an ask
     // (growth, profiling, check-in) is still due, so "Sure, my friend Wren would love this" is never
     // read as a yes to the probe.
     const askOpen = this.askOpen(m, now);
-    if (askOpen || !this.timingOk(m, timing, now)) {
+    // spec/probeDispatch.md, "Wait for the member's send window and current availability"
+    const timingDecision = probeTiming(askOpen, !askOpen && this.timingOk(m, timing, now));
+    if (timingDecision !== "CheckAvailability") {
       if (!o.deferLogged?.includes(id)) {
         o.deferLogged = [...(o.deferLogged ?? []), id];
         this.counters.deferred++;
-        this.ctx.log("send_deferred", { memberId: id, kind: "probe", oppId: o.id, until: askOpen ? m.openAskAt! + ASK_HOLD_MS : this.openAt(m, timing, now) });
+        this.ctx.log("send_deferred", { memberId: id, kind: "probe", oppId: o.id, until: timingDecision === "WaitForQuestion" ? m.openAskAt! + ASK_HOLD_MS : this.openAt(m, timing, now) });
       }
       return;
     }
     // A probe can go out days after the gates ran (sequential probes, send windows): someone who is
     // away from New York now or this week is not asked (the gates' 6-day presence check, again).
-    if (!this.inNyc(id, now, now + 6 * DAY)) { this.refuse(id, "probe", "away"); o.status.set(id, "unavailable"); return this.replaceOrClose(o, id); }
+    const present = this.inNyc(id, now, now + 6 * DAY);
+    const availability = probeAvailability(present, present && this.commonTimeGone(o, id, now));
+    if (availability === "ParticipantAway") {
+      this.refuse(id, "probe", "away");
+      if (stepProbe(pending, { type: "markUnavailable" }).phase === "Unavailable") o.status.set(id, "unavailable");
+      return this.replaceOrClose(o, id);
+    }
     // The others' picked times are all too soon now (or turned down): new times would not match theirs.
-    if (this.commonTimeGone(o, id, now)) return this.closeNoCommonTime(o, id);
+    if (availability === "NoCommonTime") return this.closeNoCommonTime(o, id);
     // A job intro has no meeting slot to pick: the two arrange the talk through the agent after the intro.
     const options = o.seat ? [] : this.timeOptionsFor(o, id, now);
     const times = options.length ? attention.timeOptionsPhrase(options, NY) : undefined;
@@ -2390,13 +2420,17 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   private onProbeAnswer(m: MemberState, oppId: string, yes: boolean, keys: string[] = []) {
     const o = this.opps.get(oppId);
-    if (!o || o.stage !== "probing" || o.status.get(m.id) !== "probing") return;
+    if (!o || o.stage !== "probing") return;
+    // spec/probeDispatch.md, "A reply or an expired deadline settles the probe"
+    const current = participantProbe(o.status.get(m.id));
+    if (!canRecordReply(current)) return;
+    const answered = stepProbe(current, { type: "recordReply", agreed: yes });
     const retry = !!o.timeRetry?.includes(m.id);
     const offered = o.offered?.[m.id] ?? [];
     const picked = offered.filter(x => keys.includes(x.key));
     if (!retry) m.answered++;
     this.ctx.log(retry ? "time_answer" : "probe_answer", { oppId, memberId: m.id, yes, ...(offered.length ? { picked: picked.map(x => x.key) } : {}) });
-    if (yes) {
+    if (answered.phase === "Available") {
       if (!retry) this.counters.probeYes++;
       o.status.set(m.id, "available"); o.primed.add(m.id);
       if (offered.length) {
@@ -2411,9 +2445,10 @@ export class ConsentNetwork implements NetworkUnderTest {
       // the plan would be set at a time this member never said works, and is often called off.
       // The retry never repeats a time anyone turned down. When the others named times and every one
       // of them is gone, there is nothing to offer and no time to book: the opportunity closes.
-      if (offered.length && !picked.length && this.commonTimeGone(o, m.id, this.now())) { this.ack(m, "No problem."); return this.closeNoCommonTime(o, m.id); }
-      const fresh = offered.length && !picked.length && !retry ? this.timeOptionsFor(o, m.id, this.now()) : [];
-      if (fresh.length) {
+      const offeredTimes = offered.length > 0, pickedTimes = picked.length > 0;
+      if (needsOtherTimes(offeredTimes, pickedTimes) && this.commonTimeGone(o, m.id, this.now())) { this.ack(m, "No problem."); return this.closeNoCommonTime(o, m.id); }
+      const fresh = shouldLookForOtherTimes(offeredTimes, pickedTimes, retry) ? this.timeOptionsFor(o, m.id, this.now()) : [];
+      if (stepProbe(answered, { type: "offerOtherTimes", hasFreshTimes: fresh.length > 0 }).phase === "AwaitingReply") {
         o.timeRetry = [...(o.timeRetry ?? []), m.id];
         o.offered = { ...o.offered, [m.id]: fresh };
         o.status.set(m.id, "probing");
@@ -2423,7 +2458,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         return;
       }
       this.ack(m, "Great, thanks.");
-    } else {
+    } else if (answered.phase === "Unavailable") {
       this.counters.probeNo++; this.emit({ type: "declined", member: m.id, planId: o.id }, `${o.id}:${m.id}`);
       // A no is remembered for the pair (network-consent-5): never probed again for a while, from any path.
       this.markDeclined(o.participants, this.now(), m.id);
@@ -2467,16 +2502,20 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** Swap an unavailable participant for an alternate (never the requester), or close quietly. */
   private replaceOrClose(o: Opp, out: MemberId) {
-    if (o.stage !== "probing") return;
-    if (o.requester === out) return this.close(o, "requester unavailable");
-    // A seat item without its hiring manager is over (an alternate candidate never stands in for them).
-    if (o.seat?.manager === out) return this.close(o, "manager unavailable");
+    // spec/probeDispatch.md, "A replacement keeps the requester or hiring manager and all eligible group members"
+    const route = replacementRoute(o.stage === "probing", o.requester === out, o.seat?.manager === out);
+    if (route === "IgnoreReplacement") return;
+    if (route === "CloseRequester") return this.close(o, "requester unavailable");
+    if (route === "CloseManager") return this.close(o, "manager unavailable");
     const group = o.participants.length > 2;
     let alt: MemberId | undefined;
-    while (!alt && o.alternates.length && o.replacements < 3) {
+    while (!alt && mayTryAlternate(o.alternates.length > 0, o.replacements)) {
       const a = o.alternates.shift()!;
       // The same checks as a reroll: blocks, avoid edges and pair history with everyone staying (network-consent-26).
-      if (this.eligible(a) && !this.sharesFirstName(o, a) && !o.participants.some(p => p !== out && (this.blocked(p, a) || this.avoid.has(pairKey(p, a)) || this.pairHistory(p, a, 60)))) alt = a;
+      const eligible = this.eligible(a);
+      const sameFirstName = eligible && this.sharesFirstName(o, a);
+      const conflict = eligible && !sameFirstName && o.participants.some(p => p !== out && (this.blocked(p, a) || this.avoid.has(pairKey(p, a)) || this.pairHistory(p, a, 60)));
+      if (alternateAllowed(eligible, sameFirstName, conflict)) alt = a;
     }
     if (o.picks?.[out]) { const { [out]: _, ...rest } = o.picks; o.picks = rest; }
     if (alt) {
@@ -2490,7 +2529,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       this.advanceProbes(o);
       return;
     }
-    if (group && o.participants.filter(p => o.status.get(p) !== "unavailable").length >= 3) {
+    if (group && groupCanContinue(o.participants.filter(p => o.status.get(p) !== "unavailable").length)) {
       o.participants = o.participants.filter(p => p !== out); o.status.delete(out);
       if (o.first === out) o.first = o.participants[0];
       return;
@@ -3494,7 +3533,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       // probed); at the probe deadline without quorum, the fallback runs. Late joins until 6 hours before.
       for (const [p, a] of Object.entries(o.planRun.answers)) {
         const sent = o.sentAt?.[p];
-        if (a !== "pending" || sent === undefined || now < sent + PROBE_TTL || !o.planRun) continue;
+        if (a !== "pending" || sent === undefined || !probeExpired(now, sent + probeResponseMs) || !o.planRun) continue;
         this.counters.probeExpired++;
         this.ctx.log("probe_answer", { oppId: o.id, memberId: p, yes: false, expired: true, plan: true });
         const m = this.members.get(p);
@@ -3510,11 +3549,13 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (o.stage === "probing" && !o.plan) {
       // A probe expires 26 hours after it went out; one that could not go out within the wait expires unsent.
       for (const p of [...o.participants]) {
-        if (o.stage !== "probing" || o.status.get(p) !== "probing") continue;
+        if (o.stage !== "probing") continue;
+        const current = participantProbe(o.status.get(p));
         const sent = o.sentAt?.[p];
-        if (now < (sent !== undefined ? sent + PROBE_TTL : (o.turnAt?.[p] ?? o.createdAt) + PROBE_WAIT)) continue;
-        // They said yes and were offered other times: no answer keeps the yes (the best time for everyone).
-        if (o.timeRetry?.includes(p)) { o.status.set(p, "available"); continue; }
+        const deadline = probeExpiryDeadline(sent !== undefined, (sent ?? 0) + probeResponseMs, (o.turnAt?.[p] ?? o.createdAt) + PROBE_WAIT);
+        const next = stepProbe(current, { type: "expireProbe", expired: probeExpired(now, deadline), timeQuestion: !!o.timeRetry?.includes(p) });
+        if (next === current) continue;
+        if (next.phase === "Available") { o.status.set(p, "available"); continue; }
         if (o.contacted.has(p)) { this.counters.probeExpired++; this.ctx.log("probe_answer", { oppId: o.id, memberId: p, yes: false, expired: true }); }
         const m = this.members.get(p);
         if (m?.awaiting?.oppId === o.id) m.awaiting = undefined;

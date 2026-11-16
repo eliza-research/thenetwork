@@ -8,7 +8,7 @@ A member needs staff review before contact and control over when The Network mak
 
 Check review and deadlines, participant answers, name disclosure, STOP, and cancellation. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-Production uses the generated [opportunity lifecycle](../opportunityLifecycle.md) and [review deadline rule](../reviewDeadline.md). Participant status, channel effects, and attendance settlement remain in the Network shell.
+Production uses the generated [opportunity lifecycle](../opportunityLifecycle.md), [probe dispatch and settlement](../probeDispatch.md), and [review deadline rule](../reviewDeadline.md). The Network shell keeps the roster, persisted statuses, channel effects, and attendance records.
 
 Imported from `quint/opportunity.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
