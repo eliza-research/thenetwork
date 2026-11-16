@@ -47,3 +47,38 @@ pure def lawTripEndsExclusively(window: PresenceWindow): bool =
 pure def lawCoveringTripSharesTime(window: PresenceWindow, requested: PresenceWindow): bool =
   presenceWindowCovers(window, requested) implies presenceWindowsOverlap(window, requested)
 ```
+
+## Story: Tell the Network my travel dates
+
+> As a member, I want to tell the agent where I will be and see which app saved my travel dates.
+
+### A signed travel statement saves only the member's own dates in that app
+
+The signed conversation identifies the app and checks that the phone still belongs to the active member there. Without that binding, the command produces no write or reply. The shell accepts exact calendar dates in the destination city and treats the end date as the first day outside the trip. A missing, invalid, or ended window asks for dates. An overlapping stay in a different city needs a correction. Repeating the same stay leaves one record. The travel entry and its collected confirmation commit together. A retry may return the stored reply only while the same membership is authorized. This command changes no consent, account status, home location, or matching markets.
+
+```quint
+type TravelEntry = TravelUnavailable | TravelNeedsDates | TravelDateConflict | TravelAlreadySaved | TravelSave
+
+pure def travelEntryReplyAllowed(canonicalMember: bool, activeMemberRow: bool): bool =
+  canonicalMember and activeMemberRow
+
+pure def samePresenceWindow(first: PresenceWindow, second: PresenceWindow): bool =
+  first.from == second.from and first.to == second.to
+
+pure def decideTravelEntry(authorized: bool, hasDates: bool, window: PresenceWindow, now: int, conflict: bool, saved: bool): TravelEntry =
+  if (not(authorized)) TravelUnavailable
+  else if (not(hasDates) or not(presenceWindowCurrentOrFuture(window, now))) TravelNeedsDates
+  else if (conflict) TravelDateConflict
+  else if (saved) TravelAlreadySaved
+  else TravelSave
+
+pure def lawUnavailableTravelNeverSaves(hasDates: bool, window: PresenceWindow, now: int, conflict: bool, saved: bool): bool =
+  decideTravelEntry(false, hasDates, window, now, conflict, saved) == TravelUnavailable
+
+pure def lawRepeatedTravelDoesNotSave(window: PresenceWindow, now: int, conflict: bool): bool =
+  decideTravelEntry(true, true, window, now, conflict, true) != TravelSave
+
+pure val firstValues = windowValues
+pure val secondValues = windowValues
+pure val presenceValues = windowValues
+```

@@ -63,6 +63,51 @@ test("signed turns collect direct replies, replay immutable JSON and isolate con
   expect(escaped).toBe(0);
 },60_000);
 
+// spec/travelPresence.md, "Tell the Network my travel dates"
+test("signed travel stores one coarse trip in the routed app and never guesses missing dates", async () => {
+  const phone = "+12125550155";
+  for (const app of [APPS.friends, APPS.slop]) {
+    await service.accounts.invite(app, phone);
+    const person = (await service.accounts.personFor(phone))!;
+    const joined = await service.accounts.join(app, { e164: phone, personId: person.id }, {
+      firstName: "Ari", age: 29, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+    });
+    expect(joined.ok).toBe(true);
+  }
+  const trips = () => sql`select p.app_id, p.city, p.from_at, p.to_at, p.areas, m.home_city from network.presence p
+    join network.members m on m.app_id=p.app_id and m.id=p.member_id
+    join platform.phone_identities ph on ph.person_id=m.person_id
+    where ph.e164=${phone} and p.type='temporary'`;
+  const declare = (id: string, text: string) => post(turn(id, phone, text, "friends"));
+  const before = escaped;
+  const unclear = await declare("travel-unclear", "I'll be in SF the 10th to the 14th.");
+  expect(unclear.status).toBe(200);
+  expect((await unclear.json()).replies[0]).toContain("YYYY-MM-DD");
+  expect(await trips()).toHaveLength(0);
+  const statement = "I will be in San Francisco from 2026-10-31 until 2026-11-02.";
+  const stranger = await post(turn("travel-not-member", "+12125550156", statement, "friends"));
+  expect(stranger.status).toBe(200);
+  expect(await stranger.json()).toMatchObject({ memberId: null, reason: "travel_presence", replies: [] });
+  expect(await service.accounts.personFor("+12125550156")).toBeUndefined();
+  const request = turn("travel-valid", phone, statement, "friends");
+  const first = await post(request);
+  expect(first.status).toBe(200);
+  const accepted = await first.json();
+  expect(accepted).toMatchObject({ app: "friends", reason: "travel_presence", replyKind: "reply", replies: [expect.stringContaining("Saved in friends.help")] });
+  expect(await (await post(request)).json()).toEqual(accepted);
+  expect((await (await declare("travel-duplicate", statement)).json()).replies[0]).toContain("Already saved");
+  expect((await (await declare("travel-conflict", "I will be in Los Angeles from 2026-11-01 until 2026-11-03.")).json()).replies[0]).toContain("overlap");
+  expect(await trips()).toEqual([expect.objectContaining({
+    app_id: "friends", city: "sf", home_city: "nyc", areas: [],
+    from_at: new Date("2026-10-31T07:00:00Z"), to_at: new Date("2026-11-02T08:00:00Z"),
+  })]);
+  expect(escaped).toBe(before);
+  expect((await declare("travel-stop", "STOP")).status).toBe(200);
+  const lockedReplay = await post(request);
+  expect(lockedReplay.status).toBe(409);
+  expect(await lockedReplay.json()).toEqual({ error: "turn_travel_account_changed", retryable: false });
+}, 60_000);
+
 test("canonical membership STOP is collected atomically and cannot drain to a provider on restart",async()=>{
   const phone="+12125550121";
   const call=async(path:string,body:unknown,cookie?:string)=>fetchWithHost(new URL(path,server.url),{method:"POST",headers:{host:"localhost:5102","content-type":"application/json",...(cookie?{cookie}:{})},body:JSON.stringify(body)});

@@ -60,6 +60,8 @@ type Row = Record<string, unknown>;
 export interface Unit {
   inbound?: Row;
   standingIntent?: StoredStandingIntentChange;
+  /** A signed travel declaration prepares its own reply inside the save transaction. */
+  travelPresence?: (tx: SQL) => Promise<void>;
   sends: Outbound[];
   events: EventRow[];
   blocks: [MemberId, MemberId][];
@@ -461,6 +463,7 @@ export class NetworkRuntime {
   /** Everything the unit produced, inside the save transaction (app.app_id is set). Rows that name a member not in this app's network.members are skipped. */
   private async writeUnit(tx: SQL, u: Unit) {
     const app = this.app.id;
+    await u.travelPresence?.(tx);
     const personIds = new Map<string, string>();
     if (u.forget.size) {
       const rows = await tx`select person.id,member.id as member_id from platform.people person

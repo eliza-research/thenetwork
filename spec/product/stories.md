@@ -262,6 +262,8 @@ Store confirmed city and time windows. Use travel tolerance and any visitor opt-
 
 Temporary presence needs a start and an end. Matching uses a valid trip only during that window. When the window ends, future matching uses other eligible presence, such as the member's home city.
 
+On the signed conversation, a member can state the city and two exact dates to record a trip for the current app. The end date is the first day away from that city. The member sees the saving app in the reply. If a date lacks its month or year, the Network asks for the dates before saving anything.
+
 Models: [live travel windows](../travelPresence.md), [matching engine](../models/matching_engine.md), [candidate pool](../models/candidate_pool.md).
 
 ## Story F27 — Review before contact
