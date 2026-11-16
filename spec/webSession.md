@@ -30,7 +30,7 @@ pure def lawCloudDeadlineCapsSession(createdAt: int, startedAt: int, ttl: int, m
 
 ### Only a live token on the requested app can authenticate
 
-A token must be present and at most 128 characters. A missing row, another app's row, or a row at or past expiry or revocation is refused. When rotation is requested, a token with no pending revocation rotates at one day by default. A token in the grace period still works without another rotation. The shell schedules old-token revocation for one minute later and persists the replacement before returning it.
+A token must be present and at most 128 characters. A missing row, another app's row, or a row at or past expiry or revocation is refused. A current ban of the session's phone or person also refuses the row, even when staff banned the person after the session started. The shell reads the ban at each use of the token. When rotation is requested, a token with no pending revocation rotates at one day by default. A token in the grace period still works without another rotation. The shell schedules old-token revocation for one minute later and persists the replacement before returning it.
 
 ```quint
 type SessionPhase = Beginning | LookingUp | Refused | Usable | RevokingOld | IssuingReplacement | Rotated
@@ -43,9 +43,9 @@ pure def readToken(flow: SessionFlow, tokenPresent: bool, tokenLength: int): Ses
   { ...flow, phase: if (tokenPresent and tokenLength <= 128) LookingUp else Refused }
 
 pure def canReadRow(flow: SessionFlow): bool = flow.phase == LookingUp
-pure def readRow(flow: SessionFlow, sameAppRow: bool, expired: bool, hasRevocation: bool, revocationDue: bool,
+pure def readRow(flow: SessionFlow, sameAppRow: bool, expired: bool, hasRevocation: bool, revocationDue: bool, banned: bool,
   rotationRequested: bool, oldEnough: bool, at: int): SessionFlow =
-  if (not(sameAppRow) or expired or revocationDue) { ...flow, phase: Refused }
+  if (not(sameAppRow) or expired or revocationDue or banned) { ...flow, phase: Refused }
   else if (not(rotationRequested) or hasRevocation or not(oldEnough)) { ...flow, phase: Usable }
   else { phase: RevokingOld, revokeAt: at + sessionGraceMs }
 
@@ -59,6 +59,11 @@ pure def stepRotationRequiresAReplacement(before: SessionFlow, via: str, after: 
   after.phase == Rotated implies (before.phase == IssuingReplacement and via == "recordReplacement")
 
 pure def sometimesRotates(flow: SessionFlow): bool = flow.phase == Rotated
+
+pure def lawBannedSessionIsRefused(sameAppRow: bool, expired: bool, hasRevocation: bool, revocationDue: bool,
+  rotationRequested: bool, oldEnough: bool, at: int): bool =
+  readRow({ phase: LookingUp, revokeAt: 0 }, sameAppRow, expired, hasRevocation, revocationDue, true,
+    rotationRequested, oldEnough, at).phase == Refused
 ```
 
 ### Sensitive account changes require a fresh sign-in

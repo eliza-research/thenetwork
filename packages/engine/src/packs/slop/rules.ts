@@ -7,14 +7,17 @@
 // both ways, stated dealbreakers, radius or cities. There is no race or ethnicity rule (no field).
 // Safety: observed safety cues and the Network's own records hold a member for human review.
 import { DAY } from "@thenetwork/core";
+import type { MatchLane } from "../../../../core/src/generated/matchLane.ts";
 import type { CandidateRule, MemberRule, PairRule } from "../../pack.ts";
 import { pairKey, type World } from "../../world.ts";
 import { limitMiles } from "./geo.ts";
 import type { SlopPackOptions } from "./options.ts";
 import { slopProfiles, type SlopProfile } from "./profile.ts";
-import { appearanceGap, statedDealbreaker } from "./score.ts";
+import { statedDealbreaker } from "./score.ts";
 
 export const SLOP_LANE = "romance" as const;
+/** The relationship lane of every slop.date match (spec/matchLane.md). */
+export const SLOP_MATCH_LANE: MatchLane = "Date";
 const prof = (w: World) => slopProfiles(w.input, w.canonical);
 
 /** A member's age range: stated; else the narrow fallback after a silent ask; else (asks off) the default guess; undefined = ask. */
@@ -115,14 +118,6 @@ export function slopPairRules(o: SlopPackOptions): PairRule[] {
         const ra = ageRangeOf(pa, o), rb = ageRangeOf(pb, o);
         if (!ra || !rb) return "age_range_unknown";
         return pb.age >= ra[0] && pb.age <= ra[1] && pa.age >= rb[0] && pa.age <= rb[1] ? null : "age_range";
-      },
-    },
-    {
-      // Iteration 3: appearance band (only when both ratings are usable).
-      id: "appearance_band", check: (w, a, b) => {
-        if (o.appearance.mode !== "band") return null;
-        const d = appearanceGap(prof(w).get(a)!, prof(w).get(b)!, o);
-        return d !== undefined && d > o.appearance.band ? "appearance_band" : null;
       },
     },
     {

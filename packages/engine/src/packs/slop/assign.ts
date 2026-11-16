@@ -1,99 +1,37 @@
-// slopPack global assignment per tick (AppPack.selection.assign): who gets proposed to whom this run.
-//   greedy  max reciprocal value first (a 1/2-approximation of the maximum-weight matching), on the
-//           value after selection.adjust (exposure debt, scarce pools, popularity);
-//   stable  stable roommates (Irving 1985) on each member's own predicted preference order: no two
-//           members would both rather be proposed to each other than to whom they got. Works for
-//           non-bipartite (queer, bi) pools, where Gale-Shapley does not apply; when no stable
-//           matching exists the rest is filled greedily.
-// Congestion control: a member is in at most `perMemberPerTick` proposals per run (rounds; round 2 is
-// a backup the harness / dispatcher only sends when round 1 failed), so nobody is flooded with probes
-// and every probe is one the member can act on (one first date at a time).
+// slopPack weekly assignment (AppPack.selection.assign): who gets proposed to whom this run. The
+// generic greedy selection over the Date lane's edges: the highest value first, each member at most
+// once per round and never past the lane capacity left this week. Congestion control: a member is in
+// at most `perMemberPerTick` proposals per run (rounds; round 2 is a backup the harness / dispatcher
+// only sends when round 1 failed). The exposure floor: pairs whose scarcer member has few eligible
+// partners go first, and carried exposure debt lifts a pair. Nothing here reads a rating. A member's
+// degree is the number of searched partners (one candidate per member pair), not every eligible one.
 import type { MemberId } from "@thenetwork/core";
-import { canReservePair, initial, step } from "../../../../core/src/generated/slopAssignment.ts";
+import { canReservePair, initial, memberCount, step } from "../../../../core/src/generated/slopAssignment.ts";
 import type { AssignContext } from "../../pack.ts";
 import type { Selected, SelectionResult } from "../../policy.ts";
 import type { Scored } from "../../scoring.ts";
-import type { Candidate } from "../../types.ts";
 import { pairKey, type World } from "../../world.ts";
 import type { SlopPackOptions } from "./options.ts";
-import { slopProfiles } from "./profile.ts";
-import { appearanceGap } from "./score.ts";
+import { SLOP_MATCH_LANE } from "./rules.ts";
 
 interface Edge { s: Scored; a: MemberId; b: MemberId; v: number }
 
-/** Per-run context for selection.adjust (degree = eligible partners, demand = how many rank you top-5). */
-const runStats = new WeakMap<World, { degree: Map<MemberId, number>; demand: Map<MemberId, number>; maxDemand: number; floorLift: Map<MemberId, number> }>();
-
-/**
- * Iteration 5 exposure floor by rating quintile: lift per member (0 for most). Quintiles over the
- * members in this run with a usable rating; a quintile's mean dates so far is compared with the
- * rated mean (both + `smooth`, so no history = no lift). Internal only; nothing is shown or logged.
- */
-export function ratingFloorLift(o: SlopPackOptions, w: World, ids: Iterable<MemberId>): Map<MemberId, number> {
-  const F = o.congestion.ratingFloor, out = new Map<MemberId, number>();
-  if (!F?.weight || o.appearance.mode === "off" || !w.input) return out;
-  const P = slopProfiles(w.input, w.canonical);
-  const rated = [...new Set(ids)].map(id => P.get(id)).filter(p => p?.appearance && p.appearance.confidence >= o.appearance.minConfidence)
-    .sort((x, y) => (x!.appearance!.overall - y!.appearance!.overall) || (x!.id < y!.id ? -1 : 1));
-  if (rated.length < 10) return out;
-  const mean = rated.reduce((s, p) => s + p!.history.dates, 0) / rated.length;
-  for (let q = 0; q < 5; q++) {
-    const grp = rated.slice(Math.floor((q * rated.length) / 5), Math.floor(((q + 1) * rated.length) / 5));
-    const m = grp.reduce((s, p) => s + p!.history.dates, 0) / Math.max(1, grp.length);
-    const ratio = (m + F.smooth) / (mean + F.smooth);
-    if (ratio < F.floor) for (const p of grp) out.set(p!.id, F.weight * (F.floor - ratio) / F.floor);
-  }
-  return out;
-}
-
-/** selection.adjust: exposure debt lift, scarce-pool lift, popularity penalty. Pure in (w, c, value). */
-export function slopAdjust(o: SlopPackOptions, w: World, c: Candidate, value: number, debt: Readonly<Record<MemberId, number>> = {}): number {
-  const C = o.congestion, st = runStats.get(w);
-  const ids = c.participants;
-  let v = value;
-  if (C.debtWeight) v += C.debtWeight * ids.reduce((s, id) => s + Math.min(C.debtCap, Math.max(0, debt[id] ?? 0)), 0) / ids.length;
-  if (st && C.scarcityWeight) v += C.scarcityWeight * Math.max(...ids.map(id => 1 / Math.sqrt(Math.max(1, st.degree.get(id) ?? 1))));
-  if (st && C.popularityPenalty && st.maxDemand > 0) v -= C.popularityPenalty * Math.max(...ids.map(id => (st.demand.get(id) ?? 0) / st.maxDemand));
-  if (st && st.floorLift.size) v += Math.max(0, ...ids.map(id => st.floorLift.get(id) ?? 0));
-  return v;
-}
-
 export function slopAssign(o: SlopPackOptions, w: World, scored: readonly Scored[], ctx: AssignContext): SelectionResult {
+  const C = o.congestion;
   const pairs = scored.filter(x => x.eligible && x.c.participants.length === 2 && !x.c.exploration);
-  // Degree and demand for adjust.
   const degree = new Map<MemberId, number>();
-  const ranked = new Map<MemberId, { other: MemberId; v: number }[]>();
-  for (const x of pairs) {
-    const [a, b] = x.c.participants as [MemberId, MemberId];
-    for (const [m, other] of [[a, b], [b, a]] as const) {
-      degree.set(m, (degree.get(m) ?? 0) + 1);
-      const l = ranked.get(m) ?? []; l.push({ other, v: x.c.benefit[m] ?? 0 }); ranked.set(m, l);
-    }
-  }
-  const demand = new Map<MemberId, number>();
-  for (const [, l] of ranked) for (const e of l.sort((p, q) => (q.v - p.v) || (p.other < q.other ? -1 : 1)).slice(0, 5)) demand.set(e.other, (demand.get(e.other) ?? 0) + 1);
-  runStats.set(w, { degree, demand, maxDemand: Math.max(0, ...demand.values()), floorLift: ratingFloorLift(o, w, degree.keys()) });
-
+  for (const x of pairs) for (const id of x.c.participants) degree.set(id, (degree.get(id) ?? 0) + 1);
+  const capacity = (id: MemberId) => w.match.profileIn(id, SLOP_MATCH_LANE)?.capacity ?? 0;
   const usable = (id: MemberId) => !ctx.exclude?.has(id) && !w.get(id)!.inOpenOpportunity;
+  const debt = (id: MemberId) => Math.min(C.debtCap, Math.max(0, ctx.debt[id] ?? 0));
   const edges: Edge[] = [];
   for (const x of pairs) {
     const [a, b] = x.c.participants as [MemberId, MemberId];
-    if (!usable(a) || !usable(b)) continue;
-    const v = slopAdjust(o, w, x.c, x.score, ctx.debt);
-    if (x.score < o.minValue) continue;
-    edges.push({ s: x, a, b, v });
+    if (!usable(a) || !usable(b) || x.score < o.minValue) continue;
+    edges.push({ s: x, a, b, v: x.score + (C.debtWeight * (debt(a) + debt(b))) / 2 });
   }
-  // Scarce pools first (tier 0), then by adjusted value.
-  const C = o.congestion;
   const tier = (e: Edge) => (C.scarceDegree > 0 && Math.min(degree.get(e.a) ?? 0, degree.get(e.b) ?? 0) <= C.scarceDegree ? 0 : 1);
-  if (o.appearance.mode === "tiebreak") {
-    // Iteration 5: compatibility first; the rating gap only orders pairs whose adjusted value is
-    // equal within tieBucket (relative, log buckets), then value, then key. Never lowers a value.
-    const P = slopProfiles(w.input, w.canonical);
-    const bucket = (v: number) => (v > 0 ? Math.floor(Math.log(v) / Math.log1p(o.appearance.tieBucket)) : -Infinity);
-    const gap = (e: Edge) => appearanceGap(P.get(e.a)!, P.get(e.b)!, o) ?? 0;
-    edges.sort((p, q) => (tier(p) - tier(q)) || (bucket(q.v) - bucket(p.v)) || (gap(p) - gap(q)) || (q.v - p.v) || (p.s.c.key < q.s.c.key ? -1 : 1));
-  } else edges.sort((p, q) => (tier(p) - tier(q)) || (q.v - p.v) || (p.s.c.key < q.s.c.key ? -1 : 1));
+  edges.sort((p, q) => (tier(p) - tier(q)) || (q.v - p.v) || (p.s.c.key < q.s.c.key ? -1 : 1));
 
   const selected: Selected[] = [];
   // spec/slopAssignment.md, "Assignment opens each configured round once in order"
@@ -102,125 +40,16 @@ export function slopAssign(o: SlopPackOptions, w: World, scored: readonly Scored
   const baseRounds = Math.max(0, Math.min(Math.floor(C.perMemberPerTick), totalRounds)) || 0;
   let run = step(initial, { type: "configureAssignment", totalRounds, baseRounds });
   const withinBackupDegree = (e: Edge) => Math.min(degree.get(e.a) ?? 0, degree.get(e.b) ?? 0) <= C.backupMaxDegree;
+  const hasRoom = (id: MemberId) => memberCount(run.memberCounts, id) < capacity(id);
   while (run.phase === "BetweenRounds") {
     run = step(run, { type: "openRound" });
-    const avail = edges.filter(e => canReservePair(run, pairKey(e.a, e.b), e.a, e.b, withinBackupDegree(e)));
-    const chosen = o.assignment === "stable" ? stableRound(avail) : greedyRound(avail);
-    for (const e of chosen) {
+    for (const e of edges) {
       // spec/slopAssignment.md, "Each pair can be reserved once and each member can participate once per round"
-      const next = step(run, { type: "reservePair", pairKey: pairKey(e.a, e.b),
-        memberA: e.a, memberB: e.b, withinBackupDegree: withinBackupDegree(e) });
-      if (next === run) throw new Error(`Assignment reservation refused for ${e.s.c.key}`);
-      run = next;
+      if (!hasRoom(e.a) || !hasRoom(e.b) || !canReservePair(run, pairKey(e.a, e.b), e.a, e.b, withinBackupDegree(e))) continue;
+      run = step(run, { type: "reservePair", pairKey: pairKey(e.a, e.b), memberA: e.a, memberB: e.b, withinBackupDegree: withinBackupDegree(e) });
       selected.push({ s: e.s, exploration: false, rank: run.proposed - 1, probability: 1 });
     }
     run = step(run, { type: "closeRound" });
   }
   return { selected, budgetSkips: edges.length - selected.length };
-}
-
-/** Greedy: highest adjusted value first, each member at most once this round. */
-function greedyRound(edges: readonly Edge[]): Edge[] {
-  const taken = new Set<MemberId>();
-  const out: Edge[] = [];
-  for (const e of edges) {
-    if (taken.has(e.a) || taken.has(e.b)) continue;
-    taken.add(e.a); taken.add(e.b);
-    out.push(e);
-  }
-  return out;
-}
-
-/**
- * Stable roommates with incomplete lists (Irving 1985; Gusfield & Irving 1989). Each member ranks
- * acceptable partners by their OWN predicted enjoyment (Candidate.benefit), ties by the pair's
- * value. Phase 1 (proposals) and phase 2 (rotation elimination). If no stable matching exists, the
- * members it could not settle are matched greedily on what is left.
- */
-function stableRound(edges: readonly Edge[]): Edge[] {
-  const byPair = new Map<string, Edge>();
-  const prefs = new Map<MemberId, MemberId[]>();
-  for (const e of edges) {
-    byPair.set(pairKey(e.a, e.b), e);
-    for (const [m, other] of [[e.a, e.b], [e.b, e.a]] as const) { const l = prefs.get(m) ?? []; l.push(other); prefs.set(m, l); }
-  }
-  const own = (m: MemberId, other: MemberId) => { const e = byPair.get(pairKey(m, other))!; return e.s.c.benefit[m] ?? 0; };
-  const val = (m: MemberId, other: MemberId) => byPair.get(pairKey(m, other))!.v;
-  const ids = [...prefs.keys()].sort();
-  const rank = new Map<MemberId, Map<MemberId, number>>();
-  for (const m of ids) {
-    const l = prefs.get(m)!.sort((x, y) => (own(m, y) - own(m, x)) || (val(m, y) - val(m, x)) || (x < y ? -1 : 1));
-    rank.set(m, new Map(l.map((x, i) => [x, i])));
-  }
-  const active = new Map<MemberId, Set<MemberId>>(ids.map(m => [m, new Set(prefs.get(m)!)]));
-  const first = (m: MemberId) => prefs.get(m)!.find(x => active.get(m)!.has(x));
-  const second = (m: MemberId) => { let n = 0; for (const x of prefs.get(m)!) if (active.get(m)!.has(x) && ++n === 2) return x; return undefined; };
-  const last = (m: MemberId) => { const l = prefs.get(m)!; for (let i = l.length - 1; i >= 0; i--) if (active.get(m)!.has(l[i]!)) return l[i]; return undefined; };
-
-  // Phase 1: everyone proposes down their list; each member holds the best proposal received.
-  const held = new Map<MemberId, MemberId>(); // receiver -> proposer
-  const free: MemberId[] = [...ids];
-  const del = (a: MemberId, b: MemberId) => {
-    active.get(a)!.delete(b); active.get(b)!.delete(a);
-    if (held.get(a) === b) { held.delete(a); free.push(b); }
-    if (held.get(b) === a) { held.delete(b); free.push(a); }
-  };
-  const proposing = (x: MemberId) => [...held.entries()].some(([, p]) => p === x);
-  let guard = 0;
-  while (free.length && guard++ < 1e6) {
-    const x = free.shift()!;
-    if (proposing(x)) continue;
-    while (true) {
-      const y = first(x);
-      if (y === undefined) break;
-      const cur = held.get(y);
-      const ry = rank.get(y)!;
-      if (cur === undefined || ry.get(x)! < ry.get(cur)!) {
-        // y holds x and rejects the proposal it held (cur, if any). Delete the worse candidates
-        // first: del(y, cur) then sees held.get(y) === cur and frees cur, exactly as the code
-        // comment says. Setting held before the deletes would hide cur, and cur would never
-        // propose again.
-        for (const z of [...active.get(y)!]) if (ry.get(z)! > ry.get(x)!) del(y, z);
-        held.set(y, x);
-        break;
-      }
-      del(x, y);
-    }
-  }
-  // Phase 2: eliminate rotations while some list has 2+ entries. A list emptied here (not in
-  // phase 1) means no stable matching exists.
-  const emptyAfter1 = new Set(ids.filter(m => active.get(m)!.size === 0));
-  let ok = true;
-  guard = 0;
-  while (ok && guard++ < 1e5) {
-    const start = ids.find(m => active.get(m)!.size >= 2);
-    if (start === undefined) break;
-    const seq: MemberId[] = [], pos = new Map<MemberId, number>();
-    let x: MemberId | undefined = start;
-    while (x !== undefined && !pos.has(x)) {
-      pos.set(x, seq.length); seq.push(x);
-      const y = second(x);
-      x = y === undefined ? undefined : last(y);
-    }
-    if (x === undefined) { ok = false; break; }
-    const cycle = seq.slice(pos.get(x)!);
-    const ys = cycle.map(a => second(a)!);
-    for (let i = 0; i < cycle.length; i++) {
-      const b = ys[i]!, a = cycle[i]!, rb = rank.get(b)!;
-      for (const z of [...active.get(b)!]) if (rb.get(z)! > rb.get(a)!) { active.get(b)!.delete(z); active.get(z)!.delete(b); }
-    }
-    if (ids.some(m => !emptyAfter1.has(m) && active.get(m)!.size === 0)) { ok = false; break; }
-  }
-  const out: Edge[] = [];
-  const taken = new Set<MemberId>();
-  for (const m of ids) {
-    if (taken.has(m) || active.get(m)!.size !== 1) continue;
-    const p = [...active.get(m)!][0]!;
-    if (taken.has(p) || active.get(p)!.size !== 1 || !active.get(p)!.has(m)) continue;
-    taken.add(m); taken.add(p);
-    out.push(byPair.get(pairKey(m, p))!);
-  }
-  // Fallback (no stable matching, or members left over): greedy on the remaining edges.
-  for (const e of greedyRound(edges.filter(e => !taken.has(e.a) && !taken.has(e.b)))) { taken.add(e.a); taken.add(e.b); out.push(e); }
-  return out.sort((p, q) => (q.v - p.v) || (p.s.c.key < q.s.c.key ? -1 : 1));
 }

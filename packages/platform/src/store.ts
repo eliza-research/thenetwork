@@ -122,7 +122,7 @@ export interface PeopleStore {
   /** True if either person blocked the other, on any app. */
   isBlocked(a: string, b: string): Promise<boolean>;
 
-  /** Record a ban (never changed or removed by the service). */
+  /** Record a ban (never changed or removed by the service), revoke the person's profile-share grants and delete the phone's pending text flows, in one transaction. */
   ban(b: Ban): Promise<void>;
   /** True when this phone hash, or this person (a person-scope ban), is banned. */
   isBanned(phoneHash: string, personId?: string | null): Promise<boolean>;
@@ -278,7 +278,16 @@ export class MemoryPeopleStore implements PeopleStore {
   async isBlocked(a: string, b: string) { return this.blocks.has(`${a}:${b}`) || this.blocks.has(`${b}:${a}`); }
 
   readonly bans: Ban[] = [];
-  async ban(b: Ban) { if (!this.bans.some(x => x.id === b.id)) this.bans.push({ ...b }); }
+  async ban(b: Ban) {
+    const recordBan = async () => {
+      if (!this.bans.some(x => x.id === b.id)) this.bans.push({ ...b });
+      for (const g of this.grants.values()) if (b.personId && g.personId === b.personId && g.revokedAt === null) g.revokedAt = b.at;
+      const hashes = [...(b.phoneHash ? [b.phoneHash] : []), ...(b.personId ? await this.phoneHashesOf(b.personId) : [])];
+      for (const h of hashes) await this.deletePending(h);
+    };
+    if (b.personId) await this.withLock(`profile-share:${b.personId}`, recordBan);
+    else await recordBan();
+  }
   async isBanned(phoneHash: string, personId?: string | null) {
     return this.bans.some(b => (b.phoneHash !== null && b.phoneHash === phoneHash) || (b.scope === "person" && !!personId && b.personId === personId));
   }

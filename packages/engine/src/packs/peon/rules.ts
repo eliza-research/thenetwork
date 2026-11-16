@@ -1,12 +1,17 @@
 // peonPack hard filters (eligibility) and geo model. They run after the core prefix (minors,
 // holds, pause, blocks) and before any scoring; they only ever remove. Order is the funnel order.
 // Every rule is job-related (domain research B3 "Hard constraints") and reads profile.ts only.
+// Level fit is not a rule here: the Hire lane's standing band and penalty decide it, and a member
+// without a stated level has no Hire membership (match.ts).
 import type { City, MemberId } from "@thenetwork/core";
-import { DAY, HOUR } from "@thenetwork/core";
+import { HOUR } from "@thenetwork/core";
 import type { CandidateRule, GeoModel, MemberRule, PairRule } from "../../pack.ts";
 import { pairKey, type World } from "../../world.ts";
 import type { Interval } from "../../interval.ts";
 import { candidateOf, historyOf, jobOf, profileOf, sides, type CandidateProfile, type JobProfile } from "./profile.ts";
+
+/** A peon pair: a candidate and a job seat. */
+const peonPair = (w: World, ids: readonly MemberId[]) => !!sides(w, ids);
 
 /** Simultaneous intros in flight per candidate (domain research B4: about 5). */
 export const MAX_ACTIVE_INTROS = 5;
@@ -46,35 +51,33 @@ export function locationOk(c: CandidateProfile, j: JobProfile): boolean {
 }
 
 export const PEON_PAIR_RULES: readonly PairRule[] = [
-  { id: "not_candidate_job", check: (w, a, b) => (sides(w, [a, b]) ? null : "not_candidate_job") },
+  { id: "not_peon_pair", check: (w, a, b) => (peonPair(w, [a, b]) ? null : "not_peon_pair") },
   {
     // Never re-introduce the same candidate and job (any earlier outcome), and never while one is in flight.
     id: "already_introduced", check: (w, a, b) => (w.pairInteractions.has(pairKey(a, b)) || w.activePairs.has(pairKey(a, b)) || w.recentPairs.has(pairKey(a, b)) ? "already_introduced" : null),
   },
+  // A manager never meets their own seats: seats.ts writes an avoid edge, and the core blocks it.
   // Current-employer blocking: a candidate is never shown to a company they excluded.
-  { id: "excluded_company", check: (w, a, b) => { const s = sides(w, [a, b])!; return s.job.company && s.cand.excluded.has(s.job.company) ? "excluded_company" : null; } },
-  {
-    id: "seniority_band", check: (w, a, b) => {
-      const s = sides(w, [a, b])!;
-      return s.cand.seniority === undefined || s.job.seniority === undefined || Math.abs(s.cand.seniority - s.job.seniority) > 1 ? "seniority_band" : null;
-    },
-  },
+  { id: "excluded_company", check: (w, a, b) => { const s = sides(w, [a, b]); return s?.job.company && s.cand.excluded.has(s.job.company) ? "excluded_company" : null; } },
   // Pay: the job's range must reach the candidate's stated floor (pay transparency: every job has a range).
-  { id: "pay_below_floor", check: (w, a, b) => { const s = sides(w, [a, b])!; return s.cand.floor !== undefined && (s.job.payMax ?? -1) < s.cand.floor ? "pay_below_floor" : null; } },
-  { id: "work_authorization", check: (w, a, b) => { const s = sides(w, [a, b])!; return workAuthOk(s.cand, s.job) ? null : "work_authorization"; } },
-  { id: "credential_required", check: (w, a, b) => { const s = sides(w, [a, b])!; return s.job.credRequired && !s.cand.creds.has(s.job.credRequired) ? "credential_required" : null; } },
+  { id: "pay_below_floor", check: (w, a, b) => { const s = sides(w, [a, b]); return s && s.cand.floor !== undefined && (s.job.payMax ?? -1) < s.cand.floor ? "pay_below_floor" : null; } },
+  { id: "work_authorization", check: (w, a, b) => { const s = sides(w, [a, b]); return s && !workAuthOk(s.cand, s.job) ? "work_authorization" : null; } },
+  { id: "credential_required", check: (w, a, b) => { const s = sides(w, [a, b]); return s?.job.credRequired && !s.cand.creds.has(s.job.credRequired) ? "credential_required" : null; } },
 ];
 
-/** Configuration rules: an intro is exactly one candidate and one job seat, and no `via`. */
+/** Configuration rules: an intro is one candidate and one job seat in the Hire lane, and no `via`. */
+function shapeOk(w: World, c: { participants: MemberId[]; lane?: string; via?: MemberId }): boolean {
+  return !c.via && c.lane === "Hire" && !!sides(w, c.participants);
+}
 export const PEON_CANDIDATE_PRE_RULES: readonly CandidateRule[] = [
-  { id: "intro_shape", check: (w, c) => (c.participants.length !== 2 || c.via || !sides(w, c.participants) ? "intro_shape" : null) },
+  { id: "intro_shape", check: (w, c) => (shapeOk(w, c) ? null : "intro_shape") },
 ];
 export const PEON_CANDIDATE_POST_RULES: readonly CandidateRule[] = [];
 
 /** Post-judge gate, pack part (the core gate already checked minors, holds and blocks). */
-export function peonHardGate(w: World, c: { participants: MemberId[] }): string | null {
+export function peonHardGate(w: World, c: { participants: MemberId[]; lane?: string; via?: MemberId }): string | null {
   const s = sides(w, c.participants);
-  if (!s) return "intro_shape";
+  if (!s || !shapeOk(w, c)) return "intro_shape";
   if (!s.job.verified) return "employer_unverified";
   if (!s.job.open) return "job_closed";
   if (s.job.payMax === undefined) return "no_pay_range";
@@ -83,7 +86,7 @@ export function peonHardGate(w: World, c: { participants: MemberId[] }): string 
 
 // ---------------------------------------------------------------------------------------- geo
 /** Markets a member can work in: candidates their home market; onsite / hybrid jobs their site market; remote jobs every run market. */
-function marketsOf(w: World, id: MemberId): City[] {
+export function peonMarkets(w: World, id: MemberId): City[] {
   const mi = w.get(id);
   if (!mi) return [];
   const j = jobOf(w, id);
@@ -102,12 +105,12 @@ export const peonGeo: GeoModel = {
   tz: (market, cfg) => cfg.timezones[market] ?? "UTC",
   location(w, id, start, end) {
     const out = new Map<City, Interval[]>();
-    for (const m of marketsOf(w, id)) out.set(m, [[start, end]]);
+    for (const m of peonMarkets(w, id)) out.set(m, [[start, end]]);
     return out;
   },
   overlap(w, ids, start, end, preferred) {
     if (end <= start) return null;
-    const sets = ids.map(id => new Set(marketsOf(w, id)));
+    const sets = ids.map(id => new Set(peonMarkets(w, id)));
     const common = w.cfg.cities.filter(c => sets.every(s => s.has(c)));
     if (!common.length) return null;
     // A candidate's own market first (ids order must not matter: pick by the candidate, not by position).
@@ -122,6 +125,3 @@ export const peonGeo: GeoModel = {
     return locationOk(s.cand, s.job) ? null : "location_incompatible";
   },
 };
-
-/** Days a job has been open. */
-export const daysOpen = (w: World, j: JobProfile) => (j.postedAt === undefined ? 0 : Math.max(0, (w.now - j.postedAt) / DAY));

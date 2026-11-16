@@ -31,6 +31,7 @@ import type { Interval, MemberIndex, RomanceProfile, World } from "./world.ts";
 import type { SelectionResult } from "./policy.ts";
 import type { EngineRng as Rng } from "@thenetwork/core";
 import type { Scored } from "./scoring.ts";
+import type { PackVectors } from "./match/profile.ts";
 
 /** What a pack's global assignment sees besides the scored configurations (policy.ts selectProposals). */
 export interface AssignContext {
@@ -74,6 +75,8 @@ export interface AppPack {
   plans?: PlansPack;
   capital?: CapitalPack;
   metrics: MetricsPack;
+  /** Lane memberships, tags, standing and optional traits and pack value for generic matching (match/). Absent: no profiles. */
+  vectors?: PackVectors;
   /** Pack defaults. Shapes are the shared config types, so configHash is unchanged for networkPack. */
   defaults: { engine: EngineConfig; attention: AttentionConfig; plans?: PlansConfig };
 }

@@ -16,6 +16,8 @@ export { DEFAULT_PLANS, resolvePlans, plansConfigHash, type PlansConfig, type Pl
 // App packs (docs/results/2026-10-08-app-packs-core.md): the contract, the core geo model and networkPack.
 export * from "./pack.ts";
 export { cityBucketGeo } from "./geo.ts";
+// The generic matching core: lane profiles, bounded exact candidate search, circles.
+export * from "./match/mod.ts";
 export { networkPack, NETWORK_PACK_VERSION } from "./packs/network/index.ts";
 // slopPack (docs/results/2026-10-08-slop-pack.md): slop.date on the shared engine.
 export { slopPack, makeSlopPack, SLOP_PACK_VERSION, probePhotoRefs, slopProbeMessage, SLOP_PROBE_PHOTO_LINE, type ProbePhotoRef, type ProbePhotoSubject, SLOP_ENGINE_CONFIG, SLOP_ENGINE_DEFAULTS, slopOptions, SLOP_DEFAULT_OPTIONS, planFirstDate, planFromInput, slopProfiles, distanceBand, canRatePhotos, adultsOnly, rateMember, appearanceFacet, ClipAppearanceRater, VisionLlmAppearanceRater, type AppearanceRater, type AppearanceScore, type RatingSubject, type SlopPackOptions, type DatePlan, type SlopProfile } from "./packs/slop/index.ts";

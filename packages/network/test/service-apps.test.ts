@@ -1308,4 +1308,53 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(me.onboarding.confirmed).toBe(true);
     for (const words of ["I'm bi", "women and men", "within 5 miles", "more fun"]) expect(JSON.stringify(me.onboarding)).not.toContain(words);
   }, T);
+
+  // spec/slopOnboarding.md, "Only a plain yes confirms the read-back"; spec/slopOnboarding.md, "A correction needs another confirmation"
+  test("slop read-back: an orientation correction recomputes a derived seeking set and keeps a stated one; a hedged or conditional answer never confirms", async () => {
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    const clock = new SimClock(START);
+    const { s } = service(clock);
+    const slopMember = async (id: string) => {
+      const state = (await sql`select state from network.network_state where id = 'slop:nyc'`)[0].state;
+      return (typeof state === "string" ? JSON.parse(state) : state).members.find((x: any) => x.id === id);
+    };
+    const seeksTags = async (id: string) => (await slopMember(id)).appTags.map((t: any) => t.tag).filter((t: string) => t.startsWith("romance:seeks:")).sort();
+    const start = async (intro: string, first: string) => {
+      const phone = newPhone();
+      expect(await text(s, clock, phone, intro, { app: "slop" })).toBe("joined");
+      const m = (await memberOf("slop", phone))!;
+      await text(s, clock, phone, "Honestly just more fun in my week.", { app: "slop" });
+      expect((await outbound(m.id)).at(-1)!.body).toBe(SLOP_ONBOARD_QUESTIONS.slop_orientation!.text);
+      await text(s, clock, phone, first, { app: "slop" });
+      return { phone, id: m.id, last: async () => (await outbound(m.id)).at(-1)!.body as string };
+    };
+
+    // A seeking set the rules derived from "straight guy" follows the corrected orientation.
+    const lee = await start("Lee 30", "straight guy, 28-38, within 5 mi of 11211");
+    expect(await lee.last()).toBe("so: you're a man looking for women 28-38 within 5 mi of 11211. right?");
+    await text(s, clock, lee.phone, "no, i'm gay", { app: "slop" });
+    expect(await seeksTags(lee.id)).toEqual(["romance:seeks:man"]);
+    expect((await slopMember(lee.id)).onboarding.confirmed).toBe(false);
+    expect(await lee.last()).toBe(SLOP_ONBOARD_QUESTIONS.slop_basics!.text);
+    await text(s, clock, lee.phone, "no dealbreakers", { app: "slop" });
+    expect(await lee.last()).toMatch(/^so: you're a man looking for men 28-38 within 5 mi of 11211\b/);
+    await text(s, clock, lee.phone, "Perfect", { app: "slop" });
+    expect((await slopMember(lee.id)).onboarding.confirmed).toBe(true);
+
+    // A hedged answer does not confirm; a stated seeking set survives a new orientation label, which needs another confirmation.
+    const ana = await start("Ana 30", "woman looking for men 28-38 within 5 mi of 11211");
+    const readback = "so: you're a woman looking for men 28-38 within 5 mi of 11211. right?";
+    expect(await ana.last()).toBe(readback);
+    await text(s, clock, ana.phone, "Right, maybe", { app: "slop" });
+    expect((await slopMember(ana.id)).onboarding.confirmed).toBe(false);
+    expect(await ana.last()).not.toBe(readback);
+    await text(s, clock, ana.phone, "no dealbreakers", { app: "slop" });
+    expect(await ana.last()).toBe(readback);
+    await text(s, clock, ana.phone, "right, i'm bi", { app: "slop" });
+    const me = await slopMember(ana.id);
+    expect(me.onboarding.confirmed).toBe(false);
+    expect(me.onboarding.seeks.value).toEqual(["man"]);
+    expect(await seeksTags(ana.id)).toEqual(["romance:seeks:man"]);
+    expect(me.appTags.map((t: any) => t.tag)).toContain("slop:orientation:bisexual");
+  }, T);
 });

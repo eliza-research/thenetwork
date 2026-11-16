@@ -52,8 +52,10 @@ The browser calls the [staff review controller](../staffReview.md) for selected 
 //   serverApproveBeforeDeadline (bug 4 of the slice report, server side) is fixed: ConsentNetwork.reviewBlock
 //   refuses every decision at or past the deadline (network.ts reviewBlock, transitions.ts reviewLate,
 //   SD-009). It is now part of safety.
-//   KNOWN DEFECT (expected to be violated today, see the comment at it):
-//   approveMatchesSeenPeople (gap G6, server side; random run finds it).
+//   approveMatchesSeenPeople (gap G6, server side) is fixed: each decision carries the review revision
+//   that the page showed (store.ts decide sends Review.rerolls), POST /review/:oppId refuses a decision
+//   without one, and ConsentNetwork.decide refuses another revision as "review_stale"
+//   (spec/reviewDeadline.md, "A decision applies only to the revision the reviewer saw"). It is now part of safety.
 //
 // OUTSIDE THE MODEL
 //   - React timing. ASSUMPTION: after each store change or state set, React renders before the next
@@ -82,6 +84,9 @@ module review_desk {
   // Bug 4 is fixed: network.ts reviewBlock refuses every decision (approve, edit, reject, re-roll) with
   // "review_expired" when reviewLate(now, deadline), that is now >= deadline. true = the shipping server.
   pure val SERVER_CHECKS_DEADLINE = true
+  // G6 is fixed: ConsentNetwork.decide refuses a decision whose revision is not the current one
+  // (reviewRevisionCurrent, "review_stale"). Version here is the review revision. true = the shipping server.
+  pure val SERVER_CHECKS_REVISION = true
 
   // ---------------------------------------------------------------- core types (logic/review.ts)
   // Mode: "idle" | "reject" | "edit" | "reroll". Ids are ints; 0 is the empty id "".
@@ -405,6 +410,7 @@ module review_desk {
     val r = s.inflight.filter(x => x.rid == rid).getOnlyElement()
     val it = s.srv.get(r.id)
     val accept = it.inReview and (not(SERVER_CHECKS_DEADLINE) or s.now < it.deadline) and
+      (not(SERVER_CHECKS_REVISION) or r.version == it.version) and
       (r.kind == "reject" or r.kind == "reroll" or (partsOk(it.parts) and s.matchingOn))
     val doIt = accept and (not(lost) or applied)
     val it2 =
@@ -619,17 +625,18 @@ module review_desk {
     s.sent.forall(r => (r.kind == "approve" or r.kind == "edit") implies
       ((r.kind == "edit") iff (r.draftsBefore.from == r.id and r.draftsBefore.changed)))
 
-  // Rule: slice report gap G6. KNOWN DEFECT (server side): a decision names the item id only, so an
-  // approve can land after another reviewer re-rolled the item to people the reviewer did not see.
-  // LemmaScript: none (needs a version in the wire request).
+  // Rule: slice report gap G6 (fixed). A decision carries the review revision that the reviewer saw,
+  // and the server refuses another one, so an approve never lands after another reviewer re-rolled the
+  // item to people the reviewer did not see. Spec: reviewDeadline.md, "A decision applies only to the
+  // revision the reviewer saw" (reviewRevisionCurrent, lawSeenReviewRevisionIsCurrent, lawRerolledReviewIsStale).
   val approveMatchesSeenPeople =
     ITEMS.forall(i => s.srv.get(i).decision == "approve" and s.srv.get(i).approvedVersion >= 0
                       implies s.srv.get(i).approvedVersion == s.srv.get(i).version)
 
-  // The invariants that hold today. The KNOWN DEFECT invariant (approveMatchesSeenPeople) is checked alone.
   val safety = and {
     ctlOkHolds, decisionOnlyToChosenItem, decisionOnlyToReviewerChoice, repeatNeverDecides, approveOnlyBeforeDeadline,
     serverApproveBeforeDeadline, confirmSendsAskedDirection, draftsBoundToItem, approveCarriesOwnDrafts,
+    approveMatchesSeenPeople,
   }
 
   // ---------------------------------------------------------------- reachability witnesses

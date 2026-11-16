@@ -7,7 +7,8 @@
 //                    under the same row-level security, and go with the member on the forget path.
 //   verifyEmployer   staff mark a manager as a verified employer (company id and `peon:verified`): peonPack
 //                    proposes no job of an unverified employer.
-//   jobPostingRoutes the staff API (one handler, registered by the service; see the README line below):
+//   jobPostingRoutes the staff API (one handler, mounted by service.ts after staff authentication, under
+//                    /apps/peon/...):
 //                      GET  /postings?managerId=<id>           the postings (one manager, or all)
 //                      POST /postings                          create or update one ({managerId, title, payMin, payMax, ...})
 //                      POST /postings/:id/close                close ({reason: "closed" | "filled"})
@@ -18,6 +19,7 @@
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { Facet, Intent, MemberId } from "@thenetwork/core";
 import { postingFacts, postingFromFacts, postingProblem, type JobPosting } from "../src/jobs.ts";
+import type { AuditEntry, StaffRole, StaffUser } from "../../observatory/src/types.ts";
 import type { NetworkRuntime } from "./runtime.ts";
 
 const ID = /^[A-Za-z0-9_.:-]{1,200}$/;
@@ -61,13 +63,15 @@ export async function verifyEmployer(tx: SQL, app: string, memberId: MemberId, c
 
 export interface PostingRouteDeps {
   rt: NetworkRuntime;
-  /** The staff member (network.staff_audit actor) and their roles. */
-  user: { id: string; roles: string[] };
-  /** Refuse unless the staff member has one of these roles for this app (service.ts `need`). */
-  need(roles: ("admin" | "reviewer" | "safety" | "analyst")[]): Response | undefined;
+  /** The authenticated staff member (network.staff_audit actor). */
+  user: Pick<StaffUser, "id" | "roles">;
+  /** Refuse unless the staff member has one of these roles for this app (service.ts `need`, spec/staffPermissions.md). */
+  need(roles: StaffRole[]): Response | undefined;
   /** network.staff_audit. */
-  audit(e: { at: number; actor: string; roles: any[]; action: string; mode: "real"; ok: boolean; app: string; targetType?: "member"; targetId?: string; detail?: Record<string, unknown> }): Promise<void>;
+  audit(e: AuditEntry): Promise<void>;
   now(): number;
+  /** The service log (a failed "result" audit row is logged, as in service.ts staffAction). */
+  log(message: string): void;
 }
 
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json" } });
@@ -95,6 +99,14 @@ export function jobPostingRoutes(deps: PostingRouteDeps): (req: Request, path: s
   const { rt } = deps;
   const audit = (action: string, ok: boolean, targetId?: string, detail?: Record<string, unknown>) =>
     deps.audit({ at: deps.now(), actor: deps.user.id, roles: deps.user.roles, action, mode: "real", ok, app: rt.app.id, ...(targetId ? { targetType: "member" as const, targetId } : {}), ...(detail ? { detail } : {}) });
+  /** A staff write as service.ts staffAction does it: a "requested" row first (no row, no action), then the action, then a "result" row. */
+  const audited = async (action: string, targetId: string, detail: Record<string, unknown>, act: () => Promise<{ ok: true } | { ok: false; reason: string }>) => {
+    await audit(action, true, targetId, { ...detail, network: rt.id, phase: "requested" });
+    const r = await act();
+    await audit(action, r.ok, targetId, { ...detail, network: rt.id, phase: "result", ...(r.ok ? {} : { reason: r.reason }) })
+      .catch(e => deps.log(`[audit] result row failed: ${(e as Error).message}`));
+    return r;
+  };
   return async (req, path) => {
     const close = path.match(/^\/postings\/([^/]+)\/close$/);
     const verify = path.match(/^\/employers\/([^/]+)\/verify$/);
@@ -118,8 +130,10 @@ export function jobPostingRoutes(deps: PostingRouteDeps): (req: Request, path: s
       if (!ID.test(memberId) || !company || !note || note.length < 5) return json({ ok: false, error: "company_and_note_required" }, 400);
       const why = await rt.readState(n => n.managerProblem(memberId));
       if (why) { await audit("verify_employer", false, memberId, { reason: why }); return json({ ok: false, reason: why }, 409); }
-      await rt.scoped(tx => verifyEmployer(tx, rt.app.id, memberId, company, deps.now()));
-      await audit("verify_employer", true, memberId, { company });
+      await audited("verify_employer", memberId, { company }, async () => {
+        await rt.scoped(tx => verifyEmployer(tx, rt.app.id, memberId, company, deps.now()));
+        return { ok: true as const };
+      });
       return json({ ok: true });
     }
     let posting: JobPosting;
@@ -151,8 +165,8 @@ export function jobPostingRoutes(deps: PostingRouteDeps): (req: Request, path: s
       const bad = postingProblem(posting);
       if (bad) return json({ ok: false, error: bad }, 400);
     }
-    const r = await rt.unitOfWork(n => n.applyPosting(posting, deps.user.id));
-    await audit(close ? "close_posting" : "save_posting", r.ok, posting.managerId, { postingId: posting.id, status: posting.status, ...(r.ok ? {} : { reason: r.reason }) });
+    const r = await audited(close ? "close_posting" : "save_posting", posting.managerId, { postingId: posting.id, status: posting.status },
+      () => rt.unitOfWork(n => n.applyPosting(posting, deps.user.id)));
     return r.ok ? json({ ok: true, posting }) : json({ ok: false, reason: r.reason }, 409);
   };
 }

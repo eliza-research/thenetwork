@@ -13,6 +13,7 @@ import type {
   RelationshipType, Responsiveness, Routine,
 } from "./persona.ts";
 import { drawLapse } from "./persona.ts";
+import { plantLatent, type PlantedLatent, type PlantedSpec } from "./planted.ts";
 
 export const ARCHETYPE_MIX: Record<Archetype, number> = {
   regular: 0.30, busy_parent: 0.12, newcomer: 0.12, connector: 0.08, introvert: 0.12,
@@ -58,6 +59,12 @@ export interface GeneratorOptions {
    * RNG fork, so every other draw is identical with or without it.
    */
   intentLapse?: boolean | { meanDays?: number; start?: number };
+  /**
+   * Planted circles and standing (planted.ts): interests come from the member's hidden circle
+   * topics. Off by default so existing worlds are unchanged. generatePlantedPersonas returns the
+   * hidden truth.
+   */
+  planted?: PlantedSpec;
 }
 
 /** Sim epoch (same as world.ts DEFAULT_START), duplicated to avoid an import cycle. */
@@ -88,6 +95,16 @@ const STYLE_BY_ARCH: Partial<Record<Archetype, WritingStyle[]>> = {
 const otherCity = (c: City): City => (c === "sf" ? "nyc" : "sf");
 
 export function generatePersonas(opts: GeneratorOptions): Persona[] {
+  return generateWorld(opts).personas;
+}
+
+/** Personas plus the planted hidden truth (circles, standing; planted.ts). Hidden truth: simulator only. */
+export function generatePlantedPersonas(opts: GeneratorOptions & { planted: PlantedSpec }): { personas: Persona[]; latent: PlantedLatent } {
+  const { personas, latent } = generateWorld(opts);
+  return { personas, latent: latent! };
+}
+
+function generateWorld(opts: GeneratorOptions): { personas: Persona[]; latent?: PlantedLatent } {
   const root = new Rng(typeof opts.seed === "number" ? opts.seed : String(opts.seed));
   const n = opts.n;
   const prefix = opts.idPrefix ?? "m";
@@ -107,9 +124,9 @@ export function generatePersonas(opts: GeneratorOptions): Persona[] {
   const nMinor = minorShare <= 0 ? 0 : Math.min(n - nAdv, Math.round(n * minorShare));
   const minorSlots = new Set(root.fork("minor").shuffle([...Array(n).keys()].filter(i => !advKind.has(i))).slice(0, nMinor));
 
-  const usedNames = new Set<string>();
-  const personas: Persona[] = [];
-  for (let i = 0; i < n; i++) {
+  // Two passes: the planted layer needs every member's city and eligibility first. Each persona
+  // draws from its own fork in the same order, so the personas are the same either way.
+  const drafts = [...Array(n).keys()].map(i => {
     const r = root.fork("persona", i);
     const id = `${prefix}${String(i + 1).padStart(4, "0")}`;
     let archetype = r.weighted(Object.entries(mix) as [Archetype, number][]);
@@ -117,8 +134,14 @@ export function generatePersonas(opts: GeneratorOptions): Persona[] {
     const adversarial = advKind.get(i);
     const minor = minorSlots.has(i);
     if (minor && archetype === "busy_parent") archetype = "regular";
-    personas.push(buildPersona(r, { id, archetype, homeCity, adversarial, disclosureRate, spread, usedNames, minor }));
-  }
+    return { r, id, archetype, homeCity, adversarial, minor };
+  });
+  const latent = opts.planted
+    ? plantLatent(opts.planted, drafts.map(d => ({ id: d.id, market: d.homeCity, eligible: !d.adversarial && !d.minor })), INTERESTS.map(x => x.tag), opts.seed)
+    : undefined;
+  const usedNames = new Set<string>();
+  const personas: Persona[] = drafts.map(({ r, ...d }) =>
+    buildPersona(r, { ...d, disclosureRate, spread, usedNames, interests: latent?.marks.get(d.id)?.topics }));
   wireRelationships(root.fork("relationships"), personas);
   if (opts.intentLapse) {
     const o = opts.intentLapse === true ? {} : opts.intentLapse;
@@ -126,7 +149,7 @@ export function generatePersonas(opts: GeneratorOptions): Persona[] {
     for (const p of personas) for (const d of p.hidden.desires) d.lapsesAt = drawLapse(lr.fork(p.id, d.id), start + p.joinDay * 86_400_000, mean);
   }
   if (opts.richness) attachKnowledge(personas, root.fork("richness"), opts.richness === true ? DEFAULT_RICHNESS_MIX : opts.richness, opts.knowledgeNow ?? KNOWLEDGE_NOW_DEFAULT);
-  return personas;
+  return { personas, latent };
 }
 
 /** Assign richness tiers (exact quotas) and simulate chat coverage + connected sources. */
@@ -160,6 +183,8 @@ function canaryToken(r: Rng): string {
 function buildPersona(r: Rng, a: {
   id: string; archetype: Archetype; homeCity: City; adversarial?: AdversarialKind;
   disclosureRate: number; spread: number; usedNames: Set<string>; minor?: boolean;
+  /** Planted interests (planted.ts); absent = drawn from the taxonomy. */
+  interests?: readonly string[];
 }): Persona {
   const { id, archetype, homeCity, adversarial } = a;
   const P = PARAMS[archetype];
@@ -180,7 +205,7 @@ function buildPersona(r: Rng, a: {
 
   // --- interests, skills, desires ---
   const nInterests = r.int(3, 6);
-  const interests = r.sample(INTERESTS, nInterests).map(x => x.tag);
+  const interests = a.interests ? [...a.interests] : r.sample(INTERESTS, nInterests).map(x => x.tag);
   if (archetype === "busy_parent" && !interests.includes("parenting")) interests.push("parenting");
   const nSkills = archetype === "connector" ? r.int(2, 3) : r.int(0, 2);
   // Prefer skills related to interests so the world has coherent supply.

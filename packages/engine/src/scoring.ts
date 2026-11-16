@@ -4,8 +4,9 @@
 // safety-derived risk always apply (Soulmates pitfall: judge silently replacing them).
 import type { Facet, MemberId, ScoreComponents } from "@thenetwork/core";
 import { DAY, HOUR } from "@thenetwork/core";
+import { pairValueScale } from "../../core/src/generated/pairValue.ts";
+import { requiredPairValues } from "./filters.ts";
 import type { Candidate, JudgeVerdict } from "./types.ts";
-import { complementarity } from "./complementarity.ts";
 import { pairKey, provenanceWeight, type World } from "./world.ts";
 
 export interface Scored {
@@ -13,29 +14,39 @@ export interface Scored {
   eligible: boolean; reason?: string; verdict?: JudgeVerdict | null;
   /** Leak-gated member-facing text from pass 3 (deep review), preferred over pass-2 text. */
   memberWhy?: Record<MemberId, string>;
-  /** Structured complementarity pair value blended into fit (undefined when not applied). */
-  complementarity?: number;
 }
 
 const clamp = (x: number, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, Number.isFinite(x) ? x : lo));
 
-/** Harmonic mean: punishes lopsided matches (reciprocal recommendation, RECON). */
+/** Compatibility helper for pack consumers outside the lane scoring pipeline. */
 export function harmonic(xs: number[]): number {
-  if (!xs.length) return 0;
-  if (xs.some(x => x <= 0)) return 0;
+  if (!xs.length || xs.some(x => x <= 0)) return 0;
   return xs.length / xs.reduce((s, x) => s + 1 / x, 0);
 }
 
-/**
- * Mutual benefit: pairs use the harmonic mean of each side's benefit; groups use
- * "average without misery" (mean, but capped by twice the least-served member).
- */
+/** Compatibility helper for single, reciprocal, and group benefit summaries. */
 export function mutualBenefit(benefits: number[]): number {
   if (benefits.length === 0) return 0;
   if (benefits.length === 1) return clamp(benefits[0]!);
   if (benefits.length === 2) return clamp(harmonic(benefits.map(b => clamp(b))));
   const mean = benefits.reduce((s, b) => s + b, 0) / benefits.length;
   return clamp(Math.min(mean, 2 * Math.min(...benefits)));
+}
+
+/**
+ * Fit and mutual benefit. With two or more participants both come from the lane's required pair
+ * values (spec/pairValue.md, "The two utilities combine as an integer harmonic mean"): fit is the
+ * lowest, mutual benefit the mean, each over 1000. A missing pair value counts as 0 (screening
+ * already refuses it). A single participant keeps the generator's fit and its own benefit.
+ */
+function pairTerms(w: World, c: Candidate): { fit: number; mutualBenefit: number } {
+  const ids = c.participants;
+  if (ids.length < 2) return { fit: clamp(c.fit), mutualBenefit: clamp(ids[0] === undefined ? 0 : c.benefit[ids[0]] ?? 0) };
+  const values = (requiredPairValues(w, c) ?? [0]).map(v => Math.max(0, v));
+  return {
+    fit: Math.min(...values) / pairValueScale,
+    mutualBenefit: values.reduce((t, v) => t + v, 0) / values.length / pairValueScale,
+  };
 }
 
 /**
@@ -71,19 +82,8 @@ export function computeComponents(w: World, c: Candidate, verdict?: JudgeVerdict
   const pairs: [MemberId, MemberId][] = [];
   for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) pairs.push([ids[i]!, ids[j]!]);
 
-  let fit = clamp(c.fit);
   const S = w.pack.scoring;
-  let mb = S.aggregate(ids.map(id => c.benefit[id] ?? 0));
-  // Structured complementarity (complementarity.ts): blended into fit and into each side's
-  // benefit before the reciprocal (harmonic / without-misery) aggregation. Not applied when a
-  // participant has no structured profile (neutral, not a penalty).
-  const cw = cfg.complementarity.weight;
-  const anchor = c.anchor?.type === "intent" ? w.intentById.get(c.anchor.id) : undefined;
-  const comp = cw > 0 ? complementarity(w, ids, anchor) : undefined;
-  if (comp) {
-    fit = clamp((1 - cw) * fit + cw * comp.pair);
-    mb = S.aggregate(ids.map(id => (1 - cw) * clamp(c.benefit[id] ?? 0) + cw * comp.benefit[id]!));
-  }
+  let { fit, mutualBenefit: mb } = pairTerms(w, c);
   let warmPath = clamp(c.warm);
   if (!warmPath && pairs.some(([a, b]) => w.isWarm(a, b))) warmPath = ids.length > 2 ? 0.5 : 0.3;
 
@@ -201,9 +201,8 @@ export function scoreCandidate(w: World, c: Candidate, verdict?: JudgeVerdict | 
   const threshold = thresholdFor(w, c);
   const fv = floorViolation(w, components, verdict);
   const thr = c.exploration ? explorationBar(w, c, threshold) : threshold;
-  const comp = w.cfg.complementarity.weight > 0 ? complementarity(w, c.participants, c.anchor?.type === "intent" ? w.intentById.get(c.anchor.id) : undefined) : undefined;
   return {
-    c, components, score, threshold: thr, verdict, ...(comp ? { complementarity: comp.pair } : {}),
+    c, components, score, threshold: thr, verdict,
     eligible: !fv && score >= thr,
     reason: fv ?? (score < thr ? "below_threshold" : undefined),
   };

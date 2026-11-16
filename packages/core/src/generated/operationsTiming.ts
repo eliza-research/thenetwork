@@ -1,6 +1,6 @@
 // GENERATED from spec/operationsTiming.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
-import { reviewLate as reviewDeadline_reviewLate, lawReviewDeadlineIsExclusive as reviewDeadline_lawReviewDeadlineIsExclusive } from "./reviewDeadline.ts";
+import { reviewLate as reviewDeadline_reviewLate, reviewRevisionCurrent as reviewDeadline_reviewRevisionCurrent, lawReviewDeadlineIsExclusive as reviewDeadline_lawReviewDeadlineIsExclusive, lawSeenReviewRevisionIsCurrent as reviewDeadline_lawSeenReviewRevisionIsCurrent, lawRerolledReviewIsStale as reviewDeadline_lawRerolledReviewIsStale } from "./reviewDeadline.ts";
 
 
 /** Story: See which work needs attention / Open reviews are due at the deadline and near during the previous hour (spec/operationsTiming.md) */

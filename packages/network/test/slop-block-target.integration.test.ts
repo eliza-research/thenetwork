@@ -96,7 +96,7 @@ describe.skipIf(!pgAvailable)("slop.date: block and report resolve the member's 
       item = q.items?.find((x: any) => x.proposal.participants.includes(ivy) && x.proposal.participants.includes(leo));
     }
     expect(item).toBeDefined();
-    expect((await (await staff(s, REVIEWER, "POST", `/apps/slop/review/${encodeURIComponent(item.oppId)}`, { decision: "approve", secondsSpent: 20 })).json() as any).ok).toBe(true);
+    expect((await (await staff(s, REVIEWER, "POST", `/apps/slop/review/${encodeURIComponent(item.oppId)}`, { decision: "approve", secondsSpent: 20, revision: item.revision })).json() as any).ok).toBe(true);
     const answered = new Set<string>();
     for (let i = 0; i < 24; i++) {
       await run(s, clock, HOUR);

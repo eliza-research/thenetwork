@@ -30,3 +30,23 @@ export function lawADefiniteAnswerCannotBeOverridden(offlineFoundNothing: boolea
 export function pickedTimes(chosen: string[], offered: string[]): string[] {
   return chosen.length > 0 ? chosen : offered;
 }
+
+/** Story: Make a choice about a proposed opportunity / A suggested alternative needs a separate yes before asking for new times (spec/probeReply.md) */
+//@ pure
+export function mayRetryCounter(offeredTimes: boolean, separateYes: boolean): boolean {
+  return offeredTimes && separateYes;
+}
+
+/** Story: Make a choice about a proposed opportunity / A suggested alternative needs a separate yes before asking for new times (spec/probeReply.md) */
+//@ pure
+export function lawABareCounterDoesNotAccept(offeredTimes: boolean): boolean {
+  //@ ensures \result === true
+  return !mayRetryCounter(offeredTimes, false);
+}
+
+/** Story: Make a choice about a proposed opportunity / A suggested alternative needs a separate yes before asking for new times (spec/probeReply.md) */
+//@ pure
+export function lawAnUntimedProbeNeedsASeparateAnswer(separateYes: boolean): boolean {
+  //@ ensures \result === true
+  return !mayRetryCounter(false, separateYes);
+}

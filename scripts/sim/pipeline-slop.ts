@@ -121,11 +121,11 @@ function nyHour(at: number): number {
 
 /** Reviewers approve every item at the next tick, as slop-live does (the worst case for the rules). */
 async function approve(w: World) {
-  const q = await (await H.staff(w.svc, H.REVIEWER, "GET", "/apps/slop/review")).json() as { items?: { kind: string; oppId: string }[] };
+  const q = await (await H.staff(w.svc, H.REVIEWER, "GET", "/apps/slop/review")).json() as { items?: { kind?: string; oppId: string; revision: number }[] };
   const approved = (w.notes.approved ??= new Map<string, number>()) as Map<string, number>;
   for (const it of q.items ?? []) {
     if (it.kind === "fraud") continue;
-    const r = await (await H.staff(w.svc, H.REVIEWER, "POST", `/apps/slop/review/${it.oppId}`, { decision: "approve", secondsSpent: 20 })).json() as { ok?: boolean };
+    const r = await (await H.staff(w.svc, H.REVIEWER, "POST", `/apps/slop/review/${it.oppId}`, { decision: "approve", secondsSpent: 20, revision: it.revision })).json() as { ok?: boolean };
     if (r.ok) approved.set(it.oppId, w.clock.now());
   }
 }

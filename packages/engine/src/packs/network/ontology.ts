@@ -3,8 +3,8 @@
 // dealbreaker tag parsing, host tag), taxonomy.ts and types.ts. Function values from non-leaf
 // modules are wrapped in arrows so this module is safe inside import cycles.
 import type { Category, EdgeType, Facet, Intent } from "@thenetwork/core";
-import { romanceMutual } from "../../complementarity.ts";
 import type { EngineConfig } from "../../config.ts";
+import { romanceMutual } from "../../filters.ts";
 import type { MemberConstraints, Ontology } from "../../pack.ts";
 import { CONTRIBUTOR_ROLES, type Role } from "../../types.ts";
 import type { RomanceProfile } from "../../world.ts";
@@ -56,13 +56,12 @@ export const networkOntology: Ontology = {
   kinds: [
     { id: "intro", format: "one_to_one", size: [2, 2] },
     { id: "group", format: "small_group", size: [3, 6] },
-    { id: "event_coattend", format: "event", size: [2, 4] },
+    { id: "event_coattend", format: "event", size: [2, 2] },
     { id: "help", format: "one_to_one", size: [2, 4] },
     { id: "member_intro", format: "one_to_one", size: [2, 2] },
     { id: "newcomer_welcome", format: "small_group", size: [3, 4] },
     { id: "network_growth", format: "one_to_one", size: [1, 1] },
     { id: "second_encounter", format: "one_to_one", size: [2, 2] },
-    { id: "expansion", format: "one_to_one", size: [2, 2] },
   ],
   contributorRoles: CONTRIBUTOR_ROLES,
   warmEdges: NETWORK_WARM_EDGES,

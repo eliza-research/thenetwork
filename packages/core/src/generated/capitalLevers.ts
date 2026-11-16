@@ -30,6 +30,19 @@ export function lawVouchCapacityIsBounded(good: number, lost: number, base: numb
   return !(maximum >= 0) || (vouchCapacityFromCounts(good, lost, base, perGood, perLost, maxBonus, maximum) >= 0 && vouchCapacityFromCounts(good, lost, base, perGood, perLost, maxBonus, maximum) <= maximum);
 }
 
+/** Story: Use my past contributions without changing who can match with me / Vouch capacity counts only the vouches and stakes of its rolling period (spec/capitalLevers.md) */
+//@ pure
+export function vouchInPeriod(entryAt: number, asOf: number, periodMs: number): boolean {
+  return entryAt > exact_capitalLevers(asOf - periodMs) && entryAt <= asOf;
+}
+
+/** Story: Use my past contributions without changing who can match with me / Vouch capacity counts only the vouches and stakes of its rolling period (spec/capitalLevers.md) */
+//@ pure
+export function lawVouchPeriodDropsOldEntries(entryAt: number, asOf: number, periodMs: number): boolean {
+  //@ ensures \result === true
+  return !(entryAt <= exact_capitalLevers(asOf - periodMs)) || !vouchInPeriod(entryAt, asOf, periodMs);
+}
+
 /** Story: Use my past contributions without changing who can match with me / Earned organizing reach reserves the extra slots for low exposure (spec/capitalLevers.md) */
 //@ pure
 export function reachFromBands(bands: number, base: number, perBand: number, maximum: number): ReachAllowance {

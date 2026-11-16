@@ -28,3 +28,23 @@ Score updates and decay cannot release a hold. Staff release a hold through the 
 pure def lawScoreUpdatesKeepHolds(score: int): bool =
   levelForScore(score, true) == Hold
 ```
+
+### Clean time lowers the score through a recorded decay event
+
+The score drops by one point for each full fourteen days with no new signal. The network records each drop as a `decay` event with negative points, so the events of a member always add up to the score. A drop never takes the score below zero, and a held score does not decay. The shell counts the elapsed steps and records the event only when the points are below zero. [Safety cases](safetyCase.md) decide where a decay event goes.
+
+```quint
+pure val trustDecayDays: int = 14
+
+pure def trustDecayPoints(score: int, steps: int, held: bool): int =
+  if (held or score <= 0 or steps <= 0) 0
+  else if (steps < score) 0 - steps
+  else 0 - score
+
+pure def lawTrustDecayKeepsScoreInRange(score: int, steps: int, held: bool): bool =
+  val points = trustDecayPoints(score, steps, held)
+  points <= 0 and (score >= 0 implies score + points >= 0)
+
+pure def lawTrustDecayLeavesHoldsAlone(score: int, steps: int): bool =
+  trustDecayPoints(score, steps, true) == 0
+```

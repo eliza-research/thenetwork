@@ -16,6 +16,7 @@
 import type { City, MemberId } from "@thenetwork/core";
 import { Rng, hash32 } from "@thenetwork/core";
 import { AREAS, FAMILIES, FAMILY, ZIPS, payMid } from "./skills.ts";
+import { plantLatent, type PlantedMark, type PlantedSpec } from "../../planted.ts";
 
 export type PeonMode = "onsite" | "hybrid" | "remote";
 export type Sex = "f" | "m" | "x";
@@ -39,6 +40,8 @@ export interface CandidateTruth {
   fake: boolean;
   isMinor: boolean; trueAge: number;
   canary: string;
+  /** Planted circle and standing (only with PeonGenOptions.planted). */
+  planted?: PlantedMark;
 }
 export interface CandidateStated {
   families: string[]; seniority: number;
@@ -86,7 +89,15 @@ export interface Job {
   };
 }
 
-export interface PeonGenOptions { seed: number; perCity?: number; jobsPerCity?: number; minorShare?: number; fakeShare?: number; weeks?: number }
+export interface PeonGenOptions {
+  seed: number; perCity?: number; jobsPerCity?: number; minorShare?: number; fakeShare?: number; weeks?: number;
+  /**
+   * Planted circles and standing (planted.ts) for candidates: an adult candidate's job family is
+   * the circle topic (the industry cluster) and seniority follows the planted standing. Off by
+   * default so existing worlds are unchanged. The truth is on `truth.planted`.
+   */
+  planted?: PlantedSpec;
+}
 
 const RACE_W: [RaceGroup, number][] = [["a", 0.45], ["b", 0.22], ["c", 0.2], ["d", 0.13]];
 /** Residential pattern: area weights by race group (the zip / area proxy). */
@@ -124,6 +135,18 @@ export function generatePeonPopulation(o: PeonGenOptions): PeonPopulation {
   const candidates: Candidate[] = [], companies: Company[] = [], jobs: Job[] = [];
   const sealed = new Map<MemberId, Sealed>();
   const cities: City[] = ["nyc", "sf"];
+  // Planted: minor and fake flags come from a per-candidate fork, so eligibility is known before the
+  // candidate loop. The default path keeps its shared stream unchanged.
+  const flags = o.planted ? new Map(cities.flatMap(market => [...Array(perCity).keys()].map(i => {
+    const id = `c-${market}-${String(i).padStart(4, "0")}`;
+    const fr = new Rng(hash32(o.seed, "peon-planted", id));
+    const isMinor = fr.bool(o.minorShare ?? 0.03);
+    return [id, { market, isMinor, fake: !isMinor && fr.bool(o.fakeShare ?? 0.03) }] as const;
+  }))) : undefined;
+  const latent = o.planted && flags
+    ? plantLatent({ topicsPerCircle: 1, interestsPerMember: [1, 1], ...o.planted },
+      [...flags].map(([id, f]) => ({ id, market: f.market, eligible: !f.isMinor && !f.fake })), FAMILIES.map(f => f.id), o.seed)
+    : undefined;
   for (const market of cities) {
     const rng = new Rng(hash32(o.seed, "peon", market));
     // ---- companies and jobs ----------------------------------------------------------------
@@ -178,8 +201,9 @@ export function generatePeonPopulation(o: PeonGenOptions): PeonPopulation {
     const marketCos = cos.filter(c => c.adversary !== "scam");
     for (let i = 0; i < perCity; i++) {
       const id = `c-${market}-${String(i).padStart(4, "0")}`;
-      const isMinor = rng.bool(o.minorShare ?? 0.03);
-      const fake = !isMinor && rng.bool(o.fakeShare ?? 0.03);
+      const flag = flags?.get(id), planted = latent?.marks.get(id);
+      const isMinor = flag ? flag.isMinor : rng.bool(o.minorShare ?? 0.03);
+      const fake = flag ? flag.fake : !isMinor && rng.bool(o.fakeShare ?? 0.03);
       const sex: Sex = weighted(rng, [["f", 0.48], ["m", 0.48], ["x", 0.04]]);
       const race = weighted(rng, RACE_W);
       const age = isMinor ? rng.int(13, 17) : clampInt(rng.normal(36, 10.5), 18, 67);
@@ -190,8 +214,10 @@ export function generatePeonPopulation(o: PeonGenOptions): PeonPopulation {
       const zips = ZIPS[homeArea]!;
       // Zip within the area is correlated with the group too (finer segregation).
       const zip = zips[Math.min(zips.length - 1, Math.floor(rng.next() * 2.5) + (race === "a" ? 0 : race === "d" ? 1 : 2))]!;
-      const fam = isMinor ? FAMILY.get(rng.pick(["customer_support", "warehouse_logistics"]))! : weighted(rng, FAMILIES.map(f => [f, f.candShare] as [typeof f, number]));
-      const seniority = isMinor ? 1 : clampInt(1 + (age - 22) / 11 + rng.normal(0, 0.9), 1, 5);
+      // Planted: an eligible candidate's family is the circle topic; seniority is standing in five bands.
+      const plantedFamily = planted && planted.circle >= 0 ? FAMILY.get(planted.topics[0]!) : undefined;
+      const fam = isMinor ? FAMILY.get(rng.pick(["customer_support", "warehouse_logistics"]))! : plantedFamily ?? weighted(rng, FAMILIES.map(f => [f, f.candShare] as [typeof f, number]));
+      const seniority = isMinor ? 1 : planted ? 1 + Math.min(4, Math.floor(planted.standing[0]! / 20)) : clampInt(1 + (age - 22) / 11 + rng.normal(0, 0.9), 1, 5);
       // True skills: the family's skills, level tracking seniority; one or two adjacent skills.
       const skills: Record<string, number> = {};
       for (const s of fam.skills) if (rng.bool(0.85)) skills[s] = clampInt(0.75 * seniority + rng.normal(0.9, 0.9), 0, 5);
@@ -227,6 +253,7 @@ export function generatePeonPopulation(o: PeonGenOptions): PeonPopulation {
           intensity: rng.range(0.45, 1), replyProb: Math.min(0.98, Math.max(0.4, rng.normal(0.85, 0.1))),
           interviewSd: 0.35, retention: rng.normal(0, 0.5), fake, isMinor, trueAge: age,
           canary: `CANARY-${hash32(o.seed, id).toString(36)}`,
+          ...(planted ? { planted } : {}),
         },
         stated: {
           families: rng.bool(0.3) ? [fam.id, fam.adjacent] : [fam.id], seniority: statedSen, skills: stated, demonstrated,

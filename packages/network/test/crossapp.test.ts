@@ -126,7 +126,7 @@ async function run(block: boolean) {
     for (const app of APPS_RUN) {
       const q = await (await staff(svc, "GET", `/apps/${app}/review`)).json();
       queues[app] = [...(queues[app] ?? []), ...q.items];
-      for (const item of q.items) await staff(svc, "POST", `/apps/${app}/review/${encodeURIComponent(item.oppId)}`, { decision: "approve", secondsSpent: 5 });
+      for (const item of q.items) await staff(svc, "POST", `/apps/${app}/review/${encodeURIComponent(item.oppId)}`, { decision: "approve", secondsSpent: 5, revision: item.revision });
     }
     await svc.tick();
   }

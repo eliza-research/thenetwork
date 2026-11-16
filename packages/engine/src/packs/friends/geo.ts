@@ -3,7 +3,7 @@
 // Location unit. NYC has 262 Neighborhood Tabulation Areas (NTAs, 2020; docs/research/
 // 2026-10-08-domain-research.md C2 "NYC specifics"). This table is a hand-entered subset of 93
 // NTA-level neighborhoods (approximate centroids, WGS84) that covers all five boroughs; each carries
-// a planning zone (a cluster of nearby neighborhoods the planner pools within) and a subway access
+// a planning zone (a cluster of nearby neighborhoods; the simulator's baselines pool within it) and a subway access
 // overhead in minutes (walk to a station plus the wait; larger in transit deserts). A production
 // table would be the full NTA list with a precomputed OpenTripPlanner / r5 NTA-to-NTA matrix on the
 // MTA GTFS for weekday-evening and weekend-day windows (domain research C2); prototypes/
@@ -15,17 +15,18 @@
 // ferry, +25). Venues are chosen to minimize the group's LONGEST trip, not the average (fairer to the
 // outer boroughs; domain research C4). Copied in spirit from packages/network/src/geo.ts
 // (travelMinutes, meetingSpot), which the engine cannot import.
-import type { MemberId } from "@thenetwork/core";
+import type { City, MemberId } from "@thenetwork/core";
 import { km, type Borough } from "@thenetwork/core/src/geo.ts";
 export { km, type Borough };
 import type { Venue } from "../network/activities.ts";
 
-export const BOROUGHS: readonly Borough[] = ["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"];
+/** friends.help's one market (NYC first). */
+export const FRIENDS_CITY: City = "nyc";
 
 export interface Neighborhood {
   /** Stable slug (an NTA stand-in). */
   id: string; name: string; borough: Borough; lat: number; lng: number;
-  /** Planning zone: nearby neighborhoods pooled together by the planner. */
+  /** Planning zone: a cluster of nearby neighborhoods (the simulator's within-area baselines). */
   zone: string;
   /** Relative weight of adults 18-44 living here (sampling weight in the simulator; not used by matching). */
   weight: number;
@@ -93,7 +94,6 @@ export const NEIGHBORHOODS: readonly Neighborhood[] = [
 ];
 export const NEIGHBORHOOD: ReadonlyMap<string, Neighborhood> = new Map(NEIGHBORHOODS.map(n => [n.id, n]));
 export const NEIGHBORHOOD_BY_NAME: ReadonlyMap<string, Neighborhood> = new Map(NEIGHBORHOODS.map(n => [n.name.toLowerCase(), n]));
-export const ZONES: readonly string[] = [...new Set(NEIGHBORHOODS.map(n => n.zone))];
 
 /** Neighborhood by id or (case-insensitive) name. */
 export function hood(x: string | undefined): Neighborhood | undefined {

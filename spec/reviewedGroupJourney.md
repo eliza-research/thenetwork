@@ -38,7 +38,7 @@ pure def sometimesRejectedWithoutContact(s: ReviewedGroupJourney): bool = s.phas
 
 ### Booking requires an independent yes from all three invitees
 
-Each invitee responds to their own invitation. A yes below quorum sends no reveal. A third yes books one meeting, with one reveal to each consenting participant. A decline cannot count towards quorum. With no alternates, a last decline below quorum closes the plan. An underfilled plan that stays open closes when the probe deadline passes.
+Each invitee responds to their own invitation. A yes below quorum sends no reveal. A third yes books one meeting, with one reveal to each consenting participant. A decline cannot count towards quorum. With no alternates, the last reply closes the plan when it leaves the acceptances below quorum, whether that reply accepts or declines ([planDecision](planDecision.md), "An unanswered plan closes when its deadline passes"). An underfilled plan that stays open closes when the probe deadline passes.
 
 ```quint
 pure def groupReplyPending(s: ReviewedGroupJourney, hiker: Hiker): bool =
@@ -55,7 +55,7 @@ pure def answerGroup(s: ReviewedGroupJourney, hiker: Hiker, agrees: bool): Group
     yesAfter: yes.length(), needed: 3, partnerPlan: false, firstMember: false, beforeDeadline: true, lateJoinOpen: true })
   if (choice == Plan::BookPlan)
     { state: { ...answered, phase: HikeBooked, meetings: 1, reveals: 3 }, out: List(GroupReveal, GroupReveal, GroupReveal) }
-  else if (not(agrees) and Plan::unmetPlanQuorum(3 - yes.length() - no.length(), yes.length(), 3))
+  else if (Plan::unmetPlanQuorum(3 - yes.length() - no.length(), yes.length(), 3))
     { state: { ...answered, phase: GroupUnderfilled }, out: List() }
   else { state: answered, out: List() }
 
