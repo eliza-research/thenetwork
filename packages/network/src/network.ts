@@ -833,7 +833,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       const whole = this.yesNoOf(body);
       const rest = plan === body ? whole : plan ? consentOf(plan).answer : "unclear";
       const yn = rest === "unclear" && whole === "no" && (NEGATES.test(plan) || (!plan && namesPlan(body))) ? "no" : rest;
-      if (o && o.stage === "scheduled" && o.status.get(m.id) === "yes" && (c.kind === "cancel" || yn === "no")) { m.awaiting = undefined; return this.handleDrop(m, o); }
+      if (o && o.stage === "scheduled" && o.status.get(m.id) === "yes" && (yn === "no" || (c.kind === "cancel" && this.cancelMatchesOpp(body, o)))) { m.awaiting = undefined; return this.handleDrop(m, o); }
       // An ack ("cool", "ok") does not confirm a message that also asks to move, asks a question or hedges.
       const planWhy = consentOf(plan || body).why;
       if (yn === "yes" || (c.kind === "ack" && planWhy !== "counter" && planWhy !== "hedged" && planWhy !== "conditional")) { m.awaiting = undefined; if (o && o.stage === "scheduled") this.confirmPlan(o, m.id, true); this.ack(m, copy.bookedThanks); return; }
@@ -852,7 +852,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     if (c.kind === "cancel") {
       const o = [...this.opps.values()].find(o => o.stage === "scheduled" && o.status.get(m.id) === "yes");
-      if (o) return this.handleDrop(m, o);
+      if (o && this.cancelMatchesOpp(body, o)) return this.handleDrop(m, o);
     }
     const isRequest = c.kind === "people_request" || c.kind === "plans_request";
     if ((aw?.kind === "feedback" && !isRequest && c.kind !== "invite_friend") || (c.kind === "feedback_like" && aw?.kind !== "interview")) {
@@ -2610,6 +2610,13 @@ export class ConsentNetwork implements NetworkUnderTest {
     const outdoorsy = o.category === "hobby" || o.category === "events" || o.tags.some(t => ["running", "hiking", "cycling", "tennis", "climbing", "photography"].includes(t));
     const from = now + 20 * HOUR;
     return outdoorsy ? nextAt(from, 11, wd => wd === "Sat" || wd === "Sun") : nextAt(from, 19, wd => !["Fri", "Sat", "Sun"].includes(wd));
+  }
+
+  /** A cancel that names a weekday ("can't make Sunday") applies only to a meeting on that day. */
+  private cancelMatchesOpp(body: string, o: Opp): boolean {
+    const day = /\b(?:can'?t|cannot|won'?t|not\s+gonna|not\s+going\s+to|unable\s+to|not\s+able\s+to)\s+(?:be\s+able\s+to\s+)?make\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.exec(body)?.[1];
+    if (!day || !o.meetingAt) return true;
+    return day.toLowerCase().startsWith(["mon", "tue", "wed", "thu", "fri", "sat", "sun"][localParts(o.meetingAt, NY).weekday]!);
   }
 
   /**

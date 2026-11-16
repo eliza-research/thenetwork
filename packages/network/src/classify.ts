@@ -67,8 +67,7 @@ const RX = {
   sexual: /\b(send|sending|share|text|dm) (me )?(some |your |a )?(nudes?|nude (pics?|photos?|selfies?)|naked (pics?|photos?|selfies?)|dick pics?|pics of your (body|tits|boobs|ass))\b|\b(wanna|want to|let me) see (you )?naked\b/i,
   invite: /\b[Mm]y (?:friend|buddy|pal|coworker|roommate|cousin) ([A-Z][a-z]+)\b/,
   inviteIntent: /\b(invite|bring|add|sign \w+ up|sign up|refer|include|loop in)\b|\bwould (love|like|enjoy|be into) (this|it|that|joining)\b|\b(wants?|wanted) (to join|in)\b|\bhas been (wanting|looking)\b|\bshould (join|be here|get an invite)\b|\blooking for something like this\b/i,
-  // "No need to cancel" keeps the plan.
-  cancel: /\b(can'?t make it|have to bail|can'?t come|(?<!\b(?:no|not|don'?t|dont|do not|won'?t)\s+)need to cancel|something came up)\b/i,
+  cancel: /(?<!\b(?:no|not|not\s+to|not\s+going\s+to|not\s+gonna|don'?t|dont|do\s+not|didn'?t|did\s+not|won'?t|wont|wouldn'?t|wouldnt|never|no\s+need\s+to|let'?s\s+not)\s+)\b(?:need|have|got|want|'d\s+like|would\s+like)\s+to\s+cancel\b|(?<!\b(?:no|not|not\s+to|not\s+going\s+to|not\s+gonna|don'?t|dont|do\s+not|didn'?t|did\s+not|won'?t|wont|wouldn'?t|wouldnt|never|no\s+need\s+to|let'?s\s+not|i'?ll|will)\s+)\b(?:(?:please\s+|can\s+we\s+|could\s+we\s+)?cancel\s+(?:our|the|this|that)?\s*(?:date|meeting|plan|meetup|dinner|coffee|lunch|tonight|today|tomorrow|tmrw)|please\s+cancel)\b(?!\s+(?:so|to)\s+(?:i|we)\s+can\s+make\b)|\bcall(?:ing)?\s+(?:off\s+(?:the|our|this)?\s*(?:date|meeting|plan|meetup|dinner)|(?:it|this|that|the\s+(?:date|meeting|plan|meetup)|our\s+(?:date|meeting|plan|meetup))\s+off)\b|\b(?:can'?t|cannot|won'?t|not\s+gonna|not\s+going\s+to|unable\s+to|not\s+able\s+to)\s+(?:be\s+able\s+to\s+)?(?:make\s+it|come|attend|make\s+(?:it\s+)?(?:today|tonight|tomorrow|tmrw|this|that|\w+day))\b(?!\s*,\s*(?:how|what)\s+about\b)(?![^.?!]{0,40}\b(?:how\s+about|what\s+about|can\s+we\s+(?:do|reschedule)|instead)\b)|\bhave\s+to\s+bail\b|\bsomething\s+came\s+up\b/i,
   block: /^\s*(?:please\s+)?block\s+(?!(?:back|on|out|off|of|time|my|the|this|that|it|in|for|a)\b)(.+)$/i,
   report: /^\s*(?:please\s+|i (?:want|need|'d like) to\s+)?report\s+(?!(?:back|on|to|that|this|it|in|for|my|the|when)\b)(.+)$/i,
   plans: /\b(anything fun|what'?s (on|happening|good)|something to do|plans? (this|for the) (weekend|week|tonight)|fun (going on|this weekend)|any (events|plans))\b/i,
@@ -739,9 +738,11 @@ const ALL_WEAK = /\b(either|both)\b/;
  * A negation cue earlier in the same clause ("can't do Thursday or Saturday", "not Sunday", "busy
  * Thursday", "away Thursday"). "No plans", "no problem", "not sure", "can't wait" and "don't mind" are not refusals.
  */
-const NEG_CUE = /\b(not(?! sure)|can'?t(?! wait)|cannot|couldn'?t|won'?t|wouldn'?t|don'?t(?! mind)|doesn'?t|isn'?t|busy|unavailable|away|out of town|travel(?:l)?ing|except|neither|nor|no(?! (plans?|problem|prob|worries|rush)\b)|nope|nah)\b/;
+const NEG_CUE = /\b(not(?! sure)|can'?t(?! wait)|cannot|couldn'?t|won'?t|wouldn'?t|don'?t(?! mind)|doesn'?t|isn'?t|busy|unavailable|away|out of town|(?:i'?m|im|i am) out|travel(?:l)?ing|except|neither|nor|no(?! (plans?|problem|prob|worries|rush)\b)|nope|nah)\b/;
 /** A refusal right after the pick: "Thursday doesn't work", "Sunday is out", "the first one is bad". */
 const NEG_AFTER = /^\s*(?:(?:one|option|time|slot)\b\s*)?(?:\d{1,2}(?::\d\d)?\s*(?:am|pm)\s*)?(?:(?:is|'s|are|would be|will be)\s+)?(?:out\b|bad\b|busy\b|full\b|packed\b|booked\b|taken\b|no good\b|not (?:good|great|ideal|possible|great)\b|tough\b|rough\b|a no\b|off\b|impossible\b|doesn'?t\b|does not\b|don'?t\b|do not\b|won'?t\b|will not\b|isn'?t\b|is not\b|can'?t\b|cannot\b)/;
+/** A plan refusal scoped to one named day, not a refusal of the whole offer ("ok I'm not coming Saturday"). */
+const PLAN_REFUSAL_AT_DAY = /^(?:(?:ok(?:ay)?|sure|sorry)\b[\s,;.!-]*)?(?:(?:i'?m|im|i am)\s+)?(?:can'?t do|cannot do|away|out|not (?:going|coming)|not)\s+(?:on\s+)?(?:sun|mon|tues?|wed(?:nes)?|thu(?:rs?)?|fri|sat(?:ur)?)(?:day)?(?:\s+(?:morning|afternoon|evening|night|at\s+\d{1,2}(?::\d\d)?\s*(?:am|pm)?))?[\s.!]*$/;
 /** A clause boundary: punctuation, "but", "though", "however". */
 const CLAUSE_START = /[.,;!?]|\b(but|though|however|although|so)\b/g;
 /** Words that make a named time a pick ("Saturday works", "free Sunday"), not just a mention ("Saturday I'm at a wedding"). */
@@ -818,6 +819,9 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const picked = all.filter(k => pos.has(k));
   const open = all.filter(k => !neg.has(k) || pos.has(k));
   const unclear = { answer: "unclear" as const, keys: [], why: c.why };
+  // A reply scoped only to some offered times accepts the remaining named options. A plan-level no
+  // ("No. Saturday I'm at a wedding") still wins, as does a refusal of every offered option.
+  if (neg.size && open.length && PLAN_REFUSAL_AT_DAY.test(t)) return { answer: "yes", keys: open, why: c.why };
   // Refusal first. A pick after a refusal ("no, Saturday works") is mixed: ask again.
   if (c.why === "refusal") return all.some(k => strong.has(k)) ? { ...unclear, why: "mixed" } : { answer: "no", keys: [], why: c.why };
   if (c.why === "mixed" || c.why === "conditional" || c.why === "hedged") return unclear;

@@ -292,6 +292,33 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
     }
     expect(rows.length).toBeGreaterThan(30);
     expect(wrong).toEqual([]);
+
+    // A refusal of Saturday at the offer stage keeps Sunday open; it does not decline the match or book Saturday.
+    for (const text of ["can't do Saturday", "I'm away Saturday", "I'm out Saturday", "ok I'm not coming Saturday", "not Saturday"]) {
+      const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+      await w.onboard("a", "b"); w.propose(["a", "b"]);
+      let first = true;
+      let offered: { start: number; label: string }[] = [];
+      await w.answerProbes(["a", "b"], id => {
+        if (id === "a" && first) {
+          first = false;
+          offered = w.sent.filter(s => s.to === "a").at(-1)?.meta?.timeOptions ?? [];
+          return text;
+        }
+        return "yes";
+      });
+      const opp = [...(w.net as any).opps.values()][0];
+      expect([text, offered.map(x => x.label), opp?.stage, opp?.picks?.a, opp?.meetingAt]).toEqual([
+        text, ["Saturday 10am", "Sunday 10am"], "scheduled", [offered[1]!.start], offered[1]!.start,
+      ]);
+    }
+
+    const scopedBooked = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    await scopedBooked.onboard("a", "b"); scopedBooked.propose(["a", "b"]); await scopedBooked.answerProbes(["a", "b"]);
+    await scopedBooked.say("a", "can't make Sunday");
+    expect(scopedBooked.log("booked_cancelled").length).toBe(0);
+    await scopedBooked.say("a", "can't make Saturday");
+    expect(scopedBooked.log("booked_cancelled").length).toBe(1);
   });
 
   await b.run("attention caps: each member's cap on initial invites, the plan lane (1 / 7 days), the Blooio streak, only-when-asked", () => {
