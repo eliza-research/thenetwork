@@ -667,20 +667,26 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const all = options.map(o => o.key);
   // Every mention of an option, as a pick or a refusal. A key both picked and refused counts as picked.
   const pos = new Set<string>(), neg = new Set<string>(), strong = new Set<string>();
+  // Keys picked by naming an offered day, and keys picked by an explicit letter or ordinal.
+  // A time-only pick ("7pm") is neither: the time alone does not say which day the member meant.
+  const dayPicked = new Set<string>(), letterPicked = new Set<string>();
+  // A day the member names that no offered option falls on ("Friday" when Friday was not offered).
+  let unofferedDay = false;
   const onlyPick = (i: number, len: number) => /^[\s\W]*(?:the\s+)?$/.test(t.slice(0, i)) && /^[\s\W]*(?:one|option|works?|please|pls|lol)?[\s\W]*$/.test(t.slice(i + len));
-  const mark = (keys: string[], i: number, len: number) => {
+  const mark = (keys: string[], i: number, len: number, picked?: Set<string>) => {
     for (const k of keys) {
       if (negatedAt(t, i, len)) { neg.add(k); continue; }
       pos.add(k);
+      picked?.add(k);
       const cl = clauseAt(t, i, len);
       if (onlyPick(i, len) || (POSITIVE_PICK.test(cl) && !/\?/.test(t.slice(i + len, i + len + 2)))) strong.add(k);
     }
   };
   // Option letters only where they cannot be the article "a": "a or b", "(b)", "option c", or alone.
-  for (const m of t.matchAll(/\b([abc])\s*(?:or|and|&|,|\/)\s*([abc])\b/g)) mark([m[1]!, m[2]!], m.index!, m[0].length);
-  for (const m of t.matchAll(/(?:\boption\s+|\()([abc])\b/g)) mark([m[1]!], m.index!, m[0].length);
+  for (const m of t.matchAll(/\b([abc])\s*(?:or|and|&|,|\/)\s*([abc])\b/g)) mark([m[1]!, m[2]!], m.index!, m[0].length, letterPicked);
+  for (const m of t.matchAll(/(?:\boption\s+|\()([abc])\b/g)) mark([m[1]!], m.index!, m[0].length, letterPicked);
   const alone = /^\s*([abc])[\s.!,)]*$/.exec(t);
-  if (alone) { pos.add(alone[1]!); strong.add(alone[1]!); }
+  if (alone) { pos.add(alone[1]!); strong.add(alone[1]!); letterPicked.add(alone[1]!); }
   // Ordinals only as a pick ("the first", "second one", or alone): "tell me about them first" is not option a.
   const ord = (w: string) => new RegExp(`\\bthe (?:${w})\\b|\\b(?:${w}) (?:one|option|time|slot)\\b|^\\W*(?:${w})\\W*$`, "g");
   const ordinals: [RegExp, number][] = [
@@ -688,10 +694,14 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     [ord("second|2nd|middle"), 1], [/(?<![\d:])\b2\b(?!\s*(am|pm|:|\d|of|more|people|person|hours?|mins?))/g, 1],
     [ord("third|3rd"), 2], [/(?<![\d:])\b3\b(?!\s*(am|pm|:|\d|of|more|people|hours?|mins?))/g, 2], [/\b(last|later|latest) one\b/g, options.length - 1],
   ];
-  for (const [re, i] of ordinals) if (options[i]) for (const m of t.matchAll(re)) mark([options[i]!.key], m.index!, m[0].length);
+  for (const [re, i] of ordinals) if (options[i]) for (const m of t.matchAll(re)) mark([options[i]!.key], m.index!, m[0].length, letterPicked);
   for (const [re, dayName] of DAY_WORDS) {
     const keys = options.filter(o => o.label.startsWith(dayName)).map(o => o.key);
-    if (keys.length) for (const m of t.matchAll(re)) mark(keys, m.index!, m[0].length);
+    if (keys.length) for (const m of t.matchAll(re)) mark(keys, m.index!, m[0].length, dayPicked);
+    // A day the member names that was not offered is a counter-offer, never a yes to the offered
+    // times ("Friday works" when Friday was not offered). A negated mention ("not Friday") refuses
+    // that day instead, so it is not a counter-offer.
+    else for (const m of t.matchAll(re)) if (!negatedAt(t, m.index!, m[0].length)) unofferedDay = true;
   }
   for (const m of t.matchAll(/\b(\d{1,2})(?::\d\d)?\s*(am|pm)\b/g)) {
     const label = `${Number(m[1])}${m[2]}`;
@@ -708,6 +718,12 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // Refusal first. A pick after a refusal ("no, Saturday works") is mixed: ask again.
   if (c.why === "refusal") return all.some(k => strong.has(k)) ? { ...unclear, why: "mixed" } : { answer: "no", keys: [], why: c.why };
   if (c.why === "mixed" || c.why === "conditional" || c.why === "hedged") return unclear;
+  // A yes aimed at a day that was not offered is a counter-offer, not a yes to the offered times:
+  // "Friday works" when Friday was not offered must not book Thursday, Saturday or Sunday.
+  // A named offered day, or an explicit letter or ordinal pick, still books that time, and a
+  // time-only pick ("Friday 7pm works") does not: the time alone does not say which day was meant.
+  // The caller reads a yes with no keys as "none of those times fit" and offers new times.
+  if (unofferedDay && c.answer === "yes" && !dayPicked.size && !letterPicked.size) return { answer: "yes", keys: [], why: "counter" };
   // A time they name and do not refuse is a yes to it ("no plans Thursday, so Thursday works").
   // A named time with a yes or a firm pick ("Saturday works"); a bare mention ("I'm at a wedding saturday") is not a yes.
   if (picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return { answer: "yes", keys: picked.filter(k => strong.has(k) || c.answer === "yes"), why: c.why };
