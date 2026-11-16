@@ -907,8 +907,12 @@ export function availabilityTags(body: string): string[] {
   return [...out.keys()].sort().flatMap(d => ORDER.filter(p => out.get(d)!.has(p)).map(p => `${p}:${DAYS3[d]}`));
 }
 
-/** Idioms with a no-word that do not say no: "yes, no doubt", "no complaints", "wouldn't miss it". */
-const AGAIN_YES_IDIOM = /\b(no (?:doubt|question|hesitation|complaints?|regrets?|notes)|(?:wouldn'?t|won'?t|would not|will not) (?:miss|change|hesitate|say no)|(?:don'?t|do not) (?:want|wanna) to miss|not gonna lie|not to lie)\b/g;
+/** Idioms with a no-word that do not say no: "yes, no doubt", "no complaints", "wouldn't miss it".
+ * The "no <word>" arm covers the harmless endings consentOf strips (HARMLESS_NO), so a friendly
+ * opener ("no worries", "no pressure", "no problem") never decides the answer on its own; the
+ * yes/no words after it do. "No-brainer" is the same shape with a hyphen: "it's a no-brainer —
+ * yes, again!" is a yes, not a no. */
+const AGAIN_YES_IDIOM = /\b(no (?:doubt|question|hesitation|complaints?|regrets?|notes|problem|probs?|worries|worry|rush|pressure|biggie|plans?|stress|sweat)|no[- ]brainer|(?:wouldn'?t|won'?t|would not|will not) (?:miss|change|hesitate|say no)|(?:don'?t|do not) (?:want|wanna) to miss|not gonna lie|not to lie)\b/g;
 
 /**
  * The answer to "Would you do it again with this group?" after a plan (plans ask 8): yes, no, or
@@ -920,8 +924,8 @@ export function planAgainOf(body: string): "yes" | "no" | "unclear" {
   const t = body.toLowerCase().replace(/[‘’ʼ]/g, "'");
   if (/\b(couldn'?t make it|didn'?t (go|make it)|nobody else|no one else|never showed|didn'?t show)\b/.test(t)) return "unclear";
   const s = t.replace(AGAIN_YES_IDIOM, " ");
-  if (/\b(probably not|not really|no\b|nah|nope|wouldn'?t|won'?t|would not|will not|not again|never again|don'?t think|(?:don'?t|do not) (?:really )?(?:want|wanna)|(?:never|not) (?:\w+ ){0,4}again|once was enough|i'?ll pass|not for me|rather not|not with (?:this|that|the|these|those|them)|(?:wasn'?t|not) (?:really )?my (?:thing|crowd|scene|vibe))\b/.test(s)) return "no";
-  if (/\b(yes|yeah|yep|definitely|absolutely|for sure|again|count me in|(?:wouldn'?t|would not) say no)\b/.test(t)) return "yes";
+  if (/\b(probably not|not really|no\b|nah|nope|wouldn'?t|won'?t|would not|will not|not again|never again|don'?t think|(?:don'?t|do not) (?:really )?(?:want|wanna|sign me up)|(?:never|not) (?:\w+ ){0,4}again|once was enough|i'?ll pass|not for me|rather not|not with (?:this|that|the|these|those|them)|(?:wasn'?t|not) (?:really )?my (?:thing|crowd|scene|vibe))\b/.test(s)) return "no";
+  if (/\b(yes|yeah|yep|definitely|absolutely|for sure|again|count me in|sign me up|(?:wouldn'?t|would not) say no)\b/.test(t)) return "yes";
   return "unclear";
 }
 
