@@ -32,7 +32,7 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { isDeepStrictEqual } from "node:util";
 import { DAY, LLMBudget, RealClock, recommenderLLM, type Clock, type City, type MemberId } from "@thenetwork/core";
-import type { ActionResult, NetworkOptions, NetworkState, ReviewDecision, ReviewOptions } from "../src/network.ts";
+import { storedInviterCurrent, type ActionResult, type NetworkOptions, type NetworkState, type ReviewDecision, type ReviewOptions } from "../src/network.ts";
 import { brandOf, copy as ntwrkCopy, copyFor, ELIZA_NOTICE, type Copy } from "../src/copy.ts";
 import { isMinor } from "@thenetwork/core";
 import { personDailyCap } from "../../core/src/generated/outreachPolicy.ts";
@@ -448,7 +448,7 @@ export class NetworkService implements RuntimeHost {
   }
 
   private async invitationOwner(tx: SQL, app: AppInfo, memberId: string, sender?: string): Promise<boolean> {
-    const [row] = await tx`select m.person_id, ph.e164 from network.members m join platform.phone_identities ph on ph.person_id=m.person_id
+    const [row] = await tx`select m.person_id, m.home_city, ph.e164 from network.members m join platform.phone_identities ph on ph.person_id=m.person_id
       where m.app_id=${app.id} and m.id=${memberId} and m.account_status='active' and not m.opted_out and ph.hold is null
       and (${sender ?? null}::text is null or ph.e164=${sender ?? null})
       order by ph.last_seen_at desc nulls last, ph.e164 limit 1`;
@@ -456,7 +456,12 @@ export class NetworkService implements RuntimeHost {
     const accounts = this.accountsFor(tx);
     const e164 = row.e164 as string;
     const binding = await accounts.activeMembership(app, { e164, personId: row.person_id as string });
-    return binding?.membership.memberId === memberId && canBeMatched(await accounts.lowestAge(e164, binding.person));
+    if (binding?.membership.memberId !== memberId || !canBeMatched(await accounts.lowestAge(e164, binding.person))) return false;
+    const owner = this.runtimeForHome(app.id, row.home_city as string);
+    if (!owner) return false;
+    const [stored] = await tx`select state from network.network_state where id=${owner.id}`;
+    const state = stored?.state;
+    return !!state && storedInviterCurrent((typeof state === "string" ? JSON.parse(state) : state) as NetworkState, memberId, this.clock.now());
   }
 
   async saveMemberInvitation(tx: SQL, rt: NetworkRuntime, staged: StagedMemberInvitation): Promise<void> {

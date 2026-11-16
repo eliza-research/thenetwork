@@ -29,7 +29,7 @@ import {
   contextFacetEligible, contextFacetLimit, contextFacetSizeLimit, contextMode, contextSinglePlayer,
   initial as initialContext, step as stepContext, type ContextMode,
 } from "../../core/src/generated/sharedContext.ts";
-import { ConsentNetwork, presentInNyc, relayDispatchCheck, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
+import { ConsentNetwork, presentInNyc, relayDispatchCheck, storedInviteNoticePartyCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
 import type { RelayCanonical } from "../src/relay.ts";
 import { loadRelayRows, PgStore, runStored, runTick, type NetworkStore } from "../src/store.ts";
 import { capitalWiring, type CapitalEvent } from "../src/capital.ts";
@@ -334,7 +334,12 @@ export class NetworkRuntime {
       and not exists(select 1 from platform.person_blocks b where (b.from_person=i.person_id and b.to_person=v.person_id)
         or (b.from_person=v.person_id and b.to_person=i.person_id))`;
     if (links.length !== invitees.length) return false;
-    const parties = await this.relayParties([inviter, ...invitees], tx);
+    const ids = [inviter, ...invitees];
+    const [stored] = await tx`select state from network.network_state where id=${this.pg.id}`;
+    if (!stored?.state) return false;
+    const state = (typeof stored.state === "string" ? JSON.parse(stored.state) : stored.state) as NetworkState;
+    if (!ids.every(id => storedInviteNoticePartyCurrent(state, id))) return false;
+    const parties = await this.relayParties(ids, tx);
     return [...parties.values()].every(party => party.adult && !party.optedOut && !party.held);
   }
 

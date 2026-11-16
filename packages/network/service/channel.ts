@@ -200,7 +200,7 @@ export class BlooioAdapter implements ChannelAdapter {
       // PgStore.save locks the state before erasing members. Dispatch takes the
       // same order, then the existing admit check revalidates current parties.
       lockAdmission: async (row, tx) => {
-        if (row.id.startsWith("relay:")) await tx`select id from network.network_state where id=${rt.pg.id} for share`;
+        if (row.id.startsWith("relay:") || row.id.startsWith("invite-notice:")) await tx`select id from network.network_state where id=${rt.pg.id} for share`;
       },
       // A relayed item: its match and both members are read again inside the admission transaction (runtime.ts).
       admit: async (row, tx) => {

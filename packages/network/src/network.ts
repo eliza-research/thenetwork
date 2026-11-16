@@ -42,7 +42,7 @@ import {
   step as stepMemberRequest, waitingMemberRequest, type MemberRequestFlow,
 } from "../../core/src/generated/memberRequest.ts";
 import {
-  defaultMemberInviteCapacity, memberInviteCanAttribute, memberInviteCanIssue, memberInviteLinkCanBeShared,
+  defaultMemberInviteCapacity, memberInviteCanAttribute, memberInviteCanIssue, memberInviteLinkCanBeShared, memberInviteSourceCurrent,
   memberInviteUsesAllowance, memberInviteWithinWindow, memberMayRequestInvite,
 } from "../../core/src/generated/memberInvitation.ts";
 import {
@@ -5685,6 +5685,23 @@ function relayMemberOf(m: Pick<MemberState, "id" | "first" | "age" | "statedAge"
   const ages = [m.age, m.statedAge].filter((a): a is number => validAge(a));
   const unsure = m.minor || m.minorSignal || m.minorReported || m.ageUnknown || m.ageConflict || !ages.length;
   return { id: m.id, firstName: m.first, age: unsure ? undefined : Math.min(...ages), optedOut: m.optedOut, held: !!m.account || trustHold };
+}
+
+/** Read back the issuer's current Network safety state without reloading the live runtime. */
+export function storedInviterCurrent(state: NetworkState, id: MemberId, now: number): boolean {
+  const member = state.members.find(m => m.id === id);
+  if (!member || state.declinedIds.includes(id)) return false;
+  const trust = state.trust?.find(record => record.id === id)?.level ?? "ok";
+  const view = relayMemberOf(member, trust !== "ok" || pendingReportHold(state.reports, id));
+  return memberInviteSourceCurrent(canBeMatched(view.age), !member.account, !view.optedOut, !view.held, now, member.invitesBlockedUntil);
+}
+
+export function storedInviteNoticePartyCurrent(state: NetworkState, id: MemberId): boolean {
+  const member = state.members.find(m => m.id === id);
+  if (!member || state.declinedIds.includes(id)) return false;
+  const held = state.trust?.some(record => record.id === id && record.level === "hold") || pendingReportHold(state.reports, id);
+  const view = relayMemberOf(member, held);
+  return canBeMatched(view.age) && !view.optedOut && !view.held;
 }
 /**
  * A two-person opportunity as the relay sees it: mutual while scheduled or done. The thread persists after the

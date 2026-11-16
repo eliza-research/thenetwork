@@ -6,7 +6,7 @@
 
 ### A direct named vouch can use the adult member's allowance
 
-Issue a link only for a direct request from an eligible adult member. The member must have current consent, be clear of trust and report holds, name a personal relationship, and have room under their invitation allowance. Count committed links and invitations held for review against the rolling 30-day allowance. An unavailable issuer does not spend a slot. A vouch is invite evidence and does not create a profile for the invitee.
+Issue a link only for a direct request from an eligible adult member. The member must have current consent, be clear of trust and report holds, name a personal relationship, and have room under their invitation allowance. Count committed links and invitations held for review against the rolling 30-day allowance. An unavailable issuer does not spend a slot. A vouch is invite evidence and does not create a profile for the invitee. Recheck the issuer's account, consent, age and holds before replay or redemption.
 
 ```quint
 pure val memberInviteWindowMs: int = 2592000000
@@ -14,9 +14,13 @@ pure val defaultMemberInviteCapacity: int = 3
 
 pure def memberInviteWithinWindow(ageMs: int): bool = ageMs >= 0 and ageMs < memberInviteWindowMs
 
+pure def memberInviteSourceCurrent(adult: bool, accountEligible: bool, consents: bool, clearOfHolds: bool,
+  now: int, invitesBlockedUntil: int): bool =
+  adult and accountEligible and consents and clearOfHolds and now >= invitesBlockedUntil
+
 pure def memberMayRequestInvite(adult: bool, accountEligible: bool, consents: bool, clearOfHolds: bool,
   now: int, invitesBlockedUntil: int, used: int, limit: int): bool =
-  adult and accountEligible and consents and clearOfHolds and now >= invitesBlockedUntil and used >= 0 and used < limit
+  memberInviteSourceCurrent(adult, accountEligible, consents, clearOfHolds, now, invitesBlockedUntil) and used >= 0 and used < limit
 
 pure def memberInviteRelationshipKnown(relationship: str): bool =
   relationship == "friend" or relationship == "coworker" or relationship == "roommate" or relationship == "family"

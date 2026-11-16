@@ -694,6 +694,17 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     const tokenReplay = await send(input);
     expect(tokenReplay.status).toBe(409);
     expect(await tokenReplay.json()).toMatchObject({ error: "turn_invitation_changed" });
+
+    const secondInvite = { ...input, messageId: "invite-before-hold", text: "Can you invite my coworker Theo?" };
+    const fresh = await send(secondInvite);
+    expect(fresh.status).toBe(200);
+    const [, unused] = (await fresh.json()).replies[0].match(/#invite=([a-zA-Z0-9_-]{43})$/) ?? [];
+    expect(unused).toHaveLength(43);
+    expect(await rt.unitOfWork(net => net.holdMember(invited.memberId, "fixture-reviewer"))).toEqual({ ok: true });
+    expect((await send(secondInvite)).status).toBe(409);
+    const loser = attempts[0]!.status === 200 ? second : first;
+    expect(await loser("/api/join", { ...bodyFor("Theo"), inviteToken: unused })).toMatchObject({ body: { error: "invalid_invitation" } });
+    expect(await count(sql`select count(*)::int as n from platform.member_invitations where redeemed_at is null`)).toBe(1);
   }, T);
 
   test("slop onboarding is the engine's loop: one question at a time, bi asked again in other words, the read-back, tags and state without the member's words", async () => {
