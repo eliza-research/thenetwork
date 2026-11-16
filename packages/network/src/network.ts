@@ -3974,7 +3974,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     const a = plans.activityById.get(o.plan.activityId)!;
     const res = this.send(m, text, {
-      type: "plan_probe", proactive: true, planInvite: allowance, ...(allowance ? { lane: "plan" } : {}),
+      type: "plan_probe", proposalId: o.id, proactive: true, planInvite: allowance, ...(allowance ? { lane: "plan" } : {}),
       plan: { planId: o.id, activity: a.id, window: { ...o.plan.window }, size: about.length, ...(o.plan.place.area ? { area: o.plan.place.area } : {}) },
     }, "probe", { about, hook: { t: "plan_probe", oppId: o.id, id }, noDefer: true, planInvite: allowance });
     if (stepPlanDispatch(rendered, { type: "recordSend", sent: res === "sent" }).phase === "InviteSent") {

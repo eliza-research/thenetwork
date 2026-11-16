@@ -60,7 +60,7 @@ pure def checkAllowance(invite: PlanDispatch, admitted: bool): PlanDispatch =
 
 ### A usable message must be sent before the daily record changes
 
-Render the invitation using the current roster, including promoted replacements. After booking, use the booked members and the pending recipient. If no usable anonymous message can be rendered for the member, the seat becomes unavailable. A rendered invitation goes through the normal send checks against that roster. Only a send confirmed by that path uses the daily slot and updates the selected allowance's counters.
+Render the invitation using the current roster, including promoted replacements. After booking, use the booked members and the pending recipient. If no usable anonymous message can be rendered for the member, the seat becomes unavailable. A rendered invitation goes through the normal send checks against that roster. Its outbound record keeps the approved opportunity ID so the queue can recheck its category and current state. Only a send confirmed by that path uses the daily slot and updates the selected allowance's counters.
 
 ```quint
 pure def canRenderInvite(invite: PlanDispatch): bool = invite.phase == RenderingInvite
