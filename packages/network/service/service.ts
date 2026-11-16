@@ -43,7 +43,9 @@ import {
 } from "../../core/src/generated/staffSafetyService.ts";
 import { inboxKeepMs, platformKeepMs, stopHintWindowMs } from "../../core/src/generated/platformRetention.ts";
 import { stopCoversEveryApp } from "../../core/src/generated/sharedLineConsentJourney.ts";
+import { standingIntentReplayAllowed } from "../../core/src/generated/standingIntentManagement.ts";
 import { ageAnswer, agesStated } from "../src/classify.ts";
+import { standingIntentCommand } from "../src/standing-intents.ts";
 import { NetworkRuntime, type RuntimeHost } from "./runtime.ts";
 import { effectiveParticipation, automatedFacetPredicate } from "./snapshot.ts";
 import { ProfileSuggestions, type SuggestionAuthorization } from "./profile-suggestions.ts";
@@ -239,7 +241,7 @@ const NOTIFY_SUMMARY_MAX = 500;
 
 export type InboundOutcome =
   | "open" | "handled" | "duplicate" | "unknown_sender" | "ignored" | "ignored_group" | "status" | "reaction" | "safety"
-  | "invite_only" | "join_asked" | "joined" | "under_age" | "stopped" | "left" | "no_network" | "held";
+  | "invite_only" | "join_asked" | "joined" | "under_age" | "stopped" | "left" | "no_network" | "held" | "standing_intents";
 
 interface Route { app: AppId; shared: boolean }
 
@@ -1089,6 +1091,7 @@ export class NetworkService implements RuntimeHost {
     const rowId = `in:${ev.channel}:${ev.messageId}`;
     const kw = platformKeyword(ev.text);
     const profileRead = !kw ? profileReadRequest(ev.text, this.apps) : undefined;
+    const intentCommand = !kw ? standingIntentCommand(ev.text) : undefined;
     const line = ev.to ? normalizeAddress(ev.to) : undefined;
 
     // STOP / STOP ALL: the consent ledger first (with or without a membership; once per message), then every member it covers.
@@ -1108,8 +1111,8 @@ export class NetworkService implements RuntimeHost {
     // Photos by text (photoIntake.ts): the answer to the photo consent ask, then any attachment. A photo
     // from a minor, an unknown age, a banned person or a non-member of slop is dropped before it is fetched.
     // Only an explicit YES PHOTOS / NO PHOTOS routed to slop: a bare yes or no goes on to the Network (a probe, a date ask, another app).
-    if (e164 && !kw && !profileRead && (await this.photoIntake.consentAnswer(e164, ev.text, rowId, route.app))) return "handled";
-    if (e164 && ev.mediaUrls?.length && !profileRead) {
+    if (e164 && !kw && !profileRead && !intentCommand && (await this.photoIntake.consentAnswer(e164, ev.text, rowId, route.app))) return "handled";
+    if (e164 && ev.mediaUrls?.length && !profileRead && !intentCommand) {
       // A provider retry of the same message takes no photo twice.
       const first = (await this.people.hit(`photo_msg:${rowId}`, DAY, t)).count === 1;
       const r = first ? await this.photoIntake.photosIn(e164, ev.mediaUrls, rowId) : { outcome: "duplicate" as const };
@@ -1135,7 +1138,7 @@ export class NetworkService implements RuntimeHost {
     }
 
     // A read request is never an instruction to join, opt in or create a person.
-    if (!memberId && profileRead) return "handled";
+    if (!memberId && (profileRead || intentCommand)) return "handled";
 
     if (memberId) {
       if (kw === "start" && e164) {
@@ -1153,7 +1156,7 @@ export class NetworkService implements RuntimeHost {
       const reply = kw === "help" ? app.brand.help : undefined;
       if (!kw && e164 && /^\s*share\W*$/i.test(ev.text) && (await this.pendingOf(e164, "share", app.id))) return this.share(rt, app, memberId, e164, ev, rowId);
       // The answer to The Network's "what are you looking for?": enroll in the apps they named.
-      if (shouldReadLookingFor(!!kw, !!profileRead, app.id === "ntwrk") && e164 && (await this.pendingOf(e164, "looking_for"))) {
+      if (!intentCommand && shouldReadLookingFor(!!kw, !!profileRead, app.id === "ntwrk") && e164 && (await this.pendingOf(e164, "looking_for"))) {
         const wants = lookingFor(ev.text).filter(a => namedOtherApp(a, a !== "ntwrk" && !!this.runtimeFor(a)));
         if (wants.length) return this.enroll(rt, memberId, e164, wants, ev, rowId);
       }
@@ -1282,6 +1285,18 @@ export class NetworkService implements RuntimeHost {
       rt.unit.inbound = { id: rowId, member_id: memberId, direction: "inbound", channel, body: ev.text, status: "received", type: null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
       rt.replyingTo = memberId;
       let disposition: "handled" | "open";
+      const manageIntent = !keyword && !fromAssistant ? standingIntentCommand(ev.text) : undefined;
+      if (manageIntent) {
+        try {
+          const e164 = normalizePhone(ev.from);
+          const own = e164 && await this.accounts.activeMembership(rt.app, { e164, personId: null });
+          const body = n.manageStandingIntents(memberId, manageIntent, !!own && own.membership.memberId === memberId);
+          if (body) rt.system(memberId, `sys:${rowId}`, body, "reply", "standing_intent");
+          return "standing_intents" as const;
+        } finally {
+          rt.replyingTo = undefined;
+        }
+      }
       const read = !keyword && !fromAssistant ? profileReadRequest(ev.text, this.apps) : undefined;
       if (read) {
         try {
@@ -2200,6 +2215,12 @@ export class NetworkService implements RuntimeHost {
     }
     if (result.status===200 && result.body && typeof result.body==="object" && "outcome" in result.body && result.body.outcome==="handled") {
       const handled=result.body as Extract<TurnResponse,{outcome:"handled"}>;
+      if (handled.reason === "standing_intents" && handled.replies.length) {
+        const rt = handled.app && handled.memberId ? await this.runtimeOfMember(handled.app, handled.memberId) : undefined;
+        const e164 = normalizePhone(input.from);
+        const binding = rt && e164 && await this.accounts.activeMembership(rt.app, { e164, personId: null });
+        if (!standingIntentReplayAllowed(!!binding && binding.membership.memberId === handled.memberId)) return json({error: "turn_intent_account_changed", retryable: false}, 409);
+      }
       if (handled.reason === "onboarding_asked") {
         const current = await admission(handled.app ?? undefined);
         if (!current.allowed || current.age !== undefined) return json({error: "turn_onboarding_changed", retryable: false}, 409);

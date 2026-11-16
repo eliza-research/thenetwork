@@ -59,6 +59,10 @@ import {
 } from "../../core/src/generated/probeDispatch.ts";
 import { reviewLate } from "../../core/src/generated/reviewDeadline.ts";
 import { cachedStandingIntentsCurrent, learnedIntentDays, learnedIntentMayProject, standingIntentBlocksLearnedCopy } from "../../core/src/generated/standingIntent.ts";
+import {
+  effectiveStandingControl, initial as initialIntentManagement, intentManagementAllowed,
+  retireIntentOpportunity, retireIntentSearch, step as stepIntentManagement, type IntentControl,
+} from "../../core/src/generated/standingIntentManagement.ts";
 import { standingIntentDeadline, standingIntentLive, standingIntentPhaseAt } from "../../core/src/standing-intent.ts";
 import {
   caseCloseResult, holdAuthority, holdLiftResult, holdSubjectKnown, initial as initialCase, minorClearResult, reportAfterDecision,
@@ -66,6 +70,7 @@ import {
 } from "../../core/src/generated/safetyCase.ts";
 import { HELP_TEXT, STOP_CONFIRMATION, type InboundMessage, type NetworkContext, type NetworkUnderTest, type SimMeta } from "@thenetwork/core";
 import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
+import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
 import { ageAnswer, availabilityTags, checkinTags, classify, extractProfile, feedbackOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, type Classified, type TimeOption } from "./classify.ts";
 import { mergeConsent, type Understand, type Understood } from "./extract.ts";
 import { brandOf, copy, copyFor, type Copy, whenPhrase } from "./copy.ts";
@@ -77,6 +82,7 @@ import { APPEARANCE_PREFIX, appearanceLeak } from "../../engine/src/packs/slop/a
 import { ABOUT_OTHERS, ASK_KINDS, LANE_BUDGETS, NEVER_REPLY, nextAt, NY, nyParts, OUTREACH, PRD_BUDGETS, SLOT_KINDS, type SendKind } from "./outreach.ts";
 import { BASE_REACH, FLOOR_EFFORT, type CapitalEvent, type CapitalEventInput, type CapitalReader, type GamingFlag, type NetworkEffort } from "./capital.ts";
 import { activityHints, BOOKING_GAP, PLAN_VENUES, planLedger, statedWindows } from "./plans.ts";
+import { standingIntentReference, type StandingIntentCommand } from "./standing-intents.ts";
 
 /** A ledger event as the Network builds it: the emitter adds the id and the Clock time. */
 type LedgerInput = CapitalEventInput extends infer E ? (E extends CapitalEventInput ? Omit<E, "t"> : never) : never;
@@ -326,6 +332,8 @@ interface MemberState {
   invitedBy?: MemberId; invites: number[]; invitesBlockedUntil: number; lastGrowthAsk: number;
   /** What the member told us. Desires carry when they were stated: they expire and can be withdrawn. */
   learned: { interests: Set<string>; skills: Set<string>; desires: Map<string, number>; area?: string; eveningsOpen?: boolean; groups?: boolean };
+  /** Per-intent choices saved with this member in the app's Network state. */
+  intentControls?: Record<string, IntentControl>;
   noShows: number; completedSinceNoShow: number; msgsIn: number;
   /** Probes/questions/invitations we sent that wanted an answer, and how many got one. */
   asked: number; answered: number;
@@ -507,6 +515,7 @@ const ZERO: ScoreComponents = { fit: 0, mutualBenefit: 0, warmPath: 0, novelty: 
 const PROBE_WAIT = DEFAULT_ATTENTION.expiry.partnerProbeDays * DAY;
 /** The daily engine run happens at the first tick from runHour until this New York hour. */
 const ENGINE_RUN_UNTIL = 20;
+const INTENT_CONTROL_STATUS = { PauseControl: "paused", CloseControl: "closed" } as const satisfies Record<IntentControl, Intent["status"]>;
 /** The earliest a booked meeting may start after the last yes, and the earliest offered slot for a partner probe. */
 const MIN_NOTICE = 6 * HOUR, PARTNER_LEAD = 12 * HOUR;
 /** Employer-like facets never go in a probe (D5). Same rule as the engine's buildProbe, which does not export it. */
@@ -1671,9 +1680,87 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   // ================================================================== requests
-  private withdrawRequests(m: MemberState, desires: readonly string[]): boolean {
+  /** Profile and matching consumers both see the member's durable choices. */
+  private controlledIntentSnapshot(snap: WorldSnapshot): WorldSnapshot {
+    let changed = false;
+    const intents = snap.intents.map(intent => {
+      const control = this.members.get(intent.memberId)?.intentControls?.[`stored:${intent.id}`];
+      if (!control || intent.details?.startsWith(JOB_INTENT)) return intent;
+      changed = true;
+      return { ...intent, status: INTENT_CONTROL_STATUS[effectiveStandingControl(intent.status, control)] };
+    });
+    return changed ? { ...snap, intents } : snap;
+  }
+
+  private ownStandingIntents(memberId: MemberId, now: number) {
+    const stored = this.snapshotCached().intents.filter(i => i.memberId === memberId && !i.details?.startsWith(JOB_INTENT));
+    const own = stored.map(intent => ({ key: `stored:${intent.id}`, intent }));
+    const m = this.members.get(memberId);
+    for (const [desire, at] of m?.learned.desires ?? []) {
+      const def = desireById.get(desire);
+      if (!def || stored.some(i => i.objective === def.text && standingIntentBlocksLearnedCopy(standingIntentPhaseAt(i, now)))) continue;
+      const key = `learned:${desire}`;
+      const control = m?.intentControls?.[key];
+      own.push({ key, intent: {
+        id: `${memberId}:li:${desire}`, memberId, objective: def.text, category: def.category,
+        createdAt: at, horizonDays: learnedIntentDays, status: control ? INTENT_CONTROL_STATUS[control] : "active",
+      } });
+    }
+    return own.sort((a, b) => b.intent.createdAt - a.intent.createdAt || a.key.localeCompare(b.key));
+  }
+
+  /** Called inside the verified member turn, with both the state write and its reply collected in that unit. */
+  manageStandingIntents(memberId: MemberId, command: StandingIntentCommand, canonicalMembership: boolean): string | undefined {
+    const m = this.members.get(memberId);
+    const scope = stepIntentManagement(initialIntentManagement, {
+      type: "authorizeIntentCommand", command: command.kind,
+      allowed: intentManagementAllowed(canonicalMembership, canonicalMembership && !!this.record(memberId), !!m?.optedOut),
+    });
+    if (scope.phase === "MemberRefused") return undefined;
+    const now = this.now();
+    const entries = this.ownStandingIntents(memberId, now).map(entry => ({ ...entry, reference: standingIntentReference(this.app.id, memberId, entry.key) }));
+    if (command.kind === "ListIntents") {
+      if (scope.phase !== "ShowIntents") return undefined;
+      if (!entries.length) return `You don't have any standing intents saved in ${this.app.name}.`;
+      const perPage = 6, pages = Math.ceil(entries.length / perPage);
+      if (command.page > pages) return `There ${pages === 1 ? "is 1 page" : `are ${pages} pages`} of intents. Say “list my intents” to start.`;
+      const states = { IntentLive: "active", IntentPaused: "paused", IntentClosed: "closed", IntentExpired: "expired", IntentInactive: "inactive" };
+      const lines = entries.slice((command.page - 1) * perPage, command.page * perPage).map(({ intent, reference }) => {
+        const title = intent.objective.replace(/[\p{Cc}\p{Cf}\s]+/gu, " ").trim().slice(0, 90);
+        const safe = title && !this.guardCheck(title, memberId).length && (!this.ratesPhotos || appearanceLeak(title) === null);
+        return `${reference} · ${states[standingIntentPhaseAt(intent, now)]} · ${safe ? title : "Saved intent"}`;
+      });
+      const more = command.page < pages ? ` For more, say “list my intents ${command.page + 1}.”` : "";
+      return [`Your standing intents in ${this.app.name} (${command.page}/${pages})`, ...lines,
+        `Say “pause intent ${entries[(command.page - 1) * perPage]!.reference}” or “close intent” followed by its reference.${more}`].join("\n");
+    }
+    const matches = entries.filter(entry => entry.reference === command.reference);
+    const selected = matches[0];
+    const phase = selected ? standingIntentPhaseAt(selected.intent, now) : undefined;
+    const decision = stepIntentManagement(scope, {
+      type: "chooseOwnedIntent", matches: matches.length, live: phase === "IntentLive", paused: phase === "IntentPaused",
+    });
+    if (decision.phase === "UnknownIntent" || decision.phase === "AmbiguousIntent") return "I couldn't identify one saved intent from that reference. Say “list my intents” to see the current list.";
+    if (!selected || (decision.phase !== "PauseSelected" && decision.phase !== "CloseSelected")) return "That intent is already inactive. No change made.";
+    const member = m ?? this.member(memberId);
+    const close = decision.phase === "CloseSelected";
+    member.intentControls = { ...member.intentControls, [selected.key]: close ? "CloseControl" : "PauseControl" };
+    this.dirty = true;
+    for (const opp of this.opps.values()) if (retireIntentOpportunity(
+      opp.anchor?.type === "intent" && opp.anchor.id === selected.intent.id && opp.participants.includes(memberId),
+      closeOpportunityForRequestWithdrawal(opp.stage),
+    )) this.close(opp, "requester unavailable");
+    const desire = DESIRES.find(d => d.text === selected.intent.objective);
+    const stillLive = desire !== undefined && this.ownStandingIntents(memberId, now).some(
+      ({ intent }) => intent.objective === selected.intent.objective && standingIntentLive(intent, now),
+    );
+    if (desire && retireIntentSearch(true, stillLive)) this.withdrawRequests(member, [desire.id], true);
+    return `${close ? "Closed" : "Paused"} intent ${selected.reference}.`;
+  }
+
+  private withdrawRequests(m: MemberState, desires: readonly string[], keepLearned = false): boolean {
     if (!desires.length) return false;
-    for (const desire of desires) m.learned.desires.delete(desire);
+    if (!keepLearned) for (const desire of desires) m.learned.desires.delete(desire);
     let changed = false;
     for (const r of this.requests) {
       const withdrawal = stepMemberRequest(initialMemberRequest, {
@@ -3960,7 +4047,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** The engine's input: the public snapshot plus everything the Network has learned and observed. */
   engineInput(now: number): EngineInput {
-    const snap = this.ctx.snapshot();
+    const snap = this.controlledIntentSnapshot(this.ctx.snapshot());
     const nyc = new Set(snap.members.filter(m => m.homeCity === "nyc" && !this.declinedIds.has(m.id)).map(m => m.id));
     const facets: Facet[] = snap.facets.filter(f => nyc.has(f.memberId));
     const intents: Intent[] = snap.intents.filter(i => nyc.has(i.memberId));
@@ -4045,7 +4132,9 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** A fresh learned statement fills in for an absent or expired record of the same want. */
   private learnedLive(id: MemberId, desireId: string, statedAt: number, now: number, stored: readonly Intent[]): boolean {
-    const phase = standingIntentPhaseAt({ status: "active", createdAt: statedAt, horizonDays: learnedIntentDays }, now);
+    const control = this.members.get(id)?.intentControls?.[`learned:${desireId}`];
+    const status = control ? INTENT_CONTROL_STATUS[control] : "active";
+    const phase = standingIntentPhaseAt({ status, createdAt: statedAt, horizonDays: learnedIntentDays }, now);
     const objective = desireById.get(desireId)?.text;
     const blockingRecord = phase === "IntentLive" && objective !== undefined && stored.some(i =>
       i.memberId === id && i.objective === objective && standingIntentBlocksLearnedCopy(standingIntentPhaseAt(i, now)));
@@ -4623,7 +4712,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   private snapshotCached(): WorldSnapshot {
     const now = this.now();
     if (!this.snapCache || this.dirty || now - this.snapCache.at > 20 * 60_000 || now < this.snapCache.at) {
-      this.snapCache = { at: now, snap: this.ctx.snapshot() }; this.knownCache = undefined; this.dirty = false;
+      this.snapCache = { at: now, snap: this.controlledIntentSnapshot(this.ctx.snapshot()) }; this.knownCache = undefined; this.dirty = false;
     }
     return this.snapCache.snap;
   }
