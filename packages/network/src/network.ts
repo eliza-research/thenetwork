@@ -27,7 +27,7 @@
 //  - Network capital. Every NC ledger event goes to one typed emitter (onLedger); the levers are read
 //    through an optional reader (capital.ts); gaming flags wait in the review queue as "fraud" items.
 import {
-  ADULT_AGE, canJoin, DAY, HOUR, isMinor, localParts, LeakGuard, MINUTE, UNDER_MIN_AGE_DECLINE, validAge,
+  ADULT_AGE, canBeMatched, canJoin, DAY, HOUR, isMinor, localParts, LeakGuard, MINUTE, UNDER_MIN_AGE_DECLINE, validAge,
   type Category, type Facet, type Intent, type LeakOptions, type LLM, type MemberId, type ParticipationState, type Proposal, type ScoreComponents, type WorldSnapshot,
 } from "@thenetwork/core";
 import {
@@ -58,17 +58,23 @@ import {
   replacementRoute, shouldLookForOtherTimes, step as stepProbe, turnReached, type ParticipantProbe,
 } from "../../core/src/generated/probeDispatch.ts";
 import { reviewLate } from "../../core/src/generated/reviewDeadline.ts";
-import { cachedStandingIntentsCurrent, learnedIntentDays, learnedIntentMayProject, standingIntentBlocksLearnedCopy } from "../../core/src/generated/standingIntent.ts";
+import {
+  cachedStandingIntentsCurrent, canQueueEngineOpportunity, learnedIntentDays, learnedIntentMayProject,
+  standingIntentBlocksLearnedCopy, standingIntentFacetEvidence, standingIntentRecheckDue,
+} from "../../core/src/generated/standingIntent.ts";
 import {
   effectiveStandingControl, initial as initialIntentManagement, intentManagementAllowed,
   retireIntentOpportunity, retireIntentSearch, step as stepIntentManagement, writesStandingIntentRow, type IntentControl,
 } from "../../core/src/generated/standingIntentManagement.ts";
 import { standingIntentDeadline, standingIntentLive, standingIntentPhaseAt } from "../../core/src/standing-intent.ts";
+import { presenceWindowCovers, presenceWindowsOverlap, presenceWindowValid } from "../../core/src/generated/travelPresence.ts";
+import { temporaryPresenceWindow } from "../../core/src/travel-presence.ts";
 import {
   caseCloseResult, holdAuthority, holdLiftResult, holdSubjectKnown, initial as initialCase, minorClearResult, reportAfterDecision,
   reportRestrictsMatching, step as stepSafetyCase, type CasePhase, type ReportPhase, type StaffActionResult,
 } from "../../core/src/generated/safetyCase.ts";
 import { HELP_TEXT, STOP_CONFIRMATION, type InboundMessage, type NetworkContext, type NetworkUnderTest, type SimMeta } from "@thenetwork/core";
+import { sha256, stableStringify } from "@thenetwork/engine/src/hash.ts";
 import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
 import { ageAnswer, availabilityTags, checkinTags, classify, extractProfile, feedbackOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, type Classified, type TimeOption } from "./classify.ts";
@@ -564,10 +570,17 @@ const NEVER_MIND = /^\W*(?:never ?mind|nvm|nobody|no one|none|forget it|no|nope|
 /** Actual NYC presence for the whole requested window; conversation ownership grants no location. */
 export function presentInNyc(snapshot: WorldSnapshot, id: MemberId, from: number, to: number): boolean {
   const member = snapshot.members.find(m => m.id === id);
-  if (!member) return false;
-  const trips = snapshot.presence.filter(p => p.memberId === id && p.type === "temporary");
-  if (trips.some(p => p.city !== "nyc" && (p.from ?? 0) < to && (p.to ?? Infinity) > from)) return false;
-  return member.homeCity === "nyc" || trips.some(p => p.city === "nyc" && p.from !== undefined && p.to !== undefined && p.from <= from && p.to >= to);
+  const requested = { from, to };
+  if (!member || !presenceWindowValid(requested)) return false;
+  let present = member.homeCity === "nyc";
+  for (const p of snapshot.presence) {
+    if (p.memberId !== id) continue;
+    const trip = temporaryPresenceWindow(p);
+    if (!trip) continue;
+    if (p.city !== "nyc" && presenceWindowsOverlap(trip, requested)) return false;
+    if (p.city === "nyc" && presenceWindowCovers(trip, requested)) present = true;
+  }
+  return present;
 }
 
 export class ConsentNetwork implements NetworkUnderTest {
@@ -599,6 +612,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** Engine questions sent (EngineResult.asks), fed back to the engine as `recentAsks`. */
   private asks: AskRecord[] = [];
   private lastRunDay = "";
+  private standingIntentSearch?: NetworkState["standingIntentSearch"];
   /** Engine run that is currently being turned into opportunities (for run linkage). */
   private currentRunId?: string;
   /** Skills confirmed by a good experience (a requester enjoyed meeting the provider). */
@@ -3164,8 +3178,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   private planWorld(now: number, fresh = false): EngineWorld {
     const day = nyParts(now).day;
     if (!fresh && this.planWorldCache?.day === day) return this.planWorldCache.w;
-    const snap = this.ctx.snapshot() as WorldSnapshot & { events?: EngineInput["events"] };
-    const w = buildWorld({ ...this.engineInput(now), ...(snap.events ? { events: snap.events } : {}) }, resolveConfig({ ...this.opts.engine }), localEmbed);
+    const w = buildWorld(this.engineInput(now), resolveConfig({ ...this.opts.engine }), localEmbed);
     this.planWorldCache = { day, w };
     return w;
   }
@@ -3646,14 +3659,16 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     const p = nyParts(now);
     this.weeklyCheckins(now);
-    if (p.hour >= this.opts.runHour && p.hour < ENGINE_RUN_UNTIL && this.lastRunDay !== p.day) {
-      this.lastRunDay = p.day;
-      this.trust.decay(now);
-      // Matching off: no engine run and no new opportunities. Growth asks and re-engagement continue.
-      if (this.opts.matchingEnabled) { this.retryRequests(now); await this.dailyRun(now); }
-      this.localEncounters(now);
-      this.reengage(now);
-      this.queueFraudFlags(now);
+    if (p.hour >= this.opts.runHour && p.hour < ENGINE_RUN_UNTIL) {
+      if (this.lastRunDay !== p.day) {
+        this.lastRunDay = p.day;
+        this.trust.decay(now);
+        // Matching off: no engine run and no new opportunities. Growth asks and re-engagement continue.
+        if (this.opts.matchingEnabled) { this.retryRequests(now); await this.dailyRun(now, p.day); }
+        this.localEncounters(now);
+        this.reengage(now);
+        this.queueFraudFlags(now);
+      } else if (this.opts.matchingEnabled) await this.recheckStandingIntents(now, p.day);
     }
     // Plans: the planner (Mondays and Thursdays) and crew sessions, after the daily engine run.
     if (this.plansOn() && p.hour >= this.opts.runHour && p.hour < ENGINE_RUN_UNTIL && this.lastPlanRunDay !== p.day) {
@@ -3809,15 +3824,56 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   // ================================================================== engine
-  private async dailyRun(now: number) {
+  private async dailyRun(now: number, day: string) {
     // Player (or scenario) proposals first: they go through the same consent flow.
     const queued = this.queued; this.queued = [];
     for (const p of queued) this.fromProposal(p, "player", now);
     const input = this.packInput(now);
+    const { fingerprint } = this.standingIntentEvidence(input);
+    const queuedToday = await this.runMatching(input, now, this.opts.maxNewPerDay);
+    this.standingIntentSearch = { day, fingerprint, queuedToday };
+  }
+
+  private async recheckStandingIntents(now: number, day: string) {
+    const previous = this.standingIntentSearch;
+    const cap = this.opts.maxNewPerDay;
+    if (previous?.day !== day || !canQueueEngineOpportunity(previous.queuedToday, cap)) return;
+    const input = this.packInput(now);
+    const { fingerprint, intentIds } = this.standingIntentEvidence(input);
+    if (!standingIntentRecheckDue(previous.fingerprint, fingerprint, intentIds.length, previous.queuedToday, cap)) return;
+    const started = await this.runMatching({ ...input, standingIntentSearch: intentIds }, now, cap - previous.queuedToday);
+    this.standingIntentSearch = { day, fingerprint, queuedToday: previous.queuedToday + started };
+  }
+
+  private standingIntentEvidence(input: EngineInput): { fingerprint: string; intentIds: string[] } {
+    const held = new Set(input.safetyHolds?.map(hold => hold.memberId));
+    const members = (input.members as MemberRecord[]).filter(m => {
+      const state = this.members.get(m.id);
+      return state && state.stage !== "new" && canBeMatched(m.age) && !held.has(m.id)
+        && !state.optedOut && m.state !== "paused" && m.accountStatus !== "paused" && m.accountStatus !== "restricted";
+    });
+    const ids = new Set(members.map(m => m.id));
+    const intents = input.intents.filter(i => ids.has(i.memberId) && standingIntentLive(i, input.now));
+    if (!intents.length) return { fingerprint: "", intentIds: [] };
+    const facets = input.facets.filter(f => ids.has(f.memberId) && standingIntentFacetEvidence(f.scope,
+      (f.validFrom === undefined || f.validFrom <= input.now) && (f.validTo === undefined || f.validTo >= input.now),
+    ));
+    // The projection time on a learned facet changes on every tick. Its usable content does not.
+    const facetEvidence = facets.map(({ validFrom, validTo, observedAt, ...facet }) => facet);
+    const evidence = {
+      members: members.map(({ id, age, state, homeCity, prefs }) => ({ id, age, state, homeCity, prefs })).map(stableStringify).sort(),
+      facets: facetEvidence.map(stableStringify).sort(),
+      intents: intents.map(stableStringify).sort(),
+      events: (input.events ?? []).filter(event => event.city === "nyc" && event.end > input.now).map(stableStringify).sort(),
+    };
+    return { fingerprint: sha256(stableStringify(evidence)), intentIds: intents.map(i => i.id).sort() };
+  }
+
+  private async runMatching(input: EngineInput, now: number, allowance: number) {
     const deps = { ...(this.opts.engineLLM ? { llm: this.opts.engineLLM } : {}), ...(this.opts.pack ? { pack: this.opts.pack } : {}) };
     const { proposals, asks, runLog } = await runEngine(input, this.effectiveEngineConfig(), deps);
-    // Exposure debt carries to the next run (matching-e2e-6).
-    this.exposureDebt = { ...(runLog.exposureDebt ?? {}) };
+    // Exposure debt tracks regular runs over the whole market (matching-e2e-6).
+    if (!input.standingIntentSearch) this.exposureDebt = { ...(runLog.exposureDebt ?? {}) };
     this.counters.engineRuns++; this.counters.engineProposals += proposals.length;
     this.currentRunId = this.sid(`${runLog.runId}-nyc`);
     this.opts.onEngineRun?.(runLog, proposals, now);
@@ -3833,13 +3889,14 @@ export class ConsentNetwork implements NetworkUnderTest {
       // peon: a job seat is answered by its hiring manager (seatRoute); a seat without one is never proposed.
       const p = this.seatRoute(p0);
       if (!p) { this.gate("seat_without_manager", p0.participants); continue; }
-      if (started >= this.opts.maxNewPerDay) { this.gate("daily_cap", p.participants); continue; }
+      if (!canQueueEngineOpportunity(started, allowance)) { this.gate("daily_cap", p.participants); continue; }
       const why = this.gateReason(p);
       if (why) { this.gate(why, p.participants); continue; }
       if (this.fromProposal(p, "engine", now)) started++;
     }
     this.currentRunId = undefined;
-    this.sendAsks(asks ?? [], now);
+    if (!input.standingIntentSearch) this.sendAsks(asks ?? [], now);
+    return started;
   }
 
   /**
@@ -4060,7 +4117,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** The engine's input: the public snapshot plus everything the Network has learned and observed. */
   engineInput(now: number): EngineInput {
-    const snap = this.controlledIntentSnapshot(this.ctx.snapshot());
+    const snap = this.controlledIntentSnapshot(this.ctx.snapshot()) as WorldSnapshot & Pick<EngineInput, "events">;
     const nyc = new Set(snap.members.filter(m => m.homeCity === "nyc" && !this.declinedIds.has(m.id)).map(m => m.id));
     const facets: Facet[] = snap.facets.filter(f => nyc.has(f.memberId));
     const intents: Intent[] = snap.intents.filter(i => nyc.has(i.memberId));
@@ -4087,6 +4144,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       // A member with no valid age on the record who told us they are an adult (6.3) goes in with that age.
       now, members: snap.members.filter(m => nyc.has(m.id)).map(x => { const m = this.members.get(x.id); return !validAge(x.age) && m && !m.minor && validAge(m.statedAge) ? { ...x, age: m.statedAge } : x; }),
       facets, intents, presence: snap.presence.filter(p => nyc.has(p.memberId)),
+      ...(snap.events ? { events: snap.events } : {}),
       edges: [
         ...snap.edges.filter(e => nyc.has(e.from) && nyc.has(e.to)),
         ...[...this.again.entries()].filter(([, s]) => s.size >= 2).map(([k]) => { const [a, b] = k.split("|") as [string, string]; return { from: a, to: b, type: "would_interact_again" as const, strength: 0.8, explicit: false, createdAt: now }; }),
@@ -5054,6 +5112,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       trust: this.trust.exportState(), cases: this.cases, caseSeq: this.caseSeq, reports: this.reports, reportSeq: this.reportSeq,
       counters: this.counters, gateReasons: this.gateReasons,
       lastRunDay: this.lastRunDay, lastTick: this.lastTick, tickGap: this.tickGap, seq: this.seq, oppSeq: this.oppSeq, reqSeq: this.reqSeq,
+      standingIntentSearch: this.standingIntentSearch,
       plans: {
         crews: this.crews, crewOffers: this.crewOffers, carry: this.planCarry, lastPlannedAt: [...this.lastPlannedAt], lastRunDay: this.lastPlanRunDay,
         again: [...this.planAgain], counters: this.plansCounters,
@@ -5106,6 +5165,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const k of Object.keys(this.gateReasons)) delete this.gateReasons[k];
     Object.assign(this.gateReasons, st.gateReasons);
     this.lastRunDay = st.lastRunDay; this.lastTick = st.lastTick; this.tickGap = st.tickGap;
+    this.standingIntentSearch = st.standingIntentSearch;
     this.seq = st.seq; this.oppSeq = st.oppSeq; this.reqSeq = st.reqSeq;
     // Plans and fraud review (added later; a state saved before them has none).
     this.crews.length = 0; this.crews.push(...(st.plans?.crews ?? []));
@@ -5337,6 +5397,8 @@ export interface NetworkState {
   trust: TrustState; cases: SafetyCase[]; caseSeq: number;
   counters: ConsentNetwork["counters"]; gateReasons: Record<string, number>;
   lastRunDay: string; lastTick: number; tickGap: number; seq: number; oppSeq: number; reqSeq: number;
+  /** Last matching evidence searched and total proposals queued in that New York day. */
+  standingIntentSearch?: { day: string; fingerprint: string; queuedToday: number };
   plans?: {
     crews: plans.Crew[]; crewOffers: CrewOffer[]; carry: { memberId: MemberId; activityId: string; until: number }[];
     lastPlannedAt: [MemberId, number][]; lastRunDay: string; again: [string, number][]; counters: ConsentNetwork["plansCounters"];

@@ -52,6 +52,8 @@ export interface ReliabilityEvidence { noShows: number; completedSinceLastNoShow
 /** What the engine reads: the core snapshot plus optional extension fields. */
 export interface EngineInput extends WorldSnapshot {
   events?: NetworkEvent[];
+  /** An evidence-triggered run considers only these live standing intents and their events. */
+  standingIntentSearch?: string[];
   safetyHolds?: SafetyHold[];
   feedback?: FeedbackRecord[];
   interactions?: InteractionRecord[];

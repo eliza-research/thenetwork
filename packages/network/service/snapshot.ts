@@ -4,9 +4,10 @@
 // src/sources/real.ts) use this one builder, so both see the same members. It never reads
 // network.channel_identities (phones and emails).
 import type { SQL } from "../../core/src/runtime/postgres.ts";
-import { DAY, type Edge, type EdgeType, type Facet, type Intent, type Member, type Presence, type Proposal, type ParticipationState, type WorldSnapshot } from "@thenetwork/core";
+import { DAY, temporaryPresenceWindow, type Edge, type EdgeType, type Facet, type Intent, type Member, type Presence, type Proposal, type ParticipationState, type WorldSnapshot } from "@thenetwork/core";
 
 import { participationOverride, validWindow, windowIsActive } from "../../core/src/generated/participationWindow.ts";
+import { presenceWindowCurrentOrFuture } from "../../core/src/generated/travelPresence.ts";
 import type { SetStateRequest } from "../../core/src/svc/contract.ts";
 import { peonSeats } from "@thenetwork/engine";
 
@@ -109,8 +110,13 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
   ]);
   // Runtime conversation ownership takes precedence; it never creates or changes physical presence.
   const joined = new Set((members as any[]).map(r => r.id as string));
+  const matchingPresence = presence.map(presenceOf).filter(p => {
+    if (p.type !== "temporary") return true;
+    const trip = temporaryPresenceWindow(p);
+    return trip !== undefined && presenceWindowCurrentOrFuture(trip, now);
+  });
   const inCity = (scope.homeCities ? new Set((members as any[]).filter(r => scope.homeCities!.includes(r.home_city)).map(r => r.id as string)) : scope.city === undefined ? undefined
-    : new Set([...(members as any[]).filter(r => r.home_city === scope.city).map(r => r.id as string), ...(presence as any[]).filter(r => r.city === scope.city).map(r => r.member_id as string)]));
+    : new Set([...(members as any[]).filter(r => r.home_city === scope.city).map(r => r.id as string), ...matchingPresence.filter(p => p.city === scope.city).map(p => p.memberId)]));
   const keep = (id: string) => joined.has(id) && (!inCity || inCity.has(id));
   const partsBy = new Map<string, any[]>();
   for (const p of parts as any[]) { if (!partsBy.has(p.opportunity_id)) partsBy.set(p.opportunity_id, []); partsBy.get(p.opportunity_id)!.push(p); }
@@ -125,7 +131,7 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
       ...(r.invited_by ? { invitedBy: r.invited_by } : {}), joinedAt: ms(r.joined_at) ?? 0, age: r.matching_age ?? (undefined as unknown as number), unansweredProactive: r.unanswered_proactive,
     })),
     facets: (facets as any[]).filter(r => keep(r.member_id)).map(facetOf), intents: (intents as any[]).filter(r => keep(r.member_id)).map(intentOf),
-    presence: (presence as any[]).filter(r => keep(r.member_id)).map(presenceOf),
+    presence: matchingPresence.filter(p => keep(p.memberId)),
     edges: [
       ...(edges as any[]).filter(e => CORE_EDGES.has(e.type) && keep(e.from_id) && keep(e.to_id)).map((e): Edge => ({ from: e.from_id, to: e.to_id, type: e.type, strength: e.strength, explicit: e.explicit, createdAt: ms(e.created_at) ?? 0 })),
       ...(personBlocks as any[]).filter(e => keep(e.from_id) && keep(e.to_id) && !(edges as any[]).some(x => x.type === "blocked" && x.from_id === e.from_id && x.to_id === e.to_id))

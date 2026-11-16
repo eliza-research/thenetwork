@@ -221,6 +221,57 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     expect(h.lastTick.thisInstance).toEqual({ at: clock.now(), ran: true });
   }, T);
 
+  // spec/standingIntent.md, "Changed matching evidence starts another standing intent search"
+  test("a new eligible member rechecks standing intents on the same day and queues human review", async () => {
+    await reset();
+    await sql`update network.members set account_status = 'invited' where id <> 'a'`;
+    const clock = new SimClock(START);
+    const options: Partial<ServiceOptions> = {
+      network: { seed: 1, maxNewPerDay: 1, plans: false, growth: false, selective: false,
+        engine: { floors: { fit: 0, mutualBenefit: 0, confidence: 0 }, retrieval: { minSim: 0 }, thresholds: { byState: { normal: 0 } } },
+      },
+    };
+    const s = service(clock, "intent-search", options);
+    expect((await staff(s, "adm-tok", "POST", "/matching", { on: true })).status).toBe(200);
+    for (const text of ONBOARD) await say(s, clock, "a", text);
+    const runCount = async () => (await sql<{ n: number }[]>`select count(*)::int as n from network.matching_runs where app_id = 'ntwrk'`)[0]!.n;
+    expect(await s.tick()).toBe(true);
+    expect(await runCount()).toBe(1);
+
+    // A changed matchable facet does not need a new day. A private facet does not trigger a run.
+    await sql`update network.facets set value = 'Indoor climbing' where id = 'a:interest:climbing'`;
+    clock.advance(MINUTE);
+    expect(await s.tick()).toBe(true);
+    expect(await runCount()).toBe(2);
+    await sql`insert into network.facets (id, member_id, kind, value, privacy_scope, provenance, status, valid_from)
+      values ('a:private', 'a', 'fact', 'Private note', 'agent_private', 'said', 'confirmed', ${new Date(clock.now())})`;
+    clock.advance(MINUTE);
+    expect(await s.tick()).toBe(true);
+    expect(await runCount()).toBe(2);
+
+    await s.close();
+    const restarted = service(clock, "intent-search-restarted", options);
+    await restarted.start();
+    clock.advance(MINUTE);
+    expect(await restarted.tick()).toBe(true);
+    expect(await runCount()).toBe(2);
+    await sql`update network.members set account_status = 'active' where id = 'b'`;
+    for (const text of ONBOARD) await say(restarted, clock, "b", text);
+    expect(await restarted.tick()).toBe(true);
+    expect(await runCount()).toBe(3);
+    const queue = await (await staff(restarted, "rev-tok", "GET", "/review")).json();
+    const item = queue.items.find((row: { origin: string }) => row.origin === "engine");
+    expect(item).toBeDefined();
+    expect([...item.proposal.participants].sort()).toEqual(["a", "b"]);
+    expect((await sql`select id from network.messages where opportunity_id = ${item.oppId}`)).toHaveLength(0);
+
+    // The next new member does not give the recheck another daily review slot.
+    await sql`update network.members set account_status = 'active' where id = 'c'`;
+    for (const text of ONBOARD) await say(restarted, clock, "c", text);
+    expect(await restarted.tick()).toBe(true);
+    expect(await runCount()).toBe(3);
+  }, T);
+
   test("an item past its review SLA expires unsent even when the reviewer acts before the next tick", async () => {
     await reset();
     const clock = new SimClock(START);

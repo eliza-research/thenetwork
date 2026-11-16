@@ -40,3 +40,30 @@ pure def standingIntentBlocksLearnedCopy(phase: StandingIntentPhase): bool = pha
 pure def lawBlockingRecordPreventsLearnedProjection(phase: StandingIntentPhase): bool =
   not(learnedIntentMayProject(phase, true))
 ```
+
+### Changed matching evidence starts another standing intent search
+
+After the daily run, recheck live standing intents on the next normal matching tick when usable evidence or supply changes. A new eligible member, a changed usable facet, a fresh intent, or a current event in the matching input can change that evidence. Use the same app and city, and keep the last searched evidence with the matching state so a retry or restart does not repeat a completed search. A private facet cannot start a search. The daily run and any rechecks share the same daily proposal limit.
+
+```quint
+pure def standingIntentFacetEvidence(scope: str, fresh: bool): bool =
+  fresh and (scope == "matchable" or scope == "shareable")
+
+pure def canQueueEngineOpportunity(queuedToday: int, dailyCap: int): bool =
+  queuedToday < dailyCap
+
+pure def standingIntentRecheckDue(previous: str, evidence: str, liveIntents: int, queuedToday: int, dailyCap: int): bool =
+  previous != evidence and liveIntents > 0 and canQueueEngineOpportunity(queuedToday, dailyCap)
+
+pure def lawUnchangedEvidenceDoesNotRecheck(evidence: str, liveIntents: int, queuedToday: int, dailyCap: int): bool =
+  not(standingIntentRecheckDue(evidence, evidence, liveIntents, queuedToday, dailyCap))
+```
+
+### Another search can queue only opportunities that serve a live intent
+
+An extra search considers opportunities anchored to a live standing intent and events in the same category as a participant's live standing intent. It uses the engine's existing eligibility gates and the Network's normal review path. It does not send profiling questions or update the regular run's exposure balance.
+
+```quint
+pure def standingIntentCandidateInScope(scoped: bool, matchesIntent: bool, eventFitsIntent: bool): bool =
+  not(scoped) or matchesIntent or eventFitsIntent
+```

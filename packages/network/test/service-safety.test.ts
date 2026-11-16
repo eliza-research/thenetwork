@@ -9,7 +9,7 @@ import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SQL } from "../../core/src/runtime/postgres.ts";
-import { MINUTE, SimClock } from "@thenetwork/core";
+import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { APPS, type AppId } from "../../platform/src/apps.ts";
@@ -20,6 +20,7 @@ import { ServiceClient } from "../../observatory/src/sources/service.ts";
 import { NetworkService, WEBHOOK_PATH, type ServiceOptions } from "../service/service.ts";
 import { START } from "./mini.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
+import { presentInNyc } from "../src/network.ts";
 import { resolveConfig } from "../../engine/src/config.ts";
 import { localEmbed } from "../../engine/src/embed.ts";
 import { friendsInfo, friendsPack } from "../../engine/src/packs/friends/index.ts";
@@ -422,6 +423,35 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
       expect(await (await staff(s, "saf-tok", "POST", `/apps/friends/members/${id}/verify`, { check, result, note: "staff review" })).json()).toEqual({ ok: true });
     }
     expect(await verified()).toEqual({ [ari]: true, [bo]: false });
+  }, T);
+
+  // spec/travelPresence.md, "Use my travel dates for matching"
+  test("friends matching uses bounded trips and drops them at the end", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const { s, otp } = service(clock);
+    const web = site(s, clock, otp);
+    const phone = newPhone();
+    await web.login("friends", phone);
+    expect((await web.join("friends", 30, "Ari")).status).toBe(200);
+    const id = (await memberOf("friends", phone))!.id;
+    const now = clock.now(), from = now + HOUR, to = now + 2 * HOUR, end = now + 3 * HOUR;
+    await sql`insert into network.presence (app_id, member_id, city, type, from_at, to_at) values
+      ('friends', ${id}, 'sf', 'temporary', ${new Date(from)}, ${new Date(to)}),
+      ('friends', ${id}, 'la', 'temporary', ${new Date(now - HOUR)}, ${new Date(now)}),
+      ('friends', ${id}, 'la', 'temporary', null, null),
+      ('friends', ${id}, 'la', 'temporary', ${new Date(to)}, ${new Date(from)})`;
+
+    const snapshot = await loadSnapshot(sql, now, { app: "friends", city: "sf" });
+    expect(snapshot.members.map(m => m.id)).toEqual([id]);
+    expect(snapshot.presence.filter(p => p.type === "temporary").map(p => [p.city, p.from, p.to])).toEqual([["sf", from, to]]);
+    const world = new World(snapshot, resolveConfig({ seed: 1 }), localEmbed, friendsPack);
+    expect([...world.location(id, now, end)]).toEqual([["nyc", [[now, from], [to, end]]], ["sf", [[from, to]]]]);
+    expect(presentInNyc(snapshot, id, now, from)).toBe(true);
+    expect(presentInNyc(snapshot, id, from, to)).toBe(false);
+    expect(presentInNyc(snapshot, id, to, end)).toBe(true);
+    expect((await loadSnapshot(sql, to, { app: "friends", city: "sf" })).members).toEqual([]);
+    expect((await loadSnapshot(sql, to, { app: "friends", city: "sf", homeCities: ["nyc"] })).members.map(m => m.id)).toEqual([id]);
   }, T);
 
   test("staff with safety on one app hold on that app only and cannot ban; the audit never counts the person's apps", async () => {

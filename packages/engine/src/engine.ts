@@ -13,6 +13,7 @@ import { checkMemberFacing, redactPrivate } from "./judgeCommon.ts";
 import { deepReviewOne, gateMemberFacing, hardGate, type DeepVerdict } from "./judgeDeep.ts";
 import { screenDecision, screenOne, type ScreenVerdict } from "./judgeScreen.ts";
 import { initial as initialJudgmentRun, step as stepJudgmentRun } from "../../core/src/generated/judgmentRun.ts";
+import { standingIntentCandidateInScope } from "../../core/src/generated/standingIntent.ts";
 import { blockingPairs, fairnessMetrics, planAsks, selectProposals, updateExposureDebt } from "./policy.ts";
 import { EngineRng as Rng } from "@thenetwork/core";
 import { sha256, stableStringify } from "./hash.ts";
@@ -112,10 +113,16 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   // The pack's generators, in the pack's order. A generator the config switches off is skipped
   // (networkPack: the GENERATOR_NAMES flags; a name the config does not know runs).
   const gate = cfg.generators as Record<string, boolean | undefined>;
+  const intentScope = input.standingIntentSearch && new Set(input.standingIntentSearch);
   for (const g of pack.generators) {
     if (g.name in gate && !gate[g.name]) continue;
     const ts = performance.now();
-    const got = g.run(ctx);
+    const generated = g.run(ctx);
+    const got = intentScope ? generated.filter(c => standingIntentCandidateInScope(true,
+      c.anchor?.type === "intent" && intentScope.has(c.anchor.id),
+      c.anchor?.type === "event" && c.participants.some(id =>
+        w.get(id)?.intents.some(intent => intentScope.has(intent.id) && intent.category === c.category)),
+    )) : generated;
     f.byGenerator[g.name] = got.length;
     cands.push(...got);
     timings[`gen:${g.name}`] = Math.round((performance.now() - ts) * 100) / 100;

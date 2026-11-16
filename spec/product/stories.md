@@ -260,7 +260,9 @@ Models: [phone identity](../models/phone_identity.md), [identity lifecycle](../m
 
 Store confirmed city and time windows. Use travel tolerance and any visitor opt-in in the relevant app. Expire the travel window automatically. A supported signup or presence region does not enable live matching there. Expose only coarse area or travel bands.
 
-Models: [matching engine](../models/matching_engine.md), [candidate pool](../models/candidate_pool.md).
+Temporary presence needs a start and an end. Matching uses a valid trip only during that window. When the window ends, future matching uses other eligible presence, such as the member's home city.
+
+Models: [live travel windows](../travelPresence.md), [matching engine](../models/matching_engine.md), [candidate pool](../models/candidate_pool.md).
 
 ## Story F27 — Review before contact
 

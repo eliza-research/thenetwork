@@ -18,7 +18,8 @@
 // NO RACE OR ETHNICITY: there is no field for it; tags that look like one are dropped here, so no
 // rule, score or explanation can read them (PRD 40.5; conformance test "no race filters").
 import type { City, Facet, MemberId } from "@thenetwork/core";
-import { canBeMatched, DAY } from "@thenetwork/core";
+import { canBeMatched, DAY, temporaryPresenceWindow } from "@thenetwork/core";
+import { presenceWindowContains } from "../../../../core/src/generated/travelPresence.ts";
 import { standingIntentLive } from "../../../../core/src/standing-intent.ts";
 import type { EngineInput } from "../../types.ts";
 import { cellOfZip, isKnownZip, MARKET_ANCHOR_ZIP, normalizeZip, zipForArea, type Cell } from "./zips.ts";
@@ -170,7 +171,11 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
     for (const f of interestFacets) if (f.scope === "shareable") interestFacet.set(f.tags[0]!, f.id);
     const is = one("romance:is:") as Gender | undefined;
     const seeks = [...new Set(has("romance:seeks:"))].sort() as Gender[];
-    const visiting = [...new Set(input.presence.filter(p => C(p.memberId) === m.id && p.type === "temporary" && (p.from ?? -Infinity) <= now + 2 * DAY && now + 2 * DAY < (p.to ?? Infinity) && p.city !== m.homeCity).map(p => p.city))].sort();
+    const visiting = [...new Set(input.presence.flatMap(p => {
+      if (C(p.memberId) !== m.id || p.city === m.homeCity) return [];
+      const trip = temporaryPresenceWindow(p);
+      return trip && presenceWindowContains(trip, now + 2 * DAY) ? [p.city] : [];
+    }))].sort();
     out.set(m.id, {
       id: m.id, age: m.age, adult: canBeMatched(m.age), optedIn: m.prefs.romanceOptIn && m.prefs.categoriesOptIn.includes("romance"), paused: m.state === "paused",
       zip: zip && isKnownZip(zip) ? normalizeZip(zip) : zip, homeMarket: m.homeCity, cell, zipUnknown: !!zip && !cell,

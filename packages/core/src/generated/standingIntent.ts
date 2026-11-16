@@ -44,3 +44,34 @@ export function lawBlockingRecordPreventsLearnedProjection(phase: StandingIntent
   //@ ensures \result === true
   return !learnedIntentMayProject(phase, true);
 }
+
+/** Story: Match only on a current standing intent / Changed matching evidence starts another standing intent search (spec/standingIntent.md:44) */
+//@ pure
+export function standingIntentFacetEvidence(scope: string, fresh: boolean): boolean {
+  return fresh && (scope === "matchable" || scope === "shareable");
+}
+
+/** Story: Match only on a current standing intent / Changed matching evidence starts another standing intent search (spec/standingIntent.md:44) */
+//@ pure
+export function canQueueEngineOpportunity(queuedToday: number, dailyCap: number): boolean {
+  return queuedToday < dailyCap;
+}
+
+/** Story: Match only on a current standing intent / Changed matching evidence starts another standing intent search (spec/standingIntent.md:44) */
+//@ pure
+export function standingIntentRecheckDue(previous: string, evidence: string, liveIntents: number, queuedToday: number, dailyCap: number): boolean {
+  return previous !== evidence && liveIntents > 0 && canQueueEngineOpportunity(queuedToday, dailyCap);
+}
+
+/** Story: Match only on a current standing intent / Changed matching evidence starts another standing intent search (spec/standingIntent.md:44) */
+//@ pure
+export function lawUnchangedEvidenceDoesNotRecheck(evidence: string, liveIntents: number, queuedToday: number, dailyCap: number): boolean {
+  //@ ensures \result === true
+  return !standingIntentRecheckDue(evidence, evidence, liveIntents, queuedToday, dailyCap);
+}
+
+/** Story: Match only on a current standing intent / Another search can queue only opportunities that serve a live intent (spec/standingIntent.md:62) */
+//@ pure
+export function standingIntentCandidateInScope(scoped: boolean, matchesIntent: boolean, eventFitsIntent: boolean): boolean {
+  return !scoped || matchesIntent || eventFitsIntent;
+}
