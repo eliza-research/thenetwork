@@ -7,6 +7,7 @@
 // for their default `pack` argument (evaluated at call time). Its top level therefore reads only
 // leaf data; function values from non-leaf modules are wrapped in arrows, and `generators` is a
 // getter.
+import { networkPreferenceQuestion } from "../../../../core/src/generated/engineAsks.ts";
 import { DEFAULT_ATTENTION, DEFAULT_CONFIG, DEFAULT_PLANS } from "../../config.ts";
 import { cityBucketGeo } from "../../geo.ts";
 import { mutualBenefit } from "../../scoring.ts";
@@ -68,10 +69,11 @@ export const networkPack: AppPack = {
     extraAsksEnabled: cfg => cfg.romance.requireStatedPrefs,
     // v1.2: a member with a live romance intent but no stated preferences is asked for them (was policy.ts planAsks).
     extraAsks: (w, id, mi, lastAsk, add) => {
-      if (!mi.romance?.seeks.length) {
-        const it = mi.intents.find(i => i.category === "romance");
-        if (it && lastAsk(["romance_prefs"]) === -Infinity && !memberReason(w, id, { category: "romance", role: "peer", format: "one_to_one", timeSensitive: false, ownIntentCreatedAt: it.createdAt })) add("romance_prefs", it.id);
-      }
+      const missingPreferences = !mi.romance?.seeks.length;
+      const it = missingPreferences ? mi.intents.find(i => i.category === "romance") : undefined;
+      const previouslyAsked = !!it && lastAsk(["romance_prefs"]) !== -Infinity;
+      if (networkPreferenceQuestion(missingPreferences, !!it, previouslyAsked) && it
+        && !memberReason(w, id, { category: "romance", role: "peer", format: "one_to_one", timeSensitive: false, ownIntentCreatedAt: it.createdAt })) add("romance_prefs", it.id);
     },
   },
   consent: {

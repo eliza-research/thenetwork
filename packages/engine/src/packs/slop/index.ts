@@ -13,7 +13,9 @@
 //   asks       unknown age range, distance or orientation -> ask instead of proposing
 // Core invariants (minors never matched, blocks win, hard filters before scoring, LeakGuard,
 // determinism, consent before reveal) are the engine's and cannot be loosened here.
-import { DAY } from "@thenetwork/core";
+import {
+  compatibilityQuestionDue, requiredQuestionDue, slopQuestionSubject, slopQuestionTrack, widerRadiusQuestion, wideningPoolEligible,
+} from "../../../../core/src/generated/engineAsks.ts";
 import { DEFAULT_ATTENTION, DEFAULT_PLANS, GENERATOR_NAMES, resolveConfig, type AttentionConfig, type EngineConfig, type EngineConfigInput } from "../../config.ts";
 import type { AppPack, EligibilityPolicy } from "../../pack.ts";
 import type { World } from "../../world.ts";
@@ -120,22 +122,22 @@ export function makeSlopPack(over: DeepPartial<SlopPackOptions> = {}): AppPack &
       // until answered, via the needs_answer rule); goal / dealbreakers / basics (does not hold back).
       extraAsks: (w, id, _mi, lastAsk, add) => {
         const p = slopProfiles(w.input, w.canonical).get(id);
-        if (!p || !p.adult || !p.optedIn || p.paused || w.holds.has(id) || reviewReason(p, o)) return;
+        if (!p || !slopQuestionSubject(p.adult, p.optedIn, p.paused, w.holds.has(id)) || reviewReason(p, o)) return;
         const intent = w.get(id)!.intents.find(i => i.category === SLOP_LANE);
         const fs = missingFields(p, o);
-        // Iteration 2: each question at most `maxAsksPerField` times (0 = no cap), then wait for the member.
-        const capped = (reason: string) => o.maxAsksPerField > 0 && (p.askCounts[reason] ?? 0) >= o.maxAsksPerField;
-        if (fs.length) {
-          // One message asks every missing hard-filter field; re-asked at most weekly until answered.
-          for (const f of fs) if (w.now - lastAsk([`slop_${f}`]) >= 7 * DAY && !capped(`slop_${f}`)) add(`slop_${f}`, intent?.id);
+        if (slopQuestionTrack(fs.length > 0) === "RequiredQuestions") {
+          for (const f of fs) {
+            const reason = `slop_${f}`;
+            if (requiredQuestionDue(w.now - lastAsk([reason]), p.askCounts[reason] ?? 0, o.maxAsksPerField)) add(reason, intent?.id);
+          }
           return;
         }
-        // Iteration 2: a small pool -> ask once whether they would consider a wider radius.
-        if (o.widen.enabled && (runDegree.get(w)?.get(id) ?? Infinity) <= o.widen.maxDegree && (limitMiles(p, o) ?? Infinity) < o.widen.miles && !(p.askCounts.slop_widen ?? 0)) add("slop_widen", intent?.id);
+        if (wideningPoolEligible(o.widen.enabled, runDegree.get(w)?.get(id) ?? Infinity, o.widen.maxDegree)
+          && widerRadiusQuestion(limitMiles(p, o) ?? Infinity, o.widen.miles, !!p.askCounts.slop_widen)) add("slop_widen", intent?.id);
         // Compatibility questions (one message; never re-asked within 3 weeks): basics, then type.
         if (!o.compatAsks) return;
-        if (needsBasics(p) && w.now - lastAsk(["slop_basics"]) >= 21 * DAY) add("slop_basics", intent?.id);
-        if (o.typeAsk && (!p.wants || !p.self) && w.now - lastAsk(["slop_type"]) >= 21 * DAY) add("slop_type", intent?.id);
+        if (needsBasics(p) && compatibilityQuestionDue(w.now - lastAsk(["slop_basics"]))) add("slop_basics", intent?.id);
+        if (o.typeAsk && (!p.wants || !p.self) && compatibilityQuestionDue(w.now - lastAsk(["slop_type"]))) add("slop_type", intent?.id);
       },
     },
     consent: {
