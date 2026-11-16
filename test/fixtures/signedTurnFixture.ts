@@ -19,7 +19,8 @@ export type SignedTurnFixture = {
   clock: SimClock;
   service: NetworkService;
   createMember(about?: Partial<Record<FixtureApp, string>>, signup?: FixtureSignup): Promise<FixtureMember>;
-  sendTurn(phone: string, text: string, options?: Partial<FixtureTurn>): Promise<{ response: TurnResponse; receivedAt: number; messageId: string }>;
+  sendTurn(phone: string, text: string, options?: Partial<FixtureTurn>): Promise<{ response: TurnResponse; receivedAt: number; messageId: string; request: TurnRequest }>;
+  replayTurn(request: TurnRequest): Promise<Response>;
   sendReceipt(input: TurnReceiptRequest): Promise<Response>;
   reviewQueue(): Promise<Response>;
   decideReview(oppId: string, decision: "approve" | "reject", reason?: string): Promise<Response>;
@@ -108,7 +109,7 @@ export async function withSignedTurnFixture(run: (fixture: SignedTurnFixture) =>
       };
       const response = await postSigned(TURN_PATH, input.messageId, input, options.observeDryRunSideEffects);
       if (!response.ok) throw new Error(`Signed turn returned ${response.status}: ${await response.text()}`);
-      return { response: await response.json() as TurnResponse, receivedAt: input.receivedAt, messageId: input.messageId };
+      return { response: await response.json() as TurnResponse, receivedAt: input.receivedAt, messageId: input.messageId, request: input };
     }
 
     async function postSigned(path: string, id: string, input: TurnRequest | TurnReceiptRequest, observeDryRunSideEffects = false) {
@@ -136,7 +137,9 @@ export async function withSignedTurnFixture(run: (fixture: SignedTurnFixture) =>
     }
 
     await run({
-      clock, service: app, createMember, sendTurn, sendReceipt: input => postSigned(TURN_RECEIPT_PATH, `${input.messageId}:receipt`, input),
+      clock, service: app, createMember, sendTurn,
+      replayTurn: input => postSigned(TURN_PATH, input.messageId, input),
+      sendReceipt: input => postSigned(TURN_RECEIPT_PATH, `${input.messageId}:receipt`, input),
       reviewQueue: () => review(""), decideReview: (oppId, decision, reason) => review(`/${encodeURIComponent(oppId)}`, { decision, reason }),
     });
   } finally {
