@@ -7,7 +7,9 @@ import {
 } from "../../../core/src/generated/matchLane.ts";
 import { tokenize } from "../embed.ts";
 import { sendTimeReason } from "../filters.ts";
+import type { MemberStandingRow } from "../types.ts";
 import { intentText, type MemberIndex, type World } from "../world.ts";
+import { standingObservations } from "./standing.ts";
 
 export type EntityId = string & { readonly __brand: "EntityId" };
 export const isEntityId = (value: string): value is EntityId => value.length > 0;
@@ -31,7 +33,12 @@ export interface EntityTags {
   readonly interests: readonly string[];
 }
 /** Whole numbers from the generated memberStanding helpers; the engine clamps them to their ranges. */
-export interface EntityStanding { readonly standing: number; readonly uncertainty: number }
+export interface EntityStanding {
+  readonly standing: number;
+  readonly uncertainty: number;
+  /** Exact source identities used for the estimate. Kept out of public match profiles and logs. */
+  readonly evidenceIds?: readonly string[];
+}
 /** Scalar attributes compared by closeness: `of` returns one whole number per entry of `costs`. */
 export interface PackTraits {
   readonly costs: readonly number[];
@@ -129,7 +136,7 @@ interface Draft {
  * unknown age, under the pack or config age floor, safety hold, paused, not opted in to the lane's
  * category) gets none, and the pack is not asked about a member who fails the core checks.
  */
-export function buildProfiles(w: World): readonly MatchProfile[] {
+export function buildProfiles(w: World, standingUpdates?: MemberStandingRow[]): readonly MatchProfile[] {
   const vectors = w.pack.vectors;
   if (!vectors) return [];
   const traitCount = vectors.traits?.costs.length ?? 0;
@@ -157,19 +164,21 @@ export function buildProfiles(w: World): readonly MatchProfile[] {
         standing: {
           standing: clamp(wholeNumber(rated.standing, "standing"), standingCeiling),
           uncertainty: clamp(wholeNumber(rated.uncertainty, "uncertainty"), standingUncertaintyCeiling),
+          evidenceIds: rated.evidenceIds,
         },
       });
     }
   }
   const interner = internTags(drafts.flatMap(d => [...d.tags.offers, ...d.tags.seeks, ...d.tags.interests]));
   drafts.sort((x, y) => compareText(x.key, y.key) || compareText(x.id, y.id));
+  const observe = standingObservations(w, standingUpdates);
   let ordinal = 0;
   return drafts.map((d, i) => {
     ordinal = i > 0 && drafts[i - 1].key === d.key ? ordinal + 1 : 0;
     return {
       id: d.id, memberId: d.entity.memberId, ordinal,
       lane: d.entity.lane, side: d.entity.side, market: d.entity.market,
-      standing: d.standing.standing, uncertainty: d.standing.uncertainty, capacity: d.capacity,
+      standing: observe(d.entity, d.standing.standing, d.standing.evidenceIds), uncertainty: d.standing.uncertainty, capacity: d.capacity,
       offers: interner.tagSet(d.tags.offers), seeks: interner.tagSet(d.tags.seeks), interests: interner.tagSet(d.tags.interests),
       traits: d.traits,
     };

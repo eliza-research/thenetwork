@@ -4,7 +4,7 @@ import type {
   Category, City, MemberId, OpenOpportunity, OpportunityKind, Proposal, ScoreComponents, WorldSnapshot,
 } from "@thenetwork/core";
 
-import type { MatchLane } from "../../core/src/generated/matchLane.ts";
+import type { LaneSide, MatchLane } from "../../core/src/generated/matchLane.ts";
 import type { EntityId } from "./match/profile.ts";
 
 export type { NetworkEvent } from "@thenetwork/core";
@@ -53,9 +53,21 @@ export interface ReliabilityEvidence { noShows: number; completedSinceLastNoShow
 /** A core Proposal, with the roles an engine proposal carries (EngineProposal.roles) when it has them. */
 export type RecentProposal = Proposal & { roles?: Record<MemberId, Role> };
 
+/** Private app-scoped state for one lane membership. Each evidence id is an opaque source digest. */
+export interface MemberStandingRow {
+  readonly memberId: MemberId;
+  readonly lane: MatchLane;
+  readonly side: LaneSide;
+  readonly value: number;
+  readonly observedAt: number;
+  readonly evidenceIds: readonly string[];
+}
+
 /** What the engine reads: the core snapshot plus optional extension fields. */
 export interface EngineInput extends WorldSnapshot {
   recentProposals: RecentProposal[];
+  /** Private prior observations. Pass an empty array to initialize standing for the first time. */
+  memberStanding?: readonly MemberStandingRow[];
   /** An evidence-triggered run considers only these live standing intents and their events. */
   standingIntentSearch?: string[];
   safetyHolds?: SafetyHold[];

@@ -82,6 +82,8 @@ export interface SlopProfile {
   ageVerified?: boolean;
   /** Appearance rating, read only for adults whose age is not known to be unverified. Internal only. */
   appearance?: { face: number; body: number; overall: number; confidence: number; bodyType?: string; bodyTypeConfidence?: number; photos?: number };
+  /** The private source facets that supply the current appearance rating. */
+  appearanceEvidenceIds?: readonly string[];
   /**
    * Hard-filter questions asked at least `silentAfterDays` ago and never answered (age_range,
    * distance, orientation): the pack proposes on a narrow fallback instead of locking them out.
@@ -144,7 +146,16 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
   const out = new Map<MemberId, SlopProfile>();
   for (const m of [...input.members].sort((a, b) => (a.id < b.id ? -1 : 1))) {
     const fs = (facetsBy.get(m.id) ?? []).slice().sort((a, b) => (a.id < b.id ? -1 : 1));
+    const appearanceFacets = fs.filter(f => f.tags.some(t => t.startsWith(APPEARANCE_PREFIX)));
     const tags = fs.flatMap(f => f.tags.filter(t => !NEVER_USED.test(t)).map(t => ({ t, f })));
+    const ageVerified = tags.some(x => x.t === "verify:age:pass") ? true : tags.some(x => x.t === "verify:age:fail") ? false : undefined;
+    const appearance = canRatePhotos({ age: m.age, ageVerified: tags.some(x => x.t === "verify:age:fail") ? false : undefined })
+      ? parseAppearance(appearanceFacets.flatMap(f => f.tags)) : undefined;
+    const appearanceSources = new Map<string, string>();
+    if (appearance) for (const facet of appearanceFacets) for (const tag of facet.tags) {
+      const key = /^appearance:(face|body|overall|conf|photos)=/.exec(tag)?.[1];
+      if (key && (key !== "photos" || appearance.photos !== undefined)) appearanceSources.set(key, facet.id);
+    }
     const has = (prefix: string) => tags.filter(x => x.t.startsWith(prefix)).map(x => x.t.slice(prefix.length));
     const one = (prefix: string) => has(prefix)[0];
     // The first zip we know (a member may have corrected an unknown one), else the first given.
@@ -194,10 +205,9 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
       identity: one("slop:identity:"), orientation: one("slop:orientation:"),
       safety: [...new Set(tags.filter(x => x.t.startsWith("safety:")).map(x => x.t))].sort(),
       verification: [...new Set(tags.filter(x => x.t.startsWith("verify:")).map(x => x.t))].sort(),
-      ageVerified: tags.some(x => x.t === "verify:age:pass") ? true : tags.some(x => x.t === "verify:age:fail") ? false : undefined,
+      ageVerified,
       // Adults only: a rating on anyone else is ignored, whatever the snapshot says.
-      appearance: canRatePhotos({ age: m.age, ageVerified: tags.some(x => x.t === "verify:age:fail") ? false : undefined })
-        ? parseAppearance(fs.filter(f => f.tags.some(t => t.startsWith(APPEARANCE_PREFIX))).flatMap(f => f.tags)) : undefined,
+      appearance, appearanceEvidenceIds: [...new Set(appearanceSources.values())],
       visiting, interestFacet, silentAsks: silent.get(m.id) ?? [], openAsks: open.get(m.id) ?? [], askCounts: counts.get(m.id) ?? {},
       review: tags.some(x => x.t === "review:confirmed") ? "confirmed" : tags.some(x => x.t === "review:cleared") ? "cleared" : undefined,
       history: hist.get(m.id) ?? emptyHistory(),

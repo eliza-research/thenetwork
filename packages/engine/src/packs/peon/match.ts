@@ -111,11 +111,12 @@ function standing(w: World, e: MatchEntity): EntityStanding {
   // reviewed fact. A candidate's reviewed facts are the level itself when a trusted source gave it,
   // and each demonstrated or interview-verified skill at or above it. One fact per facet, as in the
   // network pack: a trusted facet that carries the level and a skill is one reviewed fact.
-  const reviewed = p.kind === "job" ? 1 : new Set([
+  const reviewed = p.kind === "job" ? new Set([p.seniorityFacetId]) : new Set([
     p.seniorityReviewedIn,
     ...[...p.skills.values()].filter(s => s.level >= p.seniority!).map(s => s.reviewedIn),
-  ].filter(id => id !== undefined)).size;
-  return { standing: standingFromEvidence(level), uncertainty: standingUncertainty(reviewed) };
+  ].filter(id => id !== undefined));
+  const evidenceIds = [...new Set([p.seniorityFacetId, ...reviewed])].filter(id => id !== undefined);
+  return { standing: standingFromEvidence(level), uncertainty: standingUncertainty(reviewed.size), evidenceIds };
 }
 
 const clampValue = (v: number) => Math.max(0, Math.min(pairValueScale, v));

@@ -81,6 +81,11 @@ import {
   retireIntentOpportunity, retireIntentSearch, step as stepIntentManagement, writesStandingIntentRow, type IntentControl,
 } from "../../core/src/generated/standingIntentManagement.ts";
 import { standingIntentDeadline, standingIntentLive, standingIntentPhaseAt } from "../../core/src/standing-intent.ts";
+import { laneOffered } from "../../core/src/generated/matchLane.ts";
+import { standingMayRetain } from "../../core/src/generated/memberStanding.ts";
+import { laneCategory } from "@thenetwork/engine/src/match/profile.ts";
+import { standingKey } from "@thenetwork/engine/src/match/standing.ts";
+import type { MemberStandingRow } from "@thenetwork/engine/src/types.ts";
 import { presenceWindowCovers, presenceWindowsOverlap, presenceWindowValid } from "../../core/src/generated/travelPresence.ts";
 import { temporaryPresenceWindow } from "../../core/src/travel-presence.ts";
 import {
@@ -3101,6 +3106,11 @@ export class ConsentNetwork implements NetworkUnderTest {
   private dropMember(id: MemberId, reason: string) {
     const member = this.members.get(id);
     if (member) member.pendingInviteDraft = undefined;
+    this.memberStanding = this.memberStanding.filter(row => {
+      if (row.memberId === id) return false;
+      const seat = isSeatId(row.memberId) && this.record(row.memberId);
+      return !seat || seatOwnerOf(seat) !== id;
+    });
     const minor = reason === "minors policy";
     for (const o of this.opps.values()) {
       if (!OPEN_STAGES.has(o.stage)) continue;
@@ -3492,7 +3502,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     const day = nyParts(now).day;
     if (!fresh && this.planWorldCache?.day === day) return this.planWorldCache.w;
     const pack = this.appPack();
-    const w = new EngineWorld(pack ? this.packInput(now) : this.engineInput(now), resolveConfig({ ...this.opts.engine }), localEmbed, pack ?? networkPack);
+    const input = pack ? this.packInput(now) : this.engineInput(now);
+    const w = new EngineWorld({ ...input, memberStanding: this.memberStanding }, resolveConfig({ ...this.opts.engine }), localEmbed, pack ?? networkPack);
     this.planWorldCache = { day, w };
     return w;
   }
@@ -3997,6 +4008,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (m.pendingInviteDraft && !memberInviteDraftCurrent(now - m.pendingInviteDraft.at)) m.pendingInviteDraft = undefined;
       if (m.pendingInviteJoins?.length) m.pendingInviteJoins = m.pendingInviteJoins.filter(notice => now - notice.at < inviteJoinNoticeLifetimeMs);
     }
+    this.retainMemberStanding(now);
     for (const o of this.openOpps()) {
       if (o.stage === "scheduled") continue;
       if (this.holdHelpOpportunity(o)) {
@@ -4241,7 +4253,13 @@ export class ConsentNetwork implements NetworkUnderTest {
   private async runMatching(input: EngineInput, now: number, allowance: number) {
     const deps = { ...(this.opts.engineLLM ? { llm: this.opts.engineLLM } : {}), ...(this.opts.pack ? { pack: this.opts.pack } : {}) };
     const config = this.effectiveEngineConfig();
-    const { proposals, asks, runLog } = await runEngine(input, config, deps);
+    const { proposals, asks, runLog, memberStanding } = await runEngine({ ...input, memberStanding: this.memberStanding }, config, deps);
+    if (memberStanding?.length) {
+      const rows = new Map(this.memberStanding.map(row => [standingKey(row), row]));
+      for (const row of memberStanding) rows.set(standingKey(row), row);
+      this.memberStanding = [...rows.values()];
+      this.retainMemberStanding(now);
+    }
     // Exposure debt tracks regular runs over the whole market (matching-e2e-6).
     if (!input.standingIntentSearch) this.exposureDebt = { ...(runLog.exposureDebt ?? {}) };
     this.counters.engineRuns++; this.counters.engineProposals += proposals.length;
@@ -4284,6 +4302,32 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
   /** Exposure debt from the last engine run, passed back on the next one (engineInput). */
   private exposureDebt: Record<MemberId, number> = {};
+  /** Private engine state written atomically with the tick. It never enters a proposal or a run log. */
+  private memberStanding: readonly MemberStandingRow[] = [];
+
+  private retainMemberStanding(now: number) {
+    if (!this.memberStanding.length) return;
+    const app = this.app.id;
+    const cofounders = new Set(this.snapshotCached().intents.filter(intent => intent.objective === cofounderIntentObjective
+      && cofounderIntentEligible(intent.app ?? "", app, intent.category, intent.details ?? "", standingIntentLive(intent, now)))
+      .map(intent => intent.memberId));
+    this.memberStanding = this.memberStanding.filter(row => {
+      const record = this.record(row.memberId);
+      if (!record || this.declinedIds.has(row.memberId)) return false;
+      const subject = isSeatId(row.memberId) ? seatOwnerOf(record) : row.memberId;
+      const owner = subject ? this.record(subject) : undefined;
+      const member = subject ? this.members.get(subject) : undefined;
+      const adult = !!owner && canBeMatched(validAge(owner.age) ? owner.age : member ? member.statedAge : undefined)
+        && (!member || !(member.minor || member.minorSignal || member.minorReported || member.ageUnknown || member.ageConflict));
+      const active = !!owner && (owner.accountStatus === undefined || owner.accountStatus === "active") && owner.state !== "paused"
+        && (!member || !(member.optedOut || member.account)) && !!subject && this.trust.ok(subject) && !this.reportHeld(subject);
+      const category = laneCategory(row.lane);
+      const consent = !!category && laneOffered(app, row.lane) && !!owner?.prefs.categoriesOptIn.includes(category)
+        && (row.lane !== "Date" || owner?.prefs.romanceOptIn === true)
+        && (row.lane !== "Cofounder" || cofounders.has(row.memberId));
+      return standingMayRetain(adult, active, consent);
+    });
+  }
 
   /**
    * Engine questions for members it cannot match well yet (EngineResult.asks). At most one per
@@ -5726,6 +5770,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         again: [...this.planAgain], counters: this.plansCounters,
       },
       fraud: this.fraud, fraudSeq: this.fraudSeq, exposureDebt: this.exposureDebt,
+      ...(this.memberStanding.length ? { memberStanding: this.memberStanding } : {}),
       relay: this.relayDesk.exportState(),
     };
     // A deep copy that is exactly what a JSON store keeps.
@@ -5782,6 +5827,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const k of Object.keys(this.plansCounters) as (keyof typeof this.plansCounters)[]) this.plansCounters[k] = st.plans?.counters?.[k] ?? 0;
     this.fraud = st.fraud ?? []; this.fraudSeq = st.fraudSeq ?? 0;
     this.exposureDebt = { ...(st.exposureDebt ?? {}) };
+    this.memberStanding = Array.isArray(st.memberStanding) ? st.memberStanding : [];
     this.relayDesk.importState(st.relay);
     this.planWorldCache = undefined;
     this.replyTo = undefined; this.memberReply = false; this.currentRunId = undefined;
@@ -6045,6 +6091,8 @@ export interface NetworkState {
   reports?: (SafetyReport & { met: boolean })[]; reportSeq?: number;
   /** Engine exposure debt carried between runs (added later; older states have none). */
   exposureDebt?: Record<MemberId, number>;
+  /** Private estimates and their authorized basis, kept inside the state store. */
+  memberStanding?: readonly MemberStandingRow[];
   /** Relay threads, the relay log, held items and pending number swaps (relay.ts; added later). */
   relay?: RelayState;
 }

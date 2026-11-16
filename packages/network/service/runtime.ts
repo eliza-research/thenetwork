@@ -28,6 +28,7 @@ import { legacyIntentReconciliationDue } from "../../core/src/generated/standing
 import { cofounderDeliveryAllowed, cofounderDeliveryIdPrefix, cofounderIntentEligible, cofounderPairCurrent } from "../../core/src/generated/cofounderDispatch.ts";
 import { cofounderIntentObjective } from "../../core/src/generated/cofounderIntent.ts";
 import { standingIntentLive } from "../../core/src/standing-intent.ts";
+import { standingEvidenceKey } from "@thenetwork/engine/src/match/standing.ts";
 import { inviteJoinNoticeLifetimeMs } from "../../core/src/generated/outreachPolicy.ts";
 import {
   contextFacetEligible, contextFacetLimit, contextFacetSizeLimit, contextMode, contextSinglePlayer,
@@ -674,17 +675,33 @@ export class NetworkRuntime {
           where app_id=${app} and member_id=${memberId}`;
       }
     }
-    if (previousTags.length === 0 || (fact.kind !== "interest" && fact.kind !== "skill")) return;
+    const clearsLearned = previousTags.length > 0 && (fact.kind === "interest" || fact.kind === "skill");
+    const clearsStanding = change.kind !== "scope" || change.scope === "agent_private";
+    if (!clearsLearned && !clearsStanding) return;
     // PgStore has serialized this unit's state. The city lock stays held through the update.
     const [row] = await tx<{ state: NetworkState }[]>`select state from network.network_state where id=${this.id} for update`;
-    const member = row?.state.members.find(candidate => candidate.id === memberId);
-    if (!member) return;
-    const field = fact.kind === "interest" ? "interests" : "skills";
-    const remaining = member.learned[field].filter(tag => !previousTags.includes(tag));
-    if (remaining.length !== member.learned[field].length) {
-      member.learned[field] = remaining;
-      await tx`update network.network_state set state=${row!.state}::jsonb where id=${this.id}`;
+    if (!row) return;
+    const state = row.state;
+    let changed = false;
+    if (clearsLearned) {
+      const member = state.members.find(candidate => candidate.id === memberId);
+      const field = fact.kind === "interest" ? "interests" : "skills";
+      if (member) {
+        const remaining = member.learned[field].filter(tag => !previousTags.includes(tag));
+        changed = remaining.length !== member.learned[field].length;
+        member.learned[field] = remaining;
+      }
     }
+    if (clearsStanding && state.memberStanding?.length) {
+      const remaining = state.memberStanding.filter(entry => entry.memberId !== memberId
+        || !entry.evidenceIds.includes(standingEvidenceKey(app, memberId, entry.lane, entry.side, fact.id)));
+      if (remaining.length !== state.memberStanding.length) {
+        if (remaining.length) state.memberStanding = remaining;
+        else delete state.memberStanding;
+        changed = true;
+      }
+    }
+    if (changed) await tx`update network.network_state set state=${state}::jsonb where id=${this.id}`;
   }
 
   /** Everything the unit produced, inside the save transaction (app.app_id is set). Rows that name a member not in this app's network.members are skipped. */

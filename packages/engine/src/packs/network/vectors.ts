@@ -5,7 +5,7 @@ import type { Category, Facet, FacetKind, Intent, MemberId } from "@thenetwork/c
 import { cofounderIntentEligible } from "../../../../core/src/generated/cofounderDispatch.ts";
 import { cofounderIntentObjective } from "../../../../core/src/generated/cofounderIntent.ts";
 import { laneLimits, type LaneSide, type MatchLane } from "../../../../core/src/generated/matchLane.ts";
-import { standingFacetReadable, standingFromEvidence, standingUncertainty, type StandingEvidence } from "../../../../core/src/generated/memberStanding.ts";
+import { standingEvidencePoints, standingFacetReadable, standingFromEvidence, standingUncertainty, type StandingEvidence } from "../../../../core/src/generated/memberStanding.ts";
 import { networkIntentRoute, type NetworkIntentRoute } from "../../../../core/src/generated/networkIntentLane.ts";
 import { standingIntentLive } from "../../../../core/src/standing-intent.ts";
 import type { EntityStanding, EntityTags, MatchEntity, Membership, PackVectors } from "../../match/profile.ts";
@@ -241,6 +241,7 @@ const isReviewed = (f: Facet): boolean => f.provenance === "vouched" || f.proven
 
 function standing(w: World, entity: MatchEntity): EntityStanding {
   const evidence: StandingEvidence[] = [];
+  const evidenceIds = new Set<string>();
   const reviewedFacts = new Set<string>();
   for (const f of w.get(entity.memberId)?.match ?? []) {
     if (!STANDING_KINDS.has(f.kind) || (f.app ?? "ntwrk") !== w.pack.id || taggedRole(f.tags)?.lane !== entity.lane) continue;
@@ -253,11 +254,12 @@ function standing(w: World, entity: MatchEntity): EntityStanding {
       const points = STANDING_POINTS.get(key)?.(at < 0 ? "" : tag.slice(at + 1)) ?? 0;
       if (points <= 0) continue;
       evidence.push({ points, reviewed });
+      if (standingEvidencePoints({ points, reviewed }) > 0) evidenceIds.add(f.id);
       if (reviewed) reviewedFacts.add(f.id);
     }
   }
   // spec/memberStanding.md, "A member with no reviewed facts gets the widest uncertainty": one fact per facet.
-  return { standing: standingFromEvidence(evidence), uncertainty: standingUncertainty(reviewedFacts.size) };
+  return { standing: standingFromEvidence(evidence), uncertainty: standingUncertainty(reviewedFacts.size), evidenceIds: [...evidenceIds] };
 }
 
 export const networkVectors: PackVectors = { memberships, tags, standing };

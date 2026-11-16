@@ -18,7 +18,7 @@ import { blockingPairs, fairnessMetrics, planAsks, selectProposals, updateExposu
 import { EngineRng as Rng } from "@thenetwork/core";
 import { sha256, stableStringify } from "./hash.ts";
 import { scoreCandidate, type Scored } from "./scoring.ts";
-import type { Candidate, EngineAsk, EngineInput, EngineProposal, JudgeVerdict, MatchingRunLog } from "./types.ts";
+import type { Candidate, EngineAsk, EngineInput, EngineProposal, JudgeVerdict, MatchingRunLog, MemberStandingRow } from "./types.ts";
 import type { AppPack } from "./pack.ts";
 import { networkPack } from "./packs/network/index.ts";
 import { World } from "./world.ts";
@@ -45,9 +45,15 @@ export interface EngineDeps {
  * `asks` (v1.2, config.ask / config.romance.requireStatedPrefs): questions to send instead of, or
  * before, proposals. Empty when both flags are off.
  */
-export interface EngineResult { proposals: EngineProposal[]; asks: EngineAsk[]; runLog: MatchingRunLog }
+export interface EngineResult {
+  proposals: EngineProposal[];
+  asks: EngineAsk[];
+  runLog: MatchingRunLog;
+  /** Private standing inserts and updates. The caller persists them separately from matching logs. */
+  memberStanding?: readonly MemberStandingRow[];
+}
 
-function hashInput(input: EngineInput): string {
+function hashInput({ memberStanding: _privateStanding, ...input }: EngineInput): string {
   const strip = (x: unknown) => JSON.parse(JSON.stringify(x, (k, v) => (k === "embedding" ? undefined : v)));
   return sha256(stableStringify(strip(input))).slice(0, 16);
 }
@@ -331,7 +337,8 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   }
   lap("finalize", t);
   timings.total = Math.round((performance.now() - t0) * 100) / 100;
-  return { proposals, asks: askPlan.asks, runLog };
+  const memberStanding = input.memberStanding === undefined ? undefined : w.match.memberStanding;
+  return { proposals, asks: askPlan.asks, runLog, ...(memberStanding === undefined ? {} : { memberStanding }) };
 }
 
 const round = (x: number) => Math.round(x * 1e6) / 1e6;

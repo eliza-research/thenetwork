@@ -12,3 +12,4 @@ export {
 } from "./search.ts";
 export { buildCircles, type Circle } from "./circles.ts";
 export { MatchRun } from "./run.ts";
+export { standingEvidenceKey, standingKey } from "./standing.ts";

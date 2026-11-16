@@ -2,17 +2,19 @@
 // Every candidate path reads pairs from here, so one pair gate and one search decide them all.
 import type { MemberId } from "@thenetwork/core";
 import { laneLimits, type MatchLane } from "../../../core/src/generated/matchLane.ts";
-import type { SearchTally } from "../types.ts";
+import type { MemberStandingRow, SearchTally } from "../types.ts";
 import type { World } from "../world.ts";
 import { buildCircles, type Circle } from "./circles.ts";
 import { buildCandidateIndex, type CandidateIndex } from "./index.ts";
 import { pairValueOf } from "./pair.ts";
-import { buildProfiles, type EntityId, type MatchProfile } from "./profile.ts";
+import { buildProfiles, compareText, type EntityId, type MatchProfile } from "./profile.ts";
 import { emptySearchTally, mutualEdges, searchCandidates, tallySearch, type MatchEdge, type SearchResult } from "./search.ts";
+import { standingKey } from "./standing.ts";
 
 export class MatchRun {
   readonly profiles: readonly MatchProfile[];
   readonly index: CandidateIndex;
+  readonly memberStanding?: readonly MemberStandingRow[];
   private readonly byId = new Map<EntityId, MatchProfile>();
   private readonly byMember = new Map<MemberId, MatchProfile[]>();
   private readonly searches = new Map<EntityId, SearchResult>();
@@ -20,7 +22,9 @@ export class MatchRun {
   private readonly laneCircles = new Map<MatchLane, readonly Circle[]>();
 
   constructor(private readonly w: World) {
-    this.profiles = buildProfiles(w);
+    const updates: MemberStandingRow[] | undefined = w.input.memberStanding === undefined ? undefined : [];
+    this.profiles = buildProfiles(w, updates);
+    this.memberStanding = updates?.sort((a, b) => compareText(standingKey(a), standingKey(b)));
     this.index = buildCandidateIndex(this.profiles);
     for (const profile of this.profiles) {
       this.byId.set(profile.id, profile);
