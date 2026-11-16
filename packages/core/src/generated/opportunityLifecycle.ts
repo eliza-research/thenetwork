@@ -69,6 +69,19 @@ export function lawAGroupNeedsAtLeastThree(remaining: number): boolean {
   return !groupCanContinue(remaining) || remaining >= 3;
 }
 
+/** Story: Book and conclude a proposal that comes together / A closed booking releases its pending replies (spec/opportunityLifecycle.md) */
+//@ pure
+export function bookedReplyCurrent(proposal: OpportunityLifecycle, accepted: boolean): boolean {
+  return proposal.phase === "Scheduled" && proposal.approved && accepted;
+}
+
+/** Story: Book and conclude a proposal that comes together / A closed booking releases its pending replies (spec/opportunityLifecycle.md) */
+//@ pure
+export function lawBookedReplyRequiresCurrentConsent(proposal: OpportunityLifecycle, accepted: boolean): boolean {
+  //@ ensures \result === true
+  return !bookedReplyCurrent(proposal, accepted) || (proposal.phase === "Scheduled" && accepted);
+}
+
 /** Story: Book and conclude a proposal that comes together / A new minor signal closes an unbooked opportunity involving that person (spec/opportunityLifecycle.md) */
 //@ pure
 export function closesForMinor(proposal: OpportunityLifecycle, minorSignal: boolean, participant: boolean, alternate: boolean, contacted: boolean): boolean {

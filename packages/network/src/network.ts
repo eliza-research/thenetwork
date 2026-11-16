@@ -52,7 +52,7 @@ import {
   restoreAttendance, settlementDelayDays, silentConfirmationDue, step as stepMeetingSettlement,
 } from "../../core/src/generated/meetingSettlement.ts";
 import {
-  closesForMinor, groupCanContinue, initial as initialOpportunity, releasesPartialAcceptance, step as stepOpportunity,
+  bookedReplyCurrent, closesForMinor, groupCanContinue, initial as initialOpportunity, releasesPartialAcceptance, step as stepOpportunity,
   type OpportunityLifecycle, type OpportunityPhase,
 } from "../../core/src/generated/opportunityLifecycle.ts";
 import { queueRepeat, recentRepeatSource, recordsRepeatConsent } from "../../core/src/generated/repeatEncounter.ts";
@@ -978,11 +978,20 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (yn === "yes" || yn === "no") { m.awaiting = undefined; return this.onCrewAnswer(m, aw.crewId, yn === "yes"); }
     }
     if (aw?.kind === "booked") {
-      // The booked plan: silence is a yes; "can't" or "no" cancels it (the other member is told, without the reason).
+      // spec/opportunityLifecycle.md, "A closed booking releases its pending replies"
       const o = this.opps.get(aw.oppId!);
-      const yn = this.yesNoOf(body);
-      if (o && o.stage === "scheduled" && o.status.get(m.id) === "yes" && (c.kind === "cancel" || yn === "no")) { m.awaiting = undefined; return this.handleDrop(m, o); }
-      if (yn === "yes" || c.kind === "ack") { m.awaiting = undefined; if (o && o.stage === "scheduled") this.confirmPlan(o, m.id, true); this.ack(m, copy.bookedThanks); return; }
+      if (!o || !bookedReplyCurrent(opportunityLifecycle(o), o.status.get(m.id) === "yes")) {
+        m.awaiting = undefined;
+      } else {
+        const yn = this.yesNoOf(body);
+        if (c.kind === "cancel" || yn === "no") return this.handleDrop(m, o);
+        if (yn === "yes" || c.kind === "ack") {
+          m.awaiting = undefined;
+          this.confirmPlan(o, m.id, true);
+          this.ack(m, copy.bookedThanks);
+          return;
+        }
+      }
     }
     if (aw?.kind === "checkin") {
       m.awaiting = undefined;
@@ -3057,6 +3066,11 @@ export class ConsentNetwork implements NetworkUnderTest {
       o.closedFrom = o.stage;
       o.closedReason = "participant dropped";
       o.stage = STAGE_BY_PHASE[next.phase];
+      // spec/opportunityLifecycle.md, "A closed booking releases its pending replies"
+      for (const id of o.participants) {
+        const participant = this.members.get(id);
+        if (participant?.awaiting?.oppId === o.id) participant.awaiting = undefined;
+      }
       this.ctx.log("opportunity_closed", { proposalId: o.id, reason: "participant dropped" });
     }
   }

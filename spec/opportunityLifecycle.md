@@ -47,6 +47,18 @@ pure def lawAGroupNeedsAtLeastThree(remaining: int): bool =
   groupCanContinue(remaining) implies remaining >= 3
 ```
 
+### A closed booking releases its pending replies
+
+When a booked opportunity closes after a participant drops, clear each pending reply for that opportunity. Keep each reply slot for another opportunity. A booked reply can change or confirm a plan only while its opportunity is scheduled and the member still accepts it. Discard a stale booked reply slot before routing the member's message.
+
+```quint
+pure def bookedReplyCurrent(proposal: OpportunityLifecycle, accepted: bool): bool =
+  proposal.phase == Scheduled and proposal.approved and accepted
+
+pure def lawBookedReplyRequiresCurrentConsent(proposal: OpportunityLifecycle, accepted: bool): bool =
+  bookedReplyCurrent(proposal, accepted) implies (proposal.phase == Scheduled and accepted)
+```
+
 ### A new minor signal closes an unbooked opportunity involving that person
 
 Close an opportunity still in review or probing when a person involved becomes known to be a minor. This applies to current members, alternates, and someone who received a probe and was already replaced. A booked opportunity uses the existing cancellation path if the minor is on the booked roster.
