@@ -23,9 +23,39 @@ name: deploy-sites
 on:
   push:
     branches: [main]
-    paths: ["sites/**", "deploy/router.ts", "deploy/smoke.ts", "packages/platform/src/proxy.ts", "packages/platform/src/apps.ts", ".github/workflows/deploy-sites.yml"]
+    paths:
+      - 'apps/site/**'
+      - 'sites/**'
+      - 'packages/design-system/**'
+      - 'packages/ui/**'
+      - 'packages/core/src/generated/**'
+      - 'packages/platform/src/proxy.ts'
+      - 'packages/platform/src/apps.ts'
+      - 'deploy/router.ts'
+      - 'deploy/smoke.ts'
+      - 'tools/vibestack/vibestack/design/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.nvmrc'
+      - '.github/workflows/deploy-sites.yml'
   pull_request:
-    paths: ["sites/**", "deploy/router.ts", "deploy/smoke.ts", "packages/platform/src/proxy.ts", "packages/platform/src/apps.ts", ".github/workflows/deploy-sites.yml"]
+    paths:
+      - 'apps/site/**'
+      - 'sites/**'
+      - 'packages/design-system/**'
+      - 'packages/ui/**'
+      - 'packages/core/src/generated/**'
+      - 'packages/platform/src/proxy.ts'
+      - 'packages/platform/src/apps.ts'
+      - 'deploy/router.ts'
+      - 'deploy/smoke.ts'
+      - 'tools/vibestack/vibestack/design/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.nvmrc'
+      - '.github/workflows/deploy-sites.yml'
   workflow_dispatch:
     inputs:
       pages_operation:
@@ -60,7 +90,9 @@ jobs:
       - run: npm install --global corepack@0.35.0 && corepack enable pnpm
       - run: pnpm install --frozen-lockfile
       - name: Typecheck sites, router and scripts
-        run: pnpm exec tsc --noEmit -p sites/tsconfig.json
+        run: |
+          pnpm exec tsc --noEmit -p sites/tsconfig.json
+          pnpm --filter @thenetwork/site run typecheck
 
   build:
     needs: test
