@@ -15,6 +15,7 @@ import { AccessVerifier, parseTokenGrants } from "../src/staff.ts";
 import { dropTestDb, pgAvailable, testDb } from "./pg.ts";
 import { HIDDEN_MESSAGE } from "../src/sources/real.ts";
 import type { AuditEntry, ConfigInfo, LabRun, MemberDetail, MemberTimeline, ObsState, OpportunityDetail, SafetyInfo, StaffUser } from "../src/types.ts";
+import { webSocketUpgradeStatus } from "./websocket.ts";
 
 const T = 300_000;
 /** Staff tokens are at least 32 characters (the server refuses shorter ones). */
@@ -325,8 +326,8 @@ describe("simulation lab", () => {
     expect(validateLab({ arms: ["consent"], seeds: [1], days: 0 })).toContain("days");
     expect(validateLab({ arms: ["bogus"], seeds: [1], days: 3 })).toContain("arms");
     expect(validateLab({ arms: ["consent"], seeds: [1, 2, 3, 4, 5, 6], days: 3 })).toContain("seeds");
-    // A stand-in child: waits, logs a line, then prints indented JSON the way experiment.ts does (no judge fields).
-    const script = join(dir, "fake-arm.ts");
+    // The fixture is outside the package, so .mts sets ESM for its top-level await.
+    const script = join(dir, "fake-arm.mts");
     await writeFile(script, `import { setTimeout } from 'node:timers/promises'; await setTimeout(600); const seed = Number(process.argv[process.argv.indexOf("--seed") + 1]);
       if (seed === 3) { console.error("boom"); process.exit(2); }
       console.log("[llm] a log line before the results");
@@ -401,7 +402,7 @@ describe("live sockets are authorized again (OBS-04, OBS-05)", () => {
       expect(e.msgs.some(m => m.type === "delta" && m.mode === "real")).toBe(false);
       expect(a.closed()).toBeUndefined();
       // A new socket for the engineer is refused in real mode.
-      expect((await fetch(`${srv.url}/ws`, { headers: { authorization: `Bearer ${eng}`, upgrade: "websocket", connection: "upgrade", "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==", "sec-websocket-version": "13" } })).status).toBe(403);
+      expect(await webSocketUpgradeStatus(`${srv.url}/ws`, eng)).toBe(403);
       a.ws.close();
     } finally { await srv.stop(); }
   }, T);
@@ -466,7 +467,7 @@ describe("tokens, Access keys and the lab (OBS-11)", () => {
   test("lab: children get no secrets; the queue is capped", async () => {
     const env = labEnv({ PATH: "/bin", HOME: "/h", OPENAI_API_KEY: "sk-x", SURPLUS_API_KEY: "y", DATABASE_URL: "postgres://x", OBSERVATORY_TOKENS: "admin:z", LIVE_TESTS: "1", NETWORK_SERVICE_TOKEN: "t" });
     expect(env).toEqual({ PATH: "/bin", HOME: "/h" });
-    const script = join(dir, "slow-arm.ts");
+    const script = join(dir, "slow-arm.mts");
     await writeFile(script, "import { setTimeout } from 'node:timers/promises'; await setTimeout(5000); console.log(JSON.stringify({ results: [] }));");
     const lab = new Lab({ dir: join(dir, "lab-cap"), script, concurrency: 1 });
     try {

@@ -15,6 +15,7 @@ import { DAY } from "@thenetwork/core";
 import { APP_IDS } from "../src/apps.ts";
 import { createServer, type ObservatoryServer } from "../src/server.ts";
 import type { AuditEntry, ObsDelta, ObsState, OpportunityDetail, RevealGrant } from "../src/types.ts";
+import { webSocketUpgradeStatus } from "./websocket.ts";
 
 const T = 300_000;
 const long = (t: string) => t.padEnd(32, "-0123456789abcdef");
@@ -117,11 +118,12 @@ describe("per-app grant matrix (OBS-07)", () => {
         const r = await as(tok, url, { method, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
         expect([method, path, app, r.status]).toEqual([method, path, app, 403]);
       }
-      const ws = await fetch(`${obs.url}/ws?app=${app}`, { headers: { authorization: `Bearer ${tok}`, upgrade: "websocket", connection: "upgrade", "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==", "sec-websocket-version": "13" } });
-      expect(["/ws", app, ws.status]).toEqual(["/ws", app, 403]);
+      const status = await webSocketUpgradeStatus(`${obs.url}/ws?app=${app}`, tok);
+      expect(["/ws", app, status]).toEqual(["/ws", app, 403]);
     }
     // And the same token reaches slop.
     expect((await as(TOK.ana, "/api/state?app=slop")).status).toBe(200);
+    expect(await webSocketUpgradeStatus(`${obs.url}/ws?app=slop`, TOK.ana)).toBe(101);
   }, T);
 });
 

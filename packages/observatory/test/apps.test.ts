@@ -22,6 +22,7 @@ import { ServiceClient } from "../src/sources/service.ts";
 import { allowed, authenticate, canCrossApp, parseRoles, parseTokenGrants, parseTokens, rolesFor, type AuditSink } from "../src/staff.ts";
 import type { AppHealth, AuditEntry, ObsState, PersonAppPanel, PersonSummary, StaffUser } from "../src/types.ts";
 import { dropTestDb, pgAvailable, testDb } from "./pg.ts";
+import { webSocketUpgradeStatus } from "./websocket.ts";
 
 const T = 300_000;
 /** Staff tokens are at least 32 characters on a server; the short names in these tests are padded to that. */
@@ -123,7 +124,7 @@ describe("the console for four apps (game mode)", () => {
     expect((await as("ana", "/api/config?app=ntwrk")).status).toBe(200);
     expect((await as("ana", "/api/config?app=slop")).status).toBe(403);
     // The WebSocket needs a role for its app too.
-    expect((await fetch(`${obs.url}/ws?app=ntwrk`, { headers: { authorization: `Bearer ${long("rev-slop")}`, upgrade: "websocket", connection: "upgrade", "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==", "sec-websocket-version": "13" } })).status).toBe(403);
+    expect(await webSocketUpgradeStatus(`${obs.url}/ws?app=ntwrk`, long("rev-slop"))).toBe(403);
   }, T);
 
   test("slop: the shipped pack matches adults and keeps joined minors out", async () => {
