@@ -638,7 +638,7 @@ const REFUSAL_RX: RegExp[] = [
   /\b(?:don'?t|do not|doesn'?t) (?:think so|want to|wanna|feel like it|really want|have (?:time|the time|room|the bandwidth)|need)\b/,
   /\b(?:i'?m|im|i am) (?:not|no longer) (?:in|down|up for (?:it|that)|interested|free|available|keen|able|looking)\b/,
   /\b(?:i'?m|im|i am) (?:good|ok|okay|fine|all set)(?:,? (?:thanks?|thank you|tho|though|for now))?\s*$/,
-  /\bcount me out\b|\b(?:i'?m|im) out\b|\bskip(?:ping)? (?:this|it|that)\b|\bi'?ll sit (?:this|that) one out\b/,
+  /\bcount me out\b|\b(?:have|need|got|gotta|going) to call (?:it|this|that|things) off\b|\bskip(?:ping)? (?:this|it|that)\b|\bi'?ll sit (?:this|that) one out\b/,
   /\b(?:not gonna|won'?t|can'?t|cannot|couldn'?t|not going to) make it\b/,
   /\b(?:not|no longer) (?:comfortable|ok|okay|cool) (?:with )?(?:meeting|going|coming|the (?:date|plan|meetup))\b/,
   /(?<!not )\btoo (?:busy|swamped|slammed|far|tired)\b/,
@@ -646,7 +646,7 @@ const REFUSAL_RX: RegExp[] = [
   /👎|🙅|❌/,
 ];
 /** "Can't", "won't", "busy" and "away" refuse the offer unless a time follows (then they refuse that time). "Can't wait" is a yes. */
-const CANT = /\b(?:can'?t|cannot|can not|won'?t be able to|unable to|not able to|couldn'?t|won'?t)\b|(?:^\s*|\b(?:i'?m|im|i am|pretty|really|so|super|too|very|been|kinda)\s+)(?:busy|slammed|swamped|booked up)\b|\b(?:i'?m|im|i am|i'?ll be|i will be) (?:away|out of town|traveling|travelling)\b/g;
+const CANT = /\b(?:can'?t|cannot|can not|won'?t be able to|unable to|not able to|couldn'?t|won'?t)\b|(?:^\s*|\b(?:i'?m|im|i am|pretty|really|so|super|too|very|been|kinda)\s+)(?:busy|slammed|swamped|booked up)\b|\b(?:i'?m|im|i am|i'?ll be|i will be) (?:away|out of town|traveling|travelling)\b|\b(?:i'?m|im|i am) out\b(?! of town)/g;
 /** "Busy now, ask me later": a deferral, not a refusal of the offer. */
 const DEFER = /\b(?:ask|text|message|ping|try) me (?:later|again|tomorrow|tmrw|tonight|in a bit)\b|\bget back to you\b|\btalk later\b|\btext later\b/;
 const CANT_HARMLESS = /^\s*(?:wait|believe|say no|complain|go wrong|resist|beat|miss (?:it|this))/;
@@ -659,9 +659,12 @@ const COUNTER_RX = /\b(?:different (?:day|time|week)|another (?:day|week)|next w
 /** "No problem", "no worries", "no rush", "no plans", "no doubt", "we don't need to cancel": not refusals. */
 const HARMLESS_NO = /\bno (?:problem|prob|probs|worries|worry|rush|pressure|biggie|doubt|plans?|stress|sweat|complaints)\b|\b(?:no need|(?:don'?t|do not|doesn'?t|does not) need) to (?:cancel|call (?:it|this|that) off)\b/g;
 
+/** Double negations that keep the plan: "no, I'm not cancelling", "I'm not not coming". */
+const DOUBLE_NEG = /\bno\W+(?=(?:i'?m|im|i am|we'?re|we are)\s+not\s+(?:cancel|calling (?:it|this|that) off))|\bnot not\b|\b(?:i'?m|im|i am|we'?re|we are) not (?:cancel(?:l?ing)?|calling (?:it|this|that) off)\b/g;
+
 /** Read a reply as yes, no, a counter-offer or unclear, refusal first and sentence by sentence. */
 export function consentOf(body: string): Consent {
-  const t = normText(body).replace(HARMLESS_NO, " ");
+  const t = normText(body).replace(HARMLESS_NO, " ").replace(DOUBLE_NEG, " ");
   const wordsIn = (t.match(/[a-z]+/g) ?? []).length;
   let refusalAt = Infinity, affirmAt = Infinity, cond = false, hedge = false, counter = false, question = false;
   for (const s of sentencesOf(t)) {

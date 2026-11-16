@@ -834,7 +834,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       const rest = plan === body ? whole : plan ? consentOf(plan).answer : "unclear";
       const yn = rest === "unclear" && whole === "no" && (NEGATES.test(plan) || (!plan && namesPlan(body))) ? "no" : rest;
       if (o && o.stage === "scheduled" && o.status.get(m.id) === "yes" && (c.kind === "cancel" || yn === "no")) { m.awaiting = undefined; return this.handleDrop(m, o); }
-      if (yn === "yes" || c.kind === "ack") { m.awaiting = undefined; if (o && o.stage === "scheduled") this.confirmPlan(o, m.id, true); this.ack(m, copy.bookedThanks); return; }
+      // An ack ("cool", "ok") does not confirm a message that also asks to move, asks a question or hedges.
+      const planWhy = consentOf(plan || body).why;
+      if (yn === "yes" || (c.kind === "ack" && planWhy !== "counter" && planWhy !== "hedged" && planWhy !== "conditional")) { m.awaiting = undefined; if (o && o.stage === "scheduled") this.confirmPlan(o, m.id, true); this.ack(m, copy.bookedThanks); return; }
     }
     if (aw?.kind === "checkin") {
       m.awaiting = undefined;
