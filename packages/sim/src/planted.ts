@@ -318,8 +318,11 @@ export function plantedEngineInput(o: PlantedWorldOptions): { input: EngineInput
     const area = mark.circle >= 0 && r.bool(0.7) ? circleArea[mark.circle]! : r.pick(NEIGHBORHOODS[seat.market]);
     const joinedAt = now - (newcomer ? r.int(0, 13) : r.int(14, 400)) * DAY;
     const categories = [...new Set(lanes.map(l => LANE_CATEGORY[l]))].filter(c => adult || c !== "romance");
+    // Some cohorts are actively seeking an introduction this week. Keep the other cohorts on normal participation.
+    const activeSearch = adult && mark.circle >= 0 && hash32("planted-open", o.seed, mark.circle) % 3 === 0
+      && lanes.some(lane => lane === "Cofounder" || lane === "Invest");
     members.push({
-      id, name: `${r.pick(FIRST_NAMES)} ${i}`, homeCity: seat.market, state: "normal",
+      id, name: `${r.pick(FIRST_NAMES)} ${i}`, homeCity: seat.market, state: activeSearch ? "open" : "normal",
       prefs: {
         categoriesOptIn: categories, quietHours: [22, 8], romanceOptIn: adult && lanes.includes("Date"),
         formats: ["one_to_one", "small_group"], maxTravelMinutes: 45, onlyWhenAsked: false,
@@ -341,7 +344,9 @@ export function plantedEngineInput(o: PlantedWorldOptions): { input: EngineInput
       add("goal", LANE_OBJECTIVE[lane][m.side], [`lane:${lane}`, `side:${m.side}`], "matchable", "said", appOf(lane));
       for (const e of evidenceItems(m.observed, m.reviewed))
         add("fact", "track record", [`lane:${lane}`, `evidence:${e.points}`, e.reviewed ? "reviewed" : "unreviewed"], "matchable", e.reviewed ? "vouched" : "said", appOf(lane));
-      const intent: Intent = { id: `${id}-i-${lane}`, memberId: id, objective: LANE_OBJECTIVE[lane][m.side], category: LANE_CATEGORY[lane], horizonDays: 60, status: "active", createdAt: Math.max(joinedAt, now - r.int(0, 20) * DAY) };
+      const intent: Intent = { id: `${id}-i-${lane}`, memberId: id, app: appOf(lane), objective: LANE_OBJECTIVE[lane][m.side],
+        category: LANE_CATEGORY[lane], horizonDays: 60, status: "active", createdAt: Math.max(joinedAt, now - r.int(0, 20) * DAY),
+        ...(lane === "Cofounder" ? { details: "cofounder:member-confirmed" } : {}) };
       if (adult && app === "peon" && lane === "Hire") {
         const hire = plantedPeonHire(plantedMember, intent, area);
         intents.push(hire.intent);

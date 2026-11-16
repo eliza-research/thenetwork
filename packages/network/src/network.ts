@@ -69,6 +69,8 @@ import {
 import { reviewLate, reviewRevisionCurrent } from "../../core/src/generated/reviewDeadline.ts";
 import { inviteJoinNoticeCurrent, inviteJoinNoticeLifetimeMs, inviteJoinNoticeMayRideReply, outreachRequiresAdult } from "../../core/src/generated/outreachPolicy.ts";
 import { emptyIntentFollowupReady, emptyIntentFollowupReasonAllowed } from "../../core/src/generated/emptyIntentFollowup.ts";
+import { canSaveCofounderIntent, cofounderIntentDetails, cofounderIntentObjective } from "../../core/src/generated/cofounderIntent.ts";
+import { cofounderDeliveryAllowed, cofounderIntentEligible, cofounderPairCurrent } from "../../core/src/generated/cofounderDispatch.ts";
 import { closedPublicEventIsUnsent, publicBookedEventLinkAllowed, publicEventMemberAllowsMatch, publicEventRevisionMatches } from "../../core/src/generated/publicEventCatalog.ts";
 import {
   cachedStandingIntentsCurrent, canQueueEngineOpportunity, learnedIntentDays, learnedIntentMayProject,
@@ -470,6 +472,7 @@ interface Opp {
   };
   /** Engine proposals only: what the gates need to run again at approval. */
   anchor?: EngineProposal["anchor"]; roles?: EngineProposal["roles"];
+  lane?: EngineProposal["lane"]; cofounderIntents?: EngineProposal["cofounderIntents"];
   /** The stage it was in when it closed, and why (console). */
   closedFrom?: string; closedReason?: string;
   sameDay: boolean;
@@ -743,7 +746,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   private now() { return this.ctx.clock.now(); }
 
   // ================================================================== inbound
-  async onInbound(msg: InboundMessage): Promise<"handled" | "open"> {
+  async onInbound(msg: InboundMessage, queueCofounderIntent?: (intent: Intent) => void): Promise<"handled" | "open"> {
     if (this.declinedIds.has(msg.memberId)) return "handled"; // declined under 13: never answered again, nothing stored
     const privateInviteTurn = this.isPrivateInviteTurn(msg);
     if (privateInviteTurn) this.opts.onPrivateInviteTurn?.(msg.memberId, msg.id);
@@ -771,7 +774,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.replyTo = m.id;
     this.memberReply = !msg.keyword && msg.source !== "mcp";
     this.understood = u;
-    try { return this.handleInbound(m, msg, privateInviteTurn) === "open" ? "open" : "handled"; }
+    try { return this.handleInbound(m, msg, privateInviteTurn, queueCofounderIntent) === "open" ? "open" : "handled"; }
     finally { this.replyTo = undefined; this.memberReply = false; this.understood = undefined; }
   }
 
@@ -826,7 +829,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     return c.answer;
   }
 
-  private handleInbound(m: MemberState, msg: InboundMessage, privateInviteTurn: boolean) {
+  private handleInbound(m: MemberState, msg: InboundMessage, privateInviteTurn: boolean, queueCofounderIntent?: (intent: Intent) => void) {
     const now = this.now();
     if (msg.keyword === "STOP") { m.optedOut = true; m.pendingInviteDraft = undefined; this.dropMember(m.id, "opted out"); return; }
     if (msg.keyword === "START") { m.optedOut = false; this.send(m, copy.stopWelcomeBack, { type: "info" }, "reply"); return; }
@@ -913,11 +916,27 @@ export class ConsentNetwork implements NetworkUnderTest {
       return;
     }
 
+    if (parsed.cofounderAffirmed) {
+      if (mcp) return this.learnFromProfile(m, undefined, c, body);
+      // spec/cofounderIntent.md, "Save only the current member's own affirmative goal"
+      const eligible = !c.abuse.length && !m.minor && !m.minorSignal && !m.ageConflict && !m.ageUnknown
+        && !m.account && !m.optedOut && canBeMatched(age) && this.trust.ok(m.id) && !this.reportHeld(m.id);
+      if (!queueCofounderIntent || !canSaveCofounderIntent(this.app.id, true, true, eligible)) return "open" as const;
+      queueCofounderIntent({
+        id: `cofounder:${sha256(stableStringify([this.app.id, m.id, msg.id]))}`,
+        memberId: m.id, objective: cofounderIntentObjective, category: "professional",
+        details: cofounderIntentDetails, horizonDays: learnedIntentDays, status: "active", createdAt: now,
+      });
+      return;
+    }
+
     if (!mcp && c.kind === "people_request" && c.category === "help" && this.allowedCategories.has("help")
       && this.opts.homeHelpIntakePrompt && this.routeBoundedHelp(m, body, false)) return;
 
     // peon (#9): a job post by text, read back and saved only on the manager's yes (rules only, never an open-turn LLM output).
     if (this.opts.hooks?.postings && this.postingTurn(m, body)) return;
+
+    if (c.kind === "cofounder_goal" && !mcp) return "open" as const;
 
     const withdrew = this.withdrawRequests(m, parsed.notWanted ?? []);
     if (withdrew && c.kind !== "people_request" && c.kind !== "plans_request") return this.learnFrom(m, body);
@@ -2433,7 +2452,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (let i = 0; i < o.participants.length; i++) for (let j = i + 1; j < o.participants.length; j++)
       if (this.blocked(o.participants[i]!, o.participants[j]!)) return "blocked_pair";
     if (o.origin === "second_encounter" && (!o.repeatFrom || !this.repeatOutreachAllowed(o.category, o.participants, o.id))) return "repeat_no_longer_available";
-    if (o.origin === "engine") return this.gateReason({ ...this.toProposal(o), roles: o.roles ?? {}, anchor: o.anchor, ...(o.seat ? { seat: o.seat } : {}) } as SeatProposal, o.id);
+    if (o.origin === "engine") return this.gateReason({ ...this.toProposal(o), roles: o.roles ?? {}, anchor: o.anchor,
+      lane: o.lane, cofounderIntents: o.cofounderIntents, ...(o.seat ? { seat: o.seat } : {}) } as SeatProposal, o.id);
     return undefined;
   }
 
@@ -2450,7 +2470,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const out = opts.swapOut ?? (swappable.length === 1 ? swappable[0] : undefined);
     if (out !== undefined && !swappable.includes(out)) { this.ctx.log("review_refused", { oppId: o.id, decision: "reroll", reason: "cannot_swap" }); return { ok: false, reason: "cannot_swap" }; }
     const stay = o.participants.filter(p => p !== out);
-    const alt = out === undefined ? undefined : o.alternates.find(a => this.eligible(a) && !this.sharesFirstName(o, a) && !stay.some(p => this.blocked(p, a) || this.avoid.has(pairKey(p, a)) || this.pairHistory(p, a, 60)));
+    const alt = out === undefined || o.lane === "Cofounder" ? undefined : o.alternates.find(a => this.eligible(a) && !this.sharesFirstName(o, a) && !stay.some(p => this.blocked(p, a) || this.avoid.has(pairKey(p, a)) || this.pairHistory(p, a, 60)));
     this.counters.reviewRerolled++;
     o.review!.rerolls = [...(o.review!.rerolls ?? []), { at: now, out, in: alt, reviewer, note: opts.note }];
     this.ctx.log("review_decision", { ...logged, decision: "reroll", out: out ?? null, in: alt ?? null, next: alt ? "review" : "engine" });
@@ -2573,6 +2593,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (o.plan) return this.planLane(o, this.now());
     if (o.stage !== "probing") return;
     if (this.holdHelpOpportunity(o)) return this.close(o, "bounded help needs safety review");
+    if (o.lane === "Cofounder" && !cofounderDeliveryAllowed(this.cofounderCurrent(o), o.review?.decision === "approve", false, false)) {
+      return this.close(o, "cofounder_intent_changed");
+    }
     const publicEventIssue = this.publicEventRefusal(o);
     if (publicEventIssue) return this.close(o, publicEventIssue);
     const now = this.now();
@@ -2894,6 +2917,10 @@ export class ConsentNetwork implements NetworkUnderTest {
    */
   private reveal(o: Opp) {
     if (this.holdHelpOpportunity(o)) return this.close(o, "bounded help needs safety review");
+    if (o.lane === "Cofounder" && !cofounderDeliveryAllowed(this.cofounderCurrent(o), o.review?.decision === "approve", true,
+      o.participants.every(p => o.status.get(p) === "available" && o.contacted.has(p)))) {
+      return this.close(o, "cofounder_intent_changed");
+    }
     if (o.origin === "second_encounter" && !this.repeatPreferencesAllow(o.category, o.participants)) return this.close(o, "repeat preferences changed");
     const now = this.now();
     const published = this.currentPublishedEvent(o);
@@ -4394,6 +4421,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   private gateReason(p: SeatProposal, exceptOpp?: string): string | undefined {
     if (!this.allowedCategories.has(p.category ?? "social")) return "category_not_allowed";
     if (p.participants.some(id => !this.eligibleIn(p, id, exceptOpp))) return "participant_unavailable";
+    if (p.lane === "Cofounder" && !this.cofounderCurrent(p)) return "cofounder_intent_changed";
     if (p.category === "romance") { const why = this.romanceGate(p.participants); if (why) return why; }
     // Receiving is support-only (founder default D1-D18): never ask them to give, host or connect.
     if (p.participants.some(id => this.members.get(id)?.state === "receiving" && CONTRIBUTOR_ROLES.has(p.roles?.[id] as never))) return "receiving_contributor";
@@ -4419,7 +4447,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (p.components.confidence < 0.35) return "low_confidence";
     // Romance passed the engine's opt-in and preference checks and romanceGate above: the want gate
     // has no romance vocabulary of its own, and scored every dating proposal 0 (matching-e2e-2).
-    if (p.category !== "romance" && !this.wantsMet(p.participants, p.category ?? "social")) return "want_not_named";
+    if (p.category !== "romance" && p.lane !== "Cofounder" && !this.wantsMet(p.participants, p.category ?? "social")) return "want_not_named";
     if (p.participants.some(id => this.responsiveness(id) < this.opts.minResponsiveness)) return "unresponsive";
     if (!p.anchor || !["intent", "event"].includes(p.anchor.type)) {
       // Speculative (no one asked): only for well-known, warm or clearly overlapping people.
@@ -4474,7 +4502,12 @@ export class ConsentNetwork implements NetworkUnderTest {
       sameDay: !!p.window && p.window.end - now <= DAY,
     });
     // What the gates need to run again when a reviewer approves it (approvalCheck).
-    if (origin === "engine") { const e = p as Partial<EngineProposal>; o.anchor = e.anchor; o.roles = e.roles; }
+    if (origin === "engine") {
+      const e = p as Partial<EngineProposal>;
+      o.anchor = e.anchor; o.roles = e.roles; o.lane = e.lane;
+      if (e.cofounderIntents) o.cofounderIntents = { ...e.cofounderIntents };
+      if (o.lane === "Cofounder") o.alternates = [];
+    }
     if (p.seat) o.seat = { ...p.seat };
     if (o.anchor?.type === "event") {
       if (p.window) o.anchorWindow = { ...p.window };
@@ -4501,6 +4534,27 @@ export class ConsentNetwork implements NetworkUnderTest {
     const id = o.plan?.eventId ?? o.anchor?.id;
     const event = this.snapshotCached().events?.find(value => value.id === id);
     return event?.listing && publicEventRevisionMatches(o.publicEventRevision, sha256(stableStringify(event))) ? event : undefined;
+  }
+
+  /** Revalidate the reviewed pair's exact standing intents, including after a restart. */
+  private cofounderCurrent(o: Pick<Opp, "participants" | "cofounderIntents">): boolean {
+    const [first, second] = o.participants;
+    if (o.participants.length !== 2 || !first || !second) return false;
+    const now = this.now();
+    const snapshot = this.snapshotCached();
+    const current = (memberId: MemberId) => {
+      const intent = snapshot.intents.find(i => i.memberId === memberId && i.id === o.cofounderIntents?.[memberId]);
+      return !!intent && intent.objective === cofounderIntentObjective
+        && cofounderIntentEligible(intent.app ?? "", this.app.id, intent.category, intent.details ?? "", standingIntentLive(intent, now));
+    };
+    const eligible = (memberId: MemberId) => {
+      const record = this.record(memberId), member = this.members.get(memberId);
+      return !!member && canBeMatched(record?.age) && !!record?.prefs.categoriesOptIn.includes("professional")
+        && record.prefs.formats.includes("one_to_one") && !record.prefs.onlyWhenAsked
+        && !member.minor && !member.minorSignal && !member.minorReported && !member.ageUnknown && !member.ageConflict && !member.optedOut && !member.account
+        && this.trust.ok(memberId) && !this.reportHeld(memberId) && record.state !== "paused";
+    };
+    return cofounderPairCurrent(first !== second, current(first), current(second), eligible(first) && eligible(second) && !this.blocked(first, second));
   }
 
   private publicEventRefusal(o: Opp, event = this.currentPublishedEvent(o)): string | undefined {
@@ -4760,6 +4814,14 @@ export class ConsentNetwork implements NetworkUnderTest {
    */
   private send(m: MemberState, body: string, meta: SimMeta, kind: SendKind, o: SendOpts = {}): SendResult {
     const now = this.now();
+    const opportunity = this.opps.get(meta.proposalId ?? meta.probe?.key ?? "");
+    if (opportunity?.lane === "Cofounder" && (meta.type === "probe" || meta.type === "scheduling" || meta.type === "proposal")) {
+      const revealing = meta.type === "proposal";
+      const accepted = opportunity.participants.every(id => opportunity.status.get(id) === "yes" && opportunity.contacted.has(id));
+      if (!cofounderDeliveryAllowed(this.cofounderCurrent(opportunity), opportunity.review?.decision === "approve", revealing, accepted)) {
+        return this.refuse(m.id, kind, "cofounder_intent_changed", this.hookFns(m, o.hook));
+      }
+    }
     const proactive = !!meta.proactive;
     // A direct reply: anything we say to the member whose message we are handling, except a proactive
     // offer (that waits for the window like any other) or a growth/re-engagement ask.

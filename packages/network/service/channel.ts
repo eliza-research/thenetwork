@@ -18,6 +18,7 @@ import type { NetworkRuntime } from "./runtime.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { isMemberInvitationLink } from "../src/invitation.ts";
 import { EXPECTED_INVITATION_PREFIX } from "./expected-invitation-store.ts";
+import { cofounderDeliveryIdPrefix } from "../../core/src/generated/cofounderDispatch.ts";
 
 /** The apps' own domains: the Network's fixed copy names them ("you're in friends.help and peon.biz"), so the contact check allows them. */
 const OWN_DOMAINS = Object.values(APPS).flatMap(a => [`https://${a.domain}`, `www.${a.domain}`, a.domain]);
@@ -205,7 +206,7 @@ export class BlooioAdapter implements ChannelAdapter {
       // PgStore.save locks the state before erasing members. Dispatch takes the
       // same order, then the existing admit check revalidates current parties.
       lockAdmission: async (row, tx) => {
-        if (row.id.startsWith("relay:") || row.id.startsWith("invite-notice:") || row.id.startsWith(EXPECTED_INVITATION_PREFIX)) {
+        if (row.id.startsWith("relay:") || row.id.startsWith("invite-notice:") || row.id.startsWith(EXPECTED_INVITATION_PREFIX) || row.id.startsWith(cofounderDeliveryIdPrefix)) {
           await tx`select id from network.network_state where id=${rt.pg.id} for share`;
         }
         if (row.id.startsWith("home-help-consent:")) await rt.lockHomeHelpConsentAdmission(tx, row.id, row.memberId);
@@ -214,6 +215,7 @@ export class BlooioAdapter implements ChannelAdapter {
       admit: async (row, tx) => {
         if (row.approvedPhotos?.length && this.name !== "eliza_cloud") return { ok: false, reason: "approved_photos_require_cloud" };
         if (row.id.startsWith("relay:")) return rt.relayAdmission(tx, row);
+        if (row.id.startsWith(cofounderDeliveryIdPrefix)) return rt.cofounderAdmission(tx, row);
         if (row.id.startsWith("invite-notice:")) return await rt.invitationNoticeAdmission(tx, row.id, row.memberId)
           ? { ok: true } : { ok: false, reason: "invitation_notice_changed" };
         if (row.id.startsWith("home-help-consent:")) return await rt.homeHelpConsentAdmission(tx, row)

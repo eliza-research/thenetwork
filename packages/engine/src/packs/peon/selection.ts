@@ -65,6 +65,8 @@ export function slateCap(w: World, j: JobProfile): number {
  * Every selection phase must honor it (spec/selectionRun.md, packAllows).
  */
 export function peonAllows(w: World, c: Candidate, timesSelectedInRun: (id: MemberId) => number): boolean {
+  if (c.lane === "Cofounder") return c.participants.every(id =>
+    (w.get(id)?.recentProactive ?? Infinity) + timesSelectedInRun(id) < laneLimits("Cofounder").weeklyCapacity);
   const s = sides(w, c.participants);
   return !!s && timesSelectedInRun(s.job.id) < slateCap(w, s.job) && timesSelectedInRun(s.cand.id) < laneLimits("Hire").weeklyCapacity;
 }

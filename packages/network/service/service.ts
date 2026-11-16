@@ -31,7 +31,7 @@ import { profileSuggestionDisconnectEndpoint, type SuggestionRevokedOwnerResolve
 import { createHash, createSecretKey, hkdfSync, randomUUID, timingSafeEqual } from "node:crypto";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { isDeepStrictEqual } from "node:util";
-import { DAY, LLMBudget, RealClock, recommenderLLM, type Clock, type City, type MemberId } from "@thenetwork/core";
+import { DAY, LLMBudget, RealClock, recommenderLLM, type Clock, type City, type Intent, type MemberId } from "@thenetwork/core";
 import { storedInviterCurrent, type ActionResult, type NetworkOptions, type NetworkState, type ReviewDecision, type ReviewOptions } from "../src/network.ts";
 import { brandOf, copy as ntwrkCopy, copyFor, ELIZA_NOTICE, type Copy } from "../src/copy.ts";
 import { personDailyCap } from "../../core/src/generated/outreachPolicy.ts";
@@ -43,6 +43,8 @@ import {
 import { inboxKeepMs, platformKeepMs, stopHintWindowMs } from "../../core/src/generated/platformRetention.ts";
 import { stopCoversEveryApp } from "../../core/src/generated/sharedLineConsentJourney.ts";
 import { standingIntentReplayAllowed } from "../../core/src/generated/standingIntentManagement.ts";
+import { canSaveCofounderIntent, cofounderIntentBlocksNew } from "../../core/src/generated/cofounderIntent.ts";
+import { standingIntentPhaseAt } from "../../core/src/standing-intent.ts";
 import { homeHelpOfferChangeAllowed } from "../../core/src/generated/boundedHelp.ts";
 import { projectInvitationWelcome, projectRemoteInvitationNotice } from "../../core/src/generated/invitationJoinProjection.ts";
 import { profileAgeCounts, publicSignupUsesBrowser } from "../../core/src/generated/siteEnrollment.ts";
@@ -1839,7 +1841,14 @@ export class NetworkService implements RuntimeHost {
           rt.replyingTo = undefined;
         }
       }
-      try { disposition = await n.onInbound({ id: rowId, memberId, body: ev.text, ts: t, channel, ...(keyword ? { keyword } : {}), ...(fromAssistant ? { source: "mcp" as const } : {}) }); } finally { rt.replyingTo = undefined; }
+      const stageIntent = signedDirect && rt.signedMemberTurn(memberId, rowId) ? (intent: Intent) => {
+        rt.unit.memberCommand = tx => this.saveCofounderIntent(tx, rt, rowId, signedDirect.from, intent);
+      } : undefined;
+      try {
+        disposition = await n.onInbound({ id: rowId, memberId, body: ev.text, ts: t, channel,
+          ...(keyword ? { keyword } : {}), ...(fromAssistant ? { source: "mcp" as const } : {}) }, stageIntent);
+      } finally { rt.replyingTo = undefined; }
+      if (rt.unit.memberCommand) return "cofounder_intent" as const;
       // Carrier keywords: the app's own confirmation (packages/platform apps.ts). START gets the Network's own welcome back.
       if (systemReply) rt.system(memberId, `sys:${rowId}`, systemReply);
       if (keyword === "STOP") rt.unit.optOut.set(memberId, true);
@@ -1855,6 +1864,34 @@ export class NetworkService implements RuntimeHost {
       }
       return keyword || systemReply ? "handled" as const : disposition;
     });
+  }
+
+  private async cofounderIntentOwner(tx: SQL, rt: NetworkRuntime, memberId: MemberId, e164: string): Promise<boolean> {
+    const accounts = this.accountsFor(tx);
+    const binding = await memberCommandOwner(tx, accounts, { app: rt.app, memberId, e164 });
+    return !!binding?.member && canBeMatched(await accounts.lowestAge(e164, binding.person));
+  }
+
+  private async saveCofounderIntent(tx: SQL, rt: NetworkRuntime, rowId: string, e164: string, intent: Intent) {
+    const app = rt.app.id;
+    const adult = await this.cofounderIntentOwner(tx, rt, intent.memberId, e164);
+    if (!canSaveCofounderIntent(app, rt.signedMemberTurn(intent.memberId, rowId), true, adult)) return;
+    // The owner row remains locked while this app checks for a prior active or paused goal and saves the new one.
+    const rows = await tx<{ status: Intent["status"]; created_at: Date; horizon_days: number }[]>`select status, created_at, horizon_days
+      from network.intents where app_id=${app} and member_id=${intent.memberId} and objective=${intent.objective}
+        and category=${intent.category} and details=${intent.details} and status in ('active', 'paused')
+      order by created_at desc, id`;
+    const existing = rows.map(row => standingIntentPhaseAt({
+      status: row.status, createdAt: new Date(row.created_at).getTime(), horizonDays: row.horizon_days,
+    }, intent.createdAt)).find(cofounderIntentBlocksNew);
+    if (!existing) {
+      await tx`insert into network.intents (app_id, id, member_id, objective, category, details, horizon_days, status, created_at)
+        values (${app}, ${intent.id}, ${intent.memberId}, ${intent.objective}, ${intent.category}, ${intent.details},
+          ${intent.horizonDays}, ${intent.status}, ${new Date(intent.createdAt)})`;
+    }
+    const reply = "I noted your cofounder goal. Say LIST MY INTENTS to check it. I'll ask before any introduction.";
+    rt.unit.atomicCofounderReply = true;
+    rt.collectedMemberReply(intent.memberId, `sys:${rowId}`, reply, "cofounder_intent");
   }
 
   private async profileFactPage(tx: SQL, owner: { app: AppId; memberId: MemberId }, page: number): Promise<string> {
@@ -2903,6 +2940,12 @@ export class NetworkService implements RuntimeHost {
         const e164 = normalizePhone(input.from);
         const binding = rt && e164 && await this.accounts.activeMembership(rt.app, { e164, personId: null });
         if (!standingIntentReplayAllowed(!!binding && binding.membership.memberId === handled.memberId)) return json({error: "turn_intent_account_changed", retryable: false}, 409);
+      }
+      if (handled.reason === "cofounder_intent" && handled.replies.length) {
+        const memberId = handled.memberId;
+        const rt = handled.app && memberId ? await this.runtimeOfMember(handled.app, memberId) : undefined;
+        const live = rt && memberId && await rt.scoped(tx => this.cofounderIntentOwner(tx, rt, memberId, input.from));
+        if (!live) return json({error: "turn_intent_account_changed", retryable: false}, 409);
       }
       if (handled.reason === "travel_presence" && handled.replies.length) {
         const rt = handled.app && handled.memberId ? await this.runtimeOfMember(handled.app, handled.memberId) : undefined;

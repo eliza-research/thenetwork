@@ -114,6 +114,8 @@ export interface Candidate {
   lane?: MatchLane;
   /** The matched entity of a participant when it is not the member itself (a peon job seat). */
   entities?: Record<MemberId, EntityId>;
+  /** Exact current intent that authorizes each peer's participation in the Cofounder lane. */
+  cofounderIntents?: Readonly<Record<MemberId, string>>;
 }
 export interface GroupStats { avgPairwise: number; minBest: number; roleCoverage: number; warmTies: number; clusterDiversity: number; overlapHours: number }
 
@@ -129,6 +131,7 @@ export interface JudgeVerdict {
 
 export interface EngineProposal extends Proposal {
   category: Category; roles: Record<MemberId, Role>; expiresAt: number; anchor?: Anchor; via?: MemberId;
+  lane?: MatchLane; entities?: Candidate["entities"]; cofounderIntents?: Candidate["cofounderIntents"];
   safetyClass: SafetyClass; threshold: number; channels: string[]; judged: boolean;
   /** Off-policy logging: selector rank and probability this proposal was selected (1 for greedy picks). */
   selectorRank: number; selectionProbability: number;

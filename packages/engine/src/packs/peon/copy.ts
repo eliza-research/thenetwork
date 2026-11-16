@@ -28,6 +28,7 @@ export function peonProbeText(activity: string): string {
 
 /** Explanation lead bits (ExplainPack.leadBits): candidates hear about the job, employers get the must-have checklist. */
 export function peonLeadBits(w: World, c: Candidate, me: MemberId): string[] | undefined {
+  if (c.lane === "Cofounder") return ["You both asked to meet a potential cofounder."];
   const s = sides(w, c.participants);
   if (!s) return undefined;
   // Fixed copy can collide with words in someone's private facets: each sentence must pass the

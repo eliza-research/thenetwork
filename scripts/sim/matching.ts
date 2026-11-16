@@ -14,12 +14,10 @@ import { canonicalInput, runEngine } from "../../packages/engine/src/engine.ts";
 import { bruteForceCandidates, pairSideOf, partnerBlock, type MatchProfile } from "../../packages/engine/src/match/mod.ts";
 import { vectorsOf } from "../../packages/engine/src/match/pair.ts";
 import type { AppPack } from "../../packages/engine/src/pack.ts";
-import { friendsPack } from "../../packages/engine/src/packs/friends/index.ts";
 import { networkPack } from "../../packages/engine/src/packs/network/index.ts";
-import { peonPack } from "../../packages/engine/src/packs/peon/index.ts";
-import { slopPack } from "../../packages/engine/src/packs/slop/index.ts";
 import type { EngineInput } from "../../packages/engine/src/types.ts";
 import { World } from "../../packages/engine/src/world.ts";
+import { appWiring } from "../../packages/network/service/packs.ts";
 import {
   adjustedRandIndex, groupPurity, matchedStandingCorrelation, pairPrecision, PLANTED_LANES, plantedEngineInput, plantedLabels,
   plantedPairTruth, randomGroups, type PlantedTruth,
@@ -40,13 +38,17 @@ export const MATCHING_PINNED: Plan = {
 };
 const MATCHING_QUICK: Plan = { seeds: [1, 2, 3], exactN: [100, 200], engineN: 200, costN: [1_000, 10_000], everyLaneUpTo: 1_000, costSeed: 1 };
 
-const PACKS: readonly AppPack[] = [networkPack, slopPack, peonPack, friendsPack];
+const PACKS: readonly AppPack[] = (["ntwrk", "slop", "peon", "friends"] as const).map(app => appWiring(app).pack ?? networkPack);
+const shippedConfig = (pack: AppPack, seed: number): EngineConfigInput => ({ ...appWiring(pack.id).engine, seed });
 const PRIMARY_LANE: Readonly<Record<string, MatchLane>> = { ntwrk: "Intro", slop: "Date", peon: "Hire", friends: "Friend" };
 const lanesOf = (pack: AppPack): MatchLane[] => PLANTED_LANES.filter(lane => laneOffered(pack.id, lane));
 /** The slop block's low-tier exposure rule: no quintile under 0.85x the overall rate (packEval.ts gates3). */
 const LOW_QUINTILE_RATIO = 0.85;
 // No exploration slice and no exposure-floor pass, so blockingPairs measures the greedy phase alone.
-const greedyConfig = (seed: number): EngineConfigInput => ({ seed, exploration: { rate: 0 }, selection: { exposureFloorShare: 0 } });
+const greedyConfig = (pack: AppPack, seed: number): EngineConfigInput => {
+  const config = shippedConfig(pack, seed);
+  return { ...config, exploration: { ...config.exploration, rate: 0 }, selection: { ...config.selection, exposureFloorShare: 0 } };
+};
 // The match core reads no embedding; a flat one keeps a 100,000-member World cheap to build.
 const flatEmbed = (): number[] => [1];
 
@@ -79,15 +81,6 @@ const laneStats = (lane: MatchLane): LaneStats => ({
 const fault = (f: Faults, what: string): void => { f.count++; f.first ??= what; };
 
 const ids = (rows: readonly { readonly profile: MatchProfile; readonly value: number }[]) => rows.map(r => `${r.profile.id}:${r.value}`).join(",");
-
-function profilesForPair(w: World, lane: MatchLane, [left, right]: Pair): [MatchProfile, MatchProfile] | undefined {
-  for (const a of w.match.profilesOf(left)) {
-    if (a.lane !== lane) continue;
-    const b = w.match.profilesOf(right).find(candidate => candidate.lane === lane && w.match.value(a, candidate) >= 0);
-    if (b) return [a, b];
-  }
-  return undefined;
-}
 
 // spec/candidateSearch.md, "Story: Keep the best candidates within a fixed number of pair checks":
 // an exact search keeps exactly the brute-force top list; a budgeted one misses nothing above its bound.
@@ -149,8 +142,8 @@ const mean = (xs: readonly number[]): number => {
 
 async function engineGates(pack: AppPack, seed: number, input: EngineInput, truth: PlantedTruth, w: World, s: LaneStats): Promise<void> {
   const lane = s.lane, at = `seed ${seed}`;
-  const shipped = await runEngine(input, { seed }, { pack });
-  const greedy = await runEngine(input, greedyConfig(seed), { pack });
+  const shipped = await runEngine(input, shippedConfig(pack, seed), { pack });
+  const greedy = await runEngine(input, greedyConfig(pack, seed), { pack });
   s.runs++;
   s.blockingPairs += greedy.runLog.blockingPairs;
   const logged = shipped.runLog.search;
@@ -167,10 +160,14 @@ async function engineGates(pack: AppPack, seed: number, input: EngineInput, trut
   const pairs: Pair[] = [];
   const proposed = new Set<MemberId>();
   for (const p of shipped.proposals) {
-    for (const id of p.participants) proposed.add(id);
     if (p.participants.some(id => minors.has(id))) { fault(s.minors, `${at}: proposal ${p.id} includes a minor`); continue; }
-    if (p.participants.length < 2) continue;
-    const group = p.participants.flatMap(id => { const q = w.match.profileIn(id, lane); return q ? [q] : []; });
+    if (p.participants.length < 2 || p.lane !== lane) continue;
+    for (const id of p.participants) proposed.add(id);
+    const group = p.participants.flatMap(id => {
+      const entity = p.entities?.[id];
+      const q = entity ? w.match.profile(entity) : w.match.profileIn(id, lane);
+      return q?.lane === lane && q.memberId === id ? [q] : [];
+    });
     if (group.length !== p.participants.length) { fault(s.unprofiled, `${at}: proposal ${p.id} (${p.generator}) has a participant without a ${lane} profile`); continue; }
     if (group.length > 2) {
       s.groups++;
@@ -178,9 +175,8 @@ async function engineGates(pack: AppPack, seed: number, input: EngineInput, trut
       if (f) fault(s.groupFaults, `${at}: proposal ${p.id}: ${f}`);
       continue;
     }
-    const pair = profilesForPair(w, lane, [p.participants[0]!, p.participants[1]!]);
-    if (!pair) { fault(s.reciprocity, `${at}: ${p.id} (${p.generator}) has no eligible ${lane} pair`); continue; }
-    const [a, b] = pair;
+    const [a, b] = group as [MatchProfile, MatchProfile];
+    if (w.match.value(a, b) < 0) { fault(s.reciprocity, `${at}: ${p.id} (${p.generator}) has no eligible ${lane} pair`); continue; }
     s.pairs++;
     pairs.push([a.memberId, b.memberId]);
     // spec/pairValue.md, "A pair is refused when the gap is wider than the band and both uncertainties"
@@ -233,7 +229,7 @@ async function engineGates(pack: AppPack, seed: number, input: EngineInput, trut
 
 function costRun(pack: AppPack, n: number, seed: number, s: LaneStats): void {
   const { input } = plantedEngineInput({ seed: `matching-${seed}`, n, lanes: [s.lane], app: pack.id });
-  const w = new World(input, resolveConfig({ seed }), flatEmbed, pack);
+  const w = new World(input, resolveConfig(shippedConfig(pack, seed)), flatEmbed, pack);
   const profiles = w.match.profiles;
   const t = performance.now();
   let checks = 0, bound = 0;
@@ -357,7 +353,7 @@ export async function matchingBlock(b: Block, o: { quick: boolean }): Promise<vo
   for (const n of plan.exactN) for (const seed of plan.seeds) for (const { pack, lanes } of stats) for (const s of lanes) {
     const { input, truth } = plantedEngineInput({ seed: `matching-${seed}`, n, lanes: [s.lane], app: pack.id });
     // runEngine canonicalizes its input the same way, so this World holds the run's profiles.
-    const w = new World(canonicalInput(input), resolveConfig({ seed }), localEmbed, pack);
+    const w = new World(canonicalInput(input), resolveConfig(shippedConfig(pack, seed)), localEmbed, pack);
     exactness(w, s, `N ${n} seed ${seed}`);
     if (n === plan.engineN) await engineGates(pack, seed, input, truth, w, s);
   }

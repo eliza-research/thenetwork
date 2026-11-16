@@ -2,8 +2,12 @@
 // memberships come from what a member wants and offers, tags from the pack's own vocabulary and
 // objective taxonomy, and private standing from stated and verified facts only.
 import type { Category, Facet, FacetKind, Intent, MemberId } from "@thenetwork/core";
+import { cofounderIntentEligible } from "../../../../core/src/generated/cofounderDispatch.ts";
+import { cofounderIntentObjective } from "../../../../core/src/generated/cofounderIntent.ts";
 import { laneLimits, type LaneSide, type MatchLane } from "../../../../core/src/generated/matchLane.ts";
 import { standingFacetReadable, standingFromEvidence, standingUncertainty, type StandingEvidence } from "../../../../core/src/generated/memberStanding.ts";
+import { networkIntentRoute, type NetworkIntentRoute } from "../../../../core/src/generated/networkIntentLane.ts";
+import { standingIntentLive } from "../../../../core/src/standing-intent.ts";
 import type { EntityStanding, EntityTags, MatchEntity, Membership, PackVectors } from "../../match/profile.ts";
 import type { World } from "../../world.ts";
 import { objectivesFor } from "./taxonomy.ts";
@@ -15,6 +19,7 @@ const SIDES: readonly LaneSide[] = ["Peer", "Offering", "Seeking"];
 export interface LaneRole { readonly lane: MatchLane; readonly side: LaneSide }
 const INTRO: LaneRole = { lane: "Intro", side: "Peer" };
 const FRIEND: LaneRole = { lane: "Friend", side: "Peer" };
+const COFOUNDER_PEER: LaneRole = { lane: "Cofounder", side: "Peer" };
 
 /** One stated want (a live intent or a goal facet) read through the objective taxonomy. */
 export interface Want {
@@ -37,9 +42,9 @@ const TECH_INTERESTS: ReadonlySet<string> = new Set(INTERESTS.filter(i => i.clus
 const PROFESSIONAL_SKILLS: ReadonlySet<string> = new Set(SKILLS.flatMap(s => (s.teaches !== undefined && TECH_INTERESTS.has(s.teaches) ? [s.tag] : [])));
 const isProfessionalTag = (tag: string): boolean => TECH_INTERESTS.has(tag) || PROFESSIONAL_SKILLS.has(tag);
 
-const INVEST_OFFERED = /\b(invest(ing)? in (startups?|companies|founders|early[- ]stage \w+)|angel invest\w*)\b/i;
+const INVEST_OFFERED = /\b(invest(ing)? in (startups?|companies|founders|early[- ]stage \w+)|angel invest\w*|(meet|find|looking for|seeking) (startups?|companies|founders) to invest in)\b/i;
 const INVEST_SOUGHT = /\b(fundrais\w*|rais(e|ing) (money|a round|capital|funds?|a seed)|seed round|(find|meet) investors?)\b/i;
-const COFOUNDER = /\bco-?founders?\b/i;
+const COFOUNDER = /\b(find|get|meet|need|want|seek(ing)?|looking for) (a |another )?((potential|technical|business) )?co-?founders?\b/i;
 const MENTOR_OFFERED = /\bmentor(ing)? (someone|people|others|founders|juniors?)\b/i;
 const MENTOR_SOUGHT = /\b(find|get|need|want) (a )?mentor\b|\bmentorship\b|\badvice from\b|\bsomeone senior\b/i;
 const INVESTOR_OFFER = /\b(investor|angel invest\w*|vc (fund|firm)|venture capital\w*|fund manager|general partner)\b/i;
@@ -59,20 +64,26 @@ function taggedRole(tags: readonly string[]): LaneRole | undefined {
   return lane ? { lane, side } : undefined;
 }
 
-/** Lanes of a want. Every professional ask is also a Peer in Intro; any other ask is a Peer in Friend. */
+const INTENT_ROLES: Readonly<Record<Exclude<NetworkIntentRoute, "NoRoute">, LaneRole>> = {
+  FriendRoute: FRIEND, IntroRoute: INTRO, CofounderRoute: COFOUNDER_PEER,
+  MentorOfferRoute: { lane: "Mentor", side: "Offering" }, MentorSeekRoute: { lane: "Mentor", side: "Seeking" },
+  InvestOfferRoute: { lane: "Invest", side: "Offering" }, InvestSeekRoute: { lane: "Invest", side: "Seeking" },
+};
+
+/** A specific ask has one lane and side. Only a general professional ask can open Intro. */
 function wantRoles(text: string, category: Category | undefined, tags: readonly string[], asked: readonly string[]): LaneRole[] {
   const tagged = taggedRole(tags);
   if (tagged) return [tagged];
-  if (category === "romance" || category === "growth") return [];
-  const specific: LaneRole[] =
-    INVEST_OFFERED.test(text) ? [{ lane: "Invest", side: "Offering" }]
-    : INVEST_SOUGHT.test(text) ? [{ lane: "Invest", side: "Seeking" }]
-    : COFOUNDER.test(text) ? [{ lane: "Cofounder", side: "Peer" }]
-    : MENTOR_OFFERED.test(text) ? [{ lane: "Mentor", side: "Offering" }]
-    : MENTOR_SOUGHT.test(text) ? [{ lane: "Mentor", side: "Seeking" }]
-    : [];
-  const professional = specific.length > 0 || category === "professional" || [...plainTags(tags), ...asked].some(isProfessionalTag);
-  return professional ? [...specific, INTRO] : [FRIEND];
+  const specific: NetworkIntentRoute =
+    INVEST_OFFERED.test(text) ? "InvestOfferRoute"
+    : INVEST_SOUGHT.test(text) ? "InvestSeekRoute"
+    : COFOUNDER.test(text) ? "CofounderRoute"
+    : MENTOR_OFFERED.test(text) ? "MentorOfferRoute"
+    : MENTOR_SOUGHT.test(text) ? "MentorSeekRoute"
+    : "NoRoute";
+  const professional = category === "professional" || [...plainTags(tags), ...asked].some(isProfessionalTag);
+  const route = networkIntentRoute(category !== "romance" && category !== "growth", specific, professional);
+  return route === "NoRoute" ? [] : [INTENT_ROLES[route]];
 }
 
 /** Lanes an offer opens: its explicit lane tag; else an investor offers in Invest, a mentor in Mentor; both, and any professional skill, are Peers in Intro. */
@@ -98,11 +109,12 @@ interface RunCache {
   readonly intents: Map<string, Want>;
   readonly goals: Map<MemberId, readonly Want[]>;
   readonly tags: Map<MemberId, MemberTags>;
+  readonly cofounderIntents: Map<MemberId, Intent | undefined>;
 }
 const caches = new WeakMap<World, RunCache>();
 const cacheOf = (w: World): RunCache => {
   let cache = caches.get(w);
-  if (!cache) { cache = { intents: new Map(), goals: new Map(), tags: new Map() }; caches.set(w, cache); }
+  if (!cache) { cache = { intents: new Map(), goals: new Map(), tags: new Map(), cofounderIntents: new Map() }; caches.set(w, cache); }
   return cache;
 };
 
@@ -129,6 +141,21 @@ const memberWants = (w: World, memberId: MemberId): readonly Want[] =>
 
 export const wantHas = (want: Want, role: LaneRole): boolean => want.roles.some(r => r.lane === role.lane && r.side === role.side);
 
+/** The current signed standing intent is the only authority for a Cofounder profile. */
+export function networkCofounderIntentOf(w: World, id: MemberId): Intent | undefined {
+  const cache = cacheOf(w).cofounderIntents;
+  if (cache.has(id)) return cache.get(id);
+  let latest: Intent | undefined;
+  for (const intent of w.get(id)?.intents ?? []) {
+    if (intent.memberId !== id || intent.objective !== cofounderIntentObjective) continue;
+    if (!cofounderIntentEligible(intent.app ?? "", "ntwrk", intent.category, intent.details ?? "",
+      intent.createdAt <= w.now && standingIntentLive(intent, w.now))) continue;
+    if (!latest || intent.createdAt > latest.createdAt || (intent.createdAt === latest.createdAt && intent.id < latest.id)) latest = intent;
+  }
+  cache.set(id, latest);
+  return latest;
+}
+
 /** A member's matching tags from matchable or shareable facets and live wants (the same in every lane). */
 export function memberTags(w: World, memberId: MemberId): MemberTags {
   const cache = cacheOf(w);
@@ -141,7 +168,10 @@ export function memberTags(w: World, memberId: MemberId): MemberTags {
     else if (SEEK_KINDS.has(f.kind)) add(seeks, plainTags(f.tags));
     else if (INTEREST_KINDS.has(f.kind)) add(interests, plainTags(f.tags));
   }
-  for (const want of memberWants(w, memberId)) { add(seeks, want.seeks); add(interests, want.interests); add(offers, want.pools); }
+  for (const want of memberWants(w, memberId)) {
+    if (wantHas(want, COFOUNDER_PEER)) continue;
+    add(seeks, want.seeks); add(interests, want.interests); add(offers, want.pools);
+  }
   const tags: MemberTags = { offers, seeks, interests };
   cache.tags.set(memberId, tags);
   return tags;
@@ -154,8 +184,13 @@ function memberships(w: World, memberId: MemberId): Membership[] {
   const mi = w.get(memberId);
   if (!mi) return [];
   const roles = new Map<string, LaneRole>();
-  for (const want of memberWants(w, memberId)) for (const role of want.roles) roles.set(membershipId(memberId, role), role);
-  for (const f of mi.match) if (OFFER_KINDS.has(f.kind)) for (const role of offerRoles(f)) roles.set(membershipId(memberId, role), role);
+  for (const want of memberWants(w, memberId)) for (const role of want.roles) {
+    if (role.lane !== "Cofounder") roles.set(membershipId(memberId, role), role);
+  }
+  for (const f of mi.match) if (OFFER_KINDS.has(f.kind)) for (const role of offerRoles(f)) {
+    if (role.lane !== "Cofounder") roles.set(membershipId(memberId, role), role);
+  }
+  if (networkCofounderIntentOf(w, memberId)) roles.set(membershipId(memberId, COFOUNDER_PEER), COFOUNDER_PEER);
   // A host or a member with interests is a Friend peer without a stated social want (the profile
   // builder still requires the social opt-in).
   if (mi.isHost || mi.match.some(f => INTEREST_KINDS.has(f.kind))) roles.set(membershipId(memberId, FRIEND), FRIEND);
@@ -164,10 +199,26 @@ function memberships(w: World, memberId: MemberId): Membership[] {
   }));
 }
 
-const tags = (w: World, entity: MatchEntity): EntityTags => {
+function cofounderTags(w: World, id: MemberId): EntityTags {
+  const intent = networkCofounderIntentOf(w, id)!;
+  const want = intentWant(w, intent);
+  const offers: string[] = [], seeks = want.seeks.filter(tag => !want.pools.includes(tag)), interests = [...want.interests];
+  for (const f of w.get(id)?.match ?? []) {
+    if ((f.app ?? "ntwrk") !== "ntwrk"
+      || !standingFacetReadable(f.scope, f.provenance, f.confirmedByMember === true, f.sensitive !== undefined, f.inferred === true)) continue;
+    const fields = plainTags(f.tags);
+    if (OFFER_KINDS.has(f.kind)) offers.push(...fields);
+    if (f.kind === "desire") seeks.push(...fields);
+    if (f.kind === "interest") interests.push(...fields);
+  }
+  return { offers, seeks, interests };
+}
+
+function tags(w: World, entity: MatchEntity): EntityTags {
+  if (entity.lane === "Cofounder") return cofounderTags(w, entity.memberId);
   const { offers, seeks, interests } = memberTags(w, entity.memberId);
   return { offers: [...offers], seeks: [...seeks], interests: [...interests] };
-};
+}
 
 // spec/memberStanding.md, "Standing adds reviewed facts in full and unreviewed facts at half".
 // Recognized fact tags ("<key>:<value>") and their standing points. Nothing here reads acceptance,

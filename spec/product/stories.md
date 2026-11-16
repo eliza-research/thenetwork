@@ -96,7 +96,7 @@ Models: [agent loop](../models/chatjson_loop.md), [member request admission](../
 
 Record the objective, essential constraints, source and time horizon. List, pause or close it on request. Re-evaluate when relevant evidence or supply changes. Expire or reconfirm at 60 days. A later suggestion still needs current eligibility and consent.
 
-Models: [profile learning](../models/profile_learning.md), [standing intent freshness](../standingIntent.md), [standing intent management](../standingIntentManagement.md), [public event supply](../publicEventCatalog.md), [request retry and withdrawal](../memberRequest.md), [matching engine](../models/matching_engine.md).
+Models: [profile learning](../models/profile_learning.md), [standing intent freshness](../standingIntent.md), [standing intent management](../standingIntentManagement.md), [cofounder standing intent](../cofounderIntent.md), [public event supply](../publicEventCatalog.md), [request retry and withdrawal](../memberRequest.md), [matching engine](../models/matching_engine.md).
 
 ## Story F10 — Get concierge value
 
@@ -124,7 +124,7 @@ Models: [opportunity](../models/opportunity.md), [matching engine](../models/mat
 
 Propose a pair only when its lane gives it a pair value: both members reach the lane's utility floor, their private standing gap after the lane's offset stays inside the lane's band plus both uncertainties, and a lane that requires balance has a balanced exchange.
 
-Models: [reciprocal pair value](../pairValue.md), [relationship lanes](../matchLane.md), [matching engine](../models/matching_engine.md).
+Models: [reciprocal pair value](../pairValue.md), [relationship lanes](../matchLane.md), [exact cofounder consent](../cofounderDispatch.md), [Peon cofounder matching](../peonCofounder.md), [matching engine](../models/matching_engine.md).
 
 ### Standing stays private and earned
 

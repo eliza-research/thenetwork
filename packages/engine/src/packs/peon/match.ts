@@ -12,6 +12,8 @@ import { pairValueScale } from "../../../../core/src/generated/pairValue.ts";
 import { memberReason } from "../../filters.ts";
 import type { EntityStanding, EntityTags, MatchEntity, MatchProfile, Membership, PackVectors } from "../../match/profile.ts";
 import type { World } from "../../world.ts";
+import { networkVectors } from "../network/vectors.ts";
+import { peonCofounderMembership, peonCofounderTags } from "./cofounder.ts";
 import { candidateOf, jobOf, profileOf, type CandidateProfile, type JobProfile } from "./profile.ts";
 import { peonMarkets } from "./rules.ts";
 
@@ -49,11 +51,11 @@ const candidateEntityId = (c: CandidateProfile, f: string): string => (c.familie
 const familyOfEntity = (c: CandidateProfile, e: MatchEntity): string => (e.id === c.id ? c.families[0]! : e.id.slice(c.id.length + 1));
 
 const memberOk = (w: World, id: MemberId, role: "seeker" | "provider") =>
-  memberReason(w, id, { category: "professional", role, format: "one_to_one", timeSensitive: false }) === null;
+  memberReason(w, id, { lane: "Hire", category: "professional", role, format: "one_to_one", timeSensitive: false }) === null;
 
 // A seat or a candidate without a stated level, family or pay has no membership: the lane band is the
 // level rule only when both levels exist, and the pay value needs both the range and the floor.
-function memberships(w: World, id: MemberId): Membership[] {
+function hireMemberships(w: World, id: MemberId): Membership[] {
   const p = profileOf(w, id);
   if (!p || !known(p.seniority)) return [];
   if (p.kind === "job") {
@@ -68,12 +70,19 @@ function memberships(w: World, id: MemberId): Membership[] {
   return p.families.map(f => ({ id: candidateEntityId(p, f), lane: "Hire" as const, side: "Seeking" as const, market: p.market, capacity }));
 }
 
+function memberships(w: World, id: MemberId): Membership[] {
+  const hire = hireMemberships(w, id);
+  const cofounder = peonCofounderMembership(w, id);
+  return cofounder ? [...hire, cofounder] : hire;
+}
+
 const heldSkills = (c: CandidateProfile) => [...c.skills.keys()].flatMap(s => levels(s, effectiveLevel(c, s)));
 
 // Work mode and location are hard rules (rules.ts), so they are not sought here: a candidate who
 // accepts more modes must not get less value from a job. The role family is the shared field
 // (affinity, both sides) and, for the candidate, what they seek.
 function tags(w: World, e: MatchEntity): EntityTags {
+  if (e.lane === "Cofounder") return peonCofounderTags(w, e.memberId);
   const j = jobOf(w, e.memberId);
   if (j) {
     return {
@@ -94,6 +103,7 @@ const levelPoints = (level: number): number => Math.floor((Math.min(TOP_LEVEL, M
 // The level is a categorical fact on both sides, so both count it in full and sit on one scale; how
 // well the candidate's level is backed shows only in the uncertainty.
 function standing(w: World, e: MatchEntity): EntityStanding {
+  if (e.lane === "Cofounder") return networkVectors.standing(w, e);
   const p = profileOf(w, e.memberId)!;
   const level = [{ points: levelPoints(p.seniority!), reviewed: true }];
   // The employer is staff-verified (an unverified seat has no membership): one reviewed fact.
@@ -116,6 +126,7 @@ function payFit(payMin: number, payMax: number, floor: number): number {
 
 // Both sides of every Hire profile have a known floor or range (memberships), so no default applies.
 function packValue(w: World, a: MatchProfile, b: MatchProfile): number {
+  if (a.lane === "Cofounder" || b.lane === "Cofounder") return 0;
   const ja = jobOf(w, a.memberId), cb = candidateOf(w, b.memberId);
   if (ja && cb) return payFit(ja.payMin!, ja.payMax!, cb.floor!);
   const ca = candidateOf(w, a.memberId), jb = jobOf(w, b.memberId);

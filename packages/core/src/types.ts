@@ -54,6 +54,8 @@ export interface Intent {
   id: string; memberId: MemberId; objective: string; category: Category;
   details?: string; desiredPeople?: string; horizonDays: number;
   status: "active" | "paused" | "closed"; createdAt: number; embedding?: number[];
+  /** The app that owns a verified, app-scoped intent. Legacy projections can omit it. */
+  app?: AppId;
 }
 export interface Presence {
   memberId: MemberId; city: City; type: "home" | "routine" | "temporary";

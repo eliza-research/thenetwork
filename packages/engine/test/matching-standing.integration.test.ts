@@ -9,11 +9,11 @@ test("ordinary standing follows the current app, lane, and owner-approved matchi
   const id = "member";
   const input = emptyInput();
   input.members.push(baseMember(id));
-  input.facets.push(facet(id, 0, "goal", "Find a cofounder", ["lane:Cofounder"], "matchable"));
-  const base = facet(id, 1, "fact", "Work track record", ["lane:Cofounder", "evidence:40"], "matchable");
+  input.facets.push(facet(id, 0, "goal", "Meet people in my field", ["lane:Intro"], "matchable"));
+  const base = facet(id, 1, "fact", "Work track record", ["lane:Intro", "evidence:40"], "matchable");
   const profileWith = (changes: Partial<Facet>) => {
     const world = new World({ ...input, facets: [...input.facets, { ...base, ...changes }] }, resolveConfig({}), localEmbed);
-    return world.match.profilesOf(id).find(profile => profile.lane === "Cofounder");
+    return world.match.profilesOf(id).find(profile => profile.lane === "Intro");
   };
 
   expect(profileWith({})).toMatchObject({ standing: 20, uncertainty: 20 });
