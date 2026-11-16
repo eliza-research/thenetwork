@@ -8,7 +8,7 @@ A member needs a plan to book only after enough eligible people accept.
 
 Check quorum, group size, deadlines, alternatives, and contact eligibility. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [Friends weekly planner](../friendsWeek.md) assigns reservations before proposal review, replies, and booking.
+The [Friends weekly planner](../friendsWeek.md) assigns reservations before proposal review, replies, and booking. The [plan dispatch spec](../planDispatch.md) generates invitation eligibility, deferral, and send decisions for approved plans.
 
 Imported from `quint/plan_run.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 

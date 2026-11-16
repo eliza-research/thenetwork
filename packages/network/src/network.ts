@@ -41,6 +41,7 @@ import {
   type OpportunityLifecycle, type OpportunityPhase,
 } from "../../core/src/generated/opportunityLifecycle.ts";
 import { bookedCapacityReached, bookedOccupies } from "../../core/src/generated/peonCapacity.ts";
+import { initial as initialPlanDispatch, planLaneOpen, planTurnDue, step as stepPlanDispatch } from "../../core/src/generated/planDispatch.ts";
 import {
   alternateAllowed, canRecordReply, mayTryAlternate, mayUsePriorIntent, needsOtherTimes,
   needsProbeSend, probeAvailability, probeExpired, probeExpiryDeadline, probeIsInvite, probeResponseMs, probeTiming,
@@ -3104,9 +3105,13 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** Probes whose turn has come go out when the member's plan lane allows (send window, one a day, allowance). */
   private planLane(o: Opp, now: number) {
-    if (!o.planRun || (o.stage !== "probing" && o.stage !== "scheduled")) return;
-    if (o.stage === "scheduled" && now > o.plan!.window.start - this.pcfg.lateJoinHours * HOUR) return;
-    for (const [id, a] of Object.entries(o.planRun.answers)) if (a === "pending" && !o.contacted.has(id)) this.planProbe(o, id, now);
+    if (!o.planRun) return;
+    // spec/planDispatch.md, "Only an open plan can invite a pending member"
+    const booked = o.stage === "scheduled";
+    if (!planLaneOpen(o.stage === "probing", booked, booked && !(now > o.plan!.window.start - this.pcfg.lateJoinHours * HOUR))) return;
+    for (const [id, answer] of Object.entries(o.planRun.answers)) {
+      if (planTurnDue(answer === "pending", o.contacted.has(id))) this.planProbe(o, id, now);
+    }
   }
 
   /**
@@ -3120,16 +3125,25 @@ export class ConsentNetwork implements NetworkUnderTest {
   private planProbe(o: Opp, id: MemberId, now: number) {
     const m = this.members.get(id);
     if (!m || !o.plan || !o.planRun) return;
-    if (!this.planSeatOk(m, o.id, { busyOk: true })) return this.planAnswer(o, id, false, true);
+    // spec/planDispatch.md, "A missing seat or an absence rules out the invitation"
+    const seat = stepPlanDispatch(initialPlanDispatch, { type: "checkSeat", eligible: this.planSeatOk(m, o.id, { busyOk: true }) });
+    if (seat.phase !== "CheckingPresence") return this.planAnswer(o, id, false, true);
     // Away from New York (an announced trip) at any time from now to the plan: never asked.
-    if (!this.inNyc(id, now, o.plan.window.end)) { this.refuse(id, "probe", "away"); return this.planAnswer(o, id, false, true); }
+    const presence = stepPlanDispatch(seat, { type: "checkPresence", present: this.inNyc(id, now, o.plan.window.end) });
+    if (presence.phase !== "CheckingWindow") {
+      this.refuse(id, "probe", presence.reason);
+      return this.planAnswer(o, id, false, true);
+    }
     // In another open opportunity: the plan probe waits (one open question at a time) until the deadline.
-    if (this.busy(m.id, o.id)) return this.planDefer(o, id, "busy", now);
-    if (!this.timingOk(m, "slot", now)) return this.planDefer(o, id, "send_window", now);
-    if (m.awaiting?.kind === "probe" || m.awaiting?.kind === "booked" || this.askOpen(m, now)) return this.planDefer(o, id, "one_question", now);
-    const day = nyParts(now).day;
-    if (m.planDay === day) return this.planDefer(o, id, "one_a_day", now);
+    // spec/planDispatch.md, "Wait for the send window, earlier questions, and the right allowance"
+    const busy = this.busy(m.id, o.id);
+    const windowOpen = !busy && this.timingOk(m, "slot", now);
+    const awaitingAnswer = windowOpen && (m.awaiting?.kind === "probe" || m.awaiting?.kind === "booked" || this.askOpen(m, now));
+    const day = windowOpen && !awaitingAnswer ? nyParts(now).day : undefined;
+    const window = stepPlanDispatch(presence, { type: "checkWindow", busy, windowOpen, awaitingAnswer, sentToday: day !== undefined && m.planDay === day });
+    if (window.phase !== "CheckingAllowance" || day === undefined) return this.planDefer(o, id, window.reason, now);
     const allowance = this.pcfg.allowance.enabled && plans.planAllowanceEligible(this.planEvidence(m, now), !!m.weekly, now);
+    let admitted: boolean, allowanceReason: string;
     if (allowance) {
       const item = plans.planItem(o.plan, id, { now, reviewState: "approved", stage: o.plan.partner && id !== o.plan.invited[0] ? "partner" : "first", pcfg: this.pcfg });
       const r = attention.composeMessage({
@@ -3138,18 +3152,32 @@ export class ConsentNetwork implements NetworkUnderTest {
         conversation: { outboundSinceInbound: m.outbound ?? 0, ...(m.lastInbound ? { lastInboundAt: m.lastInbound } : {}) },
         now, mode: "digest", cfg: plans.planAllowanceConfig(DEFAULT_ATTENTION, this.pcfg),
       });
-      if (!r.send) return this.planDefer(o, id, r.reason || "compose", now);
-    } else if (this.overBudget(m)) return this.planDefer(o, id, "cap", now);
+      admitted = r.send;
+      allowanceReason = r.send ? "" : r.reason || "compose";
+    } else {
+      admitted = !this.overBudget(m);
+      allowanceReason = "cap";
+    }
+    const budget = stepPlanDispatch(window, { type: "checkAllowance", admitted });
+    if (budget.phase !== "RenderingInvite") return this.planDefer(o, id, allowanceReason, now);
     // A crew session's extra seats (organizing reach) go to people outside the crew: they get the plain plan probe.
     const inCrew = !o.plan.crewId || !!this.crews.find(c => c.id === o.plan!.crewId)?.members.includes(id);
     const text = plans.buildPlanProbe(this.planWorld(now), inCrew ? o.plan : { ...o.plan, crewId: undefined }, id, NY);
-    if (!text) { this.refuse(id, "probe", "plan_copy"); return this.planAnswer(o, id, false, true); }
+    // spec/planDispatch.md, "A usable message must be sent before the daily record changes"
+    const rendered = stepPlanDispatch(budget, { type: "renderInvite", usable: !!text });
+    if (rendered.phase !== "SendingInvite" || !text) {
+      this.refuse(id, "probe", rendered.reason);
+      return this.planAnswer(o, id, false, true);
+    }
     const a = plans.activityById.get(o.plan.activityId)!;
     const res = this.send(m, text, {
       type: "plan_probe", proactive: true, planInvite: allowance, ...(allowance ? { lane: "plan" } : {}),
       plan: { planId: o.id, activity: a.id, window: { ...o.plan.window }, size: o.plan.invited.length, ...(o.plan.place.area ? { area: o.plan.place.area } : {}) },
     }, "probe", { about: o.plan.invited, hook: { t: "plan_probe", oppId: o.id, id }, noDefer: true, planInvite: allowance });
-    if (res === "sent") { m.planDay = day; if (allowance) this.plansCounters.planInvitesAllowance++; else this.plansCounters.planInvitesIntroCap++; }
+    if (stepPlanDispatch(rendered, { type: "recordSend", sent: res === "sent" }).phase === "InviteSent") {
+      m.planDay = day;
+      if (allowance) this.plansCounters.planInvitesAllowance++; else this.plansCounters.planInvitesIntroCap++;
+    }
   }
 
   private planDefer(o: Opp, id: MemberId, reason: string, now: number) {
