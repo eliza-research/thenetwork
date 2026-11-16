@@ -6,6 +6,7 @@ import type {
   ParticipationState, Presence, ScoreComponents,
 } from "@thenetwork/core";
 import type { OracleSummary } from "@thenetwork/core";
+import type { SearchTally } from "@thenetwork/engine";
 
 export type Mode = "game" | "real";
 
@@ -200,6 +201,8 @@ export interface EngineRunSummary {
   fairness: { gini: number; top10Share: number; zeroExposureShare: number; newcomerCoverage: number; viableCoverage: number; lorenz: number[]; membersWithProposal: number; eligibleMembers: number };
   emptyStates: number;
   emptyStatesByReason: Record<string, number>;
+  /** The bounded candidate search totals (spec/candidateSearch.md); zero when no search ran. */
+  search: SearchTally;
   timingsMs: Record<string, number>;
   /** Highest-scoring configurations considered (selected or not), for "why did the alternatives lose". */
   top: { key: string; generator: string; participants: MemberId[]; score: number; eligible: boolean; reason?: string; selected: boolean; components: ScoreComponents }[];

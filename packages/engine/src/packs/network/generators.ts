@@ -4,7 +4,7 @@
 // funnel.byGenerator serializes in this order, and network_growth consumes the intents that the
 // earlier generators left unmatched.
 import { needsSecondHomeHelper } from "../../../../core/src/generated/boundedHelp.ts";
-import { circleCoherent, type CircleEvidence } from "../../../../core/src/generated/groupFormation.ts";
+import { circleCoherent } from "../../../../core/src/generated/groupFormation.ts";
 import { laneLimits, laneOffered, type MatchLane } from "../../../../core/src/generated/matchLane.ts";
 import { noPairValue } from "../../../../core/src/generated/pairValue.ts";
 import { recentRepeatSource, sameEncounterConsent } from "../../../../core/src/generated/repeatEncounter.ts";
@@ -15,7 +15,7 @@ import { isHomeEntry, isMinor, memberReason } from "../../filters.ts";
 import {
   circleCandidate, eventMembers, eventRiskText, label, makeCandidate, pairCandidate, searchFor, warmPathValue, type GenCtx, type MatchedFields,
 } from "../../genkit.ts";
-import type { Circle } from "../../match/circles.ts";
+import { circleEvidence, type Circle } from "../../match/circles.ts";
 import { compareText, laneCategory, type MatchProfile } from "../../match/profile.ts";
 import type { Anchor, Candidate, Format, NetworkEvent, Role } from "../../types.ts";
 import { intentText, pairKey, type World } from "../../world.ts";
@@ -57,21 +57,8 @@ const groupPairFloor = (lane: MatchLane, size: number): number => (size > 2 ? la
 
 /** A circle of the lane from a group whose pairs all have a searched pair value, or undefined when it is not coherent. */
 function circleOf(ctx: GenCtx, lane: MatchLane, profiles: readonly MatchProfile[]): Circle | undefined {
-  let lowestPairValue = Number.MAX_SAFE_INTEGER, pairValueTotal = 0, pairCount = 0;
-  for (let i = 0; i < profiles.length; i++) for (let j = i + 1; j < profiles.length; j++) {
-    const value = searchedValue(ctx, profiles[i], profiles[j]);
-    if (value < 0) return undefined;
-    lowestPairValue = Math.min(lowestPairValue, value);
-    pairValueTotal += value;
-    pairCount++;
-  }
-  const byStanding = [...profiles].sort((x, y) => x.standing - y.standing || x.ordinal - y.ordinal || compareText(x.id, y.id));
-  const low = byStanding[0], high = byStanding[byStanding.length - 1];
-  if (!low || !high) return undefined;
-  const evidence: CircleEvidence = {
-    size: profiles.length, lowestPairValue: pairCount > 0 ? lowestPairValue : 0, pairValueTotal, pairCount,
-    standingLow: low.standing, standingHigh: high.standing, uncertaintyTotal: low.uncertainty + high.uncertainty,
-  };
+  if (profiles.length === 0) return undefined;
+  const evidence = circleEvidence(profiles, (a, b) => { const value = searchedValue(ctx, a, b); return value >= 0 ? value : undefined; });
   const limits = laneLimits(lane);
   // spec/groupFormation.md, "A primary circle values every pair and keeps a narrow standing spread"
   return circleCoherent(evidence, limits.circleMinimum, limits.circleMaximum, limits.circlePairFloor, limits.rules.parityBand)

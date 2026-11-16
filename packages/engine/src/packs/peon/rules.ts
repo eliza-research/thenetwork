@@ -100,9 +100,7 @@ export function peonMarkets(w: World, id: MemberId): City[] {
  * CANDIDATE set, remote / hybrid / onsite) is `pairReason`. Home zip is never read: it is a proxy.
  */
 export const peonGeo: GeoModel = {
-  kind: "multi_market",
   markets: cfg => cfg.cities,
-  tz: (market, cfg) => cfg.timezones[market] ?? "UTC",
   location(w, id, start, end) {
     const out = new Map<City, Interval[]>();
     for (const m of peonMarkets(w, id)) out.set(m, [[start, end]]);

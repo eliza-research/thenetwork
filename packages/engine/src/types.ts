@@ -50,8 +50,12 @@ export interface EngineAsk {
 }
 export interface ReliabilityEvidence { noShows: number; completedSinceLastNoShow: number }
 
+/** A core Proposal, with the roles an engine proposal carries (EngineProposal.roles) when it has them. */
+export type RecentProposal = Proposal & { roles?: Record<MemberId, Role> };
+
 /** What the engine reads: the core snapshot plus optional extension fields. */
 export interface EngineInput extends WorldSnapshot {
+  recentProposals: RecentProposal[];
   /** An evidence-triggered run considers only these live standing intents and their events. */
   standingIntentSearch?: string[];
   safetyHolds?: SafetyHold[];
@@ -137,6 +141,9 @@ export interface EngineProposal extends Proposal {
    * Additive (attention budget, D13): the send-time layer orders items by E x sqrt(P_acc).
    */
   acceptance?: Record<MemberId, number>;
+  /** The candidate's relationship lane and matched entities (Candidate.lane, Candidate.entities). */
+  lane?: MatchLane;
+  entities?: Record<MemberId, EntityId>;
 }
 
 export interface FairnessMetrics {
@@ -167,8 +174,7 @@ export interface MatchingRunLog {
   runId: string; seed: number; configHash: string; inputHash: string; now: number;
   engineVersion: string; embedModel: string; judgeModel?: string;
   funnel: FunnelLog;
-  /** `complementarity`: the structured pair value blended into fit (absent when not applied). */
-  scored: { key: string; generator: string; participants: MemberId[]; components: ScoreComponents; score: number; eligible: boolean; reason?: string; judged: boolean; complementarity?: number }[];
+  scored: { key: string; generator: string; participants: MemberId[]; components: ScoreComponents; score: number; eligible: boolean; reason?: string; judged: boolean }[];
   /** Pass 2 (rubric judge) stats and verdicts, plus optional pass 1 (screen) and pass 3 (deep review). */
   judge: {
     calls: number; cacheHits: number; failures: number; verdicts: { key: string; cacheKey: string; verdict: JudgeVerdict | null; cached: boolean }[];

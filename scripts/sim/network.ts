@@ -38,7 +38,8 @@ const MEETINGS_MIN = 140;
 async function world(days: number, seed = 3, network: NetworkOptions = { review: "auto" }) {
   const personas = await nycPersonas();
   const start = (await fileAt(`${DATA_DIR}/manifest.json`).json()).snapshotNow as number;
-  const net = new ConsentNetwork({ seed, ...network });
+  // The NYC world is one market.
+  const net = new ConsentNetwork({ seed, ...network, engine: { cities: ["nyc"], ...network.engine } });
   const records: RunRecord[] = [];
   const w = new World({ seed, personas, days, start, writeLog: false, network: net, agent: new PolicyPersonaAgent(start), spawnFriend: friendFactory({ seed }), onRecord: r => records.push(r) });
   await w.begin();

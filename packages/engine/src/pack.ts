@@ -24,9 +24,9 @@
 // hashes. Run logs get no new fields for networkPack. Rule and generator order is the contract.
 import type { AppId, Category, City, Facet, Intent, MemberId, OpportunityKind } from "@thenetwork/core";
 import type { ActivityType } from "./packs/network/activities.ts";
-import type { AttentionConfig, EngineConfig, PlansConfig } from "./config.ts";
+import type { AttentionConfig, EngineConfig } from "./config.ts";
 import type { GenCtx } from "./genkit.ts";
-import type { Candidate, CadencePrefs, Format, Role } from "./types.ts";
+import type { Candidate, Format, Role } from "./types.ts";
 import type { Interval, MemberIndex, RomanceProfile, World } from "./world.ts";
 import type { SelectionResult } from "./policy.ts";
 import type { EngineRng as Rng } from "@thenetwork/core";
@@ -64,7 +64,6 @@ export interface AppPack {
   geo: GeoModel;
   /** Candidate generators. ORDER IS PART OF THE CONTRACT (funnel key order, dedupe ties, network_growth last-but-one). */
   generators: readonly GeneratorSpec[];
-  retrieval: RetrievalPolicy;
   scoring: ScoringPolicy;
   selection: SelectionPolicy;
   consent: ConsentPolicy;
@@ -73,30 +72,20 @@ export interface AppPack {
   judge?: JudgePack;
   explain: ExplainPack;
   plans?: PlansPack;
-  capital?: CapitalPack;
-  metrics: MetricsPack;
   /** Lane memberships, tags, standing and optional traits and pack value for generic matching (match/). Absent: no profiles. */
   vectors?: PackVectors;
-  /** Pack defaults. Shapes are the shared config types, so configHash is unchanged for networkPack. */
-  defaults: { engine: EngineConfig; attention: AttentionConfig; plans?: PlansConfig };
 }
 
 // ---------------------------------------------------------------------------------------- ontology
 export interface LaneDef {
-  id: LaneId; label: string;
-  /** default_on: opted in unless the member opts out; explicit: needs an opt-in; explicit_mutual: every participant opted in AND each admits the other. */
-  optIn: "default_on" | "explicit" | "explicit_mutual";
+  id: LaneId;
   /** Core invariant: every lane is adults-only for matching. There is no `false`. */
   adultOnly: true;
-  /** Shown alone, never inside a digest (attention). networkPack: romance. */
-  shipsAlone?: boolean;
   /** Plans never use this lane. networkPack: romance (D15). */
   neverInPlans?: boolean;
 }
-export interface RoleDef { id: RoleId; contributor: boolean }
-export interface KindDef { id: KindId; format: Format | "listing"; size: [number, number] }
 
-/** The want vocabulary the complementarity term reads (networkPack: engine/taxonomy OBJECTIVES). */
+/** The want vocabulary of a pack (networkPack: packs/network/taxonomy.ts OBJECTIVES). */
 export interface ObjectiveDef {
   id: string; pattern: RegExp; needs: string[]; pool?: string; interests: string[];
   /** Satisfied by mutual stated preferences (dating), not by tags. */
@@ -112,8 +101,6 @@ export interface MemberConstraints {
 
 export interface Ontology {
   lanes: readonly LaneDef[];
-  roles: readonly RoleDef[];
-  kinds: readonly KindDef[];
   /** Roles that give (provider, helper, host, connector): contribution budgets, receiving-state rule, load. */
   contributorRoles: ReadonlySet<Role>;
   /** Positive edge types that form the warm graph (blocking edges are core: blocked, avoid). */
@@ -121,10 +108,8 @@ export interface Ontology {
   /** Lane and role of the once-per-member availability probe in the run report (funnel.memberFunnel). */
   funnelProbe: { lane: Category; role: Role };
   objectives: readonly ObjectiveDef[];
-  /** Objectives a stated want maps to (complementarity, retrieval need channel). */
+  /** Objectives a stated want maps to (plan activities). */
   objectivesFor(text: string, details?: string, lane?: string): ObjectiveDef[];
-  /** Both members' mutual-preference constraints admit each other (the `romance` objective). */
-  mutualPreferenceMatch(w: World, a: MemberId, b: MemberId): boolean;
   /** Re-label a stated want (networkPack: personal growth -> hobby, which also opts the member in to hobby). Undefined = unchanged. */
   relabelIntent?(it: Intent, cfg: EngineConfig): Category | undefined;
   /** Typed constraints from a member's boundary / preference facets. */
@@ -170,13 +155,11 @@ export interface GeoOverlap { city: City; intervals: Interval[]; hours: number }
 /**
  * Where members are and whether a configuration can meet. networkPack: city buckets (sf / nyc ids
  * kept: they are inside seeds, tick ids and proposal keys). slopPack: radius around a zip or point,
- * with `pairReason` as the mutual-radius hard filter and `displayDistance` for bucketed copy.
+ * with `pairReason` as the mutual-radius hard filter.
  */
 export interface GeoModel {
-  kind: "city" | "radius" | "multi_market";
   /** Markets this run covers (locking, per-market caps, time zones). networkPack: cfg.cities, same array. */
   markets(cfg: EngineConfig): readonly City[];
-  tz(market: City, cfg: EngineConfig): string;
   /** Market -> availability intervals of a member in [start, end). */
   location(w: World, id: MemberId, start: number, end: number): Map<City, Interval[]>;
   /** Common availability of all members in one market (prefers `preferred`); null = cannot meet. The core geo filter. */
@@ -188,24 +171,13 @@ export interface GeoModel {
    * radius, d <= min(rA, rB)). Must be symmetric. networkPack: absent (city overlap only).
    */
   pairReason?(w: World, a: MemberId, b: MemberId): string | null;
-  /** Bucketed distance copy ("under 2 mi"); never an exact distance. */
-  displayDistance?(km: number): string;
 }
 
-// ---------------------------------------------------------------------------------------- generators / retrieval
+// ---------------------------------------------------------------------------------------- generators
 export interface GeneratorSpec { name: GeneratorId; run(ctx: GenCtx): Candidate[] }
-export interface RetrievalPolicy {
-  channels: readonly ("semantic" | "tag" | "graph" | "need" | "geo" | "exposure_floor")[];
-  /** Directions retrieved (peon: candidate->job and job->candidate). networkPack: members for intents. */
-  directions: readonly { from: string; to: string }[];
-}
 
 // ---------------------------------------------------------------------------------------- scoring
 export interface ScoringPolicy {
-  /** Objective name, for reports. networkPack: reciprocal harmonic (pairs) + average-without-misery (groups). */
-  objective: "reciprocal" | "one_sided" | "two_sided_asymmetric";
-  /** Aggregates per-side benefits into mutual benefit. Default (networkPack) = scoring.ts mutualBenefit. */
-  aggregate(benefits: number[]): number;
   /** Applied to novelty at the same arithmetic point as before (byte identity rule 4). */
   novelty?(c: Candidate, novelty: number): number;
   /** Applied to social risk after the safety-class bump (byte identity rule 4: networkPack adds romance +0.1 here). */
@@ -215,8 +187,10 @@ export interface ScoringPolicy {
 // ---------------------------------------------------------------------------------------- selection
 export interface SelectionPolicy {
   /**
-   * Optional lift on the greedy key (slopPack: exposure fairness on top of exposure debt, e.g. a
-   * popularity penalty). Absent for networkPack, so the greedy arithmetic is unchanged.
+   * Optional pack refusal at selection time (peonPack: a job's slate cap and a candidate's weekly
+   * cap). Returning -Infinity is a hard refusal: no phase, exploration included, reserves the
+   * configuration (spec/selectionRun.md, packAllows). A refusal must stay a refusal as the run's
+   * use grows. Any other return value is ignored: it never changes the greedy value or order.
    */
   adjust?(w: World, c: Candidate, value: number, timesSelectedInRun: (id: MemberId) => number): number;
   /**
@@ -253,8 +227,6 @@ export interface ProbeFrameCtx {
 export interface AttentionPack {
   /** Default AttentionConfig (caps, lambda, quiet hours, send time, consent...). */
   config: AttentionConfig;
-  /** Ê calibrator knots, global and per lane (fitted on the pack's sim labels). */
-  calibrator: { knots: [number, number][]; byLane: Partial<Record<Category, [number, number][]>> };
   /** The lane that always ships in its own message unless the member allows it in a digest (networkPack: romance, D10). */
   shipsAloneLane?: Category;
   /** Lanes a warm mention ("a friend of Sam") is never used for. */
@@ -267,8 +239,6 @@ export interface AttentionPack {
   laneActivity: Readonly<Record<string, string>>;
   /** The anonymous probe text. Must not name anyone; the core leak gate checks every candidate text. */
   probeText(ctx: ProbeFrameCtx, activity: string, attribute?: string, area?: string): string;
-  /** Default cadence fields the pack owns (networkPack: romanceInDigest). */
-  cadenceDefaults?(cfg: AttentionConfig): Partial<CadencePrefs>;
 }
 
 // ---------------------------------------------------------------------------------------- judge
@@ -281,16 +251,14 @@ export interface JudgePack {
   rubric: { compact: JudgePassSpec; matchable: JudgePassSpec };
   /** Pass 3 (deep review). */
   deep?: JudgePassSpec;
-  rubricKeys: readonly string[];
   /** Pseudonymous, scrubbed context for a pass (must never carry agent_private facets or sealed attributes to member-facing fields). */
   buildContext(w: World, c: Candidate, visibility: JudgeVisibility): { context: object; refs: Record<string, MemberId> };
   /** Pack part of the post-model gate, after the core gate (minors, unknown, holds, blocks). */
-  hardGate?(w: World, c: Pick<Candidate, "participants" | "via" | "category">): string | null;
+  hardGate?(w: World, c: Pick<Candidate, "participants" | "via" | "category" | "lane">): string | null;
 }
 
 // ---------------------------------------------------------------------------------------- explanations
 export interface ExplainPack {
-  laneLabel: Readonly<Record<string, string>>;
   facetPhrase: Partial<Record<Facet["kind"], string>>;
   /** Replaces the whole explanation for a kind (networkPack: network_growth). */
   leadBits?(w: World, c: Candidate, me: MemberId): string[] | undefined;
@@ -306,30 +274,12 @@ export interface ExplainPack {
   publicWords?: readonly string[];
 }
 
-// ---------------------------------------------------------------------------------------- plans / capital
+// ---------------------------------------------------------------------------------------- plans
 export interface PlansPack {
-  config: PlansConfig;
   /** The lane plans run in (networkPack: social; never romance). */
   lane: Category;
   activities: readonly ActivityType[];
 }
-export interface CapitalPack {
-  /** Ledger categories (packages/capital types). The capital package owns the ledger; this names the pack's policy. */
-  earn: readonly string[];
-  lose: readonly string[];
-  /** Core: minors never accrue capital. */
-  minorsExcluded: true;
-}
-
-// ---------------------------------------------------------------------------------------- metrics & gates
-export interface MetricGate { metric: string; op: ">=" | "<=" | "=="; value: number; seeds: number; blocking: boolean }
-export interface MetricsPack {
-  primary: readonly string[];
-  gates: readonly MetricGate[];
-  /** Oracle unsafe classes that must be 0. */
-  unsafeClasses: readonly string[];
-}
-
 // ---------------------------------------------------------------------------------------- helpers
 /** The judge part of a World's pack (throws if the pack has no judge; runEngine never calls a pass then). */
 export function judgePackOf(w: World): JudgePack {

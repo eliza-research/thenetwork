@@ -88,7 +88,7 @@ export const deepDecision = (v: DeepVerdict) => v.verdict === "yes";
  * blocks (incl. with the connector), safety holds, category and romance opt-ins of attending people.
  * Returns the first failing reason or null.
  */
-export function hardGate(w: World, c: Pick<Candidate, "participants" | "via" | "category"> & { alternates?: MemberId[] }): string | null {
+export function hardGate(w: World, c: Pick<Candidate, "participants" | "via" | "category" | "lane"> & { alternates?: MemberId[] }): string | null {
   if (involvesMinor(w, { participants: c.participants, alternates: c.alternates ?? [], via: c.via })) return "underage";
   const everyone = [...c.participants, ...(c.via ? [c.via] : [])];
   for (const id of everyone) if (!w.get(id)) return "unknown_member";

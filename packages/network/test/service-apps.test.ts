@@ -711,8 +711,16 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect((await wrong("/api/join", profile("Maya", tokenOf(0)))).status).toBe(400);
     expect((await otherApp("/api/join", profile("Maya", tokenOf(0), "friends"))).status).toBe(400);
     expect(await memberOf("ntwrk", wrongPhone)).toBeUndefined();
-    const accepted = await eligible("/api/join", profile("Maya", tokenOf(0)));
+    // spec/siteEnrollment.md, "The approved profile reaches onboarding and its stated age counts":
+    // the seed welcome delivers the joined profile once, as the member-invitation welcome does.
+    const learned: string[] = [];
+    const submitProfile = s.submitProfile.bind(s);
+    s.submitProfile = async (personId, appId, e164, text) => { learned.push(text); return submitProfile(personId, appId, e164, text); };
+    const about = "I host a monthly supper club and want to meet other founders.";
+    const accepted = await eligible("/api/join", { ...profile("Maya", tokenOf(0)), about });
     expect(accepted).toMatchObject({ status: 200, body: { ok: true, membership: { state: "active" } } });
+    expect(learned).toHaveLength(1);
+    expect(learned[0]).toContain(about);
     const member = await memberOf("ntwrk", target);
     if (!member) throw new Error("The accepted seed did not create its verified membership");
     expect((await sql`select home_city,account_status,opted_out from network.members where app_id='ntwrk' and id=${member.id}`)[0])
@@ -725,9 +733,10 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect((await sql`select recipient_hash,closed_at,ciphertext from platform.seed_invitations where ordinal=0`)[0])
       .toEqual({ recipient_hash: null, closed_at: expect.any(Date), ciphertext: null });
     expect(await count(sql`select count(*)::int as n from platform.memberships`)).toBe(1);
-    await eligible("/api/join", profile("Maya", tokenOf(0)));
+    await eligible("/api/join", { ...profile("Maya", tokenOf(0)), about });
     expect(await count(sql`select count(*)::int as n from platform.memberships`)).toBe(1);
     expect(await count(sql`select count(*)::int as n from platform.seed_invitation_attributions`)).toBe(1);
+    expect(learned).toHaveLength(1);
     expect(JSON.stringify(accepted.body)).not.toContain(vouch);
     expect(JSON.stringify(await sql`select value from network.facets where member_id=${member.id}`)).not.toContain(vouch);
 

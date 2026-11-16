@@ -204,7 +204,7 @@ export class GameSource implements DataSource {
     this.judgeHour = -1; this.healthHour = -1;
     this.recent = []; this.optOutAt.clear(); this.inviters.clear(); this.guardFallback.clear(); this.configHistory = [];
     this.consent = o.network === "consent" ? new ConsentNetwork({
-      seed: o.seed, review: o.review, ...(o.engine === "off" ? { maxNewPerDay: 0 } : {}), ...(matchingAllowed(this.app) ? {} : { matchingEnabled: false }),
+      seed: o.seed, review: o.review, engine: { cities: ["nyc"] }, ...(o.engine === "off" ? { maxNewPerDay: 0 } : {}), ...(matchingAllowed(this.app) ? {} : { matchingEnabled: false }),
       onEngineRun: (log, proposals, at) => {
         const sum = summarizeRun(log, proposals, { at, city: "nyc", wallMs: Math.round(log.timingsMs.total ?? 0) });
         this.store.addRun(sum);

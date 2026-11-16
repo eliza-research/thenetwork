@@ -266,7 +266,8 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   const askPlan = planAsks(w, input);
   f.asks = askPlan.asks.length;
   f.askFirst = askPlan.exclude.size;
-  const selection = selectProposals(w, scored, rng.fork("select"), priorDebt, { exclude: askPlan.exclude, extraProactive: askPlan.extraProactive });
+  const selectOptions = { exclude: askPlan.exclude, extraProactive: askPlan.extraProactive };
+  const selection = selectProposals(w, scored, rng.fork("select"), priorDebt, selectOptions);
   // Minors policy, last line of defence: hard filters already drop these, so this never fires
   // in a correct build. If it ever does, the configuration is withheld (fail closed), not sent.
   const selected = selection.selected.filter(x => !involvesMinor(w, x.s.c));
@@ -300,6 +301,7 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
       anchor: c.anchor ? { ...c.anchor } : undefined, via: c.via, safetyClass: c.safetyClass, threshold,
       channels: [...c.channels].sort(), judged: !!verdict, selectorRank: sel.rank, selectionProbability: round(sel.probability),
       acceptance: Object.fromEntries(c.participants.map(id => [id, round(w.get(id)?.acceptance ?? cfg.acceptance.prior)])),
+      ...(c.lane ? { lane: c.lane } : {}), ...(c.entities ? { entities: { ...c.entities } } : {}),
     };
   });
   for (const p of proposals) runLog.proposalsByGenerator[p.generator] = (runLog.proposalsByGenerator[p.generator] ?? 0) + 1;
@@ -310,7 +312,7 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
     score: round(s.score), eligible: s.eligible, reason: s.reason, judged: !!s.verdict,
   }));
   runLog.fairness = fairnessMetrics(w, selected, scored);
-  runLog.blockingPairs = blockingPairs(selected, scored);
+  runLog.blockingPairs = blockingPairs(w, selected, scored, selectOptions);
   runLog.exposureDebt = updateExposureDebt(w, priorDebt, scored, selected);
   const inProposal = new Set(proposals.flatMap(p => p.participants));
   const eligibleByIntent = new Map<string, boolean>();

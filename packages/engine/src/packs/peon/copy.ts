@@ -14,7 +14,6 @@ export const PEON_SAFE_FALLBACK = "A new job fit for you.";
 const EMPLOYER_FALLBACK = "A new yes for your job.";
 // Not "peon.biz never asks...": the core leak guard reads a domain as contact details.
 export const NEVER_ASKS = "We never ask for money, bank details or your SSN.";
-export const LANE_LABEL = { professional: "a job introduction" } as const;
 export const LANE_ACTIVITY: Record<string, string> = { professional: "a role that fits what you asked for" };
 
 const human = (s: string) => s.replace(/_/g, " ");

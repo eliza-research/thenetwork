@@ -37,6 +37,15 @@ export function officialGates(p: PeonMetrics[], k: PeonMetrics[], o?: PeonMetric
   return out;
 }
 
+/**
+ * Measurements tracked before they become launch gates. The peon pack's Hire band admits a two-level
+ * gap when both uncertainties are wide, so this records how often a backed pair is that far apart.
+ */
+export function trackedGates(p: PeonMetrics[]): GateResult[] {
+  const backed = p.reduce((s, m) => s + m.levels.backedPairs, 0), over = p.reduce((s, m) => s + m.levels.gapOverOne, 0);
+  return [{ id: "role_level_gap", gate: "No proposed Hire pair has a role-level gap over 1 when both levels are backed", value: `${over} of ${backed} backed pairs`, pass: over === 0 }];
+}
+
 /** The first proposed gate set (historical; not the launch criteria). */
 export function historicalGates(p: PeonMetrics[], k: PeonMetrics[]): GateResult[] {
   const hiresX = M(p, m => m.hires) / M(k, m => m.hires);

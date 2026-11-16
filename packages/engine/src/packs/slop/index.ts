@@ -15,11 +15,11 @@
 import {
   compatibilityQuestionDue, requiredQuestionDue, slopQuestionSubject, slopQuestionTrack, widerRadiusQuestion, wideningPoolEligible,
 } from "../../../../core/src/generated/engineAsks.ts";
-import { DEFAULT_ATTENTION, DEFAULT_PLANS, GENERATOR_NAMES, resolveConfig, type AttentionConfig, type EngineConfig, type EngineConfigInput } from "../../config.ts";
+import { DEFAULT_ATTENTION, GENERATOR_NAMES, resolveConfig, type AttentionConfig, type EngineConfig, type EngineConfigInput } from "../../config.ts";
 import type { AppPack, EligibilityPolicy } from "../../pack.ts";
 import type { World } from "../../world.ts";
 import { slopAssign } from "./assign.ts";
-import { ageBand, distancePhrase, SLOP_ASK_QUESTIONS, SLOP_FACET_PHRASE, SLOP_LANE_ACTIVITY, SLOP_LANE_LABEL, SLOP_SAFE_FALLBACK, slopProbeText } from "./copy.ts";
+import { ageBand, distancePhrase, SLOP_ASK_QUESTIONS, SLOP_FACET_PHRASE, SLOP_LANE_ACTIVITY, SLOP_SAFE_FALLBACK, slopProbeText } from "./copy.ts";
 import { makeRadiusGeo, mutualMarkets } from "./geo.ts";
 import { dateCandidateCount, slopGenerators, slopVectors } from "./generators.ts";
 import { limitMiles } from "./geo.ts";
@@ -43,7 +43,6 @@ export const SLOP_ENGINE_CONFIG: EngineConfigInput = {
   thresholds: { byState: { open: 0, normal: 0, quiet: 0, receiving: 0 }, byCategory: { romance: 0, help: 0, growth: 0 }, useByGenerator: false, exploration: 0 },
   floors: { fit: 0, mutualBenefit: 0, confidence: 0, maxSocialRisk: 1, judgeDimension: 0 },
   weights: { fit: 0, mutualBenefit: 1, warmPath: 0, novelty: 0, timingFit: 0, activationCost: 0, interruptionCost: 0, load: 0, repetition: 0, socialRisk: 0 },
-  complementarity: { weight: 0 },
   generators: Object.fromEntries(GENERATOR_NAMES.map(g => [g, false])) as Record<(typeof GENERATOR_NAMES)[number], boolean>,
   exploration: { rate: 0, maxShare: 0.15 },
   romance: { requireStatedPrefs: true },
@@ -71,19 +70,13 @@ export function makeSlopPack(over: DeepPartial<SlopPackOptions> = {}): AppPack &
     version: SLOP_PACK_VERSION,
     options: o,
     ontology: {
-      lanes: [{ id: SLOP_LANE, label: "dating", optIn: "explicit_mutual", adultOnly: true, shipsAlone: true, neverInPlans: true }],
-      roles: [{ id: "seeker", contributor: false }, { id: "peer", contributor: false }],
-      kinds: [{ id: "intro", format: "one_to_one", size: [2, 2] }],
+      lanes: [{ id: SLOP_LANE, adultOnly: true, neverInPlans: true }],
       contributorRoles: new Set(),
       // Dating has no warm graph: a "friend of" never routes a date (and a minor never could).
       warmEdges: new Set(),
       funnelProbe: { lane: SLOP_LANE, role: "peer" },
       objectives: [{ id: "date", pattern: /\bdate|dating|romance\b/i, needs: [], interests: [], romance: true }],
       objectivesFor: () => [],
-      mutualPreferenceMatch: (w, a, b) => {
-        const P = slopProfiles(w.input, w.canonical), pa = P.get(a), pb = P.get(b);
-        return !!pa?.is && !!pb?.is && pa.seeks.includes(pb.is) && pb.seeks.includes(pa.is);
-      },
       // Constraints are read from typed profiles (profile.ts); this view feeds the core's romance shape.
       constraints: fs => {
         const tags = fs.flatMap(f => f.tags);
@@ -105,9 +98,7 @@ export function makeSlopPack(over: DeepPartial<SlopPackOptions> = {}): AppPack &
     geo: makeRadiusGeo(o),
     generators: slopGenerators(o),
     vectors: slopVectors(o),
-    retrieval: { channels: ["geo", "tag"], directions: [{ from: "member", to: "member" }] },
     scoring: {
-      objective: "reciprocal",
       // Dating carries social risk for both people; the score stays the reciprocal value (weight 0).
       socialRisk: (_c, v) => v + 0.1,
     },
@@ -145,18 +136,14 @@ export function makeSlopPack(over: DeepPartial<SlopPackOptions> = {}): AppPack &
     },
     attention: {
       config: SLOP_ATTENTION,
-      // Placeholder knots (score -> P(enjoy)); not fitted yet: refit on slop pilot labels.
-      calibrator: { knots: [[0, 0.05], [0.3, 0.25], [0.6, 0.5], [1, 0.75]], byLane: {} },
       shipsAloneLane: SLOP_LANE,
       noWarmMentionLanes: [SLOP_LANE],
       itemGate: (m, it) => (it.category === SLOP_LANE && (!(typeof m.age === "number" && Number.isFinite(m.age) && m.age >= 18) || !(m.categoriesOptIn ?? [SLOP_LANE]).includes(SLOP_LANE)) ? "romance_not_allowed" : null),
       probeAllowed: (lane, n) => lane === SLOP_LANE && n === 1,
       laneActivity: SLOP_LANE_ACTIVITY,
       probeText: (ctx, activity, attribute) => slopProbeText(ctx, activity, attribute),
-      cadenceDefaults: () => ({ romanceInDigest: false }),
     },
     explain: {
-      laneLabel: SLOP_LANE_LABEL,
       facetPhrase: SLOP_FACET_PHRASE,
       // One or two sentences from shareable facts only, framed as a guess; the distance as a band.
       leadBits: (w, c, me) => {
@@ -182,25 +169,6 @@ export function makeSlopPack(over: DeepPartial<SlopPackOptions> = {}): AppPack &
     },
     // Pass 2 dating rubric (judge.ts, from PR #12): runs only when the engine has an LLM; the no-LLM path is unchanged.
     judge: slopJudge(o),
-    capital: {
-      earn: ["attendance", "review"],
-      lose: ["no_show", "ghosting", "abuse", "fraud"],
-      minorsExcluded: true,
-    },
-    metrics: {
-      primary: ["secondDateRate", "secondDatesPerSeed", "datesPerMemberMonth", "mutualYesRate"],
-      gates: [
-        { metric: "safety.minorContacts", op: "==", value: 0, seeds: 4, blocking: true },
-        { metric: "safety.adversaryContactCut", op: ">=", value: 0.9, seeds: 4, blocking: true },
-        { metric: "safety.harmCut", op: ">=", value: 0.9, seeds: 4, blocking: true },
-        { metric: "secondDateRateVsRandom", op: ">=", value: 2.5, seeds: 4, blocking: true },
-        { metric: "congestion.top10ProposalShare", op: "<=", value: 0.2, seeds: 4, blocking: true },
-        { metric: "fairness.minGroupRatio", op: ">=", value: 0.7, seeds: 4, blocking: true },
-        { metric: "backoutRate", op: "<=", value: 0.099, seeds: 4, blocking: true },
-      ],
-      unsafeClasses: ["minor", "hiddenMinor", "adversary"],
-    },
-    defaults: { engine: SLOP_ENGINE_DEFAULTS, attention: SLOP_ATTENTION, plans: DEFAULT_PLANS },
   };
 }
 

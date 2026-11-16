@@ -2,7 +2,7 @@
 // (location / overlap) and scoring.ts (shared-area activation cost): members are in a city (home,
 // routine, or a dated trip that overrides home) and can meet when they share enough hours in one
 // run city. The Network and friends.help use it. A radius model (slop.date: within X miles of a zip
-// or point, mutual radius) implements the same interface plus `pairReason` / `displayDistance`.
+// or point, mutual radius) implements the same interface plus `pairReason`.
 import type { City, MemberId, Presence } from "@thenetwork/core";
 import { HOUR, temporaryPresenceWindow } from "@thenetwork/core";
 import { presenceWindowsOverlap, presenceWindowValid } from "../../core/src/generated/travelPresence.ts";
@@ -11,9 +11,7 @@ import { intersect, subtract, union, type Interval } from "./interval.ts";
 import type { World } from "./world.ts";
 
 export const cityBucketGeo: GeoModel = {
-  kind: "city",
   markets: cfg => cfg.cities,
-  tz: (market, cfg) => cfg.timezones[market] ?? "UTC",
 
   /** Where a member is during [start,end): city -> intervals. Temporary presence overrides home (ME-011). */
   location(w: World, id: MemberId, start: number, end: number): Map<City, Interval[]> {

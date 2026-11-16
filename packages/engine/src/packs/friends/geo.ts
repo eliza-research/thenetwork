@@ -123,15 +123,6 @@ export function transitMinutes(a: Neighborhood, b: Neighborhood): number {
   return Math.round(Math.min(m, d * 13 + 5)); // never worse than walking it
 }
 
-/** Bucketed copy for a trip ("about 20 min"). Never a promise, never an exact distance. */
-export function displayMinutes(min: number): string {
-  if (min <= 10) return "a short walk";
-  if (min <= 20) return "about 15-20 min";
-  if (min <= 30) return "about 25-30 min";
-  if (min <= 45) return "about 40 min";
-  return "over 45 min";
-}
-
 // ------------------------------------------------------------------------------------------------
 // Venues (public places only; MVP: never a home, no money through the Network)
 

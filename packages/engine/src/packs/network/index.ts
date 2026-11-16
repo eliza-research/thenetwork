@@ -6,15 +6,13 @@
 // for their default `pack` argument (evaluated at call time). Its top level therefore reads only
 // leaf data; function values from non-leaf modules are wrapped in arrows, and `generators` and
 // `vectors` are getters.
-import { DEFAULT_ATTENTION, DEFAULT_CONFIG, DEFAULT_PLANS } from "../../config.ts";
+import { DEFAULT_ATTENTION } from "../../config.ts";
 import { cityBucketGeo } from "../../geo.ts";
-import { mutualBenefit } from "../../scoring.ts";
 import type { PackVectors } from "../../match/profile.ts";
 import type { AppPack, EligibilityPolicy, GeneratorSpec } from "../../pack.ts";
 import { buildPassContext } from "./judgeContext.ts";
 import { ACTIVITIES } from "./activities.ts";
-import { DEFAULT_ENJOY_BY_CATEGORY, DEFAULT_ENJOY_KNOTS } from "./calibrator.ts";
-import { ASK_QUESTIONS, CATEGORY_LABEL, GENERIC_ACTIVITY, KIND_PHRASE, NETWORK_SAFE_FALLBACK, networkKindBits, networkLeadBits, networkProbeText } from "./copy.ts";
+import { ASK_QUESTIONS, GENERIC_ACTIVITY, KIND_PHRASE, NETWORK_SAFE_FALLBACK, networkKindBits, networkLeadBits, networkProbeText } from "./copy.ts";
 import { NETWORK_GENERATORS } from "./generators.ts";
 import { networkOntology } from "./ontology.ts";
 import {
@@ -37,9 +35,6 @@ const eligibility = (): EligibilityPolicy => (elig ??= {
 /** Pack version. Not written to run logs for networkPack (byte-identity rule 2). */
 export const NETWORK_PACK_VERSION = "network-pack-1.0.0";
 
-/** Rubric keys of pass 3 (was judgeDeep.ts RUBRIC_KEYS; that module still exports them). */
-const RUBRIC_KEYS = ["mutual_benefit", "reciprocity", "intent_timing", "logistics", "stage_fit", "values_energy", "novelty", "evidence_quality", "risk_safety"] as const;
-
 export const networkPack: AppPack = {
   id: "ntwrk",
   version: NETWORK_PACK_VERSION,
@@ -49,13 +44,7 @@ export const networkPack: AppPack = {
   geo: cityBucketGeo,
   get generators(): readonly GeneratorSpec[] { return NETWORK_GENERATORS; },
   get vectors(): PackVectors { return networkVectors; },
-  retrieval: {
-    channels: ["tag", "graph"],
-    directions: [{ from: "member", to: "member" }],
-  },
   scoring: {
-    objective: "reciprocal",
-    aggregate: benefits => mutualBenefit(benefits),
     novelty: (c, v) => (c.kind === "second_encounter" ? 0.4 : v),
     socialRisk: (c, v) => (c.category === "romance" ? v + 0.1 : v),
   },
@@ -70,7 +59,6 @@ export const networkPack: AppPack = {
   },
   attention: {
     config: DEFAULT_ATTENTION,
-    calibrator: { knots: DEFAULT_ENJOY_KNOTS, byLane: DEFAULT_ENJOY_BY_CATEGORY },
     shipsAloneLane: "romance",
     noWarmMentionLanes: ["romance"],
     // Was attention.ts itemGate: romance items only for opted-in adults. A view without
@@ -79,33 +67,19 @@ export const networkPack: AppPack = {
     probeAllowed: (lane, othersCount) => !(lane === "romance" && othersCount !== 1),
     laneActivity: GENERIC_ACTIVITY,
     probeText: (ctx, activity, a, ar) => networkProbeText(ctx, activity, a, ar),
-    cadenceDefaults: cfg => ({ romanceInDigest: cfg.romanceInDigest }),
   },
   judge: {
     screen: { version: SCREEN_PROMPT_VERSION, system: SCREEN_SYSTEM },
     rubric: { compact: { version: JUDGE_PROMPT_VERSION, system: JUDGE_SYSTEM }, matchable: { version: JUDGE_PROMPT_VERSION_V3, system: JUDGE_SYSTEM_V3 } },
     deep: { version: DEEP_PROMPT_VERSION, system: DEEP_SYSTEM },
-    rubricKeys: RUBRIC_KEYS,
     buildContext: (w, c, visibility) => buildPassContext(w, c, visibility),
     hardGate: (w, c) => networkHardGate(w, c),
   },
   explain: {
-    laneLabel: CATEGORY_LABEL,
     facetPhrase: KIND_PHRASE,
     leadBits: (_w, c) => networkLeadBits(c),
     kindBits: (_w, c, me) => networkKindBits(c, me),
     safeFallback: NETWORK_SAFE_FALLBACK,
   },
-  plans: { config: DEFAULT_PLANS, lane: "social", activities: ACTIVITIES },
-  metrics: {
-    primary: ["met_worthwhile_per_seed", "precision", "worthwhile_rate", "v14"],
-    gates: [
-      { metric: "unsafe.minor", op: "==", value: 0, seeds: 8, blocking: true },
-      { metric: "privacy.canaryLeaks", op: "==", value: 0, seeds: 8, blocking: true },
-      { metric: "invariants.violations", op: "==", value: 0, seeds: 8, blocking: true },
-      { metric: "safety.minorContacts", op: "==", value: 0, seeds: 8, blocking: true },
-    ],
-    unsafeClasses: ["minor", "adversarial", "cityMismatch", "romanceMismatch", "exPartners"],
-  },
-  defaults: { engine: DEFAULT_CONFIG, attention: DEFAULT_ATTENTION, plans: DEFAULT_PLANS },
+  plans: { lane: "social", activities: ACTIVITIES },
 };

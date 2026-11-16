@@ -20,12 +20,8 @@ async function main() {
     if (!arm) throw new Error(`unknown arm ${a}; known: ${Object.keys(ARMS).join(", ")}`);
     all[a] = [];
     for (const seed of seeds) {
-      const restore = arm.setup?.();
       const t = performance.now();
-      try {
-        const r = await runPeonWorld({ seed, perCity, jobsPerCity, weeks, matcher: arm.matcher, realism });
-        all[a]!.push(peonMetrics(r));
-      } finally { restore?.(); }
+      all[a]!.push(peonMetrics(await runPeonWorld({ seed, perCity, jobsPerCity, weeks, matcher: arm.matcher, realism })));
       console.error(`${a} seed ${seed}: hires ${all[a]!.at(-1)!.hires} (${((performance.now() - t) / 1000).toFixed(1)}s)`);
     }
   }

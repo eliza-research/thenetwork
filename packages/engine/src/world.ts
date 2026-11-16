@@ -2,7 +2,7 @@
 // ONE id space (member id) before any filter runs (ME-006; Soulmates pitfall: blocks stored in
 // one id space and compared in another).
 import { MatchRun } from "./match/run.ts";
-import type { Category, City, Edge, EdgeType, Facet, FacetKind, Intent, Member, MemberId, Presence, Proposal } from "@thenetwork/core";
+import type { Category, City, Edge, EdgeType, Facet, FacetKind, Intent, Member, MemberId, Presence } from "@thenetwork/core";
 import { canBeMatched, DAY } from "@thenetwork/core";
 import { standingIntentLive } from "../../core/src/standing-intent.ts";
 import type { EngineConfig } from "./config.ts";
@@ -10,7 +10,7 @@ import { centroid, cosine, tokenize, type EmbedFn } from "./embed.ts";
 import { sha256, stableStringify } from "./hash.ts";
 import type { AppPack } from "./pack.ts";
 import { networkPack } from "./packs/network/index.ts";
-import type { EngineInput, FeedbackRecord, InteractionRecord, NetworkEvent, ReliabilityEvidence, Role } from "./types.ts";
+import type { EngineInput, FeedbackRecord, InteractionRecord, NetworkEvent, RecentProposal, ReliabilityEvidence, Role } from "./types.ts";
 
 import type { Interval } from "./interval.ts";
 export type { Interval };
@@ -164,8 +164,12 @@ export class World {
     }
 
     // --- interactions ----------------------------------------------------------------------
+    // Canonical and distinct: a record that names one member under two ids counts that member once.
+    const distinctIds = (ids: readonly MemberId[]): MemberId[] => [...new Set(ids.map(C))];
     this.interactions = (input.interactions ?? []).map(r => ({
-      ...r, participants: r.participants.map(C), declinedBy: r.declinedBy?.map(C), contributors: r.contributors?.map(C),
+      ...r, participants: distinctIds(r.participants),
+      declinedBy: r.declinedBy && distinctIds(r.declinedBy), contributors: r.contributors && distinctIds(r.contributors),
+      acceptedBy: r.acceptedBy && distinctIds(r.acceptedBy), noResponse: r.noResponse && distinctIds(r.noResponse),
     }));
     for (const r of this.interactions) {
       for (let i = 0; i < r.participants.length; i++) for (let j = i + 1; j < r.participants.length; j++) {
@@ -187,9 +191,19 @@ export class World {
     const resolved = new Set(this.interactions.filter(r => r.outcome !== "pending").map(r => r.id));
     // v1.2: proposals the Network never sent neither count against budgets nor block the pair.
     const unsent = new Set(cfg.dispatch.billOnlySent ? input.unsentProposalIds ?? [] : []);
-    const recent: Proposal[] = (input.recentProposals ?? []).filter(p => !unsent.has(p.id)).map(p => ({
-      ...p, participants: p.participants.map(C), alternates: (p.alternates ?? []).map(C),
-    }));
+    // Roles are keyed by canonical id too; a role under the canonical id wins over one under an alias.
+    const recent: RecentProposal[] = (input.recentProposals ?? []).filter(p => !unsent.has(p.id)).map(p => {
+      const roles = p.roles;
+      const canonicalRoles = new Map<MemberId, Role>();
+      for (const [raw, role] of Object.entries(roles ?? {})) {
+        const id = C(raw);
+        if (id === raw || !canonicalRoles.has(id)) canonicalRoles.set(id, role);
+      }
+      return {
+        ...p, participants: distinctIds(p.participants), alternates: distinctIds(p.alternates ?? []),
+        ...(roles ? { roles: Object.fromEntries(canonicalRoles) } : {}),
+      };
+    });
     for (const p of recent) {
       for (let i = 0; i < p.participants.length; i++) for (let j = i + 1; j < p.participants.length; j++) {
         const k = pairKey(p.participants[i]!, p.participants[j]!);
@@ -243,15 +257,13 @@ export class World {
     for (const p of recent) {
       const age = now - p.createdAt;
       if (age < 0) continue;
-      const roles = (p as any).roles as Record<MemberId, Role> | undefined;
-      const category = (p as any).category as Category | undefined;
-      for (const raw of p.participants) {
-        const id = C(raw);
+      const { roles, category } = p;
+      for (const id of p.participants) {
         const st = stateById.get(id) ?? "normal";
         const period = cfg.budgets[st].periodDays * DAY;
         if (age < period) proactive.set(id, (proactive.get(id) ?? 0) + 1);
-        const role = roles?.[raw] ?? roles?.[id];
-        const isContrib = role ? pack.ontology.contributorRoles.has(role) : (p.kind === "help" && p.participants[0] !== raw);
+        const role = roles?.[id];
+        const isContrib = role ? pack.ontology.contributorRoles.has(role) : (p.kind === "help" && p.participants[0] !== id);
         if (isContrib && age < cfg.contribution.periodDays * DAY) contrib.set(id, (contrib.get(id) ?? 0) + 1);
         if (age < 30 * DAY) {
           exposure30.set(id, (exposure30.get(id) ?? 0) + 1);

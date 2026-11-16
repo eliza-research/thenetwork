@@ -120,7 +120,7 @@ export async function friendsScheduleGates(b: Block): Promise<void> {
           memberId: id, tz: NYC_TZ, quietHours: [22, 8], stated: { windows, at: s.now, until: s.now + 7 * DAY },
         }]));
         const input = { now: s.now, tz: NYC_TZ, evidence, venues, crews: [], outcomes: [], offered: [] };
-        const policy = { ...DEFAULT_FRIENDS_POLICY, crews: false, repeat: false, universal: false, universalFirst: false, singleSlot: false, loosePass: false };
+        const policy = { ...DEFAULT_FRIENDS_POLICY, crews: false, repeat: false, universal: false };
         const partners = planFriendsWeek(w, input, policy, FRIENDS_PLANS).partners;
         expect(partners.length).toBe(1);
         const open = planFriendsWeek(w, { ...input, venues: venues.map(v => ({ ...v, hours: { ...v.hours, weekend: [9, 23] as [number, number] } })) }, policy, FRIENDS_PLANS).partners;
@@ -218,7 +218,7 @@ export async function friendsScheduleGates(b: Block): Promise<void> {
         const outcome: PlanOutcomeRecord = { planId: "earlier", activityId: crew.activityId, city: "nyc", venueId: venue.id, at: crew.slot.start, attended: ids, positive: ids, recurringWant: [] };
         const savedCrew = JSON.stringify(crew);
         const week = planFriendsWeek(w, { now: START, tz: NYC_TZ, evidence: new Map(ids.map(id => [id, { memberId: id, tz: NYC_TZ }])), venues: VENUES, crews: source === "session" ? [crew] : [], outcomes: source === "offer" ? [outcome] : [], offered: [] },
-          { ...DEFAULT_FRIENDS_POLICY, repeat: false, tables: false, singleSlot: false, partnerFallback: false, partnerIntros: 0, universal: false, loosePass: false }, FRIENDS_PLANS);
+          { ...DEFAULT_FRIENDS_POLICY, repeat: false, partnerIntros: 0, universal: false }, FRIENDS_PLANS);
         expect(JSON.stringify(crew)).toBe(savedCrew);
         const plans = source === "session" ? week.sessions : week.offers.map(x => x.first);
         expect(plans.length).toBe(1);

@@ -7,10 +7,9 @@ import { DAY } from "@thenetwork/core";
 import { laneLimits } from "../../../../core/src/generated/matchLane.ts";
 import { standingFromRating, standingRatingScale, standingReadable, standingUncertainty } from "../../../../core/src/generated/memberStanding.ts";
 import { memberReason, type MemberCheck } from "../../filters.ts";
-import { pairCandidate, type GenCtx } from "../../genkit.ts";
+import { countExclusion, pairCandidate, type GenCtx } from "../../genkit.ts";
 import type { EntityTags, MatchProfile, Membership, PackVectors } from "../../match/profile.ts";
 import type { GeneratorSpec } from "../../pack.ts";
-import { countExclusion } from "../../retrieval.ts";
 import type { Candidate } from "../../types.ts";
 import { pairKey, type World } from "../../world.ts";
 import { ratingPermille } from "./appearance.ts";
@@ -158,7 +157,7 @@ export function slopGenerators(o: SlopPackOptions): GeneratorSpec[] {
           roles: { [first.id]: "seeker", [partner.id]: "peer" }, format: "one_to_one",
           objective: `${dateActivity(first, partner).replace(/_/g, " ")} date`,
           ...(intent ? { anchor: { type: "intent" as const, id: intent.id } } : {}),
-          preferredCity: x.market as City,
+          preferredCity: x.market,
           channels: new Set(["geo", "prefs", "compat"]),
           evidence: { [first.id]: sharedEvidence(first, partner), [partner.id]: sharedEvidence(partner, first) },
           confidenceHint: 1,

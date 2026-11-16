@@ -131,6 +131,9 @@ import type { ChannelEvent } from "../../blooio/src/types.ts";
 import { allowed, authenticate, hasEverywhere, parseTokenGrants, PgAudit, type AuditSink } from "../../observatory/src/staff.ts";
 import type { AuditEntry, RoleGrant, StaffRole, StaffUser } from "../../observatory/src/types.ts";
 
+/** The homes a conversation can have; each belongs to exactly one network of an app (runtimeForHome). */
+const CONVERSATION_CITIES: readonly City[] = ["nyc", "sf", "la"];
+
 export { NetworkRuntime } from "./runtime.ts";
 type Row = Record<string, unknown>;
 const MAX_BODY_BYTES = 256 * 1024;
@@ -424,8 +427,9 @@ export class NetworkService implements RuntimeHost {
     const judgeBudget = judgeOn ? new LLMBudget({ maxCostMicro: judgeUsd * 1e6, maxRequests: judgeRequests }) : undefined;
     this.accounts = new Accounts(this.people, { hashKey: this.hashKey, now: () => this.clock.now(), env: this.env, apps: id => this.apps[id], hooks: this.hooks() });
     if (o.notify !== false) this.notify = new Notifier(o.notify ?? new PgNotifyStore(this.sql), { get: personId => this.notifyRecipient(personId) });
-    for (const spec of specs) {
-      const id = spec.id.includes(":") ? spec.id : `ntwrk:${spec.id}`;
+    const ids = specs.map(spec => (spec.id.includes(":") ? spec.id : `ntwrk:${spec.id}`));
+    for (const [i, spec] of specs.entries()) {
+      const id = ids[i]!;
       const [app, city] = id.split(":") as [string, string];
       if (!isAppId(app) || !this.apps[app]) throw new Error(`network ${id}: unknown app "${app}"`);
       // Dev only: the stored switch of these networks starts on (a new state); production always starts off.
@@ -435,7 +439,11 @@ export class NetworkService implements RuntimeHost {
         ...(judgeBudget && !o.network?.engineLLM ? { engineLLM: recommenderLLM({ ...this.cost.llmHooks(app, "engine_judge"), budget: judgeBudget }) } : {}),
         ...(devOn ? { matchingEnabled: true } : {}),
       };
-      this.runtimes.set(id, new NetworkRuntime(this, { id, app: this.apps[app], city, matchingAllowed: spec.matchingEnabled ?? true, network, adapter: o.adapter }));
+      // The homes this network owns (runtimeForHome): its own city, and for the app's first network
+      // every home that no network of the app serves.
+      const mine = ids.filter(x => x.split(":")[0] === app);
+      const cities = CONVERSATION_CITIES.filter(c => (mine.find(x => x.split(":")[1] === c) ?? mine[0]) === id);
+      this.runtimes.set(id, new NetworkRuntime(this, { id, app: this.apps[app], city, cities, matchingAllowed: spec.matchingEnabled ?? true, network, adapter: o.adapter }));
     }
     this.photoBaseUrl = o.photoBaseUrl ?? this.env.PHOTO_VIEW_BASE_URL ?? undefined;
     this.photos = new PhotoService({
@@ -708,10 +716,6 @@ export class NetworkService implements RuntimeHost {
     return this.runtimeForHome(app, homeCity)?.id;
   }
 
-  conversationCities(rt: NetworkRuntime): readonly string[] {
-    return ["nyc", "sf", "la"].filter(city => this.runtimeForHome(rt.app.id, city) === rt);
-  }
-
   /** The same registry ownership is used by snapshot loading, address books and member actions. */
   async runtimeOfMember(app: AppId, memberId: string): Promise<NetworkRuntime | undefined> {
     const [row] = await this.runtimeFor(app)?.scoped(tx => tx`select home_city from network.members where app_id=${app} and id=${memberId} and account_status not in ('invited','removed')`) ?? [];
@@ -786,7 +790,7 @@ export class NetworkService implements RuntimeHost {
       await stageApprovedHomeHelp(rt, consent, this.clock.now());
       await rt.scoped(tx => reconcileHomeHelpDelivery(tx, consent, rt.app.id));
     }
-    await queueReviewedHomeHelp(rt, consent, this.conversationCities(rt), this.clock.now());
+    await queueReviewedHomeHelp(rt, consent, rt.cities, this.clock.now());
   }
 
   /** The bias monitor of one network when its last stored report is a week old (or there is none). Returns the new report, if one was made. */
@@ -1122,23 +1126,43 @@ export class NetworkService implements RuntimeHost {
 
   private async projectSeedWelcome(rt: NetworkRuntime, memberId: MemberId): Promise<void> {
     const app = rt.app.id;
-    await rt.unitOfWork(async net => {
+    const welcomed = await rt.unitOfWork(async net => {
       const [pending] = await rt.scoped(tx => tx<{home_city: string}[]>`select m.home_city from platform.seed_invitation_attributions a
         join network.members m on m.app_id=a.app_id and m.id=a.member_id
         where a.app_id=${app} and a.member_id=${memberId} and a.welcome_projected_at is null`);
-      if (!pending || !projectInvitationWelcome(true, this.runtimeForHome(app, pending.home_city) === rt, false)) return;
+      if (!pending || !projectInvitationWelcome(true, this.runtimeForHome(app, pending.home_city) === rt, false)) return false;
       net.welcomeJoined(memberId);
       rt.unit.memberCommand = async tx => {
         const rows = await tx`update platform.seed_invitation_attributions set welcome_projected_at=${new Date(this.clock.now())}
           where app_id=${app} and member_id=${memberId} and welcome_projected_at is null returning member_id`;
         if (rows.length !== 1) throw new InvitationUnavailable();
       };
+      return true;
     });
+    if (welcomed) await this.learnWelcomedProfile(rt, memberId);
+  }
+
+  /**
+   * The joined profile follows the call that sent the welcome (also a later recovery). The welcome
+   * is recorded once (welcome_projected_at), so the profile is learned once. Both welcome paths
+   * share one limit: when the unit commits the welcome and then fails, recovery finds the welcome
+   * recorded and does not learn the profile.
+   */
+  // spec/siteEnrollment.md, "The approved profile reaches onboarding and its stated age counts"
+  private async learnWelcomedProfile(rt: NetworkRuntime, memberId: MemberId): Promise<void> {
+    try {
+      const [invitee] = await rt.scoped(tx => tx`select m.person_id, ph.e164 from network.members m join platform.phone_identities ph on ph.person_id=m.person_id
+        where m.app_id=${rt.app.id} and m.id=${memberId}`);
+      const membership = invitee && await this.people.getMembership(invitee.person_id as string, rt.app.id);
+      if (invitee && membership?.memberId === memberId) await this.learnJoinProfile(rt, invitee.person_id as string, invitee.e164 as string, membership);
+    } catch (e) {
+      this.log(`[invite] joined profile not learned (${rt.id}): ${(e as Error).message}`);
+    }
   }
 
   private async recoverSeedInvitationJoins(rt: NetworkRuntime): Promise<void> {
     const app = rt.app.id;
-    const cities = this.conversationCities(rt);
+    const cities = rt.cities;
     if (!cities.length) return;
     const pending = await rt.scoped(tx => tx<{member_id: string}[]>`select a.member_id from platform.seed_invitation_attributions a
       join network.members m on m.app_id=a.app_id and m.id=a.member_id
@@ -1169,14 +1193,7 @@ export class NetworkService implements RuntimeHost {
       return { remote: localNotice ? undefined : inviterRuntime };
     });
     if (!projected) return;
-    // This call sent the welcome (also a later recovery): the joined profile follows it, once.
-    // spec/siteEnrollment.md, "The approved profile reaches onboarding and its stated age counts"
-    await (async () => {
-      const [invitee] = await rt.scoped(tx => tx`select m.person_id, ph.e164 from network.members m join platform.phone_identities ph on ph.person_id=m.person_id
-        where m.app_id=${rt.app.id} and m.id=${memberId}`);
-      const membership = invitee && await this.people.getMembership(invitee.person_id as string, rt.app.id);
-      if (invitee && membership?.memberId === memberId) await this.learnJoinProfile(rt, invitee.person_id as string, invitee.e164 as string, membership);
-    })().catch(e => this.log(`[invite] joined profile not learned (${rt.id}): ${(e as Error).message}`));
+    await this.learnWelcomedProfile(rt, memberId);
     if (projected.remote) await this.projectInvitationNotice(projected.remote, memberId);
   }
 
@@ -1199,7 +1216,7 @@ export class NetworkService implements RuntimeHost {
 
   private async recoverInvitationJoins(rt: NetworkRuntime): Promise<void> {
     const app = rt.app.id;
-    const cities = this.conversationCities(rt);
+    const cities = rt.cities;
     const pending = await rt.scoped(tx => tx`select i.redeemed_member_id,i.welcome_projected_at from platform.member_invitations i
       join network.members m on m.app_id=i.app_id and m.id=i.redeemed_member_id
       join network.members v on v.app_id=i.app_id and v.id=i.inviter_member_id

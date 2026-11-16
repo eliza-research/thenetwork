@@ -47,7 +47,7 @@ export function slopAssign(o: SlopPackOptions, w: World, scored: readonly Scored
       // spec/slopAssignment.md, "Each pair can be reserved once and each member can participate once per round"
       if (!hasRoom(e.a) || !hasRoom(e.b) || !canReservePair(run, pairKey(e.a, e.b), e.a, e.b, withinBackupDegree(e))) continue;
       run = step(run, { type: "reservePair", pairKey: pairKey(e.a, e.b), memberA: e.a, memberB: e.b, withinBackupDegree: withinBackupDegree(e) });
-      selected.push({ s: e.s, exploration: false, rank: run.proposed - 1, probability: 1, value: null });
+      selected.push({ s: e.s, exploration: false, rank: run.proposed - 1, probability: 1 });
     }
     run = step(run, { type: "closeRound" });
   }
