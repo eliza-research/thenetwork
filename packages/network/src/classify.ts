@@ -814,6 +814,10 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // Refusal first. A pick after a refusal ("no, Saturday works") is mixed: ask again.
   if (c.why === "refusal") return all.some(k => strong.has(k)) ? { ...unclear, why: "mixed" } : { answer: "no", keys: [], why: c.why };
   if (c.why === "mixed" || c.why === "conditional" || c.why === "hedged") return unclear;
+  // A relative day ("tomorrow", "today", "tonight") names no offered day: the parser has no
+  // reference time to bind it to, so even a clock time or daypart next to it ("tomorrow 7pm
+  // works", "tomorrow evening works") must not pick an offered slot. Ask again instead.
+  if (/\b(?:tomorrow|tmrw|today|tonight)\b/.test(t)) return unclear;
   // A time they name and do not refuse is a yes to it ("no plans Thursday, so Thursday works").
   // A named time with a yes or a firm pick ("Saturday works"); a bare mention ("I'm at a wedding saturday") is not a yes.
   if (picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return { answer: "yes", keys: picked.filter(k => strong.has(k) || c.answer === "yes"), why: c.why };
