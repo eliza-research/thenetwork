@@ -8,7 +8,7 @@ import { BlooioAdapter } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";
 import { Mini } from "./mini.ts";
 
-test.skipIf(!pgAvailable)("a queued probe rechecks matching settings and an acceptance release can reach its member", async () => {
+test.skipIf(!pgAvailable)("queued invitations and meeting messages recheck the current member and opportunity", async () => {
   // spec/outboundAdmission.md, "A queued match invitation still needs the member's current settings"
   // spec/outboundAdmission.md, "A current row needs live approval and the recipient's eligibility"
   const url = await migratedDb("participation_outbound");
@@ -80,6 +80,34 @@ test.skipIf(!pgAvailable)("a queued probe rechecks matching settings and an acce
     expect(await adapter.queue.statusOf(releaseId)).toBe("sent");
     await rt.deliver();
     expect(calls.slice(before).map(call => call.idempotencyKey)).toEqual(["tn:logistics-paused", `tn:${releaseId}`]);
+
+    // A current day-before reminder sends. A pending copy for the other participant expires at the end of its window.
+    const pair = new Mini(members, { app: app.id, review: "auto", plans: false, growth: false });
+    pair.clock.set(clock.now());
+    await pair.onboard(first!, second!);
+    const planId = pair.propose([first!, second!]);
+    await pair.answerProbes([first!, second!]);
+    const booked = pair.net.exportState().opps.find(o => o.id === planId && o.stage === "scheduled")!;
+    expect(booked.bookedTold).toEqual(expect.arrayContaining([first, second]));
+    clock.set(booked.meetingAt! - DAY);
+    for (const phone of phones) await adapter.engaged(phone);
+    await sql`update network.members set prefs=prefs || ${{ quietHours: [0, 0] }}::jsonb where app_id=${app.id}`;
+    const queueReminder = (i: number, memberId: string) => rt.unitOfWork(net => {
+      net.importState({ ...net.exportState(), opps: [booked] });
+      rt.unit.sends.push({ id: `day-before-reminder:${planId}:${memberId}`, memberId, to: phones[i], kind: "transactional",
+        body: "Reminder: Saturday at the park.", type: "reminder", oppId: planId, proactive: false, system: false, ts: clock.now() });
+    });
+    await queueReminder(0, first!);
+    expect(await adapter.queue.statusOf(`day-before-reminder:${planId}:${first}`)).toBe("sent");
+    await adapter.queue.setLineSafety("review");
+    await queueReminder(1, second!);
+    const delayedReminder = `day-before-reminder:${planId}:${second}`;
+    expect(await adapter.queue.statusOf(delayedReminder)).toBe("retry_scheduled");
+    clock.advance(12 * HOUR);
+    await adapter.queue.setLineSafety(undefined);
+    await rt.deliver();
+    expect(await adapter.queue.statusOf(delayedReminder)).toBe("suppressed_ineligible");
+    expect(calls.some(call => call.idempotencyKey === `tn:${delayedReminder}`)).toBe(false);
   } finally {
     await service.close();
     await sql.close();

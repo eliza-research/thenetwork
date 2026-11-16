@@ -19,6 +19,7 @@ import { APPS } from "../../platform/src/apps.ts";
 import { isMemberInvitationLink } from "../src/invitation.ts";
 import { EXPECTED_INVITATION_PREFIX } from "./expected-invitation-store.ts";
 import { cofounderDeliveryIdPrefix } from "../../core/src/generated/cofounderDispatch.ts";
+import { dayBeforeReminderWindow } from "../../core/src/generated/meetingSettlement.ts";
 import { closedOpportunityRowStale, queuedProbePolicy } from "../../core/src/generated/outboundAdmission.ts";
 import { effectiveParticipation } from "./snapshot.ts";
 
@@ -39,6 +40,20 @@ async function releaseAdmission(tx: SQL, row: QueueRow): Promise<RecipientCheck>
       and msg.direction='outbound' and msg.type='cancellation' and msg.body=${row.text} and opp.state='SKIPPED'
       and seat.role='participant' and seat.status='available'`;
   return release ? { ok: true } : { ok: false, reason: "opportunity_release_changed" };
+}
+
+async function dayBeforeReminderAdmission(tx: SQL, row: QueueRow, now: number): Promise<RecipientCheck> {
+  if (!row.memberId || !row.oppId || row.kind !== "transactional" || row.id !== `day-before-reminder:${row.oppId}:${row.memberId}`) {
+    return { ok: false, reason: "booking_reminder_changed" };
+  }
+  const [meeting] = await tx<{ meeting_at: Date | null }[]>`select opp.meeting_at from network.messages msg
+    join network.opportunities opp on opp.app_id=msg.app_id and opp.id=msg.opportunity_id
+    join network.participations seat on seat.app_id=msg.app_id and seat.opportunity_id=opp.id and seat.member_id=msg.member_id
+    where msg.app_id=${row.app} and msg.id=${row.id} and msg.member_id=${row.memberId} and msg.opportunity_id=${row.oppId}
+      and msg.direction='outbound' and msg.type='reminder' and msg.body=${row.text} and opp.state='SCHEDULED'
+      and seat.role='participant' and seat.status='confirmed'`;
+  return meeting?.meeting_at && dayBeforeReminderWindow(meeting.meeting_at.getTime() - now)
+    ? { ok: true } : { ok: false, reason: "booking_reminder_changed" };
 }
 
 type QueuedProbe = Parameters<typeof effectiveParticipation>[0] & {
@@ -246,7 +261,8 @@ export class BlooioAdapter implements ChannelAdapter {
       // PgStore.save locks the state before erasing members. Dispatch takes the
       // same order, then the existing admit check revalidates current parties.
       lockAdmission: async (row, tx) => {
-        if (row.id.startsWith("relay:") || row.id.startsWith("invite-notice:") || row.id.startsWith(EXPECTED_INVITATION_PREFIX) || row.id.startsWith(cofounderDeliveryIdPrefix)) {
+        if (row.id.startsWith("relay:") || row.id.startsWith("invite-notice:") || row.id.startsWith(EXPECTED_INVITATION_PREFIX) || row.id.startsWith(cofounderDeliveryIdPrefix)
+          || row.id.startsWith("day-before-reminder:")) {
           await tx`select id from network.network_state where id=${rt.pg.id} for share`;
         }
         if (row.id.startsWith("home-help-consent:")) await rt.lockHomeHelpConsentAdmission(tx, row.id, row.memberId);
@@ -263,6 +279,7 @@ export class BlooioAdapter implements ChannelAdapter {
         if (row.id.startsWith(EXPECTED_INVITATION_PREFIX)) return !row.memberId && row.kind === "transactional" && await rt.expectedInvitationAdmission(tx, row)
           ? { ok: true } : { ok: false, reason: "expected_invitation_changed" };
         if (acceptanceRelease(row)) return releaseAdmission(tx, row);
+        if (row.id.startsWith("day-before-reminder:")) return dayBeforeReminderAdmission(tx, row, this.o.clock.now());
         return probeAdmission(tx, row, this.o.clock.now());
       },
       claimed: async (row, tx) => {

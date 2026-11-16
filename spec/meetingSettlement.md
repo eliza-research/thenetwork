@@ -27,6 +27,32 @@ pure def lawConfirmedDoesNotRepeat(accepted: bool, bookingDelivered: bool, words
   not(confirmationChanges(accepted, bookingDelivered, wordsRecorded, true, explicitReply).emitConfirmation)
 ```
 
+## Story: Hear about a booked meeting the day before
+
+> As a booked participant, I want a reminder early enough to plan for the meeting.
+
+### A day-before reminder has its own send window
+
+Start at 24 hours before the meeting. The day-before reminder can wait for the member's quiet hours to end before the 12-hour cutoff. Recheck the window and the accepted seat when a queued reminder is claimed. Check that the member already received the booking details. Aim to send the near-meeting reminder three hours before the meeting, or at the last available tick if the member's window would be closed then. When the day-before reminder has been sent, the near reminder uses a separate window. A job introduction has no booked meeting for the Network to remind people about. The usual contact and content rules apply.
+
+```quint
+pure val dayBeforeReminderStartMs = 24 * 3600000
+pure val dayBeforeReminderEndMs = 12 * 3600000
+pure val nearMeetingReminderLeadMs = 3 * 3600000
+
+pure def dayBeforeReminderWindow(remainingMs: int): bool =
+  remainingMs <= dayBeforeReminderStartMs and remainingMs > dayBeforeReminderEndMs
+
+pure def dayBeforeReminderDue(accepted: bool, bookingDelivered: bool, earlySent: bool, remainingMs: int): bool =
+  accepted and bookingDelivered and not(earlySent) and dayBeforeReminderWindow(remainingMs)
+
+pure def lawDayBeforeReminderFollowsBooking(accepted: bool, earlySent: bool, remainingMs: int): bool =
+  not(dayBeforeReminderDue(accepted, false, earlySent, remainingMs))
+
+pure def lawDayBeforeReminderDoesNotRepeat(accepted: bool, bookingDelivered: bool, remainingMs: int): bool =
+  not(dayBeforeReminderDue(accepted, bookingDelivered, true, remainingMs))
+```
+
 ## Story: Ask for feedback and close attendance once
 
 > As a participant, I want the Network to wait until after the meeting before asking how it went, then settle attendance once it has the available answers.
