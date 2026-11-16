@@ -754,6 +754,17 @@ function clauseAt(t: string, i: number, len: number): string {
   return t.slice(from, end < 0 ? t.length : i + len + end);
 }
 
+/** Hour from a probe label ("Thursday 7pm" -> 19, "Saturday 11am" -> 11). Labels without a clock have no hour. */
+const labelHour = (label: string): number | undefined => {
+  const m = /\b(\d{1,2})(?::\d\d)?\s*(am|pm)\b/i.exec(label);
+  if (!m) return undefined;
+  let h = Number(m[1]) % 12;
+  if (m[2]!.toLowerCase() === "pm") h += 12;
+  return h;
+};
+/** Evening by label hour: 5pm and later, before 5am. Same boundaries as the daypart mapping in #159. */
+const isEveningHour = (h: number): boolean => h >= 17 || h < 5;
+
 /**
  * A member's answer to a probe (founder decision 4a), in free text: "Thursday", "the first",
  * "either", "a or b", "neither", "none of those work", "yes", "no thanks". Returns the answer and,
@@ -817,6 +828,20 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     if (weekdayKeys.length) mark(weekdayKeys, m.index!, m[0].length);
     else if (!negatedAt(t, m.index!, m[0].length)) unofferedWeekday = true;
   }
+  // "Weeknight" names the weekday-evening options ("a weeknight works" books only those;
+  // a Saturday 11am or a Thursday 11am is not a weeknight). The codebase already defines
+  // weeknights this way: availabilityTags maps them to days [1..5] with part "evening".
+  // The evening boundary (5pm and later, before 5am) matches the daypart mapping in #159.
+  // A weeknight the probe did not offer is a counter-offer, like an unoffered day.
+  const weeknightKeys = options.filter(o => {
+    if (!["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].some(d => o.label.startsWith(d))) return false;
+    const h = labelHour(o.label);
+    return h !== undefined && isEveningHour(h);
+  }).map(o => o.key);
+  let unofferedWeeknight = false;
+  for (const m of t.matchAll(/\bweeknights?\b/g)) {
+    if (weeknightKeys.length) mark(weeknightKeys, m.index!, m[0].length);
+    else if (!negatedAt(t, m.index!, m[0].length)) unofferedWeeknight = true;
   }
   for (const m of t.matchAll(/\b(\d{1,2})(?::\d\d)?\s*(am|pm)\b/g)) {
     const label = `${Number(m[1])}${m[2]}`;
@@ -833,14 +858,14 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // Refusal first. A pick after a refusal ("no, Saturday works") is mixed: ask again.
   if (c.why === "refusal") return all.some(k => strong.has(k)) ? { ...unclear, why: "mixed" } : { answer: "no", keys: [], why: c.why };
   if (c.why === "mixed" || c.why === "conditional" || c.why === "hedged") return unclear;
-  // A yes aimed at a weekend the probe did not offer is a counter-offer, not a yes to the
-  // offered times: "this weekend works" when no weekend option was offered must not book
-  // the weekdays. A named offered time still books that time.
-  if (unofferedWeekend && c.answer === "yes" && !picked.length) return { answer: "yes", keys: [], why: "counter" };
   // A yes aimed at a weekday the probe did not offer is a counter-offer, not a yes to the
   // offered times: "a weekday works" when no weekday option was offered must not book
   // the weekend. A named offered time still books that time.
   if (unofferedWeekday && c.answer === "yes" && !picked.length) return { answer: "yes", keys: [], why: "counter" };
+  // A yes aimed at a weeknight the probe did not offer is a counter-offer, not a yes to the
+  // offered times: "a weeknight works" when no weekday-evening option was offered must not book
+  // the weekend or a weekday morning. A named offered time still books that time.
+  if (unofferedWeeknight && c.answer === "yes" && !picked.length) return { answer: "yes", keys: [], why: "counter" };
   // A time they name and do not refuse is a yes to it ("no plans Thursday, so Thursday works").
   // A named time with a yes or a firm pick ("Saturday works"); a bare mention ("I'm at a wedding saturday") is not a yes.
   if (picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return { answer: "yes", keys: picked.filter(k => strong.has(k) || c.answer === "yes"), why: c.why };

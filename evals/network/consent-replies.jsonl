@@ -333,3 +333,15 @@
 {"text":"weekdays work best","label":"yes","keys":["a"]}
 {"text":"I'm free on weekdays","label":"yes","keys":["a"]}
 {"text":"weekdays are best","label":"yes","keys":["a"]}
+{"text":"a weeknight works","label":"yes","keys":["a"]}
+{"text":"any weeknight works","label":"yes","keys":["a"]}
+{"text":"weeknights work","label":"yes","keys":["a"]}
+{"text":"weeknights work for me","label":"yes","keys":["a"]}
+{"text":"I'm free on weeknights","label":"yes","keys":["a"]}
+{"text":"weeknights are best","label":"yes","keys":["a"]}
+{"text":"a weeknight works, Saturday too","label":"yes","keys":["a","b"]}
+{"text":"any weeknight works, Sunday too","label":"yes","keys":["a","c"]}
+{"text":"weeknight works","label":"yes","keys":["a"]}
+{"text":"a weeknight evening works","label":"yes","keys":["a"]}
+{"text":"any weeknight evening works","label":"yes","keys":["a"]}
+{"text":"weeknights work best","label":"yes","keys":["a"]}
