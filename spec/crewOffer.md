@@ -1,6 +1,6 @@
 # Recurring crew offers
 
-This flow covers the offer after an existing plan. The Network owns the member records, finds the qualifying plan, and sends messages. The offer keeps its existing stored fields. The [standalone crew model](models/plan_crew.md) also covers eligibility changes, session booking, and handoff.
+This flow covers the offer after an existing plan and the handoff after recurring sessions. The Network owns the member records, finds the qualifying plan, and sends messages. The offer keeps its existing stored fields. The [standalone crew model](models/plan_crew.md) also covers eligibility changes and session booking.
 
 ## Story: Opt in to a recurring crew
 
@@ -84,4 +84,17 @@ pure def forgetCrewInvitee(offer: CrewOfferState, memberId: str): CrewOfferState
     offered: offer.offered.select(id => id != memberId),
     yes: offer.yes.select(id => id != memberId),
     no: offer.no.select(id => id != memberId) }
+```
+
+## Story: Take over the recurring crew
+
+> As a crew member, I want the Network to organize the first sessions before the crew takes over.
+
+### Handoff counts booked sessions that reached feedback
+
+When the crew has no open session, hand it off after the configured number of booked sessions reach the feedback step. A proposed session and a session that closes before feedback do not count. Keep the weekly slot history so a rejection does not queue another proposal for the same slot.
+
+```quint
+pure def crewHandoffDue(openSession: bool, completedCount: int, requiredCount: int): bool =
+  not(openSession) and completedCount >= requiredCount
 ```

@@ -35,7 +35,7 @@ import {
   type AskRecord, type EngineAsk, type EngineConfigInput, type EngineInput, type EngineProposal, type FeedbackRecord, type InteractionRecord, type MatchingRunLog,
   type AppPack, type PlansConfig, type PlansConfigInput, World as EngineWorld, DEFAULT_FRIENDS_POLICY, planFriendsWeek,
 } from "@thenetwork/engine";
-import { initial as initialCrewOffer, step as stepCrewOffer, type CrewOfferState } from "../../core/src/generated/crewOffer.ts";
+import { crewHandoffDue, initial as initialCrewOffer, step as stepCrewOffer, type CrewOfferState } from "../../core/src/generated/crewOffer.ts";
 import {
   closeOpportunityForRequestWithdrawal, immediateRequestRetryReady, initial as initialMemberRequest, learnDuringRequestIntake, memberRequestWithdrawable,
   primeMemberRequest, requestDesireWithdrawn, requestInReuseWindow, sameStandingRequest, scheduledRequestRetryReady,
@@ -4008,7 +4008,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /**
    * Crew sessions (plans ask 8): weekly, same time and place, each session opt-in and reviewed like
-   * any plan; the host rotates; the Network hands the crew off after 3 sessions. The host's organizing
+   * any plan; the host rotates; the Network hands the crew off after 3 sessions reach feedback. The host's organizing
    * reach (NC ask 3) may add members: every slot above the base 8 is reserved for members with the
    * least recent participation who fit the activity (the exposure floor).
    */
@@ -4018,20 +4018,29 @@ export class ConsentNetwork implements NetworkUnderTest {
       const next = stepCrewOffer(crewOfferState(offer), { type: "expireCrewOffer", elapsedMs: now - offer.at });
       if (next.phase === "Resolved") this.resolveCrew(offer);
     }
+    let world: EngineWorld | undefined;
     for (const crew of this.crews) {
       if (crew.handedOff) continue;
-      if ([...this.opps.values()].some(o => o.plan?.crewId === crew.id && OPEN_STAGES.has(o.stage))) continue;
+      const sessions = [...this.opps.values()].filter(o => o.plan?.crewId === crew.id);
+      const openSession = sessions.some(o => OPEN_STAGES.has(o.stage));
+      // spec/crewOffer.md, "Handoff counts booked sessions that reached feedback"
+      if (crewHandoffDue(openSession, sessions.filter(o => o.stage === "done").length, this.pcfg.crews.handOffAfterSessions)) {
+        crew.handedOff = true;
+        this.ctx.log("crew_handoff", { crewId: crew.id });
+        continue;
+      }
+      if (openSession) continue;
       const v = PLAN_VENUES.find(x => x.id === crew.venueId);
       const place = v ? { name: v.name, area: v.area } : { name: "the usual spot" };
       const members = crew.members.filter(id => { const m = this.members.get(id); return !!m && this.planSeatOk(m); });
       if (members.length < this.pcfg.crews.minMembers) continue;
-      const next = plans.crewSessionPlan(this.planWorld(now), { ...crew, members, hostRotation: crew.hostRotation.filter(h => members.includes(h)).length ? crew.hostRotation.filter(h => members.includes(h)) : members }, now, place, this.pcfg);
-      if (!next || crew.sessions.some(id => this.opps.get(id)?.plan?.window.start === next.window.start)) continue;
+      world ??= this.planWorld(now, true);
+      const next = plans.crewSessionPlan(world, { ...crew, members, hostRotation: crew.hostRotation.filter(h => members.includes(h)).length ? crew.hostRotation.filter(h => members.includes(h)) : members }, now, place, this.pcfg);
+      if (!next || crew.sessions.includes(next.id)) continue;
       const plan = this.withReach(next, now);
       crew.sessions.push(plan.id);
       this.plansCounters.crewSessions++;
       this.ctx.log("crew_session", { crewId: crew.id, session: crew.sessions.length, invited: plan.invited.length });
-      if (crew.sessions.length >= this.pcfg.crews.handOffAfterSessions) { crew.handedOff = true; this.ctx.log("crew_handoff", { crewId: crew.id }); }
       this.submitPlan(plan, now);
     }
   }
