@@ -257,6 +257,20 @@ Rules for the boundary:
 3. **Joining is a membership.** The platform creates members after a verified join (`POST /api/join`) or a join by text on an open app. A new membership through a forwarding link commits with consent, the Network member, and the app-scoped attribution. An `invited` member still has to complete signup.
 4. **No shared process state.** The two talk only through Postgres (the `network` schema) and the channel gateway. Nothing here imports Eliza, and the plugin does not import this service.
 
+## Founding-cohort invitations
+
+An app admin can issue one batch through `POST /apps/<app>/invite/seed` with a
+UUID `batchId` and `invitations` containing up to 100 rows. Each row supplies
+`phone`, `city` (`nyc` or `sf`) and a private `vouch` of at most 500 UTF-8 bytes.
+Forward the returned links to their intended recipients. An exact replay by
+the same issuer returns the same links until expiry. Changing the rows under
+the same batch ID returns a conflict.
+
+The verified recipient decides whether to join through the existing age and
+consent checks. The first join records the issuer and cohort city separately
+from the member's own profile. Private vouches leave the invitation on
+redemption, signed decline, or expiry. [Seed invitation rules](../../../spec/seedInvitation.md)
+
 ## Expected member invitation
 
 A member can take an issued forwarding link and send a private signed turn

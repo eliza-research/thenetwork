@@ -32,6 +32,7 @@ import { canJoinApp, joinAgeCheck, lowestAge } from "./age.ts";
 import type { AppId, AppInfo } from "./apps.ts";
 import { type ConsentEvent, resolveConsent, type StopScope, stopScope } from "./consent.ts";
 import { InvitationUnavailable, type ReferralJoin } from "./invite-links.ts";
+import type { SeedInvitationReferral } from "./seed-invitations.ts";
 import { keyedHash } from "./phone.ts";
 import type { Membership, PeopleStore, Person, PhoneIdentity, PhoneMethod } from "./store.ts";
 
@@ -136,14 +137,16 @@ export function joinProfileText(input: Pick<JoinInput, "about" | "neighborhood" 
   return [input.about, input.neighborhood && `I live in ${input.neighborhood}.`, input.zip && `My zip is ${input.zip}.`].filter(Boolean).join("\n");
 }
 
-export interface JoinHookContext { app: AppInfo; person: Person; membership: Membership; e164: string; age: number; input: JoinInput; referral?: ReferralJoin }
+export type EnrollmentReferral = ReferralJoin | SeedInvitationReferral;
+
+export interface JoinHookContext { app: AppInfo; person: Person; membership: Membership; e164: string; age: number; input: JoinInput; referral?: EnrollmentReferral }
 export interface MemberHookContext { app: AppInfo; personId: string; memberId: string; e164: string }
 
 export interface AccountHooks {
-  /** Resolve an explicit member invitation for this app after the account and consent gates. */
-  findInvitation?(app: AppId, token: string, at: number, verifiedPhone: string): Promise<ReferralJoin | undefined>;
+  /** Resolve an explicit invitation for this app after the account and consent gates. */
+  findInvitation?(app: AppId, token: string, at: number, verifiedPhone: string): Promise<EnrollmentReferral | undefined>;
   /** Commit the referred membership, opt-in, session attachment, Network member and invitation together. */
-  commitReferredJoin?(ctx: JoinHookContext & { referral: ReferralJoin }): Promise<void>;
+  commitReferredJoin?(ctx: JoinHookContext & { referral: EnrollmentReferral }): Promise<void>;
   /** Create the network member (the service mounts this). A throw undoes the join. */
   onJoin?(ctx: JoinHookContext): Promise<void> | void;
   /** STOP from the web. memberId is this app's member, when there is one (a global stop runs without one). */

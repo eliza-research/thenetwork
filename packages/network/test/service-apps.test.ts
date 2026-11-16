@@ -624,6 +624,129 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     return { confirmation, response: await result.json() };
   };
 
+  // spec/product/stories.md, "Seed invitations use the same acceptance rules"
+  test("a scoped staff seed batch is private and only creates membership on its first verified acceptance", async () => {
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
+    const sent: SendRequest[] = [];
+    const { s, otp } = service(clock, {
+      env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: signedInvitationSecret },
+      networks: [{ id: "ntwrk:nyc" }, { id: "ntwrk:sf" }, { id: "friends:nyc" }],
+      tokens: "admin@ntwrk:seed-admin,admin@friends:other-admin,reviewer@ntwrk:seed-reviewer",
+      adapter: (_net, rt) => new BlooioAdapter({ app: rt.app.id, from: LINE, clock, liveGate: () => true, log: () => {},
+        provider: { kind: "sim", async send(request) {
+          sent.push(request);
+          return { providerMessageId: `seed-invite-fixture-${sent.length}`, status: "sent", acceptedAt: clock.now() };
+        } },
+      }),
+    });
+    await s.start();
+    const target = newPhone(), stoppedPhone = newPhone(), bannedPhone = newPhone(), expiredPhone = newPhone(), wrongPhone = newPhone();
+    const vouch = "The fixture operator knows this recipient through a local meetup.";
+    const batch = {
+      batchId: "2e43de36-74a3-4e40-96f4-a482a53dc1a8",
+      invitations: [target, stoppedPhone, bannedPhone, expiredPhone].map(phone => ({ phone, city: "nyc" as const, vouch })),
+    };
+    const seed = async (token: string | undefined, app: AppId | undefined, data: unknown = batch) => {
+      const res = await s.fetch(new Request(`http://127.0.0.1${app ? `/apps/${app}` : ""}/invite/seed`, { method: "POST",
+        headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify(data),
+      }));
+      return { status: res.status, body: await res.json() };
+    };
+    expect((await seed(undefined, "ntwrk")).status).toBe(401);
+    expect((await seed("seed-reviewer", "ntwrk")).status).toBe(403);
+    expect((await seed("other-admin", "ntwrk")).status).toBe(403);
+    expect((await seed("seed-admin", "friends")).status).toBe(403);
+    expect((await seed("seed-admin", undefined)).status).toBe(404);
+    expect((await seed("seed-admin", "ntwrk", { ...batch, invitations: [{ phone: target, city: "boston", vouch }] })).status).toBe(400);
+
+    const created = await seed("seed-admin", "ntwrk");
+    expect(created).toMatchObject({ status: 200, body: { ok: true, batchId: batch.batchId, replayed: false } });
+    const links = created.body.invitations as { link: string; city: string; expiresAt: number }[];
+    expect(links).toHaveLength(4);
+    for (const row of links) {
+      expect(row).toMatchObject({ link: expect.stringMatching(/^https:\/\/ntwrk\.party\/SKILL\.md#invite=[A-Za-z0-9_-]{43}$/), city: "nyc" });
+      expect(row.expiresAt).toBeGreaterThan(clock.now());
+    }
+    expect(new Set(links.map(row => row.link)).size).toBe(4);
+    expect(JSON.stringify(created.body)).not.toContain(vouch);
+    for (const { phone } of batch.invitations) expect(JSON.stringify(created.body)).not.toContain(phone);
+    expect(await seed("seed-admin", "ntwrk")).toMatchObject({ status: 200, body: { ok: true, invitations: links, replayed: true } });
+    const changed = { ...batch, invitations: [{ ...batch.invitations[0]!, city: "sf" }, ...batch.invitations.slice(1)] };
+    expect((await seed("seed-admin", "ntwrk", changed)).status).toBe(409);
+    expect(await count(sql`select count(*)::int as n from platform.people`)).toBe(0);
+    expect(await count(sql`select count(*)::int as n from platform.memberships`)).toBe(0);
+    expect(await count(sql`select count(*)::int as n from network.members`)).toBe(0);
+    expect(await count(sql`select count(*)::int as n from platform.outbound`)).toBe(0);
+    expect(await count(sql`select count(*)::int as n from platform.seed_invitation_attributions`)).toBe(0);
+    const issuedRows = await sql`select app_id,ordinal,home_city,recipient_hash,closed_at,ciphertext from platform.seed_invitations order by ordinal`;
+    expect([...issuedRows].map(row => ({ ...row, ciphertext: !!row.ciphertext }))).toEqual([0, 1, 2, 3].map(ordinal => ({
+      app_id: "ntwrk", ordinal, home_city: "nyc", recipient_hash: expect.stringMatching(/^[0-9a-f]{64}$/), closed_at: null, ciphertext: true,
+    })));
+    expect([...(await sql`select app_id,actor,detail from network.staff_audit where action='issue_seed_invitation_batch'`)]).toEqual([
+      { app_id: "ntwrk", actor: expect.stringMatching(/^token:admin#[0-9a-f]{8}$/), detail: { count: 4 } },
+    ]);
+    expect(sent).toEqual([]);
+
+    const authenticate = async (phone: string, app: AppId = "ntwrk") => {
+      let cookie = "";
+      const call = async (path: string, data: Record<string, unknown>) => {
+        const res = await s.publicFetch(new Request(`http://localhost:${5101 + APP_IDS.indexOf(app)}${path}`, {
+          method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(data),
+        }));
+        cookie = res.headers.get("set-cookie")?.split(";")[0] ?? cookie;
+        return { status: res.status, body: await res.json() };
+      };
+      clock.advance(31_000);
+      expect((await call("/api/auth/otp/start", { phone })).status).toBe(200);
+      expect((await call("/api/auth/otp/verify", { phone, code: otp.codes.get(phone) })).status).toBe(200);
+      return call;
+    };
+    const tokenOf = (i: number) => new URL(links[i]!.link).hash.slice("#invite=".length);
+    const profile = (firstName: string, inviteToken: string, app: AppId = "ntwrk") => ({ firstName, age: 30, homeCity: "sf",
+      inviteToken, consent: { sms: true, wording: APPS[app].consent.text },
+    });
+    const wrong = await authenticate(wrongPhone), otherApp = await authenticate(target, "friends"), eligible = await authenticate(target);
+    expect((await wrong("/api/join", profile("Maya", tokenOf(0)))).status).toBe(400);
+    expect((await otherApp("/api/join", profile("Maya", tokenOf(0), "friends"))).status).toBe(400);
+    expect(await memberOf("ntwrk", wrongPhone)).toBeUndefined();
+    const accepted = await eligible("/api/join", profile("Maya", tokenOf(0)));
+    expect(accepted).toMatchObject({ status: 200, body: { ok: true, membership: { state: "active" } } });
+    const member = await memberOf("ntwrk", target);
+    if (!member) throw new Error("The accepted seed did not create its verified membership");
+    expect((await sql`select home_city,account_status,opted_out from network.members where app_id='ntwrk' and id=${member.id}`)[0])
+      .toEqual({ home_city: "sf", account_status: "active", opted_out: false });
+    const attribution = await sql`select a.app_id,a.member_id,a.home_city,a.issuer_id=b.issuer_id as actor_matches,a.redeemed_at,a.welcome_projected_at,b.issuer_id
+      from platform.seed_invitation_attributions a join platform.seed_invitation_batches b on a.app_id=b.app_id and a.batch_id=b.id`;
+    expect([...attribution]).toEqual([{ app_id: "ntwrk", member_id: member.id, home_city: "nyc", actor_matches: true,
+      redeemed_at: expect.any(Date), welcome_projected_at: expect.any(Date), issuer_id: expect.stringMatching(/^token:admin#[0-9a-f]{8}$/),
+    }]);
+    expect((await sql`select recipient_hash,closed_at,ciphertext from platform.seed_invitations where ordinal=0`)[0])
+      .toEqual({ recipient_hash: null, closed_at: expect.any(Date), ciphertext: null });
+    expect(await count(sql`select count(*)::int as n from platform.memberships`)).toBe(1);
+    await eligible("/api/join", profile("Maya", tokenOf(0)));
+    expect(await count(sql`select count(*)::int as n from platform.memberships`)).toBe(1);
+    expect(await count(sql`select count(*)::int as n from platform.seed_invitation_attributions`)).toBe(1);
+    expect(JSON.stringify(accepted.body)).not.toContain(vouch);
+    expect(JSON.stringify(await sql`select value from network.facets where member_id=${member.id}`)).not.toContain(vouch);
+
+    const stopped = await authenticate(stoppedPhone), banned = await authenticate(bannedPhone);
+    const signed = invitationTurn(s, clock);
+    expect((await signed({ messageId: "seed-recipient-stop", from: stoppedPhone, to: null, channel: "blooio", transport: "imessage",
+      app: "ntwrk", receivedAt: clock.now(), text: "STOP" })).status).toBe(200);
+    expect((await stopped("/api/join", profile("Stopped", tokenOf(1)))).status).toBe(400);
+    await s.people.ban({ id: "seed-fixture-ban", scope: "phone", personId: null, phoneHash: s.accounts.phoneHash(bannedPhone), reason: "Fixture safety ban",
+      reportId: null, bannedBy: "fixture-admin", at: clock.now() });
+    expect((await banned("/api/join", profile("Banned", tokenOf(2)))).status).toBe(400);
+    clock.advance(links[3]!.expiresAt - clock.now() + 1);
+    const expired = await authenticate(expiredPhone);
+    expect((await expired("/api/join", profile("Expired", tokenOf(3)))).status).toBe(400);
+    expect((await seed("seed-admin", "ntwrk")).status).toBe(409);
+    expect(await count(sql`select count(*)::int as n from platform.memberships`)).toBe(1);
+    expect(sent.some(request => request.text.includes("#invite="))).toBe(false);
+  }, T);
+
   // spec/memberInvitation.md, "The link goes to the inviter as a reply"
   // spec/memberInvitation.md, "A new verified acceptance can be attributed"
   test("a signed vouch issues a private single-use invitation for a verified app join", async () => {
