@@ -38,6 +38,21 @@ pure def planReplyChoice(reply: ReplyFacts): ReplyChoice =
   else AskAlternate
 ```
 
+### A Friends replacement needs a current pair value with every remaining member
+
+Keep the reviewed bench order. Before promoting a replacement, check the member's current Friend profile and pair value with each member still in the plan. A member who has declined or has been removed is out of the table. Skip an ineligible candidate and continue down the same reviewed bench. Repeat the check before sending an invitation to a promoted replacement.
+
+```quint
+pure def currentFriendPlanSeatFits(hasProfile: bool, peerValues: List[int]): bool =
+  hasProfile and peerValues.every(value => value >= 0)
+
+pure def lawFriendPlanSeatNeedsACurrentProfile(peerValues: List[int]): bool =
+  not(currentFriendPlanSeatFits(false, peerValues))
+
+pure def lawFriendPlanSeatNeedsEveryPairValue(hasProfile: bool, peerValues: List[int]): bool =
+  peerValues.some(value => value < 0) implies not(currentFriendPlanSeatFits(hasProfile, peerValues))
+```
+
 ### Booking requires a pending acceptance that meets quorum
 
 Only an accepting response from a member whose answer is pending can book a plan. It must arrive before the probe deadline and bring the acceptance count to quorum.
@@ -89,7 +104,7 @@ pure def lawDirectFallbackRequiresGroup(yesCount: int, smallerOn: bool, minGroup
 
 ### A group plan never books two members directly
 
-The engine counts the accepting members it can still seat after it removes booking conflicts and contact refusals. A partner plan books when that count reaches its quorum. A group plan books only with three or more seated members, and only when the count reaches quorum or the activity permits two people. When a group plan keeps exactly two seated members, the engine uses the fallback for those two members. That fallback asks them again through a fresh partner plan, which needs new review and consent from both.
+The engine counts the accepting members it can still seat after it removes booking conflicts and contact refusals. For Friends plans it seats an accepting member only when their current Friend profile gives them a pair value with every member already seated. A late join on Friends needs a current pair value with every booked member. A partner plan books when the seated count reaches its quorum. A group plan books only with three or more seated members, and only when the count reaches quorum or the activity permits two people. When a group plan keeps exactly two seated members, the engine uses the fallback for those two members. That fallback asks them again through a fresh partner plan, which needs new review and consent from both.
 
 ```quint
 pure def planBookingConsented(partnerPlan: bool, seatedCount: int, needed: int, minGroup: int): bool =

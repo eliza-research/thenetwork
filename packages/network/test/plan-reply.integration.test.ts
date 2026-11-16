@@ -4,7 +4,7 @@
 // accepting members of a group plan are asked again through a fresh partner plan, never booked as a pair.
 import { describe, expect, test } from "vitest";
 import { DAY, HOUR, MINUTE } from "@thenetwork/core";
-import type { plans } from "@thenetwork/engine";
+import { friendsPack, type plans } from "@thenetwork/engine";
 import { copy } from "../src/copy.ts";
 import { Mini, START } from "./mini.ts";
 
@@ -126,4 +126,37 @@ describe("plan probe replies", () => {
     expect(w.net.exportState().opps.find(o => o.id === partner.oppId)?.plan).toMatchObject({ partner: true, invited: ["a", "b"] });
     expect(w.net.memberList().find(m => m.id === "c")?.note?.text).toBe(copy.planNotTogether);
   }, 300_000);
+
+  test("a reviewed Friends plan skips a replacement whose Friend membership is no longer eligible", async () => {
+    // spec/planDecision.md, "A Friends replacement needs a current pair value with every remaining member"
+    const primary = ["a", "b", "c"];
+    const ids = [...primary, "d", "e"];
+    const w = new Mini(ids.map(climber), { app: "friends", pack: friendsPack, review: "human" });
+    const now = w.clock.now();
+    for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified", tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
+    await w.onboard(...ids);
+    const plan: plans.Plan = {
+      id: "friends_reviewed_backfill", city: "nyc", activityId: "bouldering", place: { name: "Brooklyn Boulders", area: "Gowanus" },
+      window: { start: now + 6 * DAY, end: now + 6 * DAY + 2 * HOUR }, invited: primary, alternates: ["d", "e"], partner: false,
+      size: { min: 3, target: 3, max: 3 }, quorum: 3, probeDeadline: now + 4 * DAY, score: 0.6, u: {}, familiar: {}, createdAt: now, category: "social",
+    };
+    (w.net as unknown as { submitPlan(plan: plans.Plan, at: number): void }).submitPlan(plan, now);
+    const item = w.net.reviewQueue()[0]!;
+    expect(w.net.review(item.oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
+    expect(await w.runUntil(() => primary.every(id => w.probed(id)), DAY)).toBe(true);
+    await w.say("a", "yes");
+    await w.say("b", "yes");
+    const index = w.facets.findIndex(f => f.id === "d:verified");
+    w.facets[index] = { ...w.facets[index]!, tags: ["verify:liveness:fail", "verify:age:pass"] };
+    const mark = w.mark();
+    await w.say("c", "no");
+
+    expect(await w.runUntil(() => w.probed("e"), DAY)).toBe(true);
+    expect(w.sent.slice(mark).filter(message => message.meta.type === "plan_probe")).toMatchObject([
+      { to: "e", meta: { plan: { planId: item.oppId, size: 3 } } },
+    ]);
+    expect(w.net.exportState().opps.find(o => o.id === item.oppId)?.participants).toEqual([...primary, "e"]);
+    await w.say("e", "yes");
+    expect(w.meetings).toMatchObject([{ proposalId: item.oppId, participants: ["a", "b", "e"] }]);
+  });
 });

@@ -29,6 +29,26 @@ export function planReplyChoice(reply: ReplyFacts): ReplyChoice {
   return !canApplyPlanReply(reply.phase, reply.pendingMember) ? "IgnoreReply" : (planProbeExpired(reply.phase, !reply.beforeDeadline) ? "ExpireProbe" : (reply.accepted ? (reply.phase === "Booked" ? (reply.lateJoinOpen ? "AddMember" : "RecordLate") : (reply.yesAfter >= reply.needed ? "BookPlan" : (reply.partnerPlan ? "AskPartner" : "RecordAnswer"))) : (reply.phase === "Booked" ? "RecordAnswer" : (reply.partnerPlan && reply.firstMember ? "ClosePlan" : "AskAlternate"))));
 }
 
+/** Story: Confirm a plan after enough members accept / A Friends replacement needs a current pair value with every remaining member (spec/planDecision.md) */
+//@ pure
+export function currentFriendPlanSeatFits(hasProfile: boolean, peerValues: number[]): boolean {
+  return hasProfile && !peerValues.some((value: number) => !(value >= 0));
+}
+
+/** Story: Confirm a plan after enough members accept / A Friends replacement needs a current pair value with every remaining member (spec/planDecision.md) */
+//@ pure
+export function lawFriendPlanSeatNeedsACurrentProfile(peerValues: number[]): boolean {
+  //@ ensures \result === true
+  return !currentFriendPlanSeatFits(false, peerValues);
+}
+
+/** Story: Confirm a plan after enough members accept / A Friends replacement needs a current pair value with every remaining member (spec/planDecision.md) */
+//@ pure
+export function lawFriendPlanSeatNeedsEveryPairValue(hasProfile: boolean, peerValues: number[]): boolean {
+  //@ ensures \result === true
+  return !peerValues.some((value: number) => value < 0) || !currentFriendPlanSeatFits(hasProfile, peerValues);
+}
+
 /** Story: Confirm a plan after enough members accept / Booking requires a pending acceptance that meets quorum (spec/planDecision.md) */
 //@ pure
 export function lawBookingNeedsQuorum(phase: PlanStage, pendingMember: boolean, accepted: boolean, yesAfter: number, needed: number, partnerPlan: boolean, firstMember: boolean, beforeDeadline: boolean, lateJoinOpen: boolean): boolean {
