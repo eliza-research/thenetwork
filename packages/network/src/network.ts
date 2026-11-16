@@ -37,6 +37,11 @@ import {
 } from "@thenetwork/engine";
 import { initial as initialCrewOffer, step as stepCrewOffer, type CrewOfferState } from "../../core/src/generated/crewOffer.ts";
 import {
+  closeOpportunityForRequestWithdrawal, immediateRequestRetryReady, initial as initialMemberRequest, memberRequestWithdrawable,
+  primeMemberRequest, requestDesireWithdrawn, requestInReuseWindow, sameStandingRequest, scheduledRequestRetryReady,
+  step as stepMemberRequest, waitingMemberRequest, type MemberRequestFlow,
+} from "../../core/src/generated/memberRequest.ts";
+import {
   chooseCheckIn, confirmationChanges, confirmationWindowHours as OPT_OUT_HOURS, countAttendance, counterpartConfirmsAttendance,
   deliveredInvitee, feedbackDelayHours, initial as initialMeetingSettlement, organizerCanVerify, requestAttendanceSatisfied,
   restoreAttendance, settlementDelayDays, silentConfirmationDue, step as stepMeetingSettlement,
@@ -1671,10 +1676,14 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const desire of desires) m.learned.desires.delete(desire);
     let changed = false;
     for (const r of this.requests) {
-      if (r.memberId !== m.id || r.kind !== "people" || !r.desireId || !desires.includes(r.desireId) || r.withdrawn
-        || (r.outcome !== "none" && r.outcome !== "probing")) continue;
+      const withdrawal = stepMemberRequest(initialMemberRequest, {
+        type: "applyRequestWithdrawal",
+        matched: memberRequestWithdrawable(r.memberId === m.id, r.kind === "people",
+          !!r.desireId && desires.includes(r.desireId), !!r.withdrawn, r.outcome ?? ""),
+      });
+      if (withdrawal.phase !== "RequestWithdrawn") continue;
       const opp = r.oppId ? this.opps.get(r.oppId) : undefined;
-      if (opp && (opp.stage === "review" || opp.stage === "probing")) this.close(opp, "requester unavailable");
+      if (opp && closeOpportunityForRequestWithdrawal(opp.stage)) this.close(opp, "requester unavailable");
       r.closed = true;
       r.withdrawn = true;
       r.outcome = "none";
@@ -1689,22 +1698,35 @@ export class ConsentNetwork implements NetworkUnderTest {
     const canSearch = this.trust.ok(m.id) && !this.reportHeld(m.id);
     // Repeat asks ("still hoping to...") are the same request: don't open another one while one is
     // in progress, and don't re-search the same want more than once every 3 days.
-    const prior = [...this.requests].reverse().find(r => r.memberId === m.id && r.kind === "people" && !r.withdrawn
-      && r.outcome !== "booked" && r.outcome !== "fulfilled" && (r.desireId ?? r.category) === (c.desireId ?? c.category));
+    const prior = [...this.requests].reverse().find(r => sameStandingRequest(
+      r.memberId === m.id, r.kind === "people", (r.desireId ?? r.category) === (c.desireId ?? c.category), !!r.withdrawn, r.outcome ?? "",
+    ));
+    const probing = prior?.outcome === "probing";
     // The re-search interval is the member's effort overlay (NC; the floor is 3 days).
-    if (prior && (prior.outcome === "probing" || now - prior.at < this.effort(m.id).intentReSearchDays * DAY)) {
-      if (o.quiet) return;
-      if (prior.outcome === "probing") { this.send(m, "Still on it; I'll get back to you soon.", { type: "info" }, "reply"); return; }
-      if (!this.opts.matchingEnabled) return this.requestWaits(m, prior, o);
-      if (prior.outcome === "none" && !prior.closed && canSearch && !this.busy(m.id) && (!prior.lastTry || now - prior.lastTry > HOUR) && !(prior.lastConfirmAt !== undefined && now - prior.lastConfirmAt < 72 * HOUR)) {
-        const opp = this.tryRequest(m, prior);
-        if (opp) { this.send(m, copy.requestAck, { type: "info" }, "reply"); this.submit(opp); return; }
-      }
+    const admission = stepMemberRequest(initialMemberRequest, {
+      type: "checkRequestAdmission",
+      repeat: !!prior && requestInReuseWindow(probing, now - prior.at, probing ? 0 : this.effort(m.id).intentReSearchDays * DAY),
+      categoryAllowed: this.allowedCategories.has(c.category ?? "social"),
+    });
+    if (admission.phase === "RequestRepeated" && prior) {
+      const route = stepMemberRequest(admission, {
+        type: "routeRepeatedRequest", quiet: !!o.quiet, probing, matching: this.opts.matchingEnabled,
+      });
+      if (route.phase === "RequestQuietRepeat") return;
+      if (route.phase === "RequestAlreadyProbing") { this.send(m, "Still on it; I'll get back to you soon.", { type: "info" }, "reply"); return; }
+      if (route.phase === "RequestMatchingPaused") return this.requestWaits(m, prior, o);
+      const search = stepMemberRequest(route, {
+        type: "routeImmediateRequestRetry",
+        ready: waitingMemberRequest(prior.outcome ?? "", !!prior.closed) && canSearch && !this.busy(m.id)
+          && immediateRequestRetryReady(!!prior.lastTry, now - (prior.lastTry ?? now), prior.lastConfirmAt !== undefined, now - (prior.lastConfirmAt ?? now)),
+      });
+      const opp = this.tryRequest(m, prior, search);
+      if (opp) { this.send(m, copy.requestAck, { type: "info" }, "reply"); this.submit(opp); return; }
       this.tellNoneYet(m, prior);
       return;
     }
     // Only what this app does (matching-e2e-2): a request outside its categories is not searched.
-    if (!this.allowedCategories.has(c.category ?? "social")) {
+    if (admission.phase !== "RequestAdmitted") {
       this.ctx.log("request_out_of_scope", { memberId: m.id, category: c.category ?? "social" });
       if (!o.quiet) this.send(m, copy.requestOutOfScope, { type: "info" }, "reply");
       return;
@@ -1718,15 +1740,19 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.dirty = true;
     // Privacy (P3): the log keeps what was asked for (category, want, tags), never the member's words.
     this.ctx.log("request", { requestId: req.id, memberId: m.id, kind: "people", category: req.category, desireId: req.desireId, tags: req.tags });
-    if (!this.opts.matchingEnabled) return this.requestWaits(m, req, o);
-    if (!canSearch || this.busy(m.id)) {
+    const search = stepMemberRequest(admission, {
+      type: "routeNewRequest", matching: this.opts.matchingEnabled, eligible: canSearch,
+      busy: this.opts.matchingEnabled && canSearch && this.busy(m.id),
+    });
+    if (search.phase === "RequestMatchingPaused") return this.requestWaits(m, req, o);
+    if (search.phase !== "RequestSearching") {
       req.outcome = "none";
       // A watch or report hold stops the search and allows a reply (network-consent-24).
-      if (!canSearch) { if (!o.quiet) this.send(m, copy.requestOnWatch, { type: "info" }, "reply"); return; }
+      if (search.phase === "RequestOnHold") { if (!o.quiet) this.send(m, copy.requestOnWatch, { type: "info" }, "reply"); return; }
       if (!o.quiet) this.send(m, "You've got something in the works already; let's see how that goes first, then I'll look again.", { type: "info" }, "reply");
       return;
     }
-    const opp = this.tryRequest(m, req);
+    const opp = this.tryRequest(m, req, search);
     if (!opp) {
       this.ctx.log("request_result", { requestId: req.id, memberId: m.id, outcome: "waiting", reason: "density_gap" });
       if (o.quiet) req.outcome = "none"; else this.tellNoneYet(m, req);
@@ -1764,14 +1790,17 @@ export class ConsentNetwork implements NetworkUnderTest {
     const def = desireId ? desireById.get(desireId) : undefined;
     if (!def) return false;
     const mine = this.snapshotCached().intents.filter(i => i.memberId === id && i.objective === def.text);
-    return mine.some(i => i.status === "closed") && !mine.some(i => i.status === "active");
+    return requestDesireWithdrawn(mine.some(i => i.status === "closed"), mine.some(i => i.status === "active"));
   }
 
   /** Search and, if anyone fits, build the opportunity (the caller submits it). Undefined when no one fits yet. */
-  private tryRequest(m: MemberState, req: Request): Opp | undefined {
+  private tryRequest(m: MemberState, req: Request, search: MemberRequestFlow): Opp | undefined {
+    if (search.phase !== "RequestSearching") return undefined;
     req.tries = (req.tries ?? 0) + 1; req.lastTry = this.now();
     const cands = this.searchFor(m, req);
-    if (!cands.length) return undefined;
+    const best = cands[0];
+    const candidate = stepMemberRequest(search, { type: "readRequestCandidates", anyCandidate: !!best });
+    if (candidate.phase !== "RequestAwaitingReview" || !best) return undefined;
     const def = req.desireId ? desireById.get(req.desireId) : undefined;
     // What they want, as a verb phrase after "wants to" ("find a regular climbing partner", "meet other founders").
     const detail = def?.text ?? (req.tags[0] ? `meet someone into ${interestLabel(req.tags[0])}` : "meet up");
@@ -1780,12 +1809,12 @@ export class ConsentNetwork implements NetworkUnderTest {
     // earlier they had moved on from: asking for it again is not yet a yes.
     const withdrawn = this.withdrew(m.id, req.desireId);
     if (withdrawn) { this.counters.withdrawnWant++; this.ctx.log("request_withdrawn_want", { requestId: req.id, memberId: m.id, desireId: req.desireId }); }
-    const primed = !withdrawn && (cands[0]!.fit >= 0.8 || !this.opts.selective);
+    const primed = primeMemberRequest(withdrawn, best.fit >= 0.8, this.opts.selective);
     const o = this.newOpp({
       origin: "request", kind: "intro", category: req.category, objective: def?.text ?? (req.tags[0] ? `meet someone into ${interestLabel(req.tags[0])}` : `${req.category} request`), detail,
-      participants: [m.id, cands[0]!.id], alternates: cands.slice(1).map(x => x.id), primed: primed ? [m.id] : [], requester: m.id,
-      explanations: { [m.id]: cands[0]!.why, [cands[0]!.id]: `they want to ${detail}, and ${cands[0]!.whyBack}` },
-      score: cands[0]!.score, generator: "request", tags: req.tags,
+      participants: [m.id, best.id], alternates: cands.slice(1).map(x => x.id), primed: primed ? [m.id] : [], requester: m.id,
+      explanations: { [m.id]: best.why, [best.id]: `they want to ${detail}, and ${best.whyBack}` },
+      score: best.score, generator: "request", tags: req.tags,
     });
     req.oppId = o.id; req.outcome = "probing";
     this.ctx.log("request_result", { requestId: req.id, memberId: m.id, outcome: "probing", oppId: o.id, candidates: cands.length });
@@ -1798,11 +1827,19 @@ export class ConsentNetwork implements NetworkUnderTest {
    */
   private retryRequests(now: number) {
     for (const r of this.requests) {
-      if (r.kind !== "people" || r.outcome !== "none" || r.closed || now - r.at > 7 * DAY || (r.lastTry && now - r.lastTry < 20 * HOUR)) continue;
-      if (r.lastConfirmAt !== undefined && now - r.lastConfirmAt < 72 * HOUR) continue;
+      const retry = stepMemberRequest(initialMemberRequest, {
+        type: "considerScheduledRequestRetry",
+        due: scheduledRequestRetryReady(r.kind === "people", waitingMemberRequest(r.outcome ?? "", !!r.closed), now - r.at,
+          !!r.lastTry, now - (r.lastTry ?? now), r.lastConfirmAt !== undefined, now - (r.lastConfirmAt ?? now)),
+      });
+      if (retry.phase !== "CheckingScheduledMember") continue;
       const m = this.members.get(r.memberId);
-      if (!m || !this.eligible(m.id, undefined, true) || this.busy(m.id)) continue;
-      const o = this.tryRequest(m, r);
+      if (!m) continue;
+      const eligible = this.eligible(m.id, undefined, true);
+      const search = stepMemberRequest(retry, {
+        type: "routeScheduledRequestRetry", eligible, busy: eligible && this.busy(m.id),
+      });
+      const o = this.tryRequest(m, r, search);
       if (!o) continue;
       this.counters.requestRetries++;
       o.retry = true;
