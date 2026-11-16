@@ -10,6 +10,10 @@ import { devShortcutsAllowed, ipBucket, signupAccountView, type Env } from "@the
 import { verifyProxyHeaders } from "@thenetwork/platform/src/proxy.ts";
 import { readCappedText } from "@thenetwork/platform/src/body.ts";
 import { initial as issuanceInitial, requestIsLive, step as stepIssuance } from "../../core/src/generated/oauthGrantIssuance.ts";
+import {
+  type TokenAuthority, type TokenFlow, type TokenReason, canReadAuthority, canReadCodeBinding, canReadRefreshBinding,
+  canRecordRotation, canRecordTokens, codeCanBeConsumed, initial as tokenInitial, step as stepToken, tokenRevocation,
+} from "../../core/src/generated/oauthTokenLifecycle.ts";
 import { defaultApps, defaultHostMap, type McpApp, type McpAppId, type Surface } from "./apps.ts";
 import type { AssistantKind, PlatformHooks } from "./hooks.ts";
 import { codePage, consentPage, consentsPage, messagePage, phonePage } from "./pages.ts";
@@ -95,6 +99,19 @@ export interface McpHandler {
 
 interface Ctx { app: McpApp; issuer: string; ip: string; req: Request; url: URL }
 interface Authed { token: Token; grant: Grant; client: OAuthClient }
+
+const tokenErrors: Record<TokenReason, [error: string, description?: string]> = {
+  NoReason: ["invalid_grant"],
+  InvalidGrant: ["invalid_grant"],
+  CodeExpired: ["invalid_grant", "The code expired."],
+  RedirectMismatch: ["invalid_grant", "redirect_uri does not match."],
+  VerifierMismatch: ["invalid_grant", "code_verifier does not match."],
+  InvalidScope: ["invalid_scope"],
+  InvalidTarget: ["invalid_target"],
+};
+const tokenAuthority: Record<"valid" | "invalid" | "unavailable", TokenAuthority> = {
+  valid: "Current", invalid: "Invalid", unavailable: "Unavailable",
+};
 
 /** submit_profile calls one grant may make in a day. */
 const PROFILES_PER_GRANT_DAY = 5;
@@ -570,6 +587,18 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     return { tokens, response: { access_token: access, token_type: "Bearer", expires_in: Math.floor(Math.min(ttl.accessMs, grant.expiresAt - at) / 1000), refresh_token: refresh, scope: scopes.join(" ") } };
   }
 
+  async function checkTokenGrant(c: Ctx, client: OAuthClient, flow: TokenFlow, grantId: string, credentialExpiry: number, at: number) {
+    const grant = await store.getGrant(grantId);
+    const grantLive = !!grant && grant.revokedAt === null && !(grant.expiresAt <= at);
+    const checked = stepToken(flow, {
+      type: "readGrant", grantLive,
+      eligible: grantLive && await customSlopEligible(c, client, grant.personId, grant.phoneKey),
+    });
+    if (!grant || !canReadAuthority(checked)) return { grant, flow: checked };
+    const authority = tokenAuthority[await cloudGrantCurrent(grant)];
+    return { grant, flow: stepToken(checked, { type: "readAuthority", credentialLive: !(credentialExpiry <= now()), authority }) };
+  }
+
   async function token(c: Ctx): Promise<Response> {
     if (c.req.method !== "POST") return json(405, { error: "method_not_allowed" }, { allow: "POST" });
     if (await limited(`token:ip:${sha256hex(ipBucket(c.ip))}`, lim.tokenPerIpMinute, 60_000)) return tooMany(60);
@@ -579,73 +608,86 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (client instanceof Response) return client;
     if (openAiUnavailable(c, client)) return json(401, { error: "invalid_client" });
     const bad = (error: string, d?: string) => json(400, { error, ...(d ? { error_description: d } : {}) });
+    const refused = (flow: TokenFlow) => flow.phase === "RetryAuthority" ? temporarilyUnavailable() : bad(...tokenErrors[flow.reason]);
     const at = now();
     const grantType = form.get("grant_type");
 
     if (grantType === "authorization_code") {
       const code = form.get("code") ?? "";
       const ac = code ? await store.getCode(sha256hex(code)) : undefined;
-      if (!ac || ac.clientId !== client.id) return bad("invalid_grant");
-      if (ac.usedAt !== null) {
+      const read = stepToken(tokenInitial, {
+        type: "readCode", clientMatches: ac?.clientId === client.id, used: !!ac && ac.usedAt !== null, live: !!ac && !(ac.expiresAt <= at),
+      });
+      if (!ac) return refused(read);
+      if (read.phase === "RevokeGrant") {
         // OAuth 2.1 4.1.3: a second use of a code revokes what the first use issued.
         await revokeGrant(ac.grantId, at);
         await store.audit({ at, kind: "code_replay", clientId: client.id, grantId: ac.grantId, app: c.app.id, detail: "grant revoked" });
-        return bad("invalid_grant");
+        return refused(read);
       }
-      if (ac.expiresAt <= at) return bad("invalid_grant", "The code expired.");
-      if (form.get("redirect_uri") !== ac.redirectUri) return bad("invalid_grant", "redirect_uri does not match.");
+      if (!canReadCodeBinding(read)) return refused(read);
+      const redirectMatches = form.get("redirect_uri") === ac.redirectUri;
       const verifier = form.get("code_verifier");
-      if (!validVerifier(verifier) || !safeEqual(pkceS256(verifier), ac.codeChallenge)) return bad("invalid_grant", "code_verifier does not match.");
+      const verifierMatches = redirectMatches && validVerifier(verifier) && safeEqual(pkceS256(verifier), ac.codeChallenge);
       const res = form.get("resource");
-      if (res && canonicalResource(res, c.issuer) !== ac.resource) return bad("invalid_target");
-      const grant = await store.getGrant(ac.grantId);
-      if (!grant || grant.revokedAt !== null || grant.expiresAt <= at) return bad("invalid_grant");
-      if (!(await customSlopEligible(c, client, grant.personId, grant.phoneKey))) return bad("invalid_grant");
-      const cloudStatus=await cloudGrantCurrent(grant);
-      if(ac.expiresAt<=now())return bad("invalid_grant");
-      if(cloudStatus==="unavailable")return temporarilyUnavailable();
-      if(cloudStatus!=="valid")return bad("invalid_grant");
+      const binding = stepToken(read, {
+        type: "readCodeBinding", redirectMatches, verifierMatches,
+        resourceMatches: verifierMatches && (!res || canonicalResource(res, c.issuer) === ac.resource),
+      });
+      if (binding.phase !== "CheckingGrant") return refused(binding);
+      const { grant, flow: authorized } = await checkTokenGrant(c, client, binding, ac.grantId, ac.expiresAt, at);
+      if (!grant || authorized.phase !== "AwaitingConsumption") return refused(authorized);
       // The Cloud check may be slow: recheck expiry and atomically consume only after it succeeds.
-      if(ac.expiresAt<=now() || grant.expiresAt<=now())return bad("invalid_grant");
-      const consumed=await store.takeCode(ac.hash,now());
-      if(!consumed)return bad("invalid_grant");
-      if(consumed.usedAt!==null){
-        await revokeGrant(ac.grantId,now());
-        await store.audit({at:now(),kind:"code_replay",clientId:client.id,grantId:ac.grantId,app:c.app.id,detail:"grant revoked"});
-        return bad("invalid_grant");
+      if (!codeCanBeConsumed(authorized, !(ac.expiresAt <= now()) && !(grant.expiresAt <= now()))) return refused(authorized);
+      const consumed = await store.takeCode(ac.hash, now());
+      const consumption = stepToken(authorized, {
+        type: "readConsumption", outcome: !consumed ? "NoCode" : consumed.usedAt !== null ? "PreviousUse" : "CodeConsumed",
+        bothLive: !!consumed && consumed.usedAt === null && !(consumed.expiresAt <= now()) && !(grant.expiresAt <= now()),
+      });
+      if (consumption.phase === "RevokeGrant") {
+        await revokeGrant(ac.grantId, now());
+        await store.audit({ at: now(), kind: "code_replay", clientId: client.id, grantId: ac.grantId, app: c.app.id, detail: "grant revoked" });
+        return refused(consumption);
       }
-      if(consumed.expiresAt<=now() || grant.expiresAt<=now())return bad("invalid_grant");
+      if (!canRecordTokens(consumption)) return refused(consumption);
       const pair = tokenPair(client, grant, ac.scopes, ac.resource);
       for (const token of pair.tokens) await store.putToken(token);
       await store.audit({ at, kind: "token_issued", clientId: client.id, grantId: grant.id, app: c.app.id, detail: ac.scopes.join(" ") });
-      return json(200, pair.response);
+      const ready = stepToken(consumption, { type: "recordTokens" });
+      return ready.phase === "TokensReady" ? json(200, pair.response) : refused(ready);
     }
 
     if (grantType === "refresh_token") {
       const raw = form.get("refresh_token") ?? "";
       const t = raw ? await store.getToken(sha256hex(raw)) : undefined;
-      if (!t || t.kind !== "refresh" || t.clientId !== client.id || t.revokedAt !== null || t.expiresAt <= at) return bad("invalid_grant");
-      const grant = await store.getGrant(t.grantId);
-      if (!grant || grant.revokedAt !== null || grant.expiresAt <= at) return bad("invalid_grant");
-      if (!(await customSlopEligible(c, client, grant.personId, grant.phoneKey))) return bad("invalid_grant");
-      const cloudStatus=await cloudGrantCurrent(grant);
-      if(t.expiresAt<=now())return bad("invalid_grant");
-      if(cloudStatus==="unavailable")return temporarilyUnavailable();
-      if(cloudStatus!=="valid")return bad("invalid_grant");
+      const read = stepToken(tokenInitial, {
+        type: "readRefresh", refreshMatches: !!t && t.kind === "refresh" && t.clientId === client.id && t.revokedAt === null && !(t.expiresAt <= at),
+      });
+      if (!t || read.phase !== "CheckingGrant") return refused(read);
+      const { grant, flow: authorized } = await checkTokenGrant(c, client, read, t.grantId, t.expiresAt, at);
+      if (!grant || !canReadRefreshBinding(authorized)) return refused(authorized);
       const asked = form.get("scope") === null ? t.scopes : parseScopes(form.get("scope"));
-      if (!asked || !asked.every(s => t.scopes.includes(s))) return bad("invalid_scope");
+      const scopeAllowed = !!asked && asked.every(s => t.scopes.includes(s));
       const res = form.get("resource");
-      if (res && canonicalResource(res, c.issuer) !== t.resource) return bad("invalid_target");
-      const refreshedAt=now();
-      if(t.expiresAt<=refreshedAt || grant.expiresAt<=refreshedAt)return bad("invalid_grant");
+      const resourceMatches = scopeAllowed && (!res || canonicalResource(res, c.issuer) === t.resource);
+      const refreshedAt = resourceMatches ? now() : at;
+      const binding = stepToken(authorized, {
+        type: "readRefreshBinding", scopeAllowed, resourceMatches,
+        bothLive: resourceMatches && !(t.expiresAt <= refreshedAt) && !(grant.expiresAt <= refreshedAt),
+      });
+      if (!asked || !canRecordRotation(binding)) return refused(binding);
       const pair = tokenPair(client, grant, asked, t.resource);
-      if (t.rotatedAt !== null || !(await store.rotateRefresh(t.hash, refreshedAt, pair.tokens, { at:refreshedAt, kind: "token_refreshed", clientId: client.id, grantId: grant.id, app: c.app.id, detail: asked.join(" ") }))) {
+      const succeeded = t.rotatedAt === null && await store.rotateRefresh(t.hash, refreshedAt, pair.tokens, {
+        at: refreshedAt, kind: "token_refreshed", clientId: client.id, grantId: grant.id, app: c.app.id, detail: asked.join(" "),
+      });
+      const rotation = stepToken(binding, { type: "recordRotation", succeeded });
+      if (rotation.phase === "RevokeGrant") {
         // A refresh token used twice: someone else has a copy. End the whole grant.
         await revokeGrant(t.grantId, at);
         await store.audit({ at, kind: "refresh_replay", clientId: client.id, grantId: t.grantId, app: c.app.id, detail: "grant revoked" });
-        return bad("invalid_grant");
+        return refused(rotation);
       }
-      return json(200, pair.response);
+      return rotation.phase === "TokensReady" ? json(200, pair.response) : refused(rotation);
     }
     return bad("unsupported_grant_type");
   }
@@ -660,11 +702,12 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const raw = form.get("token") ?? "";
     const t = raw ? await store.getToken(sha256hex(raw)) : undefined;
     // RFC 7009 2.2: the same 200 for an unknown token.
-    if (t && t.clientId === client.id) {
+    const effect = tokenRevocation(t?.clientId === client.id, t?.kind === "refresh");
+    if (t && effect !== "NoChange") {
       const at = now();
-      if (t.kind === "refresh") await revokeGrant(t.grantId, at);
+      if (effect === "EndGrant") await revokeGrant(t.grantId, at);
       else await store.revokeToken(t.hash, at);
-      await store.audit({ at, kind: "token_revoked", clientId: client.id, grantId: t.grantId, app: c.app.id, detail: t.kind === "refresh" ? "refresh: grant revoked" : "access" });
+      await store.audit({ at, kind: "token_revoked", clientId: client.id, grantId: t.grantId, app: c.app.id, detail: effect === "EndGrant" ? "refresh: grant revoked" : "access" });
     }
     return new Response(null, { status: 200, headers: { "cache-control": "no-store" } });
   }
