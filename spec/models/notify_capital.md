@@ -10,7 +10,7 @@ Check notification projection and deduplication and the network capital ledger. 
 
 Production uses the generated [notification delivery rules](../notificationDelivery.md) for timing, caps, and surface scoring, the [notification dispatch machine](../notificationDispatch.md) for digest rechecks, recording and queued relevance, and the [inbox acknowledgement machine](../notificationAcknowledgement.md) for scoped reads, update tokens, seen writes, and action feedback.
 
-This model assumes the store rejects a digest when any item changed after the re-read. The current Postgres store deduplicates by delivery ID in a transaction and marks items that remain unnotified. The scheduler also assumes the recipient still exists when rebuilding a partial digest. The generated machine takes the store's recording result as given and preserves those runtime boundaries.
+The VibeLang dispatch shell rechecks the recipient before recording. The Postgres store locks the selected items in ID order, checks that each still belongs to the recipient and remains pending, and records the claim and notice flags in one transaction. The machine treats that transaction's response as an effect result.
 
 The model's token action combines redemption and display. In production, an app-scoped read marks only selected unseen items, and a surface that resolves subject IDs may acknowledge their display separately. The Network uses [booked meeting settlement](../meetingSettlement.md) to decide which attendance and feedback events to write to the capital ledger.
 

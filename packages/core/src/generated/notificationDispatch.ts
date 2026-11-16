@@ -8,7 +8,7 @@ export interface DigestFlow { phase: DigestPhase }
 
 /** One variant per transition in the spec. */
 export type Event =
-  | { type: "rereadItems"; plannedCount: number; remainingCount: number }
+  | { type: "rereadItems"; plannedCount: number; remainingCount: number; recipientAvailable: boolean; destinationChanged: boolean }
   | { type: "recordDigest"; recorded: boolean }
   | { type: "enqueueDigest" }
   | { type: "readQueuedDigest"; sameDigest: boolean }
@@ -31,100 +31,119 @@ export function inboxItemStillPending(seen: boolean, notified: boolean): boolean
 
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md:9) */
 //@ pure
+export function inboxItemAllowedForRecipient(requested: boolean, proactiveAllowed: boolean): boolean {
+  return requested || proactiveAllowed;
+}
+
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md:9) */
+//@ pure
+export function rereadItems(digest: DigestFlow, plannedCount: number, remainingCount: number, recipientAvailable: boolean, destinationChanged: boolean): DigestFlow {
+  //@ ensures (inv(digest) && canRereadItems(digest)) ==> stepQueueRequiresRecordedDigest(digest, "rereadItems", \result)
+  return { phase: remainingCount === 0 || !recipientAvailable ? "DigestCancelled" : (remainingCount === plannedCount && !destinationChanged ? "ReusingDigest" : "RebuildingDigest") };
+}
+
+/** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md:9) */
+//@ pure
 export function canRereadItems(digest: DigestFlow): boolean {
   return digest.phase === "DigestStarting";
 }
 
 /** Story: Get a pending inbox update only while it is relevant / Re-read the planned items before recording a digest (spec/notificationDispatch.md:9) */
 //@ pure
-export function rereadItems(digest: DigestFlow, plannedCount: number, remainingCount: number): DigestFlow {
-  //@ ensures (inv(digest) && canRereadItems(digest)) ==> stepQueueRequiresRecordedDigest(digest, "rereadItems", \result)
-  return { phase: remainingCount === 0 ? "DigestCancelled" : (remainingCount === plannedCount ? "ReusingDigest" : "RebuildingDigest") };
+export function lawMissingRecipientCancels(plannedCount: number, remainingCount: number, destinationChanged: boolean): boolean {
+  //@ ensures \result === true
+  return rereadItems(initial, plannedCount, remainingCount, false, destinationChanged).phase === "DigestCancelled";
 }
 
-/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md:30) */
+/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md:34) */
+//@ pure
+export function digestItemSetCanBeRecorded(itemCount: number, pendingOwnedCount: number): boolean {
+  return itemCount > 0 && itemCount === pendingOwnedCount;
+}
+
+/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md:34) */
 //@ pure
 export function canRecordDigest(digest: DigestFlow): boolean {
   return digest.phase === "ReusingDigest" || digest.phase === "RebuildingDigest";
 }
 
-/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md:30) */
+/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md:34) */
 //@ pure
 export function recordDigest(digest: DigestFlow, recorded: boolean): DigestFlow {
   //@ ensures (inv(digest) && canRecordDigest(digest)) ==> stepQueueRequiresRecordedDigest(digest, "recordDigest", \result)
   return { phase: recorded ? "EnqueueingDigest" : "DigestCancelled" };
 }
 
-/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md:30) */
+/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md:34) */
 //@ pure
 export function canEnqueueDigest(digest: DigestFlow): boolean {
   return digest.phase === "EnqueueingDigest";
 }
 
-/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md:30) */
+/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md:34) */
 //@ pure
 export function enqueueDigest(digest: DigestFlow): DigestFlow {
   //@ ensures (inv(digest) && canEnqueueDigest(digest)) ==> stepQueueRequiresRecordedDigest(digest, "enqueueDigest", \result)
   return { phase: "DigestQueued" };
 }
 
-/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md:30) */
+/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md:34) */
 //@ pure
 export function stepQueueRequiresRecordedDigest(before: DigestFlow, via: string, after: DigestFlow): boolean {
   return !(after.phase === "DigestQueued") || (before.phase === "EnqueueingDigest" && via === "enqueueDigest");
 }
 
-/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md:30) */
+/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md:34) */
 //@ pure
 export function sometimesQueuesDigest(digest: DigestFlow): boolean {
   return digest.phase === "DigestQueued";
 }
 
-/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md:30) */
+/** Story: Get a pending inbox update only while it is relevant / The sink receives only a recorded digest (spec/notificationDispatch.md:34) */
 //@ pure
 export function sometimesCancelsDigest(digest: DigestFlow): boolean {
   return digest.phase === "DigestCancelled";
 }
 
-/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md:50) */
+/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md:57) */
 //@ pure
 export function inboxItemExpired(hasExpiry: boolean, expiresAt: number, at: number): boolean {
   return hasExpiry && expiresAt <= at;
 }
 
-/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md:50) */
+/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md:57) */
 //@ pure
 export function canReadQueuedDigest(digest: DigestFlow): boolean {
   return digest.phase === "DigestStarting";
 }
 
-/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md:50) */
+/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md:57) */
 //@ pure
 export function readQueuedDigest(digest: DigestFlow, sameDigest: boolean): DigestFlow {
   //@ ensures (inv(digest) && canReadQueuedDigest(digest)) ==> stepQueueRequiresRecordedDigest(digest, "readQueuedDigest", \result)
   return { phase: sameDigest ? "ReadingQueuedItems" : "QueuedDigestObsolete" };
 }
 
-/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md:50) */
+/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md:57) */
 //@ pure
 export function canRevalidateQueuedItems(digest: DigestFlow): boolean {
   return digest.phase === "ReadingQueuedItems";
 }
 
-/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md:50) */
+/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md:57) */
 //@ pure
 export function revalidateQueuedItems(digest: DigestFlow, allPresent: boolean, anyExpired: boolean, anyUnseen: boolean): DigestFlow {
   //@ ensures (inv(digest) && canRevalidateQueuedItems(digest)) ==> stepQueueRequiresRecordedDigest(digest, "revalidateQueuedItems", \result)
   return { phase: allPresent && !anyExpired && anyUnseen ? "QueuedDigestNeeded" : "QueuedDigestObsolete" };
 }
 
-/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md:50) */
+/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md:57) */
 //@ pure
 export function sometimesKeepsQueuedDigest(digest: DigestFlow): boolean {
   return digest.phase === "QueuedDigestNeeded";
 }
 
-/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md:50) */
+/** Story: Get a pending inbox update only while it is relevant / A queued digest is relevant only while its original content remains live and unseen in part (spec/notificationDispatch.md:57) */
 //@ pure
 export function sometimesSuppressesQueuedDigest(digest: DigestFlow): boolean {
   return digest.phase === "QueuedDigestObsolete";
@@ -146,7 +165,7 @@ export function enabled(current: DigestFlow, event: Event): boolean {
 export function step(current: DigestFlow, event: Event): DigestFlow {
   //@ requires inv(current)
   //@ ensures inv(\result)
-  if (event.type === "rereadItems" && canRereadItems(current)) return rereadItems(current, event.plannedCount, event.remainingCount);
+  if (event.type === "rereadItems" && canRereadItems(current)) return rereadItems(current, event.plannedCount, event.remainingCount, event.recipientAvailable, event.destinationChanged);
   if (event.type === "recordDigest" && canRecordDigest(current)) return recordDigest(current, event.recorded);
   if (event.type === "enqueueDigest" && canEnqueueDigest(current)) return enqueueDigest(current);
   if (event.type === "readQueuedDigest" && canReadQueuedDigest(current)) return readQueuedDigest(current, event.sameDigest);
@@ -168,7 +187,7 @@ export function parseEvent(x: unknown): Event | undefined {
     return undefined;
   }
   if (typeof raw !== "object" || raw === null) return undefined;
-  if (raw.type === "rereadItems" && Number.isSafeInteger(raw.plannedCount) && Number.isSafeInteger(raw.remainingCount)) return { type: "rereadItems", plannedCount: raw.plannedCount, remainingCount: raw.remainingCount };
+  if (raw.type === "rereadItems" && Number.isSafeInteger(raw.plannedCount) && Number.isSafeInteger(raw.remainingCount) && typeof raw.recipientAvailable === "boolean" && typeof raw.destinationChanged === "boolean") return { type: "rereadItems", plannedCount: raw.plannedCount, remainingCount: raw.remainingCount, recipientAvailable: raw.recipientAvailable, destinationChanged: raw.destinationChanged };
   if (raw.type === "recordDigest" && typeof raw.recorded === "boolean") return { type: "recordDigest", recorded: raw.recorded };
   if (raw.type === "enqueueDigest") return { type: "enqueueDigest" };
   if (raw.type === "readQueuedDigest" && typeof raw.sameDigest === "boolean") return { type: "readQueuedDigest", sameDigest: raw.sameDigest };

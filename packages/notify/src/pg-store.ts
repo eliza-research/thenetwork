@@ -2,6 +2,7 @@
 // Item ids are bigserial numbers stored as text ids "inb_<n>" in the API.
 import { fileAt } from "../../core/src/runtime/files.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
+import { digestItemSetCanBeRecorded } from "../../core/src/generated/notificationDispatch.ts";
 import type { DeliveryRecord, NotifyStore } from "./store.ts";
 import type { SurfaceSignal } from "./surface.ts";
 import type { TaskToken } from "./tokens.ts";
@@ -104,15 +105,24 @@ export class PgNotifyStore implements NotifyStore {
 
   async recordDelivery(d: DeliveryRecord) {
     return this.sql.begin(async tx => {
+      const ids = tx.array(numIds(d.itemIds), "int8");
+      const sentAt = new Date(d.sentAt);
+      if (d.deliveryId.startsWith("ntf_")) {
+        const pending = await tx`
+          select id from notify.inbox_items where person_id = ${d.personId} and id = any(${ids})
+            and seen_at is null and notified_at is null and (expires_at is null or expires_at > ${sentAt})
+          order by id for update`;
+        if (!digestItemSetCanBeRecorded(d.itemIds.length, pending.length)) return false;
+      }
       const ins = await tx`
         insert into notify.deliveries (delivery_id, person_id, item_ids, target, counts_toward_cap, sent_at)
-        values (${d.deliveryId}, ${d.personId}, ${tx.array(numIds(d.itemIds), "int8")}, ${d.target}, ${d.countsTowardCap}, ${new Date(d.sentAt)})
+        values (${d.deliveryId}, ${d.personId}, ${ids}, ${d.target}, ${d.countsTowardCap}, ${sentAt})
         on conflict (delivery_id) do nothing
         returning delivery_id`;
       if (!ins.length) return false;
       await tx`
-        update notify.inbox_items set notified_at = ${new Date(d.sentAt)}, delivery_id = ${d.deliveryId}
-        where id = any(${tx.array(numIds(d.itemIds), "int8")}) and notified_at is null`;
+        update notify.inbox_items set notified_at = ${sentAt}, delivery_id = ${d.deliveryId}
+        where id = any(${ids}) and notified_at is null`;
       return true;
     });
   }

@@ -11,6 +11,7 @@ import { OutboundQueue } from "../../blooio/src/outbound-queue.ts";
 import type { ChannelAdapter, SendRequest } from "../../blooio/src/types.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { Notifier, queuePolicy, queueSink, threadHooks, type Recipient } from "../src/index.ts";
+import { deliveryIdFor } from "../src/scheduler.ts";
 
 import { PgNotifyStore } from "../src/pg-store.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
@@ -85,6 +86,38 @@ describe.skipIf(!pgAvailable)("notify + the Postgres outbound queue", () => {
     const [row] = await sql`select status, note from platform.outbound where id = ${sent[0]!.deliveryId}`;
     expect([row.status, row.note]).toEqual(["suppressed_ineligible", "notification_obsolete"]);
     expect(calls.length).toBe(0);
+  });
+
+  // spec/notificationDispatch.md, "Re-read the planned items before recording a digest"
+  test("a recipient removed after planning leaves no delivery record or queue entry", async () => {
+    const { now, store, queue, sink, sent: calls, r } = await setup();
+    let lookups = 0;
+    const notifier = new Notifier(store, { get: () => ++lookups === 1 ? r : undefined }, { isQuiet: () => false });
+    const { item } = await notifier.add(req(r.personId, "removed-recipient"), now());
+    const id = deliveryIdFor(r.personId, [item.id]);
+
+    expect(await notifier.dispatch(now(), sink)).toEqual({ sent: [], cancelled: [id], holds: [] });
+    await queue.drain();
+    expect(await store.getDelivery(id)).toBeUndefined();
+    expect(await queue.statusOf(id)).toBeUndefined();
+    expect(calls).toHaveLength(0);
+  });
+
+  // spec/notificationDispatch.md, "The sink receives only a recorded digest"
+  test("overlapping digests cannot both claim the same item", async () => {
+    const { now, notifier, r, store } = await setup();
+    const items = await Promise.all(["first", "shared", "last"].map(async name => (await notifier.add(req(r.personId, name), now())).item.id));
+    const itemSets = [items.slice(0, 2), items.slice(1)];
+    const ids = itemSets.map(set => deliveryIdFor(r.personId, set));
+    const recorded = await Promise.all(itemSets.map((itemIds, index) => store.recordDelivery({
+      deliveryId: ids[index]!, personId: r.personId, itemIds, target: "imessage", countsTowardCap: true, sentAt: now(),
+    })));
+
+    expect(recorded.filter(Boolean)).toHaveLength(1);
+    const [first, shared, last] = await store.getItems(items);
+    expect(shared?.deliveryId).toBe(ids[recorded[0] ? 0 : 1]);
+    expect(recorded[0] ? last?.notifiedAt : first?.notifiedAt).toBeUndefined();
+    expect(await store.getDelivery(ids[recorded[0] ? 1 : 0]!)).toBeUndefined();
   });
 
 

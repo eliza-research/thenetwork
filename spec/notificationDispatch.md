@@ -1,6 +1,6 @@
 # Dispatch an inbox digest
 
-A scheduler plan is tentative until the inbox is read again. The scheduler owns the database reads, revised digest content and ID, delivery recording, and enqueue. Outside this decision, the application and outbound queue still check recipient eligibility, consent and leak safety before delivery.
+A scheduler plan is tentative until the inbox and recipient are read again. A VibeLang shell runs the generated rules through the scheduler's inbox, recipient and outbound adapters. The application and outbound queue still check recipient eligibility, consent and leak safety before delivery.
 
 ## Story: Get a pending inbox update only while it is relevant
 
@@ -8,7 +8,7 @@ A scheduler plan is tentative until the inbox is read again. The scheduler owns 
 
 ### Re-read the planned items before recording a digest
 
-Keep only items that remain unseen and unnotified. If none remain, cancel the original plan. If some were removed, rebuild the text, item-set ID and surface from the remaining items. If all remain, reuse the original plan.
+Keep only items that remain unseen, unnotified and unexpired. A recipient who no longer allows proactive updates can still get requested items. Cancel the original plan if no items remain or the recipient is unavailable. Rebuild the digest if some items were removed or the recipient's address, channel or time zone changed. If every item and the destination remain the same, reuse the original plan.
 
 ```quint
 type DigestPhase =
@@ -18,20 +18,27 @@ type DigestFlow = { phase: DigestPhase }
 pure val initial: DigestFlow = { phase: DigestStarting }
 
 pure def inboxItemStillPending(seen: bool, notified: bool): bool = not(seen) and not(notified)
+pure def inboxItemAllowedForRecipient(requested: bool, proactiveAllowed: bool): bool = requested or proactiveAllowed
 
 pure def canRereadItems(digest: DigestFlow): bool = digest.phase == DigestStarting
-pure def rereadItems(digest: DigestFlow, plannedCount: int, remainingCount: int): DigestFlow =
+pure def rereadItems(digest: DigestFlow, plannedCount: int, remainingCount: int, recipientAvailable: bool, destinationChanged: bool): DigestFlow =
   { phase:
-    if (remainingCount == 0) DigestCancelled
-    else if (remainingCount == plannedCount) ReusingDigest
+    if (remainingCount == 0 or not(recipientAvailable)) DigestCancelled
+    else if (remainingCount == plannedCount and not(destinationChanged)) ReusingDigest
     else RebuildingDigest }
+
+pure def lawMissingRecipientCancels(plannedCount: int, remainingCount: int, destinationChanged: bool): bool =
+  rereadItems(initial, plannedCount, remainingCount, false, destinationChanged).phase == DigestCancelled
 ```
 
 ### The sink receives only a recorded digest
 
-Record the final plan before asking the sink to enqueue it. A recording rejection cancels that plan, using its final delivery ID. Count the plan as queued only after the sink accepts it. The store owns the transaction and rejects repeated delivery IDs.
+Record the final plan before asking the sink to enqueue it. The store locks the selected items and requires every item to belong to the recipient and remain unseen, unnotified and unexpired at recording. It rejects repeated IDs and overlapping claims. A recording rejection cancels that plan, using its final delivery ID. Count the plan as queued only after the sink accepts it.
 
 ```quint
+pure def digestItemSetCanBeRecorded(itemCount: int, pendingOwnedCount: int): bool =
+  itemCount > 0 and itemCount == pendingOwnedCount
+
 pure def canRecordDigest(digest: DigestFlow): bool =
   digest.phase == ReusingDigest or digest.phase == RebuildingDigest
 pure def recordDigest(digest: DigestFlow, recorded: bool): DigestFlow =

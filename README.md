@@ -49,7 +49,7 @@ Studio, examples, template setup and the packaged CLI.
 |---|---|
 | Product | Stories and acceptance rules in [the product specification](spec/product/README.md). Product owners record approval in `spec/lock.json` with `pnpm run accept`. |
 | Decisions | Quint in the [executable specs](SPEC.md#writing-a-spec) generates TypeScript. The checker simulates the model, compares TypeScript traces, and runs Dafny proof obligations. |
-| Effects | VibeLang shells check [backend health](packages/core/src/vibe/backendHealthShell.vibe), drain [shutdown work](packages/core/src/vibe/backendShutdownShell.vibe), and dispatch [operations alerts](packages/core/src/vibe/opsAlertShell.vibe). `pnpm run spec:sync` compiles the shells and their generated Effect adapters. |
+| Effects | VibeLang shells check [backend health](packages/core/src/vibe/backendHealthShell.vibe), drain [shutdown work](packages/core/src/vibe/backendShutdownShell.vibe), and dispatch [operations alerts](packages/core/src/vibe/opsAlertShell.vibe) and [inbox digests](packages/core/src/vibe/notificationDigestShell.vibe). `pnpm run spec:sync` compiles the shells and their generated Effect adapters. |
 | Application | Node 26 serves the backend and console. Each package owns its existing HTTP, storage, and UI integration. The [Network agent guide](AGENTS.md) applies the upstream design guidance to these packages. |
 | Conformance | The spec checker compares the app's observed state and effects with generated rules. The [command table](#commands) lists scoped journeys and the existing application test commands. |
 
