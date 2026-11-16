@@ -7,11 +7,12 @@ import {createHash, randomUUID} from "node:crypto";
 import {SQL} from "../../core/src/runtime/postgres.ts";
 import {SimClock, MINUTE, DAY} from "@thenetwork/core";
 import {applySchema, DEV_PG_PORT} from "../../observatory/db/dev-pg.ts";
-import {APPS} from "../../platform/src/apps.ts";
+import {APPS, type AppInfo} from "../../platform/src/apps.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {TURN_PATH, TURN_RECEIPT_PATH, type TurnRequest, type TurnReceiptRequest} from "../../core/src/svc/contract.ts";
 import {BlooioAdapter, DryRunAdapter} from "../service/channel.ts";
 import {NetworkService} from "../service/service.ts";
+import type { NetworkState } from "../src/network.ts";
 import {networkRoutePolicy, routeEnvelopeAllowed} from "../service/route-authority.ts";
 import { importPublicEvents } from "../service/import-public-events.ts";
 
@@ -114,6 +115,76 @@ test("signed travel stores one coarse trip in the routed app and never guesses m
   const lockedReplay = await post(request);
   expect(lockedReplay.status).toBe(409);
   expect(await lockedReplay.json()).toEqual({ error: "turn_travel_account_changed", retryable: false });
+}, 60_000);
+
+// spec/standingIntentManagement.md, "Reconcile older saved controls during the first normal save"
+test("reconciles legacy intent controls for the current app and owner once and preserves timestamps", async () => {
+  const phone = "+12125550165", inactivePhone = "+12125550166";
+  async function join(app: AppInfo, e164: string) {
+    await service.accounts.invite(app, e164);
+    const person = (await service.accounts.personFor(e164))!;
+    const joined = await service.accounts.join(app, { e164, personId: person.id }, {
+      firstName: "Ari", age: 29, consent: { sms: true, wording: app.consent.text },
+    });
+    if (!joined.ok) throw new Error("Intent reconciliation fixture join failed");
+    return joined.membership.memberId;
+  }
+  const owner = await join(APPS.friends, phone);
+  const inactive = await join(APPS.friends, inactivePhone);
+  const otherApp = await join(APPS.slop, phone);
+  const now = clock.now();
+  const old = new Date(now - DAY), expired = new Date(now - 60 * DAY), newer = new Date(now + MINUTE);
+  const raw = [
+    { id: "legacy-pause", app: "friends", member: owner, status: "active", at: old },
+    { id: "legacy-close", app: "friends", member: owner, status: "paused", at: old },
+    { id: "legacy-done", app: "friends", member: owner, status: "closed", at: old },
+    { id: "legacy-expired", app: "friends", member: owner, status: "active", at: expired },
+    { id: "legacy-newer", app: "friends", member: owner, status: "active", at: newer },
+    { id: "legacy-job", app: "friends", member: owner, status: "active", at: old, details: "peon:job legacy fixture" },
+    { id: "legacy-inactive", app: "friends", member: inactive, status: "active", at: old },
+    { id: "legacy-other-app", app: "slop", member: otherApp, status: "active", at: old },
+    { id: "legacy-unselected", app: "friends", member: owner, status: "active", at: old },
+  ];
+  await sql`insert into network.intents ${sql(raw.map(row => ({
+    id: row.id, app_id: row.app, member_id: row.member, objective: "Looking for something", category: "hobby", status: row.status,
+    created_at: row.at, horizon_days: 60, details: row.details ?? null,
+  })))}`;
+  await sql`update platform.memberships set state = 'paused' where app_id = 'friends' and member_id = ${inactive}`;
+  const [prior] = await sql<{ state: NetworkState }[]>`select state from network.network_state where id = 'friends:nyc'`;
+  const state = prior!.state;
+  state.savedAt = now;
+  delete state.legacyIntentRowsReconciled;
+  state.members.find(m => m.id === owner)!.intentControls = {
+    "stored:legacy-pause": "PauseControl", "stored:legacy-close": "CloseControl", "stored:legacy-done": "PauseControl",
+    "stored:legacy-expired": "PauseControl", "stored:legacy-newer": "CloseControl", "stored:legacy-job": "CloseControl",
+    "stored:legacy-other-app": "PauseControl", "stored:missing-legacy-row": "CloseControl", "learned:climb-partner": "PauseControl",
+  };
+  state.members.find(m => m.id === inactive)!.intentControls = {
+    "stored:legacy-inactive": "PauseControl", "stored:legacy-unselected": "CloseControl",
+  };
+  await sql`update network.network_state set state = ${state}::jsonb where id = 'friends:nyc'`;
+
+  const snapshot = () => sql<{ id: string; status: string; created_at: Date; horizon_days: number }[]>`select id, status, created_at, horizon_days
+    from network.intents where id like 'legacy-%' order by id`;
+  const before = escaped;
+  const result = await post(turn("legacy-intents-show", phone, "list my intents", "friends"));
+  expect(result.status).toBe(200);
+  expect((await result.json()).replies[0]).toContain("Your standing intents");
+  const rows = await snapshot();
+  expect([...rows]).toEqual(raw.map(row => ({
+    id: row.id, status: row.id === "legacy-pause" ? "paused" : row.id === "legacy-close" ? "closed" : row.status,
+    created_at: row.at, horizon_days: 60,
+  })).sort((a, b) => a.id.localeCompare(b.id)));
+  const [saved] = await sql<{ state: NetworkState }[]>`select state from network.network_state where id = 'friends:nyc'`;
+  expect(saved?.state.legacyIntentRowsReconciled).toBe(true);
+  expect(saved?.state.members.find(m => m.id === owner)?.intentControls?.["learned:climb-partner"]).toBe("PauseControl");
+
+  await server.stop(true);
+  await service.close();
+  await start();
+  expect((await post(turn("legacy-intents-again", phone, "list my intents", "friends"))).status).toBe(200);
+  expect([...await snapshot()]).toEqual([...rows]);
+  expect(escaped).toBe(before);
 }, 60_000);
 
 // spec/soloConcierge.md, "Get ideas for my own time"

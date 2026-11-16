@@ -5475,6 +5475,8 @@ type OppJSON = Omit<Opp, "primed" | "status" | "contacted" | "reminded" | "feedb
 /** Everything a ConsentNetwork holds, as plain JSON (exportState / importState; store.ts keeps it). */
 export interface NetworkState {
   version: number; savedAt: number; matchingEnabled: boolean;
+  /** Persisted with the first successful service save that reconciles legacy row statuses. */
+  legacyIntentRowsReconciled?: true;
   members: MemberJSON[]; opps: OppJSON[]; requests: Request[]; queued: Proposal[]; deferred: Deferred[];
   declinedIds: MemberId[]; blocks: string[]; avoid: string[]; declined: [string, number][]; again: [string, MemberId[]][];
   feedback: FeedbackRecord[]; interactions: InteractionRecord[]; asks: AskRecord[];

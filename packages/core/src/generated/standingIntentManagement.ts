@@ -9,6 +9,8 @@ export type IntentCommand = "ListIntents" | "PauseIntent" | "CloseIntent";
 export interface IntentManagement { phase: IntentCommandPhase; command: IntentCommand }
 /** Story: See and manage the things the Network is looking for / Change only the single matching reference the member supplied (spec/standingIntentManagement.md:31) */
 export type IntentControl = "PauseControl" | "CloseControl";
+/** Story: See and manage the things the Network is looking for / Reconcile older saved controls during the first normal save (spec/standingIntentManagement.md:67) */
+export type LegacyIntentChange = "KeepIntentStatus" | "ReconcilePause" | "ReconcileClose";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -92,13 +94,39 @@ export function writesStandingIntentRow(s: IntentManagement, stored: boolean): b
   return stored && (s.phase === "PauseSelected" || s.phase === "CloseSelected");
 }
 
-/** Story: See and manage the things the Network is looking for / A pause or close stops only the work linked to that intent (spec/standingIntentManagement.md:67) */
+/** Story: See and manage the things the Network is looking for / Reconcile older saved controls during the first normal save (spec/standingIntentManagement.md:67) */
+//@ pure
+export function legacyIntentReconciliationDue(savedState: boolean, completed: boolean): boolean {
+  return savedState && !completed;
+}
+
+/** Story: See and manage the things the Network is looking for / Reconcile older saved controls during the first normal save (spec/standingIntentManagement.md:67) */
+//@ pure
+export function reconcileLegacyIntent(storedStatus: string, control: IntentControl, ownerActive: boolean, hadRowAtSave: boolean, withinHorizon: boolean, job: boolean): LegacyIntentChange {
+  return !(ownerActive && hadRowAtSave && withinHorizon) || job ? "KeepIntentStatus" : (storedStatus === "active" && control === "PauseControl" ? "ReconcilePause" : ((storedStatus === "active" || storedStatus === "paused") && control === "CloseControl" ? "ReconcileClose" : "KeepIntentStatus"));
+}
+
+/** Story: See and manage the things the Network is looking for / Reconcile older saved controls during the first normal save (spec/standingIntentManagement.md:67) */
+//@ pure
+export function lawLegacyReconciliationNeverUncloses(control: IntentControl, ownerActive: boolean, hadRowAtSave: boolean, withinHorizon: boolean, job: boolean): boolean {
+  //@ ensures \result === true
+  return reconcileLegacyIntent("closed", control, ownerActive, hadRowAtSave, withinHorizon, job) === "KeepIntentStatus";
+}
+
+/** Story: See and manage the things the Network is looking for / Reconcile older saved controls during the first normal save (spec/standingIntentManagement.md:67) */
+//@ pure
+export function lawLegacyReconciliationKeepsIneligible(storedStatus: string, control: IntentControl, ownerActive: boolean, hadRowAtSave: boolean, withinHorizon: boolean, job: boolean): boolean {
+  //@ ensures \result === true
+  return !(!(ownerActive && hadRowAtSave && withinHorizon) || job) || reconcileLegacyIntent(storedStatus, control, ownerActive, hadRowAtSave, withinHorizon, job) === "KeepIntentStatus";
+}
+
+/** Story: See and manage the things the Network is looking for / A pause or close stops only the work linked to that intent (spec/standingIntentManagement.md:93) */
 //@ pure
 export function retireIntentOpportunity(directAnchor: boolean, beforeBooking: boolean): boolean {
   return directAnchor && beforeBooking;
 }
 
-/** Story: See and manage the things the Network is looking for / A pause or close stops only the work linked to that intent (spec/standingIntentManagement.md:67) */
+/** Story: See and manage the things the Network is looking for / A pause or close stops only the work linked to that intent (spec/standingIntentManagement.md:93) */
 //@ pure
 export function retireIntentSearch(recognizedDesire: boolean, stillLive: boolean): boolean {
   return recognizedDesire && !stillLive;

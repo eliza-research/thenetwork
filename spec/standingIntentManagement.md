@@ -64,6 +64,32 @@ pure def writesStandingIntentRow(s: IntentManagement, stored: bool): bool =
   stored and (s.phase == PauseSelected or s.phase == CloseSelected)
 ```
 
+### Reconcile older saved controls during the first normal save
+
+Older controls may exist only in the previous saved member state. The first normal save reconciles them with the currently owned rows in the same app and home runtime. A row must belong to the same active member and have existed when that state was saved. A job posting, expired row, unknown owner, or newer row keeps its stored status. Apply only a change from active to paused or closed, or from paused to closed. Keep the original creation time and deadline. Save the completion marker and any row changes in one transaction. Historical or learned controls remain in member state.
+
+```quint
+type LegacyIntentChange = KeepIntentStatus | ReconcilePause | ReconcileClose
+
+pure def legacyIntentReconciliationDue(savedState: bool, completed: bool): bool =
+  savedState and not(completed)
+
+pure def reconcileLegacyIntent(storedStatus: str, control: IntentControl, ownerActive: bool, hadRowAtSave: bool, withinHorizon: bool, job: bool): LegacyIntentChange =
+  if (not(ownerActive and hadRowAtSave and withinHorizon) or job) KeepIntentStatus
+  else if (storedStatus == "active" and control == PauseControl) ReconcilePause
+  else if ((storedStatus == "active" or storedStatus == "paused") and control == CloseControl) ReconcileClose
+  else KeepIntentStatus
+
+pure val storedStatusValues = Set("active", "paused", "closed", "retired")
+
+pure def lawLegacyReconciliationNeverUncloses(control: IntentControl, ownerActive: bool, hadRowAtSave: bool, withinHorizon: bool, job: bool): bool =
+  reconcileLegacyIntent("closed", control, ownerActive, hadRowAtSave, withinHorizon, job) == KeepIntentStatus
+
+pure def lawLegacyReconciliationKeepsIneligible(storedStatus: str, control: IntentControl, ownerActive: bool, hadRowAtSave: bool, withinHorizon: bool, job: bool): bool =
+  (not(ownerActive and hadRowAtSave and withinHorizon) or job) implies
+    reconcileLegacyIntent(storedStatus, control, ownerActive, hadRowAtSave, withinHorizon, job) == KeepIntentStatus
+```
+
 ### A pause or close stops only the work linked to that intent
 
 Retire a directly anchored opportunity if it is still in review or probing. Stop searches for the same named desire when it has no other live record. Preserve transport send holds and outstanding replies. A scheduled or completed meeting stays in its own consent and cancellation flow.

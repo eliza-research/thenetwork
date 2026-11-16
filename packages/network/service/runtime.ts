@@ -24,6 +24,7 @@ import type { City, Clock, MemberId, WorldSnapshot } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import type { NetworkContext, SimMessage } from "@thenetwork/core";
 import { matchingDisabledByRegistry, startupPlan, tickRepairsProjection, tickRunsFollowup } from "../../core/src/generated/runtimeUnit.ts";
+import { legacyIntentReconciliationDue } from "../../core/src/generated/standingIntentManagement.ts";
 import {
   contextFacetEligible, contextFacetLimit, contextFacetSizeLimit, contextMode, contextSinglePlayer,
   initial as initialContext, step as stepContext, type ContextMode,
@@ -34,6 +35,7 @@ import { loadRelayRows, PgStore, runStored, runTick, type NetworkStore } from ".
 import { capitalWiring, type CapitalEvent } from "../src/capital.ts";
 import type { AppInfo } from "../../platform/src/apps.ts";
 import { effectiveParticipation, loadSnapshot } from "./snapshot.ts";
+import { reconcileLegacyIntentRows } from "./standing-intent-reconciliation.ts";
 import { appWiring, type AppWiring } from "./packs.ts";
 import { BlooioAdapter, DryRunAdapter, WAITING_STATUSES, type ChannelAdapter, type Delivery, type Outbound } from "./channel.ts";
 import { normalizeAddress } from "../../blooio/src/phone.ts";
@@ -60,6 +62,7 @@ type Row = Record<string, unknown>;
 export interface Unit {
   inbound?: Row;
   standingIntent?: StoredStandingIntentChange;
+  legacyIntentState?: NetworkState;
   /** A signed member command prepares its own reply inside the save transaction. */
   memberCommand?: (tx: SQL) => Promise<void>;
   sends: Outbound[];
@@ -369,6 +372,7 @@ export class NetworkRuntime {
         this.unit = newUnit();
         await this.refresh();
         const state = await this.loadState();
+        if (legacyIntentReconciliationDue(!!state, state?.legacyIntentRowsReconciled === true)) this.unit.legacyIntentState = state;
         // The registry's switch wins: a network whose matching is not allowed never matches, whatever was stored.
         if (state && matchingDisabledByRegistry(this.matchingAllowed)) state.matchingEnabled = false;
         return state;
@@ -376,7 +380,7 @@ export class NetworkRuntime {
       save: async (state: NetworkState) => {
         const u = this.unit;
         // PgStore.save sets app.app_id for its own transaction; the unit's rows go in the same one.
-        await this.pg.save(state, tx => this.writeUnit(tx, u));
+        await this.pg.save({ ...state, legacyIntentRowsReconciled: true }, tx => this.writeUnit(tx, u));
         this.committed.push(...u.sends.filter(s => !u.collected.has(s.id)));
         this.unit = newUnit();
       },
@@ -500,6 +504,11 @@ export class NetworkRuntime {
           and status = ${change.previousStatus} and coalesce(details, '') not like ${`${JOB_INTENT}%`}
         returning id`;
       if (rows.length !== 1) throw new Error("Selected standing intent changed before commit");
+    }
+    if (u.legacyIntentState) {
+      const inactive = new Set(u.forget);
+      for (const [member, optedOut] of u.optOut) if (optedOut) inactive.add(member);
+      await reconcileLegacyIntentRows(tx, app, this.host.conversationCities?.(this) ?? [this.city], u.legacyIntentState, this.clock.now(), inactive);
     }
     if (u.inbound && ok(u.inbound.member_id as string)) await tx`insert into network.messages ${tx({ ...u.inbound, app_id: app })} on conflict (id) do nothing`;
     const turn = this.host.inboundTurn?.();
