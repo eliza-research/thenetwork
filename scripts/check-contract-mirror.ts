@@ -18,9 +18,19 @@ const i = args.indexOf("--ref");
 const ref = i >= 0 ? args[i + 1] : "develop";
 if (!ref || !/^[\w./-]+$/.test(ref)) { console.error("usage: pnpm run check:mirror [--ref <branch|tag|sha>]"); process.exit(2); }
 
-const sha256 = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
+function mirrorHash(file: typeof FILES[number], source: Buffer): string {
+  // The opening paragraph of the signing file describes the local runtime.
+  // Keep the canonical request documentation and all source bytes in the hash.
+  const paragraphEnd = source.indexOf("\n *\n");
+  const commentEnd = source.indexOf("*/");
+  const body = file === "svc-auth.ts" && source.subarray(0, 4).equals(Buffer.from("/**\n"))
+    && paragraphEnd >= 0 && paragraphEnd < commentEnd
+    ? source.subarray(paragraphEnd)
+    : source;
+  return createHash("sha256").update(body).digest("hex");
+}
 
-async function upstream(file: string): Promise<Uint8Array> {
+async function upstream(file: string): Promise<Buffer> {
   const p = spawnProcess(["gh", "api", `repos/${UPSTREAM}/contents/${UPSTREAM_DIR}/${file}?ref=${ref}`, "-q", ".content"], { stdout: "pipe", stderr: "pipe" });
   const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
   if (code !== 0) throw new Error(`gh api failed for ${file}: ${err.trim()}`);
@@ -30,11 +40,11 @@ async function upstream(file: string): Promise<Uint8Array> {
 let ok = true;
 for (const f of FILES) {
   const local = readFileSync(new URL(`../packages/core/src/svc/${f}`, import.meta.url));
-  let remote: Uint8Array;
+  let remote: Buffer;
   try { remote = await upstream(f); } catch (e) { console.error((e as Error).message); process.exit(2); }
-  const [l, r] = [sha256(local), sha256(remote)];
+  const [l, r] = [mirrorHash(f, local), mirrorHash(f, remote)];
   console.log(`${l === r ? "same" : "DIFFERENT"}  ${f}  local ${l}  ${UPSTREAM}@${ref} ${r}`);
   if (l !== r) ok = false;
 }
-if (!ok) console.error(`The mirror differs from ${UPSTREAM}@${ref}. Copy the upstream files unchanged and update the pins in packages/core/test/contract-mirror.test.ts.`);
+if (!ok) console.error(`The mirror differs from ${UPSTREAM}@${ref}. Sync the upstream implementation and update the pins in packages/core/test/contract-mirror.test.ts.`);
 process.exit(ok ? 0 : 1);

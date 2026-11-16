@@ -42,10 +42,10 @@ accepted merges and pays after maintainer review. There is no escrow.
 - Change the model and implementation together. Compare their states, guards,
   writes, retries, leases, limits, and invariants. State which seams and proof
   obligations were checked, and which remain open.
-- The [Eliza wire contract](packages/core/src/svc/contract.ts) and
-  [signing code](packages/core/src/svc/svc-auth.ts) mirror upstream byte for
-  byte. Land contract changes upstream before updating the mirror. Use
-  `pnpm run check:mirror` to compare it.
+- The [Eliza wire contract](packages/core/src/svc/contract.ts) mirrors upstream
+  byte for byte. The [signing file](packages/core/src/svc/svc-auth.ts) has a
+  local opening comment and mirrors the upstream implementation. Land wire and
+  signing changes upstream first. Use `pnpm run check:mirror` to compare them.
 
 ## The Network contribution rules
 

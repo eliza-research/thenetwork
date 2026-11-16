@@ -60,6 +60,7 @@ Vibestack. The Node patch version is in `.nvmrc`. Use Dafny 4.11 for proofs
 and PostgreSQL 16 for local service and database tests.
 
 ```bash
+npm install --global corepack@0.35.0
 corepack enable pnpm
 pnpm install --frozen-lockfile
 pnpm run spec:setup

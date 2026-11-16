@@ -13,8 +13,9 @@ The rest of this reference describes the standalone Vibestack layout.
 Paths starting with `vibestack/` refer to the pinned upstream checkout
 under [`tools/vibestack/`](tools/vibestack/). The Network applies a local
 Node 26 overlay to the vendored stack guidance, the runtime caveat in the
-research notes, and the package manager detector's lockfile list. The pinned
-pnpm lockfiles retain published dependency metadata. The order example is
+research notes, the package manager detector's lockfile list, and the optional
+runtime metadata in the pnpm lockfiles. The dependency versions and integrity
+hashes follow upstream. The order example is
 `vibestack/examples/order/spec/index.md` and the tracker example is
 `vibestack/examples/dashboard/spec/tracker.md`. Read [AGENTS.md](AGENTS.md)
 and the [sync skill](.claude/skills/sync/SKILL.md) before changing a rule.
