@@ -6,15 +6,19 @@
 // the quintile of their photo rating ("unrated" without one), and runs the engine's biasMonitor. A
 // group whose outcome rate is under 0.8x the overall rate raises an alert (the four-fifths rule). The
 // report holds group counts and ratios only: no member id, no score.
-import { DAY, type MemberId } from "@thenetwork/core";
-import { biasMonitor, ratingQuintiles, type BiasReport, type MemberOutcome } from "../../engine/src/packs/slop/biasMonitor.ts";
+import { ADULT_AGE, DAY, type MemberId } from "@thenetwork/core";
+import {
+  biasDateHeld, biasEveryMs, biasMemberEligible, biasOpportunityInWindow, biasOpportunityReached,
+  biasPairMetAgain, biasProductionGroupMinimum, biasSinglePair, biasWindowMs,
+} from "../../core/src/generated/weeklyBias.ts";
+import { biasMonitor, DEFAULT_BIAS_THRESHOLD, ratingQuintiles, type BiasReport, type MemberOutcome } from "../../engine/src/packs/slop/biasMonitor.ts";
 import { parseAppearance } from "../../engine/src/packs/slop/appearance.ts";
 
-export const BIAS_WINDOW_MS = 28 * DAY;
-export const BIAS_EVERY_MS = 7 * DAY;
-export const BIAS_THRESHOLD = 0.8;
+export const BIAS_WINDOW_MS = biasWindowMs;
+export const BIAS_EVERY_MS = biasEveryMs;
+export const BIAS_THRESHOLD = DEFAULT_BIAS_THRESHOLD;
 /** The smallest group that can raise an alert. Smaller than the engine's 15: the NYC pilot is 40-75 adults. */
-export const BIAS_MIN_N = 8;
+export const BIAS_MIN_N = biasProductionGroupMinimum;
 const MONTH = 30.44 * DAY;
 
 export interface BiasMember { id: MemberId; age: number | null; joinedAt: number | null; tags: readonly string[] }
@@ -23,22 +27,23 @@ export interface BiasOpp { participants: readonly MemberId[]; stage: string; cre
 /** One outcome row per adult member (18+) with at least one day in the window. */
 export function biasRows(members: readonly BiasMember[], opps: readonly BiasOpp[], now: number, windowMs = BIAS_WINDOW_MS): MemberOutcome[] {
   const from = now - windowMs;
-  const adults = members.filter(m => typeof m.age === "number" && m.age >= 18 && m.joinedAt !== null && now - Math.max(m.joinedAt, from) >= DAY);
+  const adults = members.filter(m => typeof m.age === "number" && m.joinedAt !== null
+    && biasMemberEligible(m.age, ADULT_AGE, now - Math.max(m.joinedAt, from)));
   const overall = new Map<string, number>();
   for (const m of adults) { const a = parseAppearance(m.tags); if (a) overall.set(m.id, a.overall); }
   const quintile = ratingQuintiles(overall);
   // Reached: past review (probed, scheduled, done, or closed after review). Held: done, meeting in the past.
-  const recent = opps.filter(o => o.createdAt >= from && o.createdAt <= now);
-  const reached = recent.filter(o => o.stage !== "review" && !(o.stage === "closed" && (o.closedFrom ?? "review") === "review"));
-  const held = recent.filter(o => o.stage === "done" && o.meetingAt !== undefined && o.meetingAt <= now);
+  const recent = opps.filter(o => biasOpportunityInWindow(o.createdAt, from, now));
+  const reached = recent.filter(o => biasOpportunityReached(o.stage, o.closedFrom ?? "review"));
+  const held = recent.filter(o => biasDateHeld(o.stage, o.meetingAt !== undefined, o.meetingAt ?? 0, now));
   const pairDates = new Map<string, number>();
-  for (const o of held) if (o.participants.length === 2) { const k = [...o.participants].sort().join("|"); pairDates.set(k, (pairDates.get(k) ?? 0) + 1); }
+  for (const o of held) if (biasSinglePair(o.participants.length)) { const k = [...o.participants].sort().join("|"); pairDates.set(k, (pairDates.get(k) ?? 0) + 1); }
   return adults.map(m => ({
     group: quintile.get(m.id) ?? "unrated",
     memberMonths: (now - Math.max(m.joinedAt!, from)) / MONTH,
     proposals: reached.filter(o => o.participants.includes(m.id)).length,
     dates: held.filter(o => o.participants.includes(m.id)).length,
-    secondDates: [...pairDates].filter(([k, n]) => n >= 2 && k.split("|").includes(m.id)).length,
+    secondDates: [...pairDates].filter(([k, n]) => biasPairMetAgain(n) && k.split("|").includes(m.id)).length,
   }));
 }
 

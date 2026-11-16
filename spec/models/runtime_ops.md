@@ -24,6 +24,12 @@ a prior successful post, and can still ping its heartbeat after a failed
 alert delivery. The retained model below describes different behavior for
 those cases.
 
+[Weekly bias monitoring](../weeklyBias.md) drives cadence, cohort
+eligibility, and aggregate outcome rules. The current backend checks
+the newest stored report and builds from its in-memory opportunities.
+The retained model also describes an insert-time recheck and a durable
+opportunity read.
+
 Imported from `quint/runtime_ops.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
 ```quint
