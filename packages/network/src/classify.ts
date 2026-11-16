@@ -589,6 +589,14 @@ export function extractProfile(body: string): Profile {
   };
 }
 
+const EXPLICIT_REPEAT = /^(?:(?:yes|yeah)[, ]+)?(?:(?:i would|i'd|would)(?: definitely| really)?(?: love to| like to)? |(?:i want to|let's) )(?:do (?:it|that)|meet(?: up)?|see (?:you|them|him|her|each other)|hang out|get together) again$/i;
+
+/** Read a first-person follow-up request in its own clause. */
+export function explicitRepeatRequest(body: string): boolean {
+  const text = body.toLowerCase().replace(/[‘’ʼ]/g, "'");
+  return planAgainOf(text) === "yes" && text.split(/[.!?;]/).some(clause => EXPLICIT_REPEAT.test(clause.trim()));
+}
+
 /**
  * Sentiment of a feedback reply (for edges and reliability). Negations are checked first: "not
  * great", "wasn't great" and "didn't click" contain positive words but are bad meetings.

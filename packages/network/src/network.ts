@@ -50,6 +50,7 @@ import {
   groupCanContinue, initial as initialOpportunity, step as stepOpportunity,
   type OpportunityLifecycle, type OpportunityPhase,
 } from "../../core/src/generated/opportunityLifecycle.ts";
+import { queueRepeat, recentRepeatSource, recordsRepeatConsent } from "../../core/src/generated/repeatEncounter.ts";
 import { bookedCapacityReached, bookedOccupies } from "../../core/src/generated/peonCapacity.ts";
 import { initial as initialPlanDispatch, planLaneOpen, planTurnDue, step as stepPlanDispatch } from "../../core/src/generated/planDispatch.ts";
 import {
@@ -79,7 +80,7 @@ import { HELP_TEXT, STOP_CONFIRMATION, type InboundMessage, type NetworkContext,
 import { sha256, stableStringify } from "@thenetwork/engine/src/hash.ts";
 import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
-import { ageAnswer, availabilityTags, checkinTags, classify, extractProfile, feedbackOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, type Classified, type TimeOption } from "./classify.ts";
+import { ageAnswer, availabilityTags, checkinTags, classify, explicitRepeatRequest, extractProfile, feedbackOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, type Classified, type TimeOption } from "./classify.ts";
 import { mergeConsent, type Understand, type Understood } from "./extract.ts";
 import { brandOf, copy, copyFor, type Copy, whenPhrase } from "./copy.ts";
 import { APPS, type AppId, type AppInfo } from "../../platform/src/apps.ts";
@@ -464,6 +465,8 @@ interface Opp {
   bookedTold?: MemberId[];
   /** Participants who answered the feedback question. */
   feedbackFrom: Set<MemberId>;
+  /** Original completed meeting behind this review item. */
+  repeatFrom?: string;
   /** Planner plans and crew sessions: the engine plan and its quorum run (plans.startPlanRun). */
   plan?: plans.Plan; planRun?: plans.PlanRun;
   /** When the booked plan reached each member, who confirmed it in words, and who confirmed by silence (48 h). */
@@ -616,7 +619,6 @@ export class ConsentNetwork implements NetworkUnderTest {
   private avoid = new Set<string>();
   /** Pairs not to propose again for a while: a member declined, or a reviewer rejected them. */
   private declined = new Map<string, number>();
-  private again = new Map<string, Set<MemberId>>();
   private feedback: FeedbackRecord[] = [];
   private interactions: InteractionRecord[] = [];
   /** Engine questions sent (EngineResult.asks), fed back to the engine as `recentAsks`. */
@@ -1061,7 +1063,6 @@ export class ConsentNetwork implements NetworkUnderTest {
     const mine = (k: string) => k.split("|").includes(id);
     for (const s of [this.blocks, this.avoid]) for (const k of [...s]) if (mine(k)) s.delete(k);
     for (const k of [...this.declined.keys()]) if (mine(k)) this.declined.delete(k);
-    for (const k of [...this.again.keys()]) if (mine(k)) this.again.delete(k);
     this.feedback = this.feedback.filter(f => f.from !== id && f.about !== id);
     this.interactions = this.interactions.filter(x => !x.participants.includes(id));
     for (const k of [...this.planAgain.keys()]) if (mine(k)) this.planAgain.delete(k);
@@ -2276,6 +2277,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     for (let i = 0; i < o.participants.length; i++) for (let j = i + 1; j < o.participants.length; j++)
       if (this.blocked(o.participants[i]!, o.participants[j]!)) return "blocked_pair";
+    if (o.origin === "second_encounter" && (!o.repeatFrom || !this.repeatOutreachAllowed(o.category, o.participants, o.id))) return "repeat_no_longer_available";
     if (o.origin === "engine") return this.gateReason({ ...this.toProposal(o), roles: o.roles ?? {}, anchor: o.anchor, ...(o.seat ? { seat: o.seat } : {}) } as SeatProposal, o.id);
     return undefined;
   }
@@ -2451,6 +2453,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     const now = this.now();
     const pending = participantProbe(o.status.get(id));
     if (!needsProbeSend(pending, o.contacted.has(id))) return;
+    if (o.origin === "second_encounter" && (!o.repeatFrom || !this.repeatPreferencesAllow(o.category, o.participants))) {
+      this.close(o, "repeat preferences changed");
+      return;
+    }
     // A hiring manager asked for candidates (their posting): the review of one is not an initial invite.
     const invite = probeIsInvite(o.requester === id, o.seat?.manager === id);
     const timing: Timing = invite ? "slot" : "logistics";
@@ -2726,6 +2732,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    * not on the cap, and only while the member has at most 2 messages unanswered.
    */
   private reveal(o: Opp) {
+    if (o.origin === "second_encounter" && !this.repeatPreferencesAllow(o.category, o.participants)) return this.close(o, "repeat preferences changed");
     const now = this.now();
     const published = this.currentPublishedEvent(o);
     const publicEventIssue = this.publicEventRefusal(o, published);
@@ -2944,6 +2951,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     const good = !f.selfNoShow && !f.otherNoShow && (f.sentiment === "positive" || !!o.post?.[m.id]?.again);
     if (good) this.emit({ type: "value_received", member: m.id, with: others }, `${o.id}:${m.id}`);
     this.helpFeedback(m, o, f);
+    const repeatConsent = !o.plan && !o.seat && o.participants.length === 2 && recordsRepeatConsent(
+      deliveredInvitee(o.status.get(m.id) === "yes", o.bookedAt?.[m.id] !== undefined),
+      explicitRepeatRequest(body), f.sentiment === "negative", f.selfNoShow || !!o.post?.[m.id]?.otherNoShow,
+    );
     // The check-in after a date (AppHooks.postDateReports): harassment, lying, a no-show or an unsafe
     // date is a report about the other person, a block between them, and a staff case.
     const reportKind = this.opts.hooks?.postDateReports && !o.plan ? checkInReport(body) ?? (f.otherNoShow ? "no_show" : undefined) : undefined;
@@ -2962,7 +2973,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (f.selfNoShow) { m.noShows++; m.completedSinceNoShow = 0; }
     else m.completedSinceNoShow++;
     for (const other of others) {
-      this.feedback.push({ id: `fb${this.feedback.length + 1}`, from: m.id, about: other, opportunityId: o.id, at: this.now(), sentiment: f.sentiment, wouldMeetAgain: f.again });
+      this.feedback.push({ id: `fb${this.feedback.length + 1}`, from: m.id, about: other, opportunityId: o.id, at: this.now(), sentiment: f.sentiment, wouldMeetAgain: f.again, ...(repeatConsent ? { repeatConsent: true } : {}) });
       const k = pairKey(m.id, other);
       if (f.sentiment === "negative" && !f.otherNoShow) this.avoid.add(k);
       if (f.sentiment === "positive" && o.requester === m.id && o.origin === "request") {
@@ -2972,11 +2983,6 @@ export class ConsentNetwork implements NetworkUnderTest {
           if (!this.vouchedSkills.has(other)) this.vouchedSkills.set(other, new Set());
           this.vouchedSkills.get(other)!.add(sk); this.dirty = true;
         }
-      }
-      // Plans keep their own would_interact_again edges (planPost); the pair "meet again" flow is for intros.
-      if (f.again && !o.plan) {
-        const s = this.again.get(k) ?? new Set<MemberId>();
-        s.add(m.id); this.again.set(k, s);
       }
     }
     this.interactions.push({ id: `${o.id}:fb:${m.id}`, kind: o.kind, category: o.category, participants: [...o.participants], at: this.now(), outcome: f.selfNoShow ? "no_show" : "completed", contributors: [] });
@@ -4267,7 +4273,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       ...(snap.events ? { events: snap.events } : {}),
       edges: [
         ...snap.edges.filter(e => nyc.has(e.from) && nyc.has(e.to)),
-        ...[...this.again.entries()].filter(([, s]) => s.size >= 2).map(([k]) => { const [a, b] = k.split("|") as [string, string]; return { from: a, to: b, type: "would_interact_again" as const, strength: 0.8, explicit: false, createdAt: now }; }),
+        ...this.repeatSources(now).filter(({ firstYes, secondYes, pair }) => firstYes && secondYes && !this.blocked(...pair) && !this.avoid.has(pairKey(...pair)))
+          .map(({ source, pair: [from, to] }) => ({ from, to, type: "would_interact_again" as const, strength: 0.8, explicit: false, createdAt: source.meetingAt! })),
         ...[...this.avoid].map(k => { const [a, b] = k.split("|") as [string, string]; return { from: a, to: b, type: "avoid" as const, strength: 1, explicit: false, createdAt: now }; }),
         // Attendees of a plan who both said they'd do it again (plans ask 8).
         ...[...this.planAgain].map(([k, at]) => { const [a, b] = k.split("|") as [string, string]; return { from: a, to: b, type: "would_interact_again" as const, strength: 0.8, explicit: false, createdAt: at }; }),
@@ -4363,16 +4370,61 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
   }
 
+  private repeatSources(now: number): { source: Opp; pair: [MemberId, MemberId]; firstYes: boolean; secondYes: boolean }[] {
+    const responses = new Map<string, Set<MemberId>>();
+    for (const reply of this.feedback) {
+      if (!reply.repeatConsent || !reply.opportunityId || reply.from === reply.about) continue;
+      const pair = this.opps.get(reply.opportunityId)?.participants;
+      if (pair?.length !== 2 || !pair.includes(reply.from) || !pair.includes(reply.about)) continue;
+      const from = responses.get(reply.opportunityId) ?? new Set<MemberId>();
+      from.add(reply.from);
+      responses.set(reply.opportunityId, from);
+    }
+    const seen = new Set<string>();
+    const result: ReturnType<ConsentNetwork["repeatSources"]> = [];
+    const meetings = [...this.opps.values()].filter(o => !o.plan && !o.seat && o.meetingAt !== undefined &&
+      recentRepeatSource(o.stage === "done", o.participants.length === 2, now - o.meetingAt))
+      .sort((a, b) => b.meetingAt! - a.meetingAt!);
+    for (const source of meetings) {
+      const [a, b] = source.participants;
+      if (a === undefined || b === undefined || a === b) continue;
+      const key = pairKey(a, b);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const from = responses.get(source.id);
+      result.push({ source, pair: [a, b], firstYes: from?.has(a) === true, secondYes: from?.has(b) === true });
+    }
+    return result;
+  }
+
+  private repeatPreferencesAllow(category: Category, participants: readonly MemberId[]): boolean {
+    return this.allowedCategories.has(category) && (category !== "romance" || !this.romanceGate(participants)) &&
+      participants.every(id => {
+        const prefs = this.record(id)?.prefs;
+        return !!prefs?.categoriesOptIn?.includes(category) && prefs.formats?.includes("one_to_one") === true;
+      });
+  }
+
+  private repeatOutreachAllowed(category: Category, participants: readonly MemberId[], exceptOpp?: string): boolean {
+    return this.repeatPreferencesAllow(category, participants) && participants.every(id => {
+      const m = this.members.get(id);
+      return !!m && this.eligible(id, exceptOpp) && canBeMatched(this.ageOf(m));
+    });
+  }
+
   /** Encounters the Network composes itself: second encounters and newcomer welcomes. */
   private localEncounters(now: number) {
     this.growthTasks(now);
     if (!this.opts.matchingEnabled) return;
-    for (const [k, s] of this.again) {
-      if (s.size < 2) continue;
-      const [a, b] = k.split("|") as [MemberId, MemberId];
-      this.again.delete(k);
-      if (!this.eligible(a) || !this.eligible(b)) continue;
-      const o = this.newOpp({ origin: "second_encounter", kind: "second_encounter", category: "social", objective: "meet again", detail: "meeting up again", participants: [a, b], alternates: [], primed: [], explanations: { [a]: "you both said you'd meet again", [b]: "you both said you'd meet again" }, score: 0.8, generator: "second_encounter", tags: [] });
+    const offered = new Set([...this.opps.values()].flatMap(o => o.repeatFrom ? [o.repeatFrom] : []));
+    for (const { source, pair, firstYes, secondYes } of this.repeatSources(now)) {
+      if (!firstYes || !secondYes) continue;
+      const key = pairKey(...pair);
+      const pairAvailable = !this.blocked(...pair) && !this.avoid.has(key) && (this.declined.get(key) ?? -Infinity) <= now - 60 * DAY;
+      if (!queueRepeat(firstYes, secondYes, this.repeatOutreachAllowed(source.category, pair), pairAvailable, offered.has(source.id))) continue;
+      const [a, b] = pair;
+      const o = this.newOpp({ origin: "second_encounter", kind: "second_encounter", category: source.category, objective: "meet again", detail: "meeting up again", participants: [a, b], alternates: [], primed: [], explanations: { [a]: GOOD_FIT, [b]: GOOD_FIT }, score: 0.8, generator: "second_encounter", tags: [] });
+      o.repeatFrom = source.id;
       this.submit(o);
     }
     // Newcomer welcome: members who joined in the last week and finished onboarding, paired with a
@@ -5234,7 +5286,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       })),
       requests: this.requests, queued: this.queued, deferred: this.deferred,
       declinedIds: [...this.declinedIds], blocks: [...this.blocks], avoid: [...this.avoid], declined: [...this.declined],
-      again: [...this.again].map(([k, v]) => [k, [...v]]), feedback: this.feedback, interactions: this.interactions, asks: this.asks,
+      feedback: this.feedback, interactions: this.interactions, asks: this.asks,
       vouchedSkills: [...this.vouchedSkills].map(([k, v]) => [k, [...v]]), invitedIds: [...this.invitedIds],
       trust: this.trust.exportState(), cases: this.cases, caseSeq: this.caseSeq, reports: this.reports, reportSeq: this.reportSeq,
       counters: this.counters, gateReasons: this.gateReasons,
@@ -5281,7 +5333,6 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.requests.length = 0; this.requests.push(...st.requests);
     this.queued = st.queued; this.deferred = st.deferred;
     this.declinedIds = new Set(st.declinedIds); this.blocks = new Set(st.blocks); this.avoid = new Set(st.avoid); this.declined = new Map(st.declined);
-    this.again = new Map(st.again.map(([k, v]) => [k, new Set(v)]));
     this.feedback = st.feedback; this.interactions = st.interactions;
     this.vouchedSkills = new Map(st.vouchedSkills.map(([k, v]) => [k, new Set(v)]));
     this.invitedIds.clear(); for (const id of st.invitedIds) this.invitedIds.add(id);
@@ -5520,7 +5571,7 @@ export interface NetworkState {
   /** Persisted with the first successful service save that reconciles legacy row statuses. */
   legacyIntentRowsReconciled?: true;
   members: MemberJSON[]; opps: OppJSON[]; requests: Request[]; queued: Proposal[]; deferred: Deferred[];
-  declinedIds: MemberId[]; blocks: string[]; avoid: string[]; declined: [string, number][]; again: [string, MemberId[]][];
+  declinedIds: MemberId[]; blocks: string[]; avoid: string[]; declined: [string, number][];
   feedback: FeedbackRecord[]; interactions: InteractionRecord[]; asks: AskRecord[];
   vouchedSkills: [MemberId, string[]][]; invitedIds: MemberId[];
   trust: TrustState; cases: SafetyCase[]; caseSeq: number;

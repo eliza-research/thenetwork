@@ -3,6 +3,7 @@
 // filters (filters.ts), scoring and policy. ORDER IS PART OF THE CONTRACT (byte-identity rule 3):
 // the run log's funnel.byGenerator serializes in this order, and network_growth consumes the
 // intents the earlier generators left unmatched.
+import { recentRepeatSource, sameEncounterConsent } from "../../../../core/src/generated/repeatEncounter.ts";
 import type { Category, Facet, Intent, MemberId } from "@thenetwork/core";
 import { DAY } from "@thenetwork/core";
 import type { GeneratorName } from "../../config.ts";
@@ -437,17 +438,17 @@ export function secondEncounter(ctx: GenCtx): Candidate[] {
   const { w } = ctx;
   const out: Candidate[] = [];
   const done = new Set<string>();
-  const positive = (from: MemberId, about: MemberId, oppId: string) =>
-    w.feedback.some(f => f.from === from && f.about === about && (f.opportunityId === undefined || f.opportunityId === oppId) && (f.sentiment === "positive" || f.wouldMeetAgain === true));
-  const recentDone = w.interactions.filter(r => r.outcome === "completed" && w.now - r.at < 60 * DAY)
+  const wantsRepeat = (from: MemberId, about: MemberId, oppId: string) =>
+    w.feedback.some(f => f.from === from && f.about === about && sameEncounterConsent(f.repeatConsent === true, f.opportunityId ?? "", oppId));
+  const recentDone = w.interactions.filter(r => recentRepeatSource(r.outcome === "completed", r.participants.length === 2, w.now - r.at))
     .sort((a, b) => (b.at - a.at) || (a.id < b.id ? -1 : 1));
   for (const r of recentDone) {
     for (let i = 0; i < r.participants.length; i++) for (let j = i + 1; j < r.participants.length; j++) {
       const a = r.participants[i]!, b = r.participants[j]!;
       const k = pairKey(a, b);
       if (done.has(k)) continue;
-      if (!positive(a, b, r.id) || !positive(b, a, r.id)) continue;
       done.add(k);
+      if (!wantsRepeat(a, b, r.id) || !wantsRepeat(b, a, r.id)) continue;
       const ma = w.get(a), mb = w.get(b);
       if (!ma || !mb) continue;
       // Next context: an upcoming event both would like, else a shared shareable interest.

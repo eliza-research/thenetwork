@@ -89,6 +89,48 @@ describe("exportState / importState", () => {
   }, T);
 });
 
+// spec/repeatEncounter.md, "Require two independent responses about one recent completed opportunity"
+test.each([
+  ["a no-show", "I couldn't make it. Would do it again.", false, false],
+  ["a positive rating alone", "It was great, we clicked.", false, false],
+  ["explicit requests for different meetings", "I would love to meet again.", false, true],
+  ["two explicit requests", "It was great. I would love to meet again.", true, false],
+] as const)("repeat review follows delivered feedback across restart: %s", async (_label, secondFeedback, expected, separateMeetings) => {
+  const pair = ["a", "b"];
+  const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "human" });
+  await w.onboard(...pair);
+  const bookAndWaitForFeedback = async () => {
+    const meetings = w.meetings.length;
+    const id = w.propose(pair);
+    expect(await w.runUntil(() => w.net.reviewQueue().some(o => o.oppId === id))).toBe(true);
+    expect(w.net.review(id, "approve")).toBe(true);
+    await w.answerProbes(pair);
+    expect(w.meetings).toHaveLength(meetings + 1);
+    expect(await w.runUntil(() => pair.every(member =>
+      w.net.memberList().find(m => m.id === member)?.awaiting?.kind === "feedback"), 7 * DAY)).toBe(true);
+  };
+  await bookAndWaitForFeedback();
+  await w.say("a", "It was great. Would do it again.");
+  w.restart();
+  if (separateMeetings) {
+    await w.say("b", "We met as planned.");
+    await bookAndWaitForFeedback();
+    await w.say("a", "We met as planned.");
+  }
+  await w.say("b", secondFeedback);
+  const before = w.mark();
+  await w.run(DAY);
+  const repeat = () => w.net.reviewQueue().filter(o => o.origin === "second_encounter");
+  expect(repeat()).toHaveLength(expected ? 1 : 0);
+  if (!expected) return;
+  const [item] = repeat();
+  expect(w.sent.slice(before).some(s => s.meta.proposalId === item!.oppId)).toBe(false);
+  expect(w.net.review(item!.oppId, "reject")).toBe(true);
+  w.restart();
+  await w.run(DAY);
+  expect(repeat()).toHaveLength(0);
+}, T);
+
 /** A NetworkUnderTest whose ConsentNetwork can be replaced mid-run (a process restart inside a world run). */
 class Restartable implements NetworkUnderTest {
   readonly name = "consent";

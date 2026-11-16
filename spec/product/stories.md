@@ -194,7 +194,7 @@ Models: [plan run](../models/plan_run.md), [outbound queue](../models/outbound_q
 
 Ask factual questions first, then whether it was worthwhile and whether the person wants to meet again. Update contextual reliability, intent and edges. Offer a second encounter when mutual evidence and current policy support it. Keep negative feedback private. Sample whether an interruption was worthwhile under the one-open-question rule.
 
-Models: [opportunity](../models/opportunity.md), [profile learning](../models/profile_learning.md), [notification and capital](../models/notify_capital.md).
+Models: [repeat encounters](../repeatEncounter.md), [opportunity](../models/opportunity.md), [profile learning](../models/profile_learning.md), [notification and capital](../models/notify_capital.md).
 
 ## Story F20 — Set my participation
 

@@ -9,6 +9,8 @@ export interface SafetyHold { memberId: MemberId; from: number; to?: number; rea
 export interface FeedbackRecord {
   id: string; from: MemberId; about: MemberId; opportunityId?: string; at: number;
   sentiment: "positive" | "neutral" | "negative"; wouldMeetAgain?: boolean;
+  /** Attendance and an explicit repeat request were recorded for this opportunity. */
+  repeatConsent?: true;
   /** Pitfall guard (ME-006): processing feedback must not end its cooldown effect. */
   processed?: boolean;
 }
