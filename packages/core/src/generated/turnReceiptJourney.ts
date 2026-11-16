@@ -82,7 +82,7 @@ export function reportDelivery(s: ReceiptJourney, report: DeliveryReport): Recei
   //@ ensures (inv(s) && canReportDelivery(s, report)) ==> alwaysReplyStatusMatchesReceipt(\result.state)
   //@ ensures (inv(s) && canReportDelivery(s, report)) ==> stepAStoredFinalReportStays(s, \result.state)
   const local_0: ReceiptObservation = ({ tag: "SavedReceipt", report: report } as ReceiptObservation);
-  const local_1 = turnReceipt_readPrevious(({ phase: "CheckingPrevious" } as turnReceipt_TurnReceipt), equal_turnReceiptJourney(s.receipt, local_0), !equal_turnReceiptJourney(s.receipt, ({ tag: "NoReceipt" } as ReceiptObservation)), equal_turnReceiptJourney(s.receipt, ({ tag: "SavedReceipt", report: "UnknownReport" } as ReceiptObservation)), turnReceipt_receiptFinal(delivery(report)));
+  const local_1: turnReceipt_TurnReceipt = turnReceipt_readPrevious(({ phase: "CheckingPrevious" } as turnReceipt_TurnReceipt), equal_turnReceiptJourney(s.receipt, local_0), !equal_turnReceiptJourney(s.receipt, ({ tag: "NoReceipt" } as ReceiptObservation)), equal_turnReceiptJourney(s.receipt, ({ tag: "SavedReceipt", report: "UnknownReport" } as ReceiptObservation)), turnReceipt_receiptFinal(delivery(report)));
   return turnReceipt_canCheckScope(local_1) ? ({ state: ({ receipt: local_0, replyStatus: replyStatusFor(local_0) } as ReceiptJourney), out: ["ReportStored"] } as ReceiptJourneyStep) : ({ state: s, out: [local_1.phase === "Replayed" ? "ReportReplayed" : "ReportConflict"] } as ReceiptJourneyStep);
 }
 
