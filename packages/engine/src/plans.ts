@@ -20,6 +20,10 @@ import {
   canApplyPlanReply, crewBelowMinimum, crewHostOrder, crewMembersWhoOptedIn, hasCrewQuorum, planFallbackShape, planProbeExpired,
   planReplyChoice, qualifiesForPlanAllowance, singlePlanSeedsCrew, unmetPlanQuorum, type PlanStage,
 } from "../../core/src/generated/planDecision.ts";
+import {
+  cityPlanLimitReached, initial as initialCityPlanRun, isPlanAlternate, planAlternateCanRemain, planAlternateLimitReached,
+  planCanFitPlace, planScoreQualifies, searchForPlanGroup, searchForPlanPartner, step as stepCityPlanRun, venueCanHoldGroup, venueCanHostActivity,
+} from "../../core/src/generated/planFormation.ts";
 import { activitiesForTags, activityById, type ActivityType, type Daypart, type Venue } from "./packs/network/activities.ts";
 import { availabilityProb, candidateSlots, timeOptionsPhrase, type AvailabilityEvidence, type TimeSlot } from "./attention.ts";
 import { DEFAULT_ATTENTION, DEFAULT_CONFIG, DEFAULT_PLANS, type AttentionConfig, type PlansConfig } from "./config.ts";
@@ -316,10 +320,11 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
       let place: { name: string; area?: string; venueId?: string; ageMin: number; priceTier: number; capacity?: number };
       if (wh.event) place = { name: wh.event.title, area: wh.event.area, ageMin: a.ageMin, priceTier: a.costTier };
       else {
-        const vs = inp.venues.filter(v => v.public && v.city === city && v.activities.includes(a.id) && (v.capacity === undefined || v.capacity >= 2) && openAt(v, wh.slot, a.durationMin, tz, att));
+        const vs = inp.venues.filter(v => venueCanHostActivity(v.public, v.city === city, v.activities.includes(a.id), v.capacity === undefined ? Infinity : v.capacity)
+          && openAt(v, wh.slot, a.durationMin, tz, att));
         if (!vs.length) continue;
         const cover = (v: Venue) => pool.filter(id => areas.get(id)!.has(v.area.toLowerCase())).length;
-        const groupFits = (v: Venue) => (v.capacity ?? Infinity) >= minG && pool.filter(id => ageOk(id, v.ageMin)).length >= minG;
+        const groupFits = (v: Venue) => venueCanHoldGroup(v.capacity ?? Infinity, pool.filter(id => ageOk(id, v.ageMin)).length, minG);
         const v = vs.sort((x, y) => Number(groupFits(y)) - Number(groupFits(x)) || cover(y) - cover(x) || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0))[0]!;
         place = { name: v.name, area: v.area, venueId: v.id, ageMin: Math.max(v.ageMin, a.ageMin), priceTier: v.priceTier, capacity: v.capacity };
       }
@@ -329,19 +334,19 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
         venueFit: !place.area || areas.get(id)!.has(place.area.toLowerCase()) ? 1 : pcfg.otherAreaFit,
       });
       const score = (ids: MemberId[]) => scorePlanGroup(ids.map(input), compat, familiar, pcfg);
-      const passes = (s: PlanScore | null): s is PlanScore => !!s && s.min >= pcfg.minMemberU && s.score >= pcfg.threshold;
+      const passes = (s: PlanScore | null): s is PlanScore => !!s && planScoreQualifies(s.min, s.score, pcfg.minMemberU, pcfg.threshold);
       // The chosen public place's capacity bounds both groups and partner fallbacks.
       const cap = wh.event?.capacity ?? place.capacity ?? Infinity;
       const maxG = Math.min(pcfg.size.max, a.groupSize[1], pcfg.size.target, cap);
-      if (maxG < Math.min(minG, 2)) continue;
+      if (!planCanFitPlace(maxG, Math.min(minG, 2))) continue;
       const minInvite = Math.min(maxG, Math.max(minG, pcfg.minInvite));
       // Disjoint k-best (engine-attention-plans-12): after the best group, the next best group from
       // the members left, so one (slot, activity) is not always won by the same members.
       for (let k = 0; k < Math.max(1, pcfg.maxPlansPerCityRun) && pool2.length >= 2; k++) {
       let best: { ids: MemberId[]; s: PlanScore } | undefined;
-      if (pool2.length >= minInvite && maxG >= minG) best = beam(pool2, minInvite, maxG, score, passes, pcfg);
+      if (searchForPlanGroup(pool2.length, minInvite, maxG, minG)) best = beam(pool2, minInvite, maxG, score, passes, pcfg);
       let partner = false;
-      if (!best && pcfg.partnerPlans && a.groupSize[0] <= 2 && cap >= 2) {
+      if (searchForPlanPartner(!!best, pcfg.partnerPlans, a.groupSize[0], cap)) {
         // Activity-partner plan: the best pair (one-to-one intro rules: sequential probes, double opt-in).
         for (let i = 0; i < pool2.length; i++) for (let j = i + 1; j < pool2.length; j++) {
           const s = score([pool2[i]!, pool2[j]!]);
@@ -356,9 +361,10 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
       const alternates: MemberId[] = [];
       for (const id of pool2.filter(x => !primary.includes(x))
         .sort((x, y) => (fits.get(y)!.get(a.id)! * avail.get(y)! - fits.get(x)!.get(a.id)! * avail.get(x)!) || byTie(x, y))) {
-        if (alternates.length >= (partner ? 1 : pcfg.alternates)) break;
-        if (isMinor(w, id)) continue; // never a minor or unknown age as an alternate (pool is adults already)
-        if ([...primary, ...alternates].every(p => compat(p, id) !== -Infinity)) alternates.push(id);
+        if (planAlternateLimitReached(alternates.length, partner, pcfg.alternates)) break;
+        const adult = !isMinor(w, id);
+        const compatible = adult && [...primary, ...alternates].every(p => compat(p, id) !== -Infinity);
+        if (isPlanAlternate(adult, compatible)) alternates.push(id);
       }
       const host = partner ? undefined : primary.find(id => w.get(id)!.isHost && !planMemberReason(w, id, "host"));
       const start = wh.slot.start;
@@ -381,19 +387,19 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
       }
     }
   }
-  // Greedy: best plans first, each member in at most one plan per run (participants and alternates).
+  // Greedy: best plans first, with each invited member reserved once.
   cands.sort((x, y) => (y.rank - x.rank) || (x.plan.id < y.plan.id ? -1 : 1));
-  const used = new Set<MemberId>();
+  let reservations = initialCityPlanRun;
   const out: Plan[] = [];
   for (const c of cands) {
-    if (out.length >= pcfg.maxPlansPerCityRun) break;
-    if (c.plan.invited.some(id => used.has(id))) continue;
-    c.plan.alternates = c.plan.alternates.filter(id => !used.has(id) && !out.some(p => p.invited.includes(id)));
-    for (const id of c.plan.invited) used.add(id);
+    if (cityPlanLimitReached(reservations, pcfg.maxPlansPerCityRun)) break;
+    const reserved = stepCityPlanRun(reservations, { type: "reservePlan", invited: c.plan.invited, limit: pcfg.maxPlansPerCityRun });
+    if (reserved === reservations) continue;
+    reservations = reserved;
     out.push(c.plan);
   }
-  // Alternates are never someone already invited elsewhere this run.
-  for (const p of out) p.alternates = p.alternates.filter(id => !used.has(id));
+  reservations = stepCityPlanRun(reservations, { type: "publishPlans" });
+  for (const p of out) p.alternates = p.alternates.filter(id => planAlternateCanRemain(reservations, id));
   return out;
 }
 
