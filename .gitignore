@@ -16,3 +16,4 @@ __pycache__/
 .lemmascript/
 _apalache-out/
 .claude/worktrees/
+**/test/__traces__/bombadil/

@@ -48,6 +48,9 @@ needs approval. Link the specific story or rule when you propose a change.
   rule with its Quint and records approval with `pnpm run accept`.
 - For work on the generator, follow the [Vibestack contributor guide](tools/vibestack/CONTRIBUTING.md#changing-the-tools)
   and add a fixture for each new class of error it detects.
+- For a Vibestack browser property, cite the rule and run it on a locally
+  served fixture. Keep a failed trace for replay. The vendored toolchain's
+  self-test checks its own examples. [Browser checks](SPEC.md#exploring-the-page)
 
 ## 3. What is accepted and what is not
 

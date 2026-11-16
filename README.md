@@ -122,7 +122,7 @@ from The Network root.
 | `spec watch` | `pnpm run spec:watch` | Repeat checks when the local projection changes. |
 | `pnpm new <name>` | `pnpm run new <name>` | Scaffold a child spec. |
 | `pnpm accept` | `pnpm run accept` | Product owner sign-off after a fresh check. |
-| `pnpm selftest` | `pnpm run spec:selftest` | Exercise the vendored toolchain against its fixtures. |
+| `pnpm selftest` | `pnpm run spec:selftest` | Exercise the vendored toolchain against its fixtures and standalone examples. |
 | `pnpm demo` | `pnpm run spec:demo` | Run the standalone order example. |
 | | `pnpm run spec:sync` | Generate the TypeScript snapshots and compile the serving VibeLang shells. |
 | | `pnpm run spec:check-generated` | Compare checked-in TypeScript and VibeLang output with fresh generation. |
@@ -148,6 +148,11 @@ later runs. Product prose, historical sources, and action-based flow
 models stay in `spec/product/` and `spec/models/`. The review ledger,
 `spec/lock.json`, records product owner approval and goes with the spec. See the [standalone stage definitions](SPEC.md#stages-of-pnpm-check)
 and the [Network test policy](docs/tests-policy.md).
+
+Vibestack includes [Bombadil browser exploration](SPEC.md#exploring-the-page)
+for locally served pages. The Network's current spec projection runs the
+journey drivers listed above. Application pages use the existing browser
+and end-to-end coverage while their Vibestack page properties are added.
 
 ## What's here
 

@@ -1,7 +1,7 @@
 # Spec reference
 
 This is the Vibestack spec-language reference at revision
-[`26e59092`](https://github.com/lalalune/vibestack/blob/26e59092feb228811ea64360809e7ce8b1c08546/SPEC.md).
+[`3b630be7`](https://github.com/lalalune/vibestack/blob/3b630be79f85ce6ccb08774a4b692a4f174f9242/SPEC.md).
 Use [The Network command map](README.md#commands) when this reference uses
 standalone Vibestack commands. The Network keeps its product requirements in
 [`spec/product/`](spec/product/README.md) and the action-based Quint flow
@@ -34,9 +34,10 @@ with the reason.
 | `proof` | Dafny proves each unit's obligations, or `spec/lock.json` records them as simulated only | a stage above `types` failed; it runs beside `types` |
 | `tests` | the package's [tests](AGENTS.md#tests) pass, each cites a story or rule the spec has and reaches past `gen/`, and its drivers import `gen/` as types only | a stage above failed |
 | `traces` | the application, through its drivers, `driver:` programs and recorded traces, agrees with the spec ([Conformance](#conformance)) | a stage above failed |
+| `explore` | Bombadil explores the package's page, served by its `start` or `dev` script, and the properties of `test/bombadil.ts`, or Bombadil's defaults, hold in every state it reaches ([Exploring the page](#exploring-the-page)) | a stage above failed; a `-` line on a platform Bombadil has no executable for |
 | `review` | every story, rule and contract changed since `spec/lock.json` was accepted ([Review](#review)) | never |
 
-Types and proofs run concurrently; tests and traces wait for both.
+Types and proofs run concurrently; tests, traces and explore wait for both.
 
 ## Writing a spec
 
@@ -507,7 +508,7 @@ change when read again, which must do what the clean event does. `options`
 are `view` (what of the state `observe` shows), `keys` (the entities walks
 interleave), `walks` (at most this many; `0` for a slow driver) and `steps`.
 The walks use the fixed normal or nightly profile
-([budgets](https://github.com/lalalune/vibestack/blob/26e59092feb228811ea64360809e7ce8b1c08546/CONTRIBUTING.md#seeds-and-budgets)).
+([budgets](https://github.com/lalalune/vibestack/blob/3b630be79f85ce6ccb08774a4b692a4f174f9242/CONTRIBUTING.md#seeds-and-budgets)).
 
 - **A disagreement is saved.** A journey or walk that disagrees is shrunk
   and written to `test/counterexamples/<name>/<hash>.json`, which every
@@ -520,6 +521,41 @@ The walks use the fixed normal or nightly profile
   state itself, and `check` writes a `test/drivers/<name>.ts` that fails
   until its `reset`, `dispatch` and `observe` are filled in. It never
   replaces a driver. A shell on the generated `machine()` needs none.
+
+### Exploring the page
+
+The `explore` stage drives a package's page in a real browser with
+[Bombadil](https://github.com/antithesishq/bombadil): it clicks, types,
+scrolls and reloads at random, and checks properties in every state it
+reaches. A package has a page when it has an `index.html` at its top or
+under `src/`.
+
+- **Served by the package itself.** `check` runs its `start` script, or
+  `dev` when that is not the studio, and explores the first
+  `http://localhost` or `127.0.0.1` address it prints within 300 s. A page
+  with neither script fails.
+- **In Chromium.** Playwright's Chromium (`pnpm exec playwright install
+  chromium`), or the browser `CHROME` names. Bombadil runs on Linux x64 and
+  arm64 and on Apple silicon; elsewhere the stage prints a `-` line and CI
+  explores the page.
+- **For a fixed time, from no seed.** The fixed profile's seconds, Chrome's
+  start included ([budgets](https://github.com/lalalune/vibestack/blob/3b630be79f85ce6ccb08774a4b692a4f174f9242/CONTRIBUTING.md#seeds-and-budgets)). The
+  actions are random, so two runs explore differently.
+- **`test/bombadil.ts` says what must hold.** It is an ES module Bombadil
+  bundles itself. Re-export `@antithesishq/bombadil/browser/defaults` (no
+  uncaught exception or unhandled rejection, no console error, no HTTP
+  error), and export a property for each rule the page must keep, citing
+  it as a test does. The types come from `@antithesishq/bombadil`, which
+  `spec init` adds. Without the file, the defaults are checked.
+  `apps/app/test/bombadil.ts` is a worked one.
+- **A broken property is saved.** The run is kept in
+  `test/__traces__/bombadil`, which is not committed;
+  `pnpm exec bombadil browser inspect test/__traces__/bombadil` shows each
+  state. Later runs replay it first: one that still breaks fails, one that
+  cannot run keeps it, and one that breaks nothing or no longer applies to
+  the page removes it. A bug worth keeping fixed becomes a step of the journey it broke.
+- **A pass is remembered** until the package's test inputs, Bombadil's
+  version or the script change. The nightly check always explores afresh.
 
 ## Large applications
 
@@ -543,8 +579,9 @@ The walks use the fixed normal or nightly profile
 ## Checking harder
 
 Simulation is seeded from what it simulates and the fixed profile, so a run
-repeats exactly. `pnpm all check -- --nightly` uses the larger nightly profile
-and always checks afresh. A
+repeats exactly; exploring the page does not. `pnpm all check -- --nightly`
+uses the larger nightly profile, explores each page five times as long, and
+always checks afresh. A
 failing `always` rule or an unreached `sometimes` goal prints its seed and the
 `pnpm exec quint run` command that replays it.
 

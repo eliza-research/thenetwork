@@ -185,8 +185,8 @@ Screen and synthesize the designs before implementing.
 The application, tests, and vendored Vibestack toolchain use Node 26
 and pnpm. Use the Node patch version in `.nvmrc`. Pure rules, transitions and
 validation types come from Quint. Existing services consume its generated
-TypeScript at their boundaries. The public backend health route runs its
-database and tick effects in a compiled VibeLang shell. Use the existing
+TypeScript at their boundaries. Backend health, shutdown, and alert
+dispatch use compiled VibeLang shells. Use the existing
 application framework and component system in each package. Read
 the [Network command map](README.md#commands)
 when an imported skill refers to the standalone template's pnpm commands,
@@ -379,6 +379,10 @@ AA contrast. Review the content and layout across two or three passes.
   evidence. A Vibestack conformance driver uses the app's own entry point
   and imports the generated machine's types only.
   [Conformance reference](SPEC.md#conformance)
+- A Vibestack page served by a package's local `start` or `dev` can use
+  Bombadil's `explore` stage. Write properties in `test/bombadil.ts` and
+  cite their rules. Keep browser exploration on a local fixture with dry-run
+  sends. [Exploration reference](SPEC.md#exploring-the-page)
 
 ## Definition of done
 
