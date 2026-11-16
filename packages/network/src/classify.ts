@@ -799,6 +799,15 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     const keys = options.filter(o => o.label.startsWith(dayName)).map(o => o.key);
     if (keys.length) for (const m of t.matchAll(re)) mark(keys, m.index!, m[0].length);
   }
+  // "Weekend" names the Saturday and Sunday options ("this weekend works" books only those;
+  // Thursday is not the weekend). A weekend the probe did not offer is a counter-offer, like an
+  // unoffered day: the member is free at a time that was not offered.
+  const weekendKeys = options.filter(o => o.label.startsWith("Saturday") || o.label.startsWith("Sunday")).map(o => o.key);
+  let unofferedWeekend = false;
+  for (const m of t.matchAll(/\bweekends?\b/g)) {
+    if (weekendKeys.length) mark(weekendKeys, m.index!, m[0].length);
+    else if (!negatedAt(t, m.index!, m[0].length)) unofferedWeekend = true;
+  }
   for (const m of t.matchAll(/\b(\d{1,2})(?::\d\d)?\s*(am|pm)\b/g)) {
     const label = `${Number(m[1])}${m[2]}`;
     mark(options.filter(o => o.label.endsWith(` ${label}`)).map(o => o.key), m.index!, m[0].length);
@@ -814,6 +823,10 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // Refusal first. A pick after a refusal ("no, Saturday works") is mixed: ask again.
   if (c.why === "refusal") return all.some(k => strong.has(k)) ? { ...unclear, why: "mixed" } : { answer: "no", keys: [], why: c.why };
   if (c.why === "mixed" || c.why === "conditional" || c.why === "hedged") return unclear;
+  // A yes aimed at a weekend the probe did not offer is a counter-offer, not a yes to the
+  // offered times: "this weekend works" when no weekend option was offered must not book
+  // the weekdays. A named offered time still books that time.
+  if (unofferedWeekend && c.answer === "yes" && !picked.length) return { answer: "yes", keys: [], why: "counter" };
   // A time they name and do not refuse is a yes to it ("no plans Thursday, so Thursday works").
   // A named time with a yes or a firm pick ("Saturday works"); a bare mention ("I'm at a wedding saturday") is not a yes.
   if (picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return { answer: "yes", keys: picked.filter(k => strong.has(k) || c.answer === "yes"), why: c.why };

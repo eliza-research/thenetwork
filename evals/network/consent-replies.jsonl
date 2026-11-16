@@ -320,3 +320,14 @@
 {"text":"Looking for people to play chess with. Anyone? 🙌🎉","label":"unclear"}
 {"text":"Anyone around who'd want to meet someone to date? I'm near Bushwick. Honestly this is great timing.","label":"unclear"}
 {"text":"Got it. Honestly this is great timing.","label":"unclear"}
+{"text":"this weekend works","label":"yes","keys":["b","c"]}
+{"text":"weekend works","label":"yes","keys":["b","c"]}
+{"text":"next weekend works","label":"yes","keys":["b","c"]}
+{"text":"this coming weekend works","label":"yes","keys":["b","c"]}
+{"text":"this weekend works for me","label":"yes","keys":["b","c"]}
+{"text":"weekend works for me","label":"yes","keys":["b","c"]}
+{"text":"this weekend works, Thursday too","label":"yes","keys":["a","b","c"]}
+{"text":"this weekend, Saturday works","label":"yes","keys":["b","c"]}
+{"text":"Saturday or Sunday","label":"yes","keys":["b","c"]}
+{"text":"weekends work","label":"yes","keys":["b","c"]}
+{"text":"free this weekend","label":"yes","keys":["b","c"]}
