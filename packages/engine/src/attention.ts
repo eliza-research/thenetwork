@@ -23,6 +23,7 @@
 // and calls these functions; see docs/results/2026-10-07-attention-budget.md for the integration note.
 import type { Category, Facet, MemberId, ParticipationState } from "@thenetwork/core";
 import { canBeMatched, DAY, fromLocal, HOUR, inQuietHours, localParts, MINUTE, withinQuietHours } from "@thenetwork/core";
+import { unansweredInvitePause } from "../../core/src/generated/outreachPolicy.ts";
 import { DEFAULT_ATTENTION, type AttentionConfig } from "./config.ts";
 import { tokenize } from "./embed.ts";
 import { privateVocabulary } from "./explain.ts";
@@ -393,6 +394,8 @@ export interface ComposeInput {
   /** Candidate items (held + new). Revalidate before composing (revalidateHold). */
   items: readonly AttentionItem[];
   ledger: readonly AttentionLedgerEntry[];
+  /** Current unanswered count from a caller that tracks delivery receipts and terminal invite expiry. */
+  unansweredCount?: number;
   conversation: Conversation;
   now: number;
   mode: "digest" | "break_in";
@@ -475,7 +478,8 @@ export function composeMessage(inp: ComposeInput): ComposeResult {
   const no = (reason: string) => ({ ...res, reason });
   if (m.state === "paused") return no("paused");
   // The two-unanswered pause comes first (F28): the Network's own auto-pause always fires before Blooio's limit.
-  if (m.onlyWhenAsked || m.prefs.mode === "only_when_asked" || unansweredInterruptions(ledger, m.memberId, now, cfg, inp.conversation.lastInboundAt) >= 2) return no("only_when_asked");
+  const unanswered = inp.unansweredCount ?? unansweredInterruptions(ledger, m.memberId, now, cfg, inp.conversation.lastInboundAt);
+  if (m.onlyWhenAsked || m.prefs.mode === "only_when_asked" || unansweredInvitePause(unanswered)) return no("only_when_asked");
   // Reserve Blooio's third unanswered slot for logistics and safety (1.9).
   if (inp.conversation.outboundSinceInbound > cfg.blooio.interruptMaxOutstanding) return no("conversation_streak");
   if (inMemberQuietHours(m, now, cfg)) return no("quiet_hours");

@@ -134,6 +134,8 @@ export interface MeetingReport {
   proposalId: string; participants: MemberId[]; at: number; city: City; kind?: string;
 }
 
+export type InitialInviteReceipt = { kind: "accepted"; at: number } | { kind: "not_sent" };
+
 export interface NetworkContext {
   clock: Clock;
   /**
@@ -142,6 +144,8 @@ export interface NetworkContext {
    * quiet hours and conversation caps). The Network decides this; a context never guesses it.
    */
   send(memberId: MemberId, body: string, opts?: { meta?: SimMeta; idempotencyKey?: string; reply?: boolean }): SimMessage;
+  /** For a queue-backed channel, read the outcome of a prior committed send. Undefined means unresolved. */
+  initialInviteReceipt?(messageId: string): InitialInviteReceipt | undefined;
   /**
    * Public view of joined members in core types, as a perfect onboarding/extraction would
    * capture it (stated interests, intents, presence, boundaries and private disclosures

@@ -22,7 +22,7 @@ import { randomUUID } from "node:crypto";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import type { City, Clock, MemberId, WorldSnapshot } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
-import type { NetworkContext, SimMessage } from "@thenetwork/core";
+import type { InitialInviteReceipt, NetworkContext, SimMessage } from "@thenetwork/core";
 import { matchingDisabledByRegistry, startupPlan, tickRepairsProjection, tickRunsFollowup } from "../../core/src/generated/runtimeUnit.ts";
 import { legacyIntentReconciliationDue } from "../../core/src/generated/standingIntentManagement.ts";
 import { cofounderDeliveryAllowed, cofounderDeliveryIdPrefix, cofounderIntentEligible, cofounderPairCurrent } from "../../core/src/generated/cofounderDispatch.ts";
@@ -173,6 +173,7 @@ export class NetworkRuntime {
   readonly wiring: AppWiring;
   private snap?: WorldSnapshot;
   private joinedInviteeNames = new Map<string, string>();
+  private initialInviteReceipts = new Map<string, InitialInviteReceipt>();
   private addrToMember = new Map<string, MemberId>();
   private memberToAddr = new Map<MemberId, string>();
   /** The unit being built. The service adds system sends (keyword confirmations) to it. */
@@ -518,6 +519,7 @@ export class NetworkRuntime {
         this.unit = newUnit();
         await this.refresh();
         const state = await this.loadState();
+        await this.refreshInitialInviteReceipts(state);
         if (legacyIntentReconciliationDue(!!state, state?.legacyIntentRowsReconciled === true)) this.unit.legacyIntentState = state;
         // The registry's switch wins: a network whose matching is not allowed never matches, whatever was stored.
         if (state && matchingDisabledByRegistry(this.matchingAllowed)) state.matchingEnabled = false;
@@ -533,6 +535,26 @@ export class NetworkRuntime {
       withTickLock: fn => this.pg.withTickLock(fn),
       withLock: fn => this.pg.withLock(fn),
     };
+  }
+
+  /** Read receipts for exact committed sends whose acceptance is still unresolved in Network state. */
+  private async refreshInitialInviteReceipts(state: NetworkState | undefined) {
+    this.initialInviteReceipts.clear();
+    const ids = (state?.members ?? []).flatMap(member => member.pendingAsks.flatMap(invite =>
+      invite.deliveryId !== undefined && invite.acceptedAt === undefined ? [invite.deliveryId] : []));
+    if (!ids.length) return;
+    const rows = await this.scoped(tx => tx`select m.id, coalesce(o.status, m.status) as status,
+      case when o.id is null then m.ts else o.sent_at end as accepted_at
+      from network.messages m left join platform.outbound o on o.app_id = m.app_id and o.id = m.id
+      where m.app_id = ${this.app.id} and m.id in ${tx(ids)} and m.direction = 'outbound' and m.proactive`);
+    for (const row of rows) {
+      const status = row.status as string;
+      if (row.accepted_at != null && /^(accepted|sent|delivered|read)$/.test(status)) {
+        this.initialInviteReceipts.set(row.id as string, { kind: "accepted", at: new Date(row.accepted_at as string).getTime() });
+      } else if (status !== "parked_leak_review" && (status === "dry_run" || NOT_SENT.test(status))) {
+        this.initialInviteReceipts.set(row.id as string, { kind: "not_sent" });
+      }
+    }
   }
 
   /** The snapshot and the address book, read fresh for every unit (inside the lock), in one app-scoped transaction. */
@@ -630,6 +652,7 @@ export class NetworkRuntime {
         });
         return { id, ts: t, direction: "outbound", channel: "imessage", from: "network", to: memberId, memberId, body, status: causal ? "collected" : "delivered", meta } satisfies SimMessage;
       },
+      initialInviteReceipt: id => this.initialInviteReceipts.get(id),
       snapshot: () => this.snap ?? { now: this.clock.now(), members: [], facets: [], intents: [], presence: [], edges: [], recentProposals: [] },
       verifiedJoinedInviteeName: (inviter, invitee) => this.joinedInviteeNames.get(`${inviter}\0${invitee}`),
       // A proposal record has no oracle in production; eventOf reads only the proposal and the source.
