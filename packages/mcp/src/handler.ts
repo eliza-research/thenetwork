@@ -9,6 +9,10 @@
 import { devShortcutsAllowed, ipBucket, signupAccountView, type Env } from "@thenetwork/platform";
 import { verifyProxyHeaders } from "@thenetwork/platform/src/proxy.ts";
 import { readCappedText } from "@thenetwork/platform/src/body.ts";
+import {
+  type BrowserForm, type StoredPage, initial as browserInitial, mayCompareBrowserDigest,
+  sessionMatchesConsent, step as stepBrowser,
+} from "../../core/src/generated/oauthBrowserAuthorization.ts";
 import { initial as issuanceInitial, requestIsLive, step as stepIssuance } from "../../core/src/generated/oauthGrantIssuance.ts";
 import {
   type TokenAuthority, type TokenFlow, type TokenReason, canReadAuthority, canReadCodeBinding, canReadRefreshBinding,
@@ -99,6 +103,9 @@ export interface McpHandler {
 
 interface Ctx { app: McpApp; issuer: string; ip: string; req: Request; url: URL }
 interface Authed { token: Token; grant: Grant; client: OAuthClient }
+
+const browserPages: Record<AuthRequest["step"], StoredPage> = { phone: "PhonePage", code: "CodePage", consent: "ConsentPage" };
+const browserForms = { phone: "PhoneForm", code: "CodeForm", consent: "ConsentForm", cancel: "CancelForm" } satisfies Record<string, BrowserForm>;
 
 const tokenErrors: Record<TokenReason, [error: string, description?: string]> = {
   NoReason: ["invalid_grant"],
@@ -406,22 +413,33 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     await store.putAuthRequest(r);
     const cookie = `${browserCookie(c.app)}=${browser}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(ttl.requestMs / 1000)}${secureCookies(c.app) ? "; Secure" : ""}`;
     const signedIn = o.platform.session ? await o.platform.session(c.app.id, c.req) : undefined;
-    if(signedIn==="unavailable"){
-      const response=browserUnavailable(c,`/oauth/cloud-return?rid=${r.id}`);
-      response.headers.append("set-cookie",cookie);return response;
+    const entry = stepBrowser(browserInitial, {
+      type: "chooseEntry",
+      session: signedIn === "unavailable" ? "SessionUnavailable" : signedIn ? "SignedIn" : "SignedOut",
+      cloudRequired: !signedIn && !!o.platform.cloudAuthorityRequired?.(c.app.id),
+    });
+    if (entry.phase === "SessionRetry") {
+      const response = browserUnavailable(c, `/oauth/cloud-return?rid=${r.id}`);
+      response.headers.append("set-cookie", cookie);
+      return response;
     }
     const redirectHost = new URL(redirectUri).host;
     const cookieOut = [cookie];
     let res: Response;
-    if (signedIn) {
-      if (!(await customSlopEligible(c, client, signedIn.personId, o.platform.phoneKey(signedIn.e164)))) {
+    if (signedIn && signedIn !== "unavailable") {
+      const identity = stepBrowser(entry, {
+        type: "recordBrowserIdentity",
+        identity: await customSlopEligible(c, client, signedIn.personId, o.platform.phoneKey(signedIn.e164))
+          ? "IdentityPermitted" : "IdentityRejected",
+      });
+      if (identity.phase !== "ShowingConsent") {
         await store.deleteAuthRequest(r.id);
         return messagePage(c.app, "Not available", "This account cannot use this assistant connection.", 403);
       }
       if (signedIn.setCookie) cookieOut.push(signedIn.setCookie);
       await store.updateAuthRequest(r.id, { e164: signedIn.e164, personId: signedIn.personId, step: "consent" });
       res = consentPage(c.app, r.id, client.name, redirectHost, new URL(r.redirectUri).origin, scopes);
-    } else if(o.platform.cloudAuthorityRequired?.(c.app.id)) {
+    } else if (entry.phase === "HandingOffToCloud") {
       const handoff=await o.platform.beginCloudOAuth?.(c.app.id,r.id);
       if(!handoff){await store.deleteAuthRequest(r.id);return messagePage(c.app,"Sign-in unavailable","Go back to the assistant and try again later.",503);}
       cookieOut.push(handoff.setCookie);
@@ -438,9 +456,14 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const rid = form.get("rid") ?? "";
     const r = rid ? await store.getAuthRequest(rid) : undefined;
     const browser = cookieValue(c.req.headers.get("cookie"), browserCookie(c.app));
-    if (!r || r.app !== c.app.id || r.expiresAt <= now() || !browser || !safeEqual(sha256hex(browser), r.browserHash)) return undefined;
+    if (!r) return undefined;
+    const sameApp = r.app === c.app.id;
+    if (!mayCompareBrowserDigest(sameApp, sameApp && requestIsLive(now(), r.expiresAt), !!browser) || !browser) return undefined;
+    const bound = stepBrowser(browserInitial, { type: "bindBrowser", matchesDigest: safeEqual(sha256hex(browser), r.browserHash) });
+    if (bound.phase !== "CheckingClient") return undefined;
     const client = await store.getClient(r.clientId);
-    return client ? { r, client } : undefined;
+    const flow = stepBrowser(bound, { type: "readBrowserClient", clientExists: !!client });
+    return flow.phase === "BrowserBound" && client ? { r, client, flow } : undefined;
   }
 
   /** Resume only the same browser's unexpired request; consent is still a separate POST. */
@@ -448,12 +471,20 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const keys=[...c.url.searchParams.keys()],rid=c.url.searchParams.get("rid")??"";
     if(keys.length!==1 || keys[0]!=="rid" || rid.length!==22 || !/^[A-Za-z0-9_-]{22}$/.test(rid) || !o.platform.cloudAuthorityRequired?.(c.app.id))return messagePage(c.app,"This page has expired","Go back to the assistant and connect again.",400);
     const live=await liveRequest(c,new URLSearchParams({rid}));
-    if(!live || live.r.step!=="phone")return messagePage(c.app,"This page has expired","Go back to the assistant and connect again.",400);
-    const {r,client}=live;
+    if (!live) return messagePage(c.app,"This page has expired","Go back to the assistant and connect again.",400);
+    const { r, client, flow } = live;
+    const form = stepBrowser(flow, { type: "readBrowserForm", page: browserPages[r.step], hasPhone: !!r.e164, form: "CloudReturn", approve: false });
+    if (form.phase !== "CheckingIdentity") return messagePage(c.app,"This page has expired","Go back to the assistant and connect again.",400);
     if(client.app!==c.app.id || !client.redirectUris.includes(r.redirectUri) || !canonicalResource(r.resource,c.issuer) || (client.surface==="openai" && r.resource!==resourceFor(c.issuer,"openai")) || (customSlopClient(c,client) && r.resource!==resourceFor(c.issuer,"full")) || !validChallenge(r.codeChallenge) || openAiUnavailable(c,client))return messagePage(c.app,"This link does not work","Go back to the assistant and connect again.",400);
     const who=await o.platform.session?.(c.app.id,c.req);
-    if(who==="unavailable")return browserUnavailable(c,c.url.pathname+c.url.search);
-    if(!who || !(await customSlopEligible(c,client,who.personId,o.platform.phoneKey(who.e164))))return messagePage(c.app,"Connect again","Return to your agent or text conversation and connect again.",403);
+    const identity = stepBrowser(form, {
+      type: "recordBrowserIdentity",
+      identity: who === "unavailable" ? "IdentityUnavailable"
+        : who && await customSlopEligible(c, client, who.personId, o.platform.phoneKey(who.e164)) ? "IdentityPermitted"
+        : "IdentityRejected",
+    });
+    if (identity.phase === "SessionRetry") return browserUnavailable(c,c.url.pathname+c.url.search);
+    if (identity.phase !== "ShowingConsent" || !who || who === "unavailable") return messagePage(c.app,"Connect again","Return to your agent or text conversation and connect again.",403);
     await store.updateAuthRequest(r.id,{e164:who.e164,personId:who.personId,step:"consent"});
     const response=consentPage(c.app,r.id,client.name,new URL(r.redirectUri).host,new URL(r.redirectUri).origin,r.scopes);
     if(who.setCookie)response.headers.append("set-cookie",who.setCookie);
@@ -466,13 +497,19 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const form = await readForm(c.req);
     const live = form && (await liveRequest(c, form));
     if (!form || !live) return messagePage(c.app, "This page has expired", "Go back to the assistant and connect again.");
-    const { r, client } = live;
+    const { r, client, flow } = live;
     if (openAiUnavailable(c, client)) return messagePage(c.app, "Not available", "This assistant connection is not available on this site.", 403);
     const redirectHost = new URL(r.redirectUri).host;
     const clearCookie = `${browserCookie(c.app)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies(c.app) ? "; Secure" : ""}`;
 
-    if (step === "phone") {
-      if (r.step === "consent") return messagePage(c.app, "Already signed in", "Go back to the previous page to finish.");
+    const action = stepBrowser(flow, {
+      type: "readBrowserForm", page: browserPages[r.step], hasPhone: !!r.e164, form: browserForms[step],
+      approve: step === "consent" && form.get("decision") === "approve",
+    });
+    if (action.phase === "BrowserExpired") return messagePage(c.app, "This page has expired", "Go back to the assistant and connect again.");
+    if (action.phase === "AlreadyVerified") return messagePage(c.app, "Already signed in", "Go back to the previous page to finish.");
+
+    if (action.phase === "StartingOtp") {
       const t0 = performance.now();
       const pad = async () => { const left = (o.minOtpStartMs ?? 700) - (performance.now() - t0); if (left > 0) await Bun.sleep(left); };
       if (o.turnstile && !(await o.turnstile.verify(form.get("cf-turnstile-response") ?? undefined, c.ip, c.app.id))) {
@@ -482,20 +519,26 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       if (!e164) return phonePage(c.app, r.id, client.name, redirectHost, { error: "Enter a US or Canada phone number.", turnstileSiteKey: o.turnstile?.siteKey });
       const sent = await o.platform.startOtp(c.app.id, e164, c.ip);
       await pad();
-      if (!sent.ok) {
-        const text = sent.error === "rate_limited" ? "Too many codes were asked for. Please wait and try again." : "Sign-in is not available for this app right now.";
+      const next = stepBrowser(action, { type: "recordOtpSend", sent: sent.ok });
+      if (next.phase !== "ShowingCode") {
+        const text = !sent.ok && sent.error === "rate_limited" ? "Too many codes were asked for. Please wait and try again." : "Sign-in is not available for this app right now.";
         return phonePage(c.app, r.id, client.name, redirectHost, { error: text, turnstileSiteKey: o.turnstile?.siteKey });
       }
       await store.updateAuthRequest(r.id, { e164, step: "code" });
       return codePage(c.app, r.id, e164.slice(-4));
     }
 
-    if (step === "code") {
-      if (r.step !== "code" || !r.e164) return messagePage(c.app, "This page has expired", "Go back to the assistant and connect again.");
+    if (action.phase === "VerifyingOtp" && r.e164) {
       const code = (form.get("code") ?? "").replace(/\s/g, "");
-      if (!(await o.platform.verifyOtp(c.app.id, r.e164, code, c.ip))) return codePage(c.app, r.id, r.e164.slice(-4), { error: "That code did not work. Check the newest text and try again." });
+      const proof = stepBrowser(action, { type: "recordOtpVerification", verified: await o.platform.verifyOtp(c.app.id, r.e164, code, c.ip) });
+      if (proof.phase !== "CheckingIdentity") return codePage(c.app, r.id, r.e164.slice(-4), { error: "That code did not work. Check the newest text and try again." });
       const who = await o.platform.login(r.e164);
-      if (who === "held" || !(await customSlopEligible(c, client, who.personId, o.platform.phoneKey(r.e164)))) {
+      const identity = stepBrowser(proof, {
+        type: "recordBrowserIdentity",
+        identity: who !== "held" && await customSlopEligible(c, client, who.personId, o.platform.phoneKey(r.e164))
+          ? "IdentityPermitted" : "IdentityRejected",
+      });
+      if (identity.phase !== "ShowingConsent" || who === "held") {
         await store.deleteAuthRequest(r.id);
         const res = messagePage(c.app, "We need to check this number", "We need to check this number before it can be used here. Please try again later, or email us for help.", 403);
         res.headers.append("set-cookie", clearCookie);
@@ -508,31 +551,40 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       return res;
     }
 
-    if (step === "consent") {
-      if (r.step !== "consent" || !r.e164) return messagePage(c.app, "This page has expired", "Go back to the assistant and connect again.");
-      if (form.get("decision") === "approve") {
-        const current = o.platform.session ? await o.platform.session(c.app.id, c.req) : undefined;
-        if (current === "unavailable") return consentUnavailable(c, r, client);
-        const owner = await o.platform.login(r.e164);
-        if ((o.platform.session && (!current || current.personId !== r.personId || current.e164 !== r.e164))
-          || owner === "held" || owner.personId !== r.personId
-          || !(await customSlopEligible(c, client, r.personId, o.platform.phoneKey(r.e164)))) {
-          await store.deleteAuthRequest(r.id);
-          const response = messagePage(c.app, "Connect again", "Your account changed. Go back to your assistant and connect again.", 403);
-          response.headers.append("set-cookie", clearCookie);
-          return response;
-        }
-        const required = o.platform.cloudAuthorityRequired?.(c.app.id);
-        const authority = required ? await o.platform.cloudGrantAuthority?.(c.app.id, c.req, r.resource) : undefined;
-        if (authority === "unavailable") return consentUnavailable(c, r, client);
-        if (required && (!authority || authority.phoneKey !== o.platform.phoneKey(r.e164)))
-          return messagePage(c.app, "Connect again", "Return to your agent or text conversation and connect again.", 403);
-        const response = await finishAuthorization(c, { ...r, e164: r.e164 }, client, authority);
-        if (current?.setCookie) response.headers.append("set-cookie", current.setCookie);
+    if (action.phase === "CheckingConsentOwner" && r.e164) {
+      const current = o.platform.session ? await o.platform.session(c.app.id, c.req) : undefined;
+      const owner = current === "unavailable" ? undefined : await o.platform.login(r.e164);
+      const checked = stepBrowser(action, {
+        type: "readConsentOwner",
+        verdict: current === "unavailable" ? "CheckUnavailable"
+          : sessionMatchesConsent(!!o.platform.session, current?.personId === r.personId, current?.e164 === r.e164)
+            && owner && owner !== "held" && owner.personId === r.personId
+            && await customSlopEligible(c, client, r.personId, o.platform.phoneKey(r.e164))
+            ? "CheckAccepted" : "CheckRejected",
+      });
+      if (checked.phase === "SessionRetry") return consentUnavailable(c, r, client);
+      if (checked.phase !== "CheckingCloudGrant") {
+        await store.deleteAuthRequest(r.id);
+        const response = messagePage(c.app, "Connect again", "Your account changed. Go back to your assistant and connect again.", 403);
+        response.headers.append("set-cookie", clearCookie);
         return response;
       }
+      const required = o.platform.cloudAuthorityRequired?.(c.app.id);
+      const authority = required ? await o.platform.cloudGrantAuthority?.(c.app.id, c.req, r.resource) : undefined;
+      const readiness = stepBrowser(checked, {
+        type: "readConsentAuthority",
+        verdict: authority === "unavailable" ? "CheckUnavailable"
+          : !required || (authority && authority.phoneKey === o.platform.phoneKey(r.e164)) ? "CheckAccepted" : "CheckRejected",
+      });
+      if (readiness.phase === "SessionRetry") return consentUnavailable(c, r, client);
+      if (readiness.phase !== "ConsentReady" || authority === "unavailable")
+        return messagePage(c.app, "Connect again", "Return to your agent or text conversation and connect again.", 403);
+      const response = await finishAuthorization(c, { ...r, e164: r.e164 }, client, authority);
+      if (current && current !== "unavailable" && current.setCookie) response.headers.append("set-cookie", current.setCookie);
+      return response;
     }
 
+    if (action.phase !== "ConsentDeclined") return messagePage(c.app, "This page has expired", "Go back to the assistant and connect again.");
     await store.deleteAuthRequest(r.id);
     await store.audit({ at: now(), kind: "consent_denied", clientId: client.id, grantId: null, app: c.app.id, detail: null });
     return redirectTo(r.redirectUri, { error: "access_denied", error_description: "Connection cancelled", state: r.state, iss: c.issuer }, 303, { "set-cookie": clearCookie });

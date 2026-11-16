@@ -41,17 +41,17 @@ entire imported model.
 | [identity_sagas](identity_sagas.md) | Phone ownership and account changes | [Phone change lifecycle](../phoneChange.md), [account privacy](../accountPrivacy.md) |
 | [join_age](join_age.md) | Membership and age | [Shared-line enrollment](../textEnrollment.md), [member age](../memberAge.md) |
 | [join_flow](join_flow.md) | Browser signup | [Current site enrollment](../siteEnrollment.md), [member age](../memberAge.md), [phone verification limits](../otpLimits.md) |
-| [matching_engine](matching_engine.md) | Matching, interviews, and job seats | [Global selection run](../selectionRun.md), [Slop assignment rounds](../slopAssignment.md), [Slop onboarding](../slopOnboarding.md), [Peon capacity](../peonCapacity.md) |
+| [matching_engine](matching_engine.md) | Matching, interviews, and job seats | [Judgment passes](../judgmentRun.md), [judgment cache and attempts](../judgmentAttempt.md), [global selection run](../selectionRun.md), [Slop assignment rounds](../slopAssignment.md), [Slop onboarding](../slopOnboarding.md), [Peon capacity](../peonCapacity.md) |
 | [notify_capital](notify_capital.md) | Inbox and network capital | [Notification delivery](../notificationDelivery.md), [capital levers](../capitalLevers.md) |
-| [oauth_mcp](oauth_mcp.md) | Connector authorization and member tools | [Connector grant issuance](../oauthGrantIssuance.md), [token lifecycle](../oauthTokenLifecycle.md) |
+| [oauth_mcp](oauth_mcp.md) | Connector authorization and member tools | [Browser authorization](../oauthBrowserAuthorization.md), [connector grant issuance](../oauthGrantIssuance.md), [token lifecycle](../oauthTokenLifecycle.md) |
 | [observatory_sync](observatory_sync.md) | Staff console synchronization | [Snapshot and delta lifecycle](../observatorySync.md) |
-| [opportunity](opportunity.md) | Proposal, review, and response | [Opportunity lifecycle](../opportunityLifecycle.md), [review deadline](../reviewDeadline.md), [probe reply](../probeReply.md) |
+| [opportunity](opportunity.md) | Proposal, review, and response | [Opportunity lifecycle](../opportunityLifecycle.md), [probe dispatch and settlement](../probeDispatch.md), [review deadline](../reviewDeadline.md), [probe reply](../probeReply.md) |
 | [outbound_queue](outbound_queue.md) | Outbound queue and delivery receipts | [Outbound admission](../outboundAdmission.md), [provider receipt lifecycle](../outboundReceipt.md), [outreach cap](../outreachPolicy.md), [participation budgets](../participationBudgets.md), [quiet hours](../quietHours.md) |
 | [phone_identity](phone_identity.md) | Phone number identity | [Phone change lifecycle](../phoneChange.md) |
 | [photo_relay_item](photo_relay_item.md) | Selected-photo delivery | [Selected-photo claim and fetch](../photoRelayItem.md) |
 | [photos_rating](photos_rating.md) | Photo storage and private ratings | [Photo eligibility and limits](../photoPolicy.md) |
-| [plan_crew](plan_crew.md) | Crew invitations and sessions | [Crew offer state machine](../crewOffer.md), [formation rules](../planDecision.md) |
-| [plan_run](plan_run.md) | Group plans and fallback | [Plan reply, fallback and allowance](../planDecision.md) |
+| [plan_crew](plan_crew.md) | Crew invitations and sessions | [Crew offer state machine](../crewOffer.md), [formation rules](../planDecision.md), [Friends weekly pass reservations](../friendsWeek.md) |
+| [plan_run](plan_run.md) | Group plans and fallback | [Plan reply, fallback and allowance](../planDecision.md), [Friends weekly pass reservations](../friendsWeek.md) |
 | [profile_learning](profile_learning.md) | Suggestions from connected sources | [Suggestion review state machine](../profileSuggestionReview.md) |
 | [profile_read](profile_read.md) | Read a saved profile | [Saved-profile read](../savedProfileRead.md) and [suggestion review](../profileSuggestionReview.md) state machines |
 | [relay](relay.md) | Relay between matched members | [Consent timing and verdict](../relayDecision.md), [item lifecycle](../relayLifecycle.md) |

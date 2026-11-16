@@ -12,6 +12,7 @@ import { JudgeCache, judgeCandidates, runCachedPass } from "./judge.ts";
 import { checkMemberFacing, redactPrivate } from "./judgeCommon.ts";
 import { deepReviewOne, gateMemberFacing, hardGate, type DeepVerdict } from "./judgeDeep.ts";
 import { screenDecision, screenOne, type ScreenVerdict } from "./judgeScreen.ts";
+import { initial as initialJudgmentRun, step as stepJudgmentRun } from "../../core/src/generated/judgmentRun.ts";
 import { blockingPairs, fairnessMetrics, planAsks, selectProposals, updateExposureDebt } from "./policy.ts";
 import { EngineRng as Rng } from "@thenetwork/core";
 import { sha256, stableStringify } from "./hash.ts";
@@ -163,17 +164,23 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   //    Pass 3 (deep review, optional): richer context on the best survivors; "no" => deep_reject,
   //    "insufficient_information" => deep_insufficient (with the question to ask), "yes" keeps it.
   const J = pack.judge;
-  if (deps.llm && cfg.judge.enabled && cfg.judge.topK > 0 && J) {
-    const llm = deps.llm;
+  const llm = deps.llm;
+  const screen = J?.screen;
+  let judgment = stepJudgmentRun(initialJudgmentRun, {
+    type: "configureRun",
+    rubricOption: { enabled: cfg.judge.enabled, limit: cfg.judge.topK, supported: Boolean(llm && J) },
+    screenOption: { enabled: cfg.judge.screen.enabled, limit: cfg.judge.screen.topK, supported: Boolean(screen) },
+  });
+  if (judgment.phase !== "Complete" && llm && J) {
     const byScore = (xs: Scored[]) => [...xs].sort((a, b) => (b.score - a.score) || (a.c.key < b.c.key ? -1 : 1));
     const pickTop = (xs: Scored[], k: number, gk: number) => [...xs.filter(s => s.c.participants.length <= 2).slice(0, k), ...xs.filter(s => s.c.participants.length > 2).slice(0, gk)];
     let pool = byScore(scored.filter(s => !s.reason || s.reason === "below_threshold"));
-    if (cfg.judge.screen.enabled && cfg.judge.screen.topK > 0 && J.screen) {
+    if (judgment.phase === "Screening" && screen) {
       const sc = cfg.judge.screen;
       const toScreen = pickTop(pool, sc.topK, sc.groupTopK).map(s => s.c);
       const screenStats = { calls: 0, cacheHits: 0, failures: 0 };
       const screenLog: { key: string; cacheKey: string; verdict: ScreenVerdict | null; cached: boolean }[] = [];
-      const res = await runCachedPass(w, toScreen, J.screen.version, deps.screenCache ?? new JudgeCache<ScreenVerdict>(cfg.judge.ttlMs),
+      const res = await runCachedPass(w, toScreen, screen.version, deps.screenCache ?? new JudgeCache<ScreenVerdict>(cfg.judge.ttlMs),
         screenStats, c => screenOne(w, c, llm, sc.maxTokens).then(r => r.verdict), screenLog);
       runLog.judge.screen = { ...screenStats, verdicts: screenLog };
       const rejected = new Set([...res].filter(([, v]) => v && !screenDecision(v)).map(([k]) => k));
@@ -181,19 +188,26 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
       // Pass 2 only looks at screened survivors (a failed screen call fails open to pass 2).
       pool = pool.filter(s => res.has(s.c.key) && !rejected.has(s.c.key));
       t = lap("judge_screen", t);
+      judgment = stepJudgmentRun(judgment, { type: "finishScreen" });
     }
-    const toJudge = pickTop(pool, cfg.judge.topK, cfg.judge.groupTopK).map(s => s.c);
-    const verdicts = await judgeCandidates(w, toJudge, llm, deps.judgeCache ?? new JudgeCache(cfg.judge.ttlMs), runLog.judge, runLog.judge.verdicts);
-    // Pass 2 can only remove (engine-pipeline-7): a configuration that was below its bar before the
-    // judge stays ineligible even if the blended score now clears it.
-    scored = scored.map(s => {
-      const v = verdicts.get(s.c.key);
-      if (!v) return s;
-      const r = scoreCandidate(w, s.c, v);
-      return s.eligible || !r.eligible ? r : { ...r, eligible: false, reason: s.reason ?? "below_threshold" };
-    });
-    t = lap("judge", t);
-    if (cfg.judge.deep.enabled && cfg.judge.deep.topK > 0 && J.deep) {
+    if (judgment.phase === "Rubric") {
+      const toJudge = pickTop(pool, cfg.judge.topK, cfg.judge.groupTopK).map(s => s.c);
+      const verdicts = await judgeCandidates(w, toJudge, llm, deps.judgeCache ?? new JudgeCache(cfg.judge.ttlMs), runLog.judge, runLog.judge.verdicts);
+      // Pass 2 can only remove (engine-pipeline-7): a configuration that was below its bar before the
+      // judge stays ineligible even if the blended score now clears it.
+      scored = scored.map(s => {
+        const v = verdicts.get(s.c.key);
+        if (!v) return s;
+        const r = scoreCandidate(w, s.c, v);
+        return s.eligible || !r.eligible ? r : { ...r, eligible: false, reason: s.reason ?? "below_threshold" };
+      });
+      t = lap("judge", t);
+      judgment = stepJudgmentRun(judgment, {
+        type: "finishRubric",
+        deepOption: { enabled: cfg.judge.deep.enabled, limit: cfg.judge.deep.topK, supported: Boolean(J.deep) },
+      });
+    }
+    if (judgment.phase === "DeepReview" && J.deep) {
       const dc = cfg.judge.deep;
       const survivors = byScore(scored.filter(s => s.eligible && s.verdict && s.verdict.verdict !== "no")).slice(0, dc.topK);
       const deepLog: { key: string; cacheKey: string; verdict: { verdict: DeepVerdict; refs: Record<MemberId, string> } | null; cached: boolean }[] = [];
@@ -221,6 +235,7 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
       });
       runLog.judge.deep.verdicts.sort((a, b) => (a.key < b.key ? -1 : 1));
       t = lap("judge_deep", t);
+      judgment = stepJudgmentRun(judgment, { type: "finishDeepReview" });
     }
   }
   for (const s of scored) {

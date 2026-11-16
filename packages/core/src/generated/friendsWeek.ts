@@ -1,0 +1,283 @@
+// GENERATED from spec/friendsWeek.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
+//@ backend dafny
+
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md:9) */
+export type WeekPhase = "CrewSessions" | "CrewOffers" | "RepeatPlans" | "NewPlans" | "PartnerIntros" | "WeekComplete";
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md:9) */
+export interface FriendsRun { phase: WeekPhase; spreadNew: boolean; recurring: Record<string, boolean>; newUsed: Record<string, boolean>; newInvited: Record<string, boolean>; partnerCounts: Record<string, number> }
+/** Story: Find time with familiar people or meet someone nearby / Recurring plans reserve places for later passes (spec/friendsWeek.md:44) */
+export type RecurringKind = "Session" | "Offer" | "Repeat";
+/** Story: Find time with familiar people or meet someone nearby / Activity partner reservations use a separate per-member allowance (spec/friendsWeek.md:93) */
+export interface PartnerPair { first: string; second: string }
+
+/** One variant per transition in the spec. */
+export type Event =
+  | { type: "beginRepeats" }
+  | { type: "beginNewPlans"; spreadNew: boolean }
+  | { type: "beginPartners" }
+  | { type: "finishWeek" }
+  | { type: "beginCrewOffers" }
+  | { type: "reserveRecurring"; kind: RecurringKind; members: string[] }
+  | { type: "reserveNewPlan"; invited: string[]; alternates: string[]; reserveAlternates: boolean }
+  | { type: "reservePartner"; pair: PartnerPair; limit: number };
+
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md:9) */
+export const initial: FriendsRun = { phase: "CrewSessions", spreadNew: false, recurring: ({} as Record<string, boolean>), newUsed: ({} as Record<string, boolean>), newInvited: ({} as Record<string, boolean>), partnerCounts: ({} as Record<string, number>) };
+
+/** Every `always` rule at once. Holds initially and after every transition. */
+//@ pure
+export function inv(current: FriendsRun): boolean {
+  return true;
+}
+
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md:9) */
+//@ pure
+export function beginRepeats(s: FriendsRun): FriendsRun {
+  //@ ensures (inv(s) && canBeginRepeats(s)) ==> stepCompletedWeekStaysClosed(s, \result)
+  return { ...s, phase: "RepeatPlans" };
+}
+
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md:9) */
+//@ pure
+export function canBeginNewPlans(s: FriendsRun): boolean {
+  return s.phase === "RepeatPlans";
+}
+
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md:9) */
+//@ pure
+export function beginNewPlans(s: FriendsRun, spreadNew: boolean): FriendsRun {
+  //@ ensures (inv(s) && canBeginNewPlans(s)) ==> stepCompletedWeekStaysClosed(s, \result)
+  return { ...s, phase: "NewPlans", spreadNew: spreadNew };
+}
+
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md:9) */
+//@ pure
+export function canBeginPartners(s: FriendsRun): boolean {
+  return s.phase === "NewPlans";
+}
+
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md:9) */
+//@ pure
+export function beginPartners(s: FriendsRun): FriendsRun {
+  //@ ensures (inv(s) && canBeginPartners(s)) ==> stepCompletedWeekStaysClosed(s, \result)
+  return { ...s, phase: "PartnerIntros" };
+}
+
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md:9) */
+//@ pure
+export function canFinishWeek(s: FriendsRun): boolean {
+  return s.phase === "PartnerIntros";
+}
+
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md:9) */
+//@ pure
+export function finishWeek(s: FriendsRun): FriendsRun {
+  //@ ensures (inv(s) && canFinishWeek(s)) ==> stepCompletedWeekStaysClosed(s, \result)
+  return { ...s, phase: "WeekComplete" };
+}
+
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md:9) */
+//@ pure
+export function stepCompletedWeekStaysClosed(before: FriendsRun, after: FriendsRun): boolean {
+  return !(before.phase === "WeekComplete") || after.phase === "WeekComplete";
+}
+
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md:9) */
+//@ pure
+export function canBeginCrewOffers(s: FriendsRun): boolean {
+  return s.phase === "CrewSessions";
+}
+
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md:9) */
+//@ pure
+export function beginCrewOffers(s: FriendsRun): FriendsRun {
+  //@ ensures (inv(s) && canBeginCrewOffers(s)) ==> stepCompletedWeekStaysClosed(s, \result)
+  return { ...s, phase: "CrewOffers" };
+}
+
+/** Story: Find time with familiar people or meet someone nearby / Crew sessions, offers, repeats, new plans, and partners run in order (spec/friendsWeek.md:9) */
+//@ pure
+export function canBeginRepeats(s: FriendsRun): boolean {
+  return s.phase === "CrewOffers";
+}
+
+/** Story: Find time with familiar people or meet someone nearby / Recurring plans reserve places for later passes (spec/friendsWeek.md:44) */
+//@ pure
+export function reserveIds(used: Record<string, boolean>, members: string[]): Record<string, boolean> {
+  return members.reduce((seen: Record<string, boolean>, memberId: string) => ({ ...seen, ["$" + memberId]: true } as Record<string, boolean>), used);
+}
+
+/** Story: Find time with familiar people or meet someone nearby / Recurring plans reserve places for later passes (spec/friendsWeek.md:44) */
+//@ pure
+export function recurringAvailable(s: FriendsRun, memberId: string): boolean {
+  return !(("$" + memberId) in s.recurring);
+}
+
+/** Story: Find time with familiar people or meet someone nearby / Recurring plans reserve places for later passes (spec/friendsWeek.md:44) */
+//@ pure
+export function reserveRecurring(s: FriendsRun, kind: RecurringKind, members: string[]): FriendsRun {
+  //@ ensures (inv(s) && canReserveRecurring(s, kind, members)) ==> stepCompletedWeekStaysClosed(s, \result)
+  return { ...s, recurring: reserveIds(s.recurring, members) };
+}
+
+/** Story: Find time with familiar people or meet someone nearby / Recurring plans reserve places for later passes (spec/friendsWeek.md:44) */
+//@ pure
+export function canReserveRecurring(s: FriendsRun, kind: RecurringKind, members: string[]): boolean {
+  return (s.phase === "CrewSessions" && kind === "Session") || (((s.phase === "CrewOffers" && kind === "Offer") || (s.phase === "RepeatPlans" && kind === "Repeat")) && !members.some((memberId: string) => !recurringAvailable(s, memberId)));
+}
+
+/** Story: Find time with familiar people or meet someone nearby / New plans reserve each invitee once (spec/friendsWeek.md:67) */
+//@ pure
+export function newPlanUsed(s: FriendsRun, memberId: string): boolean {
+  return ("$" + memberId) in s.newUsed;
+}
+
+/** Story: Find time with familiar people or meet someone nearby / New plans reserve each invitee once (spec/friendsWeek.md:67) */
+//@ pure
+export function newPlanAlternateCanRemain(s: FriendsRun, memberId: string): boolean {
+  return !(("$" + memberId) in s.newInvited);
+}
+
+/** Story: Find time with familiar people or meet someone nearby / New plans reserve each invitee once (spec/friendsWeek.md:67) */
+//@ pure
+export function newPlanAvailable(s: FriendsRun, memberId: string): boolean {
+  return !newPlanUsed(s, memberId) && (!s.spreadNew || recurringAvailable(s, memberId));
+}
+
+/** Story: Find time with familiar people or meet someone nearby / New plans reserve each invitee once (spec/friendsWeek.md:67) */
+//@ pure
+export function reserveNewPlan(s: FriendsRun, invited: string[], alternates: string[], reserveAlternates: boolean): FriendsRun {
+  //@ ensures (inv(s) && canReserveNewPlan(s, invited, alternates, reserveAlternates)) ==> stepCompletedWeekStaysClosed(s, \result)
+  const local_0 = reserveIds(s.newUsed, invited);
+  return { ...s, newInvited: reserveIds(s.newInvited, invited), newUsed: reserveAlternates ? reserveIds(local_0, alternates) : local_0 };
+}
+
+/** Story: Find time with familiar people or meet someone nearby / New plans reserve each invitee once (spec/friendsWeek.md:67) */
+//@ pure
+export function sometimesPublishesAPlan(s: FriendsRun): boolean {
+  return s.phase === "WeekComplete" && !newPlanAlternateCanRemain(s, "one");
+}
+
+/** Story: Find time with familiar people or meet someone nearby / New plans reserve each invitee once (spec/friendsWeek.md:67) */
+//@ pure
+export function canReserveNewPlan(s: FriendsRun, invited: string[], alternates: string[], reserveAlternates: boolean): boolean {
+  return s.phase === "NewPlans" && !invited.some((memberId: string) => !newPlanAvailable(s, memberId)) && (!reserveAlternates || !alternates.some((memberId: string) => !newPlanAvailable(s, memberId)));
+}
+
+/** Story: Find time with familiar people or meet someone nearby / Activity partner reservations use a separate per-member allowance (spec/friendsWeek.md:93) */
+//@ pure
+export function partnerCount(s: FriendsRun, memberId: string): number {
+  return ("$" + memberId) in s.partnerCounts ? get_friendsWeek(s.partnerCounts, "$" + memberId) : 0;
+}
+
+/** Story: Find time with familiar people or meet someone nearby / Activity partner reservations use a separate per-member allowance (spec/friendsWeek.md:93) */
+//@ pure
+export function canReservePartner(s: FriendsRun, pair: PartnerPair, limit: number): boolean {
+  return s.phase === "PartnerIntros" && pair.first !== pair.second && partnerCount(s, pair.first) < limit && partnerCount(s, pair.second) < limit;
+}
+
+/** Story: Find time with familiar people or meet someone nearby / Activity partner reservations use a separate per-member allowance (spec/friendsWeek.md:93) */
+//@ pure
+export function reservePartner(s: FriendsRun, pair: PartnerPair, limit: number): FriendsRun {
+  //@ ensures (inv(s) && canReservePartner(s, pair, limit)) ==> stepCompletedWeekStaysClosed(s, \result)
+  return { ...s, partnerCounts: ({ ...({ ...s.partnerCounts, ["$" + pair.first]: exact_friendsWeek(partnerCount(s, pair.first) + 1) } as Record<string, number>), ["$" + pair.second]: exact_friendsWeek(partnerCount(s, pair.second) + 1) } as Record<string, number>) };
+}
+
+/** Story: Find time with familiar people or meet someone nearby / Activity partner reservations use a separate per-member allowance (spec/friendsWeek.md:93) */
+//@ pure
+export function sometimesPublishesAPartner(s: FriendsRun): boolean {
+  return s.phase === "WeekComplete" && partnerCount(s, "one") > 0;
+}
+
+/** Do the rules allow this event in this state? */
+//@ pure
+export function enabled(current: FriendsRun, event: Event): boolean {
+  if (event.type === "beginRepeats") return canBeginRepeats(current);
+  if (event.type === "beginNewPlans") return canBeginNewPlans(current);
+  if (event.type === "beginPartners") return canBeginPartners(current);
+  if (event.type === "finishWeek") return canFinishWeek(current);
+  if (event.type === "beginCrewOffers") return canBeginCrewOffers(current);
+  if (event.type === "reserveRecurring") return canReserveRecurring(current, event.kind, event.members);
+  if (event.type === "reserveNewPlan") return canReserveNewPlan(current, event.invited, event.alternates, event.reserveAlternates);
+  if (event.type === "reservePartner") return canReservePartner(current, event.pair, event.limit);
+  return false;
+}
+
+/** Apply an event. An event the rules do not allow leaves the state unchanged. */
+//@ pure
+export function step(current: FriendsRun, event: Event): FriendsRun {
+  //@ requires inv(current)
+  //@ ensures inv(\result)
+  if (event.type === "beginRepeats" && canBeginRepeats(current)) return beginRepeats(current);
+  if (event.type === "beginNewPlans" && canBeginNewPlans(current)) return beginNewPlans(current, event.spreadNew);
+  if (event.type === "beginPartners" && canBeginPartners(current)) return beginPartners(current);
+  if (event.type === "finishWeek" && canFinishWeek(current)) return finishWeek(current);
+  if (event.type === "beginCrewOffers" && canBeginCrewOffers(current)) return beginCrewOffers(current);
+  if (event.type === "reserveRecurring" && canReserveRecurring(current, event.kind, event.members)) return reserveRecurring(current, event.kind, event.members);
+  if (event.type === "reserveNewPlan" && canReserveNewPlan(current, event.invited, event.alternates, event.reserveAlternates)) return reserveNewPlan(current, event.invited, event.alternates, event.reserveAlternates);
+  if (event.type === "reservePartner" && canReservePartner(current, event.pair, event.limit)) return reservePartner(current, event.pair, event.limit);
+  return current;
+}
+
+/**
+ * Turn an untrusted value into an event, or undefined if it is not one. Use it wherever events enter the program:
+ * the proofs assume whole numbers and plain data, and this is what makes that true. The result is a fresh copy
+ * with exactly the fields the event has, so nothing the caller keeps can change it afterwards.
+ */
+//@ skip
+export function parseEvent(x: unknown): Event | undefined {
+  let raw: any;
+  try {
+    raw = JSON.parse(JSON.stringify(x));
+  } catch {
+    return undefined;
+  }
+  const is_PartnerPair = (v: any): boolean => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.first === "string" && typeof v.second === "string";
+  if (typeof raw !== "object" || raw === null) return undefined;
+  if (raw.type === "beginRepeats") return { type: "beginRepeats" };
+  if (raw.type === "beginNewPlans" && typeof raw.spreadNew === "boolean") return { type: "beginNewPlans", spreadNew: raw.spreadNew };
+  if (raw.type === "beginPartners") return { type: "beginPartners" };
+  if (raw.type === "finishWeek") return { type: "finishWeek" };
+  if (raw.type === "beginCrewOffers") return { type: "beginCrewOffers" };
+  if (raw.type === "reserveRecurring" && (raw.kind === "Session" || raw.kind === "Offer" || raw.kind === "Repeat") && Array.isArray(raw.members) && raw.members.every((x0: any) => typeof x0 === "string")) return { type: "reserveRecurring", kind: raw.kind, members: raw.members.map((x0: any) => x0) };
+  if (raw.type === "reserveNewPlan" && Array.isArray(raw.invited) && raw.invited.every((x0: any) => typeof x0 === "string") && Array.isArray(raw.alternates) && raw.alternates.every((x0: any) => typeof x0 === "string") && typeof raw.reserveAlternates === "boolean") return { type: "reserveNewPlan", invited: raw.invited.map((x0: any) => x0), alternates: raw.alternates.map((x0: any) => x0), reserveAlternates: raw.reserveAlternates };
+  if (raw.type === "reservePartner" && is_PartnerPair(raw.pair) && Number.isSafeInteger(raw.limit)) return { type: "reservePartner", pair: ({ first: raw.pair.first, second: raw.pair.second }), limit: raw.limit };
+  return undefined;
+}
+
+/**
+ * Turn an untrusted value, such as a state loaded from storage, into a state, or undefined if it is not one. It must
+ * have exactly the state's shape (no other fields, whole numbers that are safe integers, sets that hold nothing
+ * twice, maps as records whose keys carry the "$" every key carries here) and satisfy every `always` rule. The
+ * result is a fresh copy, so nothing the caller keeps can change it afterwards.
+ */
+//@ skip
+export function parseState(x: unknown): FriendsRun | undefined {
+  let raw: any;
+  try {
+    raw = JSON.parse(JSON.stringify(x));
+  } catch {
+    return undefined;
+  }
+  if (!(typeof raw === "object" && raw !== null && !Array.isArray(raw) && (raw.phase === "CrewSessions" || raw.phase === "CrewOffers" || raw.phase === "RepeatPlans" || raw.phase === "NewPlans" || raw.phase === "PartnerIntros" || raw.phase === "WeekComplete") && typeof raw.spreadNew === "boolean" && typeof raw.recurring === "object" && raw.recurring !== null && !Array.isArray(raw.recurring) && Object.entries(raw.recurring).every(([k1, x1]: [string, any]) => k1.startsWith("$") && typeof x1 === "boolean") && typeof raw.newUsed === "object" && raw.newUsed !== null && !Array.isArray(raw.newUsed) && Object.entries(raw.newUsed).every(([k1, x1]: [string, any]) => k1.startsWith("$") && typeof x1 === "boolean") && typeof raw.newInvited === "object" && raw.newInvited !== null && !Array.isArray(raw.newInvited) && Object.entries(raw.newInvited).every(([k1, x1]: [string, any]) => k1.startsWith("$") && typeof x1 === "boolean") && typeof raw.partnerCounts === "object" && raw.partnerCounts !== null && !Array.isArray(raw.partnerCounts) && Object.entries(raw.partnerCounts).every(([k1, x1]: [string, any]) => k1.startsWith("$") && Number.isSafeInteger(x1)) && Object.keys(raw).length === 6)) return undefined;
+  const parsed: FriendsRun = ({ phase: raw.phase, spreadNew: raw.spreadNew, recurring: Object.fromEntries(Object.entries(raw.recurring).map(([k1, x1]: [string, any]) => [k1, x1])), newUsed: Object.fromEntries(Object.entries(raw.newUsed).map(([k1, x1]: [string, any]) => [k1, x1])), newInvited: Object.fromEntries(Object.entries(raw.newInvited).map(([k1, x1]: [string, any]) => [k1, x1])), partnerCounts: Object.fromEntries(Object.entries(raw.partnerCounts).map(([k1, x1]: [string, any]) => [k1, x1])) });
+  return inv(parsed) ? parsed : undefined;
+}
+
+/** Proof obligation: the initial state satisfies every `always` rule. */
+export function initialHolds(): FriendsRun {
+  //@ ensures inv(\result)
+  return initial;
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_friendsWeek(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
+}
+
+/** What a map holds for a key, which it must hold. */
+export function get_friendsWeek<K extends string | number, T>(m: Record<K, T>, key: K): T {
+  if (!(key in m)) throw new RangeError(`a map holds nothing for ${key}`);
+  return m[key];
+}

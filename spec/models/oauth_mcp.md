@@ -8,7 +8,7 @@ A member needs to give an agent scoped access to their account and revoke it.
 
 Check code use, refresh, ownership, ban and revocation, scoped tools, and request retention. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [connector grant issuance spec](../oauthGrantIssuance.md) generates the runtime steps from confirmed consent through authority, single-use request consumption and issuance. The [connector token spec](../oauthTokenLifecycle.md) generates token exchange, renewal, and client revocation decisions. This standalone model also covers the initial authorization request, persisted grant state, and member tools.
+The [connector browser authorization spec](../oauthBrowserAuthorization.md) generates the request binding, phone verification, and explicit consent decisions. The [connector grant issuance spec](../oauthGrantIssuance.md) generates the runtime steps from confirmed consent through authority, single-use request consumption and issuance. The [connector token spec](../oauthTokenLifecycle.md) generates token exchange, renewal, and client revocation decisions. This standalone model also covers persisted grant state and member tools.
 
 Imported from `quint/oauth_mcp.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 

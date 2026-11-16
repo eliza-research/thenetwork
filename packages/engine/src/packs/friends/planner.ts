@@ -24,6 +24,10 @@
 // Engine-visible inputs only (the World, availability evidence, the Network's own outcome records).
 import type { MemberId } from "@thenetwork/core";
 import { CITY_TZ, DAY, HOUR, MINUTE, fromLocal, localParts } from "@thenetwork/core";
+import {
+  canReservePartner, type Event as WeekEvent, initial as initialWeek, newPlanAlternateCanRemain, newPlanAvailable, newPlanUsed,
+  recurringAvailable, step as stepWeek,
+} from "../../../../core/src/generated/friendsWeek.ts";
 import { candidateSlots, type TimeSlot } from "../../attention.ts";
 import { DEFAULT_ATTENTION, DEFAULT_PLANS, type AttentionConfig, type PlansConfig } from "../../config.ts";
 import { isMinor, memberReason } from "../../filters.ts";
@@ -204,7 +208,13 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
   const tolOf = (id: MemberId) => info.get(id)?.tolerance ?? 40;
   const eligible = (id: MemberId) => !!w.get(id) && !isMinor(w, id) && !planMemberReason(w, id);
   const venueById = new Map(inp.venues.map(v => [v.id, v]));
-  const taken = new Set<MemberId>();
+  let week = initialWeek;
+  const reserve = (event: WeekEvent) => {
+    const next = stepWeek(week, event);
+    if (next === week) return false;
+    week = next;
+    return true;
+  };
   const out: FriendsWeek = { sessions: [], offers: [], repeats: [], plans: [], partners: [] };
 
   const finish = (p: Plan, source: FriendsPlanSource, forceVenue = false): FriendsPlan | null => {
@@ -264,9 +274,8 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
     const p = crewSessionPlan({ ...crew, members }, now, v ? { name: v.name, area: v.area } : { name: "the usual spot" }, pcfg, w.pack);
     if (!p) continue;
     const fp = finish({ ...p, quorum: Math.min(3, members.length) }, "crew_session");
-    if (!fp) continue;
+    if (!fp || !reserve({ type: "reserveRecurring", kind: "Session", members: fp.invited })) continue;
     out.sessions.push({ ...fp, hostId: retainedCrewHost(crew, fp.invited) });
-    for (const id of fp.invited) taken.add(id);
   }
 
   // 2. crew offers (after one great plan) and 3. same table again
@@ -278,24 +287,25 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
   };
   const recent = inp.outcomes.filter(o => now - o.at < pol.repeatWindowDays * DAY && o.at <= now)
     .map(o => (pol.mutualPositive ? { ...o, positive: [...new Set([...o.positive, ...mutualSee(o)])].sort() } : o));
+  week = stepWeek(week, { type: "beginCrewOffers" });
   if (pol.crews) {
     const proposed = detectCrews(recent, [...inp.crews, ...inp.offered], id => w.get(id)?.isHost ?? false, pcfg);
     for (const crew of proposed) {
-      const members = crew.members.filter(id => eligible(id) && !taken.has(id));
+      const members = crew.members.filter(id => eligible(id) && recurringAvailable(week, id));
       if (members.length < pcfg.crews.minMembers) continue;
       const v = crew.venueId ? venueById.get(crew.venueId) : undefined;
       const c2: Crew = { ...crew, members, hostRotation: crew.hostRotation.filter(m => members.includes(m)).length ? crew.hostRotation.filter(m => members.includes(m)) : members };
       const p = crewSessionPlan(c2, now, v ? { name: v.name, area: v.area } : { name: "the usual spot" }, pcfg, w.pack);
       if (!p) continue;
       const fp = finish({ ...p, quorum: Math.min(3, members.length) }, "crew_offer");
-      if (!fp) continue;
+      if (!fp || !reserve({ type: "reserveRecurring", kind: "Offer", members: fp.invited })) continue;
       out.offers.push({ crew: c2, first: { ...fp, hostId: retainedCrewHost(c2, fp.invited) } });
-      for (const id of fp.invited) taken.add(id);
     }
   }
+  week = stepWeek(week, { type: "beginRepeats" });
   if (pol.repeat) {
     for (const o of [...recent].sort((x, y) => (y.at - x.at) || (x.planId < y.planId ? -1 : 1))) {
-      const pos = o.positive.filter(id => eligible(id) && !taken.has(id));
+      const pos = o.positive.filter(id => eligible(id) && recurringAvailable(week, id));
       // Members offered a crew this week are taken; everyone else positive gets the same table again
       // (pairs, groups without crews, and groups whose crew offer did not form).
       if (pos.length < 2) continue;
@@ -310,14 +320,13 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       const base: Plan = {
         id: `plan_${sha256(`repeat|${o.planId}|${start}|${ids.join(",")}`).slice(0, 16)}`, city: "nyc", activityId: a.id, ...(v ? { venueId: v.id } : {}),
         place: v ? { name: v.name, area: v.area } : { name: "the same spot" }, window: { start, end: start + a.durationMin * 60_000 },
-        invited: ids, alternates: o.attended.filter(id => !ids.includes(id) && eligible(id) && !taken.has(id)).slice(0, partner ? 0 : 2), partner,
+        invited: ids, alternates: o.attended.filter(id => !ids.includes(id) && eligible(id) && recurringAvailable(week, id)).slice(0, partner ? 0 : 2), partner,
         size: partner ? { min: 2, target: 2, max: 2 } : { min: 3, target: ids.length, max: 6 }, quorum: partner ? 2 : Math.min(3, ids.length),
         probeDeadline: start - pcfg.deadlineBeforeStartHours * HOUR, score: 0.7, u: {}, familiar: {}, createdAt: now, category: "social",
       };
       const fp = finish(base, "repeat");
-      if (!fp) continue;
+      if (!fp || !reserve({ type: "reserveRecurring", kind: "Repeat", members: [...fp.invited, ...fp.alternates] })) continue;
       out.repeats.push(fp);
-      for (const id of [...fp.invited, ...fp.alternates]) taken.add(id);
     }
   }
 
@@ -330,15 +339,14 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
     const share = (z: string) => { const m = [...inp.evidence.keys()].filter(id => homeOf(id)?.zone === z); return m.length ? m.filter(id => starved.has(id)).length / m.length : 0; };
     return (share(y) - share(x)) || (x < y ? -1 : 1);
   }) : ZONES;
-  const busy = pol.spreadNew ? taken : new Set<MemberId>();
-  const used = new Set<MemberId>();
+  week = stepWeek(week, { type: "beginNewPlans", spreadNew: pol.spreadNew });
   // Activity-first table builder (multi-slot pools), scored by the shared planner's least misery.
   const compat = makeCompat(w, "social");
   const familiar = (a: MemberId, b: MemberId) => w.isWarm(a, b);
   const slotsAll = candidateSlots(tz, now, { window: { start: now + pcfg.minLeadHours * HOUR, end: now + pcfg.horizonDays * DAY } }, att);
   const dayKey = (t: number) => { const lp = localParts(t, tz); return `${lp.month}-${lp.day}`; };
   const tables = (members: MemberId[], cfg: PlansConfig, universal = false, minInvite = pol.tableMinInvite) => {
-    const pool = members.filter(id => !busy.has(id) && !used.has(id) && inp.evidence.has(id) && eligible(id) && now - (inp.lastPlannedAt?.get(id) ?? -Infinity) >= cfg.memberCooldownDays * DAY);
+    const pool = members.filter(id => newPlanAvailable(week, id) && inp.evidence.has(id) && eligible(id) && now - (inp.lastPlannedAt?.get(id) ?? -Infinity) >= cfg.memberCooldownDays * DAY);
     if (pool.length < cfg.size.min) return;
     const fits = new Map(pool.map(id => {
       const f = activityFit(w, id, cfg);
@@ -350,7 +358,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       .filter(x => x.n >= minInvite && inp.venues.some(v => v.city === "nyc" && v.activities.includes(x.a.id)))
       .sort((x, y) => (y.n - x.n) || (x.a.id < y.a.id ? -1 : 1));
     for (const { a } of acts) {
-      const cand = pool.filter(id => !used.has(id) && (fits.get(id)!.get(a.id) ?? 0) >= cfg.minFit && (w.get(id)!.m.age ?? 0) >= a.ageMin);
+      const cand = pool.filter(id => !newPlanUsed(week, id) && (fits.get(id)!.get(a.id) ?? 0) >= cfg.minFit && (w.get(id)!.m.age ?? 0) >= a.ageMin);
       if (cand.length < minInvite) continue;
       const slots = slotsAll.filter(sl => (a.dayparts as string[]).includes(daypartOf(sl.start, tz, att)));
       const pf = new Map(cand.map(id => [id, slots.map(sl => hasWindow(inp.evidence.get(id)!, sl, now, cfg, att))] as const));
@@ -403,8 +411,8 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       const venue = fp.venueId ? venueById.get(fp.venueId) : undefined;
       fp.options = opts.filter(o => !venue || venueOpen(venue, o, a.durationMin, tz, att))
         .map(o => ({ start: o.start, end: o.start + a.durationMin * 60_000 }));
+      if (!reserve({ type: "reserveNewPlan", invited: fp.invited, alternates: fp.alternates, reserveAlternates: true })) continue;
       out.plans.push(fp);
-      for (const id of [...fp.invited, ...fp.alternates]) used.add(id);
     }
   };
 
@@ -412,18 +420,16 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
   const pcfgNew: PlansConfig = { ...pcfg, partnerPlans: pol.partnerFallback, familiarity: pol.repeat ? pcfg.familiarity : DEFAULT_PLANS.familiarity };
   const run = (members: MemberId[], cfg: PlansConfig = pcfgNew) => {
     const ev = new Map<MemberId, PlanEvidence>();
-    for (const id of members) { const e = inp.evidence.get(id); if (e && !busy.has(id) && !used.has(id)) ev.set(id, e); }
+    for (const id of members) { const e = inp.evidence.get(id); if (e && newPlanAvailable(week, id)) ev.set(id, e); }
     if (ev.size < 2) return;
-    const plans = planProposals(w, { now, city: "nyc", tz, evidence: ev, venues: inp.venues, lastPlannedAt: inp.lastPlannedAt, exclude: new Set([...busy, ...used]) }, cfg, att);
+    const plans = planProposals(w, { now, city: "nyc", tz, evidence: ev, venues: inp.venues, lastPlannedAt: inp.lastPlannedAt }, cfg, att);
     for (const p of plans) {
       // Groups first: an activity-partner (one-to-one) plan only for members who already attended a group meetup.
       if (p.partner && p.invited.some(id => memberReason(w, id, { category: "hobby", role: "peer", format: "one_to_one", timeSensitive: true }) !== null)) continue;
       const fp = finish(p, "new");
-      if (!fp) continue;
-      if (fp.invited.some(id => used.has(id))) continue;
+      if (!fp || !reserve({ type: "reserveNewPlan", invited: fp.invited, alternates: fp.alternates, reserveAlternates: false })) continue;
       out.plans.push(fp);
-      for (const id of fp.invited) used.add(id);
-      fp.alternates = fp.alternates.filter(id => !used.has(id));
+      fp.alternates = fp.alternates.filter(id => !newPlanUsed(week, id));
     }
   };
   const ids = [...inp.evidence.keys()].sort();
@@ -466,12 +472,13 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
     }
   }
   // 5. activity partners (one-to-one, intro cap), from the engine generator; groups first.
+  week = stepWeek(week, { type: "beginPartners" });
   if (pol.partnerIntros > 0) {
     const gen = activityPartner({ w, memberExclusions: {}, rng: new Rng(fnv1a(`friends-partner|${now}`)), unmatchedIntents: new Set() });
-    const count = new Map<MemberId, number>();
     for (const c of gen) {
       const [a, b] = c.participants as [MemberId, MemberId];
-      if (!inp.evidence.has(a) || !inp.evidence.has(b) || (count.get(a) ?? 0) >= pol.partnerIntros || (count.get(b) ?? 0) >= pol.partnerIntros) continue;
+      const pair = { first: a, second: b };
+      if (!inp.evidence.has(a) || !inp.evidence.has(b) || !canReservePartner(week, pair, pol.partnerIntros)) continue;
       const act = pairActivity(w, a, b, pcfg);
       if (!act) continue;
       const slots = slotsAll.filter(sl => (act.dayparts as string[]).includes(daypartOf(sl.start, tz, att)))
@@ -490,11 +497,12 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       const days = new Set<string>();
       fp.options = slots.filter(x => !venue || venueOpen(venue, x.sl, act.durationMin, tz, att))
         .filter(x => { const d = dayKey(x.sl.start); if (days.has(d)) return false; days.add(d); return true; }).slice(0, 3).map(x => ({ start: x.sl.start, end: x.sl.start + act.durationMin * 60_000 })).sort((x, y) => x.start - y.start);
+      if (!reserve({ type: "reservePartner", pair, limit: pol.partnerIntros })) continue;
       out.partners.push(fp);
-      for (const id of [a, b]) count.set(id, (count.get(id) ?? 0) + 1);
     }
   }
   // Alternates are never invited elsewhere this run.
-  for (const p of out.plans) p.alternates = p.alternates.filter(id => !p.invited.includes(id) && !out.plans.some(q => q !== p && q.invited.includes(id)));
+  week = stepWeek(week, { type: "finishWeek" });
+  for (const p of out.plans) p.alternates = p.alternates.filter(id => newPlanAlternateCanRemain(week, id));
   return out;
 }

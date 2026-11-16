@@ -10,6 +10,7 @@ Check opt-in, unique session slots, and handoff counts. The model defines the ch
 
 Imported from `quint/plan_crew.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 Production offer transitions use [Recurring crew offers](../crewOffer.md). This standalone model keeps its abstract time and eligibility changes from the source branch.
+The [Friends weekly planner](../friendsWeek.md) reserves prospective crew sessions and offers before repeats and new plans.
 
 ```quint
 // -*- mode: Bluespec; -*-

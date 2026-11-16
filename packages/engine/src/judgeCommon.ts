@@ -9,6 +9,7 @@
 // collect schema errors), the leak gate, evidence helpers and the shared prompt fragments.
 import type { ChatMessage, LLM, MemberId } from "@thenetwork/core";
 import { chatJson, labelHash, LeakGuard, textVariants } from "@thenetwork/core";
+import { cacheEntryExpired, initial as initialJudgmentAttempt, step as stepJudgmentAttempt } from "../../core/src/generated/judgmentAttempt.ts";
 import { tokenize } from "./embed.ts";
 import { sha256 } from "./hash.ts";
 import type { Candidate, JudgeVerdict } from "./types.ts";
@@ -37,7 +38,7 @@ export class JudgeCache<V = JudgeVerdict> {
   get(key: string, now: number): V | undefined {
     const e = this.m.get(key);
     if (!e) return undefined;
-    if (now - e.at >= this.ttlMs || now < e.at) { this.m.delete(key); return undefined; }
+    if (cacheEntryExpired(now - e.at, this.ttlMs, now < e.at)) { this.m.delete(key); return undefined; }
     return e.verdict;
   }
   set(key: string, verdict: V, now: number) { this.m.set(key, { verdict, at: now }); }
@@ -75,16 +76,29 @@ export async function runCachedPass<V>(w: World, cands: Candidate[], version: st
       const c = queue.shift()!;
       const ck = passCacheKey(w, c, version);
       const hit = cache.get(ck, w.now);
-      if (hit) { stats.cacheHits++; hits.add(c.key); out.set(c.key, hit); continue; }
+      let attempt = stepJudgmentAttempt(initialJudgmentAttempt, { type: "readCache", available: Boolean(hit) });
+      if (attempt.phase === "ReuseVerdict") {
+        stats.cacheHits++;
+        hits.add(c.key);
+        out.set(c.key, hit!);
+        continue;
+      }
+      if (attempt.phase !== "RequestVerdict") continue;
       stats.calls++;
+      let verdict: V | null = null;
       try {
         const v = await judge(c);
-        cache.set(ck, v, w.now);
-        out.set(c.key, v);
+        attempt = stepJudgmentAttempt(attempt, { type: "receiveVerdict" });
+        if (attempt.phase === "StoreVerdict") {
+          cache.set(ck, v, w.now);
+          attempt = stepJudgmentAttempt(attempt, { type: "completeWrite" });
+          verdict = v;
+        }
       } catch {
-        stats.failures++;
-        out.set(c.key, null); // not cached: a noisy failure must not stick (ME-008)
+        attempt = stepJudgmentAttempt(attempt, { type: "failAttempt" });
       }
+      if (attempt.phase === "AttemptFailed") stats.failures++;
+      out.set(c.key, attempt.phase === "NewVerdict" ? verdict : null);
     }
   };
   await Promise.all(Array.from({ length: Math.max(1, w.cfg.judge.concurrency) }, worker));
