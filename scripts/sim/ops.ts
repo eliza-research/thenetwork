@@ -349,8 +349,11 @@ export async function opsBlock(b: Block): Promise<void> {
         // slop's console role sees slop and the shared line, never peon.
         const seen = await sql.begin(async tx => { await tx`set local role network_observatory_slop`; return (await tx`select app_id from network.cost_ledger order by app_id`).map((r: any) => r.app_id); });
         expect(seen).toEqual(["shared", "slop"]);
-        const denied = await sql.begin(async tx => { await tx`set local role network_observatory_slop`; return tx`select 1 from network.ops_alerts`.then(() => "read", e => String(e.message)); });
-        expect(denied).toMatch(/permission denied/);
+        const denied = await sql.begin(async tx => {
+          await tx`set local role network_observatory_slop`;
+          await tx`select 1 from network.ops_alerts`;
+        }).then(() => "read", error => String(error.message));
+        expect(denied).toMatch(/permission denied for table ops_alerts/);
         // The alert store: the service role, the advisory lock, dedupe across a restart.
         const posts: unknown[] = [];
         const svcSql = new SQL({ url: srcUrl, max: 1 });
