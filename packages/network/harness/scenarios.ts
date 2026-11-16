@@ -277,9 +277,10 @@ export const SCENARIOS: NetScenario[] = [
     },
     check(ctx) {
       const id = ctx.ids.asker!;
-      const req = ctx.net.requests.find(r => r.memberId === id && r.kind === "people");
-      const ack = outbound(ctx.records).some(m => m.msg.memberId === id && /On it|couldn't find someone/.test(m.msg.body));
-      const probed = logs(ctx.records, "probe_started").some(l => (l.detail.proposal as { participants: MemberId[] }).participants.includes(id));
+      const askAt = firstSaid(ctx, id);
+      const req = ctx.net.requests.find(r => r.memberId === id && r.kind === "people" && r.at === askAt);
+      const ack = outbound(ctx.records).some(m => m.msg.memberId === id && m.t === askAt && /On it|couldn't find someone/.test(m.msg.body));
+      const probed = !!req?.oppId && logs(ctx.records, "probe_sent").some(l => l.detail.oppId === req.oppId && l.detail.memberId !== id);
       return [
         c("request understood", !!req && !!req.desireId, req ? `desire ${req.desireId}, outcome ${req.outcome}` : "no request"),
         c("acknowledged", ack, ""),
@@ -317,13 +318,19 @@ export const SCENARIOS: NetScenario[] = [
     check(ctx) {
       const invites = logs(ctx.records, "invite").filter(l => l.detail.from === ctx.ids.connector);
       const mine = invites.map(l => l.detail.newMemberId as MemberId | null).filter((x): x is MemberId => !!x);
-      const joined = mine.filter(id => ctx.records.some(r => r.type === "join" && r.memberId === id));
-      const welcomed = joined.filter(id => outbound(ctx.records).some(m => m.msg.memberId === id && /invited you/.test(m.msg.body)));
+      const joined = ctx.records.filter((r): r is Extract<RunRecord, { type: "join" }> => r.type === "join" && mine.includes(r.memberId));
+      const sent = outbound(ctx.records);
+      const welcomed = joined.filter(r => sent.some(m => m.msg.memberId === r.memberId && /invited you/.test(m.msg.body)));
+      const receipts = joined.map(r => {
+        const first = ctx.world.oracle.persona(r.memberId)?.name.split(" ")[0];
+        return sent.filter(m => first && m.msg.memberId === ctx.ids.connector && m.msg.body.includes(`${first} just joined.`));
+      });
       return [
         c("invites sent", invites.length === 3, `${invites.length}`),
         c("friends joined", joined.length >= 1, `${joined.length} of 3 joined`),
         c("welcomed by name of inviter", welcomed.length === joined.length, `${welcomed.length}`),
-        c("inviter told", outbound(ctx.records).some(m => m.msg.memberId === ctx.ids.connector && /just joined/.test(m.msg.body)), ""),
+        c("inviter told", receipts.some(matches => matches.length > 0), `${receipts.filter(matches => matches.length > 0).length} receipts`),
+        c("join receipts are timely and unique", receipts.every((matches, i) => matches.length <= 1 && matches.every(m => m.t >= joined[i]!.t)), ""),
       ];
     },
   },

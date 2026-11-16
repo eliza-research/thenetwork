@@ -169,6 +169,33 @@ export async function runSlopLive(seed: number, o: { days?: number; n?: number }
 }
 
 export async function slopLiveArm(b: Block, o: { quick: boolean }): Promise<void> {
+  // spec/probeDispatch.md, "Wait for the member's send window and current availability".
+  await b.run("slop-live: a profile readback answer cannot consent to a date", async () => {
+    const wiring = appWiring("slop");
+    const w = new Mini([
+      { id: "a", name: "Alex", age: 30, interests: ["hiking"], romance: { is: "man", seeks: ["woman"] } },
+      { id: "b", name: "Blair", age: 30, interests: ["hiking"], romance: { is: "woman", seeks: ["man"] } },
+    ], { app: "slop", review: "human", pack: wiring.pack, hooks: wiring.hooks, plans: wiring.plans ?? true, engine: wiring.engine });
+    for (const id of ["a", "b"]) {
+      await w.say(id, "Hi");
+      await w.say(id, `I'm a ${id === "a" ? "man looking for women" : "woman looking for men"}, aged 30. Ages 25-40, within 10 miles of 11211. Looking for a long-term relationship. I love cooking and reading, and no smokers. For a first date I want a hike. Usually free Saturday afternoons.`);
+    }
+    await w.say("a", "Yes, that's right.");
+    const opp = w.propose(["a", "b"], { category: "romance", objective: "hike" });
+    expect(await w.runUntil(() => w.net.reviewQueue().some(q => q.oppId === opp))).toBe(true);
+    expect(w.net.review(opp, "approve", { reviewer: "sim_staff" })).toBe(true);
+    expect(await w.runUntil(() => w.probed("a"))).toBe(true);
+    await w.say("a", "yes");
+    w.restart();
+    expect(w.net.memberList().find(m => m.id === "b")?.awaiting?.ask?.reason).toBe(SLOP_READBACK);
+    await w.say("b", "Yes, that's right.");
+    expect(w.log("probe_answer").some(r => r.detail.oppId === opp && r.detail.memberId === "b")).toBe(false);
+    expect(w.meetings).toEqual([]);
+    expect(await w.runUntil(() => w.probed("b"))).toBe(true);
+    await w.say("b", "no");
+    expect(w.meetings).toEqual([]);
+    expect(w.sent.some(m => m.meta.booked?.proposalId === opp)).toBe(false);
+  });
   await b.run("slop-live: daytime hikes stay in daytime through reviewed probes, booking and restart", async () => {
     const cases = [
       { kind: "hike mixed", activity: "hike", free: "Usually free Tuesday evenings. Also free Saturday afternoons.", slots: ["sat_day", "sun_day"] },
@@ -190,7 +217,7 @@ export async function slopLiveArm(b: Block, o: { quick: boolean }): Promise<void
       w.clock.set(start);
       for (const id of ids) {
         await w.say(id, "Hi");
-        await w.say(id, `I'm a ${id === "a" ? "man looking for women" : "woman looking for men"}, aged 30. Ages 25-40, within 10 miles of 11211. Looking for a long-term relationship. For a first date I want ${c.activity}. ${c.free}`);
+        await w.say(id, `I'm a ${id === "a" ? "man looking for women" : "woman looking for men"}, aged 30. Ages 25-40, within 10 miles of 11211. Looking for a long-term relationship. I love cooking and reading, and no smokers. For a first date I want ${c.activity}. ${c.free}`);
         await w.say(id, "Yes, that's right.");
       }
       w.restart();

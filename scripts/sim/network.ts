@@ -375,6 +375,7 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
     const minor = members.find(m => (personas.get(m.id)?.public.claimedAge ?? 99) < 18)!;
     const adult = members.find(m => !m.minor && m.stage !== "new" && !personas.get(m.id)?.hidden.adversarial)!;
     expect(net.recipientPolicy(minor.id, "probe")).toEqual({ ok: false, reason: "minor" });
+    expect(net.recipientPolicy(minor.id, "growth")).toEqual({ ok: false, reason: "minor" });
     expect(net.recipientPolicy(adult.id, "reveal", { about: [adult.id, minor.id] })).toEqual({ ok: false, reason: "other_not_matchable" });
     expect(net.recipientPolicy(minor.id, "reply")).toEqual({ ok: true });
     expect(net.recipientPolicy(adult.id, "reminder", { about: [adult.id] })).toEqual({ ok: true });

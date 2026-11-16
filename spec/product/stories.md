@@ -12,6 +12,8 @@ Check the member's invite allowance, normally three per month. Save their vouch 
 
 Keep vouch notes outside matching until the invitee joins and consents. Clear notes when declined or after 30 days. An existing member's status and onboarding details stay private. A decline stops contact, and age policy applies at acceptance.
 
+When someone joins through the invitation, tell the inviter using their first name and join status. Apply the delivery rules and carry the notice on a genuine reply when it cannot go out separately. [Invite join notice](../outreachPolicy.md#an-eligible-join-receipt-can-ride-on-a-current-reply).
+
 ## Story F2 — Seed a cohort
 
 > As an operator, I want to seed the first cohort with attributed invitations so we can establish a useful local network.

@@ -56,6 +56,8 @@ Imported from `quint/opportunity.qnt` at `30d950e`. See [model index](README.md)
 //    (at most one of each per opportunity and member), so each opportunity keeps their queue state
 //    (`probeQ`, `revealQ`). `s.collected` counts the collected messages. A member keeps the times of the first
 //    two unanswered invites only (`ask1`, `ask2`): the two-unanswered rule reads no more.
+//  - App-specific onboarding prompts are outside this model. spec/probeDispatch.md specifies how a pending
+//    onboarding question holds the reviewed probe before it can claim the reply slot.
 module opportunity {
 
   // ---------------------------------------------------------------- constants
@@ -188,7 +190,7 @@ module opportunity {
 
   // ---------------------------------------------------------------- the send pipeline (N:3862-3954)
   // The gates of send() in order: checkRecipient (N:4215), budget, the Blooio streak, timing.
-  // Kinds that are about other members (outreach.ts:59 ABOUT_OTHERS) are refused for a minor.
+  // Messages about other members and recruiting are refused for a minor (spec/outreachPolicy.md).
   pure def sendGate(s: S, m: str, kind: str, timing: str, aboutOthers: bool, proactive: bool, env: Env): str = {
     val x = mm(s, m)
     if (x.forgotten or x.optedOut) "refused"

@@ -6,6 +6,18 @@ A classified people request can reuse a standing request, start a new one, or wa
 
 > As a member, I want the Network to keep one search for the same current request, stop a request I withdraw, and check with me when a proposed introduction needs my confirmation.
 
+### A direct request can interrupt the initial interview
+
+Learn a profile statement as an interview answer when initial onboarding has a pending question. A direct request from the member for people or plans can start work before the optional interview is finished. A profile submitted by an assistant is still profile evidence.
+
+```quint
+pure def learnDuringRequestIntake(interviewPending: bool, initialOnboarding: bool, directRequest: bool): bool =
+  interviewPending and initialOnboarding and not(directRequest)
+
+pure def lawDirectRequestPassesInterview(interviewPending: bool, initialOnboarding: bool): bool =
+  not(learnDuringRequestIntake(interviewPending, initialOnboarding, true))
+```
+
 ### A repeat ask keeps the newest matching request
 
 Use the newest unwithdrawn people request for the same person and desire, or the same category when there is no desire ID. A booked or fulfilled request is outside this lookup. Reuse a request while it is probing or while it is inside the member's configured re-search interval. A new request requires a category that the app supports.

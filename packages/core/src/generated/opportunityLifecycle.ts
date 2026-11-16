@@ -69,13 +69,26 @@ export function lawAGroupNeedsAtLeastThree(remaining: number): boolean {
   return !groupCanContinue(remaining) || remaining >= 3;
 }
 
-/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md:50) */
+/** Story: Book and conclude a proposal that comes together / A new minor signal closes an unbooked opportunity involving that person (spec/opportunityLifecycle.md:50) */
+//@ pure
+export function closesForMinor(proposal: OpportunityLifecycle, minorSignal: boolean, participant: boolean, alternate: boolean, contacted: boolean): boolean {
+  return (proposal.phase === "InReview" || proposal.phase === "Probing") && minorSignal && (participant || alternate || contacted);
+}
+
+/** Story: Book and conclude a proposal that comes together / A new minor signal closes an unbooked opportunity involving that person (spec/opportunityLifecycle.md:50) */
+//@ pure
+export function lawMinorContactClosesAnUnbookedOpportunity(proposal: OpportunityLifecycle): boolean {
+  //@ ensures \result === true
+  return !(proposal.phase === "InReview" || proposal.phase === "Probing") || closesForMinor(proposal, true, false, false, true);
+}
+
+/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md:62) */
 //@ pure
 export function canComplete(proposal: OpportunityLifecycle, feedbackDue: boolean): boolean {
   return proposal.phase === "Scheduled" && feedbackDue;
 }
 
-/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md:50) */
+/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md:62) */
 //@ pure
 export function complete(proposal: OpportunityLifecycle, feedbackDue: boolean): OpportunityLifecycle {
   //@ ensures (inv(proposal) && canComplete(proposal, feedbackDue)) ==> alwaysContactStagesRequireApproval(\result)
@@ -83,13 +96,13 @@ export function complete(proposal: OpportunityLifecycle, feedbackDue: boolean): 
   return { ...proposal, phase: "Done" };
 }
 
-/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md:50) */
+/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md:62) */
 //@ pure
 export function canClose(proposal: OpportunityLifecycle): boolean {
   return proposal.phase === "InReview" || proposal.phase === "Probing" || proposal.phase === "Scheduled";
 }
 
-/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md:50) */
+/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md:62) */
 //@ pure
 export function close(proposal: OpportunityLifecycle): OpportunityLifecycle {
   //@ ensures (inv(proposal) && canClose(proposal)) ==> alwaysContactStagesRequireApproval(\result)
@@ -97,25 +110,25 @@ export function close(proposal: OpportunityLifecycle): OpportunityLifecycle {
   return { ...proposal, phase: "Closed" };
 }
 
-/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md:50) */
+/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md:62) */
 //@ pure
 export function stepTerminalOpportunityCannotReopen(before: OpportunityLifecycle, after: OpportunityLifecycle): boolean {
   return !(before.phase === "Closed" || before.phase === "Done") || before.phase === after.phase;
 }
 
-/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md:50) */
+/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md:62) */
 //@ pure
 export function sometimesCanBook(proposal: OpportunityLifecycle): boolean {
   return proposal.phase === "Scheduled";
 }
 
-/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md:50) */
+/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md:62) */
 //@ pure
 export function sometimesCanComplete(proposal: OpportunityLifecycle): boolean {
   return proposal.phase === "Done";
 }
 
-/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md:50) */
+/** Story: Book and conclude a proposal that comes together / A scheduled opportunity is done when feedback becomes due (spec/opportunityLifecycle.md:62) */
 //@ pure
 export function sometimesCanCloseBeforeContact(proposal: OpportunityLifecycle): boolean {
   return proposal.phase === "Closed" && !proposal.approved;
