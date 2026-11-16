@@ -20,6 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DAY, HOUR, type MemberId, type RunRecord } from "../../packages/core/src/index.ts";
 import { INTERESTS } from "../../packages/engine/src/packs/network/vocabulary.ts";
+import { pairKey } from "../../packages/engine/src/world.ts";
 import { PolicyPersonaAgent, World } from "../../packages/sim/src/index.ts";
 import { friendFactory, nycPersonas } from "../../packages/network/harness/index.ts";
 import { ConsentNetwork } from "../../packages/network/src/index.ts";
@@ -53,7 +54,14 @@ async function networkGates(b: Block) {
   const start = (await fileAt(`${DATA_DIR}/manifest.json`).json()).snapshotNow as number;
   const net = new ConsentNetwork({ seed, review: "auto" });
   const R: RunRecord[] = [];
-  const w = new World({ seed, personas, days, start, writeLog: false, network: net, agent: new PolicyPersonaAgent(start), spawnFriend: friendFactory({ seed }), onRecord: r => R.push(r) });
+  const rosterAtNo = new Map<Log, readonly MemberId[]>();
+  const w = new World({ seed, personas, days, start, writeLog: false, network: net, agent: new PolicyPersonaAgent(start), spawnFriend: friendFactory({ seed }), onRecord: r => {
+    R.push(r);
+    if (r.type !== "network_log" || (r.kind !== "probe_answer" && r.kind !== "time_answer")
+      || r.detail.yes !== false || r.detail.expired || r.detail.plan) return;
+    // The answer is logged before a replacement or other roster change takes effect.
+    rosterAtNo.set(r, [...(net.opps.get(String(r.detail.oppId))?.participants ?? [])]);
+  } });
   await w.begin();
   await w.advanceTo(start + (days - 1) * DAY);
 
@@ -109,16 +117,29 @@ async function networkGates(b: Block) {
   await w.complete();
 
   await b.run("network-consent-5: after a probe \"no\", the pair is not probed again (no later opportunity holds the member and the person they declined)", () => {
-    const parts = new Map<string, MemberId[]>();
-    for (const l of logs(R, "probe_started")) parts.set(String((l.detail.proposal as { id: string }).id), (l.detail.proposal as { participants: MemberId[] }).participants);
-    const noes = logs(R, "probe_answer").filter(l => l.detail.yes === false && !l.detail.expired && !l.detail.plan);
-    expect(noes.length).toBeGreaterThan(5);
+    expect(rosterAtNo.size).toBeGreaterThan(5);
+    const started = new Set<string>();
+    const declined = new Map<string, string>();
     const again: string[] = [];
-    for (const n of noes) {
-      const m = String(n.detail.memberId), others = (parts.get(String(n.detail.oppId)) ?? []).filter(x => x !== m);
-      for (const l of logs(R, "probe_started").filter(l => l.t > n.t && !l.detail.plan)) {
-        const p = (l.detail.proposal as { id: string; participants: MemberId[] });
-        if (p.participants.includes(m) && others.some(o => p.participants.includes(o))) again.push(`${n.detail.oppId} -> ${p.id}`);
+    for (const l of R) {
+      if (l.type !== "network_log") continue;
+      const atNo = rosterAtNo.get(l);
+      if (atNo) {
+        const member = String(l.detail.memberId);
+        expect(atNo.includes(member)).toBe(true);
+        for (const peer of atNo) {
+          if (peer !== member) declined.set(pairKey(member, peer), String(l.detail.oppId));
+        }
+      }
+      if ((l.kind !== "probe_started" && l.kind !== "probe_replaced") || l.detail.plan) continue;
+      const { id, participants } = l.detail.proposal as { id: string; participants: MemberId[] };
+      if (l.kind === "probe_started") started.add(id);
+      if (!started.has(id)) continue; // Plan replacements do not carry the plan flag.
+      for (const [index, member] of participants.entries()) {
+        for (const peer of participants.slice(index + 1)) {
+          const source = declined.get(pairKey(member, peer));
+          if (source) again.push(`${source} -> ${id} (${member}, ${peer})`);
+        }
       }
     }
     expect(again).toEqual([]);
@@ -435,7 +456,8 @@ async function serviceLogin(b: Block) {
       expect(ana).toBeTruthy();
       expect(rt.memberOf(C)).toBeUndefined();
       expect(rt.net.memberList().some(m => m.id === ana)).toBe(true);
-      expect(await admin`select app_id, count(*)::int as n from network.members group by 1 order by 1`).toEqual([{ app_id: "friends", n: 1 }, { app_id: "slop", n: 1 }]);
+      const members = await admin<{ app_id: string; n: number }[]>`select app_id, count(*)::int as n from network.members group by 1 order by 1`;
+      expect([...members]).toEqual([{ app_id: "friends", n: 1 }, { app_id: "slop", n: 1 }]);
       expect((await admin`select id, jsonb_array_length(state->'members')::int as n from network.network_state where id in ('friends:nyc', 'slop:nyc') order by 1`).map((r: any) => r.n)).toEqual([1, 1]);
       expect((await admin`select state from platform.consent_events where e164 = ${B} and app_id is null`).map((r: any) => r.state)).toEqual(["opted_out"]);
       expect(fake.to(A).length).toBeGreaterThanOrEqual(4);
