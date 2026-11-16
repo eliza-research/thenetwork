@@ -68,7 +68,7 @@ import {
   probeTiming, questionHoldMs, replacementRoute, shouldLookForOtherTimes, step as stepProbe, turnReached, type ParticipantProbe,
 } from "../../core/src/generated/probeDispatch.ts";
 import { reviewLate, reviewRevisionCurrent } from "../../core/src/generated/reviewDeadline.ts";
-import { inviteJoinNoticeCurrent, inviteJoinNoticeLifetimeMs, inviteJoinNoticeMayRideReply, outreachRequiresAdult } from "../../core/src/generated/outreachPolicy.ts";
+import { inviteJoinNoticeCurrent, inviteJoinNoticeLifetimeMs, inviteJoinNoticeMayRideReply, outreachRequiresAdult, unansweredInviteCounts, unansweredInvitePause } from "../../core/src/generated/outreachPolicy.ts";
 import { emptyIntentFollowupReady, emptyIntentFollowupReasonAllowed } from "../../core/src/generated/emptyIntentFollowup.ts";
 import { canSaveCofounderIntent, cofounderIntentDetails, cofounderIntentObjective } from "../../core/src/generated/cofounderIntent.ts";
 import { cofounderDeliveryAllowed, cofounderIntentEligible, cofounderPairCurrent } from "../../core/src/generated/cofounderDispatch.ts";
@@ -329,6 +329,8 @@ export const ALLOWED_CATEGORIES: Readonly<Record<string, readonly Category[]>> =
   peon: ["professional"],
 };
 
+type PendingAsk = { kind: SendKind; at: number; opportunityId?: string; deliveryId?: string; acceptedAt?: number; expiredAt?: number };
+
 interface MemberState {
   /** `area`: the neighborhood the member said (or the record says). Undefined when unknown: never a default (matching-e2e-1). */
   id: MemberId; first: string; display: string; area?: string; quietHours: [number, number];
@@ -348,8 +350,8 @@ interface MemberState {
   /** The member record's account status when staff paused or restricted the account: never matched, only replies and safety notices. */
   account?: "paused" | "restricted";
   /** Initial invites (and the re-engagement) sent since the member last wrote to us. */
-  pendingAsks: { kind: SendKind; at: number }[];
-  /** Of those, how many have waited 72 h or more (two-unanswered pause, on initial invites only). */
+  pendingAsks: PendingAsk[];
+  /** Of those, how many reached terminal expiry or waited at least 72 hours after delivery. */
   unanswered: number;
   /** Every outbound message since the member last wrote to us (the Blooio streak, attention 1.9). */
   outbound?: number;
@@ -3698,7 +3700,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       const item = plans.planItem(invitationPlan, id, { now, reviewState: "approved", stage: o.plan.partner && id !== o.plan.invited[0] ? "partner" : "first", pcfg: this.pcfg });
       const r = attention.composeMessage({
         member: this.view(m, now), items: [item], ledger: planLedger(m.id, m.planInvites ?? [], m.replies ?? []),
-        // The member's last message lifts the two-unanswered pause on the plan ledger too (heardFrom resets it for intros).
+        // The plan ledger tracks allowance use. The Network separately tracks delivered unanswered invitations.
+        unansweredCount: m.unanswered,
         conversation: { outboundSinceInbound: m.outbound ?? 0, ...(m.lastInbound ? { lastInboundAt: m.lastInbound } : {}) },
         now, mode: "digest", cfg: plans.planAllowanceConfig(DEFAULT_ATTENTION, this.pcfg),
       });
@@ -3758,7 +3761,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (recorded) {
       if (yes) { this.plansCounters.planYes++; o.status.set(id, "available"); } else { if (!silent) this.plansCounters.planNo++; o.status.set(id, silent ? "unavailable" : "no"); }
       onRecorded?.();
-    }
+    } else this.expirePlanInvitations(o, run.plan.probeDeadline, now);
     this.planAct(o, action);
     return recorded ? "recorded" : "expired";
   }
@@ -4088,6 +4091,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     // The member records can change between units (staff edits, the member's settings): read them again first.
     for (const m of [...this.members.values()]) {
       this.syncMember(m);
+      this.refreshUnanswered(m, now);
       if (m.pendingInviteDraft && !memberInviteDraftCurrent(now - m.pendingInviteDraft.at)) m.pendingInviteDraft = undefined;
       if (m.pendingInviteJoins?.length) m.pendingInviteJoins = m.pendingInviteJoins.filter(notice => now - notice.at < inviteJoinNoticeLifetimeMs);
     }
@@ -4111,7 +4115,6 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (!this.timingOk(m, d.timing ?? "logistics", now)) { this.deferred.push(d); continue; }
       this.send(m, d.body, d.meta, d.kind, d.o);
     }
-    for (const m of this.members.values()) this.refreshUnanswered(m, now);
     for (const o of [...this.opps.values()]) this.advance(o, now);
     this.checkSeats();
     for (const m of this.members.values()) {
@@ -4158,12 +4161,40 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
   }
 
-  /** F28: two messages unanswered for 48 h move the member to "only when I ask". */
+  /** F28: two unanswered invitations move the member to "only when I ask". */
   private refreshUnanswered(m: MemberState, now: number) {
-    m.unanswered = m.pendingAsks.filter(a => now - a.at >= OUTREACH.unansweredAfterMs).length;
-    if (m.unanswered >= OUTREACH.unansweredLimit && !m.onlyWhenAsked) {
+    // spec/outreachPolicy.md, "Count a sent invitation at terminal expiry or after 72 hours"
+    m.pendingAsks = m.pendingAsks.filter(invite => {
+      if (invite.deliveryId === undefined || invite.acceptedAt !== undefined) return true;
+      const receipt = this.ctx.initialInviteReceipt?.(invite.deliveryId);
+      if (receipt?.kind === "not_sent") return false;
+      if (receipt?.kind === "accepted") invite.acceptedAt = receipt.at;
+      return true;
+    });
+    m.unanswered = m.pendingAsks.filter(invite => {
+      const acceptedAt = invite.deliveryId === undefined ? invite.at : invite.acceptedAt;
+      return unansweredInviteCounts(acceptedAt !== undefined, acceptedAt ?? 0, invite.expiredAt !== undefined, invite.expiredAt ?? 0, now);
+    }).length;
+    if (unansweredInvitePause(m.unanswered) && !m.onlyWhenAsked) {
       m.onlyWhenAsked = true; this.counters.onlyWhenAsked++;
       this.ctx.log("only_when_asked", { memberId: m.id, unanswered: m.unanswered });
+    }
+  }
+
+  private expireInitialInvitation(o: Opp, id: MemberId, expiredAt: number, now: number) {
+    const member = this.members.get(id);
+    if (!member) return;
+    const invite = member.pendingAsks.find(ask => ask.opportunityId === o.id);
+    if (!invite || invite.expiredAt !== undefined) return;
+    invite.expiredAt = expiredAt;
+    this.refreshUnanswered(member, now);
+  }
+
+  private expirePlanInvitations(o: Opp, expiredAt: number, now: number) {
+    if (!o.planRun) return;
+    for (const id of plans.pendingOf(o.planRun)) {
+      const sentAt = o.sentAt?.[id];
+      if (sentAt !== undefined) this.expireInitialInvitation(o, id, Math.min(expiredAt, sentAt + probeResponseMs), now);
     }
   }
 
@@ -4191,9 +4222,14 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (o.plan && o.planRun && (o.stage === "probing" || o.stage === "scheduled")) {
       // Plan probes: silence for 26 hours after a probe went out is a no (the next alternate is
       // probed); at the probe deadline without quorum, the fallback runs. Late joins until 6 hours before.
+      const deadline = o.plan.probeDeadline;
+      const lateJoinAt = o.plan.window.start - this.pcfg.lateJoinHours * HOUR;
+      if (o.stage === "probing" && now >= deadline) this.expirePlanInvitations(o, deadline, now);
+      if (o.stage === "scheduled" && now > lateJoinAt) this.expirePlanInvitations(o, lateJoinAt, now);
       for (const [p, a] of Object.entries(o.planRun.answers)) {
         const sent = o.sentAt?.[p];
         if (a !== "pending" || sent === undefined || !probeExpired(now, sent + probeResponseMs) || !o.planRun) continue;
+        this.expireInitialInvitation(o, p, sent + probeResponseMs, now);
         this.counters.probeExpired++;
         this.ctx.log("probe_answer", { oppId: o.id, memberId: p, yes: false, expired: true, plan: true });
         const m = this.members.get(p);
@@ -4216,6 +4252,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         const next = stepProbe(current, { type: "expireProbe", expired: probeExpired(now, deadline), timeQuestion: !!o.timeRetry?.includes(p) });
         if (next === current) continue;
         if (next.phase === "Available") { o.status.set(p, "available"); continue; }
+        if (sent !== undefined) this.expireInitialInvitation(o, p, deadline, now);
         if (o.contacted.has(p)) { this.counters.probeExpired++; this.ctx.log("probe_answer", { oppId: o.id, memberId: p, yes: false, expired: true }); }
         const m = this.members.get(p);
         if (m?.awaiting?.oppId === o.id) m.awaiting = undefined;
@@ -4958,6 +4995,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       }
     }
     const proactive = !!meta.proactive;
+    if (proactive) this.refreshUnanswered(m, now);
     // A direct reply: anything we say to the member whose message we are handling, except a proactive
     // offer (that waits for the window like any other) or a growth/re-engagement ask.
     const reply = kind === "reply" || (this.replyTo === m.id && !proactive && !NEVER_REPLY.has(kind));
@@ -5065,7 +5103,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     // Only initial invites go on the cap and toward the two-unanswered pause (founder decision 3);
     // the re-engagement is the one message allowed past that pause and is counted the same way.
     // A plan invite goes on the plan allowance's own ledger instead (it still counts for two-unanswered and the streak).
-    if (proactive) { if (o.planInvite) m.planInvites = [...(m.planInvites ?? []), now].slice(-20); else m.proactive.push(now); m.pendingAsks.push({ kind, at: now }); m.lastAskAt = now; }
+    if (proactive) { if (o.planInvite) m.planInvites = [...(m.planInvites ?? []), now].slice(-20); else m.proactive.push(now); m.lastAskAt = now; }
     if (ask) { m.openAskAt = now; m.lastAskAt = now; }
     if (unsol) {
       text = attention.withPausePath(text);
@@ -5079,7 +5117,13 @@ export class ConsentNetwork implements NetworkUnderTest {
     const invitationJoins = sentStandaloneNotice ? [sentStandaloneNotice.inviteeId] : deliveredInviteJoins.map(notice => notice.inviteeId);
     if (invitationJoins.length) meta = { ...meta, invitationJoins };
     const idPrefix = invitationJoins.length ? "invite-notice:" : "";
-    this.ctx.send(m.id, text, { meta, idempotencyKey: o.key ?? `${idPrefix}${m.id}:${++this.seq}`, reply });
+    const delivery = this.ctx.send(m.id, text, { meta, idempotencyKey: o.key ?? `${idPrefix}${m.id}:${++this.seq}`, reply });
+    if (proactive && (this.ctx.initialInviteReceipt || delivery.status === "delivered")) {
+      const opportunityId = o.hook?.t === "probe" || o.hook?.t === "plan_probe" ? o.hook.oppId : undefined;
+      const seen = m.pendingAsks.some(invite => invite.deliveryId === delivery.id || (opportunityId !== undefined && invite.opportunityId === opportunityId));
+      if (!seen) m.pendingAsks.push({ kind, at: now, opportunityId, deliveryId: delivery.id,
+        acceptedAt: this.ctx.initialInviteReceipt ? undefined : delivery.ts });
+    }
     if (deliveredInviteJoins.length) m.pendingInviteJoins = m.pendingInviteJoins?.filter(notice => !deliveredInviteJoins.includes(notice));
     if (kind !== "home_help_consent") m.pendingAck = undefined;
     if (note || (m.note && now - m.note.at >= 7 * DAY)) m.note = undefined;
