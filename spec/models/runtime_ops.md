@@ -10,6 +10,10 @@ Check stored writes, retention, ticks, alerts, backup recovery, and shutdown. Th
 
 The [runtime unit spec](../runtimeUnit.md) generates load, restore, action, save, and adapter follow-up decisions. The shell owns the queue, database advisory locks, and transaction commit.
 
+The [backend lifecycle spec](../backendLifecycle.md) drives worker
+reservations and shutdown decisions. The current backend starts the
+grace wait after listeners stop accepting work.
+
 The [platform retention rules](../platformRetention.md) set the account
 and inbox cutoffs and retain counters needed for STOP hints.
 
