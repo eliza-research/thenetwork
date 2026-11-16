@@ -46,5 +46,5 @@ export declare function step(current: RuntimeUnit, event: Event): RuntimeUnit;
 export declare function parseEvent(x: unknown): Event | undefined;
 /** Turn an untrusted value, such as a state loaded from storage, into a state, or undefined if it is not one. It must have exactly the state's shape (no other fields, whole numbers that are safe integers, sets that hold nothing twice, maps as records whose keys carry the "$" every key carries here) and satisfy every `always` rule. The result is a fresh copy, so nothing the caller keeps can change it afterwards. @throws {never} */
 export declare function parseState(x: unknown): RuntimeUnit | undefined;
-/** A Machine never shares its held state with callers. @throws {never} */
+/** A Machine never shares a state with its callers. @throws {never} */
 export declare function snapshot_runtimeUnit<A>(value: A): A;

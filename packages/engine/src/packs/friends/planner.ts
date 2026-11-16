@@ -24,7 +24,7 @@
 //   likely free; the probe carries them and the group books the option most yes-sayers picked.
 //
 // Engine-visible inputs only (the World, availability evidence, the Network's own outcome records).
-import type { MemberId } from "@thenetwork/core";
+import type { Category, MemberId } from "@thenetwork/core";
 import { CITY_TZ, DAY, HOUR, MINUTE, fromLocal, localParts } from "@thenetwork/core";
 import {
   canReservePartner, type Event as WeekEvent, initial as initialWeek, newPlanAlternateCanRemain, newPlanAvailable,
@@ -149,7 +149,12 @@ function retainedCrewHost(crew: Crew, invited: readonly MemberId[]): MemberId {
   return invited[crew.sessions.length % invited.length]!;
 }
 
-const ONE_TO_ONE = { category: "hobby", role: "peer", format: "one_to_one", timeSensitive: false } as const;
+/** Current pack eligibility for an activity partner, including prior group attendance on both sides. */
+export function friendsPartnerEligible(w: World, first: MemberId, second: MemberId, category: Category = "hobby"): boolean {
+  const check = { category, role: "peer", format: "one_to_one", timeSensitive: false } as const;
+  return memberReason(w, first, check) === null && memberReason(w, second, check) === null
+    && pairReason(w, first, second, category) === null;
+}
 
 /** The mean pair value of a circle over 1 (a plan's score). */
 const circleScore = (circle: Circle) => Math.round((1e4 * circle.evidence.pairValueTotal) / (circle.evidence.pairCount * pairValueScale)) / 1e4;
@@ -411,7 +416,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
     if (!a || !b || !inp.evidence.has(a) || !inp.evidence.has(b)) continue;
     const pair = { first: a, second: b };
     if (!canReservePartner(week, pair, pol.partnerIntros)) continue;
-    if (memberReason(w, a, ONE_TO_ONE) !== null || memberReason(w, b, ONE_TO_ONE) !== null || pairReason(w, a, b, ONE_TO_ONE.category) !== null) continue;
+    if (!friendsPartnerEligible(w, a, b)) continue;
     const act = pairActivity(w, a, b, pcfg);
     if (!act) continue;
     const slots = slotsAll.filter(sl => (act.dayparts as string[]).includes(daypartOf(sl.start, tz, att)))

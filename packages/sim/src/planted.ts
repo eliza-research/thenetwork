@@ -17,8 +17,12 @@ import type { AppId, Category, City, Facet, Intent, Member, MemberId, Presence }
 import { DAY, Rng, canBeMatched, hash32 } from "@thenetwork/core";
 import type { EngineInput } from "@thenetwork/engine/src/types.ts";
 import { NEIGHBORHOODS as FRIENDS_NEIGHBORHOODS } from "@thenetwork/engine/src/packs/friends/geo.ts";
+import { FRIENDS_SLOTS, FT, VERIFY_PASS } from "@thenetwork/engine/src/packs/friends/info.ts";
 import { FRIENDS_ACTIVITY_TAGS } from "@thenetwork/engine/src/packs/friends/vectors.ts";
 import { appearanceFacet } from "@thenetwork/engine/src/packs/slop/appearance.ts";
+import { SLOTS as DATE_SLOTS } from "@thenetwork/engine/src/packs/slop/profile.ts";
+import { ZIPS } from "@thenetwork/engine/src/packs/slop/zips.ts";
+import { cofounderIntentDetails, cofounderIntentObjective } from "../../core/src/generated/cofounderIntent.ts";
 import { laneOffered } from "../../core/src/generated/matchLane.ts";
 import { FIRST_NAMES, NEIGHBORHOODS } from "./taxonomy.ts";
 import { plantedPeonHire } from "./planted-peon.ts";
@@ -147,11 +151,14 @@ const TWO_SIDED: ReadonlySet<PlantedLane> = new Set<PlantedLane>(["Hire", "Mento
 const APP_OF_LANE: Record<PlantedLane, AppId> = { Friend: "friends", Date: "slop", Cofounder: "peon", Hire: "peon", Intro: "ntwrk", Mentor: "ntwrk", Invest: "ntwrk" };
 const LANE_CATEGORY: Record<PlantedLane, Category> = { Friend: "social", Date: "romance", Cofounder: "professional", Intro: "professional", Hire: "professional", Mentor: "professional", Invest: "professional" };
 const FRIENDS_TOPICS = [...FRIENDS_ACTIVITY_TAGS].sort();
-const DATING_ZIP: Record<PlantedCity, string> = { nyc: "10001", sf: "94103" };
+const FRIENDS_ENERGY = ["low", "mid", "high"];
+const DATE_ACTIVITIES = ["coffee", "drinks", "walk", "museum", "dinner", "live_music", "comedy", "climbing", "cooking_class", "hike"];
+const DATE_PLANS = [...DATE_ACTIVITIES.map(a => `activity:${a}`), ...DATE_SLOTS.map(s => `free:${s}`)];
+const DATE_ZIPS = { nyc: ZIPS.filter(z => z.market === "nyc"), sf: ZIPS.filter(z => z.market === "sf") };
 const LANE_OBJECTIVE: Record<PlantedLane, Record<PlantedSide, string>> = {
   Friend: { Peer: "meet a few new friends who share my interests", Offering: "", Seeking: "" },
   Date: { Peer: "meet someone to date", Offering: "", Seeking: "" },
-  Cofounder: { Peer: "find a cofounder", Offering: "", Seeking: "" },
+  Cofounder: { Peer: cofounderIntentObjective, Offering: "", Seeking: "" },
   Intro: { Peer: "meet people who work on what I work on", Offering: "", Seeking: "" },
   Hire: { Peer: "", Offering: "hire for an open role", Seeking: "find a new job" },
   Mentor: { Peer: "", Offering: "mentor someone earlier in their career", Seeking: "find a mentor" },
@@ -269,15 +276,17 @@ export function plantedEngineInput(o: PlantedWorldOptions): { input: EngineInput
   const topicsPerCircle = o.topicsPerCircle ?? PLANTED_DEFAULTS.topicsPerCircle;
   // About two topics per circle in the vocabulary: circles rarely share a topic set.
   const vocabSize = Math.max(48, Math.ceil((o.n * topicsPerCircle) / 9));
-  const latent = plantLatent({ ...o, seed: o.seed, dimensions: lanes.length }, seats, names("topic", vocabSize), o.seed);
+  const topics = app === "friends" ? FRIENDS_TOPICS : names("topic", vocabSize);
+  const latent = plantLatent({ ...o, seed: o.seed, dimensions: lanes.length }, seats, topics, o.seed);
 
-  // Offers and seeks: position j in a circle offers pool[j], pool[j+1] and seeks pool[j+2], pool[j+3].
-  const skills = names("skill", vocabSize);
-  const planned = new Map<MemberId, { offers: number[]; seeks: number[] }>();
+  // Peers rotate through a cohort's pool. For a single two-sided lane, the Seeking side and
+  // Offering side receive complementary roles. Dates share the same cohort plans.
+  const skills = app === "friends" ? FRIENDS_TOPICS : app === "slop" ? DATE_PLANS : names("skill", vocabSize);
+  const twoSided = lanes.length === 1 && TWO_SIDED.has(lanes[0]!) ? lanes[0] : undefined;
+  const planned = new Map<MemberId, { pool: readonly number[]; position: number }>();
   latent.circles.forEach((ids, c) => {
-    const pool = distinctIndices(root.fork("skills", c), Math.max(4, ids.length), vocabSize);
-    const at = (k: number) => pool[k % pool.length]!;
-    ids.forEach((id, j) => planned.set(id, { offers: [at(j), at(j + 1)], seeks: [at(j + 2), at(j + 3)] }));
+    const pool = distinctIndices(root.fork("skills", c), Math.max(4, ids.length), skills.length);
+    ids.forEach((id, position) => planned.set(id, { pool, position }));
   });
   const marketOf = new Map(seats.map(s => [s.id, s.market]));
   const circleArea = latent.circles.map((ids, c) => root.fork("area", c).pick(NEIGHBORHOODS[marketOf.get(ids[0]!)!]));
@@ -304,16 +313,19 @@ export function plantedEngineInput(o: PlantedWorldOptions): { input: EngineInput
     const plan = planned.get(id);
     const taken = new Set<number>();
     const pickSkill = (plannedSkill: number | undefined) => {
-      const k = plannedSkill !== undefined && !taken.has(plannedSkill) && r.bool(purity) ? plannedSkill : freshIndex(r, vocabSize, taken);
+      const k = plannedSkill !== undefined && !taken.has(plannedSkill) && r.bool(purity) ? plannedSkill : freshIndex(r, skills.length, taken);
       taken.add(k);
       return k;
     };
-    // Latent standing without any lane offset or side: one skill level for every lane.
-    const level = plantedLevel(mark.standing[0]!);
-    const offerIdx = [pickSkill(plan?.offers[0]), pickSkill(plan?.offers[1])];
-    const seekIdx = [pickSkill(plan?.seeks[0]), pickSkill(plan?.seeks[1])];
-    const offers = offerIdx.map(k => ({ skill: skills[k]!, level }));
-    const seeks = seekIdx.map(k => ({ skill: skills[k]!, level }));
+    const side = twoSided ? memberships[twoSided]?.side : undefined;
+    const position = app === "slop" || side === "Offering" ? 0 : side === "Seeking" ? 2 : plan?.position ?? 0;
+    const drawSkill = (offset: number) => pickSkill(plan ? plan.pool[(position + offset) % plan.pool.length] : undefined);
+    const offerIdx = [drawSkill(0), drawSkill(1)];
+    const seekIdx = [drawSkill(2), drawSkill(3)];
+    const planIdx = [...offerIdx, ...seekIdx];
+    const level = app === "slop" ? 1 : plantedLevel(twoSided ? memberships[twoSided]!.standing : mark.standing[0]!);
+    const offers = (app === "slop" ? planIdx : offerIdx).map(k => ({ skill: skills[k]!, level }));
+    const seeks = (app === "slop" ? planIdx : seekIdx).map(k => ({ skill: skills[k]!, level }));
 
     const area = mark.circle >= 0 && r.bool(0.7) ? circleArea[mark.circle]! : r.pick(NEIGHBORHOODS[seat.market]);
     const joinedAt = now - (newcomer ? r.int(0, 13) : r.int(14, 400)) * DAY;
@@ -334,6 +346,12 @@ export function plantedEngineInput(o: PlantedWorldOptions): { input: EngineInput
     let f = 0;
     const add = (kind: Facet["kind"], value: string, tags: string[], scope: Facet["scope"], provenance: Facet["provenance"] = "said", facetApp: AppId = app) =>
       facets.push({ id: `${id}-f${f++}`, memberId: id, kind, value, tags, scope, provenance, confidence: 0.9, app: facetApp });
+    const trait = (label: string, count: number) => {
+      const draw = r.fork("trait", label);
+      return mark.circle >= 0 && draw.bool(purity)
+        ? hash32("planted-trait", o.seed, mark.circle, label) % count
+        : draw.int(0, count - 1);
+    };
     add("interest", `into ${mark.topics.join(", ")}`, [...mark.topics], "shareable");
     for (const s of offers) add("offer", `can help with ${s.skill}`, [s.skill, `level:${s.level}`], "shareable");
     for (const s of seeks) add("desire", `looking for help with ${s.skill}`, [s.skill, `level:${s.level}`], "matchable");
@@ -346,7 +364,7 @@ export function plantedEngineInput(o: PlantedWorldOptions): { input: EngineInput
         add("fact", "track record", [`lane:${lane}`, `evidence:${e.points}`, e.reviewed ? "reviewed" : "unreviewed"], "matchable", e.reviewed ? "vouched" : "said", appOf(lane));
       const intent: Intent = { id: `${id}-i-${lane}`, memberId: id, app: appOf(lane), objective: LANE_OBJECTIVE[lane][m.side],
         category: LANE_CATEGORY[lane], horizonDays: 60, status: "active", createdAt: Math.max(joinedAt, now - r.int(0, 20) * DAY),
-        ...(lane === "Cofounder" ? { details: "cofounder:member-confirmed" } : {}) };
+        ...(lane === "Cofounder" ? { details: cofounderIntentDetails } : {}) };
       if (adult && app === "peon" && lane === "Hire") {
         const hire = plantedPeonHire(plantedMember, intent, area);
         intents.push(hire.intent);
@@ -356,18 +374,27 @@ export function plantedEngineInput(o: PlantedWorldOptions): { input: EngineInput
       }
     }
     if (adult && app === "friends") {
-      const activities = [...new Set(mark.topics.map(topic => FRIENDS_TOPICS[hash32("friends-topic", topic) % FRIENDS_TOPICS.length]!))];
-      add("interest", "Preferred activities", activities, "shareable");
-      add("availability_pattern", "Available evenings and weekends", ["friends:free:fri_eve", "friends:free:sat_pm", "friends:free:sun_pm"], "agent_private");
-      add("fact", "Verified by the service", ["verify:liveness:pass", "verify:age:pass"], "agent_private", "connected_source");
+      const slots = new Set([FRIENDS_SLOTS[trait("free first", FRIENDS_SLOTS.length)]!, FRIENDS_SLOTS[trait("free second", FRIENDS_SLOTS.length)]!]);
+      add("availability_pattern", "Usually free", [...slots].map(slot => `${FT.free}${slot}`), "agent_private");
+      add("preference", "Social energy", [`${FT.energy}${FRIENDS_ENERGY[trait("energy", FRIENDS_ENERGY.length)]!}`], "agent_private");
+      add("fact", "Verified by the service", [`${FT.liveness}${VERIFY_PASS}`, `${FT.age}${VERIFY_PASS}`], "agent_private", "connected_source");
     }
     if (adult && app === "slop" && memberships.Date) {
       const genders = ["woman", "man", "nonbinary"] as const;
-      add("preference", "Dating preferences", [`romance:is:${genders[i % genders.length]}`, ...genders.map(gender => `romance:seeks:${gender}`), "romance:age:18-70", "slop:scope:city", "slop:max_miles:8"], "agent_private");
-      add("fact", "Home ZIP", [`slop:zip:${DATING_ZIP[seat.market]}`], "agent_private");
+      const zips = DATE_ZIPS[seat.market];
+      add("preference", "Dating preferences", [`romance:is:${genders[i % genders.length]}`, ...genders.map(gender => `romance:seeks:${gender}`), `romance:age:${Math.max(18, seat.age - 8)}-${seat.age + 8}`, "slop:scope:city", "slop:max_miles:25"], "agent_private");
+      add("fact", "Home ZIP", [`slop:zip:${zips[trait("zip", zips.length)]!.zip}`], "agent_private");
       add("goal", "Long-term dating", ["slop:goal:long_term"], "matchable");
-      const overall = (memberships.Date.observed / 100) * 6 - 3;
-      facets.push(appearanceFacet(id, { age: seat.age }, { face: overall, body: overall, overall, confidence: 0.9, photos: 1, model: "planted" }, joinedAt));
+      const wantsKids = trait("wants kids", 2) === 0 ? "yes" : "no";
+      add("fact", "Lifestyle", ["slop:smoking:never", "slop:drinking:sometimes", `slop:wants_kids:${wantsKids}`, "slop:religion_importance:1", "slop:politics:moderate"], "matchable");
+      for (const plan of offers) {
+        add(plan.skill.startsWith("free:") ? "availability_pattern" : "preference", plan.skill.split(":")[1]!, [`slop:${plan.skill}`], "matchable");
+      }
+      const { observed, reviewed } = memberships.Date;
+      if (reviewed > 0) {
+        const overall = Math.min(1000, observed * 10 + 5) * 6 / 1000 - 3;
+        facets.push({ ...appearanceFacet(id, { age: seat.age }, { face: overall, body: overall, overall, confidence: 0.9, photos: reviewed, model: "planted" }, joinedAt), app: "slop" });
+      }
     }
     ordinalOf.set(id, i);
     truthMembers.push(plantedMember);

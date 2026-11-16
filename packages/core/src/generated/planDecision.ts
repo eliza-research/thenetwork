@@ -29,6 +29,32 @@ export function planReplyChoice(reply: ReplyFacts): ReplyChoice {
   return !canApplyPlanReply(reply.phase, reply.pendingMember) ? "IgnoreReply" : (planProbeExpired(reply.phase, !reply.beforeDeadline) ? "ExpireProbe" : (reply.accepted ? (reply.phase === "Booked" ? (reply.lateJoinOpen ? "AddMember" : "RecordLate") : (reply.yesAfter >= reply.needed ? "BookPlan" : (reply.partnerPlan ? "AskPartner" : "RecordAnswer"))) : (reply.phase === "Booked" ? "RecordAnswer" : (reply.partnerPlan && reply.firstMember ? "ClosePlan" : "AskAlternate"))));
 }
 
+/** Story: Confirm a plan after enough members accept / A Friends replacement needs a current pair value with every remaining member (spec/planDecision.md) */
+//@ pure
+export function currentFriendPlanSeatFits(hasProfile: boolean, peerValues: number[]): boolean {
+  return hasProfile && !peerValues.some((value: number) => !(value >= 0));
+}
+
+/** Story: Confirm a plan after enough members accept / A Friends replacement needs a current pair value with every remaining member (spec/planDecision.md) */
+//@ pure
+export function lawFriendPlanSeatNeedsACurrentProfile(peerValues: number[]): boolean {
+  //@ ensures \result === true
+  return !currentFriendPlanSeatFits(false, peerValues);
+}
+
+/** Story: Confirm a plan after enough members accept / A Friends replacement needs a current pair value with every remaining member (spec/planDecision.md) */
+//@ pure
+export function lawFriendPlanSeatNeedsEveryPairValue(hasProfile: boolean, peerValues: number[]): boolean {
+  //@ ensures \result === true
+  return !peerValues.some((value: number) => value < 0) || !currentFriendPlanSeatFits(hasProfile, peerValues);
+}
+
+/** Story: Confirm a plan after enough members accept / An existing Friends plan can use the last discovery slot (spec/planDecision.md) */
+//@ pure
+export function planProfileCapacityAllows(capacity: number, existingFriendPlan: boolean): boolean {
+  return existingFriendPlan || capacity > 0;
+}
+
 /** Story: Confirm a plan after enough members accept / Booking requires a pending acceptance that meets quorum (spec/planDecision.md) */
 //@ pure
 export function lawBookingNeedsQuorum(phase: PlanStage, pendingMember: boolean, accepted: boolean, yesAfter: number, needed: number, partnerPlan: boolean, firstMember: boolean, beforeDeadline: boolean, lateJoinOpen: boolean): boolean {
@@ -68,6 +94,12 @@ export function planFallbackShape(yesCount: number, smallerOn: boolean, minGroup
 export function lawDirectFallbackRequiresGroup(yesCount: number, smallerOn: boolean, minGroup: number, leadOk: boolean): boolean {
   //@ ensures \result === true
   return !(planFallbackShape(yesCount, smallerOn, minGroup, leadOk) === "SmallerGroup") || yesCount >= 3;
+}
+
+/** Story: Choose a fallback for a plan that cannot proceed / Both Friends activity partners need prior group attendance (spec/planDecision.md) */
+//@ pure
+export function friendsPartnerPlanFits(currentSeats: boolean[], pairEligible: boolean): boolean {
+  return currentSeats.length === 2 && !currentSeats.some((eligible: boolean) => !eligible) && pairEligible;
 }
 
 /** Story: Choose a fallback for a plan that cannot proceed / A group plan never books two members directly (spec/planDecision.md) */

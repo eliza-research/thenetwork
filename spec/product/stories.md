@@ -134,7 +134,7 @@ Models: [private member standing](../memberStanding.md), [matching engine](../mo
 
 ### Candidate search is bounded and exact when it says so
 
-Check at most the lane's search budget of pairs for each member, and when the search closes as exact, keep the same best candidates that a full scan of the eligible members would keep.
+Use the lane's limits on pair checks and index entries visited for each search. When the search closes as exact, keep the same best candidates that a full scan of the eligible members would keep.
 
 Models: [bounded candidate search](../candidateSearch.md), [candidate pool](../models/candidate_pool.md).
 
@@ -240,7 +240,9 @@ Models: [repeat encounters](../repeatEncounter.md), [opportunity](../models/oppo
 
 Interpret plain-language categories, quiet hours, pause and resume. Confirm the new setting briefly. STOP and STOP ALL stop the shared line across apps. Leave removes one app. START and HELP have their own consent-aware path. Preserve the member's control across channels and prevent ordinary sends during an opt-out.
 
-Models: [shared-line consent journey](../sharedLineConsentJourney.md), [turn consent](../models/turn_consent.md), [outbound queue](../models/outbound_queue.md), [safety and trust](../models/safety_trust.md).
+Commands such as “pause matching”, “quiet hours 10 pm to 8 am”, and “turn off hobby suggestions” apply to the app that receives the signed text.
+
+Models: [participation controls](../participationControls.md), [shared-line consent journey](../sharedLineConsentJourney.md), [turn consent](../models/turn_consent.md), [outbound queue](../models/outbound_queue.md), [safety and trust](../models/safety_trust.md).
 
 ## Story F21 — Hear when nothing fits
 
@@ -254,7 +256,7 @@ Models: [empty intent follow-up](../emptyIntentFollowup.md), [matching engine](.
 
 ### An empty or budgeted search is a recorded reason
 
-When a member's candidate search keeps no candidate, or stops at its check budget before it is exact, record that result and its bound on missed value in the matching run log (staff only, never in member-facing text), and never fill the gap with a pair that has no pair value.
+When a member's candidate search keeps no candidate or reaches either search limit before it is exact, record the result and its bound on missed value in the staff-only matching run log. Only pairs with a value can fill a candidate slot.
 
 Models: [bounded candidate search](../candidateSearch.md), [empty intent follow-up](../emptyIntentFollowup.md), [matching engine](../models/matching_engine.md).
 

@@ -1,7 +1,7 @@
 # Spec reference
 
 This is the Vibestack spec-language reference at revision
-[`7994c1fe`](https://github.com/lalalune/vibestack/blob/7994c1feff2af9c3e7f7dd762adb908fa724a553/SPEC.md).
+[`8eac8889`](https://github.com/lalalune/vibestack/blob/8eac88896b72146440d09d91a009fc66a4501e5a/SPEC.md).
 Use [The Network command map](README.md#commands) when this reference uses
 standalone Vibestack commands. The Network keeps its product requirements in
 [`spec/product/`](spec/product/README.md) and the action-based Quint flow
@@ -471,7 +471,7 @@ line.
 - Calling a transition directly (`pay(o, 5)`) is only meaningful when its
   guard holds. Application code goes through `apply`, or a `Machine` in memory
   (`machine()`), kept in a store (`stored(key)`) or kept by the shell
-  (`machineOver(start, keep)`), of the Effect adapter
+  (`machineOver(load, keep)`), of the Effect adapter
   `gen/<name>.effect.vibe`, which use `enabled` and `step`; a React component
   goes through `useMachine` of `gen/<name>.react.ts`
   ([shell skill](.agents/skills/shell/SKILL.md)).
@@ -508,7 +508,7 @@ change when read again, which must do what the clean event does. `options`
 are `view` (what of the state `observe` shows), `keys` (the entities walks
 interleave), `walks` (at most this many; `0` for a slow driver) and `steps`.
 The walks use the fixed normal or nightly profile
-([budgets](https://github.com/lalalune/vibestack/blob/7994c1feff2af9c3e7f7dd762adb908fa724a553/CONTRIBUTING.md#seeds-and-budgets)).
+([budgets](https://github.com/lalalune/vibestack/blob/8eac88896b72146440d09d91a009fc66a4501e5a/CONTRIBUTING.md#seeds-and-budgets)).
 
 - **A disagreement is saved.** A journey or walk that disagrees is shrunk
   and written to `test/counterexamples/<name>/<hash>.json`, which every
@@ -539,7 +539,7 @@ under `src/`.
   arm64 and on Apple silicon; elsewhere the stage prints a `-` line and CI
   explores the page.
 - **For a fixed time, from no seed.** The fixed profile's seconds, Chrome's
-  start included ([budgets](https://github.com/lalalune/vibestack/blob/7994c1feff2af9c3e7f7dd762adb908fa724a553/CONTRIBUTING.md#seeds-and-budgets)). The
+  start included ([budgets](https://github.com/lalalune/vibestack/blob/8eac88896b72146440d09d91a009fc66a4501e5a/CONTRIBUTING.md#seeds-and-budgets)). The
   actions are random, so two runs explore differently.
 - **`test/bombadil.ts` says what must hold.** It is an ES module Bombadil
   bundles itself. Re-export `@antithesishq/bombadil/browser/defaults` (no

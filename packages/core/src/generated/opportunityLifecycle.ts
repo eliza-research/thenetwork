@@ -69,6 +69,19 @@ export function lawAGroupNeedsAtLeastThree(remaining: number): boolean {
   return !groupCanContinue(remaining) || remaining >= 3;
 }
 
+/** Story: Book and conclude a proposal that comes together / A closed booking releases its pending replies (spec/opportunityLifecycle.md) */
+//@ pure
+export function bookedReplyCurrent(proposal: OpportunityLifecycle, accepted: boolean): boolean {
+  return proposal.phase === "Scheduled" && proposal.approved && accepted;
+}
+
+/** Story: Book and conclude a proposal that comes together / A closed booking releases its pending replies (spec/opportunityLifecycle.md) */
+//@ pure
+export function lawBookedReplyRequiresCurrentConsent(proposal: OpportunityLifecycle, accepted: boolean): boolean {
+  //@ ensures \result === true
+  return !bookedReplyCurrent(proposal, accepted) || (proposal.phase === "Scheduled" && accepted);
+}
+
 /** Story: Book and conclude a proposal that comes together / A new minor signal closes an unbooked opportunity involving that person (spec/opportunityLifecycle.md) */
 //@ pure
 export function closesForMinor(proposal: OpportunityLifecycle, minorSignal: boolean, participant: boolean, alternate: boolean, contacted: boolean): boolean {
@@ -132,6 +145,19 @@ export function sometimesCanComplete(proposal: OpportunityLifecycle): boolean {
 //@ pure
 export function sometimesCanCloseBeforeContact(proposal: OpportunityLifecycle): boolean {
   return proposal.phase === "Closed" && !proposal.approved;
+}
+
+/** Story: Book and conclude a proposal that comes together / Closing an underfilled proposal releases the members who accepted (spec/opportunityLifecycle.md) */
+//@ pure
+export function releasesPartialAcceptance(before: OpportunityLifecycle, unresolved: boolean, systemProposal: boolean, contacted: boolean, accepted: boolean): boolean {
+  return before.phase === "Probing" && before.approved && unresolved && systemProposal && contacted && accepted;
+}
+
+/** Story: Book and conclude a proposal that comes together / Closing an underfilled proposal releases the members who accepted (spec/opportunityLifecycle.md) */
+//@ pure
+export function lawReleaseNeedsAContactedAcceptor(before: OpportunityLifecycle, unresolved: boolean, systemProposal: boolean, contacted: boolean, accepted: boolean): boolean {
+  //@ ensures \result === true
+  return !releasesPartialAcceptance(before, unresolved, systemProposal, contacted, accepted) || (contacted && accepted);
 }
 
 /** Do the rules allow this event in this state? */

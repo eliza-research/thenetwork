@@ -217,8 +217,8 @@ export interface MatchingRunLog {
   /** Bounded candidate search totals (match/search.ts); absent when no search ran. */
   search?: SearchTally;
 }
-/** Searches run, pair checks, exact and budgeted results, and the largest unseen bound of a budgeted result (-1 if none). */
-export interface SearchTally { members: number; checks: number; exact: number; budgeted: number; largestUnseenBound: number }
+/** Search costs and outcomes. The largest unseen bound is -1 when every result is exact. */
+export interface SearchTally { members: number; checks: number; touches: number; exact: number; budgeted: number; empty: number; largestUnseenBound: number }
 
 // ------------------------------------------------------------------------------------------------
 // Attention budget data model (docs/design/2026-10-07-experience-design.md 1.2; engine-local first,

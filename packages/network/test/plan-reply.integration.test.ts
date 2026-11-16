@@ -4,7 +4,7 @@
 // accepting members of a group plan are asked again through a fresh partner plan, never booked as a pair.
 import { describe, expect, test } from "vitest";
 import { DAY, HOUR, MINUTE } from "@thenetwork/core";
-import type { plans } from "@thenetwork/engine";
+import { friendsPack, FRIENDS_PLANS, type plans } from "@thenetwork/engine";
 import { copy } from "../src/copy.ts";
 import { Mini, START } from "./mini.ts";
 
@@ -13,6 +13,30 @@ const climber = (id: string) => ({
   interests: ["climbing", "hiking"], skills: ["belaying"],
   wants: [{ objective: "find a regular climbing partner", category: "hobby" as const }],
 });
+
+async function friendsPartnerFixture(partner: boolean, bothAttended: boolean) {
+  const ids = ["a", "b", "c", "d"];
+  const w = new Mini(ids.map(climber), { app: "friends", pack: friendsPack, plansConfig: FRIENDS_PLANS, review: "human" });
+  const now = w.clock.now();
+  for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified", tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
+  await w.onboard(...ids);
+  const state = w.net.exportState();
+  state.interactions.push({
+    id: "friends_group_attended", kind: "group", category: "social", at: now - DAY, outcome: "completed",
+    participants: bothAttended ? ids : ["a", "c", "d"],
+  });
+  w.net.importState(state);
+  const invited = ids.slice(0, partner ? 2 : 3);
+  const count = invited.length;
+  const plan: plans.Plan = {
+    id: "friends_partner_check", city: "nyc", activityId: "bouldering", place: { name: "Brooklyn Boulders", area: "Gowanus" },
+    window: { start: now + 6 * DAY, end: now + 6 * DAY + 2 * HOUR }, invited, alternates: [], partner,
+    size: { min: count, target: count, max: count }, quorum: count, probeDeadline: now + 4 * DAY,
+    score: 0.6, u: {}, familiar: {}, createdAt: now, category: partner ? "hobby" : "social",
+  };
+  (w.net as unknown as { submitPlan(plan: plans.Plan, at: number): void }).submitPlan(plan, now);
+  return { w, invited, item: w.net.reviewQueue()[0]! };
+}
 
 describe("plan probe replies", () => {
   test("reviewed plan replies respect the deadline after a restart and allow booked late joins", async () => {
@@ -126,4 +150,119 @@ describe("plan probe replies", () => {
     expect(w.net.exportState().opps.find(o => o.id === partner.oppId)?.plan).toMatchObject({ partner: true, invited: ["a", "b"] });
     expect(w.net.memberList().find(m => m.id === "c")?.note?.text).toBe(copy.planNotTogether);
   }, 300_000);
+
+  test("a reviewed Friends plan skips a replacement whose Friend membership is no longer eligible", async () => {
+    // spec/planDecision.md, "A Friends replacement needs a current pair value with every remaining member"
+    const primary = ["a", "b", "c"];
+    const ids = [...primary, "d", "e"];
+    const w = new Mini(ids.map(climber), { app: "friends", pack: friendsPack, review: "human" });
+    const now = w.clock.now();
+    for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified", tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
+    await w.onboard(...ids);
+    const plan: plans.Plan = {
+      id: "friends_reviewed_backfill", city: "nyc", activityId: "bouldering", place: { name: "Brooklyn Boulders", area: "Gowanus" },
+      window: { start: now + 6 * DAY, end: now + 6 * DAY + 2 * HOUR }, invited: primary, alternates: ["d", "e"], partner: false,
+      size: { min: 3, target: 3, max: 3 }, quorum: 3, probeDeadline: now + 4 * DAY, score: 0.6, u: {}, familiar: {}, createdAt: now, category: "social",
+    };
+    (w.net as unknown as { submitPlan(plan: plans.Plan, at: number): void }).submitPlan(plan, now);
+    const item = w.net.reviewQueue()[0]!;
+    expect(w.net.review(item.oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
+    expect(await w.runUntil(() => primary.every(id => w.probed(id)), DAY)).toBe(true);
+    await w.say("a", "yes");
+    await w.say("b", "yes");
+    const index = w.facets.findIndex(f => f.id === "d:verified");
+    w.facets[index] = { ...w.facets[index]!, tags: ["verify:liveness:fail", "verify:age:pass"] };
+    const mark = w.mark();
+    await w.say("c", "no");
+
+    expect(await w.runUntil(() => w.probed("e"), DAY)).toBe(true);
+    expect(w.sent.slice(mark).filter(message => message.meta.type === "plan_probe")).toMatchObject([
+      { to: "e", meta: { plan: { planId: item.oppId, size: 3 } } },
+    ]);
+    expect(w.net.exportState().opps.find(o => o.id === item.oppId)?.participants).toEqual([...primary, "e"]);
+    await w.say("e", "yes");
+    expect(w.meetings).toMatchObject([{ proposalId: item.oppId, participants: ["a", "b", "e"] }]);
+  });
+
+  test("a reviewed Friends plan books after its invitation uses the last discovery slot", async () => {
+    // spec/planDecision.md, "An existing Friends plan can use the last discovery slot"
+    const primary = ["a", "b", "c"];
+    const history = [["a", "d", "e"], ["a", "f", "g"]];
+    const ids = [...new Set([...primary, ...history.flat()])];
+    const w = new Mini(ids.map(climber), { app: "friends", pack: friendsPack, review: "human" });
+    const now = w.clock.now();
+    for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified", tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
+    await w.onboard(...ids);
+    const plan: plans.Plan = {
+      id: "friends_reviewed_last_slot", city: "nyc", activityId: "bouldering", place: { name: "Brooklyn Boulders", area: "Gowanus" },
+      window: { start: now + 6 * DAY, end: now + 6 * DAY + 2 * HOUR }, invited: primary, alternates: [], partner: false,
+      size: { min: 3, target: 3, max: 3 }, quorum: 3, probeDeadline: now + 4 * DAY, score: 0.6, u: {}, familiar: {}, createdAt: now, category: "social",
+    };
+    (w.net as unknown as { submitPlan(plan: plans.Plan, at: number): void }).submitPlan(plan, now);
+    const item = w.net.reviewQueue()[0]!;
+    const state = w.net.exportState();
+    const pending = state.opps.find(o => o.id === item.oppId)!;
+    for (const [index, invited] of history.entries()) {
+      state.opps.push({
+        ...pending, id: `friends_previous_${index}`, createdAt: now - (index + 1) * DAY, stage: "done",
+        participants: invited, contacted: invited, status: invited.map(id => [id, "yes"]), plan: { ...plan, invited },
+        review: undefined, recorded: true,
+      });
+    }
+    w.net.importState(state);
+    expect(w.net.review(item.oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
+    expect(await w.runUntil(() => primary.every(id => w.probed(id)), DAY)).toBe(true);
+    w.restart();
+    await w.say("a", "yes");
+    await w.say("b", "yes");
+    expect(w.meetings).toHaveLength(0);
+    await w.say("c", "yes");
+    expect(w.meetings).toMatchObject([{ proposalId: item.oppId, participants: primary }]);
+  });
+
+  test.each([false, true])("a smaller Friends plan checks both members before partner review (both attended: %s)", async bothAttended => {
+    // spec/planDecision.md, "Both Friends activity partners need prior group attendance"
+    const { w, invited, item } = await friendsPartnerFixture(false, bothAttended);
+    const b = w.members.find(m => m.id === "b")!;
+    b.prefs = { ...b.prefs, categoriesOptIn: ["social"] };
+    expect(w.net.review(item.oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
+    expect(await w.runUntil(() => invited.every(id => w.probed(id)), DAY)).toBe(true);
+    await w.say("a", "yes");
+    await w.say("b", "yes");
+    await w.say("c", "no");
+
+    const queue = w.net.reviewQueue();
+    expect(w.meetings).toHaveLength(0);
+    if (bothAttended) {
+      expect(queue).toMatchObject([{ proposal: { participants: ["a", "b"], category: "social" } }]);
+      expect(queue[0]?.oppId).not.toBe(item.oppId);
+      expect(w.sent.filter(s => s.meta.plan?.planId === queue[0]?.oppId)).toEqual([]);
+    } else {
+      expect(queue).toEqual([]);
+      expect(w.log("plan_fallback").at(-1)?.detail.kind).toBe("next_week");
+    }
+  });
+
+  test.each(["first contact", "booking"])("a restored Friends partner plan rechecks both members before %s", async at => {
+    // spec/planDecision.md, "Both Friends activity partners need prior group attendance"
+    const { w, item } = await friendsPartnerFixture(true, at === "booking");
+    w.restart();
+    expect(w.net.review(item.oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
+    if (at === "first contact") {
+      await w.run(DAY);
+      expect(w.sent.filter(s => s.meta.plan?.planId === item.oppId)).toEqual([]);
+    } else {
+      expect(await w.runUntil(() => w.probed("a"), DAY)).toBe(true);
+      await w.say("a", "yes");
+      expect(await w.runUntil(() => w.probed("b"), DAY)).toBe(true);
+      const state = w.net.exportState();
+      state.interactions.find(r => r.id === "friends_group_attended")!.participants = ["a", "c", "d"];
+      w.net.importState(state);
+      w.restart();
+      await w.say("b", "yes");
+    }
+    expect(w.meetings).toHaveLength(0);
+    expect(w.sent.filter(s => s.meta.type === "proposal" && s.meta.proposalId === item.oppId)).toEqual([]);
+    expect(w.net.exportState().opps.find(o => o.id === item.oppId)?.stage).toBe("closed");
+  });
 });

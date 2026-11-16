@@ -10,8 +10,8 @@ import { involvesMinor, memberReason, publicEventPreferencesAllow, screenCandida
 import type { GenCtx } from "./genkit.ts";
 import { JudgeCache, judgeCandidates, runCachedPass } from "./judge.ts";
 import { checkMemberFacing, redactPrivate } from "./judgeCommon.ts";
-import { deepReviewOne, gateMemberFacing, hardGate, type DeepVerdict } from "./judgeDeep.ts";
-import { screenDecision, screenOne, type ScreenVerdict } from "./judgeScreen.ts";
+import { gateMemberFacing, hardGate, prepareDeepReview, type DeepVerdict } from "./judgeDeep.ts";
+import { prepareScreen, screenDecision, screenSnapshot, type ScreenVerdict } from "./judgeScreen.ts";
 import { initial as initialJudgmentRun, step as stepJudgmentRun } from "../../core/src/generated/judgmentRun.ts";
 import { standingIntentCandidateInScope } from "../../core/src/generated/standingIntent.ts";
 import { blockingPairs, fairnessMetrics, planAsks, selectProposals, updateExposureDebt } from "./policy.ts";
@@ -199,8 +199,9 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
       const toScreen = pickTop(pool, sc.topK, sc.groupTopK).map(s => s.c);
       const screenStats = { calls: 0, cacheHits: 0, failures: 0 };
       const screenLog: { key: string; cacheKey: string; verdict: ScreenVerdict | null; cached: boolean }[] = [];
-      const res = await runCachedPass(w, toScreen, screen.version, deps.screenCache ?? new JudgeCache<ScreenVerdict>(cfg.judge.ttlMs),
-        screenStats, c => screenOne(w, c, llm, sc.maxTokens).then(r => r.verdict), screenLog);
+      let snapshot: World["input"] | undefined;
+      const res = await runCachedPass(w, toScreen, llm, deps.screenCache ?? new JudgeCache<ScreenVerdict>(cfg.judge.ttlMs),
+        screenStats, c => prepareScreen(w, c, sc.maxTokens, snapshot ??= screenSnapshot(w)), screenLog, runLog.judgeModel);
       runLog.judge.screen = { ...screenStats, verdicts: screenLog };
       const rejected = new Set([...res].filter(([, v]) => v && !screenDecision(v)).map(([k]) => k));
       scored = scored.map(s => (rejected.has(s.c.key) ? { ...s, eligible: false, reason: "screen_reject" } : s));
@@ -211,7 +212,7 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
     }
     if (judgment.phase === "Rubric") {
       const toJudge = pickTop(pool, cfg.judge.topK, cfg.judge.groupTopK).map(s => s.c);
-      const verdicts = await judgeCandidates(w, toJudge, llm, deps.judgeCache ?? new JudgeCache(cfg.judge.ttlMs), runLog.judge, runLog.judge.verdicts);
+      const verdicts = await judgeCandidates(w, toJudge, llm, deps.judgeCache ?? new JudgeCache(cfg.judge.ttlMs), runLog.judge, runLog.judge.verdicts, runLog.judgeModel);
       // Pass 2 can only lower or remove (engine-pipeline-7): a verdict that would raise the score keeps
       // the pre-judge score and components; a floor the verdict breaks still removes the configuration;
       // a configuration below its bar before the judge stays ineligible.
@@ -233,8 +234,8 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
       const survivors = byScore(scored.filter(s => s.eligible && s.verdict && s.verdict.verdict !== "no")).slice(0, dc.topK);
       const deepLog: { key: string; cacheKey: string; verdict: { verdict: DeepVerdict; refs: Record<MemberId, string> } | null; cached: boolean }[] = [];
       const stats = { calls: 0, cacheHits: 0, failures: 0 };
-      const res = await runCachedPass(w, survivors.map(s => s.c), J.deep.version, deps.deepCache ?? new JudgeCache<{ verdict: DeepVerdict; refs: Record<MemberId, string> }>(cfg.judge.ttlMs),
-        stats, c => deepReviewOne(w, c, llm, dc.maxTokens), deepLog);
+      const res = await runCachedPass(w, survivors.map(s => s.c), llm, deps.deepCache ?? new JudgeCache<{ verdict: DeepVerdict; refs: Record<MemberId, string> }>(cfg.judge.ttlMs),
+        stats, c => prepareDeepReview(w, c, dc.maxTokens), deepLog, runLog.judgeModel);
       runLog.judge.deep = { ...stats, verdicts: [] };
       scored = scored.map(s => {
         const r = res.get(s.c.key);

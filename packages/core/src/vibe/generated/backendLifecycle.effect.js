@@ -1,6 +1,7 @@
 // Generated from spec/backendLifecycle.md via Vibestack and VibeLang. Run pnpm run spec:sync.
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { orDie } from "effect/Effect";
@@ -58,21 +59,23 @@ export function apply(current, event) {
 export class Machine extends runtime.$service("thenetwork/spec/backendLifecycle.md#Machine") {
 }
 /**
- * A Machine from `start` that gives each state an event leads to to `keep` before it is the current one: where `keep`
- * dies, `send` dies and the state stays as it was. It never shares the state it holds with its callers.
+ * A Machine over a state kept elsewhere: `load` reads it and `keep` writes it. Each event is applied to what `load`
+ * reads when it is sent, so that a state another writer kept since is stepped from, never written over, and the state
+ * it leads to goes to `keep` before `send` returns. It fails as the first `load` does; where a later `load` fails
+ * or `keep` dies, `send` dies and the state stays as it was. It never shares a state with its callers.
  */
-export function machineOver(start, keep) {
+export function machineOver(load, keep) {
     return Effect_1.gen(function* machineOver() {
-        const held = yield* SubscriptionRef.make(snapshot_backendLifecycle(start));
+        const shown = yield* SubscriptionRef.make(snapshot_backendLifecycle(yield* load()));
         function send(event) {
             return Effect_1.gen(function* send() {
                 const input = snapshot_backendLifecycle({ event });
                 let completion_1 = runtime.$normal;
                 yield* runtime.uninterruptible(Effect_1.fnUntraced(function* send$uninterruptible() {
                     {
-                        completion_1 = { kind: "return", value: yield* SubscriptionRef.modifyEffect(held, (current) => {
+                        completion_1 = { kind: "return", value: yield* SubscriptionRef.modifyEffect(shown, () => {
                                 return Effect_1.gen(function* () {
-                                    const next = yield* apply(snapshot_backendLifecycle(current), input.event);
+                                    const next = yield* apply(snapshot_backendLifecycle(yield* orDie(load())), input.event);
                                     yield* keep(snapshot_backendLifecycle(next));
                                     return [snapshot_backendLifecycle(next), next];
                                 });
@@ -85,9 +88,9 @@ export function machineOver(start, keep) {
             });
         }
         return {
-            changes: Stream.map(SubscriptionRef.changes(held), snapshot_backendLifecycle),
+            changes: Stream.map(SubscriptionRef.changes(shown), snapshot_backendLifecycle),
             get() {
-                return Effect_1.gen({ *"get"() { return snapshot_backendLifecycle(yield* SubscriptionRef.get(held)); } }["get"]);
+                return Effect_1.gen({ *"get"() { return snapshot_backendLifecycle(yield* orDie(load())); } }["get"]);
             },
             send,
             receive(input) {
@@ -98,20 +101,28 @@ export function machineOver(start, keep) {
 }
 /** A Machine in memory, from `initial` or a state `decodeState` returned. */
 export function machine(start = initial) {
-    return Layer.effect(Machine, machineOver(start, () => Effect.void));
+    return Layer.effect(Machine, Effect_1.gen(function* () {
+        const kept = yield* Ref.make(snapshot_backendLifecycle(start));
+        return yield* machineOver(() => Ref.get(kept), (next) => Ref.set(kept, next));
+    }));
 }
 /**
- * A Machine kept in the KeyValueStore under `key`, as JSON. It starts from what is stored there, read through
- * `decodeState`, or from `start` where nothing is; what is stored and is not a state fails the layer with NotAState,
- * so that it is never written over. Each state an event leads to is stored before it is the current one: where the
- * store does not take it, `send` dies and the state stays as it was.
+ * A Machine kept in the KeyValueStore under `key`, as JSON: each event is applied to what is stored there when it
+ * is sent, read through `decodeState`, or to `start` where nothing is, so that a state another page or program
+ * stored since is stepped from, never written over. What is stored and is not a state fails the layer with NotAState,
+ * and a later `send` dies on it, so that it is never written over either. Each state an event leads to is stored
+ * before `send` returns: where the store does not take it, `send` dies and the state stays as it was.
  */
 export function stored(key, start = initial) {
     return Layer.effect(Machine, Effect_1.gen(function* () {
         const store = yield* KeyValueStore.KeyValueStore;
-        const found = yield* store.get(key);
-        const first = found === undefined ? start
-            : yield* decodeState(yield* Effect.try({ try: () => JSON.parse(found), catch: () => new NotAState({ input: found }) }));
-        return yield* machineOver(first, (next) => orDie(store.set(key, JSON.stringify(next))));
+        function load() {
+            return Effect_1.gen(function* load() {
+                const found = yield* store.get(key);
+                return found === undefined ? start
+                    : yield* decodeState(yield* Effect.try({ try: () => JSON.parse(found), catch: () => new NotAState({ input: found }) }));
+            });
+        }
+        return yield* machineOver(load, (next) => orDie(store.set(key, JSON.stringify(next))));
     }));
 }

@@ -22,7 +22,7 @@ pure def lawBookedLaneRespectsLateJoinCutoff(booked: bool): bool =
 
 ### A missing seat or an absence rules out the invitation
 
-Check the member's current eligibility for the seat. If they are ineligible or will be away during the plan interval, the quorum runner treats this seat as unavailable. Eligible and present members proceed to the contact window checks.
+Check the member's current eligibility for the seat. A Friends replacement also needs current pair values with the other members still in the plan. A Friends partner invitation checks both partners under the [one-to-one rules](planDecision.md#both-friends-activity-partners-need-prior-group-attendance). If the seat is ineligible or the recipient will be away during the plan interval, the quorum runner treats this seat as unavailable. Eligible and present members proceed to the contact window checks.
 
 ```quint
 type InvitePhase = CheckingSeat | CheckingPresence | CheckingWindow | CheckingAllowance | RenderingInvite |
@@ -60,7 +60,7 @@ pure def checkAllowance(invite: PlanDispatch, admitted: bool): PlanDispatch =
 
 ### A usable message must be sent before the daily record changes
 
-If the plan has no usable anonymous message for the member, the seat becomes unavailable. A rendered invitation goes through the normal send checks. Only a send confirmed by that path uses the daily slot and updates the selected allowance's counters.
+Render the invitation using the current roster, including promoted replacements. After booking, use the booked members and the pending recipient. If no usable anonymous message can be rendered for the member, the seat becomes unavailable. A rendered invitation goes through the normal send checks against that roster. Only a send confirmed by that path uses the daily slot and updates the selected allowance's counters.
 
 ```quint
 pure def canRenderInvite(invite: PlanDispatch): bool = invite.phase == RenderingInvite

@@ -19,13 +19,26 @@ Imported from `quint/engine_rules.qnt` at `30d950e`. See [model index](README.md
 // engine_rules: The Network's member and pair hard rules and the slop mutual radius, over days.
 //
 // WHAT THIS MODELS
-//   The decisions in packages/engine/src/packs/network/rulesCore.ts (called by rules.ts) and
-//   packages/engine/src/packs/slop/geoCore.ts (called by geo.ts). Each LemmaScript function is a pure
-//   def here with the same name and the same decision: budgetReached, interruptionBudgetReason,
-//   inCooldown, categoryCooldownReason, pairCooling, romancePairReason, marketMutual.
-//   The shell reads the counts and the latest decline from the world, then asks the core. Here the
+//   The member and pair rules that packages/engine/src/filters.ts memberReason and pairReason ask, with the
+//   generated predicates they call. Each one is a pure def here with the same name and the same decision:
+//     - spec/matchingBudgets.md budgetReached, inCooldown, pairInteractionCooling (generated, re-exported by
+//       @thenetwork/core), called by packs/network/rules.ts interruption_budget, category_cooldown and
+//       pair_cooldown;
+//     - spec/datingRadius.md sharedDatingMarket and withinAdjustedRadius (withinMutualRadius in
+//       packages/core/src/dating-radius.ts adds the margin), called by packs/slop/geo.ts mutualMarkets;
+//     - the romance rule packs/network/rules.ts romance_incompatible with romanceCompatible both ways. It is
+//       hand code. It checks both stated age ranges. The adult requirement is the core prefix of
+//       filters.ts pairReason ("underage", before every pack rule), which this model includes.
+//   The shell reads the counts and the latest decline from the world, then asks the predicates. Here the
 //   actions do the same: a proactive send asks the member rules, a proposal asks the pair rules.
 //   Declines (of a send or of a pair) are the environment and can come at any time after the item.
+//
+// WHERE THE RULES SIT IN MATCHING
+//   pairReason is the inner part of the one pair gate (match/pair.ts eligiblePair: the same lane with
+//   compatible sides, the same market, then pairReason with the lane's category). A pair has a value only
+//   through that gate (pairValueOf), and the match profiles exist only for members that pass
+//   filters.ts sendTimeReason (minors, holds, pause, lane opt-in). The pair value, the bounded search and
+//   the lane rules are in candidate_pool; this model keeps the rule decisions and their time behaviour.
 //
 // BOUNDS
 //   Members A and B (adults) and K (a minor: isMinorAge is true). Categories social and romance.
@@ -34,25 +47,27 @@ Imported from `quint/engine_rules.qnt` at `30d950e`. See [model index](README.md
 //   Romance facts (opt-in, "a admits b") are chosen at init and stay fixed.
 //
 // TIME
-//   A day is one tick. Days * DAY is shell arithmetic; the core gets the window. The event counter n
+//   A day is one tick. Days * DAY is shell arithmetic; the predicates get the window. The event counter n
 //   orders the events of one day.
 //
 // ABSTRACTIONS
 //   - recentProactive is the number of sends to the member in the last WINDOW days (world.ts counts it
 //     the same way, over the budget window of the member's state; here there is one state).
-//   - The core pair prefix (filters.ts pairReason: duplicate, underage, blocked) is NOT in this model.
-//     So romanceAdultsOnly checks that romancePairReason refuses a minor by itself (defense in depth).
-//   - One market: mutualMarkets has at most one entry, so the radius decision is marketMutual. Both
-//     members are known and have a limit (radiusPairReason unknown_member and distance_unknown are not here).
-//   - A pair decline stands for every cooling outcome of the pair (coolingOutcome: declined, expired,
-//     cancelled; network.ts closes an item with at = the close time). A send decline stands for a
+//   - Of the core pair prefix (filters.ts pairReason: duplicate, underage, blocked), the model keeps
+//     duplicate and underage. Blocks are in candidate_pool.
+//   - One market: the shared dating market is the one market, so the radius decision is
+//     sharedDatingMarket and withinAdjustedRadius. Both members are known and have a limit (the geo
+//     pairReason results unknown_member and distance_unknown are not here).
+//   - A pair decline stands for every cooling outcome of the pair (pairInteractionCooling: declined,
+//     expired, cancelled; network.ts closes an item with at = the close time). A send decline stands for a
 //     declined or an expired item (world.ts memberCategoryDeclines keeps the latest `at`).
-//   - `admits` is romanceAdmits (age range and orientation) as one fixed fact per direction.
+//   - `admits` is romanceCompatible (stated age range and orientation, with
+//     config.romance.requireStatedPrefs) as one fixed fact per direction.
 //
 // OUTSIDE THE MODEL
 //   - Quotas, the contribution budget, only-when-asked, the reliability holdout, the negative feedback
-//     cooldown, romance.requireStatedPrefs, dealbreakers and active duplicates: the same shape of
-//     decision (proved in rulesCore.ts), not repeated here.
+//     cooldown, dealbreakers and active duplicates: the same shape of decision (budgetReached, inCooldown),
+//     not repeated here.
 //   - The distance arithmetic (cellMiles) and the review queue.
 module engine_rules {
 
@@ -70,19 +85,22 @@ module engine_rules {
   type Proposal = { a: str, b: str, lane: str, day: int, n: int }
   type PairDecline = { a: str, b: str, day: int, n: int }
 
-  // ---------------------------------------------------------------- the cores
-  // rulesCore.ts budgetReached and interruptionBudgetReason (null is "not refused").
+  // ---------------------------------------------------------------- the predicates
+  // spec/matchingBudgets.md budgetReached; packs/network/rules.ts interruption_budget refuses when it holds.
   pure def budgetReached(used: int, extra: int, limit: int): bool = used + extra >= limit
   pure def interruptionRefused(used: int, extra: int, limit: int): bool = budgetReached(used, extra, limit)
-  // rulesCore.ts inCooldown: no event (has = false) is no cooldown. categoryCooldownReason and
-  // negativeFeedbackReason refuse exactly when this is true.
+  // spec/matchingBudgets.md inCooldown: no event (has = false) is no cooldown. category_cooldown and
+  // negative_feedback_cooldown refuse exactly when this is true.
   pure def inCooldown(now: int, has: bool, at: int, window: int): bool = has and now - at < window
-  // rulesCore.ts romancePairReason: true when the reason is null.
-  pure def romancePairOk(lane: str, aOpt: bool, bOpt: bool, aMinor: bool, bMinor: bool, ab: bool, ba: bool): bool =
-    lane != "romance" or (not(aMinor) and not(bMinor) and aOpt and bOpt and ab and ba)
-  // geoCore.ts marketMutual.
-  pure def marketMutual(inA: bool, inB: bool, listed: bool, miles: int, margin: int, la: int, lb: int): bool =
-    inA and inB and listed and miles + margin <= la and miles + margin <= lb
+  // spec/matchingBudgets.md pairInteractionCooling for a declined (cooling) outcome.
+  pure def pairInteractionCooling(now: int, at: int, window: int): bool = inCooldown(now, true, at, window)
+  // packs/network/rules.ts romance_incompatible, with stated age-range compatibility in each direction.
+  pure def romanceRuleOk(lane: str, aOpt: bool, bOpt: bool, ab: bool, ba: bool): bool =
+    lane != "romance" or (aOpt and bOpt and ab and ba)
+  // spec/datingRadius.md sharedDatingMarket and withinAdjustedRadius (dating-radius.ts withinMutualRadius).
+  pure def sharedDatingMarket(inFirst: bool, inSecond: bool, listed: bool): bool = inFirst and inSecond and listed
+  pure def withinAdjustedRadius(adjustedMiles: int, firstLimit: int, secondLimit: int): bool =
+    adjustedMiles <= firstLimit and adjustedMiles <= secondLimit
 
   pure def absDiff(x: int, y: int): int = if (x >= y) x - y else y - x
   pure def samePair(a1: str, b1: str, a2: str, b2: str): bool = (a1 == a2 and b1 == b2) or (a1 == b2 and b1 == a2)
@@ -107,20 +125,24 @@ module engine_rules {
   // memberCategoryDeclines keeps the latest decline day of the category.
   def latestDecline(m: str, c: str): int = catDeclines(m, c).fold(-100, (acc, d) => if (d.day > acc) d.day else acc)
   def pairDeclinesOf(a: str, b: str): Set[PairDecline] = pairDeclines.filter(d => samePair(d.a, d.b, a, b))
-  // rulesCore.ts pairCooling: some declined interaction of the pair is less than the window old.
-  def pairCooling(a: str, b: str): bool = pairDeclinesOf(a, b).exists(d => day - d.day < PAIR_COOL)
+  // packs/network/rules.ts pair_cooldown: some cooling interaction of the pair is less than the window old.
+  def pairCooling(a: str, b: str): bool = pairDeclinesOf(a, b).exists(d => pairInteractionCooling(day, d.day, PAIR_COOL))
 
-  // The member rules that rules.ts asks for a proactive send (budget, then category cooldown).
+  // The member rules that filters.ts memberReason asks for a proactive send (packs/network/rules.ts:
+  // interruption_budget, then category_cooldown).
   def memberOk(m: str, c: str): bool = and {
     not(interruptionRefused(recentSends(m), 0, LIMIT)),
     not(inCooldown(day, catDeclines(m, c).size() > 0, latestDecline(m, c), COOL)),
   }
 
-  // The pair rules that rules.ts and geo.ts ask for a proposal (cooldown, romance, radius).
+  // filters.ts pairReason for a proposal: the core prefix (duplicate, underage), the pack pair rules
+  // (pair_cooldown, romance_incompatible), then the pack geo rule (slop geo.ts pairReason, mutualMarkets).
   def pairOk(a: str, b: str, lane: str): bool = and {
+    a != b, not(minor.get(a)), not(minor.get(b)),
     not(pairCooling(a, b)),
-    romancePairOk(lane, optIn.get(a), optIn.get(b), minor.get(a), minor.get(b), admits.get((a, b)), admits.get((b, a))),
-    marketMutual(true, true, true, absDiff(pos.get(a), pos.get(b)), MARGIN, limitOf.get(a), limitOf.get(b)),
+    romanceRuleOk(lane, optIn.get(a), optIn.get(b), admits.get((a, b)), admits.get((b, a))),
+    sharedDatingMarket(true, true, true),
+    withinAdjustedRadius(absDiff(pos.get(a), pos.get(b)) + MARGIN, limitOf.get(a), limitOf.get(b)),
   }
 
   // ---------------------------------------------------------------- actions
@@ -165,7 +187,6 @@ module engine_rules {
   }
 
   action propose(a: str, b: str, lane: str): bool = all {
-    a != b,
     pairOk(a, b, lane),
     proposals' = proposals.union(Set({ a: a, b: b, lane: lane, day: day, n: n })),
     n' = n + 1, day' = day,
@@ -195,39 +216,40 @@ module engine_rules {
   }
 
   // ---------------------------------------------------------------- invariants
-  // PRD 40.3 interruption budget; rules.ts interruption_budget -> rulesCore.interruptionBudgetReason:
+  // PRD 40.3 interruption budget; packs/network/rules.ts interruption_budget -> budgetReached:
   // in every window of WINDOW days, a member gets at most LIMIT proactive sends.
   val budgetHeld = MEMBERS.forall(m => 0.to(day).forall(d =>
     sends.filter(s => s.m == m and s.day > d - WINDOW and s.day <= d).size() <= LIMIT))
 
-  // rules.ts category_cooldown -> rulesCore.categoryCooldownReason: no send of a category to a member
+  // packs/network/rules.ts category_cooldown -> inCooldown: no send of a category to a member
   // less than COOL days after the member declined that category.
   val categoryCooldownHeld = sends.forall(s => declines.forall(dc =>
     (dc.m == s.m and dc.cat == s.cat and dc.n < s.n) implies s.day - dc.day >= COOL))
 
-  // rules.ts pair_cooldown -> rulesCore.pairCooldownReason (either order of the pair): no proposal
+  // packs/network/rules.ts pair_cooldown -> pairInteractionCooling (either order of the pair): no proposal
   // less than PAIR_COOL days after the pair was declined.
   val pairCooldownHeld = proposals.forall(p => pairDeclines.forall(pd =>
     (samePair(p.a, p.b, pd.a, pd.b) and pd.n < p.n) implies p.day - pd.day >= PAIR_COOL))
 
-  // Core policy (packages/core/src/policy.ts, minors never matched); rules.ts romance_incompatible ->
-  // rulesCore.romancePairReason refuses a minor by itself.
-  val romanceAdultsOnly = proposals.forall(p => p.lane == "romance" implies (not(minor.get(p.a)) and not(minor.get(p.b))))
+  // The core prefix of filters.ts pairReason refuses duplicate members and minors in every lane.
+  val pairAdultsOnly = proposals.forall(p => not(minor.get(p.a)) and not(minor.get(p.b)))
+  val pairDistinct = proposals.forall(p => p.a != p.b)
 
-  // rules.ts romance_incompatible -> rulesCore.romancePairReason: both opted in and each admits the other.
+  // packs/network/rules.ts romance_incompatible: both opted in and each admits the other (romanceCompatible).
   val romanceMutual = proposals.forall(p => p.lane == "romance" implies
     (optIn.get(p.a) and optIn.get(p.b) and admits.get((p.a, p.b)) and admits.get((p.b, p.a))))
 
-  // PRD 40.5 radius holds BOTH ways; geo.ts pairReason -> geoCore.marketMutual / radiusPairReason.
+  // PRD 40.5 radius holds BOTH ways; slop geo.ts pairReason -> mutualMarkets -> withinAdjustedRadius.
   val radiusMutual = proposals.forall(p =>
     absDiff(pos.get(p.a), pos.get(p.b)) + MARGIN <= limitOf.get(p.a)
     and absDiff(pos.get(p.a), pos.get(p.b)) + MARGIN <= limitOf.get(p.b))
 
-  // rulesCore.romancePairReason and geoCore.radiusPairReason: the pair decision does not depend on the order.
+  // The pair decision does not depend on the order (spec/datingRadius.md lawPairDecisionSymmetric; the pair
+  // gate needs the same in both orders, because the pair value is symmetric, spec/pairValue.md).
   val pairDecisionSymmetric = MEMBERS.forall(a => MEMBERS.forall(b => CATS.forall(c => pairOk(a, b, c) == pairOk(b, a, c))))
 
   val safety = and {
-    budgetHeld, categoryCooldownHeld, pairCooldownHeld, romanceAdultsOnly, romanceMutual, radiusMutual,
+    budgetHeld, categoryCooldownHeld, pairCooldownHeld, pairAdultsOnly, pairDistinct, romanceMutual, radiusMutual,
     pairDecisionSymmetric,
   }
 
@@ -258,10 +280,11 @@ module engine_rules {
     .then(tick).then(send("A", "social"))
     .expect(safety)
 
-  // A minor is never in a romance proposal, even with every fact in favor; adults are.
+  // Duplicate members and minors fail before the pack's eligibility checks, even outside romance.
   run romanceMinorTest = initWith(ALL_IN, ALL_ADMIT, NEAR, WIDE)
     .expect(not(pairOk("A", "K", "romance")))
     .expect(not(pairOk("K", "B", "romance")))
+    .expect(not(pairOk("A", "K", "social")) and not(pairOk("A", "A", "social")))
     .then(propose("A", "B", "romance"))
     .expect(safety)
 
