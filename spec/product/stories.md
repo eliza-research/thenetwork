@@ -348,7 +348,7 @@ Models: [matching engine](../models/matching_engine.md), [candidate pool](../mod
 
 Record vouches, attendance, feedback, confirmed help and organizing. Show the member their itemized history in conversation. Apply effort, invite and organizing limits privately. Maintain a baseline of access and separate contextual reliability. Do not penalize declines, pause or inactivity.
 
-Model: [notification and capital](../models/notify_capital.md).
+Models: [private contribution history](../contributionHistory.md), [notification and capital](../models/notify_capital.md).
 
 ## Story F35 — Inspect a member's experience as staff
 

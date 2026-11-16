@@ -46,6 +46,8 @@ import { stopCoversEveryApp } from "../../core/src/generated/sharedLineConsentJo
 import { standingIntentReplayAllowed } from "../../core/src/generated/standingIntentManagement.ts";
 import { ageAnswer, agesStated } from "../src/classify.ts";
 import { standingIntentCommand } from "../src/standing-intents.ts";
+import { contributionHistoryReply, contributionHistoryRequest } from "./contribution-history.ts";
+import { contributionHistoryReplayAllowed } from "../../core/src/generated/contributionHistory.ts";
 import { saveTravelPresence, travelOwner, travelPresenceCommand } from "./travel-presence.ts";
 import { soloReplyReplayAllowed } from "../../core/src/generated/soloConcierge.ts";
 import { soloConciergeReply, soloConciergeRequest } from "./solo-concierge.ts";
@@ -244,7 +246,7 @@ const NOTIFY_SUMMARY_MAX = 500;
 
 export type InboundOutcome =
   | "open" | "handled" | "duplicate" | "unknown_sender" | "ignored" | "ignored_group" | "status" | "reaction" | "safety"
-  | "invite_only" | "join_asked" | "joined" | "under_age" | "stopped" | "left" | "no_network" | "held" | "standing_intents" | "travel_presence" | "solo_events";
+  | "invite_only" | "join_asked" | "joined" | "under_age" | "stopped" | "left" | "no_network" | "held" | "standing_intents" | "travel_presence" | "solo_events" | "contribution_history";
 
 interface Route { app: AppId; shared: boolean }
 
@@ -1073,6 +1075,7 @@ export class NetworkService implements RuntimeHost {
     const intentCommand = !kw ? standingIntentCommand(ev.text) : undefined;
     const travel = !kw && this.inboundTurn() ? travelPresenceCommand(ev.text) : undefined;
     const soloEvents = !kw && this.inboundTurn() ? soloConciergeRequest(ev.text) : undefined;
+    const contributionPage = !kw && this.inboundTurn() ? contributionHistoryRequest(ev.text) : undefined;
     // Legacy webhooks own transport engagement. A signed turn admits its canonical member after policy processing.
     if (!this.inboundTurn() && !intentCommand) await this.lineAdapter()?.engaged?.(ev.from);
     const route = await this.route(ev, o.app);
@@ -1143,8 +1146,8 @@ export class NetworkService implements RuntimeHost {
     }
 
     // An account command never joins an app or opts the sender in.
-    if (!memberId && (profileRead || intentCommand || travel || soloEvents)) {
-      return travel ? "travel_presence" : soloEvents ? "solo_events" : "handled";
+    if (!memberId && (profileRead || intentCommand || travel || soloEvents || contributionPage !== undefined)) {
+      return travel ? "travel_presence" : soloEvents ? "solo_events" : contributionPage !== undefined ? "contribution_history" : "handled";
     }
 
     if (memberId) {
@@ -1163,13 +1166,13 @@ export class NetworkService implements RuntimeHost {
       const reply = kw === "help" ? app.brand.help : undefined;
       if (!kw && e164 && /^\s*share\W*$/i.test(ev.text) && (await this.pendingOf(e164, "share", app.id))) return this.share(rt, app, memberId, e164, ev, rowId);
       // The answer to The Network's "what are you looking for?": enroll in the apps they named.
-      if (!intentCommand && !travel && !soloEvents && shouldReadLookingFor(!!kw, !!profileRead, app.id === "ntwrk") && e164 && (await this.pendingOf(e164, "looking_for"))) {
+      if (!intentCommand && !travel && !soloEvents && contributionPage === undefined && shouldReadLookingFor(!!kw, !!profileRead, app.id === "ntwrk") && e164 && (await this.pendingOf(e164, "looking_for"))) {
         const wants = lookingFor(ev.text).filter(a => namedOtherApp(a, a !== "ntwrk" && !!this.runtimeFor(a)));
         if (wants.length) return this.enroll(rt, memberId, e164, wants, ev, rowId);
       }
       // After STOP the member's texts still reach the Network (a report is never dropped), but its replies are
       // refused: the person gets one hint instead (founder decision 2026-10-11, #22).
-      if (!kw && e164) await this.stopHint(rt, app, e164, ev, rowId);
+      if (!kw && e164 && contributionPage === undefined) await this.stopHint(rt, app, e164, ev, rowId);
       const out = await this.memberMessage(rt, memberId, ev, rowId, kw, reply);
       if (e164) await this.statedAge(app, rt, memberId, e164);
       return out;
@@ -1293,8 +1296,9 @@ export class NetworkService implements RuntimeHost {
       const signedDirect = !keyword && !fromAssistant && this.inboundTurn();
       const travel = signedDirect ? travelPresenceCommand(ev.text) : undefined;
       const soloEvents = signedDirect ? soloConciergeRequest(ev.text) : undefined;
-      if (travel || soloEvents) {
-        const reason = travel ? "travel_presence" : "solo_events";
+      const contributionPage = signedDirect ? contributionHistoryRequest(ev.text) : undefined;
+      if (travel || soloEvents || contributionPage !== undefined) {
+        const reason = travel ? "travel_presence" : soloEvents ? "solo_events" : "contribution_history";
         const e164 = normalizePhone(ev.from);
         if (e164) rt.unit.memberCommand = async tx => {
           const owner = { app: rt.app, memberId, e164 };
@@ -1305,11 +1309,16 @@ export class NetworkService implements RuntimeHost {
             if (body === undefined) return;
             rt.unit.inbound = inbound;
             rt.system(memberId, `sys:${rowId}`, body, "reply", "travel_presence");
-          } else {
-            const reply = await soloConciergeReply(tx, accounts, owner, soloEvents!, now);
+          } else if (soloEvents) {
+            const reply = await soloConciergeReply(tx, accounts, owner, soloEvents, now);
             if (!reply) return;
             rt.unit.inbound = inbound;
-            rt.soloEventReply(memberId, `sys:${rowId}`, reply.body, reply.publicLinks);
+            rt.collectedMemberReply(memberId, `sys:${rowId}`, reply.body, "solo_events", reply.publicLinks);
+          } else if (contributionPage !== undefined) {
+            const body = await contributionHistoryReply(tx, accounts, owner, contributionPage);
+            if (body === undefined) return;
+            rt.unit.inbound = inbound;
+            rt.collectedMemberReply(memberId, `sys:${rowId}`, body, "contribution_history");
           }
         };
         return reason;
@@ -2229,7 +2238,7 @@ export class NetworkService implements RuntimeHost {
       const rt = turn.app ? (turn.memberId ? await this.runtimeOfMember(turn.app, turn.memberId) : this.runtimeFor(turn.app)) : undefined;
       const binding = rt && turn.memberId ? await this.accounts.activeMembership(rt.app, {e164: input.from, personId: person?.id ?? null}) : undefined;
       // Own-profile commands preserve send holds. The binding includes the known join-age check.
-      if (outcome !== "standing_intents" && outcome !== "travel_presence" && outcome !== "solo_events" && accountEligible && binding && binding.membership.memberId === turn.memberId) {
+      if (outcome !== "standing_intents" && outcome !== "travel_presence" && outcome !== "solo_events" && outcome !== "contribution_history" && accountEligible && binding && binding.membership.memberId === turn.memberId) {
         await this.lineAdapter()?.engaged?.(input.from);
       }
       if (outcome === "open" && !collected.length && turn.app && turn.memberId) {
@@ -2271,6 +2280,18 @@ export class NetworkService implements RuntimeHost {
         const available = typeof live === "object" && live !== null;
         if (!soloReplyReplayAllowed(available, available && handled.replies.length === 1 && handled.replies[0] === live.body)) {
           return json({error: "turn_concierge_changed", retryable: false}, 409);
+        }
+      }
+      if (handled.reason === "contribution_history" && handled.replies.length) {
+        const memberId = handled.memberId;
+        const rt = handled.app && memberId ? await this.runtimeOfMember(handled.app, memberId) : undefined;
+        const page = contributionHistoryRequest(input.text);
+        const live = rt && memberId && page !== undefined
+          ? await rt.scoped(tx => contributionHistoryReply(tx, this.accountsFor(tx), { app: rt.app, memberId, e164: input.from }, page)).catch(() => null)
+          : undefined;
+        if (live === null) return json({error: "contribution_history_unavailable", retryable: true}, 503);
+        if (!contributionHistoryReplayAllowed(live !== undefined, handled.replies.length === 1 && handled.replies[0] === live)) {
+          return json({error: "turn_contribution_history_changed", retryable: false}, 409);
         }
       }
       if (handled.reason === "onboarding_asked") {

@@ -5,6 +5,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import {afterAll, beforeAll, expect, test, vi} from "vitest";
 import {createHash, randomUUID} from "node:crypto";
 import {SQL} from "../../core/src/runtime/postgres.ts";
+import type { CapitalEvent } from "../../capital/src/index.ts";
 import {SimClock, MINUTE, DAY} from "@thenetwork/core";
 import {applySchema, DEV_PG_PORT} from "../../observatory/db/dev-pg.ts";
 import {APPS, type AppInfo} from "../../platform/src/apps.ts";
@@ -251,6 +252,101 @@ test("signed solo concierge offers current public listings without recruiting an
     expect(await previous.json()).toEqual({ error: "turn_concierge_changed", retryable: false });
     const empty = await post(request("no-current-solo-events", adult));
     expect((await empty.json()).replies[0]).toContain("couldn't find any current NYC Parks listings");
+    expect(escaped).toBe(before);
+  } finally {
+    await server.stop(true);
+    await service.close();
+    await start();
+  }
+}, 60_000);
+
+// spec/contributionHistory.md, "Show verified acts a page at a time"
+test("signed contribution history scopes verified acts to the current adult and app", async () => {
+  await server.stop(true);
+  await service.close();
+  await start(undefined, true);
+  try {
+    const adult = "+12125550167", teen = "+12125550168", stranger = "+12125550169";
+    const join = async (app: AppInfo, phone: string, age: number) => {
+      await service.accounts.invite(app, phone);
+      const person = (await service.accounts.personFor(phone))!;
+      const joined = await service.accounts.join(app, { e164: phone, personId: person.id }, {
+        firstName: "Ari", age, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+      });
+      if (!joined.ok) throw new Error("Contribution history fixture join failed");
+      return joined.membership.memberId;
+    };
+    const owner = await join(APPS.friends, adult, 30);
+    await join(APPS.slop, adult, 30);
+    const minor = await join(APPS.friends, teen, 17);
+    const other = "contribution-other-member", invitee = "contribution-invitee", provider = "contribution-provider";
+    const planId = "contribution-private-plan", privateLabel = "private venue call 212-555-0101";
+    const t = clock.now() - DAY;
+    const seed = async (...events: CapitalEvent[]) => {
+      const rows = events.map(event => ({
+        app_id: "friends", id: event.id, type: event.type, member_id: "member" in event ? event.member : null, t: new Date(event.t), event,
+      }));
+      await sql`insert into network.capital_events ${sql(rows)}`;
+    };
+    await seed(
+      ...[owner, minor, other, invitee, provider].map((member): CapitalEvent => ({
+        id: `contribution-joined:${member}`, type: "member_joined", member, age: 30, t,
+        ...(member === invitee ? { vouchedBy: owner } : {}),
+      })),
+      { id: "contribution-active", type: "member_activated", member: invitee, t: t + 1 },
+      { id: "contribution-value", type: "value_received", member: invitee, with: [provider], confirmedBy: [provider], t: t + 1 },
+      { id: "contribution-accepted", type: "plan_accepted", member: owner, planId, kind: "plan", startsAt: t + 4, t: t + 2 },
+      { id: "contribution-feedback", type: "feedback_given", member: owner, planId, t: t + 2 },
+      { id: "contribution-attended", type: "plan_attended", member: owner, planId, counterparts: [provider], verifiedBy: ["counterpart"], origin: "engine", publicVenue: true, t: t + 2 },
+      { id: "contribution-help", type: "help_given", helper: owner, recipient: other, helpId: "contribution-help-private", t: t + 3 },
+      { id: "contribution-useful", type: "help_confirmed", recipient: other, helpId: "contribution-help-private", useful: true, t: t + 3 },
+      { id: "contribution-organized", type: "organized", organizer: owner, planId, publicVenue: true, recurring: false, attendees: [invitee, provider], label: privateLabel, t: t + 4 },
+      { id: "contribution-need", type: "need_answered", member: owner, needId: "contribution-private-need", confirmedBy: "staff", t: t + 5 },
+      { id: "contribution-other", type: "review_completed", member: other, items: 1, t: t + 6 },
+      { id: "contribution-minor-history", type: "review_completed", member: minor, items: 1, t: t + 6 },
+    );
+
+    const text = "Show my contribution history";
+    const before = escaped;
+    const initial = turn("history-adult", adult, text, "friends");
+    const first = await post(initial);
+    expect(first.status).toBe(200);
+    const firstPage = await first.json();
+    expect(firstPage).toMatchObject({ app: "friends", memberId: owner, reason: "contribution_history", replyKind: "reply" });
+    const body = firstPage.replies[0];
+    expect(body.split("\n").filter((line: string) => line.startsWith("•"))).toHaveLength(5);
+    expect(body).toContain("Gave feedback");
+    expect(body).toContain("Organized a public plan");
+    expect(body).toContain("Helped a member");
+    expect(body).not.toContain("Helped review");
+    for (const hidden of [privateLabel, other, planId, invitee, provider]) expect(body).not.toContain(hidden);
+    expect(await (await post(initial)).json()).toEqual(firstPage);
+    const [queued] = await sql`select status from platform.outbound where id = ${firstPage.replyIds[0]}`;
+    expect(queued?.status).toBe("collected");
+    const second = await post(turn("history-page-two", adult, `${text} page 2`, "friends"));
+    expect((await second.json()).replies[0]).toContain("Vouched for someone who became active");
+
+    const otherApp = await post(turn("history-other-app", adult, text, "slop"));
+    expect(await otherApp.json()).toMatchObject({ app: "slop", replies: [expect.stringContaining("No confirmed contributions")] });
+    for (const [id, phone] of [["history-minor", teen], ["history-nonmember", stranger]]) {
+      const denied = await post(turn(id!, phone!, text, "friends"));
+      expect(denied.status).toBe(200);
+      expect(await denied.json()).toMatchObject({ reason: "contribution_history", replies: [] });
+    }
+    expect(await service.accounts.personFor(stranger)).toBeUndefined();
+
+    await seed({ id: "contribution-correction", type: "fraud_confirmed", members: [owner, other], t: t + 7 });
+    const stale = await post(initial);
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toEqual({ error: "turn_contribution_history_changed", retryable: false });
+    const refreshed = turn("history-refreshed", adult, text, "friends");
+    const current = await post(refreshed);
+    expect(current.status).toBe(200);
+    expect((await current.json()).replies[0]).not.toContain("Helped a member");
+
+    expect((await post(turn("history-leave", adult, "leave friends", "friends"))).status).toBe(200);
+    expect((await post(refreshed)).status).toBe(409);
+    expect(await service.accounts.activeMembership(APPS.slop, { e164: adult, personId: null })).toBeDefined();
     expect(escaped).toBe(before);
   } finally {
     await server.stop(true);

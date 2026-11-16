@@ -14,7 +14,7 @@ The VibeLang dispatch shell rechecks the recipient before recording. The Postgre
 
 The model's token action combines redemption and display. In production, an app-scoped read marks only selected unseen items, and a surface that resolves subject IDs may acknowledge their display separately. The Network uses [booked meeting settlement](../meetingSettlement.md) to decide which attendance and feedback events to write to the capital ledger.
 
-The generated [Capital ledger spec](../capitalLedger.md) governs event admission, contribution qualification, append-only reversals, and which entries count against the rolling credit cap. The [Capital levers](../capitalLevers.md) use admitted credits to calculate allowances.
+The generated [Capital ledger spec](../capitalLedger.md) governs event admission, contribution qualification, append-only reversals, and which entries count against the rolling credit cap. The [Capital levers](../capitalLevers.md) use admitted credits to calculate allowances. The signed [contribution history](../contributionHistory.md) replays committed app events and projects only the current adult member's verified acts.
 
 Imported from `quint/notify_capital.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 

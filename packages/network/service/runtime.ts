@@ -467,17 +467,17 @@ export class NetworkRuntime {
   }
 
   /** A directly requested result for this signed member. Source links grant only a per-reply contact exception. */
-  soloEventReply(memberId: MemberId, id: string, body: string, publicLinks: readonly string[]) {
+  collectedMemberReply(memberId: MemberId, id: string, body: string, type: "solo_events" | "contribution_history", publicLinks: readonly string[] = []) {
     const turn = this.host.inboundTurn?.();
     if (turn?.app !== this.app.id || turn.memberId !== memberId
       || normalizeAddress(this.addressOf(memberId) ?? "") !== normalizeAddress(turn.from)) return;
     const reasons = new LeakGuard({ ...this.net.leakSources([memberId]), canaryShapes: true }).check(body, { contactAllow: publicLinks });
     if (reasons.length) {
-      this.host.log(`[alert] a solo event reply failed the leak guard (${this.id}, ${id})`);
+      this.host.log(`[alert] a ${type} reply failed the leak guard (${this.id}, ${id})`);
       return;
     }
-    this.system(memberId, id, body, "reply", "solo_events");
-    (this.unit.collectedPublicLinks ??= new Map()).set(id, publicLinks);
+    this.system(memberId, id, body, "reply", type);
+    if (publicLinks.length) (this.unit.collectedPublicLinks ??= new Map()).set(id, publicLinks);
   }
 
   /** Everything the unit produced, inside the save transaction (app.app_id is set). Rows that name a member not in this app's network.members are skipped. */
@@ -523,10 +523,10 @@ export class NetworkRuntime {
       const reasons = await queue.collectedLeaks(tx, { id: s.id, ...(u.forget.has(s.memberId) ? {} : { memberId: s.memberId }), to: s.to, kind: s.kind, text: s.body, contactAllow });
       if (reasons.length) {
         u.collected.delete(s.id);
-        if (s.type === "solo_events") {
-          // A solo result was authorized for this signed reply only.
+        if (s.type === "solo_events" || s.type === "contribution_history") {
+          // This result was authorized for the signed reply only.
           u.sends = u.sends.filter(message => message.id !== s.id);
-          this.host.log(`[alert] a solo event reply failed the collected leak guard (${this.id}, ${s.id})`);
+          this.host.log(`[alert] a ${s.type} reply failed the collected leak guard (${this.id}, ${s.id})`);
         } else this.host.log(`[alert] a collected reply failed the leak guard and goes to the queue for review (${this.id}, ${s.id})`);
       }
     }
