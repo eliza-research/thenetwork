@@ -349,7 +349,7 @@ pure def lawProfileNeedsConsent(form: ProfileForm): bool =
 
 ### The server answer decides between done, blocked and a new sign-in
 
-A saved profile shows the done step and clears the notice. "Under age", "invite only", "review" and an unavailable invitation show the blocked step. "Account changed" clears the form, reads the session again and shows a notice. "Session ended" clears the form and shows the phone step with a notice. Any other failure keeps the profile step and shows the server's message.
+A saved profile shows the done step and clears the notice. "Under age", "invite only", "review" and an unavailable invitation show the blocked step. "Account changed" clears the form, reads the session again and shows a notice. "Session ended" clears the form and shows the phone step with a notice. A temporary failure keeps the same account, profile values and consent on the profile step and shows the server's message. The person can retry the form when the failed request ends.
 
 ```quint
 type JoinOutcome = JoinedOk | JoinUnderAge | JoinInviteOnly | JoinReview | JoinAccountChanged | JoinUnauthorized | JoinInvalidInvitation | JoinFailed
@@ -373,6 +373,12 @@ pure def answerJoin(page: JoinPage, joinAnswer: JoinOutcome): JoinPage =
   else if (joinAnswer == JoinUnauthorized)
     { ...idle, screen: Phone, account: 0, formHasValues: false, consented: false, notice: SessionEnded, formError: NoError }
   else { ...idle, formError: RequestFailed }
+
+pure def lawFailedSaveKeepsOwnedProfile(page: JoinPage): bool =
+  val failed = answerJoin(page, JoinFailed)
+  (page.screen == Profile and canAnswerJoin(page)) implies
+    (canSubmitProfile(failed) and failed.account == page.account and
+      failed.formHasValues == page.formHasValues and failed.consented == page.consented)
 ```
 
 ### A Peon invitation stays in memory until the verified account agrees to join
@@ -452,6 +458,9 @@ While a request runs, its form is busy: its controls are off and its button show
 
 ```quint
 pure def formBusy(page: JoinPage): bool = page.pending != Idle
+
+pure def lawSavingProfilePreventsEditsAndSubmissions(page: JoinPage): bool =
+  page.pending == SavingProfile implies (not(canEditProfile(page)) and not(canSubmitProfile(page)))
 
 pure def stepOneRequestAtATime(before: JoinPage, after: JoinPage): bool =
   (after.pending != Idle and after.pending != before.pending) implies before.pending == Idle

@@ -20,10 +20,15 @@ browserTest("the built Peon join page keeps an invitation in the same verified a
   expect(built).toMatchObject({ ok: true });
   const store = new MemoryPeopleStore();
   const first = "+12125550141", second = "+12125550142", third = "+12125550143", fourth = "+12125550144", fifth = "+12125550145";
+  const retryPhone = "+12125550146";
   const directToken = Buffer.alloc(32, 1).toString("base64url");
   const verifiedToken = Buffer.alloc(32, 2).toString("base64url");
   const expiredToken = Buffer.alloc(32, 3).toString("base64url");
-  const tokenByPhone = new Map([[first, directToken], [second, verifiedToken]]);
+  const retryToken = Buffer.alloc(32, 4).toString("base64url");
+  const tokenByPhone = new Map([[first, directToken], [second, verifiedToken], [retryPhone, retryToken]]);
+  let releaseRetryAttempt!: () => void;
+  const retryAttemptHeld = new Promise<void>(resolve => { releaseRetryAttempt = resolve; });
+  let interceptedRetry = false;
   const referredPhones: string[] = [];
   const joins: Record<string, unknown>[] = [];
   const platformFor = (host: string) => createPublicApi({
@@ -46,7 +51,15 @@ browserTest("the built Peon join page keeps an invitation in the same verified a
     async fetch(req) {
       const { pathname } = new URL(req.url);
       if (pathname.startsWith("/api/")) {
-        if (pathname === "/api/join" && req.method === "POST") joins.push(await req.clone().json() as Record<string, unknown>);
+        if (pathname === "/api/join" && req.method === "POST") {
+          const payload = await req.clone().json() as Record<string, unknown>;
+          joins.push(payload);
+          if (payload.inviteToken === retryToken && !interceptedRetry) {
+            interceptedRetry = true;
+            await retryAttemptHeld;
+            return Response.json({ ok: false, error: "server" }, { status: 503 });
+          }
+        }
         return (await platform.fetch(req)) ?? new Response("Not found", { status: 404 });
       }
       const file = join(out, normalize(pathname === "/join" ? "/join.html" : pathname));
@@ -148,7 +161,34 @@ browserTest("the built Peon join page keeps an invitation in the same verified a
       expect(joins[4]).not.toHaveProperty("inviteToken");
       expect(referredPhones).toEqual([first, second]);
     });
+
+    await withPage(async page => {
+      await verifyInSession(page, retryPhone);
+      await page.goto(inviteUrl(retryToken));
+      await profile(page);
+      await agree(page);
+      const from = joins.length;
+      // spec/browserJoin.md, "A form that waits for an answer refuses a second submit"
+      const firstPost = page.waitForRequest(`${origin}/api/join`);
+      await submit(page);
+      await firstPost;
+      await page.getByRole("button", { name: "Saving…" }).waitFor();
+      expect(await page.getByLabel("First name").evaluate((input: HTMLInputElement) => input.readOnly)).toBe(true);
+      await page.locator('[data-join-step="Profile"] form').evaluate((form: HTMLFormElement) => form.requestSubmit());
+      releaseRetryAttempt();
+      // spec/browserJoin.md, "The server answer decides between done, blocked and a new sign-in"
+      await page.getByText("Something went wrong on our side. Please try again in a minute.").waitFor();
+      expect(joins).toHaveLength(from + 1);
+      expect(await page.getByLabel("First name").inputValue()).toBe("Ari");
+      expect(await page.getByRole("checkbox").getAttribute("aria-checked")).toBe("true");
+      await submit(page);
+      await step(page, "Done");
+      expect(joins.slice(from)).toHaveLength(2);
+      expect(joins[from + 1]).toEqual(joins[from]);
+      expect(referredPhones).toEqual([first, second, retryPhone]);
+    });
   } finally {
+    releaseRetryAttempt();
     await browser.close();
     await server.stop(true);
     rmSync(out, { recursive: true, force: true });
