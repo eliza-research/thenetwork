@@ -225,7 +225,7 @@ pure def add(a: int, b: int): int = a + b`);
     assert.match(replayed[0][2], /still breaks, in the replay of test\/__traces__\/bombadil, noUncaughtExceptions/);
     const unavailable = await exec(process.execPath, ["--input-type=module", "-e",
       `import { explore } from ${JSON.stringify(path.join(project, "vibestack/explore.ts"))}; process.stdout.write(JSON.stringify(await explore(process.cwd(), (_key, run) => run())));`],
-    root, { ...process.env, CHROME: path.join(root, "missing-chromium") });
+    root, { ...process.env, CHROME: process.execPath });
     assert.equal(unavailable.status, 0, unavailable.stderr);
     assert.match(unavailable.stdout, /is kept, to be replayed when it can be/);
     assert.ok(fs.existsSync(saved));
@@ -357,7 +357,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.equal(again.said("always", /./)?.detail, trace!.detail, "the same harness gives the same trace");
     assert.equal(remembered.said("always", /./)?.detail, trace!.detail);
     assert.ok(!fs.existsSync(path.join(root, "gen/traces")), "a failing simulation is not run again for the same harness");
-    assert.ok(first.said("skipped", /^types, proof, tests and traces: /), first.text);
+    assert.ok(first.said("skipped", /^types, proof, tests, traces and explore: /), first.text);
     assert.match(first.next, /^always \(spec\/index\.md\) is the first ✗/);
     // The nightly profile is part of what is remembered and simulates a different, reproducible set of traces.
     const fuzzed = await exec(process.execPath, [path.join(project, "vibestack/spec.ts"), "check", "--json", "--nightly"], root);
@@ -616,7 +616,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.deepEqual(both.failed, ["types", "review"], both.text);
     assert.equal(both.said("types", /./)?.summary, unfit, both.text);
     assert.match(stripVTControlCharacters(both.text), /src\/wrong\.ts(?:\(1,14\):|:1:14 -) error TS2322/);
-    assert.ok(both.said("skipped", /^tests and traces: a stage above failed/), both.text);
+    assert.ok(both.said("skipped", /^tests, traces and explore: a stage above failed/), both.text);
     const untyped = copyOfProject();
     fs.rmSync(path.join(untyped, "tsconfig.json"));
     assert.ok((await run(untyped)).failed.includes("types"));
