@@ -26,16 +26,16 @@ import {
   initial as initialSignedInbox, leaseRenewMs, mayStartClaimWrite, ordinaryTurnMustWait, processingLeaseMs,
   signedAdmissionOpen, step as stepSignedInbox, turnTombstoneKeepMs, unresolvedBlockMs, type SignedInbox,
 } from "../../core/src/generated/signedInbox.ts";
+import {
+  chooseWebhook, earlierWebhookCancellable, initial as initialWebhook, step as stepWebhook,
+  webhookAnswer, webhookArrival, webhookScanLimit,
+} from "../../core/src/generated/webhookInbox.ts";
 import type { NetworkAppId, TurnRequest, TurnResponse } from "../../core/src/svc/contract.ts";
 import type { SQL } from "bun";
 import type { Clock } from "@thenetwork/core";
 import { normalizeAddress } from "../../blooio/src/phone.ts";
 import type { InboundMessage } from "../../blooio/src/types.ts";
 import { detectKeyword, leaveTarget } from "../../platform/src/consent.ts";
-
-const MAX_ATTEMPTS = 5;
-/** How many waiting rows of one sender are read to find a compliance keyword among them. */
-const KEYWORD_SCAN = 50;
 
 /** STOP, STOP ALL, START, HELP or "leave <app>": consent and its confirmation are never held back. */
 export function isComplianceText(text: unknown): boolean {
@@ -188,10 +188,15 @@ export class Inbox {
     const wrote = await this.o.sql`insert into platform.inbound (id, line, sender, received_at, arrived_at, event, status, sender_hash)
       values (${id}, ${ev.to ? normalizeAddress(ev.to) : null}, ${sender}, ${new Date(ev.receivedAt)}, ${now}, ${{ ev, app: app ?? null }}::jsonb, 'pending', ${this.o.senderKey(sender)})
       on conflict (id) do nothing returning id`;
-    if (!wrote.length) return "duplicate";
+    if (webhookArrival(wrote.length > 0) === "DuplicateWebhook") return "duplicate";
     await this.handleSender(sender);
     const [r] = await this.o.sql`select status, outcome from platform.inbound where id = ${id}`;
-    return r?.status === "done" ? (r.outcome as string) : r?.status === "failed" ? "failed" : "retry_later";
+    // spec/webhookInbox.md, "Report the received row's stored result after draining"
+    switch (webhookAnswer(r?.status === "done", r?.status === "failed")) {
+      case "StoredWebhookAnswer": return r!.outcome as string;
+      case "StoredWebhookFailure": return "failed";
+      case "WaitForRetry": return "retry_later";
+    }
   }
 
   /** Every sender with waiting rows (the tick): rows a crash or an error left behind. Returns how many rows it handled. */
@@ -253,29 +258,37 @@ export class Inbox {
     let n = 0;
     for (;;) {
       const waiting = await this.o.sql`select id, event, attempts, received_at from platform.inbound where sender = ${sender} and status = 'pending'
-        order by received_at, id limit ${KEYWORD_SCAN}`;
-      if (!waiting.length) return n;
+        order by received_at, id limit ${webhookScanLimit}`;
       const parsed = (waiting as any[]).map(w => ({ ...w, ...((typeof w.event === "string" ? JSON.parse(w.event) : w.event) as { ev: InboundMessage; app: string | null }) }));
-      // A compliance keyword goes ahead of an earlier row (one that keeps failing must not hold back a STOP).
+      // spec/webhookInbox.md, "Dedupe a received message and choose the next pending turn"
       const compliance = parsed.find(w => isComplianceText(w.ev?.text));
       // A signed turn of this sender that is running (or ended unresolved a short while ago) holds back
       // their ordinary rows only: STOP, STOP ALL, leave, START and HELP are handled at once, as signed() does.
-      if (ordinaryTurnMustWait(!!compliance)) {
+      let blocked = false;
+      if (parsed.length && ordinaryTurnMustWait(!!compliance)) {
         const blockedSince = new Date(this.o.clock.now() - unresolvedBlockMs), stale = new Date(this.o.clock.now() - processingLeaseMs);
-        if ((await this.o.sql`select 1 from platform.inbound where sender_hash=${this.o.senderKey(sender)} and request_hash is not null
-          and ((status='processing' and arrived_at>${stale}) or (status='unresolved' and arrived_at>${blockedSince})) limit 1`).length) return n;
+        blocked = (await this.o.sql`select 1 from platform.inbound where sender_hash=${this.o.senderKey(sender)} and request_hash is not null
+          and ((status='processing' and arrived_at>${stale}) or (status='unresolved' and arrived_at>${blockedSince})) limit 1`).length > 0;
       }
-      const r = compliance ?? parsed[0]!;
+      const next = chooseWebhook(parsed.length > 0, !!compliance, blocked);
+      if (next === "QueueEmpty" || next === "WaitForSignedTurn") return n;
+      const r = next === "RunCompliance" ? compliance! : parsed[0]!;
       const { ev, app } = r;
       try {
         const outcome = await this.o.handle(ev, app ?? undefined);
         await this.o.sql`update platform.inbound set status = 'done', outcome = ${outcome}, handled_at = ${new Date(this.o.clock.now())},
           handled_order = nextval('platform.inbound_handled_seq'), event = null, sender = null where id = ${r.id}`;
         n++;
-        if (isStopText(ev.text)) n += await this.cancelBefore(sender, r.received_at, parsed.filter(w => w.id !== r.id && !isComplianceText(w.ev?.text)).map(w => w.id as string));
+        // spec/webhookInbox.md, "A completed STOP clears earlier ordinary rows and errors retry at most five times"
+        const handled = stepWebhook(initialWebhook, { type: "recordHandled", stopCommand: isStopText(ev.text) });
+        if (handled.phase === "CancelEarlier") {
+          const earlier = parsed.filter(w => earlierWebhookCancellable(w.id === r.id, isComplianceText(w.ev?.text))).map(w => w.id as string);
+          n += await this.cancelBefore(sender, r.received_at, earlier);
+        }
       } catch (e) {
         const attempts = (r.attempts as number) + 1;
-        if (attempts >= MAX_ATTEMPTS) {
+        const failed = stepWebhook(initialWebhook, { type: "recordFailure", attempts });
+        if (failed.phase === "DropWebhook") {
           await this.o.sql`update platform.inbound set status = 'failed', attempts = ${attempts}, outcome = 'failed', handled_at = ${new Date(this.o.clock.now())},
             handled_order = nextval('platform.inbound_handled_seq'), event = null, sender = null where id = ${r.id}`;
           this.o.log(`[alert] inbound ${r.id} failed ${attempts} times and is dropped: ${(e as Error).message}`);

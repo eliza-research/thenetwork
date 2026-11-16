@@ -8,7 +8,7 @@ A member needs STOP to take effect on every app that shares the line.
 
 Check turn claims, STOP and START, consent ordering, and gateway projections. The model defines the checks in `safety`, the reachable states in `witness_*`, and the replay traces in `run` definitions.
 
-The [signed inbox spec](../signedInbox.md) generates claim, replay, completion, and compliance recovery decisions. The [turn receipt spec](../turnReceipt.md) generates gateway acknowledgment admission and reply status projection. The [shared context spec](../sharedContext.md) generates the context eligibility and output gates for the canonical member. The service verifies signed requests and holds the appropriate locks during these operations.
+The [signed inbox spec](../signedInbox.md) generates claim, replay, completion, and compliance recovery decisions. The [webhook inbox spec](../webhookInbox.md) generates selection, retry, and cancellation decisions for pending provider messages. The [turn receipt spec](../turnReceipt.md) generates gateway acknowledgment admission and reply status projection. The [shared context spec](../sharedContext.md) generates the context eligibility and output gates for the canonical member. The service verifies signed requests and holds the appropriate locks during these operations.
 
 Imported from `quint/turn_consent.qnt` at `30d950e`. See [model index](README.md) for scope and commands.
 
