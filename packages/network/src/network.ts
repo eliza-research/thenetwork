@@ -69,6 +69,7 @@ import {
 } from "../../core/src/generated/opportunityLifecycle.ts";
 import { queueRepeat, recentRepeatSource, recordsRepeatConsent } from "../../core/src/generated/repeatEncounter.ts";
 import { gatheringPriorityIsolated, gatheringPriorityNewcomer } from "../../core/src/generated/monthlyGatheringRsvp.ts";
+import type { GatheringNoticeKind } from "../../core/src/generated/monthlyGatheringNotices.ts";
 import { boundedHelpRoute, openHomeHelpCase } from "../../core/src/generated/boundedHelp.ts";
 import { isHomeEntry, riskTerms } from "../../engine/src/filters.ts";
 import { bookedCapacityReached, bookedOccupies } from "../../core/src/generated/peonCapacity.ts";
@@ -596,6 +597,8 @@ interface SendOpts {
   noDefer?: boolean;
   /** A reviewed event card must retain its exact body through the outbound claim. */
   immutableBody?: boolean;
+  /** The service has checked a current reservation for the exact gathering notice. */
+  gatheringRsvpLogistics?: true;
   /**
    * What the send does, as data: whether a deferred send is still worth sending when the window
    * opens, what runs when it goes out, and what runs when it is refused (hookFns). Data, not
@@ -1534,14 +1537,33 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** Stage an exact reviewed gathering invitation using ordinary proactive outreach budgets. */
   askReviewedGatheringInvitation(recipientId: MemberId, deliveryId: string, body: string): boolean {
-    if (this.app.id !== "ntwrk" || !this.matchingEnabled() || this.declinedIds.has(recipientId)) return false;
-    const member = this.members.get(recipientId);
-    const record = this.record(recipientId);
-    if (!member || !record || record.homeCity !== "nyc" || !canBeMatched(record.age) ||
-      !gatheringMemberStateCurrent(member, !this.trust.ok(recipientId) || this.reportHeld(recipientId)) ||
-      !gatheringEventPreference(record.prefs)) return false;
+    const member = this.gatheringOutreachMember(recipientId);
+    if (!member) return false;
     this.dirty = true;
     return this.send(member, body, { type: "info", proactive: true }, "info", { key: deliveryId, noDefer: true, immutableBody: true }) === "sent";
+  }
+
+  /** Logistics for the recipient's own current RSVP use the same timing as a booked meeting. */
+  sendGatheringRsvpNotice(recipientId: MemberId, { id, body, kind, startsAt }:
+    { id: string; body: string; kind: GatheringNoticeKind; startsAt: number }): boolean {
+    const member = this.gatheringOutreachMember(recipientId);
+    if (!member) return false;
+    const now = this.now();
+    const attendance = kind === "GatheringAttendancePrompt";
+    if (attendance && (this.askOpen(member, now) || member.awaiting?.kind === "probe" || member.awaiting?.kind === "booked")) return false;
+    if (kind === "GatheringNearStart" && startsAt - now > nearMeetingReminderLeadMs && this.laterAllowedTick(member, now, startsAt - HOUR)) return false;
+    this.dirty = true;
+    return this.send(member, body, { type: attendance ? "feedback_request" : "reminder" }, attendance ? "feedback" : "reminder", {
+      key: id, noDefer: true, immutableBody: true, gatheringRsvpLogistics: true,
+    }) === "sent";
+  }
+
+  private gatheringOutreachMember(id: MemberId): MemberState | undefined {
+    if (this.app.id !== "ntwrk" || !this.matchingEnabled() || this.declinedIds.has(id)) return;
+    const member = this.members.get(id);
+    const record = this.record(id);
+    if (member && record?.homeCity === "nyc" && canBeMatched(record.age) && gatheringEventPreference(record.prefs)
+      && gatheringMemberStateCurrent(member, !this.trust.ok(id) || this.reportHeld(id))) return member;
   }
 
   private queueInviteJoin(inv: MemberState, notice: InviteJoinNotice) {
@@ -5543,6 +5565,32 @@ export class ConsentNetwork implements NetworkUnderTest {
     });
   }
 
+  /** Current safe pair edges among the private, opted-in gathering roster. */
+  gatheringGroupingEvidence(ids: readonly MemberId[], now: number) {
+    if (this.app.id !== "ntwrk") return { members: [], pairs: [] };
+    const records = new Map((this.ctx.snapshot().members as MemberRecord[]).map(record => [record.id, record]));
+    const members = [...new Set(ids)].filter(id => {
+      const member = this.members.get(id);
+      const record = records.get(id);
+      if (!member || member.stage !== "active" || record?.homeCity !== "nyc" || record.state === "paused"
+        || (record.accountStatus !== undefined && record.accountStatus !== "active") || !canBeMatched(record.age)) return false;
+      const current = relayMemberOf(member, !this.trust.ok(id) || this.reportHeld(id));
+      return !current.optedOut && !current.held && canBeMatched(current.age);
+    });
+    const profiles = this.knownProfiles();
+    const pairs: { first: MemberId; second: MemberId; value: number }[] = [];
+    for (const [index, first] of members.entries()) {
+      const interests = profiles.get(first)?.interests;
+      for (const second of members.slice(index + 1)) {
+        const key = pairKey(first, second);
+        if (this.blocked(first, second) || this.avoid.has(key) || (this.declined.get(key) ?? -Infinity) > now - 60 * DAY) continue;
+        const shared = [...(profiles.get(second)?.interests ?? [])].filter(tag => interests?.has(tag)).length;
+        pairs.push({ first, second, value: shared });
+      }
+    }
+    return { members, pairs };
+  }
+
   /** Encounters the Network composes itself: second encounters and newcomer welcomes. */
   private localEncounters(now: number) {
     this.growthTasks(now);
@@ -5627,7 +5675,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     // A pending yes/no (a probe or a booked plan) is the open question: an ask now would make the
     // member's next answer ambiguous ("Free Tuesday evening" read as a yes to the probe).
     if (ask && (m.awaiting?.kind === "probe" || m.awaiting?.kind === "booked")) return this.refuse(m.id, kind, "one_question", fns);
-    const outreach = kind === "worthwhile" ? "unsolicited" : this.classifyOutreach(m, meta, now);
+    const outreach = o.gatheringRsvpLogistics ? "solicited" : kind === "worthwhile" ? "unsolicited" : this.classifyOutreach(m, meta, now);
     const unsol = outreach === "unsolicited";
     const timing = this.timingOf(kind, proactive || unsol, reply);
     if (timing !== "now") {

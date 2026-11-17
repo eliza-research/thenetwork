@@ -57,6 +57,7 @@ import type { InboundTurn, CollectedReply, AtomicReplyReason } from "./inbox.ts"
 import { BOUNDED_HOME_HELP_PROMPT } from "./bounded-home-help-intake.ts";
 import { homeHelpNoticeId, lockHomeHelpNoticeRoster } from "./bounded-home-help-delivery.ts";
 import { gatheringInvitationAdmission } from "./monthly-gathering-delivery.ts";
+import { gatheringNoticeAdmission } from "./monthly-gathering-notices.ts";
 import { parseApprovedRelayPhotos, type TurnContext } from "../../core/src/svc/contract.ts";
 import { ADULT_AGE, canBeMatched } from "../../core/src/policy.ts";
 import type { PhotoRelayService } from "../../platform/src/photo-relay.ts";
@@ -82,7 +83,9 @@ export type StagedMemberInvitation =
   | { status: "issued"; referral: ReferralJoin; url: string; relationship: InviteRelationship;
       evidence: MemberInviteEvidence; at: number; reviewId?: string };
 
-const privateMemberMessage = (type?: string) => type === "bounded_home_help" || type === "profile_fact_edit" || type === "calendar_invite" || type === "gathering_rsvp" || type?.startsWith("member_invitation") === true;
+const gatheringPrivateBody = { gathering_rsvp: "Private gathering RSVP", gathering_followup: "Private gathering follow-up" };
+const gatheringMessage = (type?: string): type is keyof typeof gatheringPrivateBody => !!type && Object.hasOwn(gatheringPrivateBody, type);
+const privateMemberMessage = (type?: string) => type === "bounded_home_help" || type === "profile_fact_edit" || type === "calendar_invite" || gatheringMessage(type) || type?.startsWith("member_invitation") === true;
 
 /** What one unit of work produced. Written in the save transaction, then delivered. */
 export interface Unit {
@@ -94,7 +97,7 @@ export interface Unit {
   atomicProfileFactReply?: true;
   atomicParticipationReply?: true;
   atomicCalendarReply?: true;
-  atomicGatheringRsvp?: true;
+  atomicGatheringReply?: keyof typeof gatheringPrivateBody;
   atomicInvitationDeliveryReply?: true;
   memberInvitation?: StagedMemberInvitation;
   standingIntent?: StoredStandingIntentChange;
@@ -457,6 +460,12 @@ export class NetworkRuntime {
     return gatheringInvitationAdmission(tx, this.app, this.pg.id, accounts, row, this.clock.now());
   }
 
+  async gatheringNoticeAdmission(tx: SQL, row: QueueRow): Promise<RecipientCheck> {
+    const accounts = this.host.accountsFor?.(tx);
+    if (!accounts || !this.matchingAllowed) return { ok: false, reason: "gathering_notice_changed" };
+    return gatheringNoticeAdmission(tx, this.app, this.pg.id, accounts, row, this.clock.now());
+  }
+
   async expectedInvitationAdmission(tx: SQL, row: { id: string; to: string; text: string }): Promise<boolean> {
     return !!await this.host.admitExpectedInvitation?.(tx, this, row);
   }
@@ -727,7 +736,7 @@ export class NetworkRuntime {
 
   /** A directly requested result for this signed member. Source links grant only a per-reply contact exception. */
   collectedMemberReply(memberId: MemberId, id: string, body: string,
-    type: "solo_events" | "contribution_history" | "member_invitation" | "member_invitation_vouch" | "member_invitation_delivery" | "bounded_home_help" | "profile_fact_edit" | "cofounder_intent" | "participation_controls" | "calendar_invite" | "gathering_rsvp", publicLinks: readonly string[] = []) {
+    type: "solo_events" | "contribution_history" | "member_invitation" | "member_invitation_vouch" | "member_invitation_delivery" | "bounded_home_help" | "profile_fact_edit" | "cofounder_intent" | "participation_controls" | "calendar_invite" | keyof typeof gatheringPrivateBody, publicLinks: readonly string[] = []) {
     const turn = this.host.inboundTurn?.();
     if (turn?.app !== this.app.id || turn.memberId !== memberId
       || normalizeAddress(this.addressOf(memberId) ?? "") !== normalizeAddress(turn.from)) return;
@@ -817,7 +826,7 @@ export class NetworkRuntime {
         : u.privateInviteTurn ? { body: "Private invitation request.", type: "member_invitation_vouch" }
           : u.atomicProfileFactReply ? { body: "Private profile fact request.", type: "profile_fact_edit" }
             : u.atomicCalendarReply ? { body: "Private calendar invite request.", type: "calendar_invite" }
-              : u.atomicGatheringRsvp ? { body: "Private gathering RSVP.", type: "gathering_rsvp" } : {};
+              : u.atomicGatheringReply ? { body: `${gatheringPrivateBody[u.atomicGatheringReply]}.`, type: u.atomicGatheringReply } : {};
       await tx`insert into network.messages ${tx({ ...u.inbound, ...privateFields, app_id: app })} on conflict (id) do nothing`;
     }
     const turn = this.host.inboundTurn?.();
@@ -872,9 +881,9 @@ export class NetworkRuntime {
       if (!captured.some(send => send.type === "calendar_invite")) throw new Error("Calendar invite reply was not collected");
       replyReason = "calendar_invite";
     }
-    if (u.atomicGatheringRsvp) {
-      if (!captured.some(send => send.type === "gathering_rsvp")) throw new Error("Gathering RSVP reply was not collected");
-      replyReason = "gathering_rsvp";
+    if (u.atomicGatheringReply) {
+      if (!captured.some(send => send.type === u.atomicGatheringReply)) throw new Error("Gathering reply was not collected");
+      replyReason = u.atomicGatheringReply;
     }
     if (u.atomicCofounderReply) {
       if (!captured.some(send => send.type === "cofounder_intent")) throw new Error("Cofounder intent reply was not collected");
@@ -897,7 +906,7 @@ export class NetworkRuntime {
       id: s.id, app_id: app, member_id: s.memberId, direction: "outbound", channel: "imessage",
       body: s.type === "bounded_home_help" ? "Private home-help reply." : s.type === "profile_fact_edit" ? "Private profile fact reply."
         : s.type === "calendar_invite" ? "Private calendar invite reply."
-        : s.type === "gathering_rsvp" ? "Private gathering RSVP reply."
+        : gatheringMessage(s.type) ? `${gatheringPrivateBody[s.type]} reply.`
         : privateMemberMessage(s.type) ? "Private invitation reply." : s.body,
       status: u.collected.has(s.id) ? "collected" : this.adapter.storedStatus,
       inbound_id: u.collected.has(s.id) ? turn!.id : null,

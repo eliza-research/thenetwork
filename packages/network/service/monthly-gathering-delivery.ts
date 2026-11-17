@@ -23,24 +23,26 @@ interface ReviewedInvite {
   has_rsvp: boolean; reserved: number;
 }
 
-function invitationId(event: GatheringRsvpKey, memberId: string): string {
-  return `${monthlyGatheringInvitePrefix}${event.id}:${event.revision}:${memberId}`;
+export function gatheringDeliveryId(event: GatheringRsvpKey, memberId: string, prefix = monthlyGatheringInvitePrefix): string {
+  return `${prefix}${event.id}:${event.revision}:${memberId}`;
 }
 
-function invitationKey(row: Pick<QueueRow, "id" | "memberId">): GatheringRsvpKey | undefined {
-  if (!row.memberId || !row.id.startsWith(monthlyGatheringInvitePrefix)) return;
-  const [id, rawRevision] = row.id.slice(monthlyGatheringInvitePrefix.length).split(":", 2);
+export function gatheringDeliveryEvent(row: Pick<QueueRow, "id" | "memberId">, prefix = monthlyGatheringInvitePrefix): GatheringRsvpKey | undefined {
+  if (!row.memberId || !row.id.startsWith(prefix)) return;
+  const [id, rawRevision] = row.id.slice(prefix.length).split(":", 2);
   const revision = Number(rawRevision);
   if (id && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(id) && Number.isSafeInteger(revision) && revision > 0 &&
-    revision <= 2_147_483_647 && row.id === invitationId({ id, revision }, row.memberId)) return { id, revision };
+    revision <= 2_147_483_647 && row.id === gatheringDeliveryId({ id, revision }, row.memberId, prefix)) return { id, revision };
 }
 
 const localStart = new Intl.DateTimeFormat("en-US", {
   timeZone: "America/New_York", weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit",
 });
 
+export const gatheringLocalStart = (startsAt: Date): string => localStart.format(startsAt);
+
 function invitationCard(event: ReviewedInvite, id: string): string {
-  return attention.withPausePath(`The Network's monthly gathering is ${localStart.format(event.starts_at)} New York time at ${event.venue_name}. Reply with the line below to reserve a place.\n`
+  return attention.withPausePath(`The Network's monthly gathering is ${gatheringLocalStart(event.starts_at)} New York time at ${event.venue_name}. Reply with the line below to reserve a place.\n`
     + `RSVP GATHERING ${gatheringRsvpReference(id)} ${event.revision} YES`);
 }
 
@@ -90,7 +92,7 @@ export async function queueReviewedGatheringInvitations(rt: NetworkRuntime, acco
       const memberId = candidate.member_id;
       const address = rt.addressOf(memberId);
       if (!address) continue;
-      const id = invitationId(candidate, memberId);
+      const id = gatheringDeliveryId(candidate, memberId);
       const notice = await rt.scoped(async tx => {
         const [stored] = await tx`select id from network.messages where app_id=${app.id} and id=${id}`;
         if (stored) return;
@@ -105,8 +107,8 @@ export async function queueReviewedGatheringInvitations(rt: NetworkRuntime, acco
 }
 
 /** Match the Network save lock order before serializing with the RSVP and member fences. */
-export async function lockGatheringInvitationAdmission(tx: SQL, app: string, runtimeId: string, row: QueueRow): Promise<void> {
-  const key = invitationKey(row);
+export async function lockGatheringAdmission(tx: SQL, app: string, runtimeId: string, row: QueueRow, prefix = monthlyGatheringInvitePrefix): Promise<void> {
+  const key = gatheringDeliveryEvent(row, prefix);
   if (app !== "ntwrk" || row.app !== app || !key) return;
   await tx`select id from network.network_state where id=${runtimeId} and app_id=${app} for share`;
   const [event] = await tx<{ venue_kind: string }[]>`select venue_kind from network.monthly_gatherings where app_id=${app} and id=${key.id} for share`;
@@ -118,7 +120,7 @@ export async function lockGatheringInvitationAdmission(tx: SQL, app: string, run
 export async function gatheringInvitationAdmission(tx: SQL, app: AppInfo, runtimeId: string, accounts: GatheringAccounts,
   row: QueueRow, now: number): Promise<RecipientCheck> {
   const refused: RecipientCheck = { ok: false, reason: "gathering_invitation_changed" };
-  const key = invitationKey(row);
+  const key = gatheringDeliveryEvent(row);
   const memberId = row.memberId;
   if (!key || !memberId || app.id !== "ntwrk" || row.app !== app.id || row.kind !== "proactive" || row.oppId ||
     row.mediaUrls.length || row.approvedPhotos?.length) return refused;

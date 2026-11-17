@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { SendRequest } from "../../blooio/src/types.ts";
-import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
+import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
 import { svcSign } from "../../core/src/svc/svc-auth.ts";
@@ -8,6 +8,8 @@ import { APPS } from "../../platform/src/apps.ts";
 import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
 import { BlooioAdapter } from "../service/channel.ts";
 import { monthlyGatheringInvitePrefix } from "../service/monthly-gathering-delivery.ts";
+import { gatheringFollowupCommand } from "../service/monthly-gathering-followup.ts";
+import { monthlyGatheringNoticePrefix } from "../service/monthly-gathering-notices.ts";
 import { gatheringRsvpCommand } from "../service/monthly-gathering-rsvp.ts";
 import { NetworkService } from "../service/service.ts";
 
@@ -20,11 +22,13 @@ test.skipIf(!pgAvailable)("the tick delivers only current staff-approved gatheri
   const secret = "a-synthetic-gathering-invitation-flow-secret";
   const sent: SendRequest[] = [];
   const invites = () => sent.filter(send => send.idempotencyKey.startsWith(`tn:${monthlyGatheringInvitePrefix}`));
+  const notices = () => sent.filter(send => send.idempotencyKey.startsWith(`tn:${monthlyGatheringNoticePrefix}`));
   const service = new NetworkService({
     url, clock, log: () => {}, photoStorage: null, notify: false,
     env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret },
     tokens: "admin@ntwrk:ntwrk-admin,reviewer@ntwrk:ntwrk-reviewer",
     networks: [{ id: "ntwrk:nyc", matchingEnabled: true }], devMatching: ["ntwrk:nyc"],
+    network: { growth: false },
     adapter: (_net, rt) => new BlooioAdapter({ app: rt.app.id, from: "+12125550100", clock, liveGate: () => true, log: () => {},
       provider: { kind: "sim", async send(request) {
         sent.push(request);
@@ -99,6 +103,40 @@ test.skipIf(!pgAvailable)("the tick delivers only current staff-approved gatheri
     clock.advance(HOUR);
     await service.tick();
     expect(invites()).toHaveLength(1);
+
+    // spec/monthlyGatheringNotices.md, "Each notice needs the exact current RSVP and its own send window"
+    clock.set(startsAt - DAY - MINUTE);
+    await service.tick();
+    expect(notices()).toHaveLength(0);
+    clock.set(startsAt - DAY);
+    await service.tick();
+    expect(notices().map(notice => notice.to)).toEqual([recipient]);
+    expect(notices()[0]!.idempotencyKey).toContain(":day-before:");
+    clock.set(startsAt - 3 * HOUR);
+    await service.tick();
+    expect(notices().map(notice => notice.to)).toEqual([recipient, recipient]);
+    expect(notices()[1]!.idempotencyKey).toContain(":near-start:");
+    clock.set(startsAt + 2 * HOUR - MINUTE);
+    await service.tick();
+    expect(notices()).toHaveLength(2);
+    clock.advance(MINUTE);
+    await service.tick();
+    expect(notices()).toHaveLength(2);
+    // The shared line has three unanswered sends. An ordinary member turn releases that hold.
+    expect((await send(recipient, "gathering-engaged-after-event", "Thanks for the reminders.")).status).toBe(200);
+    clock.advance(MINUTE);
+    await service.tick();
+    expect(notices().map(notice => notice.to)).toEqual([recipient, recipient, recipient]);
+    expect(notices()[2]!.idempotencyKey).toContain(":attendance:");
+    expect(await sql`select * from network.monthly_gathering_attendance`).toHaveLength(0);
+    const answer = notices()[2]!.text.split("\n").find(line => line.endsWith(" YES"));
+    expect(gatheringFollowupCommand(answer ?? "")).toMatchObject({ id, revision: 1, kind: "attendance", yes: true });
+    const attendance = await send(recipient, "gathering-confirm-attendance", answer!);
+    expect(await attendance.json()).toMatchObject({ outcome: "handled", reason: "gathering_followup", replies: [expect.any(String)] });
+    expect(await sql`select attended from network.monthly_gathering_attendance where gathering_id=${id}`).toEqual([{ attended: true }]);
+    clock.advance(HOUR);
+    await service.tick();
+    expect(notices()).toHaveLength(3);
   } finally {
     await service.close();
     await sql.close();

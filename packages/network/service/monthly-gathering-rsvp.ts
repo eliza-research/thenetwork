@@ -18,6 +18,7 @@ type RsvpAccounts = Pick<Accounts, "activeMembership" | "lowestAge">;
 
 const ID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const RSVP_REFERENCE = `${ID}|[a-p]{32}`;
+const RSVP_KEY = new RegExp(`^(?:${RSVP_REFERENCE})$`, "i");
 const RSVP = new RegExp(`^RSVP GATHERING (${RSVP_REFERENCE}) ([1-9][0-9]{0,8}) YES( WITH GROUPING)?[.!]?$`, "i");
 const WITHDRAW = new RegExp(`^WITHDRAW GATHERING (${RSVP_REFERENCE}) ([1-9][0-9]{0,8})[.!]?$`, "i");
 const UUID = new RegExp(`^${ID}$`, "i");
@@ -33,6 +34,11 @@ function gatheringIdFromReference(reference: string): string {
   if (UUID.test(lower)) return lower;
   const hex = lower.replace(/[a-p]/g, letter => REFERENCE_LETTERS.indexOf(letter).toString(16));
   return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join("-");
+}
+
+/** Decode the same event reference accepted by RSVP and post-event commands. */
+export function gatheringRsvpKey(reference: string, revision: string): GatheringRsvpKey | undefined {
+  if (RSVP_KEY.test(reference) && /^[1-9][0-9]{0,8}$/.test(revision)) return { id: gatheringIdFromReference(reference), revision: Number(revision) };
 }
 
 export function gatheringRsvpCommand(text: string): GatheringRsvpCommand | undefined {

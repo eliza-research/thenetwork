@@ -363,10 +363,28 @@ withdraws the RSVP. An admin can read the current roster at
 `GET /apps/ntwrk/gatherings/<id>/roster?revision=<revision>`. The roster uses
 member IDs and the current grouping choice.
 
+Use `GET /apps/ntwrk/gatherings/<id>/grouping?revision=<revision>` to preview
+groups of three to five members with current grouping consent. Approve the
+current `fingerprint` and `revision` with
+`POST /apps/ntwrk/gatherings/<id>/grouping/review`. A change to the current
+grouping requires a fresh review.
+
+Members with an active reservation can receive a day-before reminder, a
+near-start reminder, and a private attendance question through the usual
+outbound controls. Members have seven days after the gathering ends to send
+`GATHERING ATTENDED <id> <revision> YES` or `NO`. From the start of the
+gathering, members in an approved group can send `GATHERING REFERENCE <id>
+<revision>` for their own shareable reference. After confirming attendance,
+use `GATHERING FOLLOW-UP <id> <revision> <peer-reference> YES` to make a
+private choice, or `NO` to withdraw it.
+
 [Staff review rules](../../../spec/monthlyGathering.md) ·
 [Invitation approval](../../../spec/monthlyGatheringInvitationReview.md) ·
 [Invitation delivery](../../../spec/monthlyGatheringDelivery.md) ·
-[RSVP and privacy rules](../../../spec/monthlyGatheringRsvp.md)
+[RSVP and privacy rules](../../../spec/monthlyGatheringRsvp.md) ·
+[Grouping review](../../../spec/monthlyGatheringGrouping.md) ·
+[Reminders and attendance prompt](../../../spec/monthlyGatheringNotices.md) ·
+[Attendance and follow-up](../../../spec/monthlyGatheringFollowup.md)
 
 ## Limits
 
