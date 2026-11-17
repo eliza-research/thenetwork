@@ -62,10 +62,13 @@ function service(clock: SimClock, more: Partial<ServiceOptions> = {}) {
 }
 
 let evt = 0;
-async function text(s: NetworkService, clock: SimClock, from: string, body: string) {
+async function text(s: NetworkService, clock: SimClock, from: string, body: string, opts?: { app?: AppId; attachments?: { url: string }[] }) {
   const n = ++evt;
-  const raw = JSON.stringify({ id: `evt_${n}`, type: "message.received", api_version: "2026-10-01", created_at: clock.now(), organization_id: "org_test", data: { message_id: `msg_${n}`, sender: from, chat_id: from, text: body, protocol: "imessage" } });
-  const res = await s.fetch(new Request(`http://127.0.0.1${WEBHOOK_PATH}`, { method: "POST", headers: { "content-type": "application/json", "x-blooio-signature": signBlooioPayload(SECRET, raw, Math.floor(clock.now() / 1000)) }, body: raw }));
+  const data: Record<string, unknown> = { message_id: `msg_${n}`, sender: from, chat_id: from, text: body, protocol: "imessage" };
+  if (opts?.attachments) data.attachments = opts.attachments;
+  const raw = JSON.stringify({ id: `evt_${n}`, type: "message.received", api_version: "2026-10-01", created_at: clock.now(), organization_id: "org_test", data });
+  const path = opts?.app ? `${WEBHOOK_PATH}/${opts.app}` : WEBHOOK_PATH;
+  const res = await s.fetch(new Request(`http://127.0.0.1${path}`, { method: "POST", headers: { "content-type": "application/json", "x-blooio-signature": signBlooioPayload(SECRET, raw, Math.floor(clock.now() / 1000)) }, body: raw }));
   expect(res.status).toBe(200);
   clock.advance(MINUTE);
   return (await res.json()).result as string;
@@ -215,6 +218,99 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: aboutDi.subjectId, by: "person", note: "scam confirmed" })).json()).toEqual({ ok: true });
     expect((await sql`select scope from platform.bans`).map((r: any) => r.scope)).toEqual(["person"]);
     expect(await text(s, clock, di, "friends")).toBe("held");
+  }, T);
+
+  test("ban revokes every share grant, clears concurrent pending shares, and admits only HELP, STOP and leave", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const fetches: string[] = [];
+    const { s, directs } = service(clock, {
+      webhookSecrets: { slop: SECRET },
+      fetchMedia: async (url) => { fetches.push(url); return new Uint8Array([0xff, 0xd8, 0xff, 0xd9]); },
+    });
+    const ana = newPhone(), ben = newPhone();
+    for (const [p, who] of [[ana, "Ana, 30"], [ben, "Ben, 32"]] as const) {
+      expect(await text(s, clock, p, "friends")).toBe("join_asked");
+      expect(await text(s, clock, p, who)).toBe("joined");
+    }
+    // Ben joins slop and peon. Each SHARE answers that app's link notice and stores a live grant.
+    expect(await text(s, clock, ben, "slop")).toBe("join_asked");
+    expect(await text(s, clock, ben, "Ben, 32")).toBe("joined");
+    expect(await text(s, clock, ben, "SHARE")).toBe("handled");
+    expect(await text(s, clock, ben, "peon")).toBe("join_asked");
+    expect(await text(s, clock, ben, "Ben, 32")).toBe("joined");
+    expect(await text(s, clock, ben, "SHARE")).toBe("handled");
+    const grantKey = (g: { from_app: string; to_app: string }) => `${g.from_app}>${g.to_app}`;
+    const grants = async () => (await sql`select from_app, to_app, revoked_at from platform.share_grants order by from_app, to_app`) as { from_app: string; to_app: string; revoked_at: string | null }[];
+    const before = await grants();
+    expect(before.map(grantKey)).toEqual(["friends>peon", "friends>slop", "slop>peon"]);
+    expect(before.every(g => g.revoked_at === null)).toBe(true);
+
+    const pendingShares = async () => (await sql`select pt.app_id from platform.pending_texts pt
+      join platform.people p on p.phone_hash = pt.phone_hash
+      join platform.phone_identities ph on ph.person_id = p.id
+      where ph.e164 = ${ben} and pt.kind = 'share' order by pt.app_id`).map((r: { app_id: string }) => r.app_id);
+    const insertPending = async (kind: string, app: string) => {
+      await sql`insert into platform.pending_texts (phone_hash, kind, app_id, name, age, at)
+        select p.phone_hash, ${kind}, ${app}, null, null, now()
+        from platform.people p
+        join platform.phone_identities ph on ph.person_id = p.id
+        where ph.e164 = ${ben} and p.phone_hash is not null`;
+    };
+    // Several share flows are waiting at once (one row per app). Ban must clear every one.
+    for (const app of ["friends", "ntwrk", "slop"]) await insertPending("share", app);
+    expect(await pendingShares()).toEqual(["friends", "ntwrk", "slop"]);
+
+    expect(await text(s, clock, ana, "report Ben, he was rude and kept texting me")).toBe("handled");
+    const b = (await memberOf("slop", ben))!.id;
+    expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: b, by: "phone", note: "confirmed by staff" })).json()).toEqual({ ok: true });
+
+    const revoked = await grants();
+    expect(revoked.map(grantKey)).toEqual(["friends>peon", "friends>slop", "slop>peon"]);
+    expect(revoked.every(g => g.revoked_at !== null)).toBe(true);
+    expect(await pendingShares()).toEqual([]);
+
+    // A share and a photo consent that arrive after the teardown must not complete, and must not
+    // run photo intake (no fetch, no consent write, no photo rate row).
+    await insertPending("share", "friends");
+    await insertPending("share", "slop");
+    await insertPending("photo_consent", "slop");
+    const quiet = directs.length;
+    expect(await text(s, clock, ben, "here is a photo", { app: "slop", attachments: [{ url: "https://media.blooio.com/a.jpg" }] })).toBe("held");
+    expect(await text(s, clock, ben, "YES PHOTOS", { app: "slop" })).toBe("held");
+    expect(fetches).toEqual([]);
+    expect(directs.length).toBe(quiet);
+    expect((await sql`select count(*)::int as n from platform.rate_limits where bucket like 'photo_msg:%'`)[0].n).toBe(0);
+    expect((await sql`select count(*)::int as n from platform.pending_texts pt
+      join platform.people p on p.phone_hash = pt.phone_hash
+      join platform.phone_identities ph on ph.person_id = p.id
+      where ph.e164 = ${ben} and pt.kind = 'photo_consent'`)[0].n).toBe(1);
+    expect((await sql`select profile->>'photoConsent' as consent from platform.memberships m
+      join platform.phone_identities ph on ph.person_id = m.person_id
+      where ph.e164 = ${ben} and m.app_id = 'slop'`)[0].consent).toBeNull();
+    expect(await text(s, clock, ben, "SHARE")).toBe("held");
+    expect(await pendingShares()).toEqual(["friends", "slop"]);
+    expect(directs.length).toBe(quiet);
+    expect(await grants()).toEqual(revoked);
+
+    expect(await text(s, clock, ben, "hey are you there")).toBe("held");
+    expect(directs.length).toBe(quiet);
+    expect(await text(s, clock, ben, "HELP")).toBe("held");
+    const helps = new Set(Object.values(APPS).map(a => a.brand.help));
+    expect(helps.has(directs.at(-1)?.body ?? "")).toBe(true);
+    expect(await grants()).toEqual(revoked);
+
+    expect(await text(s, clock, ben, "STOP")).toBe("handled");
+    expect((await sql`select state from platform.consent_events where e164 = ${ben} and source = 'keyword:stop'`).map((r: { state: string }) => r.state)).toEqual(["opted_out"]);
+    // A leave may carry a photo. It still leaves, and the photo is not taken.
+    expect(await text(s, clock, ben, "leave slop.date", { attachments: [{ url: "https://media.blooio.com/leave.jpg" }] })).toBe("left");
+    expect(fetches).toEqual([]);
+    expect((await sql`select count(*)::int as n from platform.rate_limits where bucket like 'photo_msg:%'`)[0].n).toBe(0);
+    expect((await sql`select state from platform.memberships m join platform.phone_identities ph on ph.person_id = m.person_id where ph.e164 = ${ben} and m.app_id = 'slop'`)[0].state).toBe("removed");
+    expect(await text(s, clock, ben, "START")).toBe("held");
+    expect((await sql`select count(*)::int as n from platform.consent_events where e164 = ${ben} and source = 'keyword:start'`)[0].n).toBe(0);
+    // Leave and STOP do not mint a grant or clear a revocation.
+    expect(await grants()).toEqual(revoked);
   }, T);
 
   test("forget: a report or a minor report names neither party in network.events after that party leaves", async () => {
