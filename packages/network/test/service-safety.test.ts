@@ -586,12 +586,24 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(readdirSync(dir)).toHaveLength(0);
     expect((await sql`select count(*)::int as n from platform.photos`)[0].n).toBe(0);
   }, T);
-  test("the private member rating recomputes after photo deletion and clears on failed age or a minor age in any app", async () => {
+  // spec/photoRating.md, "Write only after the returned score passes a fresh authority check"
+  test("the private member rating follows the latest photos and clears on failed age or a minor age in any app", async () => {
     await fresh();
     const dir = mkdtempSync(join(tmpdir(), "svc-ratings-")); dirs.push(dir);
     const clock = new SimClock(START);
     const ratedPhotoCounts: number[] = [];
-    const rater: PhotoRater = { id: "fake", rate: async (_subject, photos) => { ratedPhotoCounts.push(photos.length); return { face: 0.5, body: 0.5, overall: 0.5, confidence: 0.9, model: "fake" }; } };
+    let markFirstRatingStarted!: () => void;
+    let finishFirstRating!: () => void;
+    const firstRatingStarted = new Promise<void>(resolve => { markFirstRatingStarted = resolve; });
+    const waitForFirstRating = new Promise<void>(resolve => { finishFirstRating = resolve; });
+    const rater: PhotoRater = { id: "fake", rate: async (_subject, photos) => {
+      ratedPhotoCounts.push(photos.length);
+      if (ratedPhotoCounts.length === 1) {
+        markFirstRatingStarted();
+        await waitForFirstRating;
+      }
+      return { face: 0.5, body: 0.5, overall: photos.length > 1 ? 0.7 : 0.5, confidence: 0.9, model: "fake" };
+    } };
     const { s, otp } = service(clock, { photoStorage: new LocalDiskPhotoStorage(dir), photoRater: rater });
     const web = site(s, clock, otp);
     const ana = newPhone();
@@ -600,7 +612,21 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const a = (await memberOf("slop", ana))!.id;
     const upload = async () => (await (await web.call("slop", "POST", "/api/photos", jpeg() as unknown as BodyInit, { "content-type": "image/jpeg", "x-photo-consent": PHOTO_CONSENT.version })).json()) as { ok: boolean; id: string };
     const ratings = async () => (await sql`select count(*)::int as n from network.facets where member_id = ${a} and id = ${`${a}:appearance`}`)[0].n as number;
-    const first = await upload(), second = await upload();
+    const pending = upload();
+    let second: Awaited<ReturnType<typeof upload>>;
+    const ratingVersion = () => sql`select xmin::text as write_version, tags from network.facets where id=${`${a}:appearance`}`;
+    let completedVersion: Awaited<ReturnType<typeof ratingVersion>>;
+    try {
+      await firstRatingStarted;
+      clock.advance(MINUTE);
+      second = await upload();
+      completedVersion = await ratingVersion();
+      expect(completedVersion).toHaveLength(1);
+    } finally {
+      finishFirstRating();
+    }
+    const first = await pending;
+    expect(await ratingVersion()).toEqual(completedVersion);
     expect(ratedPhotoCounts).toEqual([1, 2]);
     expect([first.ok, second.ok]).toEqual([true, true]);
     expect(await ratings()).toBe(1);

@@ -25,7 +25,7 @@ import { setTimeout as waitForMs } from "node:timers/promises";
 //    at most 4 MiB each, bytes only, never a URL) after every upload or delete, only for a verified
 //    adult with a live membership who is not banned (checked before any byte is read: zero rater calls
 //    otherwise, and checked again when the rater returns and after the write: a score is discarded if
-//    the age dropped under 18, a ban landed, the member left or a rated photo was deleted meanwhile),
+//    the age dropped under 18, a ban landed, the member left or the selected photo set changed),
 //    with retries on API errors (withRetry; each try is a cost row). The score goes to `onRating` (the
 //    service stores it with the engine's appearanceFacet, agent_private) and is never returned by any
 //    route or shown in the console. No rater: ratings are off and everything else works.
@@ -41,7 +41,7 @@ import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { ratingMaxBytes, ratingMaxPhotos, uploadMaxBytes, uploadMaxPerPerson, photoSlotsFull } from "../../core/src/generated/photoPolicy.ts";
 import {
   canCheckReturnedScore, canCheckWrittenScore, canRecordScoreRemoval, canRecordScoreWrite, canReceiveScore, canSupplyPhotos,
-  initial as ratingInitial, step as stepRating,
+  initial as ratingInitial, ratingPhotoSelectionCurrent, step as stepRating,
 } from "../../core/src/generated/photoRating.ts";
 import {
   canCheckSlots, canCleanImage, canFinishRerate, canRecordRatingClear, canRecordRemovedBytes, canRecordRemovedRow,
@@ -405,9 +405,10 @@ export class PgPhotoStore implements PhotoStore {
       values (${r.id}, ${r.personId}, ${r.app}, ${r.storageKey}, ${r.contentType}, ${r.bytes}, ${r.sha256}, ${r.consentVersion}, ${new Date(r.createdAt)})`;
   }
   async get(id: string) { const [r] = await this.sql`select * from platform.photos where id = ${id} and deleted_at is null`; return r ? photoRow(r) : undefined; }
-  async list(personId: string, app?: AppId) {
+  async list(personId: string, app?: AppId, lock = false) {
     const rows = app
-      ? await this.sql`select * from platform.photos where person_id = ${personId}::uuid and app_id = ${app} and deleted_at is null order by created_at, id`
+      ? await this.sql`select * from platform.photos where person_id = ${personId}::uuid and app_id = ${app} and deleted_at is null
+        order by created_at, id ${lock ? this.sql`for share` : this.sql``}`
       : await this.sql`select * from platform.photos where person_id = ${personId}::uuid and deleted_at is null order by created_at, id`;
     return (rows as Record<string, any>[]).map(photoRow);
   }
@@ -415,10 +416,16 @@ export class PgPhotoStore implements PhotoStore {
 }
 
 // ------------------------------------------------------------------------------------ service
-export type PhotoRefusal = "photos_off" | "app_not_allowed" | "consent_required" | "adults_only" | "not_verified" | "banned" | "too_large" | "bad_type" | "bad_image" | "too_many" | "not_found" | "not_member";
+export type PhotoRefusal = "photos_off" | "app_not_allowed" | "consent_required" | "adults_only" | "not_verified" | "banned" | "too_large" | "bad_type" | "bad_image" | "too_many" | "not_found" | "not_member" | "photo_set_changed";
 /** Membership states in which a member may be rated (left or removed: never). */
 const LIVE_MEMBERSHIP: readonly MembershipState[] = ["active", "paused", "onboarding"];
 export type PhotoResult<T> = { ok: true; value: T } | { ok: false; reason: PhotoRefusal };
+
+function ratingRows(rows: PhotoRow[]): PhotoRow[] {
+  return rows.filter(row => row.bytes <= RATER_MAX_BYTES).slice(-RATER_MAX_PHOTOS);
+}
+
+type RatingWriteResult = { discard: () => Promise<void> } | { refused: PhotoRefusal } | void;
 
 export interface PhotoServiceOptions {
   people: PeopleStore;
@@ -437,7 +444,7 @@ export interface PhotoServiceOptions {
   /** A staff ban on the person or any of their phones (platform.bans). A banned person's photo is never taken. Default: not banned. */
   banned?: (personId: string, tx?: SQL) => Promise<boolean>;
   /** The member's rating from their photos: the service stores it with appearanceFacet (agent_private). Never returned by a route. */
-  onRating?: (personId: string, app: AppId, score: AppearanceScore, subject: RatingSubject) => Promise<void>;
+  onRating?: (personId: string, app: AppId, score: AppearanceScore, subject: RatingSubject, selected: string[]) => Promise<RatingWriteResult>;
   /** A photo is gone (removed, left, deleted, a minor age, a ban): the service deletes the member's rating. */
   onRemoved?: (personId: string, app: AppId, photoId: string) => Promise<void>;
   log?: (s: string) => void;
@@ -515,14 +522,22 @@ export class PhotoService {
     return undefined;
   }
 
+  /** With tx, the production writer has locked the person; hold the photo rows until that write ends. */
+  async ratingSelectionRefusal(personId: string, app: AppId, selected: string[], tx?: SQL): Promise<PhotoRefusal | undefined> {
+    const refusal = await this.ratingRefusal(personId, app, undefined, tx);
+    if (refusal) return refusal;
+    const rows = await (tx ? new PgPhotoStore(tx).list(personId, app, true) : this.o.meta.list(personId, app));
+    if (ratingPhotoSelectionCurrent(selected, ratingRows(rows).map(row => row.id))) return;
+    return selected.some(id => !rows.some(row => row.id === id)) ? "not_found" : "photo_set_changed";
+  }
+
   /**
    * Rate the member from their newest photos (at most RATER_MAX_PHOTOS, each at most RATER_MAX_BYTES)
    * with the configured rater. Refused (no rater call, nothing written) for anyone who is not a
    * verified adult with a live membership now, or is banned. A rater call takes seconds, so everything
    * is checked again when it returns (the lowest age can drop under 18, a ban can land, the member can
-   * leave or delete a photo meanwhile): the score is discarded unless all still hold. It is checked a
-   * third time after the write, and a change that landed during the write drops the rating again
-   * (onRemoved). No rater: nothing happens. Returns whether a score was written.
+   * leave or change their selected photos meanwhile). After the write, a change clears the exact
+   * version this attempt wrote. No rater: nothing happens. Returns whether a score was kept.
    */
   async rate(personId: string, app: AppId): Promise<{ rated: boolean; refused?: PhotoRefusal }> {
     const rater = this.o.rater;
@@ -530,31 +545,35 @@ export class PhotoService {
     const who = await this.ratingRefusal(personId, app);
     let attempt = stepRating(ratingInitial, { type: "screenSubject", eligible: who === undefined });
     if (!canSupplyPhotos(attempt)) return { rated: false, refused: who };
-    const person = await this.o.people.getPerson(personId);
-    const subject: RatingSubject = { age: person!.lowestAge!, ageVerified: true };
-    const rows = (await this.o.meta.list(personId, app)).filter(r => r.bytes <= RATER_MAX_BYTES).slice(-RATER_MAX_PHOTOS);
+    const age = (await this.o.people.getPerson(personId))?.lowestAge;
+    if (age == null || !canBeMatched(age)) return { rated: false, refused: "adults_only" };
+    const subject: RatingSubject = { age, ageVerified: true };
+    const rows = ratingRows(await this.o.meta.list(personId, app));
+    const selected = rows.map(row => row.id);
     const photos: { id: string; bytes: Uint8Array }[] = [];
     for (const r of rows) { const bytes = await this.o.storage.get(r.storageKey); if (bytes) photos.push({ id: r.id, bytes }); }
-    attempt = stepRating(attempt, { type: "supplyPhotos", hasPhotos: photos.length > 0 });
-    if (!canReceiveScore(attempt)) return { rated: false, refused: "not_found" };
+    const ready = photos.length ? await this.ratingSelectionRefusal(personId, app, selected) : "not_found";
+    attempt = stepRating(attempt, { type: "supplyPhotos", hasPhotos: ready === undefined });
+    if (!canReceiveScore(attempt)) return { rated: false, refused: ready };
     const s = await rater.rate(subject, photos);
     attempt = stepRating(attempt, { type: "receiveScore", hasScore: !!s });
     if (!s || !canCheckReturnedScore(attempt)) return { rated: false };
-    const ids = photos.map(p => p.id);
-    const changed = await this.ratingRefusal(personId, app, ids);
+    const changed = await this.ratingSelectionRefusal(personId, app, selected);
     attempt = stepRating(attempt, { type: "checkReturnedScore", eligible: changed === undefined });
     if (!canRecordScoreWrite(attempt)) {
       this.o.log?.(`[photos] rating discarded: ${changed} while the rater ran`);
       return { rated: false, refused: changed };
     }
-    await this.o.onRating?.(personId, app, s, subject);
-    attempt = stepRating(attempt, { type: "recordScoreWrite" });
-    if (!canCheckWrittenScore(attempt)) return { rated: false };
-    const late = await this.ratingRefusal(personId, app, ids);
+    const write = await this.o.onRating?.(personId, app, s, subject, selected);
+    const refused = write && "refused" in write ? write.refused : undefined;
+    attempt = stepRating(attempt, { type: "recordScoreWrite", committed: refused === undefined });
+    if (!canCheckWrittenScore(attempt)) return { rated: false, refused };
+    const late = await this.ratingSelectionRefusal(personId, app, selected);
     attempt = stepRating(attempt, { type: "checkWrittenScore", eligible: late === undefined });
     if (canRecordScoreRemoval(attempt)) {
       this.o.log?.(`[photos] rating dropped: ${late} while it was written`);
-      await this.o.onRemoved?.(personId, app, ids[0]!);
+      if (write && "discard" in write) await write.discard();
+      else await this.o.onRemoved?.(personId, app, photos[0]!.id);
       attempt = stepRating(attempt, { type: "recordScoreRemoval" });
     }
     const rated = attempt.phase === "RatingKept";

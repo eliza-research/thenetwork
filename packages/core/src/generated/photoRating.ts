@@ -12,7 +12,7 @@ export type Event =
   | { type: "receiveScore"; hasScore: boolean }
   | { type: "screenSubject"; eligible: boolean }
   | { type: "checkReturnedScore"; eligible: boolean }
-  | { type: "recordScoreWrite" }
+  | { type: "recordScoreWrite"; committed: boolean }
   | { type: "checkWrittenScore"; eligible: boolean }
   | { type: "recordScoreRemoval" };
 
@@ -23,6 +23,12 @@ export const initial: RatingAttempt = { phase: "CheckingSubject" };
 //@ pure
 export function inv(current: RatingAttempt): boolean {
   return true;
+}
+
+/** Story: Keep a private rating only while its photos and authority are current / Only an eligible member with available photo bytes reaches the rater (spec/photoRating.md) */
+//@ pure
+export function ratingPhotoSelectionCurrent(selected: string[], latest: string[]): boolean {
+  return selected.length > 0 && equal_photoRating(selected, latest);
 }
 
 /** Story: Keep a private rating only while its photos and authority are current / Only an eligible member with available photo bytes reaches the rater (spec/photoRating.md) */
@@ -45,6 +51,13 @@ export function receiveScore(a: RatingAttempt, hasScore: boolean): RatingAttempt
   //@ ensures (inv(a) && canReceiveScore(a)) ==> stepWritingRequiresReturnedScoreCheck(a, "receiveScore", \result)
   //@ ensures (inv(a) && canReceiveScore(a)) ==> stepOnlyTheWriteCheckCanKeepScore(a, "receiveScore", \result)
   return { phase: hasScore ? "CheckingReturnedScore" : "RatingEnded" };
+}
+
+/** Story: Keep a private rating only while its photos and authority are current / Only an eligible member with available photo bytes reaches the rater (spec/photoRating.md) */
+//@ pure
+export function lawDifferentPhotoSelectionEndsAttempt(selected: string[], latest: string[]): boolean {
+  //@ ensures \result === true
+  return !(!equal_photoRating(selected, latest)) || !ratingPhotoSelectionCurrent(selected, latest);
 }
 
 /** Story: Keep a private rating only while its photos and authority are current / Only an eligible member with available photo bytes reaches the rater (spec/photoRating.md) */
@@ -89,10 +102,10 @@ export function canRecordScoreWrite(a: RatingAttempt): boolean {
 
 /** Story: Keep a private rating only while its photos and authority are current / Write only after the returned score passes a fresh authority check (spec/photoRating.md) */
 //@ pure
-export function recordScoreWrite(a: RatingAttempt): RatingAttempt {
+export function recordScoreWrite(a: RatingAttempt, committed: boolean): RatingAttempt {
   //@ ensures (inv(a) && canRecordScoreWrite(a)) ==> stepWritingRequiresReturnedScoreCheck(a, "recordScoreWrite", \result)
   //@ ensures (inv(a) && canRecordScoreWrite(a)) ==> stepOnlyTheWriteCheckCanKeepScore(a, "recordScoreWrite", \result)
-  return { phase: "CheckingWrittenScore" };
+  return { phase: committed ? "CheckingWrittenScore" : "RatingEnded" };
 }
 
 /** Story: Keep a private rating only while its photos and authority are current / Write only after the returned score passes a fresh authority check (spec/photoRating.md) */
@@ -169,7 +182,7 @@ export function step(current: RatingAttempt, event: Event): RatingAttempt {
   if (event.type === "receiveScore") return canReceiveScore(current) ? receiveScore(current, event.hasScore) : current;
   if (event.type === "screenSubject") return canScreenSubject(current) ? screenSubject(current, event.eligible) : current;
   if (event.type === "checkReturnedScore") return canCheckReturnedScore(current) ? checkReturnedScore(current, event.eligible) : current;
-  if (event.type === "recordScoreWrite") return canRecordScoreWrite(current) ? recordScoreWrite(current) : current;
+  if (event.type === "recordScoreWrite") return canRecordScoreWrite(current) ? recordScoreWrite(current, event.committed) : current;
   if (event.type === "checkWrittenScore") return canCheckWrittenScore(current) ? checkWrittenScore(current, event.eligible) : current;
   if (event.type === "recordScoreRemoval") return canRecordScoreRemoval(current) ? recordScoreRemoval(current) : current;
   return current;
@@ -193,7 +206,7 @@ export function parseEvent(x: unknown): Event | undefined {
   if (raw.type === "receiveScore" && typeof raw.hasScore === "boolean") return { type: "receiveScore", hasScore: raw.hasScore };
   if (raw.type === "screenSubject" && typeof raw.eligible === "boolean") return { type: "screenSubject", eligible: raw.eligible };
   if (raw.type === "checkReturnedScore" && typeof raw.eligible === "boolean") return { type: "checkReturnedScore", eligible: raw.eligible };
-  if (raw.type === "recordScoreWrite") return { type: "recordScoreWrite" };
+  if (raw.type === "recordScoreWrite" && typeof raw.committed === "boolean") return { type: "recordScoreWrite", committed: raw.committed };
   if (raw.type === "checkWrittenScore" && typeof raw.eligible === "boolean") return { type: "checkWrittenScore", eligible: raw.eligible };
   if (raw.type === "recordScoreRemoval") return { type: "recordScoreRemoval" };
   return undefined;
@@ -222,4 +235,12 @@ export function parseState(x: unknown): RatingAttempt | undefined {
 export function initialHolds(): RatingAttempt {
   //@ ensures inv(\result)
   return initial;
+}
+
+/** Equality by structure, as Quint and the proof compare records, lists, maps and variants (none holds a set). */
+export function equal_photoRating(a: unknown, b: unknown): boolean {
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return a === b;
+  const keys = Object.keys(a);
+  return Array.isArray(a) === Array.isArray(b) && keys.length === Object.keys(b).length
+    && keys.every((k) => Object.hasOwn(b, k) && equal_photoRating((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
 }

@@ -8,7 +8,7 @@ Slop runs this phase after consented photo storage changes when the rating and s
 
 ### Only an eligible member with available photo bytes reaches the rater
 
-The shell checks the app, ban, adult age, app eligibility, and live membership before reading photo bytes. It uses only its bounded selection of existing bytes. Missing inputs end the attempt. A provider that returns without a score ends the attempt without a write. Provider exceptions follow the shell's retry and logging rules.
+The shell checks the app, ban, adult age, app eligibility, and live membership before reading photo bytes. It records the ordered list of the newest eligible photo rows and uses only the available bytes from that selection. A change to the selection or authority before handing the bytes to the rater ends the attempt. Missing inputs or a response without a score end the attempt without a write. Provider exceptions follow the shell's retry and logging rules.
 
 ```quint
 type RatingPhase = CheckingSubject | ReadingPhotos | AwaitingScore | CheckingReturnedScore |
@@ -27,11 +27,20 @@ pure def supplyPhotos(a: RatingAttempt, hasPhotos: bool): RatingAttempt =
 pure def canReceiveScore(a: RatingAttempt): bool = a.phase == AwaitingScore
 pure def receiveScore(a: RatingAttempt, hasScore: bool): RatingAttempt =
   { phase: if (hasScore) CheckingReturnedScore else RatingEnded }
+
+pure val selectedValues = Set(List(), List("a"), List("a", "b"), List("b", "a"))
+pure val latestValues = selectedValues
+
+pure def ratingPhotoSelectionCurrent(selected: List[str], latest: List[str]): bool =
+  selected.length() > 0 and selected == latest
+
+pure def lawDifferentPhotoSelectionEndsAttempt(selected: List[str], latest: List[str]): bool =
+  selected != latest implies not(ratingPhotoSelectionCurrent(selected, latest))
 ```
 
 ### Write only after the returned score passes a fresh authority check
 
-When a score arrives, the shell checks the same authority again and confirms that each rated photo still belongs to the member and app. A failed check ends the attempt before the private score write. The successful write path leads to a further authority check.
+When a score arrives, the shell checks the same authority and exact photo selection again. The production write checks both under the person and photo row locks. Refuse a score for an older selection even when all the rated photos still exist. An uncommitted or refused write ends the attempt. A committed write leads to a further authority check.
 
 ```quint
 pure def canCheckReturnedScore(a: RatingAttempt): bool = a.phase == CheckingReturnedScore
@@ -39,7 +48,8 @@ pure def checkReturnedScore(a: RatingAttempt, eligible: bool): RatingAttempt =
   { phase: if (eligible) WritingScore else RatingEnded }
 
 pure def canRecordScoreWrite(a: RatingAttempt): bool = a.phase == WritingScore
-pure def recordScoreWrite(a: RatingAttempt): RatingAttempt = { phase: CheckingWrittenScore }
+pure def recordScoreWrite(a: RatingAttempt, committed: bool): RatingAttempt =
+  { phase: if (committed) CheckingWrittenScore else RatingEnded }
 
 pure def stepWritingRequiresReturnedScoreCheck(before: RatingAttempt, via: str, after: RatingAttempt): bool =
   after.phase == WritingScore implies (before.phase == CheckingReturnedScore and via == "checkReturnedScore")
@@ -47,7 +57,7 @@ pure def stepWritingRequiresReturnedScoreCheck(before: RatingAttempt, via: str, 
 
 ### Keep or remove the private rating after the write
 
-After the write hook, the shell checks current authority and rated photo ownership once more. A score kept after this check completes the attempt. If an input or authority changed, the shell removes the written score before it reports the refusal.
+After the write hook, the shell checks current authority and the exact photo selection once more. A score kept after this check completes the attempt. If an input or authority changed, the shell removes only the version written by this attempt. A later score published by another attempt is outside this cleanup.
 
 ```quint
 pure def canCheckWrittenScore(a: RatingAttempt): bool = a.phase == CheckingWrittenScore

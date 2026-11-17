@@ -133,7 +133,7 @@ import { createPublicApi, type HomeHelpVenueRequest, type MemberParticipation, t
 import { otpProviderFromEnv } from "../../platform/src/otp.ts";
 import { turnstileFromEnv } from "../../platform/src/turnstile.ts";
 import type { PeerInfo } from "../../platform/src/api.ts";
-import { PHOTO_APPS, PgPhotoStore, PhotoService, photoStorageFromEnv, type PhotoRater, type PhotoStorage } from "../../platform/src/photos.ts";
+import { PHOTO_APPS, PgPhotoStore, PhotoService, photoStorageFromEnv, type PhotoRater, type PhotoRefusal, type PhotoStorage } from "../../platform/src/photos.ts";
 import { PhotoRelayService, PgPhotoRelayStore, type PhotoRelayPolicy, type PhotoRelayItem } from "../../platform/src/photo-relay.ts";
 import { APPEARANCE_PREFIX, appearanceFacet, type AppearanceScore, type RatingSubject } from "../../engine/src/packs/slop/appearance.ts";
 import { memberExportFacetAllowed, memberExportGatheringsAllowed } from "../../core/src/generated/accountPrivacy.ts";
@@ -493,7 +493,7 @@ export class NetworkService implements RuntimeHost {
       signingKey: key, now: () => this.clock.now(), rater: o.photoRater && this.cost.meterRater(o.photoRater), log: this.log,
       eligible: (personId, app, tx) => this.verifiedAdult(personId, app, tx),
       banned: (personId, tx) => this.personBanned(personId, tx),
-      onRating: (personId, app, score, subject) => this.writeRating(personId, app, score, subject),
+      onRating: (personId, app, score, subject, selected) => this.writeRating(personId, app, score, subject, selected),
       onRemoved: (personId, app) => this.dropRatings(personId, app),
     });
     this.photoDeliveryOrigin = o.photoDeliveryOrigin;
@@ -2794,15 +2794,32 @@ export class NetworkService implements RuntimeHost {
    * verified adult), stored agent_private. The slop pack reads it from the snapshot inside matching only;
    * it is never shown to anyone and is not in the member's export.
    */
-  private async writeRating(personId: string, app: AppId, s: AppearanceScore, subject: RatingSubject) {
-    const m = await this.people.getMembership(personId, app);
+  private async writeRating(personId: string, app: AppId, s: AppearanceScore, subject: RatingSubject, selected: string[]):
+    Promise<{ refused: PhotoRefusal } | { discard: () => Promise<void> }> {
     const rt = this.runtimeFor(app);
-    if (!m || !rt) return;
-    const f = appearanceFacet(m.memberId as MemberId, subject, s, this.clock.now());
-    const at = new Date(this.clock.now());
-    await rt.scoped(tx => tx`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, source, confidence, status, valid_from)
-      values (${app}, ${f.id}, ${m.memberId}, ${f.kind}, ${f.value}, ${tx.array([...f.tags], "TEXT")}, 'agent_private', 'inferred', 'photo_rater', ${f.confidence}, 'confirmed', ${at})
-      on conflict (id) do update set tags = excluded.tags, confidence = excluded.confidence, valid_from = excluded.valid_from`);
+    if (!rt) return { refused: "not_member" };
+    return rt.scoped(async tx => {
+      // Inserts into platform.photos also lock their person through the foreign key.
+      const [person] = await tx`select id from platform.people where id=${personId}::uuid and deleted_at is null for update`;
+      if (!person) return { refused: "adults_only" };
+      const refused = await this.photos.ratingSelectionRefusal(personId, app, selected, tx);
+      if (refused) return { refused };
+      const membership = await new PgPeopleStore(tx).getMembership(personId, app);
+      if (!membership) return { refused: "not_member" };
+      const at = this.clock.now();
+      const f = appearanceFacet(membership.memberId as MemberId, subject, s, at);
+      const [written] = await tx<{ write_version: string }[]>`insert into network.facets (app_id, id, member_id, kind, value, tags,
+          privacy_scope, provenance, source, confidence, status, valid_from)
+        values (${app}, ${f.id}, ${membership.memberId}, ${f.kind}, ${f.value}, ${tx.array([...f.tags], "TEXT")},
+          'agent_private', 'inferred', 'photo_rater', ${f.confidence}, 'confirmed', ${new Date(at)})
+        on conflict (id) do update set tags=excluded.tags, confidence=excluded.confidence, valid_from=excluded.valid_from
+        returning xmin::text as write_version`;
+      if (!written) throw new Error("Photo rating write did not return its version");
+      // Cleanup is conditional on this tuple, even after another attempt deletes and recreates the facet.
+      return { discard: () => rt.scoped(async db => {
+        await db`delete from network.facets where app_id=${app} and id=${f.id} and xmin=${written.write_version}::xid`;
+      }) };
+    });
   }
 
   /** A ban on the person, or on any phone they have (platform.bans). */
