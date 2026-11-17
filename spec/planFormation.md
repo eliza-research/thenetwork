@@ -26,6 +26,24 @@ pure def lawPlaceCapsInvites(planMaximum: int, placeCapacity: int): bool =
   not(planInviteLimit(planMaximum, placeCapacity) > placeCapacity) and not(planInviteLimit(planMaximum, placeCapacity) > planMaximum)
 ```
 
+### A known trip must fit the member's travel limit
+
+For a generic plan, use the member's known neighborhood and the public venue
+or event area to estimate the one-way trip. When the estimate and the member's
+limit are known, use only venues within the limit for that member. This applies
+to primary participants and alternates. Unknown neighborhoods leave the travel
+estimate unknown. Of venues that can hold a group, favor those that fit more
+members, then shorter longest known trips. Keep the existing area and stable
+venue tie breaks. A public event uses its fixed location and the same limit.
+
+```quint
+pure def planTravelFits(hasEstimateAndLimit: bool, minutes: int, maximumMinutes: int): bool =
+  not(hasEstimateAndLimit) or minutes <= maximumMinutes
+
+pure def lawAPlanCannotExceedKnownTravelLimit(minutes: int, maximumMinutes: int): bool =
+  minutes > maximumMinutes implies not(planTravelFits(true, minutes, maximumMinutes))
+```
+
 ### Friends prefers a venue every primary invitee can reach
 
 Compare eligible open venues for the exact activity and slot. If any venue fits each primary invitee's current travel limit, choose among those venues. Within the same travel eligibility, minimize the longest trip and keep the established mean and stable ID tie breaks. When no venue fits everyone, the existing seat and alternate checks still apply. A partner plan needs both people to fit.

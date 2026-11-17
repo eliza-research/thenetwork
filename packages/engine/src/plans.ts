@@ -22,7 +22,7 @@ import {
 } from "../../core/src/generated/planDecision.ts";
 import {
   cityPlanLimitReached, initial as initialCityPlanRun, isPlanAlternate, planAlternateCanRemain, planAlternateLimitReached,
-  planActivityWindowEnd, planCanFitPlace, planGroupCanReserve, planInviteLimit, planScoreQualifies, planSlotPairCanConnect,
+  planActivityWindowEnd, planCanFitPlace, planGroupCanReserve, planInviteLimit, planScoreQualifies, planSlotPairCanConnect, planTravelFits,
   searchForPlanGroup, searchForPlanPartner, statedPlanWindowAllows, step as stepCityPlanRun,
   venueCanHoldGroup, venueCanHostActivity,
 } from "../../core/src/generated/planFormation.ts";
@@ -237,6 +237,8 @@ export interface PlannerInput {
   /** Members with any availability evidence (others are never planned: "only with a stated or inferred window"). */
   evidence: ReadonlyMap<MemberId, PlanEvidence>;
   venues: readonly Venue[];
+  /** Estimated one-way minutes to a known public place. Unknown locations have no estimate. */
+  travelMinutes?: (id: MemberId, place: Venue | NetworkEvent) => number | undefined;
   /** Member is already committed at that slot (open opportunity, booked plan). */
   busyAt?: (id: MemberId, slot: TimeSlot) => boolean;
   /** Members not to plan this run (in a live plan or crew session). */
@@ -266,7 +268,7 @@ interface Cand { plan: Plan; rank: number }
  * The planner (4.5). For each candidate slot (attention.candidateSlots, minLeadHours..horizonDays)
  * and each public event in the horizon: the demand pool D(w) = eligible adults with a stated or
  * inferred window for the whole activity; per activity with >= 2 fitting members, the open,
- * age-appropriate public venue that covers the most of their areas; the pool's coherent circles of 3-6 (group.ts poolCircles,
+ * age-appropriate public venue that fits their travel limits; the pool's coherent circles of 3-6 (group.ts poolCircles,
  * from current pair values in the ranked slot pool), ranked by least misery, then the best pairs for
  * activity-partner activities when no circle clears the floors; floors on min u_i and U; every
  * primary group is admitted by the groupFormation machine. Greedy across candidates by U: one plan
@@ -350,29 +352,42 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
         .sort((x, y) => (fits.get(y)!.get(a.id)! * avail.get(y)! - fits.get(x)!.get(a.id)! * avail.get(x)!) || byTie(x, y)).slice(0, pcfg.poolSize);
       if (pool.length < 2) continue;
       const minG = Math.max(pcfg.size.min, a.groupSize[0]);
-      // Use the event site or an open venue. Prefer venues that can host a full group before comparing area coverage.
-      let place: { name: string; area?: string; venueId?: string; ageMin: number; priceTier: number; capacity?: number };
-      if (wh.event) place = { name: wh.event.listing?.venue ?? wh.event.title, area: wh.event.area, ageMin: a.ageMin, priceTier: a.costTier };
-      else {
-        const vs = inp.venues.filter(v => venueCanHostActivity(v.public, v.city === city, v.activities.includes(a.id),
-          v.capacity ?? Infinity, venueOpenForSlot(v, slot, a.durationMin, tz, att)));
-        if (!vs.length) continue;
-        const cover = (v: Venue) => pool.filter(id => areas.get(id)!.has(v.area.toLowerCase())).length;
-        const groupFits = (v: Venue) => venueCanHoldGroup(v.capacity ?? Infinity, pool.filter(id => ageOk(id, v.ageMin)).length, minG);
-        const v = vs.sort((x, y) => Number(groupFits(y)) - Number(groupFits(x)) || cover(y) - cover(x) || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0))[0]!;
-        place = { name: v.name, area: v.area, venueId: v.id, ageMin: Math.max(v.ageMin, a.ageMin), priceTier: v.priceTier, capacity: v.capacity };
-      }
-      const pool2 = pool.filter(id => ageOk(id, place.ageMin));
+      // spec/planFormation.md, "A known trip must fit the member's travel limit"
+      const destinations = wh.event ? [wh.event] : inp.venues.filter(v => venueCanHostActivity(v.public, v.city === city,
+        v.activities.includes(a.id), v.capacity ?? Infinity, venueOpenForSlot(v, slot, a.durationMin, tz, att)));
+      const place = destinations.map(destination => {
+        const venue = "activities" in destination ? destination : undefined;
+        const area = destination.area?.toLowerCase();
+        const reachable: MemberId[] = [];
+        let cover = 0, longest = 0;
+        for (const id of pool) {
+          if (venue && !ageOk(id, venue.ageMin)) continue;
+          const estimate = inp.travelMinutes?.(id, destination);
+          const maximum = w.get(id)!.m.prefs.maxTravelMinutes;
+          if (!planTravelFits(estimate !== undefined && Number.isFinite(maximum) && maximum >= 0, estimate ?? 0, maximum ?? 0)) continue;
+          reachable.push(id);
+          if (area && areas.get(id)!.has(area)) cover++;
+          if (estimate !== undefined) longest = Math.max(longest, estimate);
+        }
+        const capacity = destination.capacity ?? Infinity;
+        return { destination, capacity, reachable, cover, longest, group: venueCanHoldGroup(capacity, reachable.length, minG) };
+      }).sort((x, y) => Number(y.group) - Number(x.group) || y.reachable.length - x.reachable.length
+        || x.longest - y.longest || y.cover - x.cover || compareText(x.destination.id, y.destination.id))[0];
+      if (!place || place.reachable.length < 2) continue;
+      const pool2 = place.reachable;
+      const { destination } = place;
+      const venueId = "activities" in destination ? destination.id : undefined;
+      const name = "activities" in destination ? destination.name : destination.listing?.venue ?? destination.title;
       const graph = poolGraph(w, lane, pool2, scoreSlotPair);
       const compat = (x: MemberId, y: MemberId) => { const v = graph.value(x, y); return v === undefined ? -Infinity : v / pairValueScale; };
       const input = (id: MemberId): PlanMemberInput => ({
         id, fit: fits.get(id)!.get(a.id)!, timeFit: avail.get(id)!,
-        venueFit: !place.area || areas.get(id)!.has(place.area.toLowerCase()) ? 1 : pcfg.otherAreaFit,
+        venueFit: !destination.area || areas.get(id)!.has(destination.area.toLowerCase()) ? 1 : pcfg.otherAreaFit,
       });
       const score = (ids: readonly MemberId[]) => scorePlanGroup(ids.map(input), compat, familiar, pcfg);
       const passes = (s: PlanScore | null | undefined): s is PlanScore => !!s && planScoreQualifies(s.min, s.score, pcfg.minMemberU, pcfg.threshold);
       // The chosen public place's capacity bounds both groups and partner fallbacks.
-      const cap = wh.event?.capacity ?? place.capacity ?? Infinity;
+      const cap = place.capacity;
       const maxG = planInviteLimit(Math.min(pcfg.size.max, a.groupSize[1], pcfg.size.target), cap);
       if (!planCanFitPlace(maxG, Math.min(minG, 2))) continue;
       const minInvite = Math.min(maxG, Math.max(minG, pcfg.minInvite));
@@ -437,12 +452,12 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
             && alternates.every(x => { const other = graph.profiles.get(x); return other !== undefined && eligiblePair(w, other, profile) === null; });
           if (isPlanAlternate(adult, compatible)) alternates.push(id);
         }
-        const id = `plan_${sha256(`${city}|${a.id}|${place.venueId ?? wh.event?.id}|${start}|${circleKey(primary)}|${now}`).slice(0, 16)}`;
+        const id = `plan_${sha256(`${city}|${a.id}|${destination.id}|${start}|${circleKey(primary)}|${now}`).slice(0, 16)}`;
         cands.push({
           rank: rankOf(best),
           plan: {
-            id, city, activityId: a.id, ...(place.venueId ? { venueId: place.venueId } : {}), ...(wh.event ? { eventId: wh.event.id } : {}),
-            place: { name: place.name, ...(place.area ? { area: place.area } : {}) },
+            id, city, activityId: a.id, ...(venueId ? { venueId } : {}), ...(wh.event ? { eventId: wh.event.id } : {}),
+            place: { name, ...(destination.area ? { area: destination.area } : {}) },
             window: { ...slot },
             invited: primary, alternates, ...(host ? { hostId: host } : {}), partner,
             size: partner ? { min: 2, target: 2, max: 2 } : { min: minG, target: primary.length, max: maxG },

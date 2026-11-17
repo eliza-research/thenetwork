@@ -4307,6 +4307,16 @@ export class ConsentNetwork implements NetworkUnderTest {
       now, city: "nyc", tz: NY, evidence, venues: PLAN_VENUES, exclude, carry: this.planCarry, lastPlannedAt: this.lastPlannedAt,
       hints: new Map([...this.members.values()].filter(m => m.hints?.length && m.stated && m.stated.until > now).map(m => [m.id, m.hints!] as [MemberId, string[]])),
       busyAt: (id, slot) => this.bookedNear(id, slot.start),
+      travelMinutes: (id, destination) => {
+        const memberArea = this.members.get(id)?.area;
+        const home = memberArea ? NEIGHBORHOOD.get(memberArea) : undefined;
+        if (!home) return undefined;
+        const area = destination.area ? NEIGHBORHOOD.get(destination.area) : undefined;
+        const venue = "activities" in destination ? VENUES.find(candidate => candidate.id === destination.id)
+          : area && destination.listing ? { ...area, lat: destination.listing.lat, lng: destination.listing.lng } : undefined;
+        const location = venue ?? area;
+        return location ? travelMinutes(home, location) : undefined;
+      },
     }, this.pcfg);
     this.ctx.log("planner_run", { plans: made.length, pool: evidence.size });
     for (const plan of made) this.submitPlan(plan, now);

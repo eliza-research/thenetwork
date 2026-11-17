@@ -55,6 +55,19 @@ export function lawPlaceCapsInvites(planMaximum: number, placeCapacity: number):
   return !(planInviteLimit(planMaximum, placeCapacity) > placeCapacity) && !(planInviteLimit(planMaximum, placeCapacity) > planMaximum);
 }
 
+/** Story: Find a public activity that fits the group / A known trip must fit the member's travel limit (spec/planFormation.md) */
+//@ pure
+export function planTravelFits(hasEstimateAndLimit: boolean, minutes: number, maximumMinutes: number): boolean {
+  return !hasEstimateAndLimit || minutes <= maximumMinutes;
+}
+
+/** Story: Find a public activity that fits the group / A known trip must fit the member's travel limit (spec/planFormation.md) */
+//@ pure
+export function lawAPlanCannotExceedKnownTravelLimit(minutes: number, maximumMinutes: number): boolean {
+  //@ ensures \result === true
+  return !(minutes > maximumMinutes) || !planTravelFits(true, minutes, maximumMinutes);
+}
+
 /** Story: Find a public activity that fits the group / Friends prefers a venue every primary invitee can reach (spec/planFormation.md) */
 //@ pure
 export function preferPlanVenue(candidateFitsEveryone: boolean, selectedFitsEveryone: boolean, candidateWinsTravelTieBreak: boolean): boolean {
