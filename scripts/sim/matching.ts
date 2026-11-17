@@ -7,8 +7,8 @@
 // (each pack's primary lane, seed 1). --quick: seeds 1-3, exactness at N 100 and 200, cost at N
 // 1,000 and 10,000. The hidden truth (planted circles and standing) is read here only.
 import { hash32, Rng, type MemberId } from "../../packages/core/src/index.ts";
-import { searchTouchesPerCheck, searchWindowHigh, searchWindowLow } from "../../packages/core/src/generated/candidateSearch.ts";
-import { laneLimits, laneOffered, laneOffset, standingUncertaintyCeiling, type MatchLane } from "../../packages/core/src/generated/matchLane.ts";
+import { searchTouchesPerCheck } from "../../packages/core/src/generated/candidateSearch.ts";
+import { laneLimits, laneOffered, laneOffset, type MatchLane } from "../../packages/core/src/generated/matchLane.ts";
 import { pairValueScale, parityAllowed, standingGap } from "../../packages/core/src/generated/pairValue.ts";
 import { resolveConfig, type EngineConfigInput } from "../../packages/engine/src/config.ts";
 import { localEmbed } from "../../packages/engine/src/embed.ts";
@@ -16,6 +16,7 @@ import { canonicalInput, runEngine } from "../../packages/engine/src/engine.ts";
 import { pairReason } from "../../packages/engine/src/filters.ts";
 import { bruteForceCandidates, laneCategory, pairSideOf, partnerBlock, type MatchProfile, type SearchResult } from "../../packages/engine/src/match/mod.ts";
 import { eligiblePair, segmentReaches, vectorsOf } from "../../packages/engine/src/match/pair.ts";
+import { searchWindowMetrics } from "../../packages/engine/src/match/search.ts";
 import type { AppPack } from "../../packages/engine/src/pack.ts";
 import { networkPack } from "../../packages/engine/src/packs/network/index.ts";
 import type { EngineInput } from "../../packages/engine/src/types.ts";
@@ -287,33 +288,6 @@ async function engineGates(pack: AppPack, seed: number, input: EngineInput, trut
   s.all.members += members.length; s.all.proposed += members.filter(id => proposed.has(id)).length;
 }
 
-// The search's window and tag ranges recomputed from the index, to explain why a search is budgeted
-// (spec/candidateSearch.md, "The posting walk covers or bounds every partner in the window").
-function addBudgeted(w: World, profile: MatchProfile, into: Budgeted): void {
-  const block = partnerBlock(w.match.index, profile);
-  if (!block) return;
-  const offset = laneOffset(profile.lane, profile.side), band = laneLimits(profile.lane).rules.parityBand;
-  const low = searchWindowLow(profile.standing, offset, band, profile.uncertainty, standingUncertaintyCeiling);
-  const high = searchWindowHigh(profile.standing, offset, band, profile.uncertainty, standingUncertaintyCeiling);
-  const groups = [
-    { mine: new Set(profile.interests), theirs: (o: MatchProfile) => o.interests },
-    { mine: new Set(profile.seeks), theirs: (o: MatchProfile) => o.offers },
-    { mine: new Set(profile.offers), theirs: (o: MatchProfile) => o.seeks },
-  ];
-  const range = new Map<string, number>();
-  let window = 0;
-  for (const other of block.profiles) {
-    if (other.standing < low || other.standing > high || !segmentReaches(profile, other)) continue;
-    window++;
-    groups.forEach((g, k) => { for (const tag of g.theirs(other)) if (g.mine.has(tag)) range.set(`${k}:${tag}`, (range.get(`${k}:${tag}`) ?? 0) + 1); });
-  }
-  into.profiles++;
-  into.window += window;
-  into.ranges += [...range.values()].reduce((t, x) => t + x, 0);
-  into.shortest += range.size ? Math.min(...range.values()) : 0;
-  into.partnerSegments += profile.segment?.partners.size ?? 0;
-}
-
 function costRun(pack: AppPack, n: number, seed: number, s: LaneStats): void {
   const { input } = plantedEngineInput({ seed: `matching-${seed}`, n, lanes: [s.lane], app: pack.id });
   const w = new World(input, resolveConfig(shippedConfig(pack, seed)), flatEmbed, pack);
@@ -339,7 +313,14 @@ function costRun(pack: AppPack, n: number, seed: number, s: LaneStats): void {
       checkCertificate(w, s, profile, result, at);
       sampled++;
     }
-    if (!result.exact) addBudgeted(w, profile, budgeted);
+    if (!result.exact && block) {
+      const counts = searchWindowMetrics(block, profile);
+      budgeted.profiles++;
+      budgeted.window += counts.window;
+      budgeted.ranges += counts.ranges;
+      budgeted.shortest += counts.shortest;
+      budgeted.partnerSegments += profile.segment?.partners.size ?? 0;
+    }
   }
   if (!profiles.length) fault(s.searchCost, `${at}: no ${s.lane} world profiles`);
   const tally = w.match.tally();
