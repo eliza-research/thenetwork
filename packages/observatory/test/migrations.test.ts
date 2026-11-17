@@ -66,14 +66,16 @@ describe.skipIf(!pgAvailable)("console roles (migration 0010)", () => {
     expect(await as("network_observatory_slop", tx => tx`select origin_app from platform.person_blocks_slop`)).toMatchObject({ e: expect.stringContaining("origin_app") });
   }, T);
 
-  test("matching age views apply canonical floors and preserve app permissions", async () => {
+  test("matching age views apply canonical floors and bans and preserve app permissions", async () => {
     await sql.begin(async tx => {
       await tx`update platform.people set lowest_age = 16, phone_hash = 'age-view-fixture' where id = ${P.a}`;
       await tx`insert into platform.age_floor values ('age-view-fixture', 15, now())`;
+      await tx`insert into platform.bans (id, scope, person_id, reason, banned_by)
+        values ('age-view-ban-fixture', 'person', ${P.c}, 'fixture', 'staff')`;
     });
     expect(await as("network_observatory_slop", tx => tx`select * from platform.matching_ages_slop order by member_id`)).toEqual({ v: [
-      { app_id: "slop", member_id: "s1", age: 15 },
-      { app_id: "slop", member_id: "s3", age: 41 },
+      { app_id: "slop", member_id: "s1", age: 15, banned: false },
+      { app_id: "slop", member_id: "s3", age: 41, banned: true },
     ] });
     expect(await as("network_observatory", tx => tx`select age from platform.matching_ages_ntwrk where member_id = 'n1'`)).toEqual({ v: [{ age: 15 }] });
     for (const role of ["network_observatory", "network_observatory_ntwrk", "network_observatory_cross_app"]) {

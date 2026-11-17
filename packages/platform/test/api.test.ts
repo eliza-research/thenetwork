@@ -87,7 +87,8 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
     const cookie = await login(c, "slop", phone);
     expect(cookie).toMatch(/^sid_slop=/);
     const me = await call(c, "slop", "GET", "/api/me", undefined, cookie);
-    expect(me.body).toEqual({ app: "slop", phoneMasked: `+1 •••-•••-${phone.slice(-4)}`, membership: null, smsOptedIn: false, canJoin: true });
+    expect(me.body).toEqual({ app: "slop", phoneMasked: `+1 •••-•••-${phone.slice(-4)}`, membership: null, smsOptedIn: false,
+      canJoin: true, signupView: expect.stringMatching(/^[0-9a-f]{64}$/) });
     const j = await join(c, "slop", cookie, 29);
     expect(j.status).toBe(200);
     expect(j.body.membership).toMatchObject({ state: "active", firstName: "Ana" });
@@ -230,7 +231,8 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
     expect(c.joined.at(-1)).toBe(inv!.memberId);
     const slop = await login(c, "slop", phone);
     // /api/me shows no age from another app (the age is checked at the join only).
-    expect((await call(c, "slop", "GET", "/api/me", undefined, slop)).body).toEqual({ app: "slop", phoneMasked: expect.any(String), membership: null, smsOptedIn: false, canJoin: true });
+    expect((await call(c, "slop", "GET", "/api/me", undefined, slop)).body).toEqual({ app: "slop", phoneMasked: expect.any(String), membership: null,
+      smsOptedIn: false, canJoin: true, signupView: expect.stringMatching(/^[0-9a-f]{64}$/) });
     const r = await join(c, "slop", slop, 25);
     expect(r.status).toBe(200);
     // The network member gets the person's lowest age, not the age typed on this site.
