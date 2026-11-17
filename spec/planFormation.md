@@ -110,9 +110,9 @@ pure def sometimesPublishesAnInvitation(s: CityPlanRun): bool = s.phase == Plans
 
 > As a member, I want the planner to check whether I am free for the whole activity before offering the time.
 
-### A Friends template supplies the start and the activity supplies the end
+### A template supplies the start and the activity supplies the end
 
-For each proposed start, use the activity's duration to set the end. Apply existing availability evidence and the venue check to that whole window. Keep the same bounds on the selected plan and other offered times.
+For a proposed start in the generic or Friends planner, use the activity's duration to set the end. Apply existing availability evidence, competing commitments, and the venue check to that whole window. Keep the same bounds on the selected plan and other offered times. For a published event, use its published start and end when checking availability and offering the plan.
 
 ```quint
 pure def planActivityWindowEnd(startsAt: int, durationMinutes: int): int = startsAt + durationMinutes * 60000

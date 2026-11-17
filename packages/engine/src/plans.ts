@@ -22,7 +22,8 @@ import {
 } from "../../core/src/generated/planDecision.ts";
 import {
   cityPlanLimitReached, initial as initialCityPlanRun, isPlanAlternate, planAlternateCanRemain, planAlternateLimitReached,
-  planCanFitPlace, planScoreQualifies, searchForPlanGroup, searchForPlanPartner, step as stepCityPlanRun, venueCanHoldGroup, venueCanHostActivity,
+  planActivityWindowEnd, planCanFitPlace, planScoreQualifies, searchForPlanGroup, searchForPlanPartner, step as stepCityPlanRun,
+  venueCanHoldGroup, venueCanHostActivity,
 } from "../../core/src/generated/planFormation.ts";
 import { activitiesForTags, activityById, type ActivityType, type Daypart, type Venue } from "./packs/network/activities.ts";
 import { availabilityProb, candidateSlots, timeOptionsPhrase, type AvailabilityEvidence, type TimeSlot } from "./attention.ts";
@@ -255,8 +256,8 @@ interface Cand { plan: Plan; rank: number }
 /**
  * The planner (4.5). For each candidate slot (attention.candidateSlots, minLeadHours..horizonDays)
  * and each public event in the horizon: the demand pool D(w) = eligible adults with a stated or
- * inferred window in it; per activity with >= 2 fitting members, the open, age-appropriate public
- * venue that covers the most of their areas; the pool's coherent circles of 3-6 (group.ts poolCircles,
+ * inferred window for the whole activity; per activity with >= 2 fitting members, the open,
+ * age-appropriate public venue that covers the most of their areas; the pool's coherent circles of 3-6 (group.ts poolCircles,
  * from the lane's bounded search edges), ranked by least misery, then the best pairs for
  * activity-partner activities when no circle clears the floors; floors on min u_i and U; every
  * primary group is admitted by the groupFormation machine. Greedy across candidates by U: one plan
@@ -308,14 +309,21 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
 
   const cands: Cand[] = [];
   for (const wh of whens) {
-    const avail = new Map<MemberId, number>();
-    for (const id of people) {
-      if (inp.busyAt?.(id, wh.slot)) continue;
-      const p = hasWindow(inp.evidence.get(id)!, wh.slot, now, pcfg, att);
-      if (p > 0) avail.set(id, p);
-    }
-    if (avail.size < 2) continue;
+    const start = wh.slot.start;
+    const availableByEnd = new Map<number, Map<MemberId, number>>();
     for (const a of wh.acts) {
+      const slot = wh.event ? wh.slot : { start, end: planActivityWindowEnd(start, a.durationMin) };
+      let avail = availableByEnd.get(slot.end);
+      if (!avail) {
+        avail = new Map<MemberId, number>();
+        for (const id of people) {
+          if (inp.busyAt?.(id, slot)) continue;
+          const p = hasWindow(inp.evidence.get(id)!, slot, now, pcfg, att);
+          if (p > 0) avail.set(id, p);
+        }
+        availableByEnd.set(slot.end, avail);
+      }
+      if (avail.size < 2) continue;
       const pool = [...avail.keys()].filter(id => (fits.get(id)!.get(a.id) ?? 0) >= pcfg.minFit && ageOk(id, a.ageMin)
         && (!wh.event?.listing || publicEventPreferencesAllow(w.get(id)?.m, a.category)))
         .sort((x, y) => (fits.get(y)!.get(a.id)! * avail.get(y)! - fits.get(x)!.get(a.id)! * avail.get(x)!) || byTie(x, y)).slice(0, pcfg.poolSize);
@@ -326,7 +334,7 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
       if (wh.event) place = { name: wh.event.listing?.venue ?? wh.event.title, area: wh.event.area, ageMin: a.ageMin, priceTier: a.costTier };
       else {
         const vs = inp.venues.filter(v => venueCanHostActivity(v.public, v.city === city, v.activities.includes(a.id), v.capacity === undefined ? Infinity : v.capacity)
-          && venueOpenForSlot(v, wh.slot, a.durationMin, tz, att));
+          && venueOpenForSlot(v, slot, a.durationMin, tz, att));
         if (!vs.length) continue;
         const cover = (v: Venue) => pool.filter(id => areas.get(id)!.has(v.area.toLowerCase())).length;
         const groupFits = (v: Venue) => venueCanHoldGroup(v.capacity ?? Infinity, pool.filter(id => ageOk(id, v.ageMin)).length, minG);
@@ -397,14 +405,13 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
             && alternates.every(x => { const other = graph.profiles.get(x); return other !== undefined && eligiblePair(w, other, profile) === null; });
           if (isPlanAlternate(adult, compatible)) alternates.push(id);
         }
-        const start = wh.slot.start;
         const id = `plan_${sha256(`${city}|${a.id}|${place.venueId ?? wh.event?.id}|${start}|${circleKey(primary)}|${now}`).slice(0, 16)}`;
         cands.push({
           rank: rankOf(best),
           plan: {
             id, city, activityId: a.id, ...(place.venueId ? { venueId: place.venueId } : {}), ...(wh.event ? { eventId: wh.event.id } : {}),
             place: { name: place.name, ...(place.area ? { area: place.area } : {}) },
-            window: { start, end: wh.event ? wh.slot.end : start + a.durationMin * 60_000 },
+            window: { ...slot },
             invited: primary, alternates, ...(host ? { hostId: host } : {}), partner,
             size: partner ? { min: 2, target: 2, max: 2 } : { min: minG, target: primary.length, max: maxG },
             quorum: partner ? pcfg.quorum.partner : Math.min(primary.length, Math.max(minG, pcfg.quorum.group)),
