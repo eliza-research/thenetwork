@@ -151,6 +151,26 @@ export function reservePair(s: AssignmentRun, pairKey: string, memberA: string, 
   return { ...s, proposed: exact_slopAssignment(s.proposed + 1), usedPairs: ({ ...s.usedPairs, ["$" + pairKey]: true } as Record<string, boolean>), usedInRound: ({ ...({ ...s.usedInRound, ["$" + memberA]: true } as Record<string, boolean>), ["$" + memberB]: true } as Record<string, boolean>), memberCounts: incrementMember(local_0, memberB) };
 }
 
+/** Story: Measure how many Slop members scammers reach / Count each real recipient once after a reveal (spec/slopAssignment.md) */
+//@ pure
+export function slopScammerContactCounts(revealed: boolean, realRecipient: boolean): boolean {
+  return revealed && realRecipient;
+}
+
+/** Story: Measure how many Slop members scammers reach / An even cohort averages its two middle reach counts (spec/slopAssignment.md) */
+//@ pure
+export function slopScammerMedianReachTwice(orderedReach: number[]): number {
+  const local_1 = orderedReach.length;
+  return local_1 === 0 ? 0 : exact_slopAssignment((0 <= quotient_slopAssignment(exact_slopAssignment(local_1 - 1), 2) && quotient_slopAssignment(exact_slopAssignment(local_1 - 1), 2) < orderedReach.length ? orderedReach[quotient_slopAssignment(exact_slopAssignment(local_1 - 1), 2)] : 0) + (0 <= quotient_slopAssignment(local_1, 2) && quotient_slopAssignment(local_1, 2) < orderedReach.length ? orderedReach[quotient_slopAssignment(local_1, 2)] : 0));
+}
+
+/** Story: Measure how many Slop members scammers reach / An even cohort averages its two middle reach counts (spec/slopAssignment.md) */
+//@ pure
+export function lawSlopSingleScammerKeepsReach(contactCount: number): boolean {
+  //@ ensures \result === true
+  return slopScammerMedianReachTwice(([contactCount] as number[])) === exact_slopAssignment(2 * contactCount);
+}
+
 /** Do the rules allow this event in this state? */
 //@ pure
 export function enabled(current: AssignmentRun, event: Event): boolean {
@@ -229,4 +249,12 @@ export function exact_slopAssignment(n: number): number {
 export function get_slopAssignment<K extends string | number, T>(m: Record<K, T>, key: K): T {
   if (!(key in m)) throw new RangeError(`a map holds nothing for ${key}`);
   return m[key];
+}
+
+/** Whole-number division as Quint does it: towards zero. */
+//@ pure
+export function quotient_slopAssignment(a: number, b: number): number {
+  //@ requires b !== 0
+  if (b === 0) throw new RangeError(`${a} cannot be divided by zero`);
+  return (a < 0 === b < 0 ? 1 : -1) * Math.floor(Math.abs(a) / Math.abs(b)) + 0;
 }
