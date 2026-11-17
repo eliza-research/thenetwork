@@ -6,6 +6,8 @@
 //
 //   pnpm run sim                      evals, onboard, network, slop, relay, peon, friends, clef (the CI run)
 //   pnpm run sim --only slop          one block (repeatable or comma-separated: --only network,peon)
+//   pnpm run sim --skip matching     run the default blocks except matching, which CI runs in parallel
+//   pnpm run sim --only matching --matching-pack friends  run one matching pack with the pinned workload
 //   pnpm run sim --quick              fewer seeds and shorter runs; quality gates become tracked
 //   pnpm run sim --with-capital       also the network-capital block (slow: 32 paired seeds; nightly)
 //   pnpm run sim --json out.json      write every gate to a file
@@ -46,7 +48,7 @@ import { clefBlock } from "./sim/clef.ts";
 import { evalsBlock } from "./sim/evals.ts";
 import { friendsBlock } from "./sim/friends.ts";
 import { Block, type Gate } from "./sim/gate.ts";
-import { matchingBlock } from "./sim/matching.ts";
+import { MATCHING_PACKS, matchingBlock } from "./sim/matching.ts";
 import { onboardBlock } from "./sim/onboard.ts";
 import { networkBlock } from "./sim/network.ts";
 import { opsBlock } from "./sim/ops.ts";
@@ -58,7 +60,7 @@ import { safetyBlock } from "./sim/safety.ts";
 import { relayBlock } from "./sim/relay.ts";
 import { slopBlock } from "./sim/slop.ts";
 
-type Opts = { quick: boolean; llm: boolean };
+type Opts = { quick: boolean; llm: boolean; matchingPack?: string };
 const BLOCKS: Record<string, (b: Block, o: Opts) => Promise<void>> = {
   evals: b => evalsBlock(b),
   network: networkBlock,
@@ -82,10 +84,20 @@ const DEFAULT = ["evals", "onboard", "network", "matching", "slop", "relay", "pe
 const argv = process.argv.slice(2);
 const values = (k: string) => argv.flatMap((x, i) => (x === `--${k}` ? (argv[i + 1] ?? "").split(",") : x.startsWith(`--${k}=`) ? x.slice(k.length + 3).split(",") : [])).filter(Boolean);
 const only = values("only");
-const unknown = only.filter(x => !BLOCKS[x]);
+const skip = values("skip");
+const unknown = [...only, ...skip].filter(x => !Object.hasOwn(BLOCKS, x));
 if (unknown.length) { console.error(`unknown block: ${unknown.join(", ")}; known: ${Object.keys(BLOCKS).join(", ")}`); process.exit(2); }
-const run = only.length ? only : [...DEFAULT, ...(argv.includes("--with-capital") || argv.includes("--nightly") ? ["capital"] : [])];
-const opts: Opts = { quick: argv.includes("--quick"), llm: argv.includes("--llm") };
+if (only.length && skip.length) { console.error("Choose --only or --skip."); process.exit(2); }
+const run = only.length ? only : [...DEFAULT, ...(argv.includes("--with-capital") || argv.includes("--nightly") ? ["capital"] : [])].filter(name => !skip.includes(name));
+if (!run.length) { console.error("Select at least one simulation block."); process.exit(2); }
+const matchingPacks = values("matching-pack");
+const matchingPack = matchingPacks[0];
+if (argv.some(arg => arg === "--matching-pack" || arg.startsWith("--matching-pack=")) &&
+  (matchingPacks.length !== 1 || !MATCHING_PACKS.some(app => app === matchingPack) || !run.includes("matching"))) {
+  console.error(`--matching-pack requires the matching block and one of ${MATCHING_PACKS.join(", ")}.`);
+  process.exit(2);
+}
+const opts: Opts = { quick: argv.includes("--quick"), llm: argv.includes("--llm"), matchingPack };
 
 // Simulations never call a model: fail fast if any code path tries. The one exception is the
 // onboarding LLM arm, which runs only with --llm (and only in the onboard block).

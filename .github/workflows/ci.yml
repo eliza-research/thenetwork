@@ -36,7 +36,7 @@ env:
   LLM_MAX_RETRIES: "0"
 
 jobs:
-  offline:
+  offline-core:
     # "offline" means no network calls and no secrets. The simulations get the same pinned Postgres as
     # the integration job, so the Postgres blocks (pipeline, pipeline-slop, safety, ops, audit) run and block.
     runs-on: ubuntu-24.04
@@ -90,13 +90,13 @@ jobs:
       - name: Typecheck (sites, scripts)
         run: pnpm exec tsc --noEmit -p sites/tsconfig.json
         timeout-minutes: 5
-      - name: Simulations (pnpm run sim)
+      - name: Simulations other than matching
         # The simulations: evals corpora, the Network in the NYC world, slop, peon and friends, each
         # with its gates on pinned seeds, and the Postgres blocks on throwaway databases. No LLM.
         # Exits 1 on any blocking gate failure.
         run: |
           if [ -n "${LIVE_TESTS:-}" ]; then echo "LIVE_TESTS must be unset in CI"; exit 1; fi
-          pnpm run sim --json sim-gates.json
+          pnpm run sim --skip matching --json sim-gates.json
         timeout-minutes: 30
       - name: No Postgres gate was skipped
         # A Postgres block that cannot reach Postgres records a tracked "skipped" gate. With REQUIRE_PG=1
@@ -113,6 +113,63 @@ jobs:
         run: pnpm run sites:build
         env:
           DEPLOY_TARGET: production
+
+  matching:
+    name: matching (${{ matrix.pack }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        pack: [ntwrk, slop, peon, friends]
+    outputs:
+      ntwrk: ${{ steps.gates.outputs.ntwrk }}
+      slop: ${{ steps.gates.outputs.slop }}
+      peon: ${{ steps.gates.outputs.peon }}
+      friends: ${{ steps.gates.outputs.friends }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - run: npm install --global corepack@0.35.0 && corepack enable pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+        timeout-minutes: 5
+      - name: Pinned matching simulations
+        id: gates
+        env:
+          MATCHING_PACK: ${{ matrix.pack }}
+        run: |
+          if [ -n "${LIVE_TESTS:-}" ]; then echo "LIVE_TESTS must be unset in CI"; exit 1; fi
+          pnpm run sim --only matching --matching-pack "$MATCHING_PACK" &&
+            printf '%s=success\n' "$MATCHING_PACK" >> "$GITHUB_OUTPUT"
+        timeout-minutes: 30
+
+  offline:
+    # Preserve the required check name and require positive completion from every matching pack.
+    if: ${{ always() }}
+    needs: [offline-core, matching]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: All offline gates completed and passed
+        env:
+          CORE: ${{ needs.offline-core.result }}
+          MATCHING: ${{ needs.matching.result }}
+          NTWRK: ${{ needs.matching.outputs.ntwrk }}
+          SLOP: ${{ needs.matching.outputs.slop }}
+          PEON: ${{ needs.matching.outputs.peon }}
+          FRIENDS: ${{ needs.matching.outputs.friends }}
+        run: |
+          for gate in CORE MATCHING NTWRK SLOP PEON FRIENDS; do
+            if [ "${!gate}" != success ]; then
+              echo "Offline validation did not pass: $gate (${!gate:-missing})"
+              exit 1
+            fi
+          done
 
   ui:
     # The design system and the component library: the brand tokens agree with design.md, the generated stories

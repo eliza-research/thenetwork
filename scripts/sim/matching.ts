@@ -40,7 +40,7 @@ export const MATCHING_PINNED: Plan = {
 };
 const MATCHING_QUICK: Plan = { seeds: [1, 2, 3], exactN: [100, 200], engineN: 200, costN: [1_000, 10_000], everyLaneUpTo: 1_000, costSeed: 1 };
 
-const PACKS: readonly AppPack[] = (["ntwrk", "slop", "peon", "friends"] as const).map(app => appWiring(app).pack ?? networkPack);
+export const MATCHING_PACKS = ["ntwrk", "slop", "peon", "friends"] as const;
 const shippedConfig = (pack: AppPack, seed: number): EngineConfigInput => ({ ...appWiring(pack.id).engine, seed });
 const PRIMARY_LANE: Readonly<Record<string, MatchLane>> = { ntwrk: "Intro", slop: "Date", peon: "Hire", friends: "Friend" };
 const lanesOf = (pack: AppPack): MatchLane[] => PLANTED_LANES.filter(lane => laneOffered(pack.id, lane));
@@ -399,21 +399,29 @@ function packGates(b: Block, pack: AppPack, lanes: readonly LaneStats[], plan: P
   }
 }
 
-export async function matchingBlock(b: Block, o: { quick: boolean }): Promise<void> {
+export async function matchingBlock(b: Block, o: { quick: boolean; matchingPack?: string }): Promise<void> {
   const plan = o.quick ? MATCHING_QUICK : MATCHING_PINNED;
-  const stats = PACKS.map(pack => ({ pack, lanes: lanesOf(pack).map(laneStats) }));
-  for (const n of plan.exactN) for (const seed of plan.seeds) for (const { pack, lanes } of stats) for (const s of lanes) {
-    const mixed = n === plan.engineN && seed === plan.seeds[0] && pack.id === "ntwrk" && s.lane === "Intro";
-    const { input, truth } = plantedEngineInput({ seed: `matching-${seed}`, n, lanes: mixed ? ["Intro", "Friend"] : [s.lane], app: pack.id });
-    // runEngine canonicalizes its input the same way, so this World holds the run's profiles.
-    const w = new World(canonicalInput(input), resolveConfig(shippedConfig(pack, seed)), localEmbed, pack);
-    exactness(w, s, `N ${n} seed ${seed}`);
-    if (n === plan.engineN) await engineGates(pack, seed, input, truth, w, s);
-  }
-  for (const n of plan.costN) for (const { pack, lanes } of stats) for (const s of lanes) {
-    if (n <= plan.everyLaneUpTo || s.lane === PRIMARY_LANE[pack.id]) costRun(pack, n, plan.costSeed, s);
-  }
-  for (const { pack, lanes } of stats) {
+  const packs = MATCHING_PACKS.filter(app => o.matchingPack === undefined || app === o.matchingPack);
+  if (!packs.length) throw new RangeError(`Unknown matching pack: ${o.matchingPack}`);
+  for (const app of packs) {
+    const pack = appWiring(app).pack ?? networkPack;
+    const lanes = lanesOf(pack).map(laneStats);
+    for (const n of plan.exactN) {
+      console.log(`  ${pack.id}: exactness N ${n}, ${plan.seeds.length} seeds${n === plan.engineN ? " and engine gates" : ""}`);
+      for (const seed of plan.seeds) for (const s of lanes) {
+        const mixed = n === plan.engineN && seed === plan.seeds[0] && pack.id === "ntwrk" && s.lane === "Intro";
+        const { input, truth } = plantedEngineInput({ seed: `matching-${seed}`, n, lanes: mixed ? ["Intro", "Friend"] : [s.lane], app: pack.id });
+        // runEngine canonicalizes its input the same way, so this World holds the run's profiles.
+        const w = new World(canonicalInput(input), resolveConfig(shippedConfig(pack, seed)), localEmbed, pack);
+        exactness(w, s, `N ${n} seed ${seed}`);
+        if (n === plan.engineN) await engineGates(pack, seed, input, truth, w, s);
+      }
+    }
+    for (const n of plan.costN) for (const s of lanes) {
+      if (n > plan.everyLaneUpTo && s.lane !== PRIMARY_LANE[pack.id]) continue;
+      console.log(`  ${pack.id}: ${s.lane} search cost N ${n}, seed ${plan.costSeed}`);
+      costRun(pack, n, plan.costSeed, s);
+    }
     printTable(pack, lanes, plan);
     packGates(b, pack, lanes, plan);
   }
