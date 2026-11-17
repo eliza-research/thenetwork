@@ -163,7 +163,9 @@ test("friends crew reach fills only compatible seats in exposure order", async (
 
   const names = ["Ari", "Ben", "Cy", "Dee", "Eli", "Fay", "Gio", "Hal", "Ira", "Jay"];
   const w = new Mini([...crewIds, ...applicants].map((id, index) => ({
-    id, name: names[index]!, age: 30, area: venue.area,
+    // b-weak lives in Riverdale, beyond the transit tolerance of every crew member: the pair gate
+    // (spec/pairValue.md) gives it no Friend pair value, so only the pair-value condition excludes it.
+    id, name: names[index]!, age: 30, area: id === "b-weak" ? "Riverdale" : venue.area,
     interests: id === "crew-c" ? ["climbing"] : id === "b-weak" ? ["coffee"] : ["coffee", "climbing"],
   })), { app: "friends", pack: friendsPack, review: "human", plans: true, plansConfig: FRIENDS_PLANS, capital });
   for (const { id } of w.members) w.facets.push({

@@ -209,9 +209,16 @@ test("bounded help re-ranks the small-group pool when a home task needs a second
     f.kind = "offer";
     f.value = f.memberId === "a-one-only" ? objective : "Available to carry furniture and boxes";
   }
+  // A help group is a circle of the asker's lane, so the requester and both helpers also form a
+  // group_composer circle with the same pairs. With grounded evidence it scores above the help request
+  // (0.539 against 0.435), and the selector uses each pair once per run (spec/selectionRun.md, "Each
+  // reservation checks the city, pair, and member limits"), so the help request is not selected in the
+  // same run. No fixture gives a help group without that circle. This case checks the helper ranking,
+  // so that generator is off.
   const { proposals } = await runEngine(w.ctx().snapshot(), {
     cities: ["nyc"], retrieval: { minSim: 0 },
     floors: { fit: 0, mutualBenefit: 0, confidence: 0 },
+    generators: { group_composer: false },
     thresholds: { byGenerator: { help_request: 0 } },
   });
   expect(proposals.find(p => p.generator === "help_request")).toMatchObject({

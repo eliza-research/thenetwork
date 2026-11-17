@@ -1,6 +1,6 @@
 # Book and close a reviewed three-person hike
 
-[Story F12](product/stories.md#story-f12--join-a-small-group) requires review, anonymous invitations and quorum. [Story F18](product/stories.md#story-f18--keep-a-meeting-on-track) requires the booked group to close gracefully when its minimum attendance fails. This journey follows a public day hike with three adult invitees who shared a Saturday afternoon window. There are no eligible alternates or smaller hike in the fixture.
+[Story F12](product/stories.md#story-f12--join-a-small-group) requires review, anonymous invitations and quorum. [Story F18](product/stories.md#story-f18--keep-a-meeting-on-track) requires the booked group to close gracefully when its minimum attendance fails. This journey follows a public day hike with three adult invitees who shared a Saturday afternoon and evening window. There are no eligible alternates or smaller hike in the fixture.
 
 ## Story: Join a reviewed public hike only after the group agrees
 
@@ -38,7 +38,7 @@ pure def sometimesRejectedWithoutContact(s: ReviewedGroupJourney): bool = s.phas
 
 ### Booking requires an independent yes from all three invitees
 
-Each invitee responds to their own invitation. A yes below quorum sends no reveal. A third yes books one meeting, with one reveal to each consenting participant. A decline cannot count towards quorum. With no alternates, the last reply closes the plan when it leaves the acceptances below quorum, whether that reply accepts or declines ([planDecision](planDecision.md), "An unanswered plan closes when its deadline passes"). An underfilled plan that stays open closes when the probe deadline passes.
+Each invitee responds to their own invitation. A yes below quorum sends no reveal. A third yes books one meeting, with one reveal to each consenting participant. A decline cannot count towards quorum. With no alternates, the last reply closes the plan when it leaves the acceptances below quorum, whether that reply accepts or declines ([planDecision](planDecision.md), "An unanswered plan closes when its deadline passes"). An underfilled plan that stays open closes when the probe deadline passes. Silence is not a decline: an invitee who has not answered by the deadline stays unanswered ([planDecision](planDecision.md) records no reply at or after the deadline). This rule changed: the deadline used to record every silent invitee as a decline.
 
 ```quint
 pure def groupReplyPending(s: ReviewedGroupJourney, hiker: Hiker): bool =
@@ -61,7 +61,7 @@ pure def answerGroup(s: ReviewedGroupJourney, hiker: Hiker, agrees: bool): Group
 
 pure def canExpireGroup(s: ReviewedGroupJourney): bool = s.phase == GroupInvited
 pure def expireGroup(s: ReviewedGroupJourney): GroupStep =
-  { state: { ...s, phase: GroupUnderfilled, declined: hikers.select(person => not(s.accepted.includes(person))) }, out: List() }
+  { state: { ...s, phase: GroupUnderfilled }, out: List() }
 
 pure def alwaysRevealsBelongToOneBooking(s: ReviewedGroupJourney): bool =
   s.meetings == (if (s.phase == HikeBooked or s.phase == HikeCancelled) 1 else 0) and s.reveals == 3 * s.meetings
@@ -69,6 +69,8 @@ pure def alwaysBookingRequiresQuorum(s: ReviewedGroupJourney): bool =
   s.phase == HikeBooked implies s.accepted.length() == 3
 pure def sometimesThreeHikersBook(s: ReviewedGroupJourney): bool = s.phase == HikeBooked
 pure def sometimesUnderfilledCloses(s: ReviewedGroupJourney): bool = s.phase == GroupUnderfilled
+pure def sometimesExpiresWithNobodyDeclined(s: ReviewedGroupJourney): bool =
+  s.phase == GroupUnderfilled and s.declined.length() == 0
 ```
 
 ### A withdrawal below minimum closes a booked group privately

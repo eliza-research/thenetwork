@@ -99,6 +99,12 @@ export function sometimesUnderfilledCloses(s: ReviewedGroupJourney): boolean {
 
 /** Story: Join a reviewed public hike only after the group agrees / Booking requires an independent yes from all three invitees (spec/reviewedGroupJourney.md) */
 //@ pure
+export function sometimesExpiresWithNobodyDeclined(s: ReviewedGroupJourney): boolean {
+  return s.phase === "GroupUnderfilled" && s.declined.length === 0;
+}
+
+/** Story: Join a reviewed public hike only after the group agrees / Booking requires an independent yes from all three invitees (spec/reviewedGroupJourney.md) */
+//@ pure
 export function canAnswerGroup(s: ReviewedGroupJourney, hiker: Hiker, agrees: boolean): boolean {
   return s.phase === "GroupInvited" && groupReplyPending(s, hiker);
 }
@@ -110,7 +116,7 @@ export function expireGroup(s: ReviewedGroupJourney): GroupStep {
   //@ ensures (inv(s) && canExpireGroup(s)) ==> alwaysRevealsBelongToOneBooking(\result.state)
   //@ ensures (inv(s) && canExpireGroup(s)) ==> alwaysBookingRequiresQuorum(\result.state)
   //@ ensures (inv(s) && canExpireGroup(s)) ==> alwaysCancellationFollowsBooking(\result.state)
-  return { state: ({ ...s, phase: "GroupUnderfilled", declined: hikers.filter((person: Hiker) => !s.accepted.includes(person)) } as ReviewedGroupJourney), out: ([] as GroupEffect[]) };
+  return { state: ({ ...s, phase: "GroupUnderfilled" } as ReviewedGroupJourney), out: ([] as GroupEffect[]) };
 }
 
 /** Story: Join a reviewed public hike only after the group agrees / Booking requires an independent yes from all three invitees (spec/reviewedGroupJourney.md) */

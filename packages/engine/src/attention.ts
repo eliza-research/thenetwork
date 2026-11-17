@@ -1127,16 +1127,33 @@ export function standingFromFacets(facets: readonly (Pick<Facet, "inferred" | "o
   const out: StandingAvailability[] = [];
   for (const f of facets) {
     if (f.kind !== "availability_pattern" || !validityIncludes(f, now)) continue;
-    const by = new Map<string, number[]>();
+    const partsByDay = new Map<number, Set<string>>();
     for (const t of f.tags) {
       const [rawPart, rawDay] = t.split(":");
       const part = rawPart?.toLowerCase();
       // Day tags arrive as "Tue" or "tue" depending on the source (sim sources.ts emits lowercase).
       const i = DAYS3.findIndex(d => d.toLowerCase() === (rawDay ?? "").slice(0, 3).toLowerCase());
       if (!part || !PARTS[part] || i < 0) continue;
-      by.set(part, [...(by.get(part) ?? []), i]);
+      partsByDay.set(i, (partsByDay.get(i) ?? new Set()).add(part));
     }
-    for (const [part, days] of by) out.push({ byDay: days, startHour: PARTS[part]![0], endHour: PARTS[part]![1], source: f.inferred ? "calendar_pattern" : "conversation", statedAt: f.observedAt ?? f.validFrom ?? now, inferred: !!f.inferred });
+    // Adjacent parts of one day are one window ("afternoons and evenings" = 12:00-22:00), so an
+    // activity that crosses a part boundary fits inside it (spec/planFormation.md, "A standing
+    // window applies to the whole activity").
+    const by = new Map<string, { range: [number, number]; days: number[] }>();
+    for (const [day, parts] of partsByDay) {
+      const ranges: [number, number][] = [];
+      for (const [start, end] of Object.entries(PARTS).filter(([part]) => parts.has(part)).map(([, hours]) => hours)) {
+        const last = ranges[ranges.length - 1];
+        if (last && last[1] === start) last[1] = end; else ranges.push([start, end]);
+      }
+      for (const range of ranges) {
+        const key = range.join("-");
+        const entry = by.get(key) ?? { range, days: [] };
+        entry.days.push(day);
+        by.set(key, entry);
+      }
+    }
+    for (const { range: [startHour, endHour], days } of by.values()) out.push({ byDay: days, startHour, endHour, source: f.inferred ? "calendar_pattern" : "conversation", statedAt: f.observedAt ?? f.validFrom ?? now, inferred: !!f.inferred });
   }
   return out;
 }

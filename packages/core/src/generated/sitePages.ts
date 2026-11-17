@@ -69,7 +69,7 @@ export function footerOf(page: SitePage): SitePage[] {
 //@ pure
 export function lawEveryFooterIsPrivacyThenTerms(app: brandIdentity_AppKey, page: SitePage): boolean {
   //@ ensures \result === true
-  return !siteHasPage(app, page) || equal_sitePages(footerOf(page), (["PrivacyPage", "TermsPage"] as SitePage[]));
+  return !siteHasPage(app, page) || (footerOf(page).length === 2 && (0 <= 0 && 0 < footerOf(page).length ? footerOf(page)[0] : "NotFoundPage") === "PrivacyPage" && (0 <= 1 && 1 < footerOf(page).length ? footerOf(page)[1] : "NotFoundPage") === "TermsPage");
 }
 
 /** Story: Read the pages of the site / Every page links the privacy policy and the terms in its footer (spec/sitePages.md) */
@@ -279,12 +279,4 @@ export function lawBackendPathsAreForwarded(app: brandIdentity_AppKey, method: R
 export function lawRetiredPathsNeverReachTheBackend(app: brandIdentity_AppKey, method: RequestMethod): boolean {
   //@ ensures \result === true
   return routeFor(app, "SettingsPath", method) !== "ForwardToBackend" && routeFor(app, "JoinPath", method) !== "ForwardToBackend";
-}
-
-/** Equality by structure, as Quint and the proof compare records, lists, maps and variants (none holds a set). */
-export function equal_sitePages(a: unknown, b: unknown): boolean {
-  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return a === b;
-  const keys = Object.keys(a);
-  return Array.isArray(a) === Array.isArray(b) && keys.length === Object.keys(b).length
-    && keys.every((k) => Object.hasOwn(b, k) && equal_sitePages((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
 }

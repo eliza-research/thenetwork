@@ -28,7 +28,7 @@ try {
         output = [];
       } else {
         if (event.atDeadline) clock.set(item.deadline);
-        const result = event.approve ? await decideReview(item.oppId, "approve") : await decideReview(item.oppId, "reject", "weak_reason");
+        const result = event.approve ? await decideReview(item, "approve") : await decideReview(item, "reject", "weak_reason");
         const body: unknown = await result.json();
         if (result.status === 200 && body && typeof body === "object" && "ok" in body && body.ok === true) {
           output = ["DecisionAccepted"];

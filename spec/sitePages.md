@@ -37,7 +37,11 @@ pure val footerLinks: List[SitePage] = List(PrivacyPage, TermsPage)
 pure def footerOf(page: SitePage): List[SitePage] = footerLinks
 
 pure def lawEveryFooterIsPrivacyThenTerms(app: AppKey, page: SitePage): bool =
-  siteHasPage(app, page) implies footerOf(page) == List(PrivacyPage, TermsPage)
+  siteHasPage(app, page) implies (
+    footerOf(page).length() == 2
+    and footerOf(page).nthOr(0, NotFoundPage) == PrivacyPage
+    and footerOf(page).nthOr(1, NotFoundPage) == TermsPage
+  )
 
 pure def lawLandingFooterHasNoOtherLink(otherPage: SitePage): bool =
   footerOf(LandingPage).includes(otherPage) implies (otherPage == PrivacyPage or otherPage == TermsPage)

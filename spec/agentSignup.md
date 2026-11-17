@@ -68,6 +68,15 @@ pure def readAppFacts(s: AgentSignup, appMatches: bool, inviteMode: bool): Agent
   { ...s, inviteOnly: inviteMode, phase: if (appMatches) Drafting else WrongApp }
 ```
 
+### A client without a transport stops
+
+Discovered by the proof: a client without a supported transport stays stopped. Without this rule, the proof cannot exclude an approval that hands a person with no transport to Messages.
+
+```quint
+pure def alwaysNoTransportStops(s: AgentSignup): bool =
+  s.transport == NoTransport implies s.phase == Unsupported
+```
+
 ### The person approves the exact draft and current text consent
 
 For the native connector path, read the selected app's public policy and exact text consent before drafting. Use the lowest stated age. Below 13 stops the flow. Anyone 13 through 17 receives the adult-only matching notice. Draft the person's first name, age, confirmed supported city/region and neighborhood, and the app-specific profile. Obtain explicit approval for the exact draft and the current app consent. Changes return to drafting. Refusal ends the attempt. In Peon's Messages path, the person's own Messages app opens the approved text with the [Peon signup line](textEnrollment.md#a-prepared-peon-signup-names-its-app-on-a-separate-first-line). The person sends it.
@@ -119,6 +128,16 @@ pure def alwaysTextHandoffIsApproved(s: AgentSignup): bool =
   s.phase == HandedToMessages implies (s.approved and s.transport == MessagesHandoff)
 ```
 
+### Nothing is approved before the person decides
+
+Discovered by the proof: until the person approves the draft, the attempt has no approval. Without this rule, the proof cannot exclude a redraft below 13 that keeps an earlier approval, or a browser enrollment before the app facts are read.
+
+```quint
+pure def alwaysNoApprovalBeforeDecision(s: AgentSignup): bool =
+  (s.phase == CheckingCapability or s.phase == ReadingApp or s.phase == Drafting or s.phase == AwaitingApproval)
+    implies not(s.approved)
+```
+
 ### The app's browser confirms the owner, enrolls if eligible and asks separately for connector access
 
 The person gets one authorization link from the client's native connector. The agent uses its configured app endpoint and uses the link exactly as issued. The browser verifies the phone or uses a current valid session. In the eligible new member flow, the person confirms their enrollment details and separately accepts the app's current text consent and connector permission. Enter any required invitation only in the app's browser. The site determines whether the invitation and signup are eligible. A completed same-app enrollment and current write grant allow the agent to check connector status. The agent reads existing membership status without signing up again or resending a new profile. Refusal, a hold, wrong app, missing/invalid invitation, changed enrollment details and unconfirmed handoff all leave the draft unsent.
@@ -158,6 +177,16 @@ pure def alwaysNativeEnrollmentKeepsInvitationGate(s: AgentSignup): bool =
 pure def alwaysOneApprovedNativeHandoff(s: AgentSignup): bool =
   s.handoffs >= 0 and s.handoffs <= 1 and
   (s.handoffs > 0 implies (s.approved and s.transport == NativeConnectorHandoff))
+```
+
+### A native browser result follows the one handoff
+
+Discovered by the proof: only the native browser step records a browser enrollment, and on the native connector path the browser step comes only after the one handoff. Without this rule, the proof cannot show that a native profile submission follows the handoff.
+
+```quint
+pure def alwaysBrowserStepFollowsHandoff(s: AgentSignup): bool =
+  (s.browserEnrolled or (s.transport == NativeConnectorHandoff and s.phase == HandedOff))
+    implies (s.transport == NativeConnectorHandoff and s.handoffs == 1)
 ```
 
 ### The connector submits once and reports saved only after the exact durable result
@@ -207,6 +236,16 @@ pure def alwaysExistingMemberKeepsProfile(s: AgentSignup): bool =
 
 pure def stepSavedFollowsConfirmation(before: AgentSignup, via: str, after: AgentSignup): bool =
   (after.phase == Saved and before.phase != Saved) implies via == "confirmProfile"
+```
+
+### No profile is sent before the status check allows it
+
+Discovered by the proof: until the connector submits the profile, the attempt has no submission. Without this rule, the proof cannot exclude a browser result that removes the enrollment of a profile that was already sent.
+
+```quint
+pure def alwaysNothingSubmittedBeforeSubmit(s: AgentSignup): bool =
+  (s.phase == ReadyForHandoff or s.phase == HandedOff or s.phase == CheckingStatus or s.phase == ReadyToSubmit)
+    implies s.submits == 0
 ```
 
 ### Each skill ends with a truthful report

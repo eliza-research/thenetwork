@@ -16,11 +16,11 @@ pure val seatCountValues = Set(0, 2, 3, 4, 5, 6)
 pure def gatheringGroupingSizeAllowed(seatCount: int): bool =
   gatheringGroupingMinimum <= seatCount and seatCount <= gatheringGroupingMaximum
 
-pure def gatheringGroupingCanSeat(eligible: bool, compatible: bool, assigned: bool, seatCount: int): bool =
-  eligible and compatible and not(assigned) and 0 <= seatCount and seatCount < gatheringGroupingMaximum
+pure def gatheringGroupingCanSeat(eligible: bool, compatible: bool, alreadyAssigned: bool, seatCount: int): bool =
+  eligible and compatible and not(alreadyAssigned) and 0 <= seatCount and seatCount < gatheringGroupingMaximum
 
-pure def lawGatheringGroupingCannotSeatBlocked(eligible: bool, assigned: bool, seatCount: int): bool =
-  not(gatheringGroupingCanSeat(eligible, false, assigned, seatCount))
+pure def lawGatheringGroupingCannotSeatBlocked(eligible: bool, alreadyAssigned: bool, seatCount: int): bool =
+  not(gatheringGroupingCanSeat(eligible, false, alreadyAssigned, seatCount))
 
 pure def lawGatheringGroupingCannotSeatTwice(eligible: bool, compatible: bool, seatCount: int): bool =
   not(gatheringGroupingCanSeat(eligible, compatible, true, seatCount))
