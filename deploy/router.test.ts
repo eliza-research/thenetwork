@@ -131,7 +131,11 @@ describe("the built Pages _worker.js", () => {
       const path = "https://ntwrk.party/t/T-7F3K9Q?candidate=ignored";
       const res = await worker.fetch(new Request(path, { headers: { cookie: "sid_ntwrk=private" } }), { ASSETS: assets });
       expect(res.status).toBe(200);
+      expect(res.headers.get("allow")).toBeNull();
       expect(await res.text()).toContain('href="https://claude.ai/new?q=Ask%20The%20Network%20for%20update%20T-7F3K9Q"');
+      const write = await worker.fetch(new Request(path, { method: "POST" }), { ASSETS: assets });
+      expect(write.status).toBe(405);
+      expect(write.headers.get("allow")).toBe("GET, HEAD");
       expect((await worker.fetch(new Request("https://ntwrk.party/_update-handoff"), { ASSETS: assets })).status).toBe(404);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
@@ -273,6 +277,7 @@ test("retired signup routes cannot expose cached forms or forward writes", async
         expect(r.status).toBe(method === "POST" ? 405 : 302);
         expect(r.headers.get("cache-control")).toBe("no-store");
         expect(r.headers.get("location")).toBe(method === "POST" ? null : "/");
+        expect(r.headers.get("allow")).toBe(method === "POST" ? "GET, HEAD" : null);
       }
     }
     expect(seen).toHaveLength(0); expect(assets).toHaveLength(0);

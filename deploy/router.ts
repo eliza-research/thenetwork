@@ -79,7 +79,7 @@ export function retiredSitePage(req: Request, app: string): Response | null {
   const headers: Record<string, string> = {};
   if (answer.noStore) headers["cache-control"] = "no-store";
   if (answer.toLanding) headers.location = "/";
-  if (answer.status === 405) headers.allow = "GET, HEAD";
+  if (answer.allowHeader) headers.allow = answer.allowHeader;
   if (answer.hasBody) headers["content-type"] = "text/plain; charset=utf-8";
   return new Response(answer.hasBody ? "Not found" : null, { status: answer.status, headers });
 }
@@ -103,7 +103,7 @@ export async function updateHandoffPage(req: Request, app: string, asset: Env["A
     "x-robots-tag": "noindex, nofollow",
   });
   if (route !== "ServeUpdateHandoff") {
-    if (answer.status === 405) headers.set("allow", "GET, HEAD");
+    if (answer.allowHeader) headers.set("allow", answer.allowHeader);
     if (answer.hasBody) headers.set("content-type", "text/plain; charset=utf-8");
     return new Response(answer.hasBody ? "Not found" : null, { status: answer.status, headers });
   }

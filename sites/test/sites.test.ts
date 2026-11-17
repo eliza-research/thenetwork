@@ -119,10 +119,8 @@ describe.each(SITES)("$domain", (s) => {
     for (const f of htmlFiles(s)) {
       const html = read(s, f);
       expect(html.match(/<title>([^<]+)<\/title>/)?.[1]?.trim().length ?? 0, f).toBeGreaterThan(3);
-      // The landing page links privacy and terms only.
-      for (const href of ["/privacy", "/terms"]) {
-        expect(html.includes(`href="${href}"`), `${f} links ${href}`).toBe(true);
-      }
+      const footer = html.match(/<footer\b[^>]*>[\s\S]*?<\/footer>/)?.[0] ?? "";
+      expect([...footer.matchAll(/<a\b[^>]+\bhref="([^"]+)"/g)].map(match => match[1]), f).toEqual(["/privacy", "/terms"]);
     }
   });
 

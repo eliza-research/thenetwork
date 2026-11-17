@@ -13,7 +13,7 @@ export type RequestMethod = "GetMethod" | "HeadMethod" | "OtherMethod";
 /** Story: Old links never open a retired page / A request routes by its path kind, the site and the method (spec/sitePages.md) */
 export type SiteRoute = "ServeLanding" | "ServePrivacy" | "ServeTerms" | "ServeJoin" | "ServeSkill" | "ServeCatalog" | "ServeRobots" | "ServeUpdateHandoff" | "RefuseUpdateHandoff" | "RefuseUpdateMethod" | "ForwardToBackend" | "ServeNotFound" | "RefuseRetired" | "RedirectToLanding" | "RefuseMethod";
 /** Story: Old links never open a retired page / A retired path answers with no page and is never cached (spec/sitePages.md) */
-export interface SiteAnswer { status: number; noStore: boolean; hasBody: boolean; toLanding: boolean }
+export interface SiteAnswer { status: number; noStore: boolean; hasBody: boolean; toLanding: boolean; allowHeader: string }
 /** Story: Old links never open a retired page / The terms name the join page as a way to opt in only where the site serves it (spec/sitePages.md) */
 export type OptInWay = "OptInOnJoinPage" | "OptInInAgent" | "OptInByText";
 /** Story: Let my agent read the signup skill from the site / Skill files are plain text that any origin can read (spec/sitePages.md) */
@@ -31,6 +31,8 @@ export const retiredSettingsPaths: string[] = ["/settings", "/settings/", "/sett
 export const retiredJoinPaths: string[] = ["/join", "/join/", "/join.html"];
 /** Story: Old links never open a retired page / A request routes by its path kind, the site and the method (spec/sitePages.md) */
 export const updateHandoffAssetPath: string = "/_update-handoff";
+/** Story: Old links never open a retired page / A retired path answers with no page and is never cached (spec/sitePages.md) */
+export const siteReadOnlyMethods: string = "GET, HEAD";
 /** Story: Read the pages of the site / The terms page has a text messaging section that a link can open (spec/sitePages.md) */
 export const smsTermsItems: SmsTermsItem[] = ["SmsProgram", "SmsOptIn", "SmsFrequency", "SmsStopEverything", "SmsLeaveOne", "SmsStartAgain", "SmsHelp", "SmsCosts", "SmsNoMarketingShare"];
 /** Story: Read the pages of the site / Every site serves public pages and each special page has one site (spec/sitePages.md) */
@@ -55,6 +57,26 @@ export function siteHasPage(app: brandIdentity_AppKey, page: SitePage): boolean 
 export function lawJoinPageOnlyOnPeon(app: brandIdentity_AppKey): boolean {
   //@ ensures \result === true
   return siteHasPage(app, "JoinPage") === (app === "Peon");
+}
+
+/** Story: Read the pages of the site / Every page links the privacy policy and the terms in its footer (spec/sitePages.md) */
+//@ pure
+export function footerOf(page: SitePage): SitePage[] {
+  return footerLinks;
+}
+
+/** Story: Read the pages of the site / Every page links the privacy policy and the terms in its footer (spec/sitePages.md) */
+//@ pure
+export function lawEveryFooterIsPrivacyThenTerms(app: brandIdentity_AppKey, page: SitePage): boolean {
+  //@ ensures \result === true
+  return !siteHasPage(app, page) || equal_sitePages(footerOf(page), (["PrivacyPage", "TermsPage"] as SitePage[]));
+}
+
+/** Story: Read the pages of the site / Every page links the privacy policy and the terms in its footer (spec/sitePages.md) */
+//@ pure
+export function lawLandingFooterHasNoOtherLink(otherPage: SitePage): boolean {
+  //@ ensures \result === true
+  return !footerOf("LandingPage").includes(otherPage) || (otherPage === "PrivacyPage" || otherPage === "TermsPage");
 }
 
 /** Story: Read the pages of the site / Every page links the privacy policy and the terms in its footer (spec/sitePages.md) */
@@ -107,7 +129,14 @@ export function isRetiredRoute(route: SiteRoute): boolean {
 /** Story: Old links never open a retired page / A retired path answers with no page and is never cached (spec/sitePages.md) */
 //@ pure
 export function answerFor(route: SiteRoute, method: RequestMethod): SiteAnswer {
-  return route === "RefuseRetired" || route === "RefuseUpdateHandoff" ? ({ status: 404, noStore: true, hasBody: method !== "HeadMethod", toLanding: false } as SiteAnswer) : (route === "RedirectToLanding" ? ({ status: 302, noStore: true, hasBody: false, toLanding: true } as SiteAnswer) : (route === "RefuseMethod" || route === "RefuseUpdateMethod" ? ({ status: 405, noStore: true, hasBody: false, toLanding: false } as SiteAnswer) : (route === "ServeUpdateHandoff" ? ({ status: 200, noStore: true, hasBody: method !== "HeadMethod", toLanding: false } as SiteAnswer) : (route === "ForwardToBackend" ? ({ status: 0, noStore: false, hasBody: false, toLanding: false } as SiteAnswer) : (route === "ServeNotFound" ? ({ status: 404, noStore: false, hasBody: method !== "HeadMethod", toLanding: false } as SiteAnswer) : ({ status: 200, noStore: false, hasBody: method !== "HeadMethod", toLanding: false } as SiteAnswer))))));
+  return route === "RefuseRetired" || route === "RefuseUpdateHandoff" ? ({ status: 404, noStore: true, hasBody: method !== "HeadMethod", toLanding: false, allowHeader: "" } as SiteAnswer) : (route === "RedirectToLanding" ? ({ status: 302, noStore: true, hasBody: false, toLanding: true, allowHeader: "" } as SiteAnswer) : (route === "RefuseMethod" || route === "RefuseUpdateMethod" ? ({ status: 405, noStore: true, hasBody: false, toLanding: false, allowHeader: siteReadOnlyMethods } as SiteAnswer) : (route === "ServeUpdateHandoff" ? ({ status: 200, noStore: true, hasBody: method !== "HeadMethod", toLanding: false, allowHeader: "" } as SiteAnswer) : (route === "ForwardToBackend" ? ({ status: 0, noStore: false, hasBody: false, toLanding: false, allowHeader: "" } as SiteAnswer) : (route === "ServeNotFound" ? ({ status: 404, noStore: false, hasBody: method !== "HeadMethod", toLanding: false, allowHeader: "" } as SiteAnswer) : ({ status: 200, noStore: false, hasBody: method !== "HeadMethod", toLanding: false, allowHeader: "" } as SiteAnswer))))));
+}
+
+/** Story: Old links never open a retired page / A retired path answers with no page and is never cached (spec/sitePages.md) */
+//@ pure
+export function lawOnlyRefusedWritesHaveAllowHeader(route: SiteRoute, method: RequestMethod): boolean {
+  //@ ensures \result === true
+  return (answerFor(route, method).allowHeader === siteReadOnlyMethods) === (route === "RefuseMethod" || route === "RefuseUpdateMethod");
 }
 
 /** Story: Old links never open a retired page / A retired path answers with no page and is never cached (spec/sitePages.md) */
@@ -250,4 +279,12 @@ export function lawBackendPathsAreForwarded(app: brandIdentity_AppKey, method: R
 export function lawRetiredPathsNeverReachTheBackend(app: brandIdentity_AppKey, method: RequestMethod): boolean {
   //@ ensures \result === true
   return routeFor(app, "SettingsPath", method) !== "ForwardToBackend" && routeFor(app, "JoinPath", method) !== "ForwardToBackend";
+}
+
+/** Equality by structure, as Quint and the proof compare records, lists, maps and variants (none holds a set). */
+export function equal_sitePages(a: unknown, b: unknown): boolean {
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return a === b;
+  const keys = Object.keys(a);
+  return Array.isArray(a) === Array.isArray(b) && keys.length === Object.keys(b).length
+    && keys.every((k) => Object.hasOwn(b, k) && equal_sitePages((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
 }

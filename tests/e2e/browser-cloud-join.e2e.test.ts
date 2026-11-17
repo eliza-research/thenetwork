@@ -106,6 +106,22 @@ browserTest("Peon keeps the approved name and age through the exact first Cloud 
     await secondTab.getByLabel("First name").waitFor();
     expect(await secondTab.getByLabel("First name").inputValue()).toBe("");
 
+    const presented: string[] = [];
+    await secondTab.route(`${origin}/api/me`, async (route: any) => {
+      const receipt = route.request().headers()["x-ntwrk-join-receipt"];
+      if (receipt) presented.push(receipt);
+      await route.continue();
+    });
+    await secondTab.evaluate((receipt: string) => sessionStorage.setItem("peon-cloud-join-receipt", receipt), restoredReceipt!);
+    const freshName = "Ari".repeat(16) + "Bo";
+    await secondTab.goto(`${origin}/join?via=agent#firstName=${freshName}Overflow&age=32`);
+    expect(await secondTab.getByLabel("First name").inputValue()).toBe(freshName);
+    expect(await secondTab.getByLabel("Age", { exact: true }).inputValue()).toBe("32");
+    expect(await secondTab.getByRole("checkbox").getAttribute("aria-checked")).toBe("false");
+    expect(presented).toEqual([]);
+    expect(secondTab.url()).toBe(`${origin}/join?via=agent`);
+    expect(await secondTab.evaluate(() => sessionStorage.getItem("peon-cloud-join-receipt"))).toBeNull();
+
     await page.getByRole("checkbox").click();
     await page.getByRole("button", { name: "Join", exact: true }).click();
     await page.getByText("Go back to the same chat to finish setting up your profile.").waitFor();
