@@ -91,7 +91,7 @@ export function copyFor(b: CopyBrand) {
   /** A probe reply that was neither a clear yes nor a clear no (a condition, a maybe): asked once more. */
   probeClarify: "Just to check: is that a yes or a no? Either is fine.",
   /** The member opted in to calendar free/busy (founder decision 4c); free/busy only, never event details. */
-  calendarOptIn: "Thanks. I'll only use free/busy from your calendar, never what's in it. Reply CALENDAR OFF anytime to stop.",
+  calendarOptIn: "I’ve saved your choice. I’ll use only free/busy if you have an authorized calendar. Reply CALENDAR OFF anytime to stop.",
   calendarOff: "Done, I won't use your calendar.",
   /** Opt-in weekly check-in (founder decision 4d). */
   weeklyOptIn: "Done. Once a week I'll ask what your week looks like. Reply WEEKLY OFF anytime to stop.",
@@ -195,7 +195,7 @@ export type Copy = ReturnType<typeof copyFor>;
 /** The Network's copy (ntwrk). Other apps: copyFor(brandOf(app)). */
 export const copy: Copy = copyFor(NTWRK_BRAND);
 
-const OFFER = "Next time I can skip the time question: reply CALENDAR to share your calendar's free/busy, or WEEKLY for a short weekly check-in.";
+const OFFER = "For future plans, reply CALENDAR to allow free/busy from an authorized calendar, or WEEKLY for a short weekly check-in.";
 /** The answer request that ends a probe: with time options, which one works; without, yes or no. */
 const tail = (times?: string) => (times ? ` I could do ${times}. Tell me which works, or no is completely fine.` : " Yes or no is all I need, and no is completely fine.");
 

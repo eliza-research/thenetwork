@@ -54,7 +54,7 @@ An introduction, a meeting message, a relay, a reviewed home-help consent card, 
 ```quint
 pure def outreachRequiresAdult(kind: str): bool =
   kind == "probe" or kind == "reveal" or kind == "nudge" or kind == "scheduling" or
-  kind == "reminder" or kind == "feedback" or kind == "relay" or kind == "growth" or kind == "invite_notice" or kind == "home_help_consent"
+  kind == "reminder" or kind == "feedback" or kind == "relay" or kind == "growth" or kind == "invite_notice" or kind == "home_help_consent" or kind == "worthwhile"
 
 pure def lawRecruitingRequiresAdult(kind: str): bool =
   kind == "growth" implies outreachRequiresAdult(kind)

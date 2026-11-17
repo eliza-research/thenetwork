@@ -37,7 +37,8 @@ import {
   contextFacetEligible, contextFacetLimit, contextFacetSizeLimit, contextMode, contextSinglePlayer,
   initial as initialContext, step as stepContext, type ContextMode,
 } from "../../core/src/generated/sharedContext.ts";
-import { ConsentNetwork, presentInNyc, relayDispatchCheck, storedGroupLateArrivalCurrent, storedInviteNoticePartyCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
+import { ConsentNetwork, presentInNyc, relayDispatchCheck, replacementProbeKey, storedGroupLateArrivalCurrent, storedInviteNoticePartyCurrent, type NetworkOptions, type NetworkState, type StoredStandingIntentChange } from "../src/network.ts";
+import { interruptionFeedbackKey } from "../src/interruption-feedback.ts";
 import type { AppliedProfileFactEdit } from "./profile-fact-edits.ts";
 import type { RelayCanonical } from "../src/relay.ts";
 import { loadRelayRows, PgStore, runStored, runTick, type NetworkStore } from "../src/store.ts";
@@ -565,8 +566,16 @@ export class NetworkRuntime {
   /** Read receipts for exact committed sends whose acceptance is still unresolved in Network state. */
   private async refreshInitialInviteReceipts(state: NetworkState | undefined) {
     this.initialInviteReceipts.clear();
-    const ids = (state?.members ?? []).flatMap(member => member.pendingAsks.flatMap(invite =>
-      invite.deliveryId !== undefined && invite.acceptedAt === undefined ? [invite.deliveryId] : []));
+    const replacements = new Set((state?.opps ?? []).filter(opp => opp.replacementFor && opp.stage === "probing").map(opp => opp.id));
+    const ids = (state?.members ?? []).flatMap(member => {
+      const pending = member.pendingAsks.flatMap(invite => invite.deliveryId !== undefined && invite.acceptedAt === undefined ? [invite.deliveryId] : []);
+      const awaiting = member.awaiting;
+      // An unrelated inbound clears the unanswered ledger, but the exact open replacement question can still be answered.
+      if (awaiting?.kind === "probe" && awaiting.oppId && replacements.has(awaiting.oppId)) pending.push(replacementProbeKey(awaiting.oppId, member.id));
+      const survey = member.interruptionSurvey;
+      if (survey?.sentAt !== undefined) pending.push(interruptionFeedbackKey(this.app.id, member.id, survey.opportunityId));
+      return pending;
+    });
     if (!ids.length) return;
     const rows = await this.scoped(tx => tx`select m.id, coalesce(o.status, m.status) as status,
       case when o.id is null then m.ts else o.sent_at end as accepted_at

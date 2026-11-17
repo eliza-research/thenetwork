@@ -54,7 +54,10 @@ import {
 } from "../../core/src/generated/meetingSettlement.ts";
 import { lateArrivalGroupCurrent, lateArrivalMayDispatch, lateArrivalMayReport, lateArrivalNotice } from "../../core/src/generated/groupLateArrival.ts";
 import { isLateArrivalReport, lateArrivalDeliveryId, type LateArrivalDelivery } from "./group-late-arrival.ts";
+import { readCalendarFreeBusy, type CalendarFreeBusyAuthority } from "../../core/src/calendar-free-busy.ts";
+import { calendarSchedulingPurpose } from "../../core/src/generated/calendarFreeBusy.ts";
 import { bookedCancellationAllowed, bookedCancellationPrefix } from "../../core/src/generated/outboundAdmission.ts";
+import { bookReplacementPlan, canTryGroupReplacement, mayOfferReviewedAlternate, recoveryPlanCanProceed, replacementAnswerAllowed, viableReplacementSlot } from "../../core/src/generated/bookedGroupReplacement.ts";
 import { rescheduleDeadline, rescheduleDraftCurrent, rescheduleTimeEligible, rescheduleVote } from "../../core/src/generated/meetingReschedule.ts";
 import {
   describeBookingStart, localBookingStart, parseRescheduleCommand, rescheduleMemberRef, rescheduleNoticeCurrent, rescheduleOfferKey,
@@ -78,6 +81,10 @@ import {
 } from "../../core/src/generated/probeDispatch.ts";
 import { reviewLate, reviewRevisionCurrent } from "../../core/src/generated/reviewDeadline.ts";
 import { inviteJoinNoticeCurrent, inviteJoinNoticeLifetimeMs, inviteJoinNoticeMayRideReply, outreachRequiresAdult, unansweredInviteCounts, unansweredInvitePause } from "../../core/src/generated/outreachPolicy.ts";
+import {
+  interruptionAnswerMs, interruptionAskUntilMs, interruptionFeedbackAskDue, interruptionFeedbackCurrent, interruptionFeedbackReply, interruptionFeedbackSample,
+} from "../../core/src/generated/interruptionFeedback.ts";
+import { interruptionFeedbackAnswer, interruptionFeedbackCode, interruptionFeedbackKey, interruptionSampleBucket, type InterruptionSurvey } from "./interruption-feedback.ts";
 import { emptyIntentFollowupReady, emptyIntentFollowupReasonAllowed } from "../../core/src/generated/emptyIntentFollowup.ts";
 import { canSaveCofounderIntent, cofounderIntentDetails, cofounderIntentObjective } from "../../core/src/generated/cofounderIntent.ts";
 import { cofounderDeliveryAllowed, cofounderIntentEligible, cofounderPairCurrent } from "../../core/src/generated/cofounderDispatch.ts";
@@ -259,6 +266,8 @@ export interface NetworkOptions {
   memberInviteTurnAllowed?: (memberId: MemberId, messageId: string) => boolean;
   /** Only the exact signed member turn can request a group logistics relay. */
   lateArrivalTurnAllowed?: (memberId: MemberId, messageId: string) => boolean;
+  /** Current, purpose-scoped calendar grant and anonymous observation from a trusted preloaded view. */
+  calendarFreeBusy?: CalendarFreeBusyAuthority;
   /** Mark the input for private invitation retention in the current service transaction. */
   onPrivateInviteTurn?: (memberId: MemberId, messageId: string) => void;
   /** Private intake instructions for a current signed home-entry request. */
@@ -362,6 +371,7 @@ interface MemberState {
   account?: "paused" | "restricted";
   /** Initial invites (and the re-engagement) sent since the member last wrote to us. */
   pendingAsks: PendingAsk[];
+  interruptionSurvey?: InterruptionSurvey;
   /** Of those, how many reached terminal expiry or waited at least 72 hours after delivery. */
   unanswered: number;
   /** Every outbound message since the member last wrote to us (the Blooio streak, attention 1.9). */
@@ -376,7 +386,7 @@ interface MemberState {
   availability?: { tags: string[]; at: number }[];
   /** The one-time calendar and weekly check-in offer was made (in the first booked plan). */
   offerMade?: boolean;
-  /** Calendar free/busy consent (decision 4c). No calendar source exists yet: consent is recorded only. */
+  /** The member opted in to using authorized free/busy for scheduling in this app. */
   calendar?: boolean;
   /** Opted in to the weekly "what's your week like?" check-in (decision 4d), and when it was last sent. */
   weekly?: boolean; lastCheckinAt?: number;
@@ -545,6 +555,8 @@ interface Opp {
   repeatFrom?: string;
   /** Planner plans and crew sessions: the engine plan and its quorum run (plans.startPlanRun). */
   plan?: plans.Plan; planRun?: plans.PlanRun;
+  /** The cancelled booking behind this separate review item. Never part of member-facing copy. */
+  replacementFor?: string;
   /** When the booked plan reached each member, who confirmed it in words, and who confirmed by silence (48 h). */
   bookedAt?: Record<MemberId, number>; explicit?: MemberId[]; confirmed?: MemberId[];
   /** Post-plan answers: came, would do it again, reported someone missing, and who they named as there. */
@@ -635,6 +647,11 @@ const OPEN_STAGES = new Set(["review", "probing", "scheduled"]);
 
 const BOOKED_REMINDER_KINDS = ["day-before-reminder", "near-meeting-reminder", "day-of-checkin"] as const;
 export type BookedReminderKind = typeof BOOKED_REMINDER_KINDS[number];
+export const replacementProbePrefix = "booked-group-replacement-probe:";
+
+export function replacementProbeKey(oppId: string, memberId: MemberId): string {
+  return `${replacementProbePrefix}${oppId}:${memberId}`;
+}
 
 export function bookedReminderKind(id: string): BookedReminderKind | undefined {
   return BOOKED_REMINDER_KINDS.find(kind => id.startsWith(`${kind}:`));
@@ -773,8 +790,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** The app this Network serves, and its member-facing copy. */
   readonly app: AppInfo;
   private readonly copy: Copy;
-  private opts: Required<Omit<NetworkOptions, "app" | "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "plansConfig" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "allowedCategories" | "hooks" | "onPosting" | "issueMemberInvite" | "memberInviteTurnAllowed" | "lateArrivalTurnAllowed" | "onPrivateInviteTurn" | "homeHelpIntakePrompt">>
-    & Pick<NetworkOptions, "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "hooks" | "onPosting" | "issueMemberInvite" | "memberInviteTurnAllowed" | "lateArrivalTurnAllowed" | "onPrivateInviteTurn" | "homeHelpIntakePrompt">;
+  private opts: Required<Omit<NetworkOptions, "app" | "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "plansConfig" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "allowedCategories" | "hooks" | "onPosting" | "issueMemberInvite" | "memberInviteTurnAllowed" | "lateArrivalTurnAllowed" | "calendarFreeBusy" | "onPrivateInviteTurn" | "homeHelpIntakePrompt">>
+    & Pick<NetworkOptions, "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "hooks" | "onPosting" | "issueMemberInvite" | "memberInviteTurnAllowed" | "lateArrivalTurnAllowed" | "calendarFreeBusy" | "onPrivateInviteTurn" | "homeHelpIntakePrompt">;
   /** The categories this app may start opportunities in (ALLOWED_CATEGORIES). */
   readonly allowedCategories: ReadonlySet<Category>;
   private pcfg: PlansConfig;
@@ -793,6 +810,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       issueMemberInvite: opts.issueMemberInvite,
       memberInviteTurnAllowed: opts.memberInviteTurnAllowed, onPrivateInviteTurn: opts.onPrivateInviteTurn,
       lateArrivalTurnAllowed: opts.lateArrivalTurnAllowed,
+      calendarFreeBusy: opts.calendarFreeBusy,
       homeHelpIntakePrompt: opts.homeHelpIntakePrompt,
     };
     this.allowedCategories = new Set(opts.allowedCategories ?? ALLOWED_CATEGORIES[this.app.id] ?? ALLOWED_CATEGORIES.ntwrk!);
@@ -813,7 +831,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const privateInviteTurn = this.isPrivateInviteTurn(msg);
     if (privateInviteTurn) this.opts.onPrivateInviteTurn?.(msg.memberId, msg.id);
     // The LLM reader runs before anything changes, so the unit below stays one synchronous step.
-    const u = privateInviteTurn ? undefined : await this.understandSafely(msg);
+    const u = privateInviteTurn || interruptionFeedbackAnswer(msg.body) ? undefined : await this.understandSafely(msg);
     if (this.declinedIds.has(msg.memberId)) return "handled";
     // What a member says can change the snapshot (a trip, a setting): read it fresh, never up to 20 minutes stale.
     this.dirty = true;
@@ -827,6 +845,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (initiated || m.lastOutUnsol || !ACK_ONLY.test(body.trim())) m.unsolStreak = 0;
     m.lastInbound = nowIn; m.msgsIn++;
     this.outboundBefore = m.outbound ?? 0;
+    this.invitesBeforeReply = new Set(m.pendingAsks.flatMap(invite => {
+      if (!invite.opportunityId) return [];
+      const receipt = invite.deliveryId && this.ctx.initialInviteReceipt?.(invite.deliveryId);
+      return invite.acceptedAt !== undefined || (receipt && receipt.kind === "accepted") ? [invite.opportunityId] : [];
+    }));
     // Answers to the Network teach the send time (founder decision 1); carrier keywords do not.
     // A profile from the member's AI assistant (source "mcp") is not the member answering: it teaches no send time.
     if (!msg.keyword && msg.source !== "mcp") m.replies = [...(m.replies ?? []), this.now()].slice(-60);
@@ -837,11 +860,12 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.memberReply = !msg.keyword && msg.source !== "mcp";
     this.understood = u;
     try { return this.handleInbound(m, msg, privateInviteTurn, queueCofounderIntent) === "open" ? "open" : "handled"; }
-    finally { this.replyTo = undefined; this.memberReply = false; this.understood = undefined; }
+    finally { this.replyTo = undefined; this.memberReply = false; this.understood = undefined; this.invitesBeforeReply.clear(); }
   }
 
   /** How many messages we had sent since the member's previous message, when this one came in. */
   private outboundBefore = 0;
+  private invitesBeforeReply = new Set<string>();
 
   private handleGroupLateArrival(member: MemberState, now: number): boolean {
     if (!this.groupLateArrivalPartyCurrent(member.id)) return false;
@@ -926,7 +950,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   private handleInbound(m: MemberState, msg: InboundMessage, privateInviteTurn: boolean, queueCofounderIntent?: (intent: Intent) => void) {
     const now = this.now();
-    if (msg.keyword === "STOP") { m.optedOut = true; m.pendingInviteDraft = undefined; this.dropMember(m.id, "opted out"); return; }
+    if (msg.keyword === "STOP") { m.optedOut = true; m.pendingInviteDraft = undefined; m.interruptionSurvey = undefined; this.dropMember(m.id, "opted out"); return; }
     if (msg.keyword === "START") { m.optedOut = false; this.send(m, copy.stopWelcomeBack, { type: "info" }, "reply"); return; }
     if (msg.keyword === "HELP") return;
     const body = msg.body.trim();
@@ -992,6 +1016,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     // booked date, a check-in, a cancel, feedback, an invite, CALENDAR/WEEKLY). Only the member's own
     // text in the thread does those.
     const mcp = msg.source === "mcp";
+    if (this.memberReply && !msg.reaction && this.calendarOptIn(m, body)) return;
     if ((c.kind === "block" || c.kind === "report") && !mcp) return this.handleBlock(m, c);
     // Nor is the assistant's block or report scored as the member's abuse: its words describe someone
     // else (network-consent-4), and a watch would drop the member and cancel a booked date. Learned only.
@@ -1010,6 +1035,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (!c.abuse.length && this.opts.memberInviteTurnAllowed?.(m.id, msg.id)) this.handleInviteVouchTurn(m, msg.id, body);
       return;
     }
+
+    const surveyAnswer = interruptionFeedbackAnswer(body);
+    if (surveyAnswer) return this.recordInterruptionFeedback(m, surveyAnswer, now, msg.ts);
 
     if (!mcp && !msg.reaction && !c.abuse.length && isLateArrivalReport(body)
       && this.opts.lateArrivalTurnAllowed?.(m.id, msg.id) && this.handleGroupLateArrival(m, now)) return;
@@ -1047,7 +1075,12 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (aw?.kind === "probe" && this.opps.get(aw.oppId!)?.plan) {
       // A plan probe: yes or no to that plan at that time ("can't make that time" is a no, and a time they are not free).
       const po = this.opps.get(aw.oppId!)!;
-      const yn0 = this.yesNoOf(body);
+      if (po.replacementFor) {
+        const delivery = this.ctx.initialInviteReceipt?.(replacementProbeKey(po.id, m.id));
+        const sentAt = this.ctx.initialInviteReceipt ? (delivery?.kind === "accepted" ? delivery.at : undefined) : aw.at;
+        if (!replacementAnswerAllowed(this.memberReply, sentAt !== undefined, msg.ts, sentAt ?? now)) return "open" as const;
+      }
+      const yn0 = po.replacementFor ? consentOf(body).answer : this.yesNoOf(body);
       // spec/probeReply.md, "A model reading cannot replace a definite or qualified answer": a yes that
       // names a time other than the plan's one time ("yes, Friday 7pm") is asked again, never booked.
       const planTime: TimeOption = { key: "a", start: po.plan!.window.start, end: po.plan!.window.end, label: attention.timeOptionsPhrase([po.plan!.window], NY) };
@@ -1064,7 +1097,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (r.answer !== "unclear") { m.awaiting = undefined; return this.onProbeAnswer(m, aw.oppId!, r.answer === "yes", r.keys); }
       if (this.clarify(m, aw, c)) return;
     }
-    if (this.optIns(m, body)) return;
+    if (!mcp && this.weeklyOptIn(m, body)) return;
     if (aw?.kind === "crew" && aw.crewId) {
       const yn = this.yesNoOf(body);
       if (yn === "yes" || yn === "no") { m.awaiting = undefined; return this.onCrewAnswer(m, aw.crewId, yn === "yes"); }
@@ -1079,7 +1112,9 @@ export class ConsentNetwork implements NetworkUnderTest {
         m.awaiting = undefined;
       } else {
         const yn = this.yesNoOf(body);
-        if (c.kind === "cancel" || yn === "no") return this.handleDrop(m, o);
+        if (c.kind === "cancel" || yn === "no") {
+          return this.handleDrop(m, o, true, !msg.reaction && (c.kind === "cancel" || consentOf(body).answer === "no"));
+        }
         if (yn === "yes" || c.kind === "ack") {
           m.awaiting = undefined;
           this.confirmPlan(o, m.id, true);
@@ -1155,7 +1190,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     const action = unlinkedCancellation(this.memberReply, true, m.awaiting?.kind === "booked", matches.length);
     if (action === "NoCancellation") return false;
-    if (action === "CancelMatchingBooking") this.handleDrop(m, matches[0]!);
+    if (action === "CancelMatchingBooking") this.handleDrop(m, matches[0]!, true, true);
     else this.send(m, action === "AskWhichBooking" ? this.copy.whichBookingToCancel : this.copy.noBookingToCancel, { type: "info" }, "reply");
     return true;
   }
@@ -1187,7 +1222,6 @@ export class ConsentNetwork implements NetworkUnderTest {
       const availability = this.evidence(member, now, o.id);
       const stated = member.stated;
       return (!stated || stated.until <= start || stated.windows.some(window => window.start <= slot.start && window.end >= slot.end))
-        && !availability.calendar?.busy.some(window => window.start < slot.end && window.end > slot.start)
         && attention.availabilityProb(availability, slot, now) > 0;
     });
   }
@@ -1289,21 +1323,22 @@ export class ConsentNetwork implements NetworkUnderTest {
     return true;
   }
 
-  /**
-   * CALENDAR / WEEKLY (and "... OFF"): the member's answer to the one-time offer in their first
-   * booked plan (founder decision 4c, 4d). True when the message was one of these.
-   */
-  private optIns(m: MemberState, body: string): boolean {
-    const k = /^\W*(?:yes,?\s+)?(calendar|weekly)(\s+(?:check-?in\s+)?off)?\W*$/i.exec(body);
+  private calendarOptIn(m: MemberState, body: string): boolean {
+    const command = /^\W*(?:yes,?\s+)?calendar(\s+off)?\W*$/i.exec(body);
+    if (!command) return false;
+    const enabled = !command[1];
+    if (enabled && !this.calendarOwnerEligible(m)) return true;
+    m.calendar = enabled;
+    if (enabled) this.counters.calendarOptIns++;
+    this.ctx.log("calendar_consent", { memberId: m.id, on: enabled });
+    this.send(m, enabled ? copy.calendarOptIn : copy.calendarOff, { type: "info" }, "reply");
+    return true;
+  }
+
+  private weeklyOptIn(m: MemberState, body: string): boolean {
+    const k = /^\W*(?:yes,?\s+)?weekly(\s+(?:check-?in\s+)?off)?\W*$/i.exec(body);
     if (!k) return false;
-    const what = k[1]!.toLowerCase(), off = !!k[2];
-    if (what === "calendar") {
-      m.calendar = !off;
-      if (!off) this.counters.calendarOptIns++;
-      this.ctx.log("calendar_consent", { memberId: m.id, on: !off });
-      this.send(m, off ? copy.calendarOff : copy.calendarOptIn, { type: "info" }, "reply");
-      return true;
-    }
+    const off = !!k[1];
     // Members aged 13-17 never get the weekly check-in (it exists to find times to meet people).
     if (m.minor) return false;
     m.weekly = !off;
@@ -2677,6 +2712,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    */
   private approvalCheck(o: Opp): string | undefined {
     if (this.holdHelpOpportunity(o)) return "bounded_help_requires_safety_review";
+    if (o.replacementFor && !this.replacementPlanCurrent(o, this.now())) return "replacement_no_longer_available";
     const publicEventIssue = this.publicEventRefusal(o);
     if (publicEventIssue) return publicEventIssue;
     for (const id of o.participants) {
@@ -2837,9 +2873,12 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (o.lane === "Cofounder" && !cofounderDeliveryAllowed(this.cofounderCurrent(o), o.review?.decision === "approve", false, false)) {
       return this.close(o, "cofounder_intent_changed");
     }
-    const publicEventIssue = this.publicEventRefusal(o);
+    const listed = this.currentPublishedEvent(o);
+    const publicEventIssue = this.publicEventRefusal(o, listed);
     if (publicEventIssue) return this.close(o, publicEventIssue);
     const now = this.now();
+    const fixed = listed ?? this.fixedTimeWindow(o);
+    if (fixed && !this.calendarAllows(o.participants, fixed, now)) return this.closeNoCommonTime(o, o.participants[0]!);
     if (!o.first || !o.participants.includes(o.first)) o.first = this.firstOf(o);
     // A member who asked for this exact thing is not asked yes or no. A requester still picks the
     // times first (requestTimes), so the other person is offered only times that work for them.
@@ -2986,25 +3025,47 @@ export class ConsentNetwork implements NetworkUnderTest {
    */
   private timeOptionsFor(o: Opp, id: MemberId, now: number): TimeOption[] {
     const keyed = (slots: { start: number; end: number }[]) => slots.slice(0, 3).map((x, i) => ({ key: "abc"[i]!, start: x.start, end: x.end, label: attention.timeOptionsPhrase([x], NY) }));
+    const evidence = o.participants.map(p => this.evidence(this.member(p), now));
+    const calendarAllows = (slot: attention.TimeSlot) => evidence.every(ev => attention.calendarAvailability(ev.calendar, slot, now) !== "busy");
     if (o.publicEventRevision) {
       const listing = this.currentPublishedEvent(o);
-      return listing && !o.declinedTimes?.includes(listing.start) ? keyed([listing]) : [];
+      return listing && !o.declinedTimes?.includes(listing.start) && calendarAllows(listing) ? keyed([listing]) : [];
     }
     const picks = Object.entries(o.picks ?? {}).filter(([who]) => o.participants.includes(who));
     const common = this.commonPicks(o, id, now);
-    if (common.named) return keyed(common.slots);
+    if (common.named) return keyed(common.slots.filter(calendarAllows));
     // No picks yet, or everyone else said "neither": times for everyone, never one a member turned down.
     const declined = new Set(o.declinedTimes ?? []);
-    const fixed = !picks.length && !!o.anchorWindow && o.anchorWindow.end - o.anchorWindow.start <= 6 * HOUR;
+    const fixed = !picks.length && this.fixedTimeWindow(o);
     // The app's pack may name the first member's options (slop: the date plan's slots both are usually free).
     const fromPack = !fixed && !picks.length ? this.opts.hooks?.timeOptions?.(this.hookOpp(o), now, this.inputOnce()) : undefined;
     if (fromPack?.length) {
-      const ok = fromPack.filter(x => x.start >= now + PARTNER_LEAD && !declined.has(x.start)).sort((a, b) => a.start - b.start);
+      const ok = fromPack.filter(x => x.start >= now + PARTNER_LEAD && !declined.has(x.start) && calendarAllows(x)).sort((a, b) => a.start - b.start);
       if (ok.length) return keyed(ok);
     }
     const candidates = attention.candidateSlots(NY, now).filter(x => !declined.has(x.start));
-    const r = attention.chooseTimeOptions(o.participants.map(p => this.evidence(this.member(p), now)), now, { tz: NY, ...(fixed ? { fixed: true, window: o.anchorWindow } : { candidates }) });
+    const r = attention.chooseTimeOptions(evidence, now, { tz: NY, ...(fixed ? { fixed: true, window: fixed } : { candidates }) });
     return keyed(r.slots.map(x => x.slot).filter(x => x.start > now));
+  }
+
+  private fixedTimeWindow(o: Opp): attention.TimeSlot | undefined {
+    const window = o.anchorWindow;
+    return window && window.end - window.start <= 6 * HOUR ? window : undefined;
+  }
+
+  private calendarOwnerEligible(m: MemberState): boolean {
+    const view = relayMemberOf(m, !this.trust.ok(m.id) || this.reportHeld(m.id));
+    return canBeMatched(view.age) && !view.optedOut && !view.held && m.state !== "paused";
+  }
+
+  private calendarEvidence(m: MemberState, now: number) {
+    if (!m.calendar || !this.opts.calendarFreeBusy) return;
+    return readCalendarFreeBusy({ app: this.app.id, memberId: m.id, purpose: calendarSchedulingPurpose, now },
+      m.calendar, this.calendarOwnerEligible(m), this.opts.calendarFreeBusy);
+  }
+
+  private calendarAllows(members: readonly MemberId[], slot: attention.TimeSlot, now: number): boolean {
+    return !this.opts.calendarFreeBusy || members.every(id => attention.calendarAvailability(this.calendarEvidence(this.member(id), now), slot, now) !== "busy");
   }
 
   /** What the Network knows about when a member is free (engine-visible; never shareable). */
@@ -3017,7 +3078,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     // A member's booked plans count as away when a time is chosen for anything else (plans ask 5).
     const booked = [...this.opps.values()].filter(o => o.id !== exceptOpp && o.stage === "scheduled" && o.meetingAt !== undefined && o.status.get(m.id) === "yes").map(o => ({ start: o.meetingAt! - 2 * HOUR, end: o.meetingAt! + 3 * HOUR }));
     const away = [...snap.presence.filter(p => p.memberId === m.id && p.type === "temporary" && p.city !== "nyc" && p.from !== undefined && p.to !== undefined).map(p => ({ start: p.from!, end: p.to! })), ...booked];
-    return { memberId: m.id, tz: NY, quietHours: m.quietHours, standing, history: m.availHistory ?? [], ...(away.length ? { away } : {}) };
+    const calendar = this.calendarEvidence(m, now);
+    return { memberId: m.id, tz: NY, quietHours: m.quietHours, standing, history: m.availHistory ?? [], ...(away.length ? { away } : {}), ...(calendar ? { calendar } : {}) };
   }
 
   private onProbeAnswer(m: MemberState, oppId: string, yes: boolean, keys: string[] = []) {
@@ -3028,6 +3090,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!canRecordReply(current)) return;
     const answered = stepProbe(current, { type: "recordReply", agreed: yes });
     const retry = !!o.timeRetry?.includes(m.id);
+    if (!retry) this.sampleInterruption(m, o.id);
     const offered = o.offered?.[m.id] ?? [];
     const picked = offered.filter(x => keys.includes(x.key));
     if (!retry) m.answered++;
@@ -3080,6 +3143,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     // probe deadline is not counted, not kept as availability evidence and not acknowledged.
     const outcome = this.planAnswer(o, m.id, yes, false, () => {
       m.answered++;
+      this.sampleInterruption(m, o.id);
       this.ctx.log("probe_answer", { oppId: o.id, memberId: m.id, yes, plan: true });
       if (yes) this.counters.probeYes++; else { this.counters.probeNo++; this.emit({ type: "declined", member: m.id, planId: o.id }, `${o.id}:${m.id}`); }
       const notThen = !yes && /\b(that time|then|that day|make it)\b/i.test(body);
@@ -3185,7 +3249,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     });
     if (next.phase !== "Scheduled") return;
     const t = published
-      ? published.start >= now + MIN_NOTICE && !o.declinedTimes?.includes(published.start) ? { at: published.start, how: "public_event" } : undefined
+      ? published.start >= now + MIN_NOTICE && !o.declinedTimes?.includes(published.start) && this.calendarAllows(o.participants, published, now)
+        ? { at: published.start, how: "public_event" } : undefined
       : this.meetingTime(o, now);
     if (!t) return this.closeNoCommonTime(o, o.participants[0]!);
     const areas = o.participants.map(p => this.member(p).area);
@@ -3237,23 +3302,29 @@ export class ConsentNetwork implements NetworkUnderTest {
     const picks = Object.entries(o.picks ?? {}).filter(([id]) => o.participants.includes(id)).map(([, xs]) => xs);
     const named = picks.filter(xs => xs.length);
     const declined = new Set(o.declinedTimes ?? []);
+    const evidence = o.participants.map(id => this.evidence(this.member(id), now));
+    const offered = Object.values(o.offered ?? {}).flat();
+    const slotFor = (start: number) => offered.find(slot => slot.start === start) ?? { start, end: start + DEFAULT_ATTENTION.availability.slotHours * HOUR };
+    const calendarAllows = (slot: attention.TimeSlot) => evidence.every(ev => attention.calendarAvailability(ev.calendar, slot, now) !== "busy");
     if (named.length) {
-      const all = named.reduce((acc, xs) => acc.filter(t => xs.includes(t))).filter(t => t >= now + MIN_NOTICE && !declined.has(t)).sort((a, b) => a - b);
+      const all = named.reduce((acc, xs) => acc.filter(t => xs.includes(t))).filter(t => t >= now + MIN_NOTICE && !declined.has(t) && calendarAllows(slotFor(t))).sort((a, b) => a - b);
       if (all.length && named.length === picks.length) return { at: all[0]!, how: "picked" };
       // "partly": someone said none of their times worked. The time comes from the others' picks: the
       // one the Network's evidence says suits them best (their turned-down times count against a daypart).
       if (all.length) {
-        const unsure = o.participants.filter(id => o.picks?.[id] && !o.picks[id]!.length).map(id => this.evidence(this.member(id), now));
-        const score = (t: number) => unsure.reduce((x, ev) => x * attention.availabilityProb(ev, { start: t, end: t + 2 * HOUR }, now), 1);
+        const unsure = evidence.filter(ev => o.picks?.[ev.memberId] && !o.picks[ev.memberId]!.length);
+        const score = (t: number) => unsure.reduce((x, ev) => x * attention.availabilityProb(ev, slotFor(t), now), 1);
         const best = [...all].sort((a, b) => (score(b) - score(a)) || (a - b))[0]!;
         return { at: best, how: "partly_picked" };
       }
       return undefined;
     }
     const candidates = attention.candidateSlots(NY, now).filter(x => !declined.has(x.start));
-    const r = attention.chooseTimeOptions(o.participants.map(p => this.evidence(this.member(p), now)), now, { tz: NY, candidates });
+    const r = attention.chooseTimeOptions(evidence, now, { tz: NY, candidates });
     const best = [...r.slots].filter(x => x.slot.start >= now + MIN_NOTICE).sort((a, b) => (b.joint - a.joint) || (a.slot.start - b.slot.start))[0];
-    return best ? { at: best.slot.start, how: "estimated" } : { at: this.slot(o, now), how: "default" };
+    if (best) return { at: best.slot.start, how: "estimated" };
+    const fallback = this.slot(o, now);
+    return calendarAllows(slotFor(fallback)) ? { at: fallback, how: "default" } : undefined;
   }
 
   /** A slot at least ~20 hours out: Saturday late morning for activities, otherwise a weeknight at 7pm. */
@@ -3267,9 +3338,12 @@ export class ConsentNetwork implements NetworkUnderTest {
    * A participant drops out of a booked meeting. `ack` = they told us (reply to them). The others
    * hear it is off (pairs) or still on (groups of 3 or more), never why.
    */
-  private handleDrop(m: MemberState, o: Opp, ack = true) {
+  private handleDrop(m: MemberState, o: Opp, ack = true, explicitWithdrawal = false) {
+    if (o.stage !== "scheduled" || o.status.get(m.id) !== "yes") return;
+    const now = this.now();
+    const acceptedAndTold = o.bookedAt?.[m.id] !== undefined && o.bookedTold?.includes(m.id) === true;
     // Counted as a reveal decision only for a member the booked plan reached who had not confirmed it.
-    if (o.bookedTold?.includes(m.id) && !(o.confirmed ?? []).includes(m.id) && o.status.get(m.id) === "yes") this.counters.revealNo++;
+    if (o.bookedTold?.includes(m.id) && !(o.confirmed ?? []).includes(m.id)) this.counters.revealNo++;
     o.status.set(m.id, "dropped");
     this.counters.bookedCancelled++;
     // The member called it off (they told us, or opted out): plan_cancelled. Free with notice (NC flake rules).
@@ -3278,11 +3352,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.ctx.log("booked_cancelled", { oppId: o.id, memberId: m.id, told: ack });
     if (ack) this.send(m, "No worries, thanks for the heads up.", { type: "info" }, "reply");
     if (m.awaiting?.oppId === o.id) m.awaiting = undefined;
-    const still = o.participants.filter(p => o.status.get(p) === "yes");
+    const still = [...new Set(o.participants)].filter(p => o.status.get(p) === "yes");
     const keep = groupCanContinue(still.length);
     if (!keep) {
       const next = stepOpportunity(opportunityLifecycle(o), { type: "close" });
-      if (next.phase !== "Closed" || o.stage === "closed") return;
+      if (next.phase !== "Closed") return;
       this.expireReveals(o);
       o.closedFrom = o.stage;
       o.closedReason = "participant dropped";
@@ -3294,6 +3368,16 @@ export class ConsentNetwork implements NetworkUnderTest {
       }
       this.ctx.log("opportunity_closed", { proposalId: o.id, reason: "participant dropped" });
       for (const id of still) this.sendBookedCancellation(o, id, copy.dropNotice(m.first, false));
+      const booked = still.filter(id => o.bookedAt?.[id] !== undefined && o.bookedTold?.includes(id));
+      // spec/bookedGroupReplacement.md, "An accepted withdrawal can start recovery after the old booking closes"
+      if (canTryGroupReplacement({
+        ownWithdrawal: explicitWithdrawal && ack && this.memberReply && this.replyTo === m.id,
+        future: o.meetingAt !== undefined && now < o.meetingAt,
+        originalOrdinaryPlan: o.origin === "planner" && o.kind === "group" && !!o.plan && !o.plan.partner && o.planRun?.stage === "booked"
+          && !o.replacementFor && !o.plan.crewId && !o.plan.hostId && !o.plan.eventId && !o.publicEventRevision && !o.seat,
+        approved: o.review?.decision === "approve" && !o.review.invalidated,
+        acceptedAndTold, remainingBooked: booked.length, quorum: o.plan?.quorum ?? 0,
+      })) this.offerGroupReplacement(o, booked, now);
       return;
     }
     // Only members who were told about the plan hear that it changed.
@@ -3385,7 +3469,15 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (o.stage === "review") this.close(o, reason);
       else if (o.stage === "probing" && o.plan) this.planOut(o, id);
       else if (o.stage === "probing") { o.status.set(id, "unavailable"); this.replaceOrClose(o, id); }
-      else if (o.stage === "scheduled") { const m = this.members.get(id); if (m) this.handleDrop(m, o, false); }
+      else if (o.stage === "scheduled") {
+        const m = this.members.get(id);
+        if (m && o.status.get(id) === "yes") this.handleDrop(m, o, false);
+        else if (activeOpportunityParticipant(o, id)) {
+          if (m?.awaiting?.oppId === o.id) m.awaiting = undefined;
+          if (o.plan) this.planOut(o, id);
+          else o.status.set(id, "unavailable");
+        }
+      }
     }
   }
 
@@ -3759,13 +3851,15 @@ export class ConsentNetwork implements NetworkUnderTest {
    * lane vectors, so a friends crew is pair-gated on Friend profiles, not on The Network's.
    */
   private planWorldCache?: { day: string; w: EngineWorld };
-  private planWorld(now: number, fresh = false): EngineWorld {
+  private planWorld(now: number, fresh = false, exceptPlans: readonly string[] = []): EngineWorld {
     const day = nyParts(now).day;
-    if (!fresh && this.planWorldCache?.day === day) return this.planWorldCache.w;
+    if (!fresh && !exceptPlans.length && this.planWorldCache?.day === day) return this.planWorldCache.w;
     const pack = this.appPack();
     const input = pack ? this.packInput(now) : this.engineInput(now);
+    // Recovery rechecks an existing reviewed group. Its original and replacement rows are not competing proposals.
+    if (exceptPlans.length) input.recentProposals = input.recentProposals?.filter(p => !exceptPlans.includes(p.id));
     const w = new EngineWorld({ ...input, memberStanding: this.memberStanding }, resolveConfig({ ...this.opts.engine }), localEmbed, pack ?? networkPack);
-    this.planWorldCache = { day, w };
+    if (!exceptPlans.length) this.planWorldCache = { day, w };
     return w;
   }
 
@@ -3867,8 +3961,84 @@ export class ConsentNetwork implements NetworkUnderTest {
     return [...week.plans, ...week.partners];
   }
 
+  private replacementVenue(plan: plans.Plan): plans.Venue | undefined {
+    return PLAN_VENUES.find(v => v.id === plan.venueId && v.city === plan.city && v.activities.includes(plan.activityId));
+  }
+
+  private replacementRosterCurrent(world: EngineWorld, plan: plans.Plan, venue: plans.Venue, roster: MemberId[], exceptOpp?: string): boolean {
+    const activity = plans.activityById.get(plan.activityId);
+    if (!activity || roster.length !== plan.quorum || new Set(roster).size !== roster.length || (venue.capacity ?? Infinity) < roster.length
+      || roster.length < activity.groupSize[0] || roster.length > activity.groupSize[1]) return false;
+    return roster.every(id => {
+      const member = this.members.get(id);
+      const record = world.get(id)?.m;
+      return !!member && !!record && this.planSeatOk(member, exceptOpp) && record.homeCity === plan.city
+        && record.age >= Math.max(activity.ageMin, venue.ageMin) && record.prefs.categoriesOptIn.includes(plan.category)
+        && record.prefs.formats.includes("small_group") && plans.planMemberReason(world, id) === null
+        && (plans.activityFit(world, id, this.pcfg, member.hints).get(plan.activityId) ?? 0) >= this.pcfg.minFit
+        && this.planFriendSeatFits(world, id, roster.filter(peer => peer !== id), "existingPlan");
+    });
+  }
+
+  private replacementWindowCurrent(venue: plans.Venue, slot: attention.TimeSlot, roster: readonly MemberId[], now: number): boolean {
+    const duration = (slot.end - slot.start) / MINUTE;
+    if (duration <= 0 || !plans.venueOpenForSlot(venue, slot, duration, NY)) return false;
+    return roster.every(id => {
+      const evidence = this.planEvidence(this.member(id), now);
+      return this.inNyc(id, now, slot.end) && !this.bookedNear(id, slot.start)
+        && (!evidence.stated || evidence.stated.until <= slot.start || evidence.stated.windows.some(w => w.start <= slot.start && w.end >= slot.end))
+        && plans.hasWindow(evidence, slot, now, this.pcfg) > 0;
+    });
+  }
+
+  private replacementPlanCurrent(o: Opp, now: number): boolean {
+    const source = o.replacementFor && this.opps.get(o.replacementFor);
+    const plan = o.plan;
+    const venue = plan && this.replacementVenue(plan);
+    if (!source || !plan || !venue || !this.opts.matchingEnabled) return false;
+    const sourceClosed = source.stage === "closed" && source.closedFrom === "scheduled" && source.closedReason === "participant dropped";
+    const beforeDeadline = now < plan.probeDeadline;
+    const current = sourceClosed && beforeDeadline
+      && this.replacementRosterCurrent(this.planWorld(now, true, [source.id, o.id]), plan, venue, o.participants, o.id)
+      && this.replacementWindowCurrent(venue, plan.window, o.participants, now);
+    return recoveryPlanCanProceed(sourceClosed, current, beforeDeadline);
+  }
+
+  private offerGroupReplacement(o: Opp, survivors: MemberId[], now: number): void {
+    const { plan, planRun, meetingAt } = o;
+    const venue = plan && this.replacementVenue(plan);
+    const activity = plan && plans.activityById.get(plan.activityId);
+    if (!plan || !planRun || !venue || !activity || meetingAt !== plan.window.start || !this.opts.matchingEnabled) return;
+    // spec/bookedGroupReplacement.md, "A replacement uses a current reviewed alternate and a viable slot"
+    const world = this.planWorld(now, true, [o.id]);
+    const rosters = planRun.bench.filter(id => mayOfferReviewedAlternate(plan.alternates.includes(id), true, o.alternates.includes(id),
+      o.participants.includes(id) || o.contacted.has(id) || Object.hasOwn(planRun.answers, id)))
+      .map(id => [...survivors, id]).filter(roster => this.replacementRosterCurrent(world, plan, venue, roster));
+    if (!rosters.length) return;
+    const earliestStart = now + this.pcfg.minLeadHours * HOUR;
+    const latestStart = now + this.pcfg.horizonDays * DAY;
+    const templates = attention.candidateSlots(NY, now).filter(slot => slot.start > meetingAt
+      && activity.dayparts.some(part => part === plans.daypartOf(slot.start, NY)));
+    const duration = Math.max(plan.window.end - meetingAt, activity.durationMin * MINUTE);
+    for (const { start } of [plan.window, ...templates]) {
+      const probeDeadline = Math.min(start - this.pcfg.deadlineBeforeStartHours * HOUR, now + this.pcfg.probeWindowHours * HOUR);
+      if (probeDeadline <= now) continue;
+      const window = { start, end: start + duration };
+      const invited = rosters.find(roster => viableReplacementSlot(start, meetingAt, earliestStart, latestStart,
+        this.replacementWindowCurrent(venue, window, roster, now)));
+      if (!invited) continue;
+      const count = invited.length;
+      this.submitPlan({
+        ...plan, id: `plan_${sha256(`${o.id}|replacement`).slice(0, 16)}`, place: { name: venue.name, area: venue.area },
+        window, probeDeadline, invited, alternates: [], size: { min: count, target: count, max: count },
+        createdAt: now, u: {}, familiar: {},
+      }, now, o.id);
+      return;
+    }
+  }
+
   /** One plan = one review item (plans ask 3). */
-  private submitPlan(plan: plans.Plan, now: number): Opp {
+  private submitPlan(plan: plans.Plan, now: number, replacementFor?: string): Opp {
     const a = plans.activityById.get(plan.activityId)!;
     const prop = plans.planToProposal(plan, this.pcfg);
     const o = this.newOpp({
@@ -3876,6 +4046,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       primed: [], explanations: prop.explanations, score: plan.score, generator: plan.crewId ? "crew" : "plan", tags: a.tags.slice(0, 4),
     });
     o.plan = plan;
+    if (replacementFor) o.replacementFor = replacementFor;
     this.bindPublishedEvent(o, plan.eventId);
     for (const id of plan.invited) this.lastPlannedAt.set(id, now);
     this.plansCounters.plansProposed++;
@@ -3896,6 +4067,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** Probes whose turn has come go out when the member's plan lane allows (send window, one a day, allowance). */
   private planLane(o: Opp, now: number) {
+    if (o.stage === "probing" && o.replacementFor && !this.replacementPlanCurrent(o, now)) return this.planFallback(o);
     const publicEventIssue = o.stage === "probing" ? this.publicEventRefusal(o) : undefined;
     if (publicEventIssue) return this.close(o, publicEventIssue);
     if (!o.planRun) return;
@@ -3935,6 +4107,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       this.refuse(id, "probe", presence.reason);
       return this.planAnswer(o, id, false, true);
     }
+    if (!this.calendarAllows([id], o.plan.window, now)) return this.planAnswer(o, id, false, true);
     // In another open opportunity: the plan probe waits (one open question at a time) until the deadline.
     // spec/planDispatch.md, "Wait for the send window, earlier questions, and the right allowance"
     const busy = this.busy(m.id, o.id);
@@ -3944,7 +4117,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const window = stepPlanDispatch(presence, { type: "checkWindow", busy, windowOpen, awaitingAnswer, sentToday: day !== undefined && m.planDay === day });
     if (window.phase !== "CheckingAllowance" || day === undefined) return this.planDefer(o, id, window.reason, now);
     const invitationPlan = { ...o.plan, invited: about };
-    const allowance = this.pcfg.allowance.enabled && plans.planAllowanceEligible(this.planEvidence(m, now), !!m.weekly, now);
+    const allowance = !o.replacementFor && this.pcfg.allowance.enabled && plans.planAllowanceEligible(this.planEvidence(m, now), !!m.weekly, now);
     let admitted: boolean, allowanceReason: string;
     if (allowance) {
       const item = plans.planItem(invitationPlan, id, { now, reviewState: "approved", stage: o.plan.partner && id !== o.plan.invited[0] ? "partner" : "first", pcfg: this.pcfg });
@@ -3976,7 +4149,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     const res = this.send(m, text, {
       type: "plan_probe", proposalId: o.id, proactive: true, planInvite: allowance, ...(allowance ? { lane: "plan" } : {}),
       plan: { planId: o.id, activity: a.id, window: { ...o.plan.window }, size: about.length, ...(o.plan.place.area ? { area: o.plan.place.area } : {}) },
-    }, "probe", { about, hook: { t: "plan_probe", oppId: o.id, id }, noDefer: true, planInvite: allowance });
+    }, "probe", { about, hook: { t: "plan_probe", oppId: o.id, id }, noDefer: true, planInvite: allowance,
+      ...(o.replacementFor ? { key: replacementProbeKey(o.id, id) } : {}),
+    });
     if (stepPlanDispatch(rendered, { type: "recordSend", sent: res === "sent" }).phase === "InviteSent") {
       m.planDay = day;
       if (allowance) this.plansCounters.planInvitesAllowance++; else this.plansCounters.planInvitesIntroCap++;
@@ -4011,6 +4186,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (recorded) {
       if (yes) { this.plansCounters.planYes++; o.status.set(id, "available"); } else { if (!silent) this.plansCounters.planNo++; o.status.set(id, silent ? "unavailable" : "no"); }
       onRecorded?.();
+      if (!yes && o.replacementFor && o.stage === "probing") {
+        this.planFallback(o);
+        return "recorded";
+      }
     } else this.expirePlanInvitations(o, run.plan.probeDeadline, now);
     this.planAct(o, action);
     return recorded ? "recorded" : "expired";
@@ -4046,10 +4225,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     const plan = o.plan!;
     const a = plans.activityById.get(plan.activityId)!;
     const now = this.now();
+    if (o.replacementFor && !this.replacementPlanCurrent(o, now)) return this.planFallback(o);
     const friendWorld = this.appPack()?.id === "friends" ? this.planWorld(now, true) : undefined;
     const friendPartnerEligible = !friendWorld || !plan.partner || this.planFriendPartnerFits(friendWorld, going, plan.category);
     let keep = going.filter(id => {
-      if (!this.bookedNear(id, plan.window.start, o.id)) return true;
+      if (!this.bookedNear(id, plan.window.start, o.id) && this.calendarAllows([id], plan.window, now)) return true;
       o.status.set(id, "unavailable"); this.plansCounters.planConflictsDropped++;
       this.ctx.log("plan_conflict", { oppId: o.id, memberId: id });
       return false;
@@ -4069,7 +4249,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     keep = seated;
     // spec/planDecision.md, "A group plan never books two members directly"
-    const hasConsent = planBookingConsented(plan.partner, keep.length, plan.quorum, a.groupSize[0]);
+    const hasConsent = o.replacementFor
+      ? bookReplacementPlan(o.review?.decision === "approve" && !o.review.invalidated,
+        going.filter(id => o.planRun?.answers[id] === "yes" && o.contacted.has(id)).length, keep.length)
+      : planBookingConsented(plan.partner, keep.length, plan.quorum, a.groupSize[0]);
     const next = stepOpportunity(opportunityLifecycle(o), { type: "book", hasConsent });
     if (next.phase !== "Scheduled") {
       o.planRun = { ...o.planRun!, stage: "closed" };
@@ -4115,8 +4298,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     const plan = o.plan!;
     if (this.publicEventRefusal(o)) { o.status.set(id, "unavailable"); return; }
     const going = o.participants.filter(p => o.status.get(p) === "yes");
-    if (this.bookedNear(id, plan.window.start, o.id) || !this.checkRecipient(id, "reveal", { about: going, reply: false }).ok
-      || (this.appPack()?.id === "friends" && !this.planFriendSeatFits(this.planWorld(this.now(), true), id, going, "existingPlan"))) {
+    const now = this.now();
+    if (this.bookedNear(id, plan.window.start, o.id) || !this.calendarAllows([id], plan.window, now)
+      || !this.checkRecipient(id, "reveal", { about: going, reply: false }).ok
+      || (this.appPack()?.id === "friends" && !this.planFriendSeatFits(this.planWorld(now, true), id, going, "existingPlan"))) {
       o.status.set(id, "unavailable");
       return;
     }
@@ -4136,6 +4321,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!again) this.plansCounters.planFallbacks++;
     const run: plans.PlanRun = { ...o.planRun!, stage: "closed" };
     o.planRun = run;
+    if (o.replacementFor) {
+      for (const id of o.participants) if (o.status.get(id) === "available") this.noteFor(id, copy.planNotTogether);
+      return this.close(o, "plan did not come together");
+    }
     const w = this.planWorld(now);
     const candidates = eligible ? { ...run, answers: Object.fromEntries(eligible.map(id => [id, run.answers[id]!])) } : run;
     const chosen = plans.planFallback(candidates, now, w.events, this.pcfg);
@@ -4172,8 +4361,11 @@ export class ConsentNetwork implements NetworkUnderTest {
   private planOut(o: Opp, id: MemberId) {
     if (!o.planRun) return;
     if (o.planRun.answers[id] === "pending") return this.planAnswer(o, id, false, true);
-    if (o.status.get(id) === "available") { o.status.set(id, "unavailable"); o.planRun = { ...o.planRun, answers: { ...o.planRun.answers, [id]: "no" } }; }
-    else if (o.status.get(id) === "queued") o.status.set(id, "unavailable");
+    if (o.status.get(id) === "available") {
+      o.status.set(id, "unavailable");
+      o.planRun = { ...o.planRun, answers: { ...o.planRun.answers, [id]: "no" } };
+      if (o.replacementFor && o.stage === "probing") this.planFallback(o);
+    } else if (o.status.get(id) === "queued") o.status.set(id, "unavailable");
   }
 
   /**
@@ -4375,6 +4567,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     const p = nyParts(now);
     this.weeklyCheckins(now);
+    this.sendInterruptionSurveys(now);
     if (p.hour >= this.opts.runHour && p.hour < ENGINE_RUN_UNTIL) {
       if (this.lastRunDay !== p.day) {
         this.lastRunDay = p.day;
@@ -4395,6 +4588,48 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   submitProposal(p: Proposal) { this.queued.push(p); }
+
+  /** An invitation that received a direct explicit answer may earn one sample. */
+  private sampleInterruption(m: MemberState, opportunityId: string) {
+    const bucket = interruptionSampleBucket(this.app.id, m.id, opportunityId);
+    if (interruptionFeedbackSample(bucket, this.invitesBeforeReply.has(opportunityId), this.memberReply, !!m.interruptionSurvey)) {
+      m.interruptionSurvey = { opportunityId, answeredAt: this.now() };
+    }
+  }
+
+  private sendInterruptionSurveys(now: number) {
+    for (const m of this.members.values()) {
+      const survey = m.interruptionSurvey;
+      if (!survey) continue;
+      const eligible = !m.account && m.stage === "active" && !m.minor && !m.optedOut && !m.onlyWhenAsked
+        && m.state !== "paused" && this.trust.ok(m.id) && !this.reportHeld(m.id);
+      if (!eligible || !this.opps.has(survey.opportunityId) || (survey.sentAt === undefined
+        ? now - survey.answeredAt >= interruptionAskUntilMs : now - survey.sentAt >= interruptionAnswerMs)) {
+        m.interruptionSurvey = undefined;
+        continue;
+      }
+      if (survey.sentAt !== undefined || !interruptionFeedbackAskDue(now - survey.answeredAt, eligible,
+        !!m.awaiting || !!m.pendingSafety || this.askOpen(m, now)) || !this.timingOk(m, "slot", now)) continue;
+      const code = interruptionFeedbackCode(this.app.id, m.id, survey.opportunityId);
+      const body = `Was that invitation worth a text? Reply WORTH YES ${code} or WORTH NO ${code}.`;
+      const key = interruptionFeedbackKey(this.app.id, m.id, survey.opportunityId);
+      if (this.send(m, body, { type: "question" }, "worthwhile", { key, noDefer: true }) === "sent") survey.sentAt = now;
+    }
+  }
+
+  private recordInterruptionFeedback(m: MemberState, answer: { worthwhile: boolean; code: string }, now: number, receivedAt: number) {
+    const survey = m.interruptionSurvey;
+    if (!survey || survey.sentAt === undefined) return;
+    const current = interruptionFeedbackCurrent(now - survey.sentAt,
+      this.checkRecipient(m.id, "worthwhile", { reply: false }).ok && m.state !== "paused" && this.opps.has(survey.opportunityId));
+    const receipt = this.ctx.initialInviteReceipt?.(interruptionFeedbackKey(this.app.id, m.id, survey.opportunityId));
+    const acceptedAt = this.ctx.initialInviteReceipt ? (receipt?.kind === "accepted" ? receipt.at : undefined) : survey.sentAt;
+    const reachedMember = acceptedAt !== undefined && receivedAt >= acceptedAt;
+    if (!interruptionFeedbackReply(this.memberReply, answer.code === interruptionFeedbackCode(this.app.id, m.id, survey.opportunityId), current, reachedMember)) return;
+    m.interruptionSurvey = undefined;
+    this.ctx.log("interruption_feedback", { worthwhile: answer.worthwhile });
+    this.send(m, "Thanks for the feedback.", { type: "info" }, "reply");
+  }
 
   /**
    * The opt-in weekly "what's your week like?" (founder decision 4d): on the configured weekday
@@ -5293,7 +5528,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     // A pending yes/no (a probe or a booked plan) is the open question: an ask now would make the
     // member's next answer ambiguous ("Free Tuesday evening" read as a yes to the probe).
     if (ask && (m.awaiting?.kind === "probe" || m.awaiting?.kind === "booked")) return this.refuse(m.id, kind, "one_question", fns);
-    const outreach = this.classifyOutreach(m, meta, now);
+    const outreach = kind === "worthwhile" ? "unsolicited" : this.classifyOutreach(m, meta, now);
     const unsol = outreach === "unsolicited";
     const timing = this.timingOf(kind, proactive || unsol, reply);
     if (timing !== "now") {
@@ -6470,6 +6705,16 @@ export function storedInviteNoticePartyCurrent(state: NetworkState, id: MemberId
   const held = state.trust?.some(record => record.id === id && record.level === "hold") || pendingReportHold(state.reports, id);
   const view = relayMemberOf(member, held);
   return canBeMatched(view.age) && !view.optedOut && !view.held;
+}
+
+export function storedInterruptionSurveyCurrent(state: NetworkState, app: string, memberId: MemberId, id: string, now: number): boolean {
+  const member = state.members.find(item => item.id === memberId);
+  const survey = member?.interruptionSurvey;
+  if (!survey || survey.sentAt === undefined || id !== interruptionFeedbackKey(app, memberId, survey.opportunityId)) return false;
+  const eligible = member.stage === "active" && !member.account && !member.onlyWhenAsked && member.state !== "paused"
+    && !state.trust?.some(record => record.id === memberId && record.level !== "ok")
+    && storedInviteNoticePartyCurrent(state, memberId) && state.opps.some(opp => opp.id === survey.opportunityId);
+  return interruptionFeedbackCurrent(now - survey.sentAt, eligible);
 }
 /**
  * A two-person opportunity as the relay sees it: mutual while scheduled or done. The thread persists after the

@@ -7,7 +7,7 @@ import { findExecutable } from "../../core/src/runtime/process.ts";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { existsSync } from "node:fs";
 import { SQL } from "../../core/src/runtime/postgres.ts";
-import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
+import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import type { SendRequest } from "../../blooio/src/types.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
@@ -780,7 +780,7 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(await admit("probe")).toEqual(denied);
 
     const mutual: Partial<NetworkState["opps"][number]> = { review, stage: "scheduled",
-      status: participants.map(id => [id, "yes"]), contacted: participants };
+      status: participants.map(id => [id, "yes"]), contacted: participants, bookedTold: participants, meetingAt: clock.now() + DAY };
     await setOpportunity({ ...mutual, review: undefined });
     expect(await admit("reveal")).toEqual(denied);
     await setOpportunity({ ...mutual, status: [[first.memberId, "yes"], [second.memberId, "no"]] });

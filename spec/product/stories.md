@@ -76,7 +76,7 @@ Models: [profile learning](../models/profile_learning.md), [outbound queue](../m
 
 Offer authorized Google Calendar free/busy, pasted LinkedIn profile text, an allowed X profile or approved connection, or a summary from the member's agent. Mark proposed facts with source, confidence and scope. Persist confirmed facts, remove raw pasted summaries after confirmation, and support revocation. Exclude sensitive inferences and other people's private details.
 
-Models: [OAuth and MCP](../models/oauth_mcp.md), [profile learning](../models/profile_learning.md), [source collection and cleanup](../profileSuggestionSource.md), [suggestion review](../profileSuggestionReview.md).
+Models: [calendar free/busy](../calendarFreeBusy.md), [OAuth and MCP](../models/oauth_mcp.md), [profile learning](../models/profile_learning.md), [source collection and cleanup](../profileSuggestionSource.md), [suggestion review](../profileSuggestionReview.md).
 
 ## Story F8 — Ask for something
 
@@ -210,7 +210,7 @@ Models: [relay](../models/relay.md), [photo relay item](../models/photo_relay_it
 
 Use stated availability or authorized calendar free/busy, travel constraints and a public venue. Offer 2–3 viable times when a slot is unsettled. If consenting probe answers select a shared slot, the reveal can carry the booked plan. A changed time requires renewed consent. A cancellation notifies participants with minimal detail. The agent suggests booking links and gives requested calendar invites. It holds no money.
 
-Models: [meeting rescheduling](../meetingReschedule.md), [requested calendar invite](../calendarInvite.md), [opportunity](../models/opportunity.md), [plan run](../models/plan_run.md).
+Models: [calendar free/busy](../calendarFreeBusy.md), [meeting rescheduling](../meetingReschedule.md), [requested calendar invite](../calendarInvite.md), [opportunity](../models/opportunity.md), [plan run](../models/plan_run.md).
 
 ## Story F18 — Keep a meeting on track
 
@@ -220,7 +220,7 @@ Models: [meeting rescheduling](../meetingReschedule.md), [requested calendar inv
 
 Send permitted reminders and a day-of check-in. Relay a late arrival. Offer a reviewed, eligible replacement or reschedule when someone drops, or cancel gracefully if minimum participation fails. A booked group cannot continue with fewer than three people. Record attendance and apply the contextual no-show rule. STOP, bans, blocks and quiet hours still apply.
 
-Models: [meeting settlement](../meetingSettlement.md), [late arrival in a booked group](../groupLateArrival.md), [reviewed group journey](../reviewedGroupJourney.md), [plan run](../models/plan_run.md), [outbound queue](../models/outbound_queue.md).
+Models: [meeting settlement](../meetingSettlement.md), [booked group replacement](../bookedGroupReplacement.md), [late arrival in a booked group](../groupLateArrival.md), [reviewed group journey](../reviewedGroupJourney.md), [plan run](../models/plan_run.md), [outbound queue](../models/outbound_queue.md).
 
 ## Story F19 — Give feedback and meet again
 
@@ -230,7 +230,7 @@ Models: [meeting settlement](../meetingSettlement.md), [late arrival in a booked
 
 Ask factual questions first, then whether it was worthwhile and whether the person wants to meet again. Update contextual reliability, intent and edges. Offer a second encounter when mutual evidence and current policy support it. Keep negative feedback private. Sample whether an interruption was worthwhile under the one-open-question rule.
 
-Models: [repeat encounters](../repeatEncounter.md), [opportunity](../models/opportunity.md), [profile learning](../models/profile_learning.md), [notification and capital](../models/notify_capital.md).
+Models: [interruption feedback](../interruptionFeedback.md), [repeat encounters](../repeatEncounter.md), [opportunity](../models/opportunity.md), [profile learning](../models/profile_learning.md), [notification and capital](../models/notify_capital.md).
 
 ## Story F20 — Set my participation
 

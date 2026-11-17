@@ -98,6 +98,7 @@ import { ADULT_AGE, canBeMatched, canJoin } from "../../core/src/policy.ts";
 import { CostLedger, costRatesFromEnv, PgCostSink } from "./cost.ts";
 import { BlooioAdapter, originalBookingNoticeStale, type ChannelAdapter, type DirectKind, type Outbound } from "./channel.ts";
 import { RESCHEDULE_QUEUE_PREFIX } from "../src/rescheduling.ts";
+import { interruptionFeedbackAnswer } from "../src/interruption-feedback.ts";
 import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, stagingSiteOrigins, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { Accounts, homeCityOf, joinProfileText, type AccountHooks, type EnrollmentReferral, type HomeInput, type JoinHookContext, type MemberHookContext, type Who } from "../../platform/src/accounts.ts";
 import {
@@ -1495,6 +1496,7 @@ export class NetworkService implements RuntimeHost {
     const intentCommand = !kw ? standingIntentCommand(ev.text) : undefined;
     const controls = !kw && participationCommand(ev.text);
     const calendar = !kw && calendarInviteRequest(ev.text);
+    const surveyAnswer = !kw && interruptionFeedbackAnswer(ev.text);
     const travel = !kw && this.inboundTurn() ? travelPresenceCommand(ev.text) : undefined;
     const soloEvents = !kw && this.inboundTurn() ? soloConciergeRequest(ev.text) : undefined;
     const contributionPage = !kw && this.inboundTurn() ? contributionHistoryRequest(ev.text) : undefined;
@@ -1592,6 +1594,7 @@ export class NetworkService implements RuntimeHost {
     if (banned) return "held";
 
     // An account command never joins an app or opts the sender in.
+    if (!memberId && surveyAnswer) return "handled";
     if (!memberId && (profileRead || intentCommand || controls || calendar || travel || soloEvents || contributionPage !== undefined)) {
       return controls ? "participation_controls" : calendar ? "calendar_invite" : travel ? "travel_presence" : soloEvents ? "solo_events" : contributionPage !== undefined ? "contribution_history" : "handled";
     }
@@ -1617,7 +1620,7 @@ export class NetworkService implements RuntimeHost {
       }
       // After STOP the member's texts still reach the Network (a report is never dropped), but its replies are
       // refused: the person gets one hint instead (founder decision 2026-10-11, #22).
-      if (!kw && e164 && !controls && !calendar && contributionPage === undefined) await this.stopHint(rt, app, e164, ev, rowId);
+      if (!kw && e164 && !controls && !calendar && !surveyAnswer && contributionPage === undefined) await this.stopHint(rt, app, e164, ev, rowId);
       const out = await this.memberMessage(rt, memberId, ev, rowId, kw, reply);
       if (e164) await this.statedAge(app, rt, memberId, e164);
       return out;
@@ -1736,7 +1739,10 @@ export class NetworkService implements RuntimeHost {
       if (n.isDeclined(memberId)) return "handled" as const; // declined at join: never answered, nothing stored
       const t = this.clock.now();
       const channel = ev.transport === "sms" ? "sms" : "imessage";
-      const inbound = { id: rowId, member_id: memberId, direction: "inbound", channel, body: ev.text, status: "received", type: null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
+      const surveyAnswer = !keyword && interruptionFeedbackAnswer(ev.text);
+      const inbound = { id: rowId, member_id: memberId, direction: "inbound", channel,
+        body: surveyAnswer ? "Private invitation feedback." : ev.text, status: "received",
+        type: surveyAnswer ? "interruption_feedback" : null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
       const signedDirect = !keyword && !fromAssistant && this.inboundTurn();
       const calendar = !keyword && calendarInviteRequest(ev.text);
       if (calendar) {
@@ -1897,7 +1903,7 @@ export class NetworkService implements RuntimeHost {
         rt.unit.memberCommand = tx => this.saveCofounderIntent(tx, rt, rowId, signedDirect.from, intent);
       } : undefined;
       try {
-        disposition = await n.onInbound({ id: rowId, memberId, body: ev.text, ts: t, channel,
+        disposition = await n.onInbound({ id: rowId, memberId, body: ev.text, ts: signedDirect ? Math.min(t, ev.receivedAt) : t, channel,
           ...(keyword ? { keyword } : {}), ...(fromAssistant ? { source: "mcp" as const } : {}) }, stageIntent);
       } finally { rt.replyingTo = undefined; }
       if (rt.unit.memberCommand) return "cofounder_intent" as const;

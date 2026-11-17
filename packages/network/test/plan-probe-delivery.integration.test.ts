@@ -3,13 +3,17 @@ import { DAY, HOUR, SimClock } from "@thenetwork/core";
 import type { plans } from "@thenetwork/engine";
 import type { SendRequest } from "../../blooio/src/types.ts";
 import { SQL } from "../../core/src/runtime/postgres.ts";
+import { type TurnRequest, TURN_PATH } from "../../core/src/svc/contract.ts";
+import { svcSign } from "../../core/src/svc/svc-auth.ts";
+import { RealSource } from "../../observatory/src/sources/real.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
 import { BlooioAdapter } from "../service/channel.ts";
 import { NetworkService } from "../service/service.ts";
+import { interruptionFeedbackKey, interruptionSampleBucket } from "../src/interruption-feedback.ts";
 import { Mini } from "./mini.ts";
 
-test.skipIf(!pgAvailable)("a staff-approved group plan sends anonymous probes through the matching settings gate", async () => {
+test.skipIf(!pgAvailable)("approved probes use current settings and a sampled decline contributes private feedback", async () => {
   // spec/planDispatch.md, "A usable message must be sent before the daily record changes"
   // spec/outboundAdmission.md, "A queued match invitation still needs the member's current settings"
   const url = await migratedDb("plan_probe_delivery");
@@ -17,6 +21,7 @@ test.skipIf(!pgAvailable)("a staff-approved group plan sends anonymous probes th
   const clock = new SimClock(Date.UTC(2026, 10, 16, 19));
   const app = APPS.friends;
   const networkId = "friends:nyc";
+  const secret = "synthetic-plan-probe-and-survey-test-fixture";
   const recipients = [
     { name: "Ari", e164: "+12125550391" },
     { name: "Blair", e164: "+12125550392" },
@@ -31,9 +36,17 @@ test.skipIf(!pgAvailable)("a staff-approved group plan sends anonymous probes th
   } });
   const service = new NetworkService({
     url, clock, log: () => {}, photoStorage: null, adapter: () => adapter,
-    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off" }, networks: [{ id: networkId }],
+    env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off", SERVICE_TURN_SECRET: secret }, networks: [{ id: networkId }],
     devMatching: [networkId], network: { plans: false, growth: false, maxNewPerDay: 0 }, tokens: "reviewer@friends:plan-reviewer",
   });
+  const observatory = new RealSource({ app: app.id, url });
+  const turn = async (messageId: string, text: string, receivedAt = clock.now()) => {
+    const input: TurnRequest = { app: app.id, channel: "blooio", from: recipients[0]!.e164, messageId, text,
+      transport: "imessage", receivedAt, to: null };
+    const body = JSON.stringify(input);
+    const signed = await svcSign(secret, { id: messageId, path: TURN_PATH, method: "POST", body, nowS: Math.floor(clock.now() / 1000) });
+    return service.fetch(new Request(`http://localhost${TURN_PATH}`, { method: "POST", headers: { "content-type": "application/json", ...signed }, body }));
+  };
   try {
     await service.start();
     const members = [];
@@ -55,8 +68,11 @@ test.skipIf(!pgAvailable)("a staff-approved group plan sends anonymous probes th
       invited, alternates: [], partner: false, size: { min: 3, target: 3, max: 3 }, quorum: 3, probeDeadline: now + 3 * DAY,
       score: 0.6, u: {}, familiar: {}, createdAt: now, category: "social",
     };
+    const sampledIndex = Array.from({ length: 400 }, (_, index) => index + 1)
+      .find(index => interruptionSampleBucket(app.id, invited[0]!, `${app.id}.nw-1-${index}`) === 0)!;
+    expect(sampledIndex).toBeDefined();
     await rt.unitOfWork(net => {
-      net.importState({ ...net.exportState(), members: fixture.net.exportState().members });
+      net.importState({ ...net.exportState(), members: fixture.net.exportState().members, oppSeq: sampledIndex - 1 });
       (net as unknown as { submitPlan(plan: plans.Plan, at: number): void }).submitPlan(plan, now);
     });
     const probes = () => sql<{ id: string; member_id: string; opportunity_id: string | null }[]>`select id,member_id,opportunity_id
@@ -71,6 +87,7 @@ test.skipIf(!pgAvailable)("a staff-approved group plan sends anonymous probes th
     const { items } = await queue.json() as { items: { oppId: string; revision: number }[] };
     expect(items).toHaveLength(1);
     const { oppId, revision } = items[0]!;
+    expect(oppId).toBe(`${app.id}.nw-1-${sampledIndex}`);
     const approval = await service.fetch(new Request(`${reviewUrl}/${encodeURIComponent(oppId)}`, {
       method: "POST", headers, body: JSON.stringify({ decision: "approve", revision }),
     }));
@@ -100,7 +117,37 @@ test.skipIf(!pgAvailable)("a staff-approved group plan sends anonymous probes th
         expect(delivered[0]?.text).not.toMatch(/\b(?:Ari|Blair|Charlie)\b/i);
       }
     }
+
+    // spec/interruptionFeedback.md, "Sample a confirmed invitation after its own answer"
+    // spec/interruptionFeedback.md, "A direct answer measures the interruption once"
+    expect((await turn("decline-before-survey", "No")).status).toBe(200);
+    const key = interruptionFeedbackKey(app.id, invited[0]!, oppId);
+    expect(await adapter.queue.statusOf(key)).toBeUndefined();
+    const answeredAt = clock.now();
+    clock.set(answeredAt + DAY - 1);
+    await rt.unitOfWork(net => net.tick(clock.now()));
+    expect(await adapter.queue.statusOf(key)).toBeUndefined();
+    for (let hour = 0; hour < 24 && await adapter.queue.statusOf(key) !== "sent"; hour++) {
+      clock.set(answeredAt + DAY + hour * HOUR);
+      await rt.unitOfWork(net => net.tick(clock.now()));
+    }
+    const samples = calls.filter(call => call.idempotencyKey === `tn:${key}`);
+    expect(samples).toHaveLength(1);
+    const reply = /WORTH NO [a-p]{16}/.exec(samples[0]!.text)![0];
+    expect((await rt.pg.load())?.members.find(member => member.id === invited[0])?.pendingAsks).toEqual([]);
+    expect((await turn("early-survey-answer", reply, clock.now() - 1)).status).toBe(200);
+    expect(await sql`select 1 from network.events where app_id='friends' and type='interruption_feedback'`).toEqual([]);
+    expect((await turn("survey-answer", reply)).status).toBe(200);
+    expect((await turn("duplicate-survey-answer", reply)).status).toBe(200);
+    expect(await sql`select payload,actor_id,object_id from network.events where app_id='friends' and type='interruption_feedback'`)
+      .toEqual([{ payload: { worthwhile: false }, actor_id: null, object_id: null }]);
+    expect((await sql`select distinct body from network.messages where direction='inbound' and type='interruption_feedback'`))
+      .toEqual([{ body: "Private invitation feedback." }]);
+    await observatory.init();
+    expect(observatory.state().stats.scorecard?.find(metric => metric.key === "worthwhile_interruption"))
+      .toMatchObject({ label: "Worthwhile interruptions", value: 0, n: 1 });
   } finally {
+    await observatory.dispose();
     await service.close();
     await sql.close();
     await dropDb(url);

@@ -54,7 +54,7 @@ export function lawInvitationCountsAtTerminalExpiry(acceptedAt: number, expiredA
 /** Story: Keep minors out of introductions and recruiting / Recruiting is an adult-only message at the time it is sent (spec/outreachPolicy.md) */
 //@ pure
 export function outreachRequiresAdult(kind: string): boolean {
-  return kind === "probe" || kind === "reveal" || kind === "nudge" || kind === "scheduling" || kind === "reminder" || kind === "feedback" || kind === "relay" || kind === "growth" || kind === "invite_notice" || kind === "home_help_consent";
+  return kind === "probe" || kind === "reveal" || kind === "nudge" || kind === "scheduling" || kind === "reminder" || kind === "feedback" || kind === "relay" || kind === "growth" || kind === "invite_notice" || kind === "home_help_consent" || kind === "worthwhile";
 }
 
 /** Story: Keep minors out of introductions and recruiting / Recruiting is an adult-only message at the time it is sent (spec/outreachPolicy.md) */
