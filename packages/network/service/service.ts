@@ -2081,7 +2081,7 @@ export class NetworkService implements RuntimeHost {
       }
       return keyword || systemReply ? "handled" as const : disposition;
     }, !fromAssistant && !kw && !calendarPreferenceCommand(ev.text) && this.inboundTurn()?.memberId === memberId
-      ? { kind: "member", memberId, reschedule: !!parseRescheduleCommand(ev.text) } : undefined);
+      ? { kind: "member", memberId, reschedule: parseRescheduleCommand(ev.text) } : undefined);
   }
 
   private async cofounderIntentOwner(tx: SQL, rt: NetworkRuntime, memberId: MemberId, e164: string): Promise<boolean> {

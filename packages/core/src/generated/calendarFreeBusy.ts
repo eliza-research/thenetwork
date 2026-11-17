@@ -110,6 +110,19 @@ export function calendarPreloadSeatAllowed(status: string, booked: boolean, pend
 
 /** Story: Use my authorized calendar to choose a time / A scheduling read uses only the seats still involved in that work (spec/calendarFreeBusy.md) */
 //@ pure
+export function calendarReschedulePreloadAllowed(matching: number): boolean {
+  return matching === 1;
+}
+
+/** Story: Use my authorized calendar to choose a time / A scheduling read uses only the seats still involved in that work (spec/calendarFreeBusy.md) */
+//@ pure
+export function lawAmbiguousCalendarRescheduleCannotRead(matching: number): boolean {
+  //@ ensures \result === true
+  return !(matching > 1) || !calendarReschedulePreloadAllowed(matching);
+}
+
+/** Story: Use my authorized calendar to choose a time / A scheduling read uses only the seats still involved in that work (spec/calendarFreeBusy.md) */
+//@ pure
 export function lawCalendarDoesNotReadRetiredSeat(booked: boolean, pendingLateSeat: boolean): boolean {
   //@ ensures \result === true
   return !calendarPreloadSeatAllowed("dropped", booked, pendingLateSeat);

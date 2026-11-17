@@ -83,7 +83,7 @@ pure def lawCalendarBridgeProofNeedsExactOwner(signed: bool, exactRequest: bool,
 
 ### A scheduling read uses only the seats still involved in that work
 
-Skip members who declined, withdrew or became unavailable for the opportunity. A booked reschedule uses only the accepted roster. Work on a late plan seat can use the accepted roster and the still-pending invitees. A direct member turn may read a booked plan with a pending seat only when that member has a pending seat or is rescheduling an accepted seat.
+Skip members who declined, withdrew or became unavailable for the opportunity. A booked reschedule uses only the accepted roster of the one current booking that the sender identifies. A request identifies its original start. A yes vote identifies the sender's exact pending offer. A malformed request, a decline, or no unique current match starts no calendar read. Other bookings of the same member contribute no calendar owners to that read. Work on a late plan seat can use the accepted roster and the still-pending invitees. A direct member turn may read a booked plan with a pending seat only when that member has a pending seat or is rescheduling an accepted seat.
 
 ```quint
 pure val statusValues = Set("", "queued", "probing", "available", "unavailable", "yes", "no", "dropped")
@@ -91,6 +91,11 @@ pure val statusValues = Set("", "queued", "probing", "available", "unavailable",
 pure def calendarPreloadSeatAllowed(status: str, booked: bool, pendingLateSeat: bool): bool =
   status != "unavailable" and status != "no" and status != "dropped" and
     (not(booked) or status == "yes" or pendingLateSeat)
+
+pure def calendarReschedulePreloadAllowed(matching: int): bool = matching == 1
+
+pure def lawAmbiguousCalendarRescheduleCannotRead(matching: int): bool =
+  matching > 1 implies not(calendarReschedulePreloadAllowed(matching))
 
 pure def lawCalendarDoesNotReadRetiredSeat(booked: bool, pendingLateSeat: bool): bool =
   not(calendarPreloadSeatAllowed("dropped", booked, pendingLateSeat))

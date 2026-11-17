@@ -9,6 +9,7 @@ import { svcSign, svcVerify } from "../../core/src/svc/svc-auth.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
 import { NetworkService } from "../service/service.ts";
+import { localBookingStart, rescheduleMemberRef, type RescheduleCommand, type RescheduleDraft } from "../src/rescheduling.ts";
 import { Mini, START } from "./mini.ts";
 
 const turnSecret = "synthetic-calendar-bridge-fixture-turn-secret";
@@ -133,7 +134,7 @@ test.skipIf(!pgAvailable)("a signed owner proof and fresh Cloud preload bind act
     const persisted = (await rt.pg.load())!;
     const probing = optedIn.opps.find(opp => opp.id === oppId)!;
     await rt.unitOfWork(n => n.importState({ ...persisted, opps: [{ ...probing, participants: [...ids, declined.id], status: [...probing.status, [declined.id, "no"]] }] }));
-    const stageWork = async (memberId: string, reschedule = false) => {
+    const stageWork = async (memberId: string, reschedule?: RescheduleCommand) => {
       reads.length = 0;
       await rt.unitOfWork(() => undefined, { kind: "member", memberId, reschedule });
       return reads.map(request => request.memberId).sort();
@@ -151,9 +152,40 @@ test.skipIf(!pgAvailable)("a signed owner proof and fresh Cloud preload bind act
       status: [[first.id, "yes"], [second.id, "yes"], [declined.id, "no"], [pending.id, "probing"]],
       planRun: { plan, stage: "booked", bench: [], answers: { [first.id]: "yes", [second.id]: "yes", [declined.id]: "no", [pending.id]: "pending" } },
     }] }));
-    expect(await stageWork(second.id, true)).toEqual([first.id]);
+    expect(await stageWork(second.id, { kind: "request", originalAt: start, proposedAt: start + 2 * DAY })).toEqual([first.id]);
     expect(await stageWork(second.id)).toEqual([]);
     expect(await stageWork(pending.id)).toEqual([first.id, pending.id].sort());
+
+    // A direct reschedule must not read opted-in calendars for any other booking this member holds.
+    const unrelated: typeof booked = { ...booked, id: "unrelated-booked-calendar", meetingAt: start + DAY,
+      participants: [second.id, pending.id], status: [[second.id, "yes"], [pending.id, "yes"]] };
+    const setBookings = (...opps: (typeof booked)[]) => rt.unitOfWork(n => n.importState({ ...n.exportState(), opps }));
+    await setBookings(booked, unrelated);
+    reads.length = 0;
+    expect((await turn("calendar-reschedule-format", "RESCHEDULE whenever", phones[1])).status).toBe(200);
+    expect(reads).toEqual([]);
+    expect((await turn("calendar-reschedule-unknown-vote", "RESCHEDULE YES aaaaaaaaaaaaaaaa", phones[1])).status).toBe(200);
+    expect(reads).toEqual([]);
+    const exact = `RESCHEDULE ${localBookingStart(start)} TO ${localBookingStart(start + 2 * DAY)}`;
+    await setBookings(booked, { ...unrelated, meetingAt: start, publicEventRevision: "fixture-fixed" });
+    const ambiguous = await turn("calendar-reschedule-ambiguous", exact, phones[1]);
+    expect(ambiguous.status, await ambiguous.text()).toBe(200);
+    expect(reads).toEqual([]);
+    await setBookings(booked, unrelated);
+    expect((await turn("calendar-reschedule-exact", exact, phones[1])).status).toBe(200);
+    expect(reads.map(request => request.memberId)).toEqual([first.id]);
+
+    const draft: RescheduleDraft = { ref: "calendar-reschedule-fixture", revision: booked.scheduleRevision ?? 0,
+      originalAt: start, proposedAt: start + 2 * DAY, expiresAt: clock.now() + HOUR,
+      roster: [...ids].sort(), offered: [second.id], accepted: [] };
+    await setBookings({ ...booked, reschedule: draft }, unrelated);
+    reads.length = 0;
+    const code = rescheduleMemberRef(draft, second.id);
+    expect((await turn("calendar-reschedule-decline", `RESCHEDULE NO ${code}`, phones[1])).status).toBe(200);
+    expect(reads).toEqual([]);
+    await setBookings({ ...booked, reschedule: draft }, unrelated);
+    expect((await turn("calendar-reschedule-vote", `RESCHEDULE YES ${code}`, phones[1])).status).toBe(200);
+    expect(reads.map(request => request.memberId)).toEqual([first.id]);
   } finally {
     await service.close();
     await dropDb(url);
