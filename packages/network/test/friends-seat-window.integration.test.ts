@@ -75,10 +75,12 @@ test("friends: alternates need a Friend pair value with everyone before they can
   const policy = { ...DEFAULT_FRIENDS_POLICY, crews: false, openTable: false, partnerIntros: 0 };
   const run = (world: World, evidence: Map<MemberId, plans.PlanEvidence>, outcomes: plans.PlanOutcomeRecord[] = []) =>
     planFriendsWeek(world, { now: START, tz: TZ, evidence, venues: [venue], crews: [], outcomes, offered: [] }, policy, FRIENDS_PLANS);
+  const block = (from: MemberId, to: MemberId) => ({ from, to, type: "blocked" as const, strength: 1, explicit: true, createdAt: START - DAY });
 
   const available = new Set(["a", "b", "c", "e"]);
   const newWorld = new World({ ...snap, members: snap.members.filter(m => available.has(m.id)),
     facets: snap.facets.filter(f => available.has(f.memberId)), presence: snap.presence.filter(p => available.has(p.memberId)),
+    edges: [block("c", "e")],
   }, cfg, localEmbed, friendsPack);
   const windows = [10, 11].map(day => {
     const start = Date.UTC(2026, 9, day, 16);
@@ -86,7 +88,7 @@ test("friends: alternates need a Friend pair value with everyone before they can
   });
   const evidence = new Map<MemberId, plans.PlanEvidence>([...available].map(id =>
     [id, { memberId: id, tz: TZ, quietHours: [22, 8], stated: { windows, at: START, until: START + 7 * DAY } }]));
-  // c and e each fit a and b. They share too little to seat or retain both at one table.
+  // c and e each fit a and b. Their block prevents them sharing the table or its alternate list.
   const newGroup = run(newWorld, evidence).plans;
   expect(newGroup).toHaveLength(1);
   expect(newGroup[0]!.invited).toHaveLength(3);
@@ -96,12 +98,11 @@ test("friends: alternates need a Friend pair value with everyone before they can
 
   const repeatWorld = new World({
     ...snap, facets: snap.facets.map(f => f.id === "b:verified" ? { ...f, tags: [...f.tags, "friends:max_travel:1"] } : f),
-    edges: [["c", "d"], ["f", "g"]].map(([from, to]) => ({ from: from!, to: to!, type: "blocked", strength: 1, explicit: true, createdAt: START - DAY })),
+    edges: [block("c", "d"), block("c", "e"), block("f", "g")],
   }, cfg, localEmbed, friendsPack);
   const outcome: plans.PlanOutcomeRecord = { planId: "prior-table", activityId: "coffee_crawl", venueId: venue.id,
     city: "nyc", at: Date.UTC(2026, 9, 3, 16), attended: samples.map(({ id }) => id), positive: ["a", "b", "c"], recurringWant: [] };
-  // b cannot make the trip. The blocked attendee d and weak fit e cannot take the seat, and g
-  // cannot be kept as an alternate once f fills it.
+  // b cannot make the trip. c's blocks exclude d and e, and the last block excludes g once f joins.
   const repeats = run(repeatWorld, new Map(), [outcome]).repeats;
   expect(repeats).toMatchObject([{ invited: ["a", "c", "f"], alternates: [] }]);
   expect(repeats).toEqual(run(repeatWorld, new Map(), [{ ...outcome, attended: ["a", "b", "c", "f"] }]).repeats);
