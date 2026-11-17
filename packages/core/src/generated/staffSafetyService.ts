@@ -121,6 +121,32 @@ export function lawReleaseOfOneAppLeavesOtherAppsHeld(globalHold: boolean): bool
   return !globalHold || (!durableStaffHoldCoversApp(false, globalHold, true) && durableStaffHoldCoversApp(false, globalHold, false));
 }
 
+/** Story: Hold a member without exposing their other memberships / A committed trust hold follows the person through ordinary app leave (spec/staffSafetyService.md) */
+//@ pure
+export function carryTrustHoldOnAppLeave(ordinaryAppLeave: boolean, trustLevel: string): boolean {
+  return ordinaryAppLeave && trustLevel === "hold";
+}
+
+/** Story: Hold a member without exposing their other memberships / A committed trust hold follows the person through ordinary app leave (spec/staffSafetyService.md) */
+//@ pure
+export function carriedTrustHoldRecordAllowed(currentOwner: boolean, canonicalBan: boolean, staffHoldCoversApp: boolean): boolean {
+  return currentOwner && !(canonicalBan || staffHoldCoversApp);
+}
+
+/** Story: Hold a member without exposing their other memberships / A committed trust hold follows the person through ordinary app leave (spec/staffSafetyService.md) */
+//@ pure
+export function lawWatchDoesNotCarryAcrossLeave(ordinaryAppLeave: boolean): boolean {
+  //@ ensures \result === true
+  return !carryTrustHoldOnAppLeave(ordinaryAppLeave, "watch");
+}
+
+/** Story: Hold a member without exposing their other memberships / A committed trust hold follows the person through ordinary app leave (spec/staffSafetyService.md) */
+//@ pure
+export function lawCarriedTrustHoldRequiresOneCurrentOwner(canonicalBan: boolean, staffHoldCoversApp: boolean): boolean {
+  //@ ensures \result === true
+  return !carriedTrustHoldRecordAllowed(false, canonicalBan, staffHoldCoversApp);
+}
+
 /** Story: Hold a member without exposing their other memberships / Keep the requested and result audits in order (spec/staffSafetyService.md) */
 //@ pure
 export function canRecordRequestedSafetyAudit(flow: ServiceSafetyFlow): boolean {

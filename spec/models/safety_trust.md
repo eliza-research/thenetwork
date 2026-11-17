@@ -12,7 +12,7 @@ Imported from `quint/safety_trust.qnt` at `30d950e`. See [model index](README.md
 
 Production uses [Safety cases and report review](../safetyCase.md) for the case lifecycle, report decisions, and staff hold and age-clearance admission. The standalone model also covers member contact, trust scores, and cross-app effects.
 
-The matching snapshot reads [canonical ban authority](../staffSafetyService.md#live-enrollment-and-ban-projection-use-the-current-person) while runtime restriction is being projected. [Durable staff holds](../staffSafetyService.md#a-staff-hold-survives-ordinary-app-membership-changes) retain explicit staff decisions through ordinary app leave and rejoin under [PRD §40.3](../product/source/prd.md#403-shared-platform). Production keeps global authority with per-app releases. The retained model represents coverage with a set of app scopes. Automatic and report-only carryover in these traces describes the intended behavior and still needs production work.
+The matching snapshot reads [canonical ban authority](../staffSafetyService.md#live-enrollment-and-ban-projection-use-the-current-person) while runtime restriction is being projected. [Durable staff holds](../staffSafetyService.md#a-staff-hold-survives-ordinary-app-membership-changes) retain explicit staff decisions through ordinary app leave and rejoin under [PRD §40.3](../product/source/prd.md#403-shared-platform). Production keeps global authority with per-app releases. The retained model represents coverage with a set of app scopes. [A committed hard trust hold](../staffSafetyService.md#a-committed-trust-hold-follows-the-person-through-ordinary-app-leave) also carries within its app when the runtime forgets its member. Report-only carryover in these traces describes the intended behavior and still needs production work.
 
 ```quint
 // quint-check: max-steps=14 max-samples=6000 verify-steps=2
@@ -896,23 +896,27 @@ module safety_trust {
     s' = { ...s, pendingTexts: s.pendingTexts.exclude(Set(p)), shareGrants: s.shareGrants.union(Set(p)), lastAction: "shareYes" },
   }
 
-  // "leave <app>" (service.ts:921 forget): (1) leaveStart: readState(safetyHeld) in one lock, and when it was
-  // true the person_holds row (person, app, 'safety_carryover'); (2) leaveFinish: unitOfWork(forgetMember) in
-  // another lock. A report, a hold or a dismiss can commit between them (W3-221).
+  // App leave begins with consent. The report-only and minor branches retain the historical
+  // modeled intent. Committed hard holds use the current state at the atomic forget.
   action leaveStart(app: str, p: str): bool = {
     val m = midOf(s, app, p)
-    val rows = if (safetyHeld(s, m)) s.personHolds.union(Set((p, app))) else s.personHolds
+    val rows = if (lvl(s, m) != "hold" and safetyHeld(s, m)) s.personHolds.union(Set((p, app))) else s.personHolds
     all { s.live.get(m), not(s.leaving.contains(m)), s' = { ...s, personHolds: rows, leaving: s.leaving.union(Set(m)), lastAction: "leaveStart" } }
   }
+  pure def retainHardHold(st: State, m: Mid): State =
+    if (lvl(st, m) == "hold" and not(covered(st, m) or st.banned.contains(m.p)))
+      { ...st, personHolds: st.personHolds.union(Set((m.p, m.app))) }
+    else st
+
   action leaveFinish(m: Mid): bool = all {
     s.leaving.contains(m), s.live.get(m),
-    s' = { ...forget(s, m), lastAction: "leaveFinish" },
+    s' = { ...forget(retainHardHold(s, m), m), lastAction: "leaveFinish" },
   }
   // The leave with nothing between the two steps (run tests only).
   action leave(app: str, p: str): bool = {
     val m = midOf(s, app, p)
-    val rows = if (safetyHeld(s, m)) s.personHolds.union(Set((p, app))) else s.personHolds
-    all { s.live.get(m), s' = { ...forget({ ...s, personHolds: rows }, m), lastAction: "leave" } }
+    val rows = if (lvl(s, m) != "hold" and safetyHeld(s, m)) s.personHolds.union(Set((p, app))) else s.personHolds
+    all { s.live.get(m), s' = { ...forget(retainHardHold({ ...s, personHolds: rows }, m), m), lastAction: "leave" } }
   }
 
   // A join by text: a banned person is refused; a hold does not refuse a join (PRD 40.3). A former member gets
@@ -1308,9 +1312,22 @@ module safety_trust {
       .then(join("slop", "ben"))
       .expect(staffHoldFollowsPerson and not(matchable(s, BEN_S1)) and covered(s, BEN_S1))
       .then(tick(1))
-      .expect(lvl(s, BEN_S1) == "hold" and safety and not(witness_carryoverHold))
+      .expect(lvl(s, BEN_S1) == "hold" and safety)
       .then(liftHold(BEN_S1))
       .expect(not(covered(s, BEN_S1)) and covered(s, BEN_P) and lvl(s, BEN_P) == "hold" and safety)
+
+  run automaticHardHoldCarriesFromForgetTest =
+    init
+      .then(abuse(BEN_S, WATCH))
+      .then(leaveStart("slop", "ben"))
+      .expect(not(covered(s, BEN_S)))
+      .then(abuse(BEN_S, HOLD - WATCH))
+      .expect(lvl(s, BEN_S) == "hold")
+      .then(leaveFinish(BEN_S))
+      .then(join("slop", "ben"))
+      .expect(covered(s, BEN_S1) and not(matchable(s, BEN_S1)) and not(covered(s, BEN_P)))
+      .then(tick(1))
+      .expect(not(witness_carryoverHold))
 
   // SD-021 retained requirement: a minor report on slop, a leave and a rejoin. The new member is held.
   run sd021MinorReportCarriedOverTest =

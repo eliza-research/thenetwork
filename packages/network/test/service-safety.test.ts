@@ -22,6 +22,7 @@ import { NetworkService, WEBHOOK_PATH, type ServiceOptions } from "../service/se
 import { Mini, START } from "./mini.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
 import { presentInNyc } from "../src/network.ts";
+import { WATCH } from "../src/trust.ts";
 import { resolveConfig } from "../../engine/src/config.ts";
 import { localEmbed } from "../../engine/src/embed.ts";
 import { friendsInfo, friendsPack } from "../../engine/src/packs/friends/index.ts";
@@ -797,6 +798,60 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await sql`select app_id from platform.staff_safety_holds where person_id=${person.id}`).toEqual([{ app_id: null }]);
     expect(await restarted.s.accounts.deleteAll({ e164: phone, personId: person.id })).toBe(true);
     expect(await sql`select app_id from platform.staff_safety_holds where person_id=${person.id}`).toEqual([]);
+  }, T);
+
+  test("an automatic hard hold committed after leave admission survives the atomic forget", async () => {
+    // spec/staffSafetyService.md, "A committed trust hold follows the person through ordinary app leave"
+    await fresh();
+    const clock = new SimClock(START);
+    const { s, otp } = service(clock, { tokens: "safety@peon:peon-safety-tok" });
+    const web = site(s, clock, otp);
+    const phone = newPhone(), watchPhone = newPhone();
+    for (const [app, e164, name] of [["slop", phone, "Ari"], ["peon", phone, "Ari"], ["peon", watchPhone, "Blair"]] as const) {
+      await web.login(app, e164);
+      expect((await web.join(app, 30, name)).status).toBe(200);
+    }
+    const person = (await s.accounts.personFor(phone))!;
+    const watchPerson = (await s.accounts.personFor(watchPhone))!;
+    const former = (await memberOf("peon", phone))!.id;
+    const watchId = (await memberOf("peon", watchPhone))!.id;
+    const slop = (await memberOf("slop", phone))!.id;
+    const rt = s.runtimeFor("peon")!;
+    await rt.unitOfWork(n => {
+      for (const id of [former, watchId]) n.trust.add(id, clock.now(), "block_abuse", WATCH);
+    });
+
+    const beginAppLeave = s.people.beginAppLeave.bind(s.people);
+    s.people.beginAppLeave = async request => {
+      const admission = await beginAppLeave(request);
+      if (admission.ok && admission.membership?.memberId === former) await rt.unitOfWork(n => {
+        // The simulator supplies committed report evidence between the consent write and runtime forget.
+        expect(n.trust.report(former, "fixture-counterpart", clock.now(), { met: true })).toBeGreaterThan(0);
+        expect(n.trust.level(former)).toBe("hold");
+      });
+      return admission;
+    };
+    try {
+      expect(await text(s, clock, phone, "leave peon.biz")).toBe("left");
+    } finally {
+      s.people.beginAppLeave = beginAppLeave;
+    }
+    expect(await text(s, clock, watchPhone, "leave peon.biz")).toBe("left");
+    expect(await sql`select app_id from platform.staff_safety_holds where person_id=${person.id}`).toEqual([{ app_id: "peon" }]);
+    expect(await sql`select origin from platform.staff_safety_holds where person_id=${person.id}`).toEqual([{ origin: "automatic_carryover" }]);
+    expect(await sql`select app_id from platform.staff_safety_holds where person_id=${watchPerson.id}`).toEqual([]);
+    expect(await memberOf("peon", phone)).toBeUndefined();
+
+    await web.login("peon", phone);
+    expect((await web.join("peon", 30, "Ari")).status).toBe(200);
+    const current = (await memberOf("peon", phone))!.id;
+    expect(current).not.toBe(former);
+    expect(await sql`select app_id,staff_held from platform.matching_ages where member_id in (${current},${slop}) order by app_id`)
+      .toEqual([{ app_id: "peon", staff_held: true }, { app_id: "slop", staff_held: false }]);
+    const lifted = await staff(s, "peon-safety-tok", "POST", "/apps/peon/safety/lift", { memberId: current, note: "staff resolved review" });
+    expect(await lifted.json()).toEqual({ ok: true });
+    expect(await sql`select app_id from platform.staff_safety_holds where person_id=${person.id}`).toEqual([]);
+    expect(await sql`select staff_held from platform.matching_ages where app_id='peon' and member_id=${current}`).toEqual([{ staff_held: false }]);
   }, T);
 
   test("a committed global hold stops queued peer delivery while a related runtime is still waiting", async () => {

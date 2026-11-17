@@ -72,6 +72,26 @@ pure def lawReleaseOfOneAppLeavesOtherAppsHeld(globalHold: bool): bool =
   globalHold implies (not(durableStaffHoldCoversApp(false, globalHold, true)) and durableStaffHoldCoversApp(false, globalHold, false))
 ```
 
+### A committed trust hold follows the person through ordinary app leave
+
+Read the current trust level inside the same runtime unit that forgets an ordinary app member. Preserve a committed hard hold as one scoped record for the exact linked person and app, including a hard hold reached from corroborated reports. Write the restriction before erasing runtime data in that transaction. An existing applicable staff hold or canonical ban already provides authority. A watch, a report without a hard hold, or an existing age restriction does not create a hard-hold record. Phone reassignment and whole-account erasure follow the account cleanup procedure.
+
+Carry only the restriction's source kind, person, app, decision key and time. A member can rejoin. The existing snapshot and peer-contact gates apply the held bit, and authorized staff can lift the carried hard hold for the app. A new explicit staff decision uses the existing staff scope and audit.
+
+```quint
+pure def carryTrustHoldOnAppLeave(ordinaryAppLeave: bool, trustLevel: str): bool =
+  ordinaryAppLeave and trustLevel == "hold"
+
+pure def carriedTrustHoldRecordAllowed(currentOwner: bool, canonicalBan: bool, staffHoldCoversApp: bool): bool =
+  currentOwner and not(canonicalBan or staffHoldCoversApp)
+
+pure def lawWatchDoesNotCarryAcrossLeave(ordinaryAppLeave: bool): bool =
+  not(carryTrustHoldOnAppLeave(ordinaryAppLeave, "watch"))
+
+pure def lawCarriedTrustHoldRequiresOneCurrentOwner(canonicalBan: bool, staffHoldCoversApp: bool): bool =
+  not(carriedTrustHoldRecordAllowed(false, canonicalBan, staffHoldCoversApp))
+```
+
 ### Keep the requested and result audits in order
 
 Persist the request audit before performing an admitted cross-runtime safety action. If the requested audit fails, the caller cannot proceed. An action that returns gets a subsequent result audit. Preserve the existing best-effort handling for a result-audit failure.

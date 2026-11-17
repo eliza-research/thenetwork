@@ -36,11 +36,11 @@ import { storedInviterCurrent, type ActionResult, type NetworkOptions, type Netw
 import { brandOf, copy as ntwrkCopy, copyFor, ELIZA_NOTICE, type Copy } from "../src/copy.ts";
 import { personDailyCap } from "../../core/src/generated/outreachPolicy.ts";
 import {
-  durableStaffHoldLiftAllowed, durableStaffHoldScope, initial as initialStaffSafety, staffAgeAppCleared, staffAgeClearSummary, staffAgeMayReviewReports,
+  carryTrustHoldOnAppLeave, durableStaffHoldLiftAllowed, durableStaffHoldScope, initial as initialStaffSafety, staffAgeAppCleared, staffAgeClearSummary, staffAgeMayReviewReports,
   staffMinorReportDismissible, staffSafetyAuditScope, staffSafetyMembershipLive, staffSafetyReportFor, staffSafetySelectsTarget,
   step as stepStaffSafety,
 } from "../../core/src/generated/staffSafetyService.ts";
-import { checkStaffHoldProjection, currentStaffHold, liftStaffHold, recordStaffHold, StaffHoldStateChanged } from "./staff-safety-holds.ts";
+import { checkStaffHoldProjection, currentStaffHold, liftStaffHold, recordCarriedTrustHold, recordStaffHold, StaffHoldStateChanged } from "./staff-safety-holds.ts";
 import { inboxKeepMs, platformKeepMs, stopHintWindowMs } from "../../core/src/generated/platformRetention.ts";
 import { stopCoversEveryApp } from "../../core/src/generated/sharedLineConsentJourney.ts";
 import { standingIntentReplayAllowed } from "../../core/src/generated/standingIntentManagement.ts";
@@ -1245,10 +1245,10 @@ export class NetworkService implements RuntimeHost {
       onJoin: (ctx: JoinHookContext) => this.joined(ctx),
       commitReferredJoin: ctx => this.commitReferredJoin(ctx),
       onStop: ctx => this.stopped(ctx.app, ctx.personId, ctx.scope),
-      onForget: async (ctx: MemberHookContext) => {
+      onForget: async (ctx, reason) => {
         // The app's photos go first (leave, delete everything, a new owner of the number).
         await this.photos.deleteFor(ctx.personId, ctx.app.id);
-        await this.forget(ctx.app, ctx.memberId);
+        await this.forget(ctx.app, ctx.memberId, reason === "leave" ? ctx.personId : undefined);
         // Other parts of the backend that hold data about the person in this app (the MCP server's OAuth grants).
         for (const f of this.forgetListeners) {
           try { await f(ctx); } catch (e) { this.log(`[forget] listener failed for ${ctx.app.id}: ${(e as Error).message}`); }
@@ -1492,10 +1492,18 @@ export class NetworkService implements RuntimeHost {
   onEraseAccount(fn: (personId: string) => Promise<unknown> | unknown) { this.accountEraseListeners.push(fn); }
 
   /** Leave one app: the Network forgets the member, then the save deletes every row that names them (the forget path). */
-  private async forget(app: AppInfo, memberId: MemberId) {
+  private async forget(app: AppInfo, memberId: MemberId, ordinaryLeavePersonId?: string) {
     const rt = await this.runtimeOfMember(app.id, memberId) ?? this.runtimeFor(app.id);
     if (!rt) return;
-    await rt.unitOfWork(n => { n.forgetMember(memberId); rt.unit.forget.add(memberId); });
+    await rt.unitOfWork(n => {
+      const carriesHold = carryTrustHoldOnAppLeave(ordinaryLeavePersonId !== undefined, n.trust.level(memberId));
+      if (carriesHold && ordinaryLeavePersonId) {
+        const at = this.clock.now();
+        rt.unit.memberCommand = tx => recordCarriedTrustHold(tx, app.id, memberId, ordinaryLeavePersonId, at);
+      }
+      n.forgetMember(memberId);
+      rt.unit.forget.add(memberId);
+    });
   }
 
   /** spec/accountPrivacy.md, "An export includes the member's own facts and photo metadata" */

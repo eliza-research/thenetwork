@@ -154,6 +154,7 @@ export type EnrollmentReferral = ReferralJoin | SeedInvitationReferral;
 
 export interface JoinHookContext { app: AppInfo; person: Person; membership: Membership; e164: string; age: number; input: JoinInput; referral?: EnrollmentReferral }
 export interface MemberHookContext { app: AppInfo; personId: string; memberId: string; e164: string }
+type MemberForgetReason = "leave" | "account_erasure" | "phone_reassignment";
 
 export interface AccountHooks {
   /** Resolve an explicit invitation for this app after the account and consent gates. */
@@ -165,7 +166,7 @@ export interface AccountHooks {
   /** STOP from the web. memberId is this app's member, when there is one (a global stop runs without one). */
   onStop?(ctx: Omit<MemberHookContext, "memberId"> & { memberId?: string; scope: StopScope }): Promise<void> | void;
   /** Delete the member's network rows for this app (the generalized forget path). */
-  onForget?(ctx: MemberHookContext): Promise<void> | void;
+  onForget?(ctx: MemberHookContext, reason: MemberForgetReason): Promise<void> | void;
   /** Erase person-bound records that can exist without an app membership. */
   onEraseAccount?(personId: string): Promise<void> | void;
   /** The member's own network data for this app (facets, intents, opportunities, messages). */
@@ -261,7 +262,7 @@ export class Accounts {
       return true;
     }
     for (const m of await this.store.memberships(ph.personId)) {
-      if (m.state !== "removed") await this.hooks.onForget?.({ app: this.opts.apps(m.app), personId: ph.personId, memberId: m.memberId, e164 });
+      if (m.state !== "removed") await this.hooks.onForget?.({ app: this.opts.apps(m.app), personId: ph.personId, memberId: m.memberId, e164 }, "phone_reassignment");
     }
     await this.hooks.onEraseAccount?.(ph.personId);
     return this.store.deleteAll(ph.personId, e164, this.phoneHash(e164), at, true);
@@ -556,7 +557,7 @@ export class Accounts {
       type: "recordLeaveConsent", recorded: admission.ok, membershipBound: hasScopedMembership(!!who.personId, !!m, m?.state === "removed"),
     });
     if (optedOut.phase === "AwaitingAppForget" && who.personId && m) {
-      await this.hooks.onForget?.({ app, personId: who.personId, memberId: m.memberId, e164: who.e164 });
+      await this.hooks.onForget?.({ app, personId: who.personId, memberId: m.memberId, e164: who.e164 }, "leave");
       await this.store.forgetMembership(who.personId, app.id, at, m.memberId);
       return stepPrivacy(optedOut, { type: "recordAppForget" }).phase === "CompletePrivacyRequest";
     }
@@ -574,7 +575,7 @@ export class Accounts {
     if (who.personId) {
       for (const m of await this.store.memberships(who.personId)) {
         if (hasScopedMembership(true, true, m.state === "removed"))
-          await this.hooks.onForget?.({ app: this.opts.apps(m.app), personId: who.personId, memberId: m.memberId, e164: who.e164 });
+          await this.hooks.onForget?.({ app: this.opts.apps(m.app), personId: who.personId, memberId: m.memberId, e164: who.e164 }, "account_erasure");
       }
       await this.hooks.onEraseAccount?.(who.personId);
     }
