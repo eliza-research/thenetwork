@@ -627,6 +627,29 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         }
         return json(d);
       }),
+      "/api/review/:id/plan": { GET: guard(async (req, u, app) => {
+        const readRevision = modeRevision;
+        if (mode !== "real") return json({ ok: false, error: "real_only" }, 404);
+        let id: string;
+        try { id = decodeURIComponent(req.params.id!); } catch { return json({ ok: false, error: "invalid_review" }, 400); }
+        const seen = new URL(req.url).searchParams.get("revision");
+        const revision = seen !== null && /^\d+$/.test(seen) ? Number(seen) : NaN;
+        if (!id || id.length > 200 || !Number.isSafeInteger(revision)) return json({ ok: false, error: "invalid_review" }, 400);
+        const no = await record(u, app, { action: "read_review_plan", targetType: "opportunity", targetId: id, ok: true, detail: { revision } });
+        if (no) return no;
+        const src = await source("real", app);
+        if (readRevision !== modeRevision) return modeChanged();
+        if (!(src instanceof RealSource)) return json({ ok: false, error: "preview_unavailable" }, 503);
+        try {
+          const pending = src.reviewPlanPreview(u.id, id, revision);
+          if (!pending) return json({ ok: false, error: "preview_unavailable" }, 503);
+          const preview = await pending;
+          if (readRevision !== modeRevision) return modeChanged();
+          return preview ? json({ ok: true, preview }) : json({ ok: false, error: "preview_unavailable" }, 404);
+        } catch {
+          return json({ ok: false, error: "preview_unavailable" }, 503);
+        }
+      }, ["reviewer", "safety"]) },
       "/api/reveal": {
         // Admin-console 4.4: per member, with a reason, for at most 15 minutes; audited before it is granted.
         GET: guard((_r, u, app) => {

@@ -1,5 +1,7 @@
 import { readCapped } from "../../../platform/src/body.ts";
 import { gatheringFromService, type GatheringRequest, type GatheringResponse } from "../gatherings.ts";
+import { reviewRevisionCurrent } from "../../../core/src/generated/reviewDeadline.ts";
+import { scrubText } from "../scrub.ts";
 import { sniffType, PHOTO_MAX_BYTES } from "../../../platform/src/photos.ts";
 // Real mode's write path: the Network service's staff API (packages/network/service, runbook-real
 // 6.5). The Observatory's own database login stays read-only; review decisions, safety actions and
@@ -33,7 +35,7 @@ import { sniffType, PHOTO_MAX_BYTES } from "../../../platform/src/photos.ts";
 //   POST /staff/relay/<id>/release      { note }   (the console sends the reason as both reason and note)
 //   POST /staff/relay/<id>/reject       { note }
 // 409 { reason } is a refusal with the Network's reason; 404 means the service has no such route yet.
-import type { BiasReportView, ControlCommand, ControlResult, HealthAlert, HeldQueue, HeldText, MemberPhoto, ReportKind, SafetyAction, SafetyReport } from "../types.ts";
+import type { BiasReportView, ControlCommand, ControlResult, HealthAlert, HeldQueue, HeldText, MemberPhoto, ReportKind, SafetyAction, SafetyReport, StaffPlanPreview } from "../types.ts";
 import { REVIEW_BLOCK_ERRORS, SAFETY_ERRORS } from "./source.ts";
 
 export interface ServiceConfig {
@@ -109,6 +111,22 @@ export class ServiceClient {
     // Time on one item counts at most 30 minutes (a card left open is not review work; audit observatory-10).
     const secondsSpent = cmd.secondsSpent === undefined ? undefined : Math.min(1800, Math.max(0, Number(cmd.secondsSpent) || 0));
     return this.act(`/review/${encodeURIComponent(cmd.oppId)}`, staff, { decision, reason, note, secondsSpent, explanations, objective, swapOut, revision }, REVIEW_BLOCK_ERRORS);
+  }
+
+  async reviewPlanPreview(staff: string, id: string, revision: number): Promise<StaffPlanPreview | undefined> {
+    const { status, json } = await this.call("GET", `/review/${encodeURIComponent(id)}/plan?revision=${revision}`, staff);
+    if (status === 404 && json.error === "preview_unavailable") return;
+    const p = json.preview;
+    const textField = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 500;
+    if (status !== 200 || !json.ok || !p || !p.place
+        || ![p.deadline, p.start, p.end, p.probeDeadline, p.quorum, p.maxSeats].every(Number.isSafeInteger)
+        || p.end <= p.start || p.quorum < 1 || p.maxSeats < p.quorum
+        || p.app !== (this.c.app ?? "ntwrk") || p.opportunityId !== id || !reviewRevisionCurrent(revision, p.revision)
+        || !textField(p.activity) || !textField(p.place.name) || (p.place.area !== undefined && !textField(p.place.area))
+        || !Array.isArray(p.alternates) || !p.alternates.every(textField)) throw new Error("plan preview unavailable");
+    return { app: p.app, opportunityId: p.opportunityId, revision: p.revision, deadline: p.deadline,
+      activity: scrubText(p.activity, false), place: { name: scrubText(p.place.name, false), ...(p.place.area ? { area: scrubText(p.place.area, false) } : {}) },
+      start: p.start, end: p.end, probeDeadline: p.probeDeadline, quorum: p.quorum, maxSeats: p.maxSeats, alternates: p.alternates };
   }
 
   /** The staff API owns authoring and review; only its accepted result reaches the workspace. */

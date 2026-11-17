@@ -7,6 +7,9 @@ import type {
 } from "@thenetwork/core";
 import type { OracleSummary } from "@thenetwork/core";
 import type { SearchTally } from "@thenetwork/engine";
+import type { ReviewPlanPreview } from "../../network/src/network.ts";
+
+export type StaffPlanPreview = ReviewPlanPreview & { app: string };
 
 export type Mode = "game" | "real";
 

@@ -324,7 +324,7 @@ Models: [live travel windows](../travelPresence.md), [signed travel journey](../
 
 Show the app, origin, scrubbed context, reasons, proposed copy, timeline and deadline to the assigned reviewer. Store the decision, reviewer, reason and evidence as audit data. Recheck all participants on approval and dispatch. A materially changed proposal must pass review again. Expiry prevents a late send. Simulated review is confined to the simulation.
 
-Models: [review desk](../models/review_desk.md), [staff console](../models/staff_console.md), [console privacy](../models/console_privacy.md).
+Models: [staff review and plan preview](../staffReview.md), [review desk](../models/review_desk.md), [staff console](../models/staff_console.md), [console privacy](../models/console_privacy.md).
 
 ## Story F28 — Stop asking when I do not answer
 

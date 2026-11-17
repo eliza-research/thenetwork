@@ -88,6 +88,7 @@ import {
   probeTiming, questionHoldMs, replacementRoute, shouldLookForOtherTimes, slopProbeReplyCurrent, step as stepProbe, turnReached, type ParticipantProbe,
 } from "../../core/src/generated/probeDispatch.ts";
 import { reviewLate, reviewRevisionCurrent } from "../../core/src/generated/reviewDeadline.ts";
+import { reviewPlanPreviewCurrent } from "../../core/src/generated/staffReview.ts";
 import { inviteJoinNoticeCurrent, inviteJoinNoticeLifetimeMs, inviteJoinNoticeMayRideReply, outreachEngagementSource, outreachRequiresAdult, reengagementDeliveryPrefix, reengagementMayStage, unansweredInviteCountAfterInbound, unansweredInviteCounts, unansweredInvitePause } from "../../core/src/generated/outreachPolicy.ts";
 import {
   interruptionAnswerMs, interruptionAskUntilMs, interruptionFeedbackAskDue, interruptionFeedbackCurrent, interruptionFeedbackReply, interruptionFeedbackSample,
@@ -184,6 +185,13 @@ export interface ReviewItem {
   revision: number;
   kind?: "opportunity" | "fraud";
   fraud?: { flag: GamingFlag["kind"]; members: MemberId[]; evidence: Record<string, number> };
+}
+/** Staff-only facts about the proposed activity and ordered standby seats. */
+export interface ReviewPlanPreview {
+  opportunityId: string; revision: number; deadline: number;
+  activity: string; place: { name: string; area?: string };
+  start: number; end: number; probeDeadline: number; quorum: number; maxSeats: number;
+  alternates: MemberId[];
 }
 /** A gaming flag in the human review queue (NC integration ask 4). */
 export interface FraudItem {
@@ -2848,6 +2856,17 @@ export class ConsentNetwork implements NetworkUnderTest {
       .map((o): ReviewItem => ({ oppId: o.id, proposal: this.toProposal(o), origin: o.origin, queuedAt: o.review!.queuedAt, deadline: o.review!.deadline, rerolls: o.review!.rerolls?.length ?? 0, revision: reviewRevision(o) }))
       .concat(this.fraud.filter(x => x.status === "review").map(x => this.fraudItem(x)))
       .sort((a, b) => a.queuedAt - b.queuedAt);
+  }
+
+  reviewPlanPreview(oppId: string, revision: number): ReviewPlanPreview | undefined {
+    const o = this.opps.get(oppId), plan = o?.plan, review = o?.review;
+    const activity = plan && plans.activityById.get(plan.activityId);
+    // spec/staffReview.md, "A plan preview belongs to the open revision under review"
+    if (!o || !plan || !review || !activity || !reviewPlanPreviewCurrent(o.stage === "review", true, revision, reviewRevision(o), this.now(), review.deadline)) return;
+    return { opportunityId: o.id, revision, deadline: review.deadline,
+      activity: activity.label, place: { name: plan.place.name, ...(plan.place.area ? { area: plan.place.area } : {}) },
+      start: plan.window.start, end: plan.window.end, probeDeadline: plan.probeDeadline, quorum: plan.quorum,
+      maxSeats: plan.size.max, alternates: [...o.alternates] };
   }
 
   /** A reviewer's decision. True when it was applied; decide() also says why not. */

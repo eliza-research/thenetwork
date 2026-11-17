@@ -1,5 +1,6 @@
 // GENERATED from spec/staffReview.md by vibestack/spec.ts. Do not edit: change the spec and run `pnpm gen`.
 //@ backend dafny
+import { reviewLate as reviewDeadline_reviewLate, reviewRevisionCurrent as reviewDeadline_reviewRevisionCurrent, lawReviewDeadlineIsExclusive as reviewDeadline_lawReviewDeadlineIsExclusive, lawSeenReviewRevisionIsCurrent as reviewDeadline_lawSeenReviewRevisionIsCurrent, lawRerolledReviewIsStale as reviewDeadline_lawRerolledReviewIsStale } from "./reviewDeadline.ts";
 
 /** Story: Review the opportunity I selected / A changed card or revision starts a fresh draft (spec/staffReview.md) */
 export type ReviewMode = "IdleReview" | "RejectReview" | "EditReview" | "RerollReview";
@@ -106,6 +107,39 @@ export function sometimesReviewDraftOpens(ctl: ReviewCtl): boolean {
 //@ pure
 export function canSettleReview(ctl: ReviewCtl, cardKey: string, revision: number): boolean {
   return ownsReviewResponse(ctl, cardKey, revision);
+}
+
+/** Story: Review the opportunity I selected / A plan preview belongs to the open revision under review (spec/staffReview.md) */
+//@ pure
+export function reviewPlanPreviewCurrent(pending: boolean, hasPlan: boolean, seenRevision: number, currentRevision: number, currentTime: number, deadline: number): boolean {
+  return pending && hasPlan && reviewDeadline_reviewRevisionCurrent(seenRevision, currentRevision) && !reviewDeadline_reviewLate(currentTime, deadline);
+}
+
+/** Story: Review the opportunity I selected / A plan preview belongs to the open revision under review (spec/staffReview.md) */
+//@ pure
+export function lawPlanPreviewClosesAtDeadline(pending: boolean, hasPlan: boolean, revision: number, deadline: number): boolean {
+  //@ ensures \result === true
+  return !reviewPlanPreviewCurrent(pending, hasPlan, revision, revision, deadline, deadline);
+}
+
+/** Story: Review the opportunity I selected / A plan preview belongs to the open revision under review (spec/staffReview.md) */
+//@ pure
+export function lawPlanPreviewRefusesOlderRevision(currentTime: number, deadline: number, revision: number): boolean {
+  //@ ensures \result === true
+  return !reviewPlanPreviewCurrent(true, true, revision, exact_staffReview(revision + 1), currentTime, deadline);
+}
+
+/** Story: Review the opportunity I selected / Plan approval in the console waits for the selected preview (spec/staffReview.md) */
+//@ pure
+export function planPreviewMatchesCard(cardApp: string, previewApp: string, cardId: string, previewId: string, cardRevision: number, previewRevision: number, cardDeadline: number, previewDeadline: number): boolean {
+  return cardApp === previewApp && cardId === previewId && reviewDeadline_reviewRevisionCurrent(cardRevision, previewRevision) && cardDeadline === previewDeadline;
+}
+
+/** Story: Review the opportunity I selected / Plan approval in the console waits for the selected preview (spec/staffReview.md) */
+//@ pure
+export function lawOlderPlanPreviewCannotEnableApproval(app: string, id: string, revision: number, deadline: number): boolean {
+  //@ ensures \result === true
+  return !planPreviewMatchesCard(app, app, id, id, exact_staffReview(revision + 1), revision, deadline, deadline);
 }
 
 /** Do the rules allow this event in this state? */

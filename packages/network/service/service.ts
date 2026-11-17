@@ -3814,6 +3814,20 @@ export class NetworkService implements RuntimeHost {
         await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_review_queue", mode: "real", ok: true, app: rt.app.id });
         return json({ ok: true, network: rt.id, items: await this.reviewQueue(rt) });
       }
+      const planPreviewPath = path.match(/^\/review\/([^/]+)\/plan$/);
+      if (req.method === "GET" && planPreviewPath) {
+        const no = need(["reviewer", "safety"]); if (no) return no;
+        let id: string;
+        try { id = decodeURIComponent(planPreviewPath[1]!); } catch { return json({ ok: false, error: "invalid_review" }, 400); }
+        const seen = url.searchParams.get("revision");
+        const revision = seen !== null && /^\d+$/.test(seen) ? Number(seen) : NaN;
+        if (id.length > 200 || !Number.isSafeInteger(revision)) return json({ ok: false, error: "invalid_review" }, 400);
+        const now = this.clock.now();
+        await this.audit.write({ at: now, actor: user.id, roles: user.roles, action: "read_review_plan", mode: "real", ok: true,
+          app: rt.app.id, targetType: "opportunity", targetId: id, detail: { revision } });
+        const preview = await rt.readState(net => net.reviewPlanPreview(id, revision));
+        return preview ? json({ ok: true, preview: { app: rt.app.id, ...preview } }) : json({ ok: false, error: "preview_unavailable" }, 404);
+      }
       if (path === "/holds") {
         // Numbers on hold (they may have a new owner): staff for every app decide (GET lists, POST decides).
         if (!hasEverywhere(user, "admin")) return json({ ok: false, code: "forbidden", error: "needs role admin@*" }, 403);

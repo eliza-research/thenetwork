@@ -399,7 +399,10 @@ export class RealSource implements DataSource {
         createdAt: ms(r.created_at) ?? 0, updatedAt: ms(r.updated_at) ?? 0, meetingAt: ms(r.meeting_at), runId: r.run_id ?? undefined,
       };
       const rv = reviewBy.get(r.id);
-      if (rv) o.review = this.reviewOf(rv);
+      if (rv) {
+        o.review = this.reviewOf(rv);
+        o.origin = rv.origin ?? undefined;
+      }
       if (times.has(r.id)) o.times = times.get(r.id);
       if (o.meetingAt !== undefined && told.has(r.id)) o.booked = { at: o.meetingAt, optOutHours: BOOKED_OPT_OUT_HOURS, told: told.get(r.id)!, cancelled: cancelled.get(r.id) ?? {} };
       upsertIfChanged(s.opps, o, x => s.upsertOpp(x));
@@ -832,6 +835,10 @@ export class RealSource implements DataSource {
   /** Authoring remains exclusively on the Network service. */
   monthlyGatherings(actor: string, request: GatheringRequest) {
     return this.service?.monthlyGatherings(actor, request);
+  }
+
+  reviewPlanPreview(actor: string, id: string, revision: number) {
+    return this.service?.reviewPlanPreview(actor, id, revision);
   }
 
   /** A staff action the service applied: read the database again so every viewer sees it. */
