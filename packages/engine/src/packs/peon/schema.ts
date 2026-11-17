@@ -72,6 +72,9 @@ export const SAFETY = {
 export const SEARCH_INTENT = "peon:search";
 export const JOB_INTENT = "peon:job";
 
+/** Employers and candidate exclusions use the same key, including existing verified employer rows. */
+export const peonCompanyKey = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60);
+
 export type PeonMode = "onsite" | "hybrid" | "remote";
 export const MODES: readonly PeonMode[] = ["onsite", "hybrid", "remote"];
 

@@ -159,6 +159,7 @@ import { learningConsentContextEndpoint } from "./learning-consent-context-endpo
 import { SUGGESTION_PATH, profileSuggestionEndpoint, type SuggestionIdentityResolver } from "./profile-suggestion-endpoint.ts";
 import { RELAY_PATH, relayClassifierFromEnv, relayEndpoint } from "./relay-endpoint.ts";
 import { jobPostingRoutes } from "./postings.ts";
+import { applyPeonSearchCommand, namesPeonSearch, peonSearchCommand, peonSearchReplyCurrent, purgePeonSearchDrafts } from "./peon-candidate-search.ts";
 import type { RelayClassifierHook } from "../../engine/src/relay.ts";
 import type { ChannelEvent } from "../../blooio/src/types.ts";
 // The Observatory's staff auth (per-app role grants) and audit sink, so the console and the service agree.
@@ -911,6 +912,8 @@ export class NetworkService implements RuntimeHost {
     for (const app of new Set([...this.runtimes.values()].map(rt => rt.app.id))) {
       await this.profileSuggestions.expirePending(app, this.clock.now()).catch(e => this.log(`[purge] profile suggestions failed: ${(e as Error).message}`));
     }
+    await this.runtimeFor("peon")?.scoped(tx => purgePeonSearchDrafts(tx, this.clock.now()))
+      .catch(() => this.log("[purge] Peon search draft expiry waits for retry"));
     const n = await this.people.purge(this.clock.now() - platformKeepMs).catch(e => { this.log(`[purge] failed: ${(e as Error).message}`); return 0; });
     // The inbox keeps handled ids a week (dedupe); the line keeps no counters for an address that is nobody's phone.
     await this.inbox.purge(this.clock.now() - inboxKeepMs).catch(e => this.log(`[purge] inbox failed: ${(e as Error).message}`));
@@ -1734,8 +1737,9 @@ export class NetworkService implements RuntimeHost {
 
   private appWords() { return Object.values(this.apps).flatMap(a => [a.id, ...a.domain.split(".")]); }
 
-  /** A standalone app keyword or the first line of the Peon skill's prepared signup text. */
+  /** A standalone app keyword, a prepared Peon signup, or an explicitly app-named Peon command. */
   namedApp(text: string): AppId | undefined {
+    if (namesPeonSearch(text)) return "peon";
     const lineBreak = text.indexOf("\n");
     if (lineBreak >= 0) {
       const header = text.slice(0, lineBreak).replace(/\r$/, "");
@@ -1867,6 +1871,10 @@ export class NetworkService implements RuntimeHost {
     }
     if (gatheringRsvp || gatheringFollowup) {
       if (banned || !memberId || !turn || ev.mediaUrls?.length) return gatheringRsvp ? "gathering_rsvp" : "gathering_followup";
+      return this.memberUnit(rt, memberId, ev, rowId, undefined);
+    }
+    if (!kw && route.app === "peon" && peonSearchCommand(ev.text)) {
+      if (!memberId || !turn || ev.mediaUrls?.length) return "peon_candidate_search";
       return this.memberUnit(rt, memberId, ev, rowId, undefined);
     }
 
@@ -2066,6 +2074,20 @@ export class NetworkService implements RuntimeHost {
         body: surveyAnswer ? "Private invitation feedback." : ev.text, status: "received",
         type: surveyAnswer ? "interruption_feedback" : null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
       const signedDirect = !keyword && !fromAssistant && this.inboundTurn();
+      const peonSearch = !keyword && rt.app.id === "peon" && peonSearchCommand(ev.text);
+      if (peonSearch) {
+        const reason = "peon_candidate_search" as const;
+        if (!signedDirect || !rt.signedMemberTurn(memberId, rowId)) return reason;
+        rt.unit.memberCommand = async tx => {
+          const owner = { app: rt.app, memberId, e164: signedDirect.from };
+          const body = await applyPeonSearchCommand(tx, this.accountsFor(tx), owner, peonSearch, ev.receivedAt, this.clock.now());
+          if (!body) return;
+          rt.unit.inbound = inbound;
+          rt.unit.atomicReply = reason;
+          rt.collectedMemberReply(memberId, `sys:${rowId}`, body, reason);
+        };
+        return reason;
+      }
       const gatheringRsvp = !keyword && gatheringRsvpCommand(ev.text);
       const gatheringFollowup = !keyword && gatheringFollowupCommand(ev.text);
       if (gatheringRsvp || (!keyword && gatheringFollowupRequested(ev.text))) {
@@ -3400,7 +3422,7 @@ export class NetworkService implements RuntimeHost {
         await this.lineAdapter()?.engaged?.(input.from);
       }
       // Own-profile commands preserve send holds. The binding includes the known join-age check.
-      if (outcome !== "standing_intents" && outcome !== "travel_presence" && outcome !== "solo_events" && outcome !== "contribution_history" && outcome !== "profile_fact_edit" && outcome !== "participation_controls" && outcome !== "calendar_invite" && outcome !== "gathering_rsvp" && outcome !== "gathering_followup" && accountEligible && binding && binding.membership.memberId === turn.memberId) {
+      if (outcome !== "standing_intents" && outcome !== "travel_presence" && outcome !== "solo_events" && outcome !== "contribution_history" && outcome !== "profile_fact_edit" && outcome !== "participation_controls" && outcome !== "calendar_invite" && outcome !== "gathering_rsvp" && outcome !== "gathering_followup" && outcome !== "peon_candidate_search" && accountEligible && binding && binding.membership.memberId === turn.memberId) {
         await this.lineAdapter()?.engaged?.(input.from);
       }
       if (outcome === "open" && !collected.length && turn.app && turn.memberId) {
@@ -3485,6 +3507,14 @@ export class NetworkService implements RuntimeHost {
         const rt = handled.app && memberId ? await this.runtimeOfMember(handled.app, memberId) : undefined;
         const live = rt && memberId && await rt.scoped(tx => this.cofounderIntentOwner(tx, rt, memberId, input.from));
         if (!live) return json({error: "turn_intent_account_changed", retryable: false}, 409);
+      }
+      if (handled.reason === "peon_candidate_search" && handled.replies.length) {
+        const memberId = handled.memberId;
+        const rt = handled.app === "peon" && memberId ? await this.runtimeOfMember("peon", memberId) : undefined;
+        const command = peonSearchCommand(input.text);
+        const current = rt && memberId && command && handled.replies.length === 1 && await rt.scoped(tx =>
+          peonSearchReplyCurrent(tx, this.accountsFor(tx), { app: rt.app, memberId, e164: input.from }, command, handled.replies[0]!, this.clock.now()));
+        if (!current) return json({error: "turn_peon_search_changed", retryable: false}, 409);
       }
       if (handled.reason === "travel_presence" && handled.replies.length) {
         const rt = handled.app && handled.memberId ? await this.runtimeOfMember(handled.app, handled.memberId) : undefined;

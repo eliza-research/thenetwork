@@ -102,10 +102,11 @@ export type StagedMemberInvitation =
 
 const gatheringPrivateBody = { gathering_rsvp: "Private gathering RSVP", gathering_followup: "Private gathering follow-up" };
 const gatheringMessage = (type?: string): type is keyof typeof gatheringPrivateBody => !!type && Object.hasOwn(gatheringPrivateBody, type);
-const privateMemberMessage = (type?: string) => type === "bounded_home_help" || type === "profile_fact_edit" || type === "calendar_invite" || type === "inbox_updates" || gatheringMessage(type) || type?.startsWith("member_invitation") === true;
+const privateMemberMessage = (type?: string) => type === "bounded_home_help" || type === "profile_fact_edit" || type === "calendar_invite" || type === "inbox_updates" || type === "peon_candidate_search" || gatheringMessage(type) || type?.startsWith("member_invitation") === true;
 const privateAtomicRequests: Partial<Record<AtomicReplyReason, string>> = {
   profile_fact_edit: "Private profile fact request.",
   calendar_invite: "Private calendar invite request.",
+  peon_candidate_search: "Private job search request.",
   gathering_rsvp: `${gatheringPrivateBody.gathering_rsvp}.`,
   gathering_followup: `${gatheringPrivateBody.gathering_followup}.`,
 };
@@ -1185,6 +1186,7 @@ export class NetworkRuntime {
       body: s.type === "bounded_home_help" ? "Private home-help reply." : s.type === "profile_fact_edit" ? "Private profile fact reply."
         : s.type === "calendar_invite" ? "Private calendar invite reply."
         : s.type === "inbox_updates" ? "Private inbox updates reply."
+        : s.type === "peon_candidate_search" ? "Private job search reply."
         : gatheringMessage(s.type) ? `${gatheringPrivateBody[s.type]} reply.`
         : privateMemberMessage(s.type) ? "Private invitation reply." : s.body,
       status: u.collected.has(s.id) ? "collected" : this.adapter.storedStatus,

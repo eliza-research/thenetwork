@@ -66,7 +66,7 @@ export interface InboundTurn {
   firstContactNotice?: { phoneHash: string; replyId: string };
 }
 export interface CollectedReply {id: string; body: string; kind: "reply" | "compliance"}
-export type AtomicReplyReason = "member_invitation" | "member_invitation_review" | "member_invitation_delivery" | "bounded_home_help" | "profile_fact_edit" | "cofounder_intent" | "participation_controls" | "calendar_invite" | "gathering_rsvp" | "gathering_followup" | "inbox_updates" | "travel_presence";
+export type AtomicReplyReason = "member_invitation" | "member_invitation_review" | "member_invitation_delivery" | "bounded_home_help" | "profile_fact_edit" | "cofounder_intent" | "participation_controls" | "calendar_invite" | "gathering_rsvp" | "gathering_followup" | "inbox_updates" | "travel_presence" | "peon_candidate_search";
 
 interface WebhookEnvelope {
   ev: InboundMessage;

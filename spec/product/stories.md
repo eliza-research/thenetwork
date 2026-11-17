@@ -44,7 +44,7 @@ Use a short, resumable conversation. Explain consent and where facts came from. 
 
 The site entry stays in the person's current agent where direct signup is supported. Use the separate [agent signup rules](policies.md#age-identity-and-enrollment). A person can also choose the shared text line as their entry.
 
-Models: [join flow](../models/join_flow.md), [profile learning](../models/profile_learning.md), [agent loop](../models/chatjson_loop.md), [authorization](../models/auth_edge.md).
+Models: [join flow](../models/join_flow.md), [profile learning](../models/profile_learning.md), [Peon job search](../peonCandidateSearch.md), [agent loop](../models/chatjson_loop.md), [authorization](../models/auth_edge.md).
 
 ## Story F5 — Review and correct my profile
 
@@ -382,7 +382,7 @@ Models: [Friends weekly repeats](../friendsWeek.md#a-friends-repeat-uses-its-own
 
 Only verified employers with pay ranges can reach a candidate. Exclude protected traits and proxies from automated matching. Respect current-employer blocks and qualification filters. Ask candidates first and send unranked slates with must-have checks after consent. Staff review introductions. Hiring teams make the decisions.
 
-Models: [matching engine](../models/matching_engine.md), [candidate pool](../models/candidate_pool.md), [review desk](../models/review_desk.md).
+Models: [Peon job search](../peonCandidateSearch.md), [matching engine](../models/matching_engine.md), [candidate pool](../models/candidate_pool.md), [review desk](../models/review_desk.md).
 
 ### Role level and candidate level fit both ways
 
